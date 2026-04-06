@@ -1,0 +1,7 @@
+{
+  "name": "build-loop",
+  "version": "1.0.0",
+  "description": "Orchestrated development loop: assess → define → plan → optimize → execute → validate → iterate → fact-check → report",
+  "author": "Tyrone Ross",
+  "keywords": ["development", "orchestration", "evaluation", "iteration", "build"]
+}
