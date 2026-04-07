@@ -17,25 +17,37 @@ Orchestrated 8-phase development loop for Claude Code. Brings structure, validat
 
 ## Installation
 
-**From GitHub:**
+### From GitHub (recommended)
 
 ```bash
-claude plugins add tyroneross/build-loop
+# Add the build-loop marketplace
+claude plugins marketplace add https://github.com/tyroneross/build-loop.git
+
+# Install the plugin
+claude plugins install build-loop@build-loop
 ```
 
-**Manual (local development):**
-
-Clone the repo and add the path to your Claude Code settings:
+### Manual (local development)
 
 ```bash
 git clone https://github.com/tyroneross/build-loop.git
 ```
 
-Then in `~/.claude/settings.json`:
+Add to `~/.claude/settings.json`:
 
 ```json
 {
-  "plugins": ["/path/to/build-loop"]
+  "extraKnownMarketplaces": {
+    "build-loop": {
+      "source": {
+        "source": "directory",
+        "path": "/path/to/build-loop"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "build-loop@build-loop": true
+  }
 }
 ```
 
