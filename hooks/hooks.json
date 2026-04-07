@@ -5,8 +5,8 @@
         "matcher": "Bash",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "If the command just executed was a deploy, push, or release command (git push, npm publish, vercel deploy, etc.): check whether .build-loop/state.json exists and indicates an active build loop. If Phase 7 (Fact Check & Mock Scan) has NOT completed, warn: 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.' Otherwise, do nothing."
+            "type": "command",
+            "command": "[ -f .build-loop/state.json ] || exit 0; python3 -c \"import json,sys; s=json.load(open('.build-loop/state.json')); p7=s.get('phases',{}).get('fact_check',{}).get('completed',False); active=s.get('active',False); sys.exit(0 if (not active or p7) else 1)\" 2>/dev/null && exit 0; echo \"$TOOL_INPUT\" | grep -qE '\\b(git\\s+push|npm\\s+publish|vercel\\s+deploy|gh\\s+release)\\b' && echo 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.'; exit 0"
           }
         ]
       }
