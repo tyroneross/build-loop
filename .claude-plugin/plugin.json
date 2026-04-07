@@ -1,7 +1,22 @@
 {
   "name": "build-loop",
-  "version": "1.0.0",
-  "description": "Orchestrated development loop: assess → define → plan → optimize → execute → validate → iterate → fact-check → report",
-  "author": { "name": "Tyrone Ross" },
-  "keywords": ["development", "orchestration", "evaluation", "iteration", "build"]
+  "version": "0.1.0",
+  "description": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, and mock data scanning.",
+  "author": {
+    "name": "Tyrone Ross",
+    "url": "https://github.com/tyroneross"
+  },
+  "repository": "https://github.com/tyroneross/build-loop",
+  "license": "FSL-1.1-MIT",
+  "homepage": "https://github.com/tyroneross/build-loop#readme",
+  "keywords": [
+    "development",
+    "orchestration",
+    "evaluation",
+    "iteration",
+    "build",
+    "tdd",
+    "fact-checking",
+    "code-quality"
+  ]
 }

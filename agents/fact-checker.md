@@ -1,6 +1,19 @@
 ---
 name: fact-checker
-description: Use this agent to validate all rendered data, claims, and metrics before completion. Traces percentages, scores, dollar amounts, and assessments to their data source. Flags extreme language and unverifiable claims. Run before reporting results to users.
+description: |
+  Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
+
+  <example>
+  Context: Build loop Phase 7 — verifying claims before report
+  user: "Run fact check on the implementation"
+  assistant: "I'll use the fact-checker agent to trace all rendered metrics to their data sources."
+  </example>
+
+  <example>
+  Context: User wants to verify data integrity in UI
+  user: "Check if the dashboard metrics are real or hardcoded"
+  assistant: "I'll use the fact-checker agent to trace each metric to its source."
+  </example>
 model: inherit
 color: yellow
 tools: ["Read", "Grep", "Glob"]

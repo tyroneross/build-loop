@@ -1,0 +1,13 @@
+{
+  "PostToolUse": [
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "If the command just executed was a deploy, push, or release command (git push, npm publish, vercel deploy, etc.): check whether .build-loop/state.json exists and indicates an active build loop. If Phase 7 (Fact Check & Mock Scan) has NOT completed, warn: 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.' Otherwise, do nothing."
+        }
+      ]
+    }
+  ]
+}

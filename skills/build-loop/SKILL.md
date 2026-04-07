@@ -11,6 +11,17 @@ An 8-phase development loop: assess current state, define goals with scoring cri
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
 
+## External Skill Dependencies
+
+This skill references external skills when available. If unavailable, degrade gracefully:
+
+| Skill | Used In | Fallback |
+|-------|---------|----------|
+| `writing-plans` | Phase 3 (Plan) | Write a structured plan directly: goal, tasks with exact file paths, dependency order, test commands |
+| `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
+| `calm-precision` | Phase 4 (Execute, UI work) | Follow standard UI best practices: 44px touch targets, 4.5:1 contrast, 8pt grid, content >= 70% of chrome |
+| `verification-before-completion` | Phase 8 (Report) | Run all test/build/lint commands and confirm output before claiming completion |
+
 ## Efficiency
 
 - No extraneous code. Every line serves the goal

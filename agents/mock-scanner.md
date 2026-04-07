@@ -1,6 +1,19 @@
 ---
 name: mock-scanner
-description: Use this agent as a fast, lightweight scan for residual mock or placeholder data in production code paths. Detects hardcoded fake data, lorem ipsum, faker usage, placeholder metrics, and stubs replacing real implementations. Run before completion.
+description: |
+  Fast, lightweight scan for residual mock, placeholder, or fake data in production code paths.
+
+  <example>
+  Context: Build loop Phase 7 — scanning for mock data before release
+  user: "Scan for any leftover test data in production code"
+  assistant: "I'll use the mock-scanner agent to find placeholder and fake data in production paths."
+  </example>
+
+  <example>
+  Context: Pre-release quality check
+  user: "Make sure we didn't leave any lorem ipsum or faker data"
+  assistant: "I'll use the mock-scanner agent to scan for residual mock data."
+  </example>
 model: haiku
 color: cyan
 tools: ["Read", "Grep", "Glob"]

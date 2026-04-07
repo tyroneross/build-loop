@@ -1,6 +1,19 @@
 ---
 name: build-orchestrator
-description: Use this agent when running the full build loop or when a task requires multi-phase orchestrated development — assessment, goal definition, planning, parallel execution, validation, iteration, fact-checking, and reporting. Coordinates domain-specific agents for parallel work.
+description: |
+  Coordinates the 8-phase development loop for significant multi-step code changes.
+
+  <example>
+  Context: User wants to build a complete feature
+  user: "Build the user notification system with email and push support"
+  assistant: "I'll use the build-orchestrator agent to run the full build loop."
+  </example>
+
+  <example>
+  Context: User invokes the /build command
+  user: "/build add dark mode to the dashboard"
+  assistant: "I'll use the build-orchestrator agent to orchestrate the implementation."
+  </example>
 model: inherit
 color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
