@@ -1,0 +1,25 @@
+{
+  "name": "build-loop",
+  "owner": {
+    "name": "Tyrone Ross",
+    "url": "https://github.com/tyroneross"
+  },
+  "metadata": {
+    "description": "Official marketplace for build-loop — orchestrated 8-phase development loop",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "build-loop",
+      "source": "./",
+      "description": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, and mock data scanning.",
+      "version": "0.1.0",
+      "author": { "name": "Tyrone Ross" },
+      "homepage": "https://github.com/tyroneross/build-loop",
+      "repository": "https://github.com/tyroneross/build-loop",
+      "license": "FSL-1.1-MIT",
+      "category": "development",
+      "keywords": ["development", "orchestration", "evaluation", "iteration", "build", "tdd", "fact-checking", "code-quality"]
+    }
+  ]
+}
