@@ -14,7 +14,7 @@ Orchestrated 8-phase development loop for significant multi-step code changes.
 
 ## Claude Code Integration
 
-- `/build [goal]` — triggers the build-loop skill which orchestrates all 8 phases
+- `/build-loop [goal]` — triggers the build-loop skill which orchestrates all 8 phases
 - Build orchestrator agent coordinates phase execution and spawns parallel subagents
 - Fact-checker and mock-scanner agents run in parallel during Phase 7
 - External skills used when available: `writing-plans`, `subagent-driven-development`, `calm-precision`, `verification-before-completion` — phases degrade gracefully without them

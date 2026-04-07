@@ -4,7 +4,7 @@ argument-hint: "[goal description]"
 ---
 
 {{#if ARGUMENTS}}
-Load the `build-loop` skill. Goal: `{{ARGUMENTS}}`
+Load the `build-loop:build-loop` skill. Goal: `{{ARGUMENTS}}`
 {{else}}
-Load the `build-loop` skill. Ask the user what they're building or changing.
+Load the `build-loop:build-loop` skill. Ask the user what they're building or changing.
 {{/if}}
