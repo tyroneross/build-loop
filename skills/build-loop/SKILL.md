@@ -32,6 +32,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 |---|---|---|---|
 | Web UI build | `ibr:design-implementation`, `ibr:component-patterns` (web-ui), `calm-precision` | `frontend-design:frontend-design` | `fallbacks.md#web-ui` |
 | Web UI validation | `ibr:design-validation`, `ibr:scan`, `ibr:compare` | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
+| Orchestrated UI build | `/ibr:build --from=build-loop` | existing ibr skills in sequence | `fallbacks.md#web-ui` |
 | Mobile UI build | `ibr:component-patterns` (mobile-ui), `apple-dev` (if Apple), `calm-precision` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
 | Mobile UI validation | `ibr:native-testing`, `ibr:native-scan` | `showcase:capture` | `fallbacks.md#mobile-ui` |
 | Design system tokens | `ibr:design-system`, `ibr:validate_tokens` | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
