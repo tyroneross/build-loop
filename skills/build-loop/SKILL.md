@@ -11,47 +11,73 @@ An 8-phase development loop: assess current state, define goals with scoring cri
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
 
-## External Skill Dependencies
+## Capability Routing
 
-Build-loop does NOT reinvent patterns that specialized skills already encode. When the task matches a specialty, load the skill and delegate — don't write plugin manifests, hook JSON, or SKILL.md files from scratch. If a skill is unavailable, degrade gracefully per the fallback column.
+Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** (the specialized plugin) → **secondary** (another installed plugin that can partially cover) → **inline fallback** (guidance text from `fallbacks.md`, injected verbatim into subagent prompts).
 
-### Core loop skills
+Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` and writes the result to `.build-loop/state.json` under `availablePlugins`. All routing consults that object.
+
+### Core loop skills (always check)
 
 | Skill | Used In | Fallback |
 |-------|---------|----------|
 | `writing-plans` | Phase 3 (Plan) | Write a structured plan directly: goal, tasks with exact file paths, dependency order, test commands |
 | `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
-| `calm-precision` | Phase 4 (Execute, UI work) | Follow standard UI best practices: 44px touch targets, 4.5:1 contrast, 8pt grid, content >= 70% of chrome |
 | `verification-before-completion` | Phase 8 (Report) | Run all test/build/lint commands and confirm output before claiming completion |
 | `simplify` (slash: `/simplify`) | Phase 8 (after Report) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
 
-### Plugin / hook / skill / agent work — **mandatory**
+### Capability routing table
 
-If Phase 1 ASSESS detects that the task touches any of the following, Phase 3 PLAN must map each task to the authoritative skill below and Phase 4 EXECUTE must load that skill (or include its guidance verbatim in subagent prompts — subagents don't inherit parent skills). **Do not infer plugin formats from memory or by reading another plugin's config.**
+| Capability | Preferred | Secondary | Inline fallback section |
+|---|---|---|---|
+| Web UI build | `ibr:design-implementation`, `ibr:component-patterns` (web-ui), `calm-precision` | `frontend-design:frontend-design` | `fallbacks.md#web-ui` |
+| Web UI validation | `ibr:design-validation`, `ibr:scan`, `ibr:compare` | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
+| Mobile UI build | `ibr:component-patterns` (mobile-ui), `apple-dev` (if Apple), `calm-precision` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
+| Mobile UI validation | `ibr:native-testing`, `ibr:native-scan` | `showcase:capture` | `fallbacks.md#mobile-ui` |
+| Design system tokens | `ibr:design-system`, `ibr:validate_tokens` | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
+| Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `ibr:screenshot` | `fallbacks.md#screenshot` |
+| Web content fetching (low LLM) | `scraper-app:web-scraper` SDK | — | `fallbacks.md#web-fetch` (flags LLM cost in report) |
+| Deep debugging | `claude-code-debugger:debug-loop` + `debugger` MCP `search`/`store` | — | `fallbacks.md#debug` |
+| Bug-pattern memory | `claude-code-debugger:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
+| Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
+| Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Phase 8), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
+| Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
+| Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
+| iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
+| Architecture scan / impact trace | `gator:*` commands (if installed) | `navgator` commands | Read component → edit → re-read downstream |
+| Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
+
+### Sub-routers (set during Phase 1)
+
+**UI target**: if consumer project has `ios/`, `*.swift`, `Package.swift`, or `*.xcodeproj` → `uiTarget: "mobile"`, `platform: "apple"`. Else if `app.json` (Expo) or `App.tsx` with `react-native` → `uiTarget: "mobile"`, `platform: "react-native"`. Else → `uiTarget: "web"`, `platform: "web"`.
+
+**Migration source**: if `.replit` / `replit.nix` present → `migrationSource: "replit"`. Lovable / Bolt / v0 export markers (e.g. `lovable.config`, `bolt.config`, `v0.dev` in comments) → corresponding source. `replit-migrate` skills generalize — load `migration-scan` for any of the above, override hints as needed.
+
+**Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds per `~/.claude/projects/-Users-tyroneross/memory/reference_asc_credentials.md`.
+
+### Plugin / hook / skill / agent work — mandatory
+
+If Phase 1 detects that the task touches plugin components, Phase 3 must map each task to the authoritative skill below and Phase 4 must load that skill. **Do not infer plugin formats from memory or by reading another plugin's config.**
 
 | Task surface | Skill (authoritative) | Fallback |
 |---|---|---|
-| `.claude-plugin/plugin.json` (manifest, paths, component registration) | `plugin-dev:plugin-structure` | Read `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` for the `plugin.json` paths-must-start-with-`./` lesson |
-| `hooks/hooks.json` or any hook script | `plugin-dev:hook-development` + run `plugin-dev/scripts/hook-linter.sh` before commit | Command hooks default; silent-exit pattern; NO prompt hooks on PostToolUse/Stop/SessionStart unless always-visible output is the goal |
-| Slash commands (`commands/*.md`, frontmatter, `allowed-tools`, `$ARGUMENTS`) | `plugin-dev:command-development` | — |
-| Subagents (`agents/*.md`, frontmatter, `description:`, tools list) | `plugin-dev:agent-development` + `RossLabs-AI-Toolkit/agents/` for prior examples | — |
-| MCP servers (`.mcp.json`, server config, wrapper-vs-unwrapped) | `plugin-dev:mcp-integration` | Dedicated `.mcp.json` files should NOT wrap with `mcpServers` key (Method 1) |
-| `~/.claude/settings.json` enabledPlugins / extraKnownMarketplaces | `plugin-dev:plugin-settings` | — |
-| **Creating a new skill** (SKILL.md frontmatter, progressive disclosure, auto-activation) | `plugin-dev:skill-development` + `skill-builder` (personal skill) | Follow official skill format; keep SKILL.md ≤200 lines; progressive disclosure via references/ |
-| Creating a new plugin end-to-end | `plugin-builder` (personal skill) → delegates into the plugin-dev skills above | — |
-| Architecture scan / impact / trace before editing | `gator:*` commands (if installed) + `RossLabs-AI-Toolkit/skills/architecture-scan` | Read component → edit → re-read downstream |
-| Debugging / root-cause investigation | `claude-code-debugger:*` + `RossLabs-AI-Toolkit/skills/debugging-memory` | Standard: reproduce → isolate → hypothesis → test |
-| Design validation, UI audit | `ibr:*` commands + `RossLabs-AI-Toolkit/skills/design-validation` | Manual screenshot + review checklist from `calm-precision` |
-| Recovering from compaction / context loss | `bookmark:*` + `RossLabs-AI-Toolkit/skills/context-continuity` | Re-read last plan file in `.build-loop/` |
+| `.claude-plugin/plugin.json` | `plugin-dev:plugin-structure` | Read `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` — paths must start with `./` |
+| `hooks/hooks.json` or hook scripts | `plugin-dev:hook-development` + run `plugin-dev/scripts/hook-linter.sh` | Command hooks default; silent-exit pattern; NO prompt hooks on PostToolUse/Stop/SessionStart |
+| Slash commands (`commands/*.md`) | `plugin-dev:command-development` | — |
+| Subagents (`agents/*.md`) | `plugin-dev:agent-development` + `RossLabs-AI-Toolkit/agents/` | `fallbacks.md#agent-authoring` |
+| MCP servers (`.mcp.json`) | `plugin-dev:mcp-integration` | `.mcp.json` must NOT wrap with `mcpServers` key (Method 1) |
+| `~/.claude/settings.json` | `plugin-dev:plugin-settings` | — |
+| New skill (SKILL.md) | `plugin-dev:skill-development` + `skill-builder` (personal) | Official skill format; SKILL.md ≤200 lines |
+| New plugin end-to-end | `plugin-builder` (personal) → delegates into `plugin-dev:*` | — |
 
 ### External knowledge — check before coding
 
 | Source | When | How |
 |---|---|---|
-| `/cookbook` (Claude Cookbook — 66 recipes, weekly-diff tracked) | When task involves Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, extended thinking, structured output, batch, prompt caching, context compaction | Invoke `/cookbook` or `/cookbook search <term>`; read `~/.claude/projects/-Users-tyroneross/memory/reference_claude_cookbook.md` for full index |
-| `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` | Before any plugin work | Read top-to-bottom during Phase 1 ASSESS if the task touches plugin components |
-| `context7` MCP | When task uses a library/framework | Call `query-docs` / `resolve-library-id` for current syntax — do NOT code external APIs from training data |
-| `research` skill | When factual claims, pricing, version numbers needed | Use tiered research — T1 official docs → T4 forum posts; 2-source minimum for disputed facts |
+| `/cookbook` | Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, thinking, structured output, batch, caching | Invoke `/cookbook` or read `~/.claude/projects/-Users-tyroneross/memory/reference_claude_cookbook.md` |
+| `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` | Any plugin work | Read during Phase 1 ASSESS |
+| `context7` MCP | Any library/framework use | `query-docs` / `resolve-library-id` — do NOT code from training data |
+| `research` skill | Factual claims, pricing, versions | T1 official docs → T4 forums; 2-source minimum |
 
 ## Efficiency
 
@@ -68,15 +94,16 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 **Goal**: Know what exists before changing anything. Scope assessment to files and directories relevant to the stated goal. On large codebases, limit to 2-3 focused exploration passes.
 
-1. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, etc. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json` in the working directory. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills in the table above before any manifest/hook/skill/agent/MCP/command edits.
-2. **Detect available tools**: Check for test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets
-3. **Map architecture** using best available approach:
-   - NavGator if available → Explore agents → file reading
-4. **Capture UI state** (if web/mobile):
-   - IBR scan if available → screenshots → manual review
-5. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items
-6. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions
-7. **Recovery check**: If `.build-loop/state.json` exists, check for interrupted prior build. Offer to resume from last completed phase instead of restarting
+1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
+2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command edits.
+3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
+4. **Detect available tools**: test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets.
+5. **Map architecture** using best available approach: NavGator/gator if available → Explore agents → file reading.
+6. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
+7. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
+8. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items.
+9. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
+10. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
 
 **Output**: Structured state summary. Brief.
 
@@ -217,6 +244,74 @@ Run `/simplify` (or load the `simplify` skill directly) against the changed file
 Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior. If a simplification would break evidence collection or monitoring, keep it.
 
 For **plugin work specifically**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json`, and `grep` the manifest for `../` or bare paths (per `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` 2026-04-05). Silent manifest failures are worse than loud ones.
+
+## Memory — Global and Project-Scoped
+
+Build-loop maintains two memory stores. Every build reads both; writes go to exactly one based on scope.
+
+**Global memory**: `~/.build-loop/memory/`
+
+- Applies across every project this user builds.
+- Examples: "Deployment to Vercel uses `vercel deploy --prebuilt` when `ENABLE_AUTH=true`"; "Neon is the default Postgres for Next.js 16 projects"; "TestFlight upload uses ASC API key from `~/.appstoreconnect/private_keys/`"; "User prefers zero-dep scripts over package additions".
+- Structure: one file per fact/lesson/tool-discovery. Index in `~/.build-loop/memory/MEMORY.md` (line-per-entry: `- [Title](file.md) — hook`).
+- Types: `tool`, `deployment`, `library-choice`, `user-preference`, `pattern`.
+
+**Project memory**: `<project>/.build-loop/memory/`
+
+- Applies only to the current project.
+- Examples: "This app's design system lives in `src/styles/tokens.css`, not Tailwind"; "Routes under `/admin/` require `requireAdmin()` guard"; "The `custom_themes` table has a user_id VarChar bug from 2026-04-13 — see migration note".
+- Same structure as global; index in `.build-loop/memory/MEMORY.md`.
+- Types: `design`, `convention`, `gotcha`, `decision`, `contract`.
+
+### Routing rule (always ask this question)
+
+**"Would this apply to a different project?"**
+
+- **Yes** → global (`~/.build-loop/memory/`). Deployment tools, library choices, general user preferences, reusable patterns.
+- **No** → project (`.build-loop/memory/`). Design tokens, internal APIs, project-specific gotchas, per-repo conventions.
+- **Ambiguous** → ask the user once, then save. Don't guess.
+
+### When to write memory
+
+- User states a preference or convention: save immediately.
+- A build surfaces a new tool/library/deployment pattern worth reusing: save after Phase 8.
+- A project-specific gotcha or decision emerges: save during Phase 8 REPORT.
+- Do NOT save: ephemeral task details, things already derivable from code or git log, state that changes per build.
+
+### When to read memory
+
+- Always during Phase 1 ASSESS.
+- Before deploying: check global deployment memory.
+- Before UI work: check project design memory.
+- Before adopting a new library: check global library-choice memory.
+
+## Skill-on-Demand — Build, Use, Keep or Drop
+
+Build-loop can author new skills mid-flow when a repeated task pattern emerges and no existing skill covers it.
+
+**When to author a new skill:**
+
+- A procedure has repeated ≥3 times across builds OR is complex enough that a subagent prompt keeps growing.
+- No existing skill (global or project) matches.
+- The procedure has a clear trigger and a deterministic output format.
+
+**Where to write it (two tiers):**
+
+- **Project-local skill**: `<project>/.build-loop/skills/<name>/SKILL.md` — only loaded for this project. Use for project-specific procedures (e.g., "run the custom smoke-test suite for this app").
+- **Global skill**: `~/.claude/skills/<name>/SKILL.md` — loaded for every session. Requires user confirmation before writing (global scope is consequential).
+
+**Procedure:**
+
+1. Draft the skill during Phase 4 if the need arises. Use the `plugin-dev:skill-development` skill if available, else `fallbacks.md#agent-authoring` format (but for skills — name, description, body ≤200 lines, progressive disclosure).
+2. Use it immediately in the current build.
+3. At Phase 8, score its usefulness: did it reduce friction? Would you use it next build?
+4. Decide: **keep**, **promote** (project → global), or **drop**.
+   - Keep (project) — leave in `.build-loop/skills/`.
+   - Promote — move to `~/.claude/skills/`, confirm with user.
+   - Drop — delete and note in `.build-loop/feedback.md` why it didn't earn its keep.
+5. Record the decision in `.build-loop/memory/` (project) or `~/.build-loop/memory/` (global) as a `pattern` entry.
+
+**Never proliferate skills**. A skill that isn't used twice across builds should be dropped. Prefer extending an existing skill over creating a new one.
 
 ## Feedback — After Every Build
 
