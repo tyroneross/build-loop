@@ -13,7 +13,9 @@ Before starting the loop, assess whether the task warrants it. If the task is a 
 
 ## External Skill Dependencies
 
-This skill references external skills when available. If unavailable, degrade gracefully:
+Build-loop does NOT reinvent patterns that specialized skills already encode. When the task matches a specialty, load the skill and delegate — don't write plugin manifests, hook JSON, or SKILL.md files from scratch. If a skill is unavailable, degrade gracefully per the fallback column.
+
+### Core loop skills
 
 | Skill | Used In | Fallback |
 |-------|---------|----------|
@@ -21,6 +23,35 @@ This skill references external skills when available. If unavailable, degrade gr
 | `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
 | `calm-precision` | Phase 4 (Execute, UI work) | Follow standard UI best practices: 44px touch targets, 4.5:1 contrast, 8pt grid, content >= 70% of chrome |
 | `verification-before-completion` | Phase 8 (Report) | Run all test/build/lint commands and confirm output before claiming completion |
+| `simplify` (slash: `/simplify`) | Phase 8 (after Report) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
+
+### Plugin / hook / skill / agent work — **mandatory**
+
+If Phase 1 ASSESS detects that the task touches any of the following, Phase 3 PLAN must map each task to the authoritative skill below and Phase 4 EXECUTE must load that skill (or include its guidance verbatim in subagent prompts — subagents don't inherit parent skills). **Do not infer plugin formats from memory or by reading another plugin's config.**
+
+| Task surface | Skill (authoritative) | Fallback |
+|---|---|---|
+| `.claude-plugin/plugin.json` (manifest, paths, component registration) | `plugin-dev:plugin-structure` | Read `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` for the `plugin.json` paths-must-start-with-`./` lesson |
+| `hooks/hooks.json` or any hook script | `plugin-dev:hook-development` + run `plugin-dev/scripts/hook-linter.sh` before commit | Command hooks default; silent-exit pattern; NO prompt hooks on PostToolUse/Stop/SessionStart unless always-visible output is the goal |
+| Slash commands (`commands/*.md`, frontmatter, `allowed-tools`, `$ARGUMENTS`) | `plugin-dev:command-development` | — |
+| Subagents (`agents/*.md`, frontmatter, `description:`, tools list) | `plugin-dev:agent-development` + `RossLabs-AI-Toolkit/agents/` for prior examples | — |
+| MCP servers (`.mcp.json`, server config, wrapper-vs-unwrapped) | `plugin-dev:mcp-integration` | Dedicated `.mcp.json` files should NOT wrap with `mcpServers` key (Method 1) |
+| `~/.claude/settings.json` enabledPlugins / extraKnownMarketplaces | `plugin-dev:plugin-settings` | — |
+| **Creating a new skill** (SKILL.md frontmatter, progressive disclosure, auto-activation) | `plugin-dev:skill-development` + `skill-builder` (personal skill) | Follow official skill format; keep SKILL.md ≤200 lines; progressive disclosure via references/ |
+| Creating a new plugin end-to-end | `plugin-builder` (personal skill) → delegates into the plugin-dev skills above | — |
+| Architecture scan / impact / trace before editing | `gator:*` commands (if installed) + `RossLabs-AI-Toolkit/skills/architecture-scan` | Read component → edit → re-read downstream |
+| Debugging / root-cause investigation | `claude-code-debugger:*` + `RossLabs-AI-Toolkit/skills/debugging-memory` | Standard: reproduce → isolate → hypothesis → test |
+| Design validation, UI audit | `ibr:*` commands + `RossLabs-AI-Toolkit/skills/design-validation` | Manual screenshot + review checklist from `calm-precision` |
+| Recovering from compaction / context loss | `bookmark:*` + `RossLabs-AI-Toolkit/skills/context-continuity` | Re-read last plan file in `.build-loop/` |
+
+### External knowledge — check before coding
+
+| Source | When | How |
+|---|---|---|
+| `/cookbook` (Claude Cookbook — 66 recipes, weekly-diff tracked) | When task involves Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, extended thinking, structured output, batch, prompt caching, context compaction | Invoke `/cookbook` or `/cookbook search <term>`; read `~/.claude/projects/-Users-tyroneross/memory/reference_claude_cookbook.md` for full index |
+| `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` | Before any plugin work | Read top-to-bottom during Phase 1 ASSESS if the task touches plugin components |
+| `context7` MCP | When task uses a library/framework | Call `query-docs` / `resolve-library-id` for current syntax — do NOT code external APIs from training data |
+| `research` skill | When factual claims, pricing, version numbers needed | Use tiered research — T1 official docs → T4 forum posts; 2-source minimum for disputed facts |
 
 ## Efficiency
 
@@ -37,7 +68,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 **Goal**: Know what exists before changing anything. Scope assessment to files and directories relevant to the stated goal. On large codebases, limit to 2-3 focused exploration passes.
 
-1. **Detect project type**: web app, API, library, mobile, CLI, monorepo, etc.
+1. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, etc. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json` in the working directory. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills in the table above before any manifest/hook/skill/agent/MCP/command edits.
 2. **Detect available tools**: Check for test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets
 3. **Map architecture** using best available approach:
    - NavGator if available → Explore agents → file reading
@@ -172,6 +203,21 @@ Blocking issues → route back to Phase 6 (Iterate). Warnings → include in rep
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 
+## Phase 8.5: SIMPLIFY — Trim The Diff
+
+**Goal**: remove incidental complexity added during iteration without changing behavior.
+
+Run `/simplify` (or load the `simplify` skill directly) against the changed files. Focus:
+- Inline single-use helpers that were extracted "just in case"
+- Delete dead branches, commented-out code, and unused imports
+- Collapse try/except that catches a thing that can't happen
+- Remove validation for invariants that the type system or upstream already guarantees
+- Reduce abstractions that have exactly one call site
+
+Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior. If a simplification would break evidence collection or monitoring, keep it.
+
+For **plugin work specifically**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json`, and `grep` the manifest for `../` or bare paths (per `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` 2026-04-05). Silent manifest failures are worse than loud ones.
+
 ## Feedback — After Every Build
 
 Append one line to `.build-loop/feedback.md` only if something surprising happened: a plan deviation, a tool that produced wrong results, a skill gap, an eval blind spot. Format: `YYYY-MM-DD | what happened | what to do differently`. No entry needed if the build went as expected.
@@ -183,7 +229,7 @@ On future `/build` runs, check this file and adjust proactively.
 ```
 ASSESS → DEFINE → PLAN → EXECUTE → VALIDATE
                                        ↓
-                                  All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → FEEDBACK
+                                  All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → SIMPLIFY → FEEDBACK
                                        ↓                  ↓
                                       no            blocking issues
                                        ↓                  ↓
