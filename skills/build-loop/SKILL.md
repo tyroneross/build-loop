@@ -55,6 +55,62 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 
 **Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds per `~/.claude/projects/-Users-tyroneross/memory/reference_asc_credentials.md`.
 
+### Trigger Conditions
+
+Some capabilities should fire proactively based on goal phrasing or files touched. Phase 1 ASSESS sets these flags in `.build-loop/state.json.triggers`, and Phase 4 EXECUTE consults them before dispatching each subagent.
+
+**pyramid-principle** (structured writing)
+
+Fires whenever the build produces user-visible prose or professional writing. Even small text should follow pyramid structure, and the logical ordering principle applies to design flow too.
+
+Trigger if any of:
+
+- Task touches user-visible text inside the app: copy, microcopy, empty-state messages, error messages, onboarding flow, help content, tooltips, toasts, form labels, email templates, notification text.
+- Task creates or edits: `README.md`, `CHANGELOG.md`, `docs/**/*.md`, PR descriptions, release notes, design docs, status updates, exec summaries, handoff documents.
+- Goal contains: "write", "draft", "summarize", "document", "one-pager", "brief", "memo", "deck", "slides", "presentation", "status update".
+- Designing information architecture or section ordering: use the pyramid logic for top-down flow (governing thought, then MECE key lines, then support).
+
+Action: load `pyramid-principle:pyramid-principle-core` first for ground rules, then the specific skill matching length and format. If absent, use `fallbacks.md#structured-writing`.
+
+**prompt-builder** (prompt authoring or audit)
+
+Fires when prompts are a core part of the product, not when prompts appear incidentally in code comments or test fixtures.
+
+Trigger if any of:
+
+- Building or editing prompts that the app sends to an LLM at runtime: document-generation prompts (ProductPilot style), chat-with-user system prompts, voice-interaction prompts (SpeakSavvy style), reranker prompts, eval-judge prompts.
+- Robust agent or prompt pipeline present in the product: multi-step prompts, RAG, tool-use flows.
+- Semantic search over user queries: use `prompt-builder` to revise the query before embedding or retrieval.
+- Authoring a new agent's instructions (the body of an `agents/*.md` file serving as LLM guidance).
+- File signals: `prompts/`, `system-prompt.*`, strings passed to `messages[{role:"system"}]`, `anthropic.messages.create`, `openai.chat.completions.create`, prompt templates in `.prompt` or `.txt` held as product assets.
+- Goal contains: "system prompt", "agent prompt", "prompt engineering", "rewrite this prompt", "improve this prompt", "audit prompts", "eval judge".
+
+Existing prompt guardrail: if the task touches an **existing** in-product prompt (not a new one), pause and ask the user before running `prompt-builder`. Prompts are often tuned against real evals; silent rewrites can regress quality. Offer the option, do not auto-apply.
+
+Action: load `prompt-builder:prompt-builder` (plugin) if installed, else the personal `prompt-builder` skill, else `fallbacks.md#prompt`. For existing-prompt edits, capture before-and-after in `.build-loop/prompts/` with version suffixes so regressions are detectable.
+
+**Judgment: prompt-builder vs inline prompt**
+
+Not every prompt needs the full engine. Use `prompt-builder` when the prompt is load-bearing. Craft a simple inline prompt when it is throwaway.
+
+Use `prompt-builder` when any of these are true:
+
+- The prompt ships in the product and runs at scale.
+- The prompt is sent to end users or generates user-visible output.
+- The prompt is part of an agent, eval judge, RAG pipeline, or semantic-search query rewriter.
+- Output correctness is measured (evals exist or are planned).
+- The prompt will be reused across features, or maintained over time.
+- Token cost matters because it runs millions of times.
+
+Roll your own inline prompt when all of these are true:
+
+- One-shot usage inside the current build loop (dispatching a subagent, asking Claude to transform a file, generating a migration script).
+- Not persisted to the product codebase.
+- Output is checked once by the orchestrator, not by an eval.
+- A short direct instruction is clearer than a 6-Part Stack.
+
+Default when uncertain: if the prompt text will exist in the repo after the build, use `prompt-builder`. If it only exists as a line in an orchestrator message during this build, inline is fine.
+
 ### Plugin / hook / skill / agent work — mandatory
 
 If Phase 1 detects that the task touches plugin components, Phase 3 must map each task to the authoritative skill below and Phase 4 must load that skill. **Do not infer plugin formats from memory or by reading another plugin's config.**

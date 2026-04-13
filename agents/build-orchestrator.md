@@ -40,9 +40,13 @@ You are a build orchestrator that coordinates the 8-phase development loop.
 
 ### Detection (Phase 1)
 - Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` and write the JSON result into `.build-loop/state.json` under `availablePlugins`
-- Set sub-routers: `uiTarget`, `platform`, `migrationSource` — see SKILL.md §Capability Routing
-- Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist — project overrides global on conflict
-- Every downstream phase consults `availablePlugins` before dispatching a subagent
+- Set sub-routers: `uiTarget`, `platform`, `migrationSource`. See SKILL.md §Capability Routing
+- Set triggers per SKILL.md §Trigger Conditions. Scan the goal text and the set of files the plan will touch, then set boolean flags under `.build-loop/state.json.triggers`:
+  - `structuredWriting` (pyramid-principle): user-visible copy, README, CHANGELOG, docs, PR description, status update, exec summary, information architecture
+  - `promptAuthoring` (prompt-builder): product LLM prompts, agent instructions, eval judges, semantic-search query rewriting, RAG prompts
+  - `promptEditingExisting` (prompt-builder + user confirmation): editing a prompt that already ships in the product
+- Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist. Project overrides global on conflict
+- Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent
 
 ### Capability Routing (Phases 4, 5, 7)
 When a phase needs a capability (UI build, debug, web-fetch, screenshot, migration, etc.):
@@ -81,12 +85,17 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
 - Blocking issues route back to iteration
 - Warnings included in report
 
+### Trigger-Driven Routing (Phases 4 and 5)
+- If `triggers.structuredWriting` and `availablePlugins.pyramidPrinciple`: the subagent writing copy, docs, or the scorecard loads `pyramid-principle:pyramid-principle-core` plus the length-matched skill (`pyramid-short-form`, `pyramid-long-form`, or `pyramid-presentation`). If the plugin is absent, paste `fallbacks.md#structured-writing` into the prompt
+- If `triggers.promptAuthoring`, first decide whether the prompt is load-bearing (see SKILL.md §Trigger Conditions, "Judgment: prompt-builder vs inline prompt"). If load-bearing AND `availablePlugins.promptBuilder`: the subagent authoring the prompt loads `prompt-builder:prompt-builder`. If absent, try personal `prompt-builder` skill via `Skill("prompt-builder")`, else paste `fallbacks.md#prompt`. If not load-bearing (one-shot orchestrator-to-Claude message, transient transform), craft an inline prompt directly
+- If `triggers.promptEditingExisting`: pause and ask the user with AskUserQuestion before running `prompt-builder` on a shipped prompt. Capture before and after in `.build-loop/prompts/<name>.v<n>.md`
+
 ### Report & Memory Write (Phase 8)
 - If `availablePlugins.pyramidPrinciple`: invoke `pyramid-principle:pyramid-short-form` for the scorecard
 - Write new memory entries to the correct tier:
   - Cross-project learnings (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`
   - Project-specific learnings (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`
-- Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep / promote / drop; record the decision in memory
+- Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory
 
 ## Output Format
 
