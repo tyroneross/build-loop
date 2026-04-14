@@ -1,7 +1,7 @@
 {
   "name": "build-loop",
-  "version": "0.1.0",
-  "description": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, and mock data scanning.",
+  "version": "0.2.0-alpha",
+  "description": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, mock data scanning, and Sonnet-heavy execution with adversarial critic pass.",
   "author": {
     "name": "Tyrone Ross",
     "url": "https://github.com/tyroneross"

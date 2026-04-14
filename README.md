@@ -73,9 +73,24 @@ Skip the loop for single-file edits, config changes, or fixes under ~20 lines.
 
 | Agent | Role | Model |
 |-------|------|-------|
-| **build-orchestrator** | Drives all 8 phases, dispatches subagents | inherit |
-| **fact-checker** | Traces rendered metrics to data sources | inherit |
+| **build-orchestrator** | Drives all 8 phases, dispatches subagents | opus (overridable) |
+| **sonnet-critic** | Adversarial read-only review between execution and final validation | sonnet |
+| **fact-checker** | Traces rendered metrics to data sources | inherit (sonnet recommended) |
 | **mock-scanner** | Scans for placeholder/fake data in production code | haiku |
+
+**Pin vs inherit philosophy**: pin when the task has a clear right tier (critic needs Sonnet, mock-scanner needs Haiku, orchestrator benefits from Opus judgment). Use `inherit` when user intent should flow through (fact-checker — recommended Sonnet, but respects main-session choice). Override an agent's pin by passing `model:` at spawn time or editing frontmatter.
+
+### Model Tiering
+
+Build-loop assigns models per task, not per phase, guided by the `model-tiering` skill:
+
+- **Opus** at boundaries: planning, final review, novel architecture, ambiguity resolution, user-visible prose
+- **Sonnet** inside: bounded code execution, adversarial critic, first-pass debugging, fact-checking
+- **Haiku** for pattern-matching only (mock scanning)
+
+Escalation triggers (mid-flow switch to Opus): 2 consecutive failures, ambiguous spec, cross-file architectural decision, critic `strong-checkpoint` finding, novel error, user-visible prose. See `skills/model-tiering/SKILL.md` and `agents/build-orchestrator.md §Escalation Triggers`.
+
+The pattern amortizes Opus cost across many Sonnet subagents. Typical build: Opus plans once, 6 to 12 Sonnet implementer runs, 1 Sonnet critic per chunk, Opus final review. Estimated 4x cheaper than single-pass Opus end-to-end.
 
 ### Eval Methodology
 

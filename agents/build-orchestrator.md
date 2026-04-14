@@ -14,7 +14,7 @@ description: |
   user: "/build add dark mode to the dashboard"
   assistant: "I'll use the build-orchestrator agent to orchestrate the implementation."
   </example>
-model: inherit
+model: opus
 color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
 ---
@@ -78,6 +78,27 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
   - Fix A breaks criterion B → flag oscillation, ask user
   - 3+ simultaneous failures after a fix → systemic, stop and reassess
 - Hard stop at 5 iterations
+
+### Model Tiering (Phases 4, 5, 6)
+Consult `Skill("build-loop:model-tiering")` when spawning any subagent. Defaults:
+
+- **Implementer** (Phase 4 execution): `model: sonnet`, `effort: medium`
+- **Adversarial critic** (between Phase 4 and Phase 5): dispatch `sonnet-critic` agent. Read-only. If `pass: false` with `strong-checkpoint` findings, route directly to Phase 6
+- **Fact-checker** (Phase 7A): inherit (Sonnet in most sessions)
+- **Mock-scanner** (Phase 7B): `model: haiku` — pattern matching only
+- **Planner / final reviewer** (Phases 2, 3, 8): inherit (expect Opus)
+
+### Escalation Triggers — when to switch a subagent to Opus
+Keep Sonnet on implementer and critic by default. Escalate a task (respawn with Opus) when any of the following fire:
+
+1. **2 consecutive failures** on the same chunk after a retry at `effort=high`
+2. **Ambiguous spec** — interpretation materially changes implementation; don't guess, escalate
+3. **Cross-file architectural decision** surfaces mid-execution that was not in the plan
+4. **Critic flagged `strong-checkpoint`** finding requiring judgment (not a mechanical fix)
+5. **Novel error pattern** — not found in `.build-loop/issues/` or `claude-code-debugger` memory
+6. **User-visible prose** — copy, microcopy, error messages where tone matters
+
+Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`, `trigger`, `from_model`, `to_model`, `timestamp`. Phase 8 report includes escalation count — high rates indicate plan-quality issues, not model-quality issues.
 
 ### Pre-Completion Gates (Phase 7)
 - Dispatch fact-checker and mock-scanner in parallel
