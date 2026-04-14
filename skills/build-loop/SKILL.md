@@ -227,11 +227,27 @@ Load `eval-guide.md` in this skill directory for judge prompt template and score
 **Goal**: Implement the plan using parallel subagents where possible.
 
 1. **Use `subagent-driven-development`** — dispatch subagents per task
-2. **Parallel agents** where dependency graph allows
-3. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs
-4. **UI work**: Load `calm-precision` skill and follow it
-5. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. Log to `.build-loop/issues/` with context
-6. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
+2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
+3. **Parallel agents** where dependency graph allows
+4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs
+5. **UI work**: Load `calm-precision` skill and follow it
+6. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. Log to `.build-loop/issues/` with context
+7. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
+
+## Phase 4.5: CRITIC — Adversarial Read-Only Review
+
+**Goal**: Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before they reach validation — using a separate read-only agent that has no incentive to sandbag.
+
+1. **Dispatch `sonnet-critic`** per chunk (or per batch of chunks if they share a rubric). The critic has tools=[Read, Grep, Glob] only — no Edit, no Write
+2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (changed files or `git diff HEAD~1`)
+3. **Output**: JSON with `findings`, `strong_checkpoint_count`, `guidance_count`, `pass` boolean
+4. **Routing**:
+   - `pass: true` → proceed to Phase 5
+   - `pass: false` with `strong-checkpoint` findings → route back to Phase 4 for fixes (not Phase 6 — no iteration counter burn yet)
+   - Findings marked `guidance` → record in `.build-loop/issues/` and proceed
+5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers
+
+Skip this phase only when the chunk is trivial (single-file typo fix, config value change) or when no rubric criteria apply.
 
 ## Phase 5: VALIDATE — Eval Against Scoring Criteria
 
@@ -396,12 +412,14 @@ On future `/build` runs, check this file and adjust proactively.
 ## Process Flow
 
 ```
-ASSESS → DEFINE → PLAN → EXECUTE → VALIDATE
-                                       ↓
-                                  All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → SIMPLIFY → FEEDBACK
-                                       ↓                  ↓
-                                      no            blocking issues
-                                       ↓                  ↓
-                                  ITERATE ←──────────────┘
-                                 (up to 5x)
+ASSESS → DEFINE → PLAN → EXECUTE → CRITIC → VALIDATE
+                            ↑         ↓         ↓
+                            │    strong-    All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → SIMPLIFY → FEEDBACK
+                            │  checkpoint       ↓                  ↓
+                            └───(re-execute)   no            blocking issues
+                                                ↓                  ↓
+                                            ITERATE ←──────────────┘
+                                           (up to 5x)
 ```
+
+CRITIC is the adversarial read-only pass (Phase 4.5). Strong-checkpoint findings route back to EXECUTE without consuming iteration budget. Guidance findings proceed but are logged to `.build-loop/issues/`.
