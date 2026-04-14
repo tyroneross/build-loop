@@ -41,6 +41,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Deep debugging | `claude-code-debugger:debug-loop` + `debugger` MCP `search`/`store` | — | `fallbacks.md#debug` |
 | Bug-pattern memory | `claude-code-debugger:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
 | Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
+| DeepAgents / local-LLM agent work | `build-loop:building-with-deepagents` (SubAgent API, middleware stack, per-agent tool scoping, anti-patterns) | — | Read installed `deepagents` source: `python3 -c 'import deepagents, os; print(os.path.dirname(deepagents.__file__))'` then `graph.py` + `middleware/subagents.py` |
 | Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Phase 8), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
 | Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
 | Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
@@ -89,6 +90,22 @@ Trigger if any of:
 Existing prompt guardrail: if the task touches an **existing** in-product prompt (not a new one), pause and ask the user before running `prompt-builder`. Prompts are often tuned against real evals; silent rewrites can regress quality. Offer the option, do not auto-apply.
 
 Action: load `prompt-builder:prompt-builder` (plugin) if installed, else the personal `prompt-builder` skill, else `fallbacks.md#prompt`. For existing-prompt edits, capture before-and-after in `.build-loop/prompts/` with version suffixes so regressions are detectable.
+
+**building-with-deepagents** (DeepAgents / local-LLM agent work)
+
+Fires whenever the project uses the open-source `deepagents` package. DeepAgents has subtle API shape (SubAgent dict, middleware stack, per-agent tool scoping) that makes hand-rolled focus modes and flat-tool-list designs silently wrong — small local models exhibit tool-call hallucinations in ways that scoping fixes and prompt injection doesn't.
+
+Trigger if any of:
+
+- Repo grep: `from deepagents` or `import deepagents` in any Python source file
+- `deepagents` in `pyproject.toml`, `requirements*.txt`, `uv.lock`, or `poetry.lock`
+- Goal mentions: "agent", "sub-agent", "subagent", "planner/researcher/writer", "focus mode", "tool-call hallucination", "LangGraph agent", "ChatOllama", "local LLM agent"
+- File signals: `create_deep_agent`, `SubAgent`, `AGENT_ROLES`, `agent_focus_prompt`
+- Pain symptoms in the conversation: "`<namespace>.<tool>` is not a valid tool", "silent thinking", "model loaded forever", "threads vanish on restart"
+
+Existing-agent guardrail: treat agent definitions like existing prompts — pause before rewriting, capture before-and-after in `.build-loop/agents/` with version suffixes. Tool scoping changes downstream behavior for every query; regressions are expensive to spot.
+
+Action: load `build-loop:building-with-deepagents` before any code edit involving agent construction, tool binding, or streaming. The skill's `references/anti-patterns.md` lists 12 concrete bugs we've hit — verify none of your planned changes reintroduce them.
 
 **Judgment: prompt-builder vs inline prompt**
 
