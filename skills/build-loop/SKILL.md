@@ -7,6 +7,16 @@ description: Use when making significant multi-step code changes requiring plann
 
 An 8-phase development loop: assess current state, define goals with scoring criteria, plan and optimize execution, build with parallel agents, validate against internal evals, iterate on failures, fact-check output, and report results.
 
+## Routing
+
+Build-loop supports three modes, routed by the orchestrator:
+
+- **Build** (default): Full 8-phase loop for implementation tasks
+- **Optimize**: Autoresearch-pattern optimization for measurable metrics (`/build-loop:optimize`)
+- **Research**: Pre-decision analysis that produces a research packet (`/build-loop:research`)
+
+The orchestrator classifies intent automatically. Users can override with the standalone commands.
+
 ## Scope Check
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
@@ -249,6 +259,26 @@ Load `eval-guide.md` in this skill directory for judge prompt template and score
 
 Skip this phase only when the chunk is trivial (single-file typo fix, config value change) or when no rubric criteria apply.
 
+## Phase 4.7: AUTO-OPTIMIZE — Metric-Driven Post-Build Optimization
+
+**Goal**: After implementation is built and committed, run autonomous optimization passes on anything with a mechanical metric. Uses Karpathy's autoresearch pattern: constrained scope + mechanical metric + atomic changes + git commit/revert.
+
+**Load the `build-loop:optimize` skill for the full protocol.**
+
+1. **Discover targets**: Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"` to find available optimization targets
+2. **`simplify` is always available**: Reduces line count in files changed by Phase 4. Metric = total lines, direction = lower, guard = build passes. Catches dead imports, unused files, redundant code
+3. **Other targets** appear when the repo has the right tooling (build script → optimize-build, test runner → optimize-tests, bundler → optimize-bundle)
+4. **Run sequentially after Phase 4 commits** — not in parallel with implementation subagents
+5. **Budget**: 3-5 iterations for post-build (polish, not deep optimization)
+6. **Results**: Dispatch `overfitting-reviewer` after the loop. Archive to `.build-loop/optimize/experiments/`
+
+**Skip this phase** when:
+- No mechanical metric exists for the changes made
+- The build was trivial (single-file, <20 lines)
+- User explicitly opts out
+
+Optimization results feed into Phase 5 (Validate) as additional evidence.
+
 ## Phase 5: VALIDATE — Eval Against Scoring Criteria
 
 **Goal**: Test every criterion from Phase 2 with evidence.
@@ -412,14 +442,16 @@ On future `/build` runs, check this file and adjust proactively.
 ## Process Flow
 
 ```
-ASSESS → DEFINE → PLAN → EXECUTE → CRITIC → VALIDATE
-                            ↑         ↓         ↓
-                            │    strong-    All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → SIMPLIFY → FEEDBACK
-                            │  checkpoint       ↓                  ↓
-                            └───(re-execute)   no            blocking issues
-                                                ↓                  ↓
-                                            ITERATE ←──────────────┘
-                                           (up to 5x)
+ASSESS → DEFINE → PLAN → EXECUTE → CRITIC → OPTIMIZE → VALIDATE
+                            ↑         ↓         ↓           ↓
+                            │    strong-    (if metric   All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → SIMPLIFY → FEEDBACK
+                            │  checkpoint   exists)          ↓                  ↓
+                            └───(re-execute)                no            blocking issues
+                                                             ↓                  ↓
+                                                         ITERATE ←──────────────┘
+                                                        (up to 5x)
 ```
 
-CRITIC is the adversarial read-only pass (Phase 4.5). Strong-checkpoint findings route back to EXECUTE without consuming iteration budget. Guidance findings proceed but are logged to `.build-loop/issues/`.
+CRITIC (Phase 4.5) is the adversarial read-only pass. Strong-checkpoint findings route back to EXECUTE without consuming iteration budget.
+
+OPTIMIZE (Phase 4.7) runs the autoresearch-pattern optimization loop when a mechanical metric exists. Dispatches `optimize-runner` for autonomous iteration, then `overfitting-reviewer` for adversarial review. Skipped when no metric applies.
