@@ -91,7 +91,7 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
 - Run LLM-as-judge graders second (nuanced criteria)
 - If `availablePlugins.ibr` and UI work: invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile
 - Collect evidence for every pass/fail — no criterion passes without proof
-- **Memory-first gate** (if `availablePlugins.claudeCodeDebugger`): before routing any FAILED criterion to Phase 6, invoke `Skill("build-loop:debugger-bridge")` Phase 5 logic. It calls `read_logs` MCP first (pulls structured log entries for the error window), synthesizes a symptom string, then calls `checkMemoryWithVerdict()`. Verdict routing: `KNOWN_FIX` → apply directly and skip Phase 6 re-planning; `LIKELY_MATCH` → use prior incident as Phase 6 plan; `WEAK_SIGNAL`/`NO_MATCH` → normal fallthrough. If `read_logs` returns empty on a silent failure, flag `evidence_gap: true` — next Phase 6 attempt should invoke `logging-tracer-bridge` before re-planning. Record each gate in `.build-loop/state.json.debuggerGates.phase5`
+- **Memory-first gate** (if `availablePlugins.claudeCodeDebugger`): before routing any FAILED criterion to Phase 6, invoke `Skill("build-loop:debugger-bridge")` Phase 5 logic. It calls `read_logs` MCP first (pulls structured log entries for the error window), synthesizes a symptom string, then calls `checkMemoryWithVerdict()`. **Default behavior for all verdicts**: route to Phase 6 as an adapted plan — never skip Phase 6. `KNOWN_FIX` may direct-apply only when all three gate checks hold (file match + version match + second validation signal); log the direct-apply-blocked reason when any check fails. If `read_logs` returns empty on a silent failure, flag `evidence_gap: true` — next Phase 6 attempt must invoke `logging-tracer-bridge` before re-planning. Record each gate in `.build-loop/state.json.debuggerGates.phase5` including the direct-apply gate result
 
 ### Iteration (Phase 6)
 - Diagnose root cause before fixing — don't blind retry
@@ -145,7 +145,7 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 
 ### Report & Memory Write (Phase 8)
 - If `availablePlugins.pyramidPrinciple`: invoke `pyramid-principle:pyramid-short-form` for the scorecard
-- **Append a run entry to `.build-loop/state.json.runs[]`** — schema in SKILL.md §Phase 8. Capture `filesTouched` (from `git diff --name-only <pre-build-sha>..HEAD`), `diagnosticCommands` (from your session transcript), `manualInterventions` (from any `AskUserQuestion` responses that deviated from default), and per-phase `{status, duration_s, root_cause?}`
+- **Append a run entry to `.build-loop/state.json.runs[]`** — schema in SKILL.md §Phase 8. Generate a `run_id` for this build (`run_<UTC-ISO-basic>_<sha256(goal)[:8]>`). Capture `filesTouched` (from `git diff --name-only <pre-build-sha>..HEAD`), `diagnosticCommands` (from your session transcript), `manualInterventions` (from any `AskUserQuestion` responses that deviated from default), `active_experimental_artifacts[]` (names of any experimental skills that triggered this run — used by Phase 9 confound tracking), and per-phase `{status, duration_s, root_cause?}`. For each experimental skill that triggered, append its applied-row to `.build-loop/experiments/<name>.jsonl` with `run_id` and `co_applied_experimental_artifacts[]` filled in so Phase 9 can compute confound state correctly.
 - **Store resolved debugger incidents and report outcomes** (if `availablePlugins.claudeCodeDebugger`):
   - For each newly resolved Phase 5/6 failure: invoke `store` MCP tool with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
   - For each Phase 5 gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied: invoke `outcome` MCP tool with `{incident_id, result: "worked"|"failed"|"modified", notes}`. This trains the verdict classifier.
@@ -164,14 +164,15 @@ Runs after Phase 8.5 on every build unless `.build-loop/config.json.autoSelfImpr
 4. For each kept pattern, dispatch `self-improvement-architect` (Sonnet) — drafts experimental artifact to `.build-loop/skills/experimental/<name>/SKILL.md`
 5. **Opus 4.7 signoff (you)** — read each drafted artifact, verdict: APPROVE / REVISE (1 retry max) / DISCARD. Log discard reason to `.build-loop/experiments/discarded.jsonl`
 6. For APPROVED artifacts: write baseline entry to `.build-loop/experiments/<name>.jsonl` with metric, target, sample size
-7. **Auto-promote / auto-remove sweep** — for each artifact already in `.build-loop/skills/experimental/` (from prior runs), check its jsonl:
-   - If applied-count >= `sample_size_target` AND delta meets target: `git mv` to `.build-loop/skills/active/<name>/`, update frontmatter (`experimental: false`, `promoted_at: <ISO>`), append `{event: "auto_promote", ...}` to both the jsonl and `.build-loop/experiments/decisions.jsonl`
-   - If delta regresses: `rm -rf` the directory; append `{event: "auto_remove", reason: "regression", ...}` with evidence (including the SKILL.md content snapshot so last-30 discards can be restored)
-   - If flat at N: extend `sample_size_target` to 2N; log `{event: "extend_sample", ...}`
-   - If flat at 2N: auto-remove as inconclusive
-   - Honor `.build-loop/skills/.demoted` (do not re-promote names listed there)
-   - Skip the sweep entirely if `.build-loop/config.json.autoPromote` is false
-8. Append concise synthesis to Phase 8 report — include any auto-promotes/auto-removes from step 7, plus new drafts from steps 4-6. If none, one line: "N runs scanned, no patterns crossed threshold, no sample-complete experiments this run."
+7. **Sample review sweep** — for each artifact in `.build-loop/skills/experimental/`, compute the **effective sample** (count of applied rows where `confounded: false`). Then:
+   - **Auto-promote requires all of**: `autoPromote: true` in `.build-loop/config.json`, effective sample >= 8 (or `sample_size_target` if higher), delta meets target, no regressions in the non-confounded set. When all hold: `git mv` to `.build-loop/skills/active/<name>/`, update frontmatter, log `{event: "auto_promote", ...}`.
+   - **Regressions do NOT auto-remove**. Instead: write `.build-loop/proposals/<name>-remove.md` with evidence and ask the user via `AskUserQuestion` in the next Phase 9 run before any file deletion. Single-build regressions should not delete potentially useful skills.
+   - **Inconclusive at 2N** (flat after extended sample): write `.build-loop/proposals/<name>-inconclusive.md`; same user-confirmed removal gate as regressions.
+   - **Effective sample < 8**: record evidence but take no action, even if `autoPromote: true`. Below-floor decisions always require manual signoff.
+   - **Flat at N (effective)**: extend `sample_size_target` to 2N; log `{event: "extend_sample", ...}`.
+   - Honor `.build-loop/skills/.demoted` (do not re-promote names listed there).
+   - If `autoPromote` is false (default): every row above becomes "write proposal, no file moves or deletes."
+8. Append concise synthesis to Phase 8 report — include any auto-promotes, proposals written, and extend-sample logs. If `autoPromote: false`, state this clearly so the user knows proposals accumulated. If none of the above fired: one line — "N runs scanned, no patterns crossed threshold, no sample-complete experiments this run."
 
 Never write outside `.build-loop/`. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.
 

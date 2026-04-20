@@ -93,14 +93,29 @@ Before marking a criterion as FAIL and routing to Phase 6, query debugger memory
    Skill("claude-code-debugger:debugging-memory") with input { symptom, budget: 2500 }
    ```
 
-3. **Act on verdict**:
+3. **Act on verdict — all verdicts treat memory as a hypothesis, not a patch**:
 
-   | Verdict | Action |
-   |---|---|
-   | `KNOWN_FIX` (>80% confidence, exact match) | Apply the documented fix directly. Proceed to Phase 6 validation. Do NOT re-plan. |
-   | `LIKELY_MATCH` (60-80%, multiple similar) | Load the top incident's detail. Adapt the fix to current context. Route to Phase 6 with the adapted fix as the plan. |
-   | `WEAK_SIGNAL` (30-60%, loosely related) | Note the similar incident in the Phase 6 plan as a reference, but investigate normally. |
-   | `NO_MATCH` (<30%) | Fall through to standard Phase 6 behavior. Record the failure for future memory (Phase 8 store). |
+   The adversarial review flagged that compressing a failure to a single-line symptom and then applying a historical fix directly can overfit on superficially similar incidents (same error string, different root cause / version / layer). Direct-apply is now gated behind strict match requirements. By default, every verdict routes to Phase 6 as an adapted plan — never as a skip.
+
+   | Verdict | Default action | Direct-apply? |
+   |---|---|---|
+   | `KNOWN_FIX` (>80% confidence, exact symptom match) | Load the top incident's detail. Adapt the fix to current context. Route to Phase 6 with the adapted fix as the plan. | Only if **all three** secondary signals match (see below) |
+   | `LIKELY_MATCH` (60-80%, multiple similar) | Load the top incident's detail. Adapt the fix to current context. Route to Phase 6 as the plan. | No |
+   | `WEAK_SIGNAL` (30-60%, loosely related) | Note the similar incident in the Phase 6 plan as a reference, but investigate normally. | No |
+   | `NO_MATCH` (<30%) | Fall through to standard Phase 6 behavior. Record the failure for future memory (Phase 8 store). | No |
+
+   **Direct-apply gate for `KNOWN_FIX`** — all three must hold or the verdict falls back to "adapted plan in Phase 6":
+
+   1. **File match**: at least one of the incident's `files[]` exists at the same path in the current project (string match on suffix is acceptable — e.g. `src/auth/session.ts` matches even if relative vs absolute).
+   2. **Version match**: if the incident records a framework/library version (e.g. `next@14`, `prisma@5.8`), the current project's equivalent version must be within the same major (and same minor for libraries with pre-1.0 semver). If no version metadata on the incident, this check defaults to "fail" — no direct-apply.
+   3. **Second validation signal**: a non-symptom-string match must also agree. At least one of:
+      - An exact stack-frame match (same function name + same file) between current failure and incident
+      - A matching error class/type hierarchy (not just the message text)
+      - A matching log entry from `read_logs` earlier in this gate
+
+   If any of the three fails, downgrade to adapted-plan routing. Record the downgrade in the gate log with `direct_apply_blocked_by: "version_mismatch" | "no_file_overlap" | "no_secondary_signal"`.
+
+   **Why this is strict**: a bad direct-apply mutates the codebase on a lossy match and then Phase 8 stores the (wrong) outcome back to memory, reinforcing the false association. The cost of occasionally skipping a legitimate direct-apply is small; the cost of one overfit mutation compounding across sessions is large.
 
 4. **Record the verdict** in `.build-loop/state.json.debuggerGates.phase5`:
 

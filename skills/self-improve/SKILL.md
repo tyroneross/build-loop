@@ -150,23 +150,60 @@ The orchestrator is responsible for capturing `diagnosticCommands` (hook or tran
 
 ### `.build-loop/experiments/<name>.jsonl`
 
-Append-only log per experimental artifact. One `{"event": "created", ...}` entry, then `{"event": "applied", ...}` for each triggered run. Decision entry `{"event": "decision", "verdict": "promote|remove|extend", ...}` when sample complete.
+Append-only log per experimental artifact. Schema:
 
-## Auto-Promotion (after sample complete)
+```jsonl
+{"event": "created", "date": "ISO", "artifact": "name", "baseline_metric": "...", "baseline_value": N, "target_value": N, "sample_size_target": 8}
+{"event": "applied", "date": "ISO", "run_id": "run_YYYYMMDDTHHMMSSZ_hash8", "triggered": true, "metric_value": N, "outcome": "pass|fail", "co_applied_experimental_artifacts": ["other-name"], "confounded": true}
+{"event": "applied", "date": "ISO", "run_id": "...", "triggered": true, "metric_value": N, "outcome": "pass", "co_applied_experimental_artifacts": [], "confounded": false}
+{"event": "decision", "date": "ISO", "verdict": "promote|remove|extend", ...}
+```
 
-Once `.build-loop/experiments/<name>.jsonl` has `sample_size_target` applied entries, Phase 9 computes the delta and acts automatically within the project. No user prompt; user keeps full control via removal commands and can monitor decisions in one log.
+`applied` rows with `confounded: true` are preserved for audit but excluded from the effective sample count. The effective sample is `count(rows where confounded == false)`. A sample only passes the floor when effective count >= 8 (or the user's custom `sample_size_target`, whichever is larger).
+
+## Promotion decisions (after sample complete)
+
+**Default behavior is opt-in.** `autoPromote` defaults to **`false`** in `.build-loop/config.json` — Phase 9 drafts experimental artifacts and tracks A/B evidence but stops at "propose promote" until the user enables the auto mode. This changed after an adversarial review flagged that small-sample auto-promotion can flip on flake and delete good work during temporary regressions.
+
+### Enabling auto-promote
+
+To opt in, create `.build-loop/config.json` with:
+
+```json
+{ "autoPromote": true }
+```
+
+Even with the flag on, auto-promotion requires **`sample_size_target >= 8`** and passing the promotion rules below. Below the floor, Phase 9 always writes a proposal to `.build-loop/proposals/<name>.md` and blocks promotion until the user reviews. The architect agent initializes new experiments with `sample_size_target: 8` by default; only raise it when noise demands more power.
+
+### Promotion rules
+
+When `autoPromote` is true AND `sample_size_target >= 8` AND the experiment's applied entries are all `confounded: false` (see §Confound tracking below):
 
 | Delta vs baseline | Action | Location |
 |---|---|---|
-| Metric improves ≥ target | **Auto-promote**: `git mv .build-loop/skills/experimental/<name> .build-loop/skills/active/<name>`, update SKILL.md frontmatter `experimental: false` + `promoted_at: <ISO>`, append `{event: "promoted", ...}` to the experiment's jsonl | `.build-loop/skills/active/<name>/` |
+| Metric improves ≥ target (non-confounded) | **Auto-promote**: `git mv .build-loop/skills/experimental/<name> .build-loop/skills/active/<name>`, update SKILL.md frontmatter `experimental: false` + `promoted_at: <ISO>`, append `{event: "promoted", ...}` to the experiment's jsonl | `.build-loop/skills/active/<name>/` |
 | Metric improves < target (partial win) | **Extend sample** to 2N; re-evaluate after additional runs | unchanged |
 | Metric flat (±10% of baseline) | **Extend sample** to 2N; re-evaluate | unchanged |
-| Metric regresses | **Auto-remove**: `rm -rf .build-loop/skills/experimental/<name>/`; append evidence row to `discarded.jsonl` with `{reason: "regression", baseline, observed, delta, evidence: [run_dates]}` | deleted |
-| Sample at 2N still flat | **Auto-remove**: inconclusive after extended sample; same discard log format with `reason: "inconclusive"` | deleted |
+| Metric regresses | **Write proposal** to `.build-loop/proposals/<name>-remove.md` with evidence. Removal requires user confirmation via `AskUserQuestion` in the next Phase 9 run (not immediate `rm -rf`). Avoids single-build regressions deleting useful skills. | experimental (intact) |
+| Sample at 2N still flat | **Write proposal** to `.build-loop/proposals/<name>-inconclusive.md`; same user confirmation gate for removal | experimental (intact) |
 
-**Why auto** (instead of the earlier "propose promote" wording): autoresearch proves the pattern of metric-gated auto-accept works. Keeping the user in the loop on every promotion produced decision fatigue and stalled the self-improvement loop in practice. The safety nets are: (1) project-local only — auto-promote never touches the plugin repo, (2) every decision logged to `.build-loop/experiments/decisions.jsonl` for audit, (3) user can reverse any promotion with one command.
+If the opt-in flag is off, every row above becomes "write proposal, no file moves/deletes." Proposals accumulate in `.build-loop/proposals/` for manual review.
 
-**A note on precedent**: Karpathy's autoresearch auto-accepts metric wins *within a single optimization run*. It does not cross-promote between runs. Auto-promote here is a new layer on top — "win a bounded A/B across sessions → become the new default inside this project." Cross-project promotion (to the plugin itself, affecting every user) requires explicit user action via `/build-loop:promote-experiment <name>`.
+**Below the sample-size floor** (`applied_count < 8`): Phase 9 records evidence but never acts. The architect may still author new experimental artifacts in this state — the floor only gates promotion/removal decisions.
+
+### Confound tracking
+
+Every Phase 5 applied-run log line MUST include:
+- `run_id` — a canonical identifier for the build run (Phase 8 generates it, e.g. `run_20260419T143022Z_<goalHash8>`)
+- `co_applied_experimental_artifacts[]` — full list of experimental artifact names that also triggered on this run
+
+**Rule**: a run with `co_applied_experimental_artifacts.length > 0` is **confounded** — no single artifact can claim credit for the metric delta. Phase 9 marks all such runs with `confounded: true` and **excludes them from promotion math**. The confound state is sticky: removing an entry from the jsonl does not uncontaminate it.
+
+**Enforcement**: at most one experimental artifact should trigger per build by design. If two fire (because their descriptions both matched the goal), log both measurements with the confound flag and continue the build, but the A/B accounting discounts all co-applied rows. Extending the sample to 2N must count only `confounded: false` rows toward the new target.
+
+**Why we keep both artifacts active rather than disabling one**: silently disabling a co-applied artifact alters future behavior without user awareness. Keeping them both on + marking runs confounded produces honest (if slower) evidence and a surfacable signal that the skills are overlapping and should be merged or one retired.
+
+**A note on precedent**: Karpathy's autoresearch auto-accepts metric wins *within a single optimization run*, not across runs. Cross-run auto-promotion is a new layer. The adversarial review correctly pointed out that small-sample cross-run promotion without isolation is not the same claim of rigor — so the default is opt-in, the floor is 8, and confounded runs don't count.
 
 ### Decision log format
 
@@ -183,7 +220,7 @@ Write to `.build-loop/experiments/decisions.jsonl` (append-only) one entry per a
 
 - **Stop an auto-promote**: if the user disagrees with an auto-promotion, `git mv .build-loop/skills/active/<name> .build-loop/skills/experimental/<name>` or `rm -rf .build-loop/skills/active/<name>/`. Phase 9 will not re-promote a name listed in `.build-loop/skills/.demoted` (one name per line — create this file to block re-promotion).
 - **Restore a removed artifact**: logs preserve the original SKILL.md content in `discarded.jsonl` under `{artifact_content: "..."}`. Restoration is manual (grab the content, write back). Only the last 30 discards are preserved; older entries keep metadata only.
-- **Disable auto-promote entirely**: `.build-loop/config.json` → `{"autoPromote": false}`. Phase 9 will still detect and draft experimental artifacts, but will stop at the "draft + Opus signoff" step, writing a proposal to `.build-loop/proposals/` for manual review.
+- **Auto-promote is OFF by default**. To enable: `.build-loop/config.json` → `{"autoPromote": true}`. Even when on, promotion requires effective non-confounded sample >= 8 and non-regression. Below the floor or with confounded-only evidence, proposals accumulate in `.build-loop/proposals/` for manual review regardless of the flag.
 
 ## Cross-Project Promotion
 

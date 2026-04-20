@@ -66,19 +66,23 @@ Governs model selection across all build-loop phases. When `model:` appears in a
 
 ## Cost math quick reference
 
-| Configuration | Relative cost |
+> ⚠️ **Advisory only.** The numbers below are directional heuristics based on single-source token-profile estimates and public pricing as of the skill's last update. They are **not** verified against real usage telemetry and should not be used as hard routing logic. Treat them as "this tier costs roughly this much more than that tier," not as commitments. Pricing, token profiles, and model output lengths all drift over time. Before using these ratios in any cost-minimization decision, pull actual usage data from the last 30 days of builds and re-derive the numbers for your workload.
+
+| Configuration | Relative cost (advisory) |
 |---------------|--------------|
-| Single-pass Opus | 5x baseline |
-| Single-pass Sonnet 4.6 | ~0.3x (70% fewer tokens) |
+| Single-pass Opus | ~5x baseline |
+| Single-pass Sonnet 4.6 | ~0.3x (70% fewer tokens in observed samples) |
 | Sonnet 4.6, effort=high | ~0.6x |
 | Sonnet 4.6, best-of-3 + critic | ~1.2x |
 | Sonnet 4.6 best-of-3 + critic vs single-pass Opus | ~4x cheaper |
 
 ❓ Best-of-N + critic vs single-pass Opus on SWE-bench has not been directly benchmarked.
 
+**How to convert these into routing decisions**: don't. Use the numbers to sanity-check a tier choice after the fact ("was this worth the 5x?"), not to justify forcing a model swap. When real telemetry disagrees with this table, trust telemetry and file an issue to update the table.
+
 ## How the build-loop uses this
 
-Orchestrator (Opus) spawns implementer subagent (Sonnet, effort=medium) → external verification gate (tests/lint/types) → Sonnet critic agent (read-only, effort=high) → if strong-checkpoint flagged, escalate to Opus for judgment call. See `agents/build-orchestrator.md §Escalation Triggers`.
+Orchestrator (Opus 4.7) spawns implementer subagent (Sonnet, effort=medium) → external verification gate (tests/lint/types) → Sonnet critic agent (read-only, effort=high) → if strong-checkpoint flagged, escalate to Opus for judgment call. See `agents/build-orchestrator.md §Escalation Triggers`. The **tier mapping** is the policy; the cost numbers above are advisory context, not the basis for overrides.
 
 Haiku is only used for Phase 7B mock scanning. Never for reasoning tasks.
 

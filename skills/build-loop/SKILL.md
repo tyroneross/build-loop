@@ -316,14 +316,14 @@ custom assertions → pass/fail
 
 ### Memory-first gate (when a criterion fails)
 
-Before routing failures to Phase 6, load `build-loop:debugger-bridge`. For each failed criterion with an error-like signal (exception, test failure, build error), call its Phase 5 memory gate. Verdict decides:
+Before routing failures to Phase 6, load `build-loop:debugger-bridge`. For each failed criterion with an error-like signal (exception, test failure, build error), call its Phase 5 memory gate. **Memory is a hypothesis, not a patch — every verdict routes to Phase 6 as an adapted plan by default**:
 
-- `KNOWN_FIX` → apply directly, no Phase 6 re-planning
+- `KNOWN_FIX` → adapt prior incident as Phase 6 plan. Direct-apply only when all three gates hold: file match + version match + second validation signal (stack frame, error class, or log entry). Otherwise behave as LIKELY_MATCH.
 - `LIKELY_MATCH` → adapt prior incident as Phase 6 plan
 - `WEAK_SIGNAL` → note reference, investigate normally
 - `NO_MATCH` → standard Phase 6 fallthrough; store at Phase 8 for future learning
 
-Skip silently when `availablePlugins.claudeCodeDebugger` is false.
+Skip silently when `availablePlugins.claudeCodeDebugger` is false. See `debugger-bridge/SKILL.md` for the direct-apply gate specification.
 
 ## Phase 6: ITERATE — Fix & Retry (up to 5x)
 

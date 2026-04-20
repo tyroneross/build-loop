@@ -87,12 +87,28 @@ At the bottom of every experimental SKILL.md you write, include:
 
 **Baseline metric:** <one specific metric — e.g., "Phase 5 pass rate on middleware edits" or "attempts-to-pass on TS path alias files">
 **Target:** <improvement threshold, e.g., "reduce Phase 5 failures by 50% on matching files">
-**Sample size:** N runs where trigger conditions match (minimum 3, target 5)
-**Decision:** After N runs, compare metric. If target met → propose promote. If worse → mark for removal. If flat → extend sample to 2N before deciding.
-**Tracking file:** `.build-loop/experiments/<name>.jsonl` — one line per applicable run with `{date, triggered, metric_value, outcome}`
+**Sample size target:** 8 non-confounded applied runs (minimum floor per self-improve SKILL). Confounded runs — where another experimental artifact also triggered — are logged for audit but excluded from this count.
+**Isolation rule:** Before measuring a run, check `.build-loop/state.json.run.active_experimental_artifacts[]`. If any other experimental name appears, set `confounded: true` on this skill's measurement row. Do not alter behavior based on confound state.
+**Decision:** After reaching 8 non-confounded applied runs, compare metric. If `autoPromote: true` is set in `.build-loop/config.json` and target met → auto-promote. Otherwise a proposal is written to `.build-loop/proposals/`. Regression triggers a user-confirmed removal proposal, not an auto-delete. Flat → extend sample to 16 non-confounded rows.
+**Tracking file:** `.build-loop/experiments/<name>.jsonl` — append-only, schema below.
 ```
 
-Keep it small. User asked for focused, not extensive. One metric, one decision rule.
+### Required applied-row schema (non-negotiable)
+
+Every experimental skill you draft MUST state this schema verbatim in its Experiment section:
+
+```jsonl
+{"event": "applied", "date": "ISO-8601", "run_id": "run_YYYYMMDDTHHMMSSZ_<hash8>", "triggered": true, "metric_value": N, "outcome": "pass|fail|partial", "co_applied_experimental_artifacts": ["name1"], "confounded": true}
+```
+
+Fields that the orchestrator fills in at Phase 8:
+- `run_id` — canonical build identifier
+- `co_applied_experimental_artifacts` — every other experimental name that triggered on this run
+- `confounded` — `true` if the co-applied array is non-empty, else `false`
+
+A skill that omits `run_id` or `co_applied_experimental_artifacts` cannot participate in auto-promote. If you generate a SKILL.md missing either field in its Experiment section, the orchestrator rejects it at Phase 9 signoff — so include them verbatim.
+
+Keep the Experiment section small otherwise: one metric, one decision rule, explicit confound handling. No multi-metric dashboards.
 
 ## Constraints
 

@@ -109,19 +109,77 @@ Write to `.build-loop/logs/<component>.jsonl` with rotation at 10MB. File path g
 
 Add spans at the boundaries where the debug-loop identified evidence gaps. Do not introduce OTel as a new dependency — that is a build-loop decision requiring user approval. If OTel is not already installed, drop to Tier 1 or Tier 2.
 
+### Ephemeral-by-default (mandatory)
+
+Diagnostic instrumentation added by this bridge **must not land in the final diff unless the user explicitly approves it**. The adversarial review flagged that log/tracer patches that survive into the commit alter timing, IO, and snapshot behavior — masking rather than fixing the original failure. Two enforcement mechanisms, choose per invocation:
+
+**Mechanism A — Runtime gate (preferred)**. Wrap every new log statement so it is inert unless `DEBUG_TRACE=1` is set:
+
+```typescript
+const __trace = process.env.DEBUG_TRACE === "1";
+function trace(msg: string, meta: Record<string, unknown> = {}) {
+  if (!__trace) return;
+  const entry = { ts: new Date().toISOString(), level: "trace", msg, ...meta };
+  process.stderr.write(JSON.stringify(entry) + "\n");
+}
+```
+
+```python
+import os, json, sys, datetime
+_TRACE = os.environ.get("DEBUG_TRACE") == "1"
+def trace(msg, **meta):
+    if not _TRACE: return
+    entry = {"ts": datetime.datetime.utcnow().isoformat() + "Z", "level": "trace", "msg": msg, **meta}
+    print(json.dumps(entry), file=sys.stderr)
+```
+
+Re-run the failing criterion with `DEBUG_TRACE=1 <test-command>`. Output flows to stderr for `read_logs` MCP to capture. Production paths never execute trace code in normal builds.
+
+**Mechanism B — Throwaway patch**. When the bridge cannot wrap the instrumentation in a runtime gate (e.g. language without env access, or instrumentation requires structural changes like adding request IDs), apply the change as a `git stash` patch BEFORE re-running:
+
+```bash
+# After the code changes land
+git stash push -u -m "build-loop:trace/<session-id>"
+# Stash applied in-place
+git stash show stash@{0}
+# Re-run the failing criterion
+<test-command>
+# Diagnostics captured in .build-loop/logs/
+# Revert after the capture completes
+git stash drop stash@{0}
+```
+
+The orchestrator tracks the stash entry in `.build-loop/state.json.observability.interventions[].stash_id`. Phase 8 verifies no stash entries remain with `build-loop:trace/` prefix at build completion; if any do, the orchestrator reverts them before writing the scorecard.
+
+### Keep-in-diff approval (opt-in only)
+
+To keep instrumentation in the final diff (e.g. the user wants ongoing observability), the orchestrator must invoke `AskUserQuestion`:
+
+```
+Question: "Keep the diagnostic logging added to <files> in the final diff?"
+Options:
+  - "Revert — instrumentation was diagnostic only" (default, recommended)
+  - "Keep — convert to permanent observability (remove DEBUG_TRACE gate or unstash)"
+  - "Keep with gate — leave DEBUG_TRACE wrapping in place"
+```
+
+Default answer on user absence: **revert**. No silent retention. If the user picks "keep", the bridge either removes the env-flag guard (Mechanism A) or applies the stash and drops the reference (Mechanism B).
+
 ### Code placement rules
 
 - Insert at function entry/exit for functions the debug-loop flagged
 - Never silently catch + log (`catch { log(...) }` without rethrow is an anti-pattern)
 - Include the variable that was `undefined` / `null` / `nil` in the log entry — bare "error in X" is useless
-- Add exactly ONE log per function added; no spam
+- Add exactly ONE trace call per function added; no spam
+- All calls must go through the `trace()` helper (Mechanism A) or live in a throwaway stash (Mechanism B) — no unguarded log/print/eprintln
 
 ### Re-validate after adding
 
 After the logging change lands:
-1. Re-run the failing Phase 5 criterion
+1. Re-run the failing Phase 5 criterion with `DEBUG_TRACE=1` (Mechanism A) or stash applied (Mechanism B)
 2. If tests now fail WITH informative output → route to Phase 6 with the log evidence as fresh context
 3. If tests still fail silently → this bridge did not solve the problem; escalate to user
+4. **Always** revert instrumentation at Phase 8 unless the user approved keep-in-diff. The orchestrator verifies no `build-loop:trace/` stash entries remain.
 
 ## Model Tiering
 
