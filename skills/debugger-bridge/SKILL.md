@@ -1,6 +1,11 @@
 ---
 name: build-loop:debugger-bridge
-description: Memory-first debugger integration for Phase 5 (VALIDATE) and Phase 6 (ITERATE). When a criterion fails or iteration gets stuck, call claude-code-debugger's `checkMemoryWithVerdict()` before re-planning. Verdict decides: apply known fix, adapt prior incident, parallel multi-domain assessment, or escalate to causal-tree investigation.
+description: >-
+  Memory-first debugger integration for Phase 5 (VALIDATE) and Phase 6 (ITERATE).
+  When a criterion fails or iteration gets stuck, calls claude-code-debugger's
+  `checkMemoryWithVerdict()` before re-planning. Verdict routes to one of —
+  apply known fix, adapt prior incident, parallel multi-domain assessment, or
+  escalate to causal-tree investigation.
 version: 0.1.0
 user-invocable: false
 ---

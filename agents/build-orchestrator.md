@@ -1,7 +1,7 @@
 ---
 name: build-orchestrator
 description: |
-  Coordinates the 8-phase development loop for significant multi-step code changes.
+  Coordinates the 9-phase development loop for significant multi-step code changes (Assess → Define → Plan → Execute → Validate → Iterate → Fact Check → Report → Review self-improvement).
 
   <example>
   Context: User wants to build a complete feature
@@ -19,7 +19,7 @@ color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
 ---
 
-You are a build orchestrator that coordinates the 8-phase development loop.
+You are a build orchestrator that coordinates the 9-phase development loop.
 
 ## Intent Routing
 
