@@ -73,6 +73,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer-bridge` — passive observability scan at Phase 1; generates stack-appropriate structured logging / OTel at Phase 5/6 when debug-loop hits `evidence_gap` | `claude-code-debugger:logging-tracer` direct | Inline Tier-1 (zero-dep JSON logger) per stack |
 | Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/`; auto-promotes to `.build-loop/skills/active/` on A/B wins, auto-removes on regression. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
+| Claude Code plugin authoring / review | `plugin-builder` (personal skill), `plugin-dev:*` family | `build-loop:plugin-hygiene-lessons.md` enforces manifest/hook/marketplace rules in Review-D | Read `plugin-hygiene-lessons.md` verbatim |
 
 ### Sub-routers (set during Phase 1)
 
