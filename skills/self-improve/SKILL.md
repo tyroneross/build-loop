@@ -152,15 +152,48 @@ The orchestrator is responsible for capturing `diagnosticCommands` (hook or tran
 
 Append-only log per experimental artifact. One `{"event": "created", ...}` entry, then `{"event": "applied", ...}` for each triggered run. Decision entry `{"event": "decision", "verdict": "promote|remove|extend", ...}` when sample complete.
 
-## Promotion Rule (after sample complete)
+## Auto-Promotion (after sample complete)
 
-| Delta | Action |
-|---|---|
-| Metric improves ≥ target | Propose promote: move from `.build-loop/skills/experimental/` to `.build-loop/skills/active/` (user confirms via AskUserQuestion) |
-| Metric regresses | Remove automatically; log to `discarded.jsonl` with evidence |
-| Metric flat (±10%) | Extend sample to 2N before deciding |
+Once `.build-loop/experiments/<name>.jsonl` has `sample_size_target` applied entries, Phase 9 computes the delta and acts automatically within the project. No user prompt; user keeps full control via removal commands and can monitor decisions in one log.
 
-Promotion to the plugin repo (cross-project) is a separate step requiring explicit user request. `/build-loop:promote-experiment <name>` is the entry point (not yet implemented — tracked in follow-up).
+| Delta vs baseline | Action | Location |
+|---|---|---|
+| Metric improves ≥ target | **Auto-promote**: `git mv .build-loop/skills/experimental/<name> .build-loop/skills/active/<name>`, update SKILL.md frontmatter `experimental: false` + `promoted_at: <ISO>`, append `{event: "promoted", ...}` to the experiment's jsonl | `.build-loop/skills/active/<name>/` |
+| Metric improves < target (partial win) | **Extend sample** to 2N; re-evaluate after additional runs | unchanged |
+| Metric flat (±10% of baseline) | **Extend sample** to 2N; re-evaluate | unchanged |
+| Metric regresses | **Auto-remove**: `rm -rf .build-loop/skills/experimental/<name>/`; append evidence row to `discarded.jsonl` with `{reason: "regression", baseline, observed, delta, evidence: [run_dates]}` | deleted |
+| Sample at 2N still flat | **Auto-remove**: inconclusive after extended sample; same discard log format with `reason: "inconclusive"` | deleted |
+
+**Why auto** (instead of the earlier "propose promote" wording): autoresearch proves the pattern of metric-gated auto-accept works. Keeping the user in the loop on every promotion produced decision fatigue and stalled the self-improvement loop in practice. The safety nets are: (1) project-local only — auto-promote never touches the plugin repo, (2) every decision logged to `.build-loop/experiments/decisions.jsonl` for audit, (3) user can reverse any promotion with one command.
+
+**A note on precedent**: Karpathy's autoresearch auto-accepts metric wins *within a single optimization run*. It does not cross-promote between runs. Auto-promote here is a new layer on top — "win a bounded A/B across sessions → become the new default inside this project." Cross-project promotion (to the plugin itself, affecting every user) requires explicit user action via `/build-loop:promote-experiment <name>`.
+
+### Decision log format
+
+Write to `.build-loop/experiments/decisions.jsonl` (append-only) one entry per auto-decision:
+
+```jsonl
+{"event": "auto_promote", "date": "ISO", "name": "middleware-typegen", "baseline": 0.6, "observed": 0.94, "delta": "+56%", "target": 0.9, "sample_size": 5, "artifacts_moved": 2}
+{"event": "auto_remove", "date": "ISO", "name": "aggressive-dedup", "reason": "regression", "baseline": 3.2, "observed": 4.1, "delta": "+28% (worse)", "sample_size": 5}
+{"event": "extend_sample", "date": "ISO", "name": "memo-scope", "reason": "flat", "baseline": 0.72, "observed": 0.75, "delta": "+4%", "new_target_size": 10}
+{"event": "auto_remove", "date": "ISO", "name": "eager-typegen", "reason": "inconclusive", "sample_size": 10, "note": "flat after 2N"}
+```
+
+### User override / reversal
+
+- **Stop an auto-promote**: if the user disagrees with an auto-promotion, `git mv .build-loop/skills/active/<name> .build-loop/skills/experimental/<name>` or `rm -rf .build-loop/skills/active/<name>/`. Phase 9 will not re-promote a name listed in `.build-loop/skills/.demoted` (one name per line — create this file to block re-promotion).
+- **Restore a removed artifact**: logs preserve the original SKILL.md content in `discarded.jsonl` under `{artifact_content: "..."}`. Restoration is manual (grab the content, write back). Only the last 30 discards are preserved; older entries keep metadata only.
+- **Disable auto-promote entirely**: `.build-loop/config.json` → `{"autoPromote": false}`. Phase 9 will still detect and draft experimental artifacts, but will stop at the "draft + Opus signoff" step, writing a proposal to `.build-loop/proposals/` for manual review.
+
+## Cross-Project Promotion
+
+Auto-promote stays inside the project. Moving an experimental or active artifact into the build-loop plugin repo — where it affects every user on every project — requires explicit invocation:
+
+```
+/build-loop:promote-experiment <name>
+```
+
+The command reads the experiment's track record across this and other projects (if global `~/.build-loop/experiments/` index exists), checks the artifact quality, asks the user for confirmation, and commits to the plugin repo on a feature branch for user review. See `commands/promote-experiment.md` for the full protocol.
 
 ## Removal
 

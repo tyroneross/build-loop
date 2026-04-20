@@ -58,8 +58,9 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
 | iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
 | Architecture scan / impact trace (Phase 1 + Phase 7) | `build-loop:navgator-bridge` — reads `.navgator/architecture/` JSON for blast-radius analysis in Phase 1, runs `navgator rules` diff post-change in Phase 7 | `gator:*` commands if installed | Read component → edit → re-read downstream |
-| Debugger memory-first gate (Phase 5 + Phase 6) | `build-loop:debugger-bridge` — calls `checkMemoryWithVerdict()` before iterating, escalates to parallel assessment or causal-tree investigation on stuck state | `claude-code-debugger:debug-loop` direct | `fallbacks.md#debug` |
-| Self-improvement / recurring pattern detection (Phase 9) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/` with A/B tracking | — | Manual review of `.build-loop/state.json.runs[]` |
+| Debugger memory-first gate (Phase 5 + Phase 6) | `build-loop:debugger-bridge` — calls `checkMemoryWithVerdict()` before iterating, escalates to parallel assessment or causal-tree investigation on stuck state; reads logs via `read_logs` MCP; feeds back `outcome` on applied fixes | `claude-code-debugger:debug-loop` direct | `fallbacks.md#debug` |
+| Runtime visibility / observability (Phase 1 + reactive Phase 5/6) | `build-loop:logging-tracer-bridge` — passive observability scan at Phase 1; generates stack-appropriate structured logging / OTel at Phase 5/6 when debug-loop hits `evidence_gap` | `claude-code-debugger:logging-tracer` direct | Inline Tier-1 (zero-dep JSON logger) per stack |
+| Self-improvement / recurring pattern detection (Phase 9) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/`; auto-promotes to `.build-loop/skills/active/` on A/B wins, auto-removes on regression. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
 
 ### Sub-routers (set during Phase 1)
@@ -186,9 +187,11 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
 4. **Detect available tools**: test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets.
 5. **Map architecture** using best available approach:
-   - If `.navgator/architecture/index.json` exists → load `build-loop:navgator-bridge` skill, run its Phase 1 blast-radius read. Output goes to `.build-loop/state.json.navgator.phase1`. Phase 3 PLAN consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, and layer-crossing risks.
+   - If `.navgator/architecture/index.json` exists → load `build-loop:navgator-bridge` skill, run its Phase 1 blast-radius read. Output goes to `.build-loop/state.json.navgator.phase1`. Phase 3 PLAN consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, per-file `navgator impact` for top 5 risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
    - Else if `gator:*` is available → use those commands.
    - Else → Explore agents → file reading.
+5a. **Observability baseline** (informational, no changes): load `build-loop:logging-tracer-bridge` to classify the project's logging level (well-instrumented / print-only / silent). Recorded in `.build-loop/state.json.observability`. If Phase 5 fails with a silent failure, Phase 6 may trigger this bridge reactively.
+5b. **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): call `build-loop:debugger-bridge` Phase 1 step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
 6. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
 7. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
 8. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items.
@@ -382,7 +385,9 @@ Blocking issues (any gate) → route back to Phase 6 (Iterate). Warnings → inc
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 
-**Store debugger incidents**: if `build-loop:debugger-bridge` tracked any failures resolved during this run (Phase 5 or Phase 6), invoke the debugger `store` MCP tool for each resolved incident. This is the write side of the memory-first gate — skip it and the next build cannot learn from this one.
+**Store debugger incidents**: if `build-loop:debugger-bridge` tracked any failures resolved during this run (Phase 5 or Phase 6), invoke the debugger `store` MCP tool for each resolved incident. **Also** invoke the `outcome` MCP tool for each Phase 5 gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied — reports back worked/failed/modified. This is both sides of the memory-first gate's feedback loop; skip it and the debugger's verdict classifier never improves.
+
+**Orphan scan** (if NavGator available): invoke `build-loop:navgator-bridge` Phase 8 — runs `navgator dead`, diffs against Phase 1 baseline, surfaces new orphans introduced this build.
 
 **Also: append a run entry to `.build-loop/state.json.runs[]`** for Phase 9's self-improvement scan. Schema:
 

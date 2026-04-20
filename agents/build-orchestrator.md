@@ -66,7 +66,9 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
   - `promptAuthoring` (prompt-builder): product LLM prompts, agent instructions, eval judges, semantic-search query rewriting, RAG prompts
   - `promptEditingExisting` (prompt-builder + user confirmation): editing a prompt that already ships in the product
 - Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist. Project overrides global on conflict
-- **Architecture blast-radius** (if NavGator available): invoke `Skill("build-loop:navgator-bridge")`. It reads `.navgator/architecture/` and writes a compact summary to `.build-loop/state.json.navgator.phase1` — layers touched, 1-hop/2-hop dependents, risk flags. Phase 3 PLAN consults this for scoping. If `.navgator/architecture/index.json` is missing, the skill emits a one-line note and exits; do not block.
+- **Architecture blast-radius** (if NavGator available): invoke `Skill("build-loop:navgator-bridge")`. It reads `.navgator/architecture/`, runs `navgator impact` on up to 5 highest-risk components, invokes `navgator llm-map` when `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, and writes a compact summary to `.build-loop/state.json.navgator.phase1`. Phase 3 PLAN consults this for scoping. If `.navgator/architecture/index.json` is missing, the skill emits a one-line note and exits; do not block.
+- **Observability baseline**: invoke `Skill("build-loop:logging-tracer-bridge")` with `{phase: 1, action: "scan"}`. Records the project's logging level in `.build-loop/state.json.observability` — informational, no code changes at Phase 1.
+- **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): invoke `build-loop:debugger-bridge` Phase 1 step — calls `list` MCP for recent incidents in this project. One-line context log.
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent
 
 ### Capability Routing (Phases 4, 5, 7)
@@ -89,11 +91,12 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
 - Run LLM-as-judge graders second (nuanced criteria)
 - If `availablePlugins.ibr` and UI work: invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile
 - Collect evidence for every pass/fail — no criterion passes without proof
-- **Memory-first gate** (if `availablePlugins.claudeCodeDebugger`): before routing any FAILED criterion to Phase 6, invoke `Skill("build-loop:debugger-bridge")` Phase 5 logic. It calls `checkMemoryWithVerdict()` and returns a verdict. On `KNOWN_FIX`, apply directly and skip Phase 6 re-planning. On `LIKELY_MATCH`, use the prior incident as the Phase 6 plan. Record each gate in `.build-loop/state.json.debuggerGates.phase5`
+- **Memory-first gate** (if `availablePlugins.claudeCodeDebugger`): before routing any FAILED criterion to Phase 6, invoke `Skill("build-loop:debugger-bridge")` Phase 5 logic. It calls `read_logs` MCP first (pulls structured log entries for the error window), synthesizes a symptom string, then calls `checkMemoryWithVerdict()`. Verdict routing: `KNOWN_FIX` → apply directly and skip Phase 6 re-planning; `LIKELY_MATCH` → use prior incident as Phase 6 plan; `WEAK_SIGNAL`/`NO_MATCH` → normal fallthrough. If `read_logs` returns empty on a silent failure, flag `evidence_gap: true` — next Phase 6 attempt should invoke `logging-tracer-bridge` before re-planning. Record each gate in `.build-loop/state.json.debuggerGates.phase5`
 
 ### Iteration (Phase 6)
 - Diagnose root cause before fixing — don't blind retry
 - **Stuck-iteration escalation** (if `availablePlugins.claudeCodeDebugger`): invoke `Skill("build-loop:debugger-bridge")` Phase 6 logic at the start of every attempt. It escalates:
+  - If the previous attempt flagged `evidence_gap: true` (silent failure) → invoke `Skill("build-loop:logging-tracer-bridge")` with `{phase: 5, action: "repair"}` FIRST. Logging lands, re-validate the failed criterion; if output is now informative, proceed with the new context. If still silent, escalate.
   - After 2 same-root-cause failures → `/assess` with parallel domain assessors (explicitly pass `model: sonnet` to assessors to override `inherit` default, preventing 4× Opus fan-out from your Opus 4.7 tier)
   - After 3 same-criterion failures → `claude-code-debugger:debug-loop` for causal-tree investigation
 - Re-validate only failed criteria, not the full suite
@@ -130,6 +133,7 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 ### Pre-Completion Gates (Phase 7)
 - Dispatch fact-checker and mock-scanner in parallel
 - **Architectural violation check** (if `.navgator/architecture/index.json` exists): invoke `Skill("build-loop:navgator-bridge")` Phase 7 logic in parallel with the other gates. Runs `navgator rules --json`, classifies violations into blocking (circular-dependency, layer-violation, database-isolation, frontend-direct-db at error) vs warning (hotspot, high-fan-out, orphan), and flags recurrences against `.navgator/lessons/lessons.json`
+- **Orphan scan** (Phase 8 info): invoke `build-loop:navgator-bridge` Phase 8 step after scorecard — runs `navgator dead`, diffs against Phase 1 baseline, surfaces new orphans introduced this build. Informational only, never blocks.
 - If `platform: "apple"` AND goal includes deploy/TestFlight/App Store: invoke `apple-dev` deploy flow
 - Blocking issues route back to iteration
 - Warnings included in report
@@ -142,7 +146,10 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 ### Report & Memory Write (Phase 8)
 - If `availablePlugins.pyramidPrinciple`: invoke `pyramid-principle:pyramid-short-form` for the scorecard
 - **Append a run entry to `.build-loop/state.json.runs[]`** — schema in SKILL.md §Phase 8. Capture `filesTouched` (from `git diff --name-only <pre-build-sha>..HEAD`), `diagnosticCommands` (from your session transcript), `manualInterventions` (from any `AskUserQuestion` responses that deviated from default), and per-phase `{status, duration_s, root_cause?}`
-- **Store resolved debugger incidents** (if `availablePlugins.claudeCodeDebugger` and any Phase 5/6 failure was resolved): for each entry in `.build-loop/state.json.debuggerGates`, invoke `store` MCP tool with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`. This is the write side of the memory-first gate — skip it and the next build cannot learn from this one
+- **Store resolved debugger incidents and report outcomes** (if `availablePlugins.claudeCodeDebugger`):
+  - For each newly resolved Phase 5/6 failure: invoke `store` MCP tool with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
+  - For each Phase 5 gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied: invoke `outcome` MCP tool with `{incident_id, result: "worked"|"failed"|"modified", notes}`. This trains the verdict classifier.
+  Both steps are required to close the memory-first gate's feedback loop.
 - Write new memory entries to the correct tier:
   - Cross-project learnings (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`
   - Project-specific learnings (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`
@@ -157,9 +164,16 @@ Runs after Phase 8.5 on every build unless `.build-loop/config.json.autoSelfImpr
 4. For each kept pattern, dispatch `self-improvement-architect` (Sonnet) — drafts experimental artifact to `.build-loop/skills/experimental/<name>/SKILL.md`
 5. **Opus 4.7 signoff (you)** — read each drafted artifact, verdict: APPROVE / REVISE (1 retry max) / DISCARD. Log discard reason to `.build-loop/experiments/discarded.jsonl`
 6. For APPROVED artifacts: write baseline entry to `.build-loop/experiments/<name>.jsonl` with metric, target, sample size
-7. Append concise synthesis to Phase 8 report: `{name, purpose, A/B metric, removal command}` per artifact. If none shipped, one line: "N runs scanned, no patterns crossed threshold."
+7. **Auto-promote / auto-remove sweep** — for each artifact already in `.build-loop/skills/experimental/` (from prior runs), check its jsonl:
+   - If applied-count >= `sample_size_target` AND delta meets target: `git mv` to `.build-loop/skills/active/<name>/`, update frontmatter (`experimental: false`, `promoted_at: <ISO>`), append `{event: "auto_promote", ...}` to both the jsonl and `.build-loop/experiments/decisions.jsonl`
+   - If delta regresses: `rm -rf` the directory; append `{event: "auto_remove", reason: "regression", ...}` with evidence (including the SKILL.md content snapshot so last-30 discards can be restored)
+   - If flat at N: extend `sample_size_target` to 2N; log `{event: "extend_sample", ...}`
+   - If flat at 2N: auto-remove as inconclusive
+   - Honor `.build-loop/skills/.demoted` (do not re-promote names listed there)
+   - Skip the sweep entirely if `.build-loop/config.json.autoPromote` is false
+8. Append concise synthesis to Phase 8 report — include any auto-promotes/auto-removes from step 7, plus new drafts from steps 4-6. If none, one line: "N runs scanned, no patterns crossed threshold, no sample-complete experiments this run."
 
-Never write outside `.build-loop/`. Never promote artifacts cross-project without explicit user invocation of `/build-loop:promote-experiment <name>` (not yet implemented — flag as follow-up if user asks).
+Never write outside `.build-loop/`. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.
 
 ## Output Format
 

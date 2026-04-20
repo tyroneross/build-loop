@@ -60,7 +60,25 @@ Do not error, do not block the build. NavGator is optional.
 
 5. **Risk flags**. Read `SUMMARY.md` for hotspots. If any touched component is listed as a hotspot (high fan-in), or appears in circular-dependency chains, or spans a layer violation — add a `⚠️ risk` flag to the Phase 1 output.
 
-6. **Emit compact summary** (≤15 lines) into `.build-loop/state.json.navgator.phase1`:
+5a. **Per-file impact for highest-risk components**. For each component flagged as `risk` in step 5, call `navgator impact <component> --json` (not just read graph.json) for authoritative downstream enumeration. This is slower than JSON reads but accurate — use only for flagged components, not all touched components. Cap at 5 impact calls per Phase 1 (if > 5 risks, take the top 5 by fan-in).
+
+   ```bash
+   navgator impact "$COMP" --depth 2 --json > /tmp/navgator_impact_$$_$COMP.json
+   ```
+
+   Merge into the risk entry: `{component, reason, impactedFiles: [...], impactedLines: N, blastCategory: "contained|spreading|critical"}`.
+
+5b. **Prompts in scope** (when `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true): call `navgator llm-map --json` to enumerate all LLM prompts in the project and which components they live in. Intersect with `componentsTouched`. If the build will edit an in-scope prompt, surface it explicitly:
+
+   ```json
+   "promptsInScope": [
+     { "file": "src/agents/researcher/system.ts", "component": "COMP_researcher", "provider": "anthropic", "calls_per_day_estimate": "high" }
+   ]
+   ```
+
+   Phase 4 consults this so the implementer knows *which* prompts are load-bearing vs incidental before editing them.
+
+6. **Emit compact summary** (≤20 lines) into `.build-loop/state.json.navgator.phase1`:
 
    ```json
    {
@@ -73,8 +91,11 @@ Do not error, do not block the build. NavGator is optional.
      "oneHopDependents": 12,
      "twoHopDependents": 34,
      "risks": [
-       { "component": "COMP_auth_ts", "reason": "hotspot (24 dependents)" },
-       { "component": "COMP_users_model", "reason": "crosses frontend→database layer" }
+       { "component": "COMP_auth_ts", "reason": "hotspot (24 dependents)", "impactedFiles": ["a.ts", "b.ts"], "blastCategory": "spreading" },
+       { "component": "COMP_users_model", "reason": "crosses frontend→database layer", "impactedFiles": [...], "blastCategory": "critical" }
+     ],
+     "promptsInScope": [
+       { "file": "src/agents/researcher/system.ts", "component": "COMP_researcher", "provider": "anthropic" }
      ]
    }
    ```
@@ -123,7 +144,7 @@ If `risks.length >= 3` or `twoHopDependents > 50`: note this in state.json and t
 
 5. **Lessons matching**. Read `.navgator/lessons/lessons.json` if present. If any new violation matches a known recurring pattern (same `rule` + same `component`), flag it as a "recurrence" in the report — the user should see "this violation type has appeared N times in this project" for context.
 
-6. **Emit summary** (≤10 lines) into `.build-loop/state.json.navgator.phase7`:
+6. **Emit summary** (≤15 lines) into `.build-loop/state.json.navgator.phase7`:
 
    ```json
    {
@@ -134,6 +155,32 @@ If `risks.length >= 3` or `twoHopDependents > 50`: note this in state.json and t
      "recurrences": [{"rule": "frontend-direct-db", "seenBefore": 3}]
    }
    ```
+
+## Phase 8 — Orphan Scan (informational)
+
+After the scorecard is written, run a quick orphan detection to surface dead code introduced or exposed by this build:
+
+```bash
+navgator dead --json > /tmp/navgator_dead_phase8.json
+```
+
+If the CLI is unavailable or the scan is stale, skip silently. Otherwise, diff against the Phase 1 snapshot:
+
+- **New orphans** (code added during the build that ended up with zero imports/callers): include in Phase 8 report as "⚠️ potentially dead code" with file paths. These are common when a feature is half-wired — e.g. a helper written but never called.
+- **Resolved orphans** (previously orphaned components now connected): include as "✅ resolved orphans" in the report — credit where due; indicates earlier dead code was wired in.
+- **Persistent orphans** (orphaned before and still orphaned): do not report every build. Only surface if `persistent_count > 10` with a pointer to `/navgator:dead` for the user to act.
+
+Write summary to `.build-loop/state.json.navgator.phase8`:
+
+```json
+{
+  "newOrphans": [{"component": "COMP_helper_util", "file": "src/utils/new-helper.ts"}],
+  "resolvedOrphans": [{"component": "COMP_legacy_formatter"}],
+  "persistentOrphansCount": 14
+}
+```
+
+This gate never blocks — orphan detection is noisy and sometimes wrong (dynamic imports, string-based routing, test fixtures). Informational only.
 
 ## Integration with Orchestrator
 

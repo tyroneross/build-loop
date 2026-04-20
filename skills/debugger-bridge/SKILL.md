@@ -33,11 +33,34 @@ If `true`, proceed. If `false`, emit:
 Debugger memory: claude-code-debugger not installed. Using inline debug fallback.
 ```
 
+## Phase 1 — Context priming (optional, cheap)
+
+At the start of Phase 1 ASSESS, pull recent project incident context so the orchestrator is aware of what's been failing lately:
+
+```
+mcp__plugin_claude_code_debugger__list({ filter: { project: "<current>" }, limit: 10 })
+```
+
+Summarize in one line for the orchestrator log: "Debugger memory: N recent incidents in this project, top categories: [db, frontend]." No action, just context. If memory is empty, skip silently.
+
 ## Phase 5 — Pre-Fail Memory Gate
 
 Before marking a criterion as FAIL and routing to Phase 6, query debugger memory.
 
 ### Steps
+
+0. **Read logs before synthesizing** (if tests fail with no stderr/stdout capture): invoke `read_logs` MCP to pull any structured log entries from `.build-loop/logs/*.jsonl`, Sentry (if configured), or OTel endpoints (if `OTEL_EXPORTER_OTLP_ENDPOINT` set):
+
+   ```
+   mcp__plugin_claude_code_debugger__read_logs({
+     source: "project",
+     severity: "error",
+     query: "<criterion keyword>",
+     since: "<phase_5_start_timestamp>"
+   })
+   ```
+
+   If log entries are returned, incorporate them into the symptom string below. If `read_logs` returns nothing but the test failed silently, flag `evidence_gap: true` in the gate record — Phase 6 escalation may need `logging-tracer-bridge` to restore visibility before debugger memory is useful.
 
 1. **Synthesize a symptom string**. Take the failed criterion's evidence (test output, error message, type error) and compress to a single line < 200 chars. Preserve the error type, file, and key phrase.
 
@@ -138,9 +161,13 @@ When the bug is not multi-layer but deep (same root-cause symptom keeps reappear
 
 4. Result is stored in debugger memory automatically via its own `store` tool.
 
-## Phase 8 — Store for Future Memory
+## Phase 8 — Store for Future Memory + Outcome Feedback
 
-When a build completes (pass or fail), if any Phase 5/6 failure was resolved during this run, store the incident:
+When a build completes (pass or fail), close the feedback loop to debugger memory in two steps:
+
+### Step A — Store resolved incidents (write new knowledge)
+
+For each Phase 5/6 failure resolved during this run, store the incident:
 
 ```
 mcp__plugin_claude_code_debugger__store({
@@ -151,6 +178,24 @@ mcp__plugin_claude_code_debugger__store({
   files: ["<paths touched>"]
 })
 ```
+
+### Step B — Report outcomes on applied memory (train verdict classification)
+
+For each Phase 5 gate entry in `.build-loop/state.json.debuggerGates` where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied, report back whether the suggested fix actually worked:
+
+```
+mcp__plugin_claude_code_debugger__outcome({
+  incident_id: "<from the gate record>",
+  result: "worked" | "failed" | "modified",
+  notes: "<one line>"
+})
+```
+
+- `worked`: applied as-is, resolved Phase 5 criterion on first attempt
+- `modified`: applied the suggested approach but had to adapt substantially (Phase 6 iteration count > 1 on that criterion)
+- `failed`: applied but criterion still failed; eventually resolved via different fix or not at all
+
+This is the training signal that makes the verdict classifier better over time. Skipping this step means the debugger's verdicts never improve from your builds. **Always call `outcome` for applied gates, even on build failures** — "worked" vs "failed" is meaningful in both outcomes.
 
 This is what makes the memory-first gate useful on the next run. Do not skip storage.
 
