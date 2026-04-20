@@ -12,7 +12,23 @@ Lets build-loop consume NavGator's architecture graph without tight coupling. Na
 **Use:**
 - Assess — compute blast radius before planning
 - Review-D Fact-Check — detect new violations after implementation
-- Never writes. Never invokes NavGator CLI. Purely a reader.
+- Report (Review-F) — orphan scan after build completes
+
+## Cherry-pick principle
+
+**NavGator remains an independent tool and repository.** This bridge does not embed or duplicate NavGator's functionality — it only consumes the relevant outputs:
+
+- Reads `.navgator/architecture/{index.json, file_map.json, graph.json, SUMMARY.md, lessons/lessons.json}` — filesystem only
+- Invokes `navgator impact`, `navgator rules`, `navgator llm-map`, `navgator dead` — CLI delegation only
+- Writes to `.build-loop/state.json.navgator.*` — bridge's own namespace in build-loop's state
+
+What this bridge does NOT do:
+- Reimplement any NavGator rule logic, scanning, or graph construction
+- Cache or shadow NavGator's outputs (always reads live)
+- Modify NavGator's config, lessons, or architecture files
+- Couple to NavGator's internal schema beyond the documented stable fields (`schema_version: "1.0.0"`)
+
+If NavGator is absent, this bridge skips — it does not provide a fallback implementation.
 
 ## Pre-flight
 

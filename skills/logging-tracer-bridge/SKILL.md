@@ -9,6 +9,20 @@ user-invocable: false
 
 Folds claude-code-debugger's `logging-tracer` skill into build-loop. Solves "tests failed but I can't tell why" — generates zero-dep structured logging, file-based JSONL for `read_logs` MCP consumption, or OTel tracing when the project already has it.
 
+## Cherry-pick principle
+
+**claude-code-debugger remains an independent plugin and repository.** This bridge does not embed the debugger's full `logging-tracer` implementation — it delegates when the upstream plugin is available:
+
+- If `availablePlugins.claudeCodeDebugger` is true → delegates to `claude-code-debugger:logging-tracer` (upstream handles tier selection and codegen)
+- If upstream is absent → falls back to a **minimum-viable inline Tier-1 helper** (5-8 lines per language: Node, Python, Go, Rust). This is graceful degradation, not a second implementation. Anything more elaborate (Tier 2 JSONL rotation, Tier 3 OTel spans) requires the upstream plugin.
+
+What this bridge does NOT do:
+- Reimplement the upstream's tier selection logic, placement rules, or stack detection
+- Introduce new logging dependencies (no `winston`, `pino`, or OTel installs)
+- Preserve instrumentation in the final diff without explicit user approval (see §Ephemeral-by-default)
+
+If upstream is absent and the Tier-1 fallback isn't sufficient, the bridge surfaces this to the user rather than silently expanding scope.
+
 ## When This Fires
 
 ### Assess — Observability baseline check (passive, informational)

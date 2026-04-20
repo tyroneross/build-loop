@@ -14,6 +14,22 @@ user-invocable: false
 
 Folds claude-code-debugger into build-loop surgically. Instead of blind retries at Iterate, check institutional memory first. Most bugs recur; if the debugger has seen this class before, apply the known fix or adapt prior incident notes.
 
+## Cherry-pick principle
+
+**claude-code-debugger remains an independent plugin and repository.** This bridge does not embed or duplicate the debugger's memory, verdict classifier, or causal-tree logic — it only consumes the relevant MCP tools and skills:
+
+- Calls MCP tools: `search`, `store`, `outcome`, `read_logs`, `list` — delegation only
+- Invokes upstream skills: `claude-code-debugger:debugging-memory`, `:assess`, `:debug-loop` — delegation only
+- Writes to `.build-loop/state.json.debuggerGates.*` — bridge's own namespace
+
+What this bridge does NOT do:
+- Reimplement verdict classification or memory search
+- Cache debugger memory locally (always calls live MCP)
+- Call `store` or `outcome` outside Review-F to avoid corrupting training data
+- Duplicate the `assessment-orchestrator` or `debug-loop` internal phases
+
+If the debugger plugin is absent, this bridge skips — consumer falls back to `fallbacks.md#debug` inline guidance (minimum viable; does NOT reimplement debugger memory).
+
 **Use at:**
 - Review-B — when any criterion fails with an error-like signal (exception, test failure, build error)
 - Iterate — before each retry attempt, not just once
