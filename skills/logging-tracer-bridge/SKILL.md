@@ -1,6 +1,6 @@
 ---
 name: build-loop:logging-tracer-bridge
-description: Generate stack-appropriate structured logging and optional OpenTelemetry tracing when a build lacks runtime visibility — surfaced in Phase 1 (if project has only print/console.log in production paths), triggered in Phase 5/6 when debugger-bridge cannot make progress due to silent failures. Delegates to claude-code-debugger's logging-tracer skill when available.
+description: Generate stack-appropriate structured logging and optional OpenTelemetry tracing when a build lacks runtime visibility — surfaced in Assess (if project has only print/console.log in production paths), triggered in Review-B/Iterate when debugger-bridge cannot make progress due to silent failures. Delegates to claude-code-debugger's logging-tracer skill when available.
 version: 0.1.0
 user-invocable: false
 ---
@@ -11,7 +11,7 @@ Folds claude-code-debugger's `logging-tracer` skill into build-loop. Solves "tes
 
 ## When This Fires
 
-### Phase 1 — Observability baseline check (passive, informational)
+### Assess — Observability baseline check (passive, informational)
 
 During ASSESS, after detecting the project's language/framework, run a quick observability scan:
 
@@ -31,9 +31,9 @@ Classify:
 - **Print-only**: only `print()` / `console.log` in production paths → set `.build-loop/state.json.observability.level = "print-only"`.
 - **Silent**: no logging at all in production paths → `.build-loop/state.json.observability.level = "silent"`.
 
-Do **not** add logging in Phase 1. This is informational — Phase 5/6 may need it.
+Do **not** add logging in Assess. This is informational — Review-B/Iterate may need it.
 
-### Phase 5/6 — Reactive trigger (when debug-loop stalls)
+### Review-B/Iterate — Reactive trigger (when debug-loop stalls)
 
 When `build-loop:debugger-bridge` escalates to `debug-loop` and the debug-loop's `root-cause-investigator` agent returns with an `evidence_gap` verdict (i.e. "cannot determine cause because logs/traces are missing"), load this bridge.
 
@@ -66,7 +66,7 @@ Skill("claude-code-debugger:logging-tracer") with input {
 The upstream skill handles tier selection and code generation. Bridge's job is to:
 1. Pass the right context (what file, what symptom, what stack)
 2. Record the intervention in `.build-loop/state.json.observability.interventions[]`
-3. Re-run the failing Phase 5 criterion after the logging lands
+3. Re-run the failing Review-B criterion after the logging lands
 
 ### Fallback when upstream is absent
 
@@ -149,7 +149,7 @@ git stash show stash@{0}
 git stash drop stash@{0}
 ```
 
-The orchestrator tracks the stash entry in `.build-loop/state.json.observability.interventions[].stash_id`. Phase 8 verifies no stash entries remain with `build-loop:trace/` prefix at build completion; if any do, the orchestrator reverts them before writing the scorecard.
+The orchestrator tracks the stash entry in `.build-loop/state.json.observability.interventions[].stash_id`. Review-F verifies no stash entries remain with `build-loop:trace/` prefix at build completion; if any do, the orchestrator reverts them before writing the scorecard.
 
 ### Keep-in-diff approval (opt-in only)
 
@@ -176,21 +176,21 @@ Default answer on user absence: **revert**. No silent retention. If the user pic
 ### Re-validate after adding
 
 After the logging change lands:
-1. Re-run the failing Phase 5 criterion with `DEBUG_TRACE=1` (Mechanism A) or stash applied (Mechanism B)
-2. If tests now fail WITH informative output → route to Phase 6 with the log evidence as fresh context
+1. Re-run the failing Review-B criterion with `DEBUG_TRACE=1` (Mechanism A) or stash applied (Mechanism B)
+2. If tests now fail WITH informative output → route to Iterate with the log evidence as fresh context
 3. If tests still fail silently → this bridge did not solve the problem; escalate to user
-4. **Always** revert instrumentation at Phase 8 unless the user approved keep-in-diff. The orchestrator verifies no `build-loop:trace/` stash entries remain.
+4. **Always** revert instrumentation at Review-F unless the user approved keep-in-diff. The orchestrator verifies no `build-loop:trace/` stash entries remain.
 
 ## Model Tiering
 
 | Step | Model |
 |---|---|
-| Phase 1 observability scan | inline, no model (grep only) |
+| Assess observability scan | inline, no model (grep only) |
 | Code generation — Tier 1 | inline, template substitution (no model needed for zero-dep) |
 | Code generation — Tier 2 | Sonnet (file path, rotation logic, JSONL schema need judgment) |
 | Code generation — Tier 3 OTel | Sonnet (span placement requires reading existing instrumentation) |
 | Placement decisions | Sonnet via debugger upstream |
-| Phase 5 re-validation | inline via build-loop's standard grader |
+| Review-B re-validation | inline via build-loop's standard grader |
 
 ## State Schema
 
@@ -216,7 +216,7 @@ Write observations to `.build-loop/state.json.observability`:
 
 ## What This Bridge Does NOT Do
 
-- Does not add logging in Phase 1 without a triggering event (no surprise code changes)
+- Does not add logging in Assess without a triggering event (no surprise code changes)
 - Does not introduce a new logging library as a dependency (Tier 3 only when already present)
 - Does not add log statements everywhere — only at the debugger-identified evidence gap
 - Does not replace structured logging that is already working
@@ -227,4 +227,4 @@ Orchestrator invokes via `Skill("build-loop:logging-tracer-bridge")` with either
 - `{phase: 1, action: "scan"}` for the passive observability check
 - `{phase: 5, action: "repair", trigger: "<evidence_gap|user_request>", target_files: [...], symptom: "..."}` for reactive code generation
 
-Results flow to `.build-loop/state.json.observability`. Phase 8 report includes any interventions made.
+Results flow to `.build-loop/state.json.observability`. Review-F report includes any interventions made.

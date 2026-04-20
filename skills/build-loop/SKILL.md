@@ -5,7 +5,7 @@ description: Use when making significant multi-step code changes requiring plann
 
 # Build Loop — Orchestrated Development
 
-A 9-phase development loop: assess current state, define goals with scoring criteria, plan and optimize execution, build with parallel agents, validate against internal evals, iterate on failures, fact-check output, report results, and self-improvement review.
+A 5-phase development loop (+1 optional): assess state and criteria, plan, execute, review (critic/validate/fact-check/report as sub-steps), iterate on review failures. Optional Phase 6 Learn detects cross-build recurring patterns and drafts experimental skills.
 
 ## Routing
 
@@ -35,7 +35,18 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
 | `verification-before-completion` | Phase 8 (Report) | Run all test/build/lint commands and confirm output before claiming completion |
 | `simplify` (slash: `/simplify`) | Phase 8 (after Report) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
-| `build-loop:self-improve` | Phase 9 (Review) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
+| `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
+
+### Phase quick reference
+
+| # | Phase | Purpose | Sub-steps / key actions |
+|---|---|---|---|
+| 1 | **Assess** | Understand state + define goal & criteria | detect tools, map architecture, load memory, write `goal.md` |
+| 2 | **Plan** | Break work, identify parallel-safe, optimize | writing-plans skill → dependency graph |
+| 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation |
+| 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report | sub-steps A-F; B-D can route to Iterate; F runs only on final pass |
+| 5 | **Iterate** | Fix Review failures, loop back to Review | max 5x; debugger-bridge escalations at attempts 2 & 3 |
+| 6 | **Learn** | Cross-build pattern detection + experimental skill drafting | optional; requires `runs[] >= 3`; auto-promote opt-in |
 
 ### Capability routing table
 
@@ -57,10 +68,10 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
 | Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
 | iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
-| Architecture scan / impact trace (Phase 1 + Phase 7) | `build-loop:navgator-bridge` — reads `.navgator/architecture/` JSON for blast-radius analysis in Phase 1, runs `navgator rules` diff post-change in Phase 7 | `gator:*` commands if installed | Read component → edit → re-read downstream |
-| Debugger memory-first gate (Phase 5 + Phase 6) | `build-loop:debugger-bridge` — calls `checkMemoryWithVerdict()` before iterating, escalates to parallel assessment or causal-tree investigation on stuck state; reads logs via `read_logs` MCP; feeds back `outcome` on applied fixes | `claude-code-debugger:debug-loop` direct | `fallbacks.md#debug` |
-| Runtime visibility / observability (Phase 1 + reactive Phase 5/6) | `build-loop:logging-tracer-bridge` — passive observability scan at Phase 1; generates stack-appropriate structured logging / OTel at Phase 5/6 when debug-loop hits `evidence_gap` | `claude-code-debugger:logging-tracer` direct | Inline Tier-1 (zero-dep JSON logger) per stack |
-| Self-improvement / recurring pattern detection (Phase 9) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/`; auto-promotes to `.build-loop/skills/active/` on A/B wins, auto-removes on regression. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
+| Architecture scan / impact trace (Assess + Review) | `build-loop:navgator-bridge` — reads `.navgator/architecture/` JSON for blast-radius analysis in Phase 1, runs `navgator rules` diff post-change in Phase 7 | `gator:*` commands if installed | Read component → edit → re-read downstream |
+| Debugger memory-first gate (Review + Iterate) | `build-loop:debugger-bridge` — calls `checkMemoryWithVerdict()` before iterating, escalates to parallel assessment or causal-tree investigation on stuck state; reads logs via `read_logs` MCP; feeds back `outcome` on applied fixes | `claude-code-debugger:debug-loop` direct | `fallbacks.md#debug` |
+| Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer-bridge` — passive observability scan at Phase 1; generates stack-appropriate structured logging / OTel at Phase 5/6 when debug-loop hits `evidence_gap` | `claude-code-debugger:logging-tracer` direct | Inline Tier-1 (zero-dep JSON logger) per stack |
+| Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/`; auto-promotes to `.build-loop/skills/active/` on A/B wins, auto-removes on regression. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
 
 ### Sub-routers (set during Phase 1)
@@ -178,52 +189,44 @@ If Phase 1 detects that the task touches plugin components, Phase 3 must map eac
 
 Use the best available tool for each need. If a preferred tool is unavailable, improvise — never block on a missing dependency. The skill is self-sufficient; external tools make it faster but their absence does not stop the loop.
 
-## Phase 1: ASSESS — Understand Current State
+## Phase 1: Assess — State, Goal, and Criteria
 
-**Goal**: Know what exists before changing anything. Scope assessment to files and directories relevant to the stated goal. On large codebases, limit to 2-3 focused exploration passes.
+**Goal**: Know what exists AND what success looks like before writing any code. Combines situational awareness with goal definition so the plan phase has everything it needs.
 
+### Understand current state
 1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
 2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command edits.
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
 4. **Detect available tools**: test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets.
 5. **Map architecture** using best available approach:
-   - If `.navgator/architecture/index.json` exists → load `build-loop:navgator-bridge` skill, run its Phase 1 blast-radius read. Output goes to `.build-loop/state.json.navgator.phase1`. Phase 3 PLAN consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, per-file `navgator impact` for top 5 risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
+   - If `.navgator/architecture/index.json` exists → load `build-loop:navgator-bridge` skill, run its Assess blast-radius read. Output goes to `.build-loop/state.json.navgator.assess`. Phase 2 Plan consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, per-file `navgator impact` for top 5 risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
    - Else if `gator:*` is available → use those commands.
    - Else → Explore agents → file reading.
-5a. **Observability baseline** (informational, no changes): load `build-loop:logging-tracer-bridge` to classify the project's logging level (well-instrumented / print-only / silent). Recorded in `.build-loop/state.json.observability`. If Phase 5 fails with a silent failure, Phase 6 may trigger this bridge reactively.
-5b. **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): call `build-loop:debugger-bridge` Phase 1 step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
-6. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
-7. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
-8. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items.
-9. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
-10. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
+6. **Observability baseline** (informational, no changes): load `build-loop:logging-tracer-bridge` to classify the project's logging level (well-instrumented / print-only / silent). Recorded in `.build-loop/state.json.observability`. If Review-B Validate fails with a silent failure, Iterate may trigger this bridge reactively.
+7. **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): call `build-loop:debugger-bridge` Assess step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
+8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
+9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
+10. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items.
+11. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
+12. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
 
-**Output**: Structured state summary. Brief.
+### Define goal and scoring criteria
+13. **State the goal** in concrete, measurable terms.
+14. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Show for confirmation.
+15. **Design eval graders per criterion** using the grading hierarchy:
+    - **Prefer code-based graders** (fast, deterministic, cheap): test suite pass/fail, lint/type check, build succeeds, schema validation, accessibility audit
+    - **Use LLM-as-judge graders** when code can't check the criterion:
+      - Binary pass/fail only — no Likert scales
+      - One evaluator per dimension — no multi-dimension God Evaluator
+      - Judge reasons in thinking tags, outputs only pass/fail
+      - Use Claude (the running instance) as judge
+    - Each criterion gets: `description | grading method | pass condition | evidence required`
+    - Load `eval-guide.md` in this skill directory for judge prompt template and scorecard format if needed.
+16. **Write goal file**: Save to `.build-loop/goal.md` in the project directory.
 
-## Phase 2: DEFINE — Goal, Scoring, Evaluation Criteria
+**Output**: Structured state summary + `.build-loop/goal.md` with criteria. Brief.
 
-**Goal**: Define the target and how to measure success — before writing any code.
-
-1. **State the goal** in concrete, measurable terms
-2. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Show for confirmation
-3. **Design eval graders per criterion** using the grading hierarchy:
-
-**Prefer code-based graders** (fast, deterministic, cheap):
-- Test suite pass/fail, lint/type check, build succeeds, schema validation, accessibility audit
-
-**Use LLM-as-judge graders** when code can't check the criterion:
-- Binary pass/fail only — no Likert scales
-- One evaluator per dimension — no multi-dimension God Evaluator
-- Judge reasons in thinking tags, outputs only pass/fail
-- Use Claude (the running instance) as judge
-
-Each criterion gets: `description | grading method | pass condition | evidence required`
-
-Load `eval-guide.md` in this skill directory for judge prompt template and scorecard format if needed.
-
-4. **Write goal file**: Save to `.build-loop/goal.md` in the project directory
-
-## Phase 3: PLAN — Steps & Optimization
+## Phase 2: Plan — Steps & Optimization
 
 **Goal**: Break work into executable steps, then optimize the plan before execution.
 
@@ -241,7 +244,7 @@ Load `eval-guide.md` in this skill directory for judge prompt template and score
 
 **Output**: Plan file with dependency graph, integration points, and optimization notes.
 
-## Phase 4: EXECUTE — Build With Agents
+## Phase 3: Execute — Build With Agents
 
 **Goal**: Implement the plan using parallel subagents where possible.
 
@@ -253,44 +256,29 @@ Load `eval-guide.md` in this skill directory for judge prompt template and score
 6. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. Log to `.build-loop/issues/` with context
 7. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
 
-## Phase 4.5: CRITIC — Adversarial Read-Only Review
+## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Report
 
-**Goal**: Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before they reach validation — using a separate read-only agent that has no incentive to sandbag.
+**Goal**: evaluate the built output against the rubric and decide pass / fail / iterate. Everything that used to live in phases 4.5, 4.7, 5, 7, 8, and 8.5 happens here as ordered sub-steps. One phase heading, six sub-steps, single exit point.
 
-1. **Dispatch `sonnet-critic`** per chunk (or per batch of chunks if they share a rubric). The critic has tools=[Read, Grep, Glob] only — no Edit, no Write
-2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (changed files or `git diff HEAD~1`)
-3. **Output**: JSON with `findings`, `strong_checkpoint_count`, `guidance_count`, `pass` boolean
+Review runs every time we need an evaluation (initial post-Execute, and again after each Iterate pass). The report sub-step (F) writes final artifacts only on the LAST pass — intermediate Reviews skip it.
+
+### Sub-step A: Critic (adversarial read-only)
+
+Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before spending tokens on full validation. Uses a separate read-only agent with no incentive to sandbag.
+
+1. **Dispatch `sonnet-critic`** per chunk (or per batch of chunks if they share a rubric). The critic has tools=[Read, Grep, Glob] only — no Edit, no Write.
+2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (`git diff HEAD~1` or the changed-file set).
+3. **Output**: JSON with `findings`, `strong_checkpoint_count`, `guidance_count`, `pass` boolean.
 4. **Routing**:
-   - `pass: true` → proceed to Phase 5
-   - `pass: false` with `strong-checkpoint` findings → route back to Phase 4 for fixes (not Phase 6 — no iteration counter burn yet)
+   - `pass: true` → proceed to sub-step B (Validate)
+   - `pass: false` with `strong-checkpoint` findings → route back to Execute for fixes (not Iterate — no iteration counter burn yet on critic-only failures)
    - Findings marked `guidance` → record in `.build-loop/issues/` and proceed
-5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers
+5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers.
+6. **Skip** on re-reviews after Iterate (critic already saw the diff at first pass) unless Iterate touched different files. Skip entirely for trivial chunks (single-file typo, config value).
 
-Skip this phase only when the chunk is trivial (single-file typo fix, config value change) or when no rubric criteria apply.
+### Sub-step B: Validate (graders + memory-first gate)
 
-## Phase 4.7: AUTO-OPTIMIZE — Metric-Driven Post-Build Optimization
-
-**Goal**: After implementation is built and committed, run autonomous optimization passes on anything with a mechanical metric. Uses Karpathy's autoresearch pattern: constrained scope + mechanical metric + atomic changes + git commit/revert.
-
-**Load the `build-loop:optimize` skill for the full protocol.**
-
-1. **Discover targets**: Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"` to find available optimization targets
-2. **`simplify` is always available**: Reduces line count in files changed by Phase 4. Metric = total lines, direction = lower, guard = build passes. Catches dead imports, unused files, redundant code
-3. **Other targets** appear when the repo has the right tooling (build script → optimize-build, test runner → optimize-tests, bundler → optimize-bundle)
-4. **Run sequentially after Phase 4 commits** — not in parallel with implementation subagents
-5. **Budget**: 3-5 iterations for post-build (polish, not deep optimization)
-6. **Results**: Dispatch `overfitting-reviewer` after the loop. Archive to `.build-loop/optimize/experiments/`
-
-**Skip this phase** when:
-- No mechanical metric exists for the changes made
-- The build was trivial (single-file, <20 lines)
-- User explicitly opts out
-
-Optimization results feed into Phase 5 (Validate) as additional evidence.
-
-## Phase 5: VALIDATE — Eval Against Scoring Criteria
-
-**Goal**: Test every criterion from Phase 2 with evidence.
+Test every criterion from Assess with evidence.
 
 **Code-based graders first** (fast, deterministic):
 ```
@@ -312,130 +300,126 @@ custom assertions → pass/fail
 - Use `verification-before-completion` for evidence-based claims
 - No criterion marked "pass" without proof
 
-**Output**: Scorecard with pass/fail per criterion + evidence
+**Memory-first gate (on any failing criterion)**: before routing failures to Iterate, load `build-loop:debugger-bridge`. For each failed criterion with an error-like signal (exception, test failure, build error), call its Review-B memory gate. **Memory is a hypothesis, not a patch — every verdict routes to Iterate as an adapted plan by default**:
 
-### Memory-first gate (when a criterion fails)
+- `KNOWN_FIX` → adapt prior incident as the Iterate fix plan. Direct-apply only when all three gates hold: file match + version match + second validation signal (stack frame, error class, or log entry). Otherwise behave as LIKELY_MATCH.
+- `LIKELY_MATCH` → adapt prior incident as the Iterate fix plan
+- `WEAK_SIGNAL` → note reference in the Iterate plan, investigate normally
+- `NO_MATCH` → standard Iterate fallthrough; store at sub-step F Report for future learning
 
-Before routing failures to Phase 6, load `build-loop:debugger-bridge`. For each failed criterion with an error-like signal (exception, test failure, build error), call its Phase 5 memory gate. **Memory is a hypothesis, not a patch — every verdict routes to Phase 6 as an adapted plan by default**:
+Skip the memory gate silently when `availablePlugins.claudeCodeDebugger` is false. See `debugger-bridge/SKILL.md` for the direct-apply gate spec.
 
-- `KNOWN_FIX` → adapt prior incident as Phase 6 plan. Direct-apply only when all three gates hold: file match + version match + second validation signal (stack frame, error class, or log entry). Otherwise behave as LIKELY_MATCH.
-- `LIKELY_MATCH` → adapt prior incident as Phase 6 plan
-- `WEAK_SIGNAL` → note reference, investigate normally
-- `NO_MATCH` → standard Phase 6 fallthrough; store at Phase 8 for future learning
+**Output**: per-criterion pass/fail with evidence. Any `fail` → Iterate. All `pass` → sub-step C.
 
-Skip silently when `availablePlugins.claudeCodeDebugger` is false. See `debugger-bridge/SKILL.md` for the direct-apply gate specification.
+### Sub-step C: Optimize (opt-in, only with a mechanical metric)
 
-## Phase 6: ITERATE — Fix & Retry (up to 5x)
+Metric-driven autonomous optimization using Karpathy's autoresearch pattern. Opt-in — runs only when a mechanical metric exists AND the user hasn't disabled it.
 
-**Goal**: Fix failures systematically, not blindly.
+**Load the `build-loop:optimize` skill for the full protocol.**
 
-If any criterion fails:
-1. **Diagnose root cause** — don't just retry
-2. **Create targeted fix plan** for failed criteria only
-3. **Execute fix** (subagents if parallel-safe)
-4. **Re-validate ONLY failed criteria** — re-run their specific graders
-5. **Track**: iteration count, what failed, what was attempted, what changed
+1. **Discover targets**: Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"`.
+2. **`simplify` is always available** when code changed: reduces line count in files changed by Execute. Metric = total lines, direction = lower, guard = build passes.
+3. **Other targets** appear when the repo has the right tooling (build script → optimize-build, test runner → optimize-tests, bundler → optimize-bundle).
+4. **Budget**: 3-5 iterations (polish, not deep optimization).
+5. **Post-loop**: dispatch `overfitting-reviewer`. Archive to `.build-loop/optimize/experiments/`.
+
+**Skip** when: no mechanical metric, build was trivial (<20 lines), or user opts out. Optimization results feed back into Validate as additional evidence.
+
+### Sub-step D: Fact-Check & Mock Scan
+
+Nothing false, fabricated, or placeholder reaches the user. Three gates, run in parallel. Load `phases/fact-check.md` for detailed guidance.
+
+- **Gate 1 — Fact Checker**: Trace every rendered %, $, score, count, or assessment to its data source. Flag "always", "never", "100%", "guaranteed" — replace with accurate language unless genuinely absolute. Every rendered metric needs a traceable path: source → transformation → display.
+- **Gate 2 — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
+- **Gate 3 — Architectural Violation Check** (if NavGator available): load `build-loop:navgator-bridge`, run its Review violation check. Executes `navgator rules --json` and classifies blocking (`circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error) vs warning (`hotspot`, `high-fan-out`, `orphan`). Flags recurrences against `.navgator/lessons/lessons.json`.
+
+Blocking issues (any gate) → route to Iterate. Warnings → include in Report (sub-step F).
+
+### Sub-step E: Simplify (trim the diff)
+
+Remove incidental complexity added during Execute/Iterate without changing behavior.
+
+Run `/simplify` (or load the `simplify` skill directly) against the changed files. Focus:
+- Inline single-use helpers extracted "just in case"
+- Delete dead branches, commented-out code, unused imports
+- Collapse try/except that catches a thing that can't happen
+- Remove validation for invariants the type system or upstream already guarantees
+- Reduce abstractions that have exactly one call site
+
+Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
+
+### Sub-step F: Report (only on final Review pass)
+
+Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes final artifacts and closes the build.
+
+- **Scorecard** with final pass/fail per criterion + evidence
+- **✅ Known** (verified working with proof), **⚠️ Unknown** (untested), **❓ Unfixed** (post-cap)
+- **Discovered issues**: pre-existing problems from `.build-loop/issues/` — user decides: fix now, defer, or dismiss
+- **Fact check results**: any unverifiable claims or mock data warnings from sub-step D
+
+Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
+
+**Debugger store + outcome** (if `availablePlugins.claudeCodeDebugger`): for each resolved Review-B/Iterate failure, invoke `store` MCP with `{symptom, root_cause, fix, tags, files}`. For each Review-B memory-gate entry where a prior `KNOWN_FIX`/`LIKELY_MATCH` was applied, invoke `outcome` with `worked`/`failed`/`modified`. Both sides of the memory feedback loop — skipping either breaks learning.
+
+**Orphan scan** (if NavGator available): invoke `build-loop:navgator-bridge` Report step — runs `navgator dead`, diffs against Assess baseline, surfaces new orphans introduced this build.
+
+**Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. Schema:
+
+```json
+{
+  "run_id": "run_<ISO-basic>_<sha256(goal)[:8]>",
+  "date": "<ISO-8601 UTC>",
+  "goal": "<short goal text>",
+  "outcome": "pass | fail | partial",
+  "phases": { "assess": { "status": "pass|fail", "duration_s": N, "root_cause": "?" }, "plan": {...}, "execute": {...}, "review": {...}, "iterate": {...} },
+  "diagnosticCommands": ["shell commands run during build"],
+  "filesTouched": ["absolute paths edited"],
+  "manualInterventions": [{ "phase": "review", "note": "short description" }],
+  "active_experimental_artifacts": []
+}
+```
+
+Capture `filesTouched` from `git diff --name-only` relative to the pre-build HEAD. `diagnosticCommands` and `manualInterventions` come from orchestrator state tracking. `active_experimental_artifacts` lists experimental skills that triggered this run (for Learn's confound tracking).
+
+## Phase 5: Iterate — Fix Review Failures (up to 5x)
+
+**Goal**: Fix failures surfaced by Review, systematically not blindly. Loops back to Review after each fix.
+
+Entered when Review sub-step A, B, or D finds blocking issues. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn.
+
+Per attempt:
+1. **Diagnose root cause** — don't just retry. Reads Review's evidence.
+2. **Consult debugger memory** (if `availablePlugins.claudeCodeDebugger`): at the start of EACH attempt, invoke `build-loop:debugger-bridge` Iterate logic:
+   - After 2 consecutive same-root-cause failures → parallel multi-domain assessment via `claude-code-debugger:assess`. Pass `model: sonnet` to domain assessors explicitly (override the debugger's default `inherit` to prevent 4× Opus fan-out from the Opus 4.7 orchestrator).
+   - After 3 consecutive failures on the same criterion → causal-tree investigation via `claude-code-debugger:debug-loop`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
+3. **Create targeted fix plan** for failed criteria only.
+4. **Execute fix** (subagents if parallel-safe).
+5. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
+6. **Track**: attempt count, what failed, what was attempted, what changed.
 
 **Convergence detection**:
 - Same criterion fails 2x with same root cause → escalate to user
 - Fix A breaks criterion B (oscillation) → flag and ask user
 - 3+ criteria fail simultaneously after a fix → systemic issue, stop and reassess
 
-**Hard stop at 5 iterations**. Report remaining failures in Phase 8.
+**Hard stop at 5 iterations**. Proceed to Review sub-step F Report with remaining failures marked ❓ Unfixed. Log each iteration to `.build-loop/state.json`.
 
-Log each iteration to `.build-loop/state.json`.
+## Phase 6: Learn — Cross-Build Pattern Detection (optional)
 
-### Stuck-iteration escalation (debugger-bridge Phase 6)
+**Goal**: detect recurring patterns across recent runs, auto-draft experimental skills/agents to address them, surface them for keep/remove decisions. Closes the loop between "build N times" and "build N+1 is faster because we learned."
 
-At the start of each attempt (not just the first), invoke `build-loop:debugger-bridge` Phase 6 logic:
+**Load the `build-loop:self-improve` skill for the full protocol.** (Skill keeps its existing name for backward compatibility; this phase was named "Self-Improvement Review" in v0.2.0 — renamed here to avoid collision with Phase 4 Review.)
 
-- **After 2 consecutive same-root-cause failures** → parallel multi-domain assessment via `claude-code-debugger:assess`. Pass `model: sonnet` to domain assessors explicitly (override the debugger's default `inherit` to prevent 4× Opus fan-out from the Opus 4.7 orchestrator).
-- **After 3 consecutive failures on the same criterion** → causal-tree investigation via `claude-code-debugger:debug-loop`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
-- Skip when `availablePlugins.claudeCodeDebugger` is false.
-
-## Phase 7: FACT CHECK & MOCK SCAN
-
-**Goal**: Nothing false, fabricated, or placeholder reaches the user.
-
-Two gates. Run in parallel for speed. Load `phases/fact-check.md` in this skill directory for detailed guidance.
-
-**Gate A — Fact Checker**: Trace every rendered %, $, score, count, or assessment to its data source. Flag "always", "never", "100%", "guaranteed" — replace with accurate language unless genuinely absolute. Verify scoring logic produces displayed values. Every rendered metric needs a traceable path: source → transformation → display.
-
-**Gate B — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
-
-**Gate C — Architectural Violation Check** (if NavGator available): load `build-loop:navgator-bridge`, run its Phase 7 violation check. Executes `navgator rules --json` and classifies:
-- Blocking (route to Phase 6): `circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error severity
-- Warning (include in report): `hotspot`, `high-fan-out`, `orphan`
-- Recurrences: flags violations that match entries in `.navgator/lessons/lessons.json` so user sees "this type has appeared N times in this project"
-
-Skip silently when `.navgator/architecture/index.json` does not exist.
-
-Blocking issues (any gate) → route back to Phase 6 (Iterate). Warnings → include in report.
-
-## Phase 8: REPORT — Present Results
-
-**Goal**: Clear, honest summary with certainty markers.
-
-- **Scorecard**: Final pass/fail per criterion with evidence
-- **✅ Known**: Verified working features (with proof)
-- **⚠️ Unknown**: Untested or uncertain areas
-- **❓ Unfixed**: Issues remaining after iteration limit
-- **Discovered issues**: Pre-existing problems from `.build-loop/issues/` — user decides: fix now, defer, or dismiss
-- **Fact check results**: Any unverifiable claims or mock data warnings
-
-Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
-
-**Store debugger incidents**: if `build-loop:debugger-bridge` tracked any failures resolved during this run (Phase 5 or Phase 6), invoke the debugger `store` MCP tool for each resolved incident. **Also** invoke the `outcome` MCP tool for each Phase 5 gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied — reports back worked/failed/modified. This is both sides of the memory-first gate's feedback loop; skip it and the debugger's verdict classifier never improves.
-
-**Orphan scan** (if NavGator available): invoke `build-loop:navgator-bridge` Phase 8 — runs `navgator dead`, diffs against Phase 1 baseline, surfaces new orphans introduced this build.
-
-**Also: append a run entry to `.build-loop/state.json.runs[]`** for Phase 9's self-improvement scan. Schema:
-
-```json
-{
-  "date": "<ISO-8601 UTC>",
-  "goal": "<short goal text>",
-  "outcome": "pass | fail | partial",
-  "phases": { "1": { "status": "pass|fail", "duration_s": N, "root_cause": "?" }, ... },
-  "diagnosticCommands": ["shell commands run during build"],
-  "filesTouched": ["absolute paths edited"],
-  "manualInterventions": [{ "phase": N, "note": "short description" }]
-}
-```
-
-Capture `filesTouched` from `git diff --name-only` relative to the pre-build HEAD. `diagnosticCommands` and `manualInterventions` come from orchestrator state tracking during the run.
-
-## Phase 8.5: SIMPLIFY — Trim The Diff
-
-**Goal**: remove incidental complexity added during iteration without changing behavior.
-
-Run `/simplify` (or load the `simplify` skill directly) against the changed files. Focus:
-- Inline single-use helpers that were extracted "just in case"
-- Delete dead branches, commented-out code, and unused imports
-- Collapse try/except that catches a thing that can't happen
-- Remove validation for invariants that the type system or upstream already guarantees
-- Reduce abstractions that have exactly one call site
-
-Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior. If a simplification would break evidence collection or monitoring, keep it.
-
-For **plugin work specifically**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json`, and `grep` the manifest for `../` or bare paths (per `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` 2026-04-05). Silent manifest failures are worse than loud ones.
-
-## Phase 9: REVIEW — Self-Improvement Scan
-
-**Goal**: detect recurring patterns across recent runs, auto-draft experimental skills/agents to address them, notify the user for keep/remove decisions. Closes the loop between "build N times" and "build N+1 is faster because we learned".
-
-**Load the `build-loop:self-improve` skill for the full protocol.**
-
-Runs automatically after Phase 8.5 on every build. Also user-invocable via `/build-loop:self-improve` (to trigger a scan without a build).
+Runs automatically after Review sub-step F on every build unless disabled. Also user-invokable via `/build-loop:self-improve` to run a scan without a build.
 
 Quick flow:
 
-1. **Detect** — dispatch `recurring-pattern-detector` (Haiku). Reads `.build-loop/state.json.runs[]`, returns JSON list of patterns crossing confidence threshold.
-2. **Filter** — keep only `high` confidence or `count >= 4`; manual interventions at lower threshold.
-3. **Draft** — for each kept pattern, dispatch `self-improvement-architect` (Sonnet). Writes to `.build-loop/skills/experimental/<name>/SKILL.md` with an A/B Experiment section.
-4. **Signoff** — orchestrator (Opus 4.7) reviews: approve / revise once / discard.
-5. **Track** — baseline metric recorded in `.build-loop/experiments/<name>.jsonl`. Subsequent runs that match the skill's trigger append applied entries. After sample size complete, decision emitted.
-6. **Notify** — concise synthesis appended to Phase 8 report, including removal command.
+1. **Detect** — dispatch `recurring-pattern-detector` (Haiku). Reads `.build-loop/state.json.runs[]`, returns JSON list of patterns crossing confidence threshold. Only emits `phase_failure` and `manual_intervention` types (real pain signals); `diagnostic_repeat` and `file_churn` were removed to prevent skill sprawl.
+2. **Filter** — keep only `confidence: high` or `count >= 4`; manual interventions at lower threshold. Dedupe against existing active/experimental skill names. Cap 2 artifacts per scan.
+3. **Draft** — for each kept pattern, dispatch `self-improvement-architect` (Sonnet). Writes to `.build-loop/skills/experimental/<name>/SKILL.md` with an A/B Experiment section including `run_id` and `co_applied_experimental_artifacts[]` schema.
+4. **Signoff** — orchestrator (Opus 4.7) reviews each draft: APPROVE / REVISE (1 retry) / DISCARD.
+5. **Sample review sweep** — for artifacts in `.build-loop/skills/experimental/` from prior runs: if `.build-loop/config.json.autoPromote` is true AND effective (non-confounded) sample ≥ 8 AND target met → auto-promote to `active/`. Regressions and inconclusive-at-2N write proposals to `.build-loop/proposals/` for user confirmation — never auto-delete.
+6. **Notify** — concise synthesis appended to Review sub-step F report, including removal command for each artifact moved or proposed.
 
 **Skip** when:
 - `.build-loop/state.json.runs[]` has fewer than 3 entries
@@ -443,13 +427,15 @@ Quick flow:
 - User has set `.build-loop/config.json.autoSelfImprove: false`
 
 **User control**:
-- Remove any artifact: `rm -rf .build-loop/skills/experimental/<name>/`
+- Remove any artifact: `rm -rf .build-loop/skills/experimental/<name>/` or `active/<name>/`
+- Block re-promotion of a name: add it to `.build-loop/skills/.demoted`
 - Inspect tracking: `cat .build-loop/experiments/<name>.jsonl`
-- Disable globally: create `.build-loop/config.json` with `{"autoSelfImprove": false}`
+- Disable Learn entirely: `.build-loop/config.json` → `{"autoSelfImprove": false}`
+- Auto-promote defaults to OFF — set `"autoPromote": true` to enable (requires effective sample ≥ 8)
 
 **What this phase will NOT do**:
 - Modify the build-loop plugin repo
-- Promote artifacts cross-project without explicit `/build-loop:promote-experiment` invocation (not yet implemented)
+- Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`
 - Run more than once per build
 
 ## Memory — Global and Project-Scoped

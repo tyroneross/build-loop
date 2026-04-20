@@ -1,6 +1,6 @@
 ---
 name: build-loop:navgator-bridge
-description: Read NavGator architecture data during Phase 1 (ASSESS) and Phase 7 (FACT CHECK) to compute blast radius before changes and detect new violations after. Filesystem-only — consumes NavGator's JSON outputs, does not require running NavGator CLI mid-build.
+description: Read NavGator architecture data during Assess and Review-D (Fact-Check) to compute blast radius before changes and detect new violations after. Filesystem-only — consumes NavGator's JSON outputs, does not require running NavGator CLI mid-build.
 version: 0.1.0
 user-invocable: false
 ---
@@ -10,8 +10,8 @@ user-invocable: false
 Lets build-loop consume NavGator's architecture graph without tight coupling. NavGator writes to `.navgator/architecture/`; this skill reads from there. If NavGator has never run on the project, this skill no-ops with a one-line note.
 
 **Use:**
-- Phase 1 ASSESS — compute blast radius before planning
-- Phase 7 FACT CHECK — detect new violations after implementation
+- Assess — compute blast radius before planning
+- Review-D Fact-Check — detect new violations after implementation
 - Never writes. Never invokes NavGator CLI. Purely a reader.
 
 ## Pre-flight
@@ -30,9 +30,9 @@ NavGator: no architecture snapshot found (run /navgator:scan to enable blast-rad
 
 Do not error, do not block the build. NavGator is optional.
 
-## Phase 1 — Blast-Radius Read
+## Assess — Blast-Radius Read
 
-**Purpose**: narrow the plan. Before Phase 3 PLAN writes a dependency graph, tell it which components the changes will touch so subagent scoping is accurate.
+**Purpose**: narrow the plan. Before Plan writes a dependency graph, tell it which components the changes will touch so subagent scoping is accurate.
 
 ### Inputs
 
@@ -58,9 +58,9 @@ Do not error, do not block the build. NavGator is optional.
    - **2-hop dependents** — one level further out (may need regression checks)
    Cap 2-hop at 50 components; if exceeded, flag "high blast radius" and include only top 10 by fan-in.
 
-5. **Risk flags**. Read `SUMMARY.md` for hotspots. If any touched component is listed as a hotspot (high fan-in), or appears in circular-dependency chains, or spans a layer violation — add a `⚠️ risk` flag to the Phase 1 output.
+5. **Risk flags**. Read `SUMMARY.md` for hotspots. If any touched component is listed as a hotspot (high fan-in), or appears in circular-dependency chains, or spans a layer violation — add a `⚠️ risk` flag to the Assess output.
 
-5a. **Per-file impact for highest-risk components**. For each component flagged as `risk` in step 5, call `navgator impact <component> --json` (not just read graph.json) for authoritative downstream enumeration. This is slower than JSON reads but accurate — use only for flagged components, not all touched components. Cap at 5 impact calls per Phase 1 (if > 5 risks, take the top 5 by fan-in).
+5a. **Per-file impact for highest-risk components**. For each component flagged as `risk` in step 5, call `navgator impact <component> --json` (not just read graph.json) for authoritative downstream enumeration. This is slower than JSON reads but accurate — use only for flagged components, not all touched components. Cap at 5 impact calls per Assess (if > 5 risks, take the top 5 by fan-in).
 
    ```bash
    navgator impact "$COMP" --depth 2 --json > /tmp/navgator_impact_$$_$COMP.json
@@ -76,7 +76,7 @@ Do not error, do not block the build. NavGator is optional.
    ]
    ```
 
-   Phase 4 consults this so the implementer knows *which* prompts are load-bearing vs incidental before editing them.
+   Execute consults this so the implementer knows *which* prompts are load-bearing vs incidental before editing them.
 
 6. **Emit compact summary** (≤20 lines) into `.build-loop/state.json.navgator.phase1`:
 
@@ -100,7 +100,7 @@ Do not error, do not block the build. NavGator is optional.
    }
    ```
 
-7. **Log to Phase 1 output** one line:
+7. **Log to Assess output** one line:
 
    ```
    Blast radius: touches [N components] across [layers], [risks_count] risk flags. See state.json.navgator.phase1 for details.
@@ -108,15 +108,15 @@ Do not error, do not block the build. NavGator is optional.
 
 ### When to Escalate
 
-If `risks.length >= 3` or `twoHopDependents > 50`: note this in state.json and the Phase 1 summary. Phase 3 PLAN should consider splitting the work into smaller chunks with explicit integration tests between them.
+If `risks.length >= 3` or `twoHopDependents > 50`: note this in state.json and the Assess summary. Plan should consider splitting the work into smaller chunks with explicit integration tests between them.
 
-## Phase 7 — Post-Change Violation Check
+## Review-D — Post-Change Violation Check
 
-**Purpose**: detect architectural regressions introduced during Phase 4. NavGator runs `rules` internally; this skill invokes it and diffs against the Phase 1 baseline.
+**Purpose**: detect architectural regressions introduced during Execute. NavGator runs `rules` internally; this skill invokes it and diffs against the Assess baseline.
 
 ### Inputs
 
-- The Phase 1 baseline in `.build-loop/state.json.navgator.phase1`
+- The Assess baseline in `.build-loop/state.json.navgator.phase1`
 - A fresh run of `navgator rules --json` (executed by this skill)
 
 ### Steps
@@ -136,11 +136,11 @@ If `risks.length >= 3` or `twoHopDependents > 50`: note this in state.json and t
    ```
    NavGator's built-in rules: `orphan`, `database-isolation`, `frontend-direct-db`, `circular-dependency`, `hotspot`, `high-fan-out`, `layer-violation`.
 
-3. **Diff against baseline**. Compare Phase 7 violations with Phase 1's pre-change state (optional — only meaningful if Phase 1 captured a full rules snapshot; for now treat all violations as candidates for blocking).
+3. **Diff against baseline**. Compare Review-D violations with Assess pre-change state (optional — only meaningful if Assess captured a full rules snapshot; for now treat all violations as candidates for blocking).
 
 4. **Route findings**:
-   - `severity: "error"` on `circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` → **BLOCKING**. Route back to Phase 6 with the violation as a new failed criterion.
-   - `severity: "warn"` on `hotspot`, `high-fan-out`, `orphan` → **WARNING**. Include in Phase 8 report, do not block.
+   - `severity: "error"` on `circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` → **BLOCKING**. Route back to Iterate with the violation as a new failed criterion.
+   - `severity: "warn"` on `hotspot`, `high-fan-out`, `orphan` → **WARNING**. Include in Review-F report, do not block.
 
 5. **Lessons matching**. Read `.navgator/lessons/lessons.json` if present. If any new violation matches a known recurring pattern (same `rule` + same `component`), flag it as a "recurrence" in the report — the user should see "this violation type has appeared N times in this project" for context.
 
@@ -156,7 +156,7 @@ If `risks.length >= 3` or `twoHopDependents > 50`: note this in state.json and t
    }
    ```
 
-## Phase 8 — Orphan Scan (informational)
+## Review-F — Orphan Scan (informational)
 
 After the scorecard is written, run a quick orphan detection to surface dead code introduced or exposed by this build:
 
@@ -164,9 +164,9 @@ After the scorecard is written, run a quick orphan detection to surface dead cod
 navgator dead --json > /tmp/navgator_dead_phase8.json
 ```
 
-If the CLI is unavailable or the scan is stale, skip silently. Otherwise, diff against the Phase 1 snapshot:
+If the CLI is unavailable or the scan is stale, skip silently. Otherwise, diff against the Assess snapshot:
 
-- **New orphans** (code added during the build that ended up with zero imports/callers): include in Phase 8 report as "⚠️ potentially dead code" with file paths. These are common when a feature is half-wired — e.g. a helper written but never called.
+- **New orphans** (code added during the build that ended up with zero imports/callers): include in Review-F report as "⚠️ potentially dead code" with file paths. These are common when a feature is half-wired — e.g. a helper written but never called.
 - **Resolved orphans** (previously orphaned components now connected): include as "✅ resolved orphans" in the report — credit where due; indicates earlier dead code was wired in.
 - **Persistent orphans** (orphaned before and still orphaned): do not report every build. Only surface if `persistent_count > 10` with a pointer to `/navgator:dead` for the user to act.
 
@@ -184,7 +184,7 @@ This gate never blocks — orphan detection is noisy and sometimes wrong (dynami
 
 ## Integration with Orchestrator
 
-The build-orchestrator dispatches this skill via the `Skill` tool during its Phase 1 and Phase 7 coordination. Pass the goal text and current phase as context. The skill reads/writes under `.build-loop/state.json.navgator.*` for later phase consumption.
+The build-orchestrator dispatches this skill via the `Skill` tool during its Assess and Review-D coordination. Pass the goal text and current phase as context. The skill reads/writes under `.build-loop/state.json.navgator.*` for later phase consumption.
 
 ## What This Skill Does NOT Do
 
@@ -195,4 +195,4 @@ The build-orchestrator dispatches this skill via the `Skill` tool during its Pha
 
 ## Model
 
-Haiku sufficient for reads + JSON diff. Sonnet only if a Phase 7 violation description requires nuanced re-writing for the user report. Default: inline, no model — pure filesystem ops.
+Haiku sufficient for reads + JSON diff. Sonnet only if a Review-D violation description requires nuanced re-writing for the user report. Default: inline, no model — pure filesystem ops.

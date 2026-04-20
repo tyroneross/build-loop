@@ -1,19 +1,19 @@
 ---
 name: build-loop:self-improve
-description: Phase 9 REVIEW — scan recent build-loop runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user. Use after Phase 8 REPORT, or user-invokable with `/build-loop:self-improve` to trigger a scan outside a build.
+description: Phase 6 Learn — scan recent build-loop runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user. Use after Review sub-step F (Report), or user-invokable with `/build-loop:self-improve` to trigger a scan outside a build.
 version: 0.1.0
 user-invocable: true
 ---
 
-# Build-Loop Self-Improvement (Phase 9 REVIEW)
+# Build-Loop Self-Improvement (Phase 6 Learn)
 
-This skill runs after Phase 8 REPORT completes, or on demand. It detects recurring patterns across recent build-loop runs, drafts experimental skills/agents to address them, and notifies the user for keep/remove decisions.
+This skill runs after Review sub-step F (Report) completes, or on demand. It detects recurring patterns across recent build-loop runs, drafts experimental skills/agents to address them, and notifies the user for keep/remove decisions.
 
 **Principle:** auto-draft, notify, experiment, decide based on evidence. User can always remove. A/B comparison is small and focused — one metric, short sample, clear decision rule.
 
 ## When This Skill Runs
 
-- Automatically at end of every build-loop run (Phase 9, after Phase 8 REPORT)
+- Automatically at end of every build-loop run (Phase 6 Learn, after Review sub-step F (Report))
 - On demand via `/build-loop:self-improve`
 - Skipped if `.build-loop/state.json.runs` has fewer than 3 entries — not enough signal
 
@@ -21,7 +21,7 @@ This skill runs after Phase 8 REPORT completes, or on demand. It detects recurri
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Phase 9: REVIEW (this skill)                                  │
+│ Phase 6 Learn: REVIEW (this skill)                                  │
 ├──────────────────────────────────────────────────────────────┤
 │ 1. DETECT   → recurring-pattern-detector (Haiku)              │
 │              emits patterns[] JSON                            │
@@ -87,7 +87,7 @@ Opus signoff is the quality gate. Sonnet drafts fast; Opus ensures no garbage sh
 For each APPROVED artifact, write to `.build-loop/experiments/<name>.jsonl`:
 
 ```jsonl
-{"event": "created", "date": "2026-04-19T14:22:00Z", "artifact": "experimental-middleware-typegen", "baseline_metric": "Phase 5 pass rate on middleware edits", "baseline_value": 0.6, "target_value": 0.9, "sample_size_target": 5}
+{"event": "created", "date": "2026-04-19T14:22:00Z", "artifact": "experimental-middleware-typegen", "baseline_metric": "Review-B pass rate on middleware edits", "baseline_value": 0.6, "target_value": 0.9, "sample_size_target": 5}
 ```
 
 The experimental skill's description triggers it on matching runs. Each subsequent run that matches the skill's trigger appends to this file:
@@ -96,14 +96,14 @@ The experimental skill's description triggers it on matching runs. Each subseque
 {"event": "applied", "date": "...", "run_date": "2026-04-20", "triggered": true, "metric_value": 1.0, "outcome": "phase_5_pass"}
 ```
 
-After `sample_size_target` applied entries, Phase 9 computes delta and emits a decision recommendation (promote / remove / extend sample).
+After `sample_size_target` applied entries, Phase 6 Learn computes delta and emits a decision recommendation (promote / remove / extend sample).
 
 ### 6. Notify user (concise synthesis)
 
-Emit exactly this format to the Phase 8 report tail:
+Emit exactly this format to the Review sub-step F report tail:
 
 ```
-## Phase 9: Self-Improvement Review
+## Phase 6 Learn: Self-Improvement Review
 
 Scanned: N runs over last M days
 Detected: X high-confidence patterns, Y filtered out (low signal)
@@ -119,15 +119,15 @@ Remove: `rm -rf .build-loop/skills/experimental/<name>/`
 If nothing was created, emit:
 
 ```
-## Phase 9: Self-Improvement Review
+## Phase 6 Learn: Self-Improvement Review
 Scanned N runs. No recurring patterns crossed confidence threshold. Nothing created.
 ```
 
 ## Data Contracts
 
-### `.build-loop/state.json.runs[]` extensions (writer: build-orchestrator during Phase 8)
+### `.build-loop/state.json.runs[]` extensions (writer: build-orchestrator during Review sub-step F)
 
-Phase 8 REPORT must now append a run entry to `state.json.runs[]` before Phase 9 runs. Schema:
+Review sub-step F (Report) must now append a run entry to `state.json.runs[]` before Phase 6 Learn runs. Schema:
 
 ```json
 {
@@ -163,7 +163,7 @@ Append-only log per experimental artifact. Schema:
 
 ## Promotion decisions (after sample complete)
 
-**Default behavior is opt-in.** `autoPromote` defaults to **`false`** in `.build-loop/config.json` — Phase 9 drafts experimental artifacts and tracks A/B evidence but stops at "propose promote" until the user enables the auto mode. This changed after an adversarial review flagged that small-sample auto-promotion can flip on flake and delete good work during temporary regressions.
+**Default behavior is opt-in.** `autoPromote` defaults to **`false`** in `.build-loop/config.json` — Phase 6 Learn drafts experimental artifacts and tracks A/B evidence but stops at "propose promote" until the user enables the auto mode. This changed after an adversarial review flagged that small-sample auto-promotion can flip on flake and delete good work during temporary regressions.
 
 ### Enabling auto-promote
 
@@ -173,7 +173,7 @@ To opt in, create `.build-loop/config.json` with:
 { "autoPromote": true }
 ```
 
-Even with the flag on, auto-promotion requires **`sample_size_target >= 8`** and passing the promotion rules below. Below the floor, Phase 9 always writes a proposal to `.build-loop/proposals/<name>.md` and blocks promotion until the user reviews. The architect agent initializes new experiments with `sample_size_target: 8` by default; only raise it when noise demands more power.
+Even with the flag on, auto-promotion requires **`sample_size_target >= 8`** and passing the promotion rules below. Below the floor, Phase 6 Learn always writes a proposal to `.build-loop/proposals/<name>.md` and blocks promotion until the user reviews. The architect agent initializes new experiments with `sample_size_target: 8` by default; only raise it when noise demands more power.
 
 ### Promotion rules
 
@@ -184,20 +184,20 @@ When `autoPromote` is true AND `sample_size_target >= 8` AND the experiment's ap
 | Metric improves ≥ target (non-confounded) | **Auto-promote**: `git mv .build-loop/skills/experimental/<name> .build-loop/skills/active/<name>`, update SKILL.md frontmatter `experimental: false` + `promoted_at: <ISO>`, append `{event: "promoted", ...}` to the experiment's jsonl | `.build-loop/skills/active/<name>/` |
 | Metric improves < target (partial win) | **Extend sample** to 2N; re-evaluate after additional runs | unchanged |
 | Metric flat (±10% of baseline) | **Extend sample** to 2N; re-evaluate | unchanged |
-| Metric regresses | **Write proposal** to `.build-loop/proposals/<name>-remove.md` with evidence. Removal requires user confirmation via `AskUserQuestion` in the next Phase 9 run (not immediate `rm -rf`). Avoids single-build regressions deleting useful skills. | experimental (intact) |
+| Metric regresses | **Write proposal** to `.build-loop/proposals/<name>-remove.md` with evidence. Removal requires user confirmation via `AskUserQuestion` in the next Phase 6 Learn run (not immediate `rm -rf`). Avoids single-build regressions deleting useful skills. | experimental (intact) |
 | Sample at 2N still flat | **Write proposal** to `.build-loop/proposals/<name>-inconclusive.md`; same user confirmation gate for removal | experimental (intact) |
 
 If the opt-in flag is off, every row above becomes "write proposal, no file moves/deletes." Proposals accumulate in `.build-loop/proposals/` for manual review.
 
-**Below the sample-size floor** (`applied_count < 8`): Phase 9 records evidence but never acts. The architect may still author new experimental artifacts in this state — the floor only gates promotion/removal decisions.
+**Below the sample-size floor** (`applied_count < 8`): Phase 6 Learn records evidence but never acts. The architect may still author new experimental artifacts in this state — the floor only gates promotion/removal decisions.
 
 ### Confound tracking
 
-Every Phase 5 applied-run log line MUST include:
-- `run_id` — a canonical identifier for the build run (Phase 8 generates it, e.g. `run_20260419T143022Z_<goalHash8>`)
+Every Review-B applied-run log line MUST include:
+- `run_id` — a canonical identifier for the build run (the orchestrator generates it at Review-F, e.g. `run_20260419T143022Z_<goalHash8>`)
 - `co_applied_experimental_artifacts[]` — full list of experimental artifact names that also triggered on this run
 
-**Rule**: a run with `co_applied_experimental_artifacts.length > 0` is **confounded** — no single artifact can claim credit for the metric delta. Phase 9 marks all such runs with `confounded: true` and **excludes them from promotion math**. The confound state is sticky: removing an entry from the jsonl does not uncontaminate it.
+**Rule**: a run with `co_applied_experimental_artifacts.length > 0` is **confounded** — no single artifact can claim credit for the metric delta. Phase 6 Learn marks all such runs with `confounded: true` and **excludes them from promotion math**. The confound state is sticky: removing an entry from the jsonl does not uncontaminate it.
 
 **Enforcement**: at most one experimental artifact should trigger per build by design. If two fire (because their descriptions both matched the goal), log both measurements with the confound flag and continue the build, but the A/B accounting discounts all co-applied rows. Extending the sample to 2N must count only `confounded: false` rows toward the new target.
 
@@ -218,7 +218,7 @@ Write to `.build-loop/experiments/decisions.jsonl` (append-only) one entry per a
 
 ### User override / reversal
 
-- **Stop an auto-promote**: if the user disagrees with an auto-promotion, `git mv .build-loop/skills/active/<name> .build-loop/skills/experimental/<name>` or `rm -rf .build-loop/skills/active/<name>/`. Phase 9 will not re-promote a name listed in `.build-loop/skills/.demoted` (one name per line — create this file to block re-promotion).
+- **Stop an auto-promote**: if the user disagrees with an auto-promotion, `git mv .build-loop/skills/active/<name> .build-loop/skills/experimental/<name>` or `rm -rf .build-loop/skills/active/<name>/`. Phase 6 Learn will not re-promote a name listed in `.build-loop/skills/.demoted` (one name per line — create this file to block re-promotion).
 - **Restore a removed artifact**: logs preserve the original SKILL.md content in `discarded.jsonl` under `{artifact_content: "..."}`. Restoration is manual (grab the content, write back). Only the last 30 discards are preserved; older entries keep metadata only.
 - **Auto-promote is OFF by default**. To enable: `.build-loop/config.json` → `{"autoPromote": true}`. Even when on, promotion requires effective non-confounded sample >= 8 and non-regression. Below the floor or with confounded-only evidence, proposals accumulate in `.build-loop/proposals/` for manual review regardless of the flag.
 

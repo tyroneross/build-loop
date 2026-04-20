@@ -4,7 +4,7 @@ description: |
   Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
 
   <example>
-  Context: Build loop Phase 7 — verifying claims before report
+  Context: Build loop Review sub-step D — verifying claims before report
   user: "Run fact check on the implementation"
   assistant: "I'll use the fact-checker agent to trace all rendered metrics to their data sources."
   </example>

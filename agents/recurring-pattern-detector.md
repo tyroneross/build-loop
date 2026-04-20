@@ -4,7 +4,7 @@ description: |
   Scans `.build-loop/state.json.runs[]` for patterns that recur across 3+ runs (same phase failing, same diagnostic command, same file churn, same manual user intervention). Emits a structured JSON proposal list. Pattern-matching only — no authoring, no judgment.
 
   <example>
-  Context: Build-loop Phase 9 REVIEW kicking off self-improvement scan
+  Context: Build-loop Phase 6 Learn kicking off self-improvement scan
   user: "Scan recent build-loop runs for recurring patterns worth proposing as skills"
   assistant: "I'll use the recurring-pattern-detector agent to surface repeating signals from the state.json log."
   </example>
@@ -105,14 +105,14 @@ Emit a single JSON object to stdout. Nothing else. No markdown fences. No prose.
       "count": 4,
       "confidence": "high",
       "evidence": [
-        { "date": "2026-04-10", "goal": "add auth", "detail": "Phase 5 failed — type error in middleware, 2 attempts" },
-        { "date": "2026-04-12", "goal": "add webhook", "detail": "Phase 5 failed — same type error pattern" }
+        { "date": "2026-04-10", "goal": "add auth", "detail": "Review-B failed — type error in middleware, 2 attempts" },
+        { "date": "2026-04-12", "goal": "add webhook", "detail": "Review-B failed — same type error pattern" }
       ],
       "proposal": {
         "skillSkeleton": {
           "name": "auto-middleware-typegen",
           "trigger": "when Phase 4 edits a middleware file and TS path aliases are involved",
-          "purpose": "Auto-generate type-safe middleware scaffolding so Phase 5 type check does not fail on path resolution."
+          "purpose": "Auto-generate type-safe middleware scaffolding so Review-B type check does not fail on path resolution."
         }
       }
     }

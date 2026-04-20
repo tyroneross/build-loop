@@ -6,7 +6,7 @@ argument-hint: <artifact-name>
 
 # /build-loop:promote-experiment <name>
 
-Promote a proven experimental artifact into the build-loop plugin itself. This is the manual, user-approved counterpart to Phase 9's auto-promote — which stays local to the project. Cross-project promotion modifies the plugin repo and affects every user, so it is never automatic.
+Promote a proven experimental artifact into the build-loop plugin itself. This is the manual, user-approved counterpart to Phase 6 Learn's auto-promote — which stays local to the project. Cross-project promotion modifies the plugin repo and affects every user, so it is never automatic.
 
 ## Prerequisites
 
@@ -90,7 +90,7 @@ If user approved promotion:
 5. Update the plugin's `skills/build-loop/SKILL.md` capability routing table to reference the new skill if it fits an existing row, OR add a new row (ask the user which).
 6. Commit:
    ```
-   feat(skills): promote <name> from Phase 9 self-improvement
+   feat(skills): promote <name> from Phase 6 Learn
 
    Originated as auto-drafted experimental skill in <project>.
    Aggregate track record: P projects, Q runs, +X% vs baseline
@@ -114,7 +114,7 @@ Do not delete the local artifact — it stays in `.build-loop/skills/active/<nam
 
 ## Safety rails
 
-- **Never auto-invoke**. Phase 9 auto-promote stops at the project boundary. This command is the only path to the plugin repo.
+- **Never auto-invoke**. Phase 6 Learn auto-promote stops at the project boundary. This command is the only path to the plugin repo.
 - **Require user confirmation**. AskUserQuestion is mandatory.
 - **Always open a PR**, never commit to main directly. Plugin maintainers review before merge.
 - **Preserve provenance**. Frontmatter records the source project, baseline, and delta. If the promoted skill regresses in a cross-project context, the track record makes rollback decisions clear.
@@ -122,6 +122,6 @@ Do not delete the local artifact — it stays in `.build-loop/skills/active/<nam
 
 ## Related
 
-- Phase 9 auto-promote (project-local): `skills/self-improve/SKILL.md`
+- Phase 6 Learn auto-promote (project-local): `skills/self-improve/SKILL.md`
 - User removal override: `.build-loop/skills/.demoted` file or `rm -rf .build-loop/skills/active/<name>/`
 - Global cross-project evidence index: `~/.build-loop/experiments/<name>.jsonl` (appended on every applied run across projects)

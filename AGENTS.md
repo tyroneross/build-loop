@@ -1,6 +1,6 @@
 # Build Loop
 
-Orchestrated 9-phase development loop for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
+Orchestrated 5-phase development loop (+1 optional) for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
 
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
@@ -8,15 +8,12 @@ Orchestrated 9-phase development loop for significant multi-step code changes. U
 
 | # | Phase | Purpose | Output |
 |---|-------|---------|--------|
-| 1 | **Assess** | Understand current state — project type, architecture, available tools, prior state | Assessment summary |
-| 2 | **Define** | State the goal in concrete terms, design 3-5 scoring criteria with pass/fail conditions | Goal file + scoring criteria |
-| 3 | **Plan** | Break work into tasks with dependency order, identify parallel-safe groups | Plan with dependency graph |
-| 4 | **Execute** | Build it — dispatch parallel work for independent file groups | Working implementation |
-| 5 | **Validate** | Evaluate against scoring criteria from Phase 2 | Scorecard with pass/fail + evidence |
-| 6 | **Iterate** | Fix failures, re-validate only failed criteria (5 iterations max) | Updated scorecard |
-| 7 | **Fact Check** | Verify all rendered data traces to real sources, scan for mock/placeholder data | Verification report |
-| 8 | **Report** | Present final scorecard with verified/unknown/unfixed categories, append run to state.json | Final report + run log |
-| 9 | **Review** | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking | Experimental artifacts + synthesis |
+| 1 | **Assess** | Understand state (project type, architecture, tools, prior state) AND define goal + 3-5 scoring criteria with pass/fail conditions | State summary + `.build-loop/goal.md` |
+| 2 | **Plan** | Break work into tasks with dependency order, identify parallel-safe groups | Plan with dependency graph |
+| 3 | **Execute** | Build it — dispatch parallel work for independent file groups | Working implementation |
+| 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report — six ordered sub-steps, single exit point | Scorecard + evidence; routes to Iterate on failure |
+| 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) | Updated scorecard |
+| 6 | **Learn** (optional) | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking; auto-promote on metric wins when enabled | Experimental artifacts + synthesis |
 
 ## Core Principles
 
@@ -30,14 +27,16 @@ Orchestrated 9-phase development loop for significant multi-step code changes. U
 
 ### Phase 1: Assess
 
+Combines situational awareness with goal definition so Plan has everything it needs.
+
+**Understand state:**
 - Detect project type and tooling (language, framework, test runner, linter, build system)
 - Map relevant architecture (only what the goal touches)
 - Check for prior state (`.build-loop/state.json` from interrupted builds)
 - If goal involves external frameworks or APIs: research current docs before planning
 - If web/mobile UI: capture current visual state for before/after comparison
 
-### Phase 2: Define
-
+**Define goal + criteria:**
 - State the goal in one concrete sentence — what will be true when this succeeds?
 - Design 3-5 scoring criteria. Each criterion must have:
   - A clear pass condition
@@ -50,7 +49,7 @@ Orchestrated 9-phase development loop for significant multi-step code changes. U
 - Code-based graders first (test pass/fail, lint clean, build succeeds, type check passes).
 - LLM-as-judge only for criteria code can't evaluate (UX quality, naming clarity, etc.).
 
-### Phase 3: Plan
+### Phase 2: Plan
 
 - Break work into tasks with exact file paths
 - Identify dependency order — what must complete before what?
@@ -58,7 +57,7 @@ Orchestrated 9-phase development loop for significant multi-step code changes. U
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
 
-### Phase 4: Execute
+### Phase 3: Execute
 
 - Dispatch parallel work for independent file groups
 - Each worker gets minimal context + integration contract (what interfaces to implement)
@@ -66,76 +65,65 @@ Orchestrated 9-phase development loop for significant multi-step code changes. U
 - Surface pre-existing issues separately from new work
 - Checkpoint after major integration points
 
-### Phase 5: Validate
+### Phase 4: Review
 
-Run every scoring criterion from Phase 2:
+Six ordered sub-steps; intermediate failures route to Iterate, final pass writes Report artifacts.
 
-1. Code-based graders first (fast, deterministic):
-   - Test suite: run and check exit code
-   - Linter: run and check exit code
-   - Type checker: run and check exit code
-   - Build: run and check exit code
+**Sub-step A — Critic (adversarial read-only)**: dispatch a read-only reviewer against the diff. Catch scope drift, missed edge cases, rubric violations before spending tokens on full validation. Strong-checkpoint findings route back to Execute (no iteration burn); guidance findings are logged.
 
-2. LLM-as-judge graders second (for nuanced criteria):
-   - Present criterion, pass condition, and evidence
-   - Judge reasons internally, outputs only PASS or FAIL
-
-3. Collect evidence for every result — no pass/fail without proof.
-
-**Scorecard format:**
+**Sub-step B — Validate**: code-based graders first (test, lint, type, build), LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Scorecard format:
 
 | # | Criterion | Method | Result | Evidence |
 |---|-----------|--------|--------|----------|
 | 1 | Tests pass | code | PASS | exit 0, 47/47 |
 | 2 | No lint errors | code | FAIL | 3 errors in auth.ts |
 
-### Phase 6: Iterate
+**Sub-step C — Optimize (opt-in)**: runs only when a mechanical metric exists and the user hasn't disabled it. 3-5 iterations polish. Uses autoresearch pattern: constrained scope + metric + atomic changes + commit-or-revert.
 
-For each failed criterion:
+**Sub-step D — Fact-Check & Mock Scan**: three gates in parallel.
+
+- *Fact Check*: trace every rendered metric (%, $, score, count) to source. Flag "always", "never", "100%", "guaranteed" — replace unless genuinely absolute.
+- *Mock Data Scan*: production paths only. Detect lorem ipsum, faker, hardcoded fake values, `Math.random()` in display, placeholder text. Classify blocking (renders to user) vs warning.
+- *Architectural Violations* (if available): `navgator rules --json`. Blocking: circular-dependency, layer-violation, database-isolation, frontend-direct-db. Warning: hotspot, high-fan-out, orphan.
+
+Blocking issues (any gate) route to Iterate. Warnings land in Report.
+
+**Sub-step E — Simplify**: trim the diff — inline single-use helpers, delete dead branches, remove validation for upstream-guaranteed invariants. Preserve public API, tests, observability.
+
+**Sub-step F — Report** (only on final Review pass):
+- **Scorecard** with final pass/fail per criterion + evidence
+- **Verified** (working with evidence), **Unknown** (untested), **Unfixed** (post-cap)
+- **Discovered issues**: pre-existing problems from assessment
+- **Fact check results**: warnings from sub-step D
+
+Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. Append run entry to `.build-loop/state.json.runs[]` with `run_id`, phase statuses, files touched, diagnostic commands, manual interventions, active experimental artifacts.
+
+### Phase 5: Iterate
+
+For each failed criterion flagged by Review:
 1. Diagnose root cause (not just symptoms)
 2. Create targeted fix plan
 3. Execute fix
-4. Re-validate ONLY failed criteria
+4. Loop back to Review sub-step B (Validate). Sub-step A usually skipped unless the fix touched new files.
 
 **Convergence rules:**
 - If a criterion fails 3 times with the same root cause: escalate to user
 - If fixing one criterion breaks another: stop, reassess approach
 - If score doesn't improve after 2 consecutive iterations: change strategy, don't repeat
-- **Hard stop at 5 iterations.** Report current state and let the user decide.
+- **Hard stop at 5 iterations.** Proceed to Review sub-step F with remaining ❓ Unfixed.
 
 Log iteration state to `.build-loop/state.json`.
 
-### Phase 7: Fact Check & Mock Scan
+### Phase 6: Learn (optional)
 
-Two verification gates, run in parallel:
+Runs after Review sub-step F on every build unless disabled or `runs[]` has fewer than 3 entries.
 
-**Gate A — Fact Check:**
-- Trace every rendered metric (%, $, score, count) to its data source
-- Flag unverifiable claims in code, comments, or output
-- Catch extreme language: "always", "never", "100%", "guaranteed" — replace with qualified language unless genuinely absolute
-- Verify scoring logic produces displayed values (no hardcoded display values without backing computation)
+- **Detect**: pattern detector scans `state.json.runs[]` for recurring `phase_failure` + `manual_intervention` signals.
+- **Draft**: for each kept pattern, architect agent writes experimental SKILL.md with A/B Experiment section (sample target 8 non-confounded runs).
+- **Signoff**: Opus reviews each draft; APPROVE / REVISE (1 retry) / DISCARD.
+- **Sample sweep**: for existing experimental artifacts with sample complete, auto-promote to `active/` (only when `autoPromote: true` config is set AND effective non-confounded sample ≥ 8 AND non-regression). Regressions and inconclusive results write proposals, never auto-delete.
 
-**Gate B — Mock Data Scan:**
-- Scan production code paths (exclude test files, fixtures, dev-only code)
-- Detect: lorem ipsum, faker usage, hardcoded fake names/emails/prices, placeholder text in rendered output, `Math.random()` generating user-facing values, stubs replacing real implementations
-- Classify: blocking (renders to user) vs warning (internal only)
-
-**Resolution:**
-- Blocking issues route back to Phase 6
-- Warnings included in Phase 8 report
-
-### Phase 8: Report
-
-Present final results:
-
-- **Scorecard** with final pass/fail per criterion
-- **Verified** (confirmed working with evidence)
-- **Unknown** (untested or uncertain areas)
-- **Unfixed** (remaining issues after iteration cap)
-- **Discovered issues** (pre-existing problems found during assessment)
-- **Fact check results** (any warnings from Phase 7)
-
-Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
+User controls: `rm -rf .build-loop/skills/experimental/<name>/`, `.build-loop/skills/.demoted` blocklist, `autoSelfImprove: false` disables the phase entirely.
 
 ## Project Data
 
@@ -161,4 +149,4 @@ After every build, if something surprising happened, append one line to `.build-
 YYYY-MM-DD | what happened | what to do differently
 ```
 
-These entries are loaded during Phase 1 of future builds to prevent repeating mistakes.
+These entries are loaded during Phase 1 (Assess) of future builds to prevent repeating mistakes.

@@ -1,8 +1,10 @@
 # Build Loop Plugin
 
-Orchestrated 9-phase development loop for significant multi-step code changes.
+Orchestrated 5-phase development loop (+1 optional) for significant multi-step code changes.
 
-**Phases**: Assess → Define → Plan → Execute → Validate → Iterate (5x max) → Fact Check → Report → Review (self-improve)
+**Phases**: Assess → Plan → Execute → Review → Iterate (5x max). Optional: Learn (cross-build pattern detection).
+
+Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report.
 
 ## Principles
 
@@ -15,11 +17,11 @@ Orchestrated 9-phase development loop for significant multi-step code changes.
 
 ## Claude Code Integration
 
-- `/build-loop [goal]` — triggers the build-loop skill which orchestrates all 9 phases
-- `/build-loop:self-improve` — run Phase 9 alone against recent runs without a new build
+- `/build-loop [goal]` — triggers the build-loop skill which orchestrates all 5 phases
+- `/build-loop:self-improve` — run Phase 6 Learn alone against recent runs without a new build
 - Build orchestrator agent (Opus 4.7) coordinates phase execution and spawns parallel subagents
-- Fact-checker and mock-scanner agents run in parallel during Phase 7
-- Recurring-pattern-detector (Haiku) + self-improvement-architect (Sonnet) run during Phase 9
+- Fact-checker and mock-scanner agents run in parallel during Review sub-step D
+- Recurring-pattern-detector (Haiku) + self-improvement-architect (Sonnet) run during Phase 6 Learn
 - External skills used when available: `writing-plans`, `subagent-driven-development`, `calm-precision`, `verification-before-completion`, `plugin-dev:skill-development`, `navgator` — phases degrade gracefully without them
 
 ## Model Tiering
@@ -39,8 +41,10 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 - `feedback.md` — post-build lessons
 - `evals/` — scorecard archives
 - `issues/` — discovered issues
-- `skills/experimental/` — auto-drafted skills from Phase 9 (remove with `rm -rf`)
-- `agents/experimental/` — auto-drafted agents from Phase 9
+- `skills/experimental/` — auto-drafted skills from Phase 6 Learn (remove with `rm -rf`)
+- `agents/experimental/` — auto-drafted agents from Phase 6 Learn
+- `skills/active/` — auto-promoted skills (opt-in; requires `autoPromote: true` + effective sample ≥ 8)
+- `proposals/` — pending promotion/removal proposals awaiting user confirmation
 - `experiments/<name>.jsonl` — A/B tracking log per experimental artifact
 - `experiments/discarded.jsonl` — Opus-rejected drafts with reasons
 

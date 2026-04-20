@@ -4,7 +4,7 @@ description: |
   Fast, lightweight scan for residual mock, placeholder, or fake data in production code paths.
 
   <example>
-  Context: Build loop Phase 7 — scanning for mock data before release
+  Context: Build loop Review sub-step D — scanning for mock data before release
   user: "Scan for any leftover test data in production code"
   assistant: "I'll use the mock-scanner agent to find placeholder and fake data in production paths."
   </example>

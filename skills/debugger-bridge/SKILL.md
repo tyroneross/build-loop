@@ -1,7 +1,7 @@
 ---
 name: build-loop:debugger-bridge
 description: >-
-  Memory-first debugger integration for Phase 5 (VALIDATE) and Phase 6 (ITERATE).
+  Memory-first debugger integration for Review sub-step B (Validate) and Iterate (ITERATE).
   When a criterion fails or iteration gets stuck, calls claude-code-debugger's
   `checkMemoryWithVerdict()` before re-planning. Verdict routes to one of —
   apply known fix, adapt prior incident, parallel multi-domain assessment, or
@@ -12,11 +12,11 @@ user-invocable: false
 
 # Debugger Bridge
 
-Folds claude-code-debugger into build-loop surgically. Instead of blind retries at Phase 6, check institutional memory first. Most bugs recur; if the debugger has seen this class before, apply the known fix or adapt prior incident notes.
+Folds claude-code-debugger into build-loop surgically. Instead of blind retries at Iterate, check institutional memory first. Most bugs recur; if the debugger has seen this class before, apply the known fix or adapt prior incident notes.
 
 **Use at:**
-- Phase 5 VALIDATE — when any criterion fails with an error-like signal (exception, test failure, build error)
-- Phase 6 ITERATE — before each retry attempt, not just once
+- Review-B — when any criterion fails with an error-like signal (exception, test failure, build error)
+- Iterate — before each retry attempt, not just once
 
 **Skip when:**
 - `availablePlugins.claudeCodeDebugger` is false → use `fallbacks.md#debug` inline guidance
@@ -28,7 +28,7 @@ Folds claude-code-debugger into build-loop surgically. Instead of blind retries 
 Check installation:
 
 ```bash
-# Via state.json set in Phase 1
+# Via state.json set in Assess
 jq -r '.availablePlugins.claudeCodeDebugger' .build-loop/state.json
 ```
 
@@ -38,9 +38,9 @@ If `true`, proceed. If `false`, emit:
 Debugger memory: claude-code-debugger not installed. Using inline debug fallback.
 ```
 
-## Phase 1 — Context priming (optional, cheap)
+## Assess — Context priming (optional, cheap)
 
-At the start of Phase 1 ASSESS, pull recent project incident context so the orchestrator is aware of what's been failing lately:
+At the start of Assess, pull recent project incident context so the orchestrator is aware of what's been failing lately:
 
 ```
 mcp__plugin_claude_code_debugger__list({ filter: { project: "<current>" }, limit: 10 })
@@ -48,9 +48,9 @@ mcp__plugin_claude_code_debugger__list({ filter: { project: "<current>" }, limit
 
 Summarize in one line for the orchestrator log: "Debugger memory: N recent incidents in this project, top categories: [db, frontend]." No action, just context. If memory is empty, skip silently.
 
-## Phase 5 — Pre-Fail Memory Gate
+## Review-B — Pre-Fail Memory Gate
 
-Before marking a criterion as FAIL and routing to Phase 6, query debugger memory.
+Before marking a criterion as FAIL and routing to Iterate, query debugger memory.
 
 ### Steps
 
@@ -65,13 +65,13 @@ Before marking a criterion as FAIL and routing to Phase 6, query debugger memory
    })
    ```
 
-   If log entries are returned, incorporate them into the symptom string below. If `read_logs` returns nothing but the test failed silently, flag `evidence_gap: true` in the gate record — Phase 6 escalation may need `logging-tracer-bridge` to restore visibility before debugger memory is useful.
+   If log entries are returned, incorporate them into the symptom string below. If `read_logs` returns nothing but the test failed silently, flag `evidence_gap: true` in the gate record — Iterate escalation may need `logging-tracer-bridge` to restore visibility before debugger memory is useful.
 
 1. **Synthesize a symptom string**. Take the failed criterion's evidence (test output, error message, type error) and compress to a single line < 200 chars. Preserve the error type, file, and key phrase.
 
    Good:
    ```
-   Phase 5 FAIL: criterion "tests pass" — TypeError: Cannot read properties of undefined (reading 'middleware') at src/auth/session.ts:42
+   Review-B FAIL: criterion "tests pass" — TypeError: Cannot read properties of undefined (reading 'middleware') at src/auth/session.ts:42
    ```
 
    Bad (too broad):
@@ -95,16 +95,16 @@ Before marking a criterion as FAIL and routing to Phase 6, query debugger memory
 
 3. **Act on verdict — all verdicts treat memory as a hypothesis, not a patch**:
 
-   The adversarial review flagged that compressing a failure to a single-line symptom and then applying a historical fix directly can overfit on superficially similar incidents (same error string, different root cause / version / layer). Direct-apply is now gated behind strict match requirements. By default, every verdict routes to Phase 6 as an adapted plan — never as a skip.
+   The adversarial review flagged that compressing a failure to a single-line symptom and then applying a historical fix directly can overfit on superficially similar incidents (same error string, different root cause / version / layer). Direct-apply is now gated behind strict match requirements. By default, every verdict routes to Iterate as an adapted plan — never as a skip.
 
    | Verdict | Default action | Direct-apply? |
    |---|---|---|
-   | `KNOWN_FIX` (>80% confidence, exact symptom match) | Load the top incident's detail. Adapt the fix to current context. Route to Phase 6 with the adapted fix as the plan. | Only if **all three** secondary signals match (see below) |
-   | `LIKELY_MATCH` (60-80%, multiple similar) | Load the top incident's detail. Adapt the fix to current context. Route to Phase 6 as the plan. | No |
-   | `WEAK_SIGNAL` (30-60%, loosely related) | Note the similar incident in the Phase 6 plan as a reference, but investigate normally. | No |
-   | `NO_MATCH` (<30%) | Fall through to standard Phase 6 behavior. Record the failure for future memory (Phase 8 store). | No |
+   | `KNOWN_FIX` (>80% confidence, exact symptom match) | Load the top incident's detail. Adapt the fix to current context. Route to Iterate with the adapted fix as the plan. | Only if **all three** secondary signals match (see below) |
+   | `LIKELY_MATCH` (60-80%, multiple similar) | Load the top incident's detail. Adapt the fix to current context. Route to Iterate as the plan. | No |
+   | `WEAK_SIGNAL` (30-60%, loosely related) | Note the similar incident in the Iterate plan as a reference, but investigate normally. | No |
+   | `NO_MATCH` (<30%) | Fall through to standard Iterate behavior. Record the failure for future memory (Review-F store). | No |
 
-   **Direct-apply gate for `KNOWN_FIX`** — all three must hold or the verdict falls back to "adapted plan in Phase 6":
+   **Direct-apply gate for `KNOWN_FIX`** — all three must hold or the verdict falls back to "adapted plan in Iterate":
 
    1. **File match**: at least one of the incident's `files[]` exists at the same path in the current project (string match on suffix is acceptable — e.g. `src/auth/session.ts` matches even if relative vs absolute).
    2. **Version match**: if the incident records a framework/library version (e.g. `next@14`, `prisma@5.8`), the current project's equivalent version must be within the same major (and same minor for libraries with pre-1.0 semver). If no version metadata on the incident, this check defaults to "fail" — no direct-apply.
@@ -115,7 +115,7 @@ Before marking a criterion as FAIL and routing to Phase 6, query debugger memory
 
    If any of the three fails, downgrade to adapted-plan routing. Record the downgrade in the gate log with `direct_apply_blocked_by: "version_mismatch" | "no_file_overlap" | "no_secondary_signal"`.
 
-   **Why this is strict**: a bad direct-apply mutates the codebase on a lossy match and then Phase 8 stores the (wrong) outcome back to memory, reinforcing the false association. The cost of occasionally skipping a legitimate direct-apply is small; the cost of one overfit mutation compounding across sessions is large.
+   **Why this is strict**: a bad direct-apply mutates the codebase on a lossy match and then Review-F stores the (wrong) outcome back to memory, reinforcing the false association. The cost of occasionally skipping a legitimate direct-apply is small; the cost of one overfit mutation compounding across sessions is large.
 
 4. **Record the verdict** in `.build-loop/state.json.debuggerGates.phase5`:
 
@@ -130,9 +130,9 @@ Before marking a criterion as FAIL and routing to Phase 6, query debugger memory
    }
    ```
 
-## Phase 6 — Stuck-Iteration Escalation
+## Iterate — Stuck-Iteration Escalation
 
-After Phase 6 attempt N fails and before attempt N+1, escalate based on failure count and diversity.
+After Iterate attempt N fails and before attempt N+1, escalate based on failure count and diversity.
 
 ### Escalation rules
 
@@ -159,7 +159,7 @@ When the failure symptom touches multiple layers (search queries are slow AND re
 
 3. **Model override**: when invoking from build-orchestrator (Opus 4.7), explicitly pass `model: sonnet` to each domain assessor via the subagent dispatch to avoid 4 parallel Opus invocations. Only escalate individual assessors to Opus if their initial output flags `confidence: low` or `needs_judgment: true`.
 
-4. Aggregate the assessors' ranked findings. Use the top action as the Phase 6 attempt N+1 plan.
+4. Aggregate the assessors' ranked findings. Use the top action as the Iterate attempt N+1 plan.
 
 ### Causal-tree investigation
 
@@ -170,24 +170,24 @@ When the bug is not multi-layer but deep (same root-cause symptom keeps reappear
    ```
    Skill("claude-code-debugger:debug-loop") with input {
      symptom,
-     reproductionSteps: <from Phase 5 evidence>,
-     previousAttempts: <Phase 6 diffs so far>
+     reproductionSteps: <from Review-B evidence>,
+     previousAttempts: <Iterate diffs so far>
    }
    ```
 
 2. `debug-loop` runs 7 internal phases (investigate → hypothesize → fix → verify → score → critique → report), up to 5 iterations, with `root-cause-investigator` and `fix-critique` agents.
 
-3. When it returns, the fix (if any) is already applied. Build-loop's Phase 6 validates against its original criteria. If it passes, proceed. If it fails after 5 internal debug-loop iterations, hard-stop and escalate to user.
+3. When it returns, the fix (if any) is already applied. Build-loop's Iterate validates against its original criteria. If it passes, proceed. If it fails after 5 internal debug-loop iterations, hard-stop and escalate to user.
 
 4. Result is stored in debugger memory automatically via its own `store` tool.
 
-## Phase 8 — Store for Future Memory + Outcome Feedback
+## Review-F — Store for Future Memory + Outcome Feedback
 
 When a build completes (pass or fail), close the feedback loop to debugger memory in two steps:
 
 ### Step A — Store resolved incidents (write new knowledge)
 
-For each Phase 5/6 failure resolved during this run, store the incident:
+For each Review-B/Iterate failure resolved during this run, store the incident:
 
 ```
 mcp__plugin_claude_code_debugger__store({
@@ -201,7 +201,7 @@ mcp__plugin_claude_code_debugger__store({
 
 ### Step B — Report outcomes on applied memory (train verdict classification)
 
-For each Phase 5 gate entry in `.build-loop/state.json.debuggerGates` where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied, report back whether the suggested fix actually worked:
+For each Review-B gate entry in `.build-loop/state.json.debuggerGates` where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied, report back whether the suggested fix actually worked:
 
 ```
 mcp__plugin_claude_code_debugger__outcome({
@@ -211,8 +211,8 @@ mcp__plugin_claude_code_debugger__outcome({
 })
 ```
 
-- `worked`: applied as-is, resolved Phase 5 criterion on first attempt
-- `modified`: applied the suggested approach but had to adapt substantially (Phase 6 iteration count > 1 on that criterion)
+- `worked`: applied as-is, resolved Review-B criterion on first attempt
+- `modified`: applied the suggested approach but had to adapt substantially (Iterate attempt count > 1 on that criterion)
 - `failed`: applied but criterion still failed; eventually resolved via different fix or not at all
 
 This is the training signal that makes the verdict classifier better over time. Skipping this step means the debugger's verdicts never improve from your builds. **Always call `outcome` for applied gates, even on build failures** — "worked" vs "failed" is meaningful in both outcomes.
@@ -228,20 +228,20 @@ This is what makes the memory-first gate useful on the next run. Do not skip sto
 | LIKELY_MATCH adaptation | Sonnet |
 | Parallel assessors | Sonnet (override debugger default `inherit` to prevent 4× Opus) |
 | Causal-tree (`debug-loop`) | Sonnet by default; internal escalation to Opus on strong-checkpoint |
-| `store` call (Phase 8) | inline, no model |
+| `store` call (Review-F) | inline, no model |
 
 ## What This Skill Does NOT Do
 
-- Does not replace Phase 5 VALIDATE or Phase 6 ITERATE — it augments them
-- Does not write to debugger memory automatically at Phase 5 — store only at Phase 8 when resolution is known
+- Does not replace Review-B Validate or Iterate ITERATE — it augments them
+- Does not write to debugger memory automatically at Review-B — store only at Review-F when resolution is known
 - Does not override build-loop's 5-iteration hard stop
 - Does not invoke the debugger's `logging-tracer` skill (out of scope; add when needed separately)
 
 ## Integration with Orchestrator
 
 Build-orchestrator dispatches this skill at:
-- Phase 5, immediately after any criterion marked FAIL (before routing to Phase 6)
-- Phase 6, at the start of each attempt (not just attempt 1)
-- Phase 8, once per build, to store resolved incidents
+- Review-B, immediately after any criterion marked FAIL (before routing to Iterate)
+- Iterate, at the start of each attempt (not just attempt 1)
+- Review-F, once per build, to store resolved incidents
 
-Orchestrator reads `.build-loop/state.json.debuggerGates.*` for dashboard visibility and Phase 9 self-improvement signals.
+Orchestrator reads `.build-loop/state.json.debuggerGates.*` for dashboard visibility and Phase 6 Learn signals.

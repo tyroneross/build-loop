@@ -111,10 +111,10 @@ These skills enhance the loop when available but are not required:
 
 | Skill | Used In | Without It |
 |-------|---------|------------|
-| `writing-plans` | Phase 3 | Write plan directly with file paths and dependency order |
-| `subagent-driven-development` | Phase 4 | Dispatch parallel agents manually |
-| `calm-precision` | Phase 4 (UI) | Use standard UI best practices |
-| `verification-before-completion` | Phase 8 | Run test/build/lint and confirm output manually |
+| `writing-plans` | Phase 2 (Plan) | Write plan directly with file paths and dependency order |
+| `subagent-driven-development` | Phase 3 (Execute) | Dispatch parallel agents manually |
+| `calm-precision` | Phase 3 (Execute, UI) | Use standard UI best practices |
+| `verification-before-completion` | Phase 4 (Review sub-step B) | Run test/build/lint and confirm output manually |
 
 ## Cross-Tool Support
 
