@@ -5,13 +5,13 @@ description: Use when making significant multi-step code changes requiring plann
 
 # Build Loop — Orchestrated Development
 
-An 8-phase development loop: assess current state, define goals with scoring criteria, plan and optimize execution, build with parallel agents, validate against internal evals, iterate on failures, fact-check output, and report results.
+A 9-phase development loop: assess current state, define goals with scoring criteria, plan and optimize execution, build with parallel agents, validate against internal evals, iterate on failures, fact-check output, report results, and self-improvement review.
 
 ## Routing
 
 Build-loop supports three modes, routed by the orchestrator:
 
-- **Build** (default): Full 8-phase loop for implementation tasks
+- **Build** (default): Full 9-phase loop for implementation tasks
 - **Optimize**: Autoresearch-pattern optimization for measurable metrics (`/build-loop:optimize`)
 - **Research**: Pre-decision analysis that produces a research packet (`/build-loop:research`)
 
