@@ -280,6 +280,8 @@ Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violatio
 
 Test every criterion from Assess with evidence.
 
+**UI validation when IBR is absent**: paste `fallbacks.md#web-ui` into the validation subagent prompt. The fallback contains 10 specific grep checks (Gestalt violations, touch targets, missing handlers, missing aria-labels, status-pill anti-patterns, off-token colors, non-8pt spacing, console leftovers, mock data) plus a file-check matrix for landmarks, focus styles, and viewport tags. Findings get `⚠️ static-analysis only — install IBR for computed-CSS verification` flag in the Review-F report. This is the standalone UI validation path — degraded vs IBR, but not silent.
+
 **Code-based graders first** (fast, deterministic):
 ```
 test suite       → pass/fail

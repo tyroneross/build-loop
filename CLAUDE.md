@@ -8,12 +8,13 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Principles
 
-- Self-sufficient: works without any specific tool installed
+- Self-sufficient: works without any specific tool installed. Bridges to NavGator, claude-code-debugger, IBR, etc. all have **standalone fallbacks** in `skills/build-loop/fallbacks.md` — degraded-but-useful behavior when upstream plugins are absent, not skip-silently.
 - Tools loaded on demand, not pre-loaded
 - Guidelines for the creation process, guardrails for user-facing output
 - No false data, no mock data in production, no unverified claims
 - Diagnose before fixing, converge or escalate
 - Learn from recurring patterns — auto-draft experimental skills with A/B comparison, user keeps or removes
+- Cherry-pick from companion tools, don't embed. The companion repos (NavGator, claude-code-debugger, IBR) stay independent; bridges only consume their relevant outputs/skills. When companions are absent, fallbacks.md carries the **knowledge of what to look for** even if the deep execution isn't available.
 
 ## Claude Code Integration
 

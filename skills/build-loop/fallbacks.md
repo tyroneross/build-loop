@@ -4,11 +4,15 @@ Inline guidance the orchestrator embeds in subagent prompts when a preferred plu
 
 Each section is self-contained. Keep prose tight: the goal is "capture the concept" for new users without the full toolkit, not to replicate the plugin.
 
+**Design principle**: fallbacks are degraded-but-useful, not skip-silently. Build-loop should carry knowledge of *what to look for* even when it can't run the deep validation. Every section below names specific files, grep patterns, or commands — not just "investigate carefully."
+
 ---
 
 ## web-ui — Web UI build / validation
 
-Design principles (Calm Precision, condensed from global `CLAUDE.md`):
+**Standalone mode when IBR is not installed.** Build-loop cannot compute CSS values or drive a browser, but it CAN grep the code for specific violations the IBR scan would have caught. The checks below are the minimum-viable static-analysis subset.
+
+### Design principles (Calm Precision, condensed from global `CLAUDE.md`)
 
 - **Grouping**: single border around related items; dividers between rows. Never individual borders on list items.
 - **Hierarchy**: Title 14–16px bold → Description 12–14px → Metadata 11–12px muted.
@@ -21,13 +25,66 @@ Design principles (Calm Precision, condensed from global `CLAUDE.md`):
 - **Nav selected state**: text-gray-900, font-medium, 2px bottom border. Never background pills.
 - **Integrity**: no fake/placeholder buttons. Backend exists before UI.
 
-Validation without IBR:
+### Static grep checks (run these at Review-D Fact-Check when IBR absent)
 
-1. Visit the URL in a browser, DevTools open.
-2. Tab through interactive elements — every one must be reachable and visibly focused.
-3. Verify every button/link has a handler (click, submit, or `href`).
-4. Check console for errors and warnings.
-5. Screenshot the final state; compare against goal.
+Each check returns matches = potential violation. Not all matches are real violations — some are false positives. Review output manually; flag when confidence is high.
+
+```sh
+# 1. Gestalt — individual borders on items inside a list/map
+# Look for .map() returning elements with border styles
+grep -rn "\.map(" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | grep -B1 -A5 "border\|rounded-" | head -20
+
+# 2. Touch targets — buttons/links narrower than 44px
+# Catches explicit width props. Won't catch Tailwind classes without a second pass.
+grep -rnE "<(button|a)\s[^>]*(width|w-[0-9])" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | grep -vE "w-(full|auto|screen|[4-9][0-9]|1[0-9]{2,})" | head -20
+
+# 3. Interactive elements missing handlers
+# <button> without onClick or type="submit" is suspicious
+grep -rnE "<button[^>]*>" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | grep -v "onClick\|type=.submit.\|type=.reset." | head -20
+
+# 4. <a> without href or onClick
+grep -rnE "<a\s[^>]*>" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | grep -v "href=\|onClick=" | head -20
+
+# 5. Missing aria-label on icon-only buttons
+grep -rnE "<button[^>]*>\s*<(svg|Icon|[A-Z][a-zA-Z]*Icon)" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | grep -v "aria-label" | head -20
+
+# 6. Status rendered as background pill (signal-to-noise violation)
+# Common classes: bg-red-*, bg-green-*, bg-amber-* on small text
+grep -rnE "bg-(red|green|amber|yellow|orange)-[0-9]{3}.*text-[a-z]+-[0-9]{3}" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | head -20
+
+# 7. Hardcoded color hexes (should use tokens)
+grep -rnE "#[0-9a-fA-F]{3,8}\b" --include="*.tsx" --include="*.jsx" --include="*.css" src/ app/ 2>/dev/null | grep -v "^[^:]*:[0-9]*:\s*//\|^[^:]*:[0-9]*:\s*/\*" | head -20
+
+# 8. Non-8pt spacing (odd pixel values)
+grep -rnE "(padding|margin|gap|top|right|bottom|left):\s*([0-9]+)px" --include="*.css" --include="*.scss" src/ app/ 2>/dev/null | awk -F'[:p]' '{if($4 && $4!~/^(0|4|8|12|16|20|24|32|40|48|56|64)$/) print $0}' | head -20
+
+# 9. Console errors / warnings left in code
+grep -rnE "console\.(log|error|warn|debug)" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" src/ app/ 2>/dev/null | grep -v "\.test\.\|\.spec\.\|__tests__/" | head -20
+
+# 10. Mock data / faker / placeholder in production paths
+grep -rnE "(faker|@faker-js|lorem ipsum|PLACEHOLDER|TODO:.*REAL_DATA|Math\.random\(\))" --include="*.ts" --include="*.tsx" src/ app/ 2>/dev/null | grep -v "\.test\.\|\.spec\.\|__tests__/\|fixtures/" | head -20
+```
+
+### File-check matrix
+
+After greps, verify these files exist and have the right shape:
+
+| Check | File pattern | What it needs |
+|---|---|---|
+| Accessible landmarks | `app/layout.tsx` or `src/App.tsx` | `<main>`, `<nav>`, `<header>`, `<footer>` present |
+| Skip-to-content link | Same | `<a href="#main">Skip</a>` before nav |
+| Focus styles | global CSS | Explicit `:focus-visible` rule, not `outline: none` without replacement |
+| Keyboard shortcuts | Anywhere | `onKeyDown` handlers on non-button interactive elements (divs, spans with roles) |
+
+### Runtime validation (still available without IBR)
+
+If the dev server is running, also do:
+
+1. `curl -s -o /dev/null -w "%{http_code}" <url>` — page loads
+2. `curl -s <url> | grep -c '<meta name="viewport"'` — must be 1 (viewport tag present, mobile-responsive)
+3. User explicit manual check: tab through interactive elements, watch console, screenshot
+
+Report any failures in Review-D with file path + line number. Flag with `⚠️ static-analysis only — install IBR for computed-CSS verification`.
 
 ---
 
@@ -68,6 +125,69 @@ Source-of-truth check order:
 If none exist: ask the user. Do not invent a palette.
 
 When adding a new component: reuse existing tokens. Never introduce a new hex literal without confirming with the user.
+
+---
+
+## architecture — Blast-radius and impact analysis
+
+**Standalone mode when NavGator is not installed.** Build-loop cannot build a full dependency graph, but it CAN produce a useful approximation from git history, filesystem layout, and import greps. Less accurate than NavGator's AST-aware scan; good enough to scope Plan correctly.
+
+### Assess step (before Plan)
+
+Run these in order. Output goes to `.build-loop/state.json.architecture.standalone`.
+
+```sh
+# 1. Changed files (from the goal's scope or current diff)
+CHANGED=$(git diff --name-only origin/main..HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null)
+echo "$CHANGED"
+
+# 2. Layer classification by conventional directories
+# Map each changed file to a layer heuristic
+echo "$CHANGED" | while read f; do
+  case "$f" in
+    src/db/*|src/models/*|prisma/*|*migrations*) echo "db: $f" ;;
+    src/api/*|app/api/*|pages/api/*|src/routes/*) echo "backend: $f" ;;
+    src/components/*|app/*/page.tsx|app/*/layout.tsx|pages/*) echo "frontend: $f" ;;
+    src/workers/*|*queue*|*job*) echo "queue: $f" ;;
+    src/lib/*|src/utils/*|src/shared/*) echo "shared: $f" ;;
+    *.test.*|*.spec.*|__tests__/*) echo "test: $f" ;;
+    *) echo "other: $f" ;;
+  esac
+done
+
+# 3. 1-hop dependents — who imports these files?
+# For each changed file, grep for its module specifier across the repo
+echo "$CHANGED" | while read f; do
+  MODULE=$(echo "$f" | sed 's|^src/||; s|\.tsx\?$||; s|\.jsx\?$||; s|/index$||')
+  IMPORTERS=$(grep -rlE "from ['\"][@~/]*${MODULE}(/|'|\")" src/ app/ 2>/dev/null | grep -v "^$f$" | head -10)
+  echo "$f → imported by: $(echo $IMPORTERS | tr '\n' ' ')"
+done
+
+# 4. Hotspot detection — files with high git churn (proxy for high fan-in)
+# Top 10 most-changed files in the last 100 commits
+git log --pretty=format: --name-only -100 2>/dev/null | sort | uniq -c | sort -rn | head -10
+
+# 5. Circular-import smell — TypeScript compiler already catches these on `tsc --noEmit`
+# Run the type check and look for "Cannot find module" or "circular" in output
+# (Delegate to Review-B's type check grader; just note this is where cycles surface.)
+```
+
+### Risk flags
+
+Emit a risk flag when:
+- Changed files cross ≥3 layer classifications (e.g. frontend + backend + db in one build) — high blast radius
+- Any changed file appears in the top-5 hotspots from check #4 — concentration risk
+- 1-hop dependent count > 10 for any single changed file — fan-out concern
+- Changed files include both `src/db/` and `src/components/` without going through `src/api/` — possible frontend-direct-db layer violation
+
+### What this fallback cannot do (flag these as gaps)
+
+- Transitive (2-hop+) dependency tracing — NavGator's `graph.json` required
+- LLM prompt mapping (`navgator llm-map`) — needs the AST-aware scanner
+- Lessons/recurrence matching (`.navgator/lessons/`) — this is NavGator-specific storage
+- Post-change architectural rule enforcement (`navgator rules`) — requires full component classification
+
+When any of the above would materially affect the build (e.g. large refactor touching 20+ files, or a build that edits product LLM prompts), recommend installing NavGator rather than pushing forward with the fallback. Note this in the Review-F report as `⚠️ NavGator would improve confidence here`.
 
 ---
 
@@ -123,14 +243,59 @@ Stop after 3 failed hypotheses and escalate to the user with what was tried.
 
 ## bug-memory — Prior-bug lookup
 
-When `claude-code-debugger:debugging-memory` is unavailable, grep the consumer project:
+**Standalone mode when `claude-code-debugger:debugging-memory` is unavailable.** No verdict classifier, no cross-session training. Just a file-grep of this project's prior builds.
+
+### Query procedure
+
+Extract key tokens from the current failure (error class, function name, file path, distinctive noun). Then:
 
 ```sh
-grep -R -l "<error-substring>" .build-loop/issues/ 2>/dev/null
-grep -R -l "<error-substring>" .bookmark/ 2>/dev/null
+SYMPTOM="<your symptom string>"
+# Pull the 3-5 most distinctive words from SYMPTOM
+TOKENS=$(echo "$SYMPTOM" | tr ' ' '\n' | grep -E '^[A-Z][a-zA-Z]+$|^[a-z_]+[A-Z][a-zA-Z]+$|Error|Exception|timeout|undefined' | head -5)
+
+# Search local project history
+for T in $TOKENS; do
+  grep -R -l "$T" .build-loop/issues/ 2>/dev/null
+  grep -R -l "$T" .build-loop/feedback.md 2>/dev/null
+  grep -R -l "$T" .bookmark/ 2>/dev/null
+done | sort -u
 ```
 
-Read any matches before starting a fresh investigation. Do not dispatch a debug subagent without checking.
+### Degraded verdict (4 states, same shape as debugger-bridge)
+
+| State | Match rule | Action |
+|---|---|---|
+| `LOCAL_HIT_EXACT` | At least one file contains the full symptom string (case-insensitive substring match) | Read that file; adapt its recorded fix as the Iterate plan. Not direct-apply. |
+| `LOCAL_HIT_PARTIAL` | ≥2 tokens co-occur in the same file | Reference the file in the Iterate plan; investigate normally |
+| `LOCAL_WEAK` | 1 token match only | Note reference, investigate normally |
+| `LOCAL_NO_MATCH` | No files contain any tokens | Standard Iterate; write a new `.build-loop/issues/<slug>.md` after resolution |
+
+No confidence score (no classifier). No cross-project lookup. No automatic training signal back to the source — this is strictly read-only memory for one project.
+
+### Storage (write side)
+
+After resolving a failure, append to `.build-loop/issues/YYYY-MM-DD-<slug>.md`:
+
+```
+# <one-line title>
+
+**Symptom**: <error string as it appeared>
+**Root cause**: <what was actually wrong>
+**Fix**: <diff summary or description>
+**Files**: <paths touched>
+**Tags**: <layer>, <component>, <pattern>
+```
+
+Future builds will grep this file. Installing `claude-code-debugger` promotes this to a classified, cross-project, ranked memory — but the file-grep works standalone.
+
+---
+
+## logging-fallback — Observability when claude-code-debugger absent
+
+**Standalone mode when `claude-code-debugger:logging-tracer` is unavailable.** Minimum-viable Tier-1 structured logging per language. Covered in `skills/logging-tracer-bridge/SKILL.md` §"Fallback when upstream is absent" — the bridge already contains the standalone code. This fallback section exists only to point at the bridge:
+
+> For zero-dep structured-JSON logging in Node, Python, Go, or Rust, see `skills/logging-tracer-bridge/SKILL.md`. The bridge's Tier-1 fallback is a 5-8 line helper per language that writes to stderr and respects a `DEBUG_TRACE=1` env gate. This is the standalone path; nothing more elaborate is available without the debugger plugin.
 
 ---
 

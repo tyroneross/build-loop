@@ -48,11 +48,18 @@ Check installation:
 jq -r '.availablePlugins.claudeCodeDebugger' .build-loop/state.json
 ```
 
-If `true`, proceed. If `false`, emit:
+If `true`, run the steps in this skill against the debugger's MCP tools and skills.
 
-```
-Debugger memory: claude-code-debugger not installed. Using inline debug fallback.
-```
+If `false`, **run the standalone fallback** instead of skipping silently. Build-loop carries degraded-but-useful bug-memory when the debugger isn't installed:
+
+- **Load**: `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md` §`bug-memory` — executable token-extract + grep against `.build-loop/issues/`, `.build-loop/feedback.md`, and `.bookmark/`
+- **Verdict shape**: `LOCAL_HIT_EXACT` / `LOCAL_HIT_PARTIAL` / `LOCAL_WEAK` / `LOCAL_NO_MATCH` — same four-state interface as the classifier verdict, but from file grep. No confidence score. No direct-apply path (all verdicts route to Iterate as adapted plan).
+- **Storage**: after resolving a failure, write `.build-loop/issues/YYYY-MM-DD-<slug>.md` with `{symptom, root_cause, fix, files, tags}`. Future builds grep this file.
+- **Flag in Review-F report**: `⚠️ debugger memory via local grep — install claude-code-debugger for classified cross-project memory + training feedback loop`
+
+The fallback covers: this-project failure history, local pattern lookup, manual incident recording. It does NOT cover: cross-project memory, the verdict classifier, causal-tree investigation (`debug-loop`), parallel multi-domain assessment (`/assess`), or the `outcome` training signal — those require the debugger plugin.
+
+Do not error, do not block the build.
 
 ## Assess — Context priming (optional, cheap)
 
@@ -248,10 +255,11 @@ This is what makes the memory-first gate useful on the next run. Do not skip sto
 
 ## What This Skill Does NOT Do
 
-- Does not replace Review-B Validate or Iterate ITERATE — it augments them
+- Does not replace Review-B Validate or Iterate — it augments them
 - Does not write to debugger memory automatically at Review-B — store only at Review-F when resolution is known
 - Does not override build-loop's 5-iteration hard stop
-- Does not invoke the debugger's `logging-tracer` skill (out of scope; add when needed separately)
+- Does not invoke the debugger's `logging-tracer` skill directly (that's `logging-tracer-bridge`'s job)
+- Does not block a build when the debugger plugin is absent — routes to `fallbacks.md#bug-memory` for a standalone local-grep lookup instead of skipping silently
 
 ## Integration with Orchestrator
 

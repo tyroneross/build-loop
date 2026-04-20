@@ -38,13 +38,17 @@ Before either phase's logic runs, check:
 [ -f ".navgator/architecture/index.json" ] && echo "HAVE_NAVGATOR" || echo "NO_NAVGATOR"
 ```
 
-If `NO_NAVGATOR`, emit exactly one line to the report and skip:
+If `HAVE_NAVGATOR`, run the steps in this skill against the NavGator outputs.
 
-```
-NavGator: no architecture snapshot found (run /navgator:scan to enable blast-radius analysis).
-```
+If `NO_NAVGATOR`, **run the standalone fallback** instead of skipping silently. Build-loop carries degraded-but-useful architecture knowledge when NavGator isn't installed:
 
-Do not error, do not block the build. NavGator is optional.
+- **Load**: `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md` §`architecture` — executable grep/git commands that approximate Assess blast-radius
+- **Write output to**: `.build-loop/state.json.architecture.standalone` (distinct namespace from the NavGator-fed `.navgator` key so downstream phases can tell which source produced the data)
+- **Flag in Review-F report**: `⚠️ architecture analysis via static fallback — install NavGator for AST-aware dependency graph + rule enforcement`
+
+The fallback covers: layer classification by directory convention, 1-hop import grep, git-churn hotspot detection, risk flags for cross-layer/high-fan-out changes. It does NOT cover: transitive (2-hop+) tracing, LLM prompt mapping, or architectural rule enforcement — those require NavGator.
+
+Do not error, do not block the build. Standalone is the worst case; NavGator is better.
 
 ## Assess — Blast-Radius Read
 
@@ -207,7 +211,7 @@ The build-orchestrator dispatches this skill via the `Skill` tool during its Ass
 - Does not run `navgator scan` automatically — user owns scan freshness
 - Does not modify `.navgator/` outputs
 - Does not reinterpret NavGator's component classifications
-- Does not block a build when NavGator is not installed
+- Does not block a build when NavGator is not installed — routes to `fallbacks.md#architecture` for a standalone (degraded-but-useful) analysis instead of skipping silently
 
 ## Model
 
