@@ -1,6 +1,6 @@
 # Build Loop
 
-Orchestrated 8-phase development loop for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
+Orchestrated 9-phase development loop for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
 
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
@@ -15,7 +15,8 @@ Orchestrated 8-phase development loop for significant multi-step code changes. U
 | 5 | **Validate** | Evaluate against scoring criteria from Phase 2 | Scorecard with pass/fail + evidence |
 | 6 | **Iterate** | Fix failures, re-validate only failed criteria (5 iterations max) | Updated scorecard |
 | 7 | **Fact Check** | Verify all rendered data traces to real sources, scan for mock/placeholder data | Verification report |
-| 8 | **Report** | Present final scorecard with verified/unknown/unfixed categories | Final report |
+| 8 | **Report** | Present final scorecard with verified/unknown/unfixed categories, append run to state.json | Final report + run log |
+| 9 | **Review** | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking | Experimental artifacts + synthesis |
 
 ## Core Principles
 

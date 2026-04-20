@@ -35,18 +35,19 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
 | `verification-before-completion` | Phase 8 (Report) | Run all test/build/lint commands and confirm output before claiming completion |
 | `simplify` (slash: `/simplify`) | Phase 8 (after Report) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
+| `build-loop:self-improve` | Phase 9 (Review) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
 
 ### Capability routing table
 
 | Capability | Preferred | Secondary | Inline fallback section |
 |---|---|---|---|
-| Web UI build | `ibr:design-implementation`, `ibr:component-patterns` (web-ui), `calm-precision` | `frontend-design:frontend-design` | `fallbacks.md#web-ui` |
-| Web UI validation | `ibr:design-validation`, `ibr:scan`, `ibr:compare` | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
+| Web UI build | `ibr:scan-while-building`, `ibr:component-patterns`, `ibr:design-guidance`, `calm-precision` | `frontend-design:frontend-design` | `fallbacks.md#web-ui` |
+| Web UI validation | `ibr:design-validation`, `ibr:scan`, `compare` MCP tool | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
 | Orchestrated UI build | `/ibr:build --from=build-loop` | existing ibr skills in sequence | `fallbacks.md#web-ui` |
 | Mobile UI build | `ibr:component-patterns` (mobile-ui), `apple-dev` (if Apple), `calm-precision` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
 | Mobile UI validation | `ibr:native-testing`, `ibr:native-scan` | `showcase:capture` | `fallbacks.md#mobile-ui` |
-| Design system tokens | `ibr:design-system`, `ibr:validate_tokens` | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
-| Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `ibr:screenshot` | `fallbacks.md#screenshot` |
+| Design system tokens | `ibr:design-guidance` (§Configuration), `validate_tokens` MCP tool | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
+| Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `screenshot` MCP tool | `fallbacks.md#screenshot` |
 | Web content fetching (low LLM) | `scraper-app:web-scraper` SDK | — | `fallbacks.md#web-fetch` (flags LLM cost in report) |
 | Deep debugging | `claude-code-debugger:debug-loop` + `debugger` MCP `search`/`store` | — | `fallbacks.md#debug` |
 | Bug-pattern memory | `claude-code-debugger:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
@@ -56,7 +57,8 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
 | Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
 | iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
-| Architecture scan / impact trace | `gator:*` commands (if installed) | `navgator` commands | Read component → edit → re-read downstream |
+| Architecture scan / impact trace (Phase 1 + Phase 7) | `navgator` — read `.navgator/architecture/file_map.json`, `graph.json`, `SUMMARY.md` for blast-radius analysis; run `navgator impact <component>` for precise downstream, `navgator rules` post-change | `gator:*` commands if installed | Read component → edit → re-read downstream |
+| Self-improvement / recurring pattern detection (Phase 9) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/` with A/B tracking | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
 
 ### Sub-routers (set during Phase 1)
@@ -350,6 +352,22 @@ Blocking issues → route back to Phase 6 (Iterate). Warnings → include in rep
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 
+**Also: append a run entry to `.build-loop/state.json.runs[]`** for Phase 9's self-improvement scan. Schema:
+
+```json
+{
+  "date": "<ISO-8601 UTC>",
+  "goal": "<short goal text>",
+  "outcome": "pass | fail | partial",
+  "phases": { "1": { "status": "pass|fail", "duration_s": N, "root_cause": "?" }, ... },
+  "diagnosticCommands": ["shell commands run during build"],
+  "filesTouched": ["absolute paths edited"],
+  "manualInterventions": [{ "phase": N, "note": "short description" }]
+}
+```
+
+Capture `filesTouched` from `git diff --name-only` relative to the pre-build HEAD. `diagnosticCommands` and `manualInterventions` come from orchestrator state tracking during the run.
+
 ## Phase 8.5: SIMPLIFY — Trim The Diff
 
 **Goal**: remove incidental complexity added during iteration without changing behavior.
@@ -364,6 +382,38 @@ Run `/simplify` (or load the `simplify` skill directly) against the changed file
 Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior. If a simplification would break evidence collection or monitoring, keep it.
 
 For **plugin work specifically**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json`, and `grep` the manifest for `../` or bare paths (per `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` 2026-04-05). Silent manifest failures are worse than loud ones.
+
+## Phase 9: REVIEW — Self-Improvement Scan
+
+**Goal**: detect recurring patterns across recent runs, auto-draft experimental skills/agents to address them, notify the user for keep/remove decisions. Closes the loop between "build N times" and "build N+1 is faster because we learned".
+
+**Load the `build-loop:self-improve` skill for the full protocol.**
+
+Runs automatically after Phase 8.5 on every build. Also user-invocable via `/build-loop:self-improve` (to trigger a scan without a build).
+
+Quick flow:
+
+1. **Detect** — dispatch `recurring-pattern-detector` (Haiku). Reads `.build-loop/state.json.runs[]`, returns JSON list of patterns crossing confidence threshold.
+2. **Filter** — keep only `high` confidence or `count >= 4`; manual interventions at lower threshold.
+3. **Draft** — for each kept pattern, dispatch `self-improvement-architect` (Sonnet). Writes to `.build-loop/skills/experimental/<name>/SKILL.md` with an A/B Experiment section.
+4. **Signoff** — orchestrator (Opus 4.7) reviews: approve / revise once / discard.
+5. **Track** — baseline metric recorded in `.build-loop/experiments/<name>.jsonl`. Subsequent runs that match the skill's trigger append applied entries. After sample size complete, decision emitted.
+6. **Notify** — concise synthesis appended to Phase 8 report, including removal command.
+
+**Skip** when:
+- `.build-loop/state.json.runs[]` has fewer than 3 entries
+- Detector returns no patterns crossing threshold
+- User has set `.build-loop/config.json.autoSelfImprove: false`
+
+**User control**:
+- Remove any artifact: `rm -rf .build-loop/skills/experimental/<name>/`
+- Inspect tracking: `cat .build-loop/experiments/<name>.jsonl`
+- Disable globally: create `.build-loop/config.json` with `{"autoSelfImprove": false}`
+
+**What this phase will NOT do**:
+- Modify the build-loop plugin repo
+- Promote artifacts cross-project without explicit `/build-loop:promote-experiment` invocation (not yet implemented)
+- Run more than once per build
 
 ## Memory — Global and Project-Scoped
 

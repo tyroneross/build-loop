@@ -1,8 +1,8 @@
 # Build Loop Plugin
 
-Orchestrated 8-phase development loop for significant multi-step code changes.
+Orchestrated 9-phase development loop for significant multi-step code changes.
 
-**Phases**: Assess → Define → Plan → Execute → Validate → Iterate (5x max) → Fact Check → Report
+**Phases**: Assess → Define → Plan → Execute → Validate → Iterate (5x max) → Fact Check → Report → Review (self-improve)
 
 ## Principles
 
@@ -11,22 +11,38 @@ Orchestrated 8-phase development loop for significant multi-step code changes.
 - Guidelines for the creation process, guardrails for user-facing output
 - No false data, no mock data in production, no unverified claims
 - Diagnose before fixing, converge or escalate
+- Learn from recurring patterns — auto-draft experimental skills with A/B comparison, user keeps or removes
 
 ## Claude Code Integration
 
-- `/build-loop [goal]` — triggers the build-loop skill which orchestrates all 8 phases
-- Build orchestrator agent coordinates phase execution and spawns parallel subagents
+- `/build-loop [goal]` — triggers the build-loop skill which orchestrates all 9 phases
+- `/build-loop:self-improve` — run Phase 9 alone against recent runs without a new build
+- Build orchestrator agent (Opus 4.7) coordinates phase execution and spawns parallel subagents
 - Fact-checker and mock-scanner agents run in parallel during Phase 7
-- External skills used when available: `writing-plans`, `subagent-driven-development`, `calm-precision`, `verification-before-completion` — phases degrade gracefully without them
+- Recurring-pattern-detector (Haiku) + self-improvement-architect (Sonnet) run during Phase 9
+- External skills used when available: `writing-plans`, `subagent-driven-development`, `calm-precision`, `verification-before-completion`, `plugin-dev:skill-development`, `navgator` — phases degrade gracefully without them
+
+## Model Tiering
+
+| Role | Model | Why |
+|---|---|---|
+| Orchestrator / plan / final signoff | Opus 4.7 | Wrong spec is catastrophic |
+| Implementer, sonnet-critic, optimize-runner, overfitting-reviewer, self-improvement-architect | Sonnet 4.6 | Bounded, recoverable, ~4× cheaper |
+| Mock-scanner, recurring-pattern-detector | Haiku 4.5 | Pattern matching only |
+| Fact-checker | inherit | Session-driven |
 
 ## Project Data
 
 Runtime data stored in `.build-loop/` within consumer projects (created on first use):
 - `goal.md` — current build goal
-- `state.json` — iteration state, phase progress
+- `state.json` — iteration state, phase progress, **`runs[]`** for self-improvement scanning
 - `feedback.md` — post-build lessons
 - `evals/` — scorecard archives
 - `issues/` — discovered issues
+- `skills/experimental/` — auto-drafted skills from Phase 9 (remove with `rm -rf`)
+- `agents/experimental/` — auto-drafted agents from Phase 9
+- `experiments/<name>.jsonl` — A/B tracking log per experimental artifact
+- `experiments/discarded.jsonl` — Opus-rejected drafts with reasons
 
 ## Cross-Tool Support
 

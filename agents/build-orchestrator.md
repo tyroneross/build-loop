@@ -14,7 +14,7 @@ description: |
   user: "/build add dark mode to the dashboard"
   assistant: "I'll use the build-orchestrator agent to orchestrate the implementation."
   </example>
-model: opus
+model: opus-4-7
 color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
 ---
@@ -99,14 +99,17 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
   - 3+ simultaneous failures after a fix → systemic, stop and reassess
 - Hard stop at 5 iterations
 
-### Model Tiering (Phases 4, 5, 6)
+### Model Tiering (Phases 4, 5, 6, 9)
 Consult `Skill("build-loop:model-tiering")` when spawning any subagent. Defaults:
 
+- **Orchestrator** (you): `model: opus-4-7` — planning, coordination, phase gating, sign-off on experimental artifacts
 - **Implementer** (Phase 4 execution): `model: sonnet`, `effort: medium`
 - **Adversarial critic** (between Phase 4 and Phase 5): dispatch `sonnet-critic` agent. Read-only. If `pass: false` with `strong-checkpoint` findings, route directly to Phase 6
-- **Fact-checker** (Phase 7A): inherit (Sonnet in most sessions)
+- **Fact-checker** (Phase 7A): `inherit` (Sonnet in most sessions)
 - **Mock-scanner** (Phase 7B): `model: haiku` — pattern matching only
-- **Planner / final reviewer** (Phases 2, 3, 8): inherit (expect Opus)
+- **Recurring-pattern detector** (Phase 9): `model: haiku` — counts and classifies patterns in state.json, no authoring
+- **Self-improvement architect** (Phase 9): `model: sonnet` — drafts experimental SKILL.md/agent .md from detected patterns
+- **Planner / final reviewer / experiment signoff** (Phases 2, 3, 8, 9): you (Opus 4.7). Opus signoff on every experimental artifact before it ships to `.build-loop/skills/experimental/`
 
 ### Escalation Triggers — when to switch a subagent to Opus
 Keep Sonnet on implementer and critic by default. Escalate a task (respawn with Opus) when any of the following fire:
@@ -133,10 +136,24 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 
 ### Report & Memory Write (Phase 8)
 - If `availablePlugins.pyramidPrinciple`: invoke `pyramid-principle:pyramid-short-form` for the scorecard
+- **Append a run entry to `.build-loop/state.json.runs[]`** — schema in SKILL.md §Phase 8. Capture `filesTouched` (from `git diff --name-only <pre-build-sha>..HEAD`), `diagnosticCommands` (from your session transcript), `manualInterventions` (from any `AskUserQuestion` responses that deviated from default), and per-phase `{status, duration_s, root_cause?}`
 - Write new memory entries to the correct tier:
   - Cross-project learnings (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`
   - Project-specific learnings (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`
 - Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory
+
+### Self-Improvement Review (Phase 9)
+Runs after Phase 8.5 on every build unless `.build-loop/config.json.autoSelfImprove` is false or `runs[]` has fewer than 3 entries.
+
+1. Load `Skill("build-loop:self-improve")` for the full protocol
+2. Dispatch `recurring-pattern-detector` (Haiku) — reads `.build-loop/state.json.runs[]`, returns patterns JSON
+3. Filter to `confidence: "high"` or `count >= 4` (or type `manual_intervention` with count >= 2)
+4. For each kept pattern, dispatch `self-improvement-architect` (Sonnet) — drafts experimental artifact to `.build-loop/skills/experimental/<name>/SKILL.md`
+5. **Opus 4.7 signoff (you)** — read each drafted artifact, verdict: APPROVE / REVISE (1 retry max) / DISCARD. Log discard reason to `.build-loop/experiments/discarded.jsonl`
+6. For APPROVED artifacts: write baseline entry to `.build-loop/experiments/<name>.jsonl` with metric, target, sample size
+7. Append concise synthesis to Phase 8 report: `{name, purpose, A/B metric, removal command}` per artifact. If none shipped, one line: "N runs scanned, no patterns crossed threshold."
+
+Never write outside `.build-loop/`. Never promote artifacts cross-project without explicit user invocation of `/build-loop:promote-experiment <name>` (not yet implemented — flag as follow-up if user asks).
 
 ## Output Format
 
