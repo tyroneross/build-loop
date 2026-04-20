@@ -66,6 +66,7 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
   - `promptAuthoring` (prompt-builder): product LLM prompts, agent instructions, eval judges, semantic-search query rewriting, RAG prompts
   - `promptEditingExisting` (prompt-builder + user confirmation): editing a prompt that already ships in the product
 - Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist. Project overrides global on conflict
+- **Architecture blast-radius** (if NavGator available): invoke `Skill("build-loop:navgator-bridge")`. It reads `.navgator/architecture/` and writes a compact summary to `.build-loop/state.json.navgator.phase1` — layers touched, 1-hop/2-hop dependents, risk flags. Phase 3 PLAN consults this for scoping. If `.navgator/architecture/index.json` is missing, the skill emits a one-line note and exits; do not block.
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent
 
 ### Capability Routing (Phases 4, 5, 7)
@@ -88,13 +89,16 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
 - Run LLM-as-judge graders second (nuanced criteria)
 - If `availablePlugins.ibr` and UI work: invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile
 - Collect evidence for every pass/fail — no criterion passes without proof
+- **Memory-first gate** (if `availablePlugins.claudeCodeDebugger`): before routing any FAILED criterion to Phase 6, invoke `Skill("build-loop:debugger-bridge")` Phase 5 logic. It calls `checkMemoryWithVerdict()` and returns a verdict. On `KNOWN_FIX`, apply directly and skip Phase 6 re-planning. On `LIKELY_MATCH`, use the prior incident as the Phase 6 plan. Record each gate in `.build-loop/state.json.debuggerGates.phase5`
 
 ### Iteration (Phase 6)
 - Diagnose root cause before fixing — don't blind retry
-- If `availablePlugins.claudeCodeDebugger` and 2+ failed fixes: invoke `claude-code-debugger:debug-loop`
+- **Stuck-iteration escalation** (if `availablePlugins.claudeCodeDebugger`): invoke `Skill("build-loop:debugger-bridge")` Phase 6 logic at the start of every attempt. It escalates:
+  - After 2 same-root-cause failures → `/assess` with parallel domain assessors (explicitly pass `model: sonnet` to assessors to override `inherit` default, preventing 4× Opus fan-out from your Opus 4.7 tier)
+  - After 3 same-criterion failures → `claude-code-debugger:debug-loop` for causal-tree investigation
 - Re-validate only failed criteria, not the full suite
 - Convergence rules:
-  - Same failure 2x with same root cause → escalate to user
+  - Same failure 2x with same root cause → escalate to user (unless debugger-bridge already escalated first)
   - Fix A breaks criterion B → flag oscillation, ask user
   - 3+ simultaneous failures after a fix → systemic, stop and reassess
 - Hard stop at 5 iterations
@@ -125,6 +129,7 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 
 ### Pre-Completion Gates (Phase 7)
 - Dispatch fact-checker and mock-scanner in parallel
+- **Architectural violation check** (if `.navgator/architecture/index.json` exists): invoke `Skill("build-loop:navgator-bridge")` Phase 7 logic in parallel with the other gates. Runs `navgator rules --json`, classifies violations into blocking (circular-dependency, layer-violation, database-isolation, frontend-direct-db at error) vs warning (hotspot, high-fan-out, orphan), and flags recurrences against `.navgator/lessons/lessons.json`
 - If `platform: "apple"` AND goal includes deploy/TestFlight/App Store: invoke `apple-dev` deploy flow
 - Blocking issues route back to iteration
 - Warnings included in report
@@ -137,6 +142,7 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 ### Report & Memory Write (Phase 8)
 - If `availablePlugins.pyramidPrinciple`: invoke `pyramid-principle:pyramid-short-form` for the scorecard
 - **Append a run entry to `.build-loop/state.json.runs[]`** — schema in SKILL.md §Phase 8. Capture `filesTouched` (from `git diff --name-only <pre-build-sha>..HEAD`), `diagnosticCommands` (from your session transcript), `manualInterventions` (from any `AskUserQuestion` responses that deviated from default), and per-phase `{status, duration_s, root_cause?}`
+- **Store resolved debugger incidents** (if `availablePlugins.claudeCodeDebugger` and any Phase 5/6 failure was resolved): for each entry in `.build-loop/state.json.debuggerGates`, invoke `store` MCP tool with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`. This is the write side of the memory-first gate — skip it and the next build cannot learn from this one
 - Write new memory entries to the correct tier:
   - Cross-project learnings (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`
   - Project-specific learnings (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`
