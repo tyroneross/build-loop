@@ -531,3 +531,21 @@ ASSESS → DEFINE → PLAN → EXECUTE → CRITIC → OPTIMIZE → VALIDATE
 CRITIC (Phase 4.5) is the adversarial read-only pass. Strong-checkpoint findings route back to EXECUTE without consuming iteration budget.
 
 OPTIMIZE (Phase 4.7) runs the autoresearch-pattern optimization loop when a mechanical metric exists. Dispatches `optimize-runner` for autonomous iteration, then `overfitting-reviewer` for adversarial review. Skipped when no metric applies.
+
+## References
+
+Contextual material loaded on demand (not at skill invocation):
+
+- `references/refactor-history/` — Internal assessment of the 2026-04 refactor that consolidated the prior 9-phase model into the current 5+Learn model. `ASSESSMENT.md` explains the rationale, `trace-comparison.md` shows before/after execution flow, `STANDALONE_TEST_RUN.md` validates the new model, `scenarios/01..06` contain 6 test scenarios (bugfix, UI build, multi-fail, IBR-absent, NavGator-absent, debugger-absent). Load when evaluating proposed phase-model changes or onboarding contributors.
+- `eval-guide.md` — How to interpret build-loop scorecards.
+- `fallbacks.md` — Degraded-but-useful behavior when bridge plugins (NavGator, claude-code-debugger, IBR) are absent.
+- `phases/fact-check.md` — Detailed fact-check sub-step specification.
+
+Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>")`):
+
+- `build-loop:research` · `build-loop:optimize` · `build-loop:self-improve` — callable modes
+- `build-loop:model-tiering` — reference for model selection
+- `build-loop:navgator-bridge` · `build-loop:debugger-bridge` · `build-loop:logging-tracer-bridge` — plugin integrations (cherry-pick pattern)
+- `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
+- `build-loop:authentication` — auth reference library (Google Cloud Console now; extensible)
+- `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
