@@ -241,6 +241,8 @@ Custom paths in `plugin.json` **supplement** defaults, they don't replace them.
 | `type: "prompt"` hooks on high-frequency events | Never use `type: "prompt"` on `PostToolUse:Bash` or `UserPromptSubmit`. They fire on every tool call — LLM must evaluate the prompt each time, which spams "hook stopped continuation" messages and costs tokens. Use `type: "command"` with silent exit (exit 0) for conditional nudges; `type: "prompt"` is only OK on low-frequency events like `SessionStart`. |
 | Identical hook in source repo and marketplace aggregator | Edit the source repo manifest — cache under `~/.claude/plugins/cache/` is regenerated from the marketplace repo on every sync, overwriting local edits. Commit + push before expecting changes to persist. |
 | Flat `.mcp.json` without `mcpServers` wrapper | Always wrap: `{"mcpServers": {"<name>": {...}}}`. Flat form `{"<name>": {...}}` silently passes `/doctor` but fails at MCP startup — only visible in `/mcp`. |
+| Claude-only plugin (no `.codex-plugin/plugin.json`) | Add a Codex manifest per `references/dual-host-claude-codex.md` so users on either host get the same plugin. Name/version must match the Claude manifest; skills and MCP config paths are shared. |
+| Divergent `name` or `version` across Claude/Codex manifests | Keep identical. Users think of it as one plugin; split versions cause support confusion. |
 | Plugin ships without pre-built `dist/` | Either bundle with `tsup` (single-file output, no runtime deps) OR commit `dist/` to the repo OR add a postinstall rebuild. `tsc`-only output that depends on `node_modules/` will fail when the marketplace sync excludes those dirs. |
 | Removing a marketplace doesn't stick after `/reload-plugins` | Multiple sources re-seed `known_marketplaces.json`: `extraKnownMarketplaces` in `settings.json`, `~/.claude/plugins/.install-manifests/*.json`, and `~/.claude/plugins/marketplaces/<name>/`. Clean all three sources, then rewrite `known_marketplaces.json` last. See `references/plugin-hygiene-lessons.md` § 9. |
 | Partial cache dirs from interrupted `/plugin update` | Two version dirs for the same plugin (one complete, one missing `dist/`/`node_modules/`). Align `installed_plugins.json`'s `version`+`installPath` and delete the incomplete one. See § 10. |
@@ -286,6 +288,24 @@ When `/plugin` shows "MCP · ✗ failed":
 
 Full playbook in `references/plugin-hygiene-lessons.md` § 13.
 
+## Dual-Host: Shipping to Claude Code AND Codex
+
+Plugins ship to both Claude Code and Codex from one repo with thin per-host manifests. For the full pattern — `.codex-plugin/plugin.json` schema, agent-neutral surfaces (skills, MCP), Claude-only surfaces (hooks, agents), README/install-script conventions — see **`references/dual-host-claude-codex.md`**.
+
+Quick summary:
+
+| Surface | Location | Host |
+|---|---|---|
+| Claude manifest | `.claude-plugin/plugin.json` | Claude Code |
+| Codex manifest | `.codex-plugin/plugin.json` | Codex |
+| Workspace install metadata (optional) | `.agents/plugins/marketplace.json` | Codex (local dev) |
+| Skills (agent-neutral) | `./skills/<name>/SKILL.md` | Both |
+| MCP servers (agent-neutral) | `./.mcp.json` | Both |
+| Agent definitions | `./agents/*.md` | Claude only |
+| Hooks | `./hooks/hooks.json` | Claude only (Codex has its own system) |
+
+Keep `name` and `version` identical across the two manifests — users think of it as one plugin.
+
 ## Additional Resources
 
 Core references (load as needed — don't pre-load all):
@@ -295,7 +315,8 @@ Core references (load as needed — don't pre-load all):
 - **`references/hooks-reference.md`** — All hook events, types, matchers, and patterns
 - **`references/components-guide.md`** — Detailed guide for each component type
 - **`references/distribution.md`** — Marketplace creation, versioning, and sharing
-- **`references/plugin-hygiene-lessons.md`** — 14 real-world incidents from shipping plugins (duplicate installs, `.mcp.json` schema, marketplace zombies, partial cache dirs, `${CLAUDE_PLUGIN_DATA}` patterns)
+- **`references/dual-host-claude-codex.md`** — Codex plugin surface, dual-host shape, schema for `.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json`, README/install-script patterns
+- **`references/plugin-hygiene-lessons.md`** — 16 real-world incidents from shipping plugins (duplicate installs, `.mcp.json` schema, marketplace zombies, partial cache dirs, `${CLAUDE_PLUGIN_DATA}` patterns, UI failure-badge persistence)
 - **`references/build-loop-phase-guidance.md`** — How build-loop phases should handle plugin edits (Assess → Plan → Execute → Review → Iterate)
 
 Related skills:
