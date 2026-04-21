@@ -215,6 +215,33 @@ The symlink satisfies the stale path until the session restarts and re-resolves 
 
 **For plugin authors.** If your plugin registers hooks that reference `${CLAUDE_PLUGIN_ROOT}`, document that plugin updates require a Claude Code restart (not just `/reload-plugins`) for the hook paths to refresh. Consider writing hook scripts that resolve their own path at runtime (e.g. `realpath "$0"` inside the script) rather than relying on the registered command's frozen `${CLAUDE_PLUGIN_ROOT}`.
 
+## 16. `/plugin` "Needs attention" badges persist beyond the failure
+
+**What happened (2026-04-21).** After fixing the `.mcp.json` schema for bookmark, debugger, and ibr — verified healthy via direct JSON-RPC `initialize` handshake — the `/plugin` UI kept showing the red "✗ failed" badge after `/reload-plugins`. `/reload-plugins` correctly reported "7 plugin MCP servers" loaded, matching the expected count, so all servers were in fact running. Only the UI status was stale.
+
+**Rule.** Claude Code's `/plugin` panel caches per-session MCP connection status. When an MCP fails at startup, the panel latches the red badge for the life of the session. `/reload-plugins` re-runs plugin discovery but does **not** re-probe existing MCP health. Same staleness pattern as § 15 (hook `${CLAUDE_PLUGIN_ROOT}` paths).
+
+**Ways to clear stale badges, in order of disruption:**
+
+| Method | Disruption | Reliability |
+|---|---|---|
+| `/exit` and relaunch Claude Code | High — full restart | 100% — fresh process |
+| Toggle each plugin off then on in `/plugin` UI | Medium | ~95% — forces MCP reconnect |
+| Toggle `enabledPlugins` in `settings.json` + `/reload-plugins` | Low | ~70% |
+| Wait — do nothing | None | 0% during session, 100% next launch |
+
+**Diagnostic rule: do not trust UI badges over direct evidence.** When a badge says failed but the server tests healthy, the badge is the lie. Checks that trump the UI:
+
+1. **Direct handshake test** — if the server responds to `initialize` RPC with a valid result, it's healthy:
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' | \
+     CLAUDE_PLUGIN_ROOT=<path> node <path>/dist/mcp/server.js
+   ```
+2. **Reload loaded count** — if `/reload-plugins` reports N plugin MCP servers loaded and N matches the enabled count, the servers are running regardless of UI.
+3. **Invoke a tool** — call a slash command or tool that depends on the MCP (e.g. `/bookmark:snapshot`). Success = server live.
+
+**For plugin authors.** Don't treat user bug reports of "MCP failed in /plugin" as gospel. Ask them to (a) run the standalone handshake, (b) try an actual tool invocation. Stale UI badges generate false bug reports.
+
 ## Preflight checklist before shipping a plugin change
 
 - [ ] `plugin.json` declares only non-default paths for `hooks`, `mcpServers`, `lsp`
