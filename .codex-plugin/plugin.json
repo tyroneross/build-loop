@@ -1,0 +1,34 @@
+{
+  "name": "build-loop",
+  "version": "0.2.0",
+  "description": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, mock data scanning, and Sonnet-heavy execution with adversarial critic pass.",
+  "author": {
+    "name": "Tyrone Ross",
+    "url": "https://github.com/tyroneross"
+  },
+  "homepage": "https://github.com/tyroneross/build-loop#readme",
+  "repository": "https://github.com/tyroneross/build-loop",
+  "license": "FSL-1.1-MIT",
+  "keywords": [
+    "development",
+    "orchestration",
+    "evaluation",
+    "iteration",
+    "build",
+    "tdd",
+    "fact-checking",
+    "code-quality"
+  ],
+  "skills": "./skills",
+  "interface": {
+    "displayName": "Build Loop",
+    "shortDescription": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, mock data scanning, and Sonnet-heavy execution with adversarial critic pass.",
+    "longDescription": "Orchestrated 8-phase development loop: assess, define, plan, execute, validate, iterate, fact-check, report. Built-in eval grading, fact verification, mock data scanning, and Sonnet-heavy execution with adversarial critic pass.",
+    "developerName": "Ross Labs",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

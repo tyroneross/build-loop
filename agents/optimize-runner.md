@@ -19,6 +19,9 @@ Read `experiment.json` to get:
 - `direction`: `"higher"` or `"lower"` (what counts as improvement)
 - `baseline`: the metric value before any experiments began
 - `best_value`: the current best metric value (compare against this, not baseline)
+- `metric_samples`: measured runs per iteration
+- `metric_warmups`: warmup runs discarded before measuring
+- `metric_aggregate`: aggregate used to compare measured runs
 
 ### Step 2 — Read history before every hypothesis
 
@@ -59,9 +62,9 @@ Record the commit SHA.
 
 ### Step 7 — Measure
 
-Run the metric:
+Run the metric with the experiment's sampling settings:
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/metric_runner.py --cmd "<metric_cmd>"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/metric_runner.py   --cmd "<metric_cmd>"   --samples <metric_samples>   --warmups <metric_warmups>   --aggregate <metric_aggregate>
 ```
 
 Run the guard:
@@ -80,16 +83,7 @@ Compute `delta = new_metric - best_value` (from experiment.json, NOT the origina
 ### Step 9 — Log the result
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py \
-  --log \
-  --workdir "$PWD" \
-  --iteration <N> \
-  --commit <sha> \
-  --metric <value> \
-  --delta <delta> \
-  --status <keep|discard|error> \
-  --description "<what changed>" \
-  --hypothesis "<the reasoning from Step 4, condensed to one line>"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py   --log   --workdir "$PWD"   --iteration <N>   --commit <sha>   --metric <value>   --delta <delta>   --status <keep|discard|error>   --description "<what changed>"   --hypothesis "<the reasoning from Step 4, condensed to one line>"
 ```
 
 Report progress inline:

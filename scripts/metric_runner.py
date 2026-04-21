@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import re
+import statistics
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -14,6 +16,11 @@ class MetricResult:
     elapsed_seconds: float
     success: bool
     error: Optional[str] = None
+    samples_run: int = 1
+    warmups_run: int = 0
+    aggregate: str = "last"
+    sample_values: list[float] = field(default_factory=list)
+    summary: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -37,6 +44,8 @@ _NUMERIC_PATTERNS = [
     # Any standalone float or int
     re.compile(r"([\d]+(?:\.[\d]+)?)"),
 ]
+
+_ALLOWED_AGGREGATES = {"last", "min", "max", "mean", "median", "p95"}
 
 
 def parse_numeric(output: str) -> float:
@@ -81,17 +90,7 @@ def parse_numeric(output: str) -> float:
     raise ValueError(f"No numeric value found in output: {text[:200]!r}")
 
 
-def run_metric(cmd: str, timeout: int = 300, cwd: str | None = None) -> MetricResult:
-    """Run a metric command and extract a numeric result.
-
-    Args:
-        cmd: Shell command whose stdout contains a parseable numeric value.
-        timeout: Maximum seconds to wait (default 300).
-        cwd: Working directory for the command (default: current directory).
-
-    Returns:
-        MetricResult with value, raw_output, elapsed_seconds, success, error.
-    """
+def _run_metric_once(cmd: str, timeout: int, cwd: str | None) -> MetricResult:
     start = time.monotonic()
     try:
         proc = subprocess.run(
@@ -150,6 +149,131 @@ def run_metric(cmd: str, timeout: int = 300, cwd: str | None = None) -> MetricRe
             success=False,
             error=str(exc),
         )
+
+
+def _percentile(values: list[float], fraction: float) -> float:
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    index = (len(ordered) - 1) * fraction
+    lower = math.floor(index)
+    upper = math.ceil(index)
+    if lower == upper:
+        return ordered[lower]
+    lower_value = ordered[lower]
+    upper_value = ordered[upper]
+    weight = index - lower
+    return lower_value + (upper_value - lower_value) * weight
+
+
+def _summarize(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {}
+    summary = {
+        "count": float(len(values)),
+        "min": min(values),
+        "max": max(values),
+        "mean": statistics.fmean(values),
+        "median": statistics.median(values),
+        "p95": _percentile(values, 0.95),
+    }
+    if len(values) > 1:
+        summary["stdev"] = statistics.stdev(values)
+    return {key: round(value, 6) for key, value in summary.items()}
+
+
+def _aggregate_value(values: list[float], aggregate: str) -> float:
+    if aggregate not in _ALLOWED_AGGREGATES:
+        raise ValueError(
+            f"Unsupported aggregate {aggregate!r}. Expected one of {sorted(_ALLOWED_AGGREGATES)}"
+        )
+    if not values:
+        raise ValueError("At least one measured sample is required")
+    summary = _summarize(values)
+    if aggregate == "last":
+        return values[-1]
+    if aggregate == "min":
+        return summary["min"]
+    if aggregate == "max":
+        return summary["max"]
+    if aggregate == "mean":
+        return summary["mean"]
+    if aggregate == "median":
+        return summary["median"]
+    return summary["p95"]
+
+
+def run_metric(
+    cmd: str,
+    timeout: int = 300,
+    cwd: str | None = None,
+    *,
+    samples: int = 1,
+    warmups: int = 0,
+    aggregate: str = "last",
+) -> MetricResult:
+    """Run a metric command and extract a numeric result.
+
+    Args:
+        cmd: Shell command whose stdout contains a parseable numeric value.
+        timeout: Maximum seconds to wait per invocation (default 300).
+        cwd: Working directory for the command (default: current directory).
+        samples: Number of measured runs to aggregate (default 1).
+        warmups: Number of warmup runs to discard before measuring.
+        aggregate: How to combine measured samples.
+
+    Returns:
+        MetricResult with aggregate value, raw_output, elapsed_seconds, and
+        per-sample summary metadata.
+    """
+    if samples < 1:
+        raise ValueError("samples must be >= 1")
+    if warmups < 0:
+        raise ValueError("warmups must be >= 0")
+    if aggregate not in _ALLOWED_AGGREGATES:
+        raise ValueError(
+            f"Unsupported aggregate {aggregate!r}. Expected one of {sorted(_ALLOWED_AGGREGATES)}"
+        )
+
+    total_elapsed = 0.0
+    sample_values: list[float] = []
+    output_chunks: list[str] = []
+    total_runs = warmups + samples
+
+    for run_index in range(total_runs):
+        result = _run_metric_once(cmd, timeout=timeout, cwd=cwd)
+        total_elapsed += result.elapsed_seconds
+        phase = "warmup" if run_index < warmups else "sample"
+        ordinal = run_index + 1 if phase == "warmup" else run_index - warmups + 1
+        output_chunks.append(f"## {phase} {ordinal}\n{result.raw_output.strip()}")
+        if not result.success:
+            return MetricResult(
+                value=0.0,
+                raw_output="\n\n".join(chunk for chunk in output_chunks if chunk.strip()),
+                elapsed_seconds=total_elapsed,
+                success=False,
+                error=f"{phase} {ordinal} failed: {result.error}",
+                samples_run=len(sample_values),
+                warmups_run=min(run_index, warmups),
+                aggregate=aggregate,
+                sample_values=sample_values,
+                summary=_summarize(sample_values),
+            )
+        if run_index >= warmups:
+            sample_values.append(result.value)
+
+    value = _aggregate_value(sample_values, aggregate)
+    return MetricResult(
+        value=value,
+        raw_output="\n\n".join(chunk for chunk in output_chunks if chunk.strip()),
+        elapsed_seconds=total_elapsed,
+        success=True,
+        samples_run=len(sample_values),
+        warmups_run=warmups,
+        aggregate=aggregate,
+        sample_values=sample_values,
+        summary=_summarize(sample_values),
+    )
 
 
 def run_guard(cmd: str, timeout: int = 300, cwd: str | None = None) -> GuardResult:
@@ -215,16 +339,36 @@ def _cli() -> None:
     group.add_argument("--guard", help="guard command to run")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--cwd", default=None, help="working directory for the command")
+    parser.add_argument("--samples", type=int, default=1, help="measured runs to aggregate")
+    parser.add_argument("--warmups", type=int, default=0, help="warmup runs to discard")
+    parser.add_argument(
+        "--aggregate",
+        choices=sorted(_ALLOWED_AGGREGATES),
+        default="last",
+        help="aggregation applied to measured runs",
+    )
 
     args = parser.parse_args()
 
     if args.cmd:
-        result = run_metric(args.cmd, timeout=args.timeout, cwd=args.cwd)
+        result = run_metric(
+            args.cmd,
+            timeout=args.timeout,
+            cwd=args.cwd,
+            samples=args.samples,
+            warmups=args.warmups,
+            aggregate=args.aggregate,
+        )
         output = {
             "value": result.value,
             "success": result.success,
             "elapsed_seconds": round(result.elapsed_seconds, 3),
             "error": result.error,
+            "samples_run": result.samples_run,
+            "warmups_run": result.warmups_run,
+            "aggregate": result.aggregate,
+            "sample_values": result.sample_values,
+            "summary": result.summary,
         }
         print(json.dumps(output))
         sys.exit(0 if result.success else 1)

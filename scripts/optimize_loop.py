@@ -18,11 +18,17 @@ NOT responsible for:
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 import datetime as _dt
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from scripts.metric_runner import run_guard, run_metric
 
@@ -251,7 +257,13 @@ def init_experiment(workdir: Path, config: dict) -> Path:
     loop_dir = _loop_dir(workdir)
     loop_dir.mkdir(parents=True, exist_ok=True)
 
-    metric_result = run_metric(config["metric_cmd"], cwd=str(workdir))
+    metric_result = run_metric(
+        config["metric_cmd"],
+        cwd=str(workdir),
+        samples=int(config.get("metric_samples", 1)),
+        warmups=int(config.get("metric_warmups", 0)),
+        aggregate=config.get("metric_aggregate", "last"),
+    )
     if not metric_result.success:
         raise RuntimeError(
             f"Baseline metric command failed: {metric_result.error}\n"
@@ -272,6 +284,9 @@ def init_experiment(workdir: Path, config: dict) -> Path:
         "guard_cmd": config.get("guard_cmd"),
         "budget": int(config.get("budget", 5)),
         "direction": direction,
+        "metric_samples": int(config.get("metric_samples", 1)),
+        "metric_warmups": int(config.get("metric_warmups", 0)),
+        "metric_aggregate": config.get("metric_aggregate", "last"),
         "baseline_commit": baseline_commit,
         "baseline_value": baseline_value,
         "best_value": baseline_value,
@@ -324,7 +339,13 @@ def run_iteration(workdir: Path, iteration: int) -> IterationResult:
 
     commit = _current_commit(workdir)
 
-    metric_result = run_metric(metric_cmd, cwd=str(workdir))
+    metric_result = run_metric(
+        metric_cmd,
+        cwd=str(workdir),
+        samples=int(experiment.get("metric_samples", 1)),
+        warmups=int(experiment.get("metric_warmups", 0)),
+        aggregate=experiment.get("metric_aggregate", "last"),
+    )
     if not metric_result.success:
         result = IterationResult(
             iteration=iteration,
@@ -573,6 +594,14 @@ def _cli() -> None:
     parser.add_argument("--description", help="change description (for --log)")
     parser.add_argument("--hypothesis", default="", help="hypothesis text (for --log)")
     parser.add_argument("--prompt-version", default="v1", help="prompt version tag (for --init)")
+    parser.add_argument("--metric-samples", type=int, default=1, help="measured metric runs per iteration")
+    parser.add_argument("--metric-warmups", type=int, default=0, help="warmup metric runs to discard")
+    parser.add_argument(
+        "--metric-aggregate",
+        choices=["last", "min", "max", "mean", "median", "p95"],
+        default="last",
+        help="aggregation applied to measured metric runs",
+    )
 
     args = parser.parse_args()
     workdir = Path(args.workdir).resolve()
@@ -590,6 +619,9 @@ def _cli() -> None:
             "budget": args.budget,
             "direction": args.direction,
             "prompt_version": args.prompt_version,
+            "metric_samples": args.metric_samples,
+            "metric_warmups": args.metric_warmups,
+            "metric_aggregate": args.metric_aggregate,
         }
         if not config["metric_cmd"]:
             print("ERROR: --metric-cmd required for --init", file=sys.stderr)

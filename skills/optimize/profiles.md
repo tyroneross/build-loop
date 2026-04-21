@@ -37,8 +37,23 @@ Reduce code complexity in files touched by the current build.
 
 ## optimize-perf
 
-- **Metric**: Custom benchmark command
+Use when a workload has a benchmark command but no specialized preset.
+
+- **Metric**: Custom benchmark command that prints one numeric value
 - **Guard**: Test suite passes
 - **Direction**: lower
 - **Budget**: 10
 - **Scope**: Hot-path source files
+- **Benchmark guidance**: Prefer representative workloads over microbenchmarks. For latency, run repeated samples with `--metric-samples 5-9`, discard cold-start noise with `--metric-warmups 1-2`, and aggregate with `median` or `p95`.
+
+## semantic-search-latency
+
+Use when optimizing end-to-end semantic-search response time in a consumer repo.
+
+- **Metric**: A semantic-search benchmark command over a fixed query set, for example `python3 scripts/bench_semantic_search.py --queries bench/semantic_search_queries.txt --stat p95`
+- **Guard**: Relevance / regression checks for the same search flow plus the normal test suite
+- **Direction**: lower
+- **Budget**: 10
+- **Scope**: Search hot path only — embedding prep, query rewriting, ANN/vector lookup, reranking, caching, result shaping
+- **Runner settings**: Start with `--metric-samples 7 --metric-warmups 1 --metric-aggregate p95`
+- **What it finds**: Cold-start penalties, redundant embeddings, unnecessary reranks, inefficient filters, cache misses, slow result formatting
