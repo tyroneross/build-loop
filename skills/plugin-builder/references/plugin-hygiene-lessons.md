@@ -184,6 +184,37 @@ This distinguishes "server works but Claude Code's UI shows stale failure" from 
 
 Check kebab-case for both `marketplace.json.name` and every `plugins[].name` before publishing. The fastest way to catch this: run `claude plugin validate .` in the marketplace root.
 
+## 15. Never delete a cache version dir while Claude Code is running
+
+**What happened (2026-04-21).** During mid-session cleanup, I archived `~/.claude/plugins/cache/rosslabs-ai-toolkit/ibr/1.0.1/` (a partial dir left from an interrupted update). The live Claude Code session had loaded ibr's hooks at startup with `${CLAUDE_PLUGIN_ROOT}` resolved to `.../ibr/1.0.1/`. Hook paths are cached in memory at session start — `/reload-plugins` does not rebuild them. On next `Stop` event:
+
+> Stop hook error: Failed to run: Plugin directory does not exist: /Users/.../ibr/1.0.1 (ibr@rosslabs-ai-toolkit — run /plugin to reinstall)
+
+`installed_plugins.json` correctly pointed at `1.0.0`, but the in-memory hook registry still held `1.0.1`.
+
+**Rule.** Cache-directory cleanup must follow session state:
+
+| Action | When safe |
+|---|---|
+| Edit `installed_plugins.json` version/installPath | Anytime |
+| Archive/delete an *unused* version dir | Only when no live session holds a hook from it |
+| Archive/delete the *active* `installPath` dir | Never while Claude Code is running — will break hooks, MCP, and commands immediately |
+
+**Recovery without restart.** Symlink the missing dir back to the active version:
+```bash
+ln -s ~/.claude/plugins/cache/<mkt>/<plugin>/<active-version> \
+      ~/.claude/plugins/cache/<mkt>/<plugin>/<missing-version>
+```
+The symlink satisfies the stale path until the session restarts and re-resolves `${CLAUDE_PLUGIN_ROOT}`.
+
+**Safe sequence for mid-session cache cleanup.**
+1. Align `installed_plugins.json` `version` + `installPath` for the plugin.
+2. Leave all cache version dirs in place.
+3. Have the user `/exit` and relaunch Claude Code.
+4. On the fresh session, archive or delete the orphaned version dirs.
+
+**For plugin authors.** If your plugin registers hooks that reference `${CLAUDE_PLUGIN_ROOT}`, document that plugin updates require a Claude Code restart (not just `/reload-plugins`) for the hook paths to refresh. Consider writing hook scripts that resolve their own path at runtime (e.g. `realpath "$0"` inside the script) rather than relying on the registered command's frozen `${CLAUDE_PLUGIN_ROOT}`.
+
 ## Preflight checklist before shipping a plugin change
 
 - [ ] `plugin.json` declares only non-default paths for `hooks`, `mcpServers`, `lsp`
