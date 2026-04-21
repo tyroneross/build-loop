@@ -41,6 +41,8 @@ Add to the manifest-drift check:
 2. For each match, verify the referenced file is NOT at the auto-loaded default path
 3. Grep hook files for `"type": "prompt"` inside `PostToolUse`, `PreToolUse`, `UserPromptSubmit`
 4. If the plugin ships in an aggregator marketplace, verify marketplace.json version matches plugin.json version
+5. **`.mcp.json` schema**: verify top-level key is `"mcpServers"`. Flat form `{"<name>": {...}}` silently passes `/doctor` but fails at MCP startup — only `/mcp` surfaces the failure. Correct form is `{"mcpServers": {"<name>": {...}}}`.
+6. **Build artifacts**: if plugin.json's `mcpServers.*.args` references `${CLAUDE_PLUGIN_ROOT}/dist/...`, verify `dist/` is not gitignored and is checked into the repo. Alternative: plugin uses `tsup` to bundle into a single self-contained file (preferred — ibr's pattern).
 
 ## Iterate phase
 
