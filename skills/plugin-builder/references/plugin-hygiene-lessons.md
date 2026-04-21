@@ -89,13 +89,114 @@ Use both. `/doctor` surfaces load-time failures (bad hooks, broken manifests, mi
 
 **Relevant to plugin authors.** A plugin's `settings.json` sets *default* settings — values Claude Code merges into the user's config. Writing absolute paths, your local API keys, or your personal `enabledPlugins` map into a plugin's `settings.json` ships your machine's state to every user. Plugin-level `settings.json` should only contain defaults the user is expected to override (usually empty or near-empty).
 
+## 9. Removing a marketplace from `known_marketplaces.json` is not enough
+
+**What happened (2026-04-21).** After a marketplace consolidation, editing `~/.claude/plugins/known_marketplaces.json` and running `/reload-plugins` made the removed marketplaces come right back. Five "zombie" marketplaces kept auto-re-registering on every reload: `bookmark`, `interface-built-right`, `mockup-gallery`, `navgator`, `build-loop`.
+
+**Rule.** Claude Code re-seeds `known_marketplaces.json` from multiple persistent sources on every reload. To fully remove a marketplace, clean all of:
+
+| Location | What it does | How to clean |
+|---|---|---|
+| `~/.claude/settings.json` → `extraKnownMarketplaces` | User-level persistent marketplace definitions. Re-registers on every reload. | Delete the entry. Highest-priority cleanup target. |
+| `~/.claude/settings.json` → `enabledPlugins` | Keys like `"plugin@marketplace": true` also re-register the marketplace implicitly. | Delete dead entries. |
+| `~/.claude/settings.json` → top-level `plugins` array (deprecated) | Legacy paths like `".../bookmark/.claude-plugin"` re-add plugins and their marketplace. | Remove or replace with empty array. |
+| `~/.claude/plugins/.install-manifests/<plugin>@<marketplace>.json` | Per-install manifests with hashes. Each file implicitly keeps its marketplace registered. | Archive or delete the manifest files. |
+| `~/.claude/plugins/marketplaces/<name>/` | Physical clone of a git-sourced marketplace. Presence can trigger auto-registration. | Archive the directory. |
+| Project-scope `.claude/settings.json` → `extraKnownMarketplaces` | Team-level injection that re-registers when you trust the folder. | Audit `git-folder/*/.claude/settings.json`. |
+| `~/.claude/plugins/known_marketplaces.json` | The runtime registry. Rewritten each reload from the sources above. | Clean this LAST so there's nothing to rewrite it from. |
+
+Cleanup ordering matters: purge the re-seeding sources first, only then rewrite `known_marketplaces.json`. Otherwise the next reload resurrects everything.
+
+## 10. Partial cache dirs from interrupted updates confuse plugin resolution
+
+**What happened.** Plugins had two cache directories for the same plugin, e.g. `claude-code-debugger/1.8.0/` (complete) and `claude-code-debugger/1.8.1/` (partial — missing `dist/` and `node_modules/`). Claude Code saw 1.8.1 as the "installed version" per `installed_plugins.json` but the `installPath` still pointed at 1.8.0. Additionally, the newer directory was incomplete so even if Claude tried to use it, the MCP server failed to start.
+
+**Rule.**
+- **Verify `installed_plugins.json` version matches installPath** — if `version: "1.8.1"` but installPath ends in `/1.8.0/`, something is stale. Align them.
+- **Audit for incomplete cache dirs:** for each `<plugin>/<version>/`, check `dist/` and `node_modules/` presence if the plugin needs them. Missing = delete the incomplete dir.
+- **Do not manually `cp` files between version dirs.** Either let `/plugin update` regenerate cleanly, or remove the bad version and let Claude Code re-fetch.
+
+Quick audit:
+```bash
+for p in ~/.claude/plugins/cache/*/*/; do
+  name=$(basename $(dirname $p))
+  ver=$(basename $p)
+  nm=$([ -d "$p/node_modules" ] && echo y || echo n)
+  dist=$([ -d "$p/dist" ] && echo y || echo n)
+  echo "$name/$ver: node_modules=$nm dist=$dist"
+done
+```
+
+## 11. `${CLAUDE_PLUGIN_DATA}` is the right home for build artifacts
+
+**Context.** TypeScript plugins that bundle with `tsc` need `node_modules/` at runtime. The marketplace sync doesn't include `node_modules/`, so cached plugins arrive without dependencies and MCP servers fail at startup.
+
+**Rule.** Three correct patterns, in order of preference:
+
+1. **Bundle with `tsup`** — single-file `dist/mcp/server.js` that embeds all deps. No `node_modules/` needed at runtime. IBR follows this pattern. Ship `dist/` in git (don't gitignore it).
+2. **SessionStart hook with `${CLAUDE_PLUGIN_DATA}`** — install deps once into the persistent data dir, not the cache. Survives plugin updates.
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [{
+         "hooks": [{
+           "type": "command",
+           "command": "diff -q \"${CLAUDE_PLUGIN_ROOT}/package.json\" \"${CLAUDE_PLUGIN_DATA}/package.json\" >/dev/null 2>&1 || (cd \"${CLAUDE_PLUGIN_DATA}\" && cp \"${CLAUDE_PLUGIN_ROOT}/package.json\" . && npm install)"
+         }]
+       }]
+     }
+   }
+   ```
+   Then point MCP at the bundled script with `NODE_PATH=${CLAUDE_PLUGIN_DATA}/node_modules`.
+3. **Commit `dist/` + use pure-stdlib server** — smallest deliverable but only viable for servers with zero runtime deps.
+
+`${CLAUDE_PLUGIN_ROOT}` changes on every plugin update; data there doesn't survive. `${CLAUDE_PLUGIN_DATA}` persists at `~/.claude/plugins/data/<id>/`.
+
+## 12. Reserved marketplace names
+
+**Context.** Claude Code rejects these names at publish/sync time:
+- `claude-code-marketplace`, `claude-code-plugins`, `claude-plugins-official`
+- `anthropic-marketplace`, `anthropic-plugins`
+- `agent-skills`, `knowledge-work-plugins`, `life-sciences`
+- Any name that impersonates the above (`official-claude-plugins`, `anthropic-tools-v2`, etc.)
+
+**Rule.** Use a clearly-original kebab-case name that identifies you or your team. Validate before publishing: the `claude.ai` marketplace sync rejects non-kebab-case names silently even when the local `/plugin` flow accepts them.
+
+## 13. Testing an MCP server without Claude Code
+
+**Rule.** You can verify a Claude Code plugin's MCP server is healthy without any plugin machinery by sending the `initialize` RPC directly:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | \
+  CLAUDE_PLUGIN_ROOT=/path/to/plugin \
+  node /path/to/plugin/dist/mcp/server.js
+```
+
+A healthy server responds with a single-line JSON-RPC `result` containing `protocolVersion`, `serverInfo.name`, `serverInfo.version`, and `capabilities`. If you see nothing, a stack trace, or `EACCES`/`MODULE_NOT_FOUND`, the server has a real failure.
+
+This distinguishes "server works but Claude Code's UI shows stale failure" from "server actually broken." Extremely useful for debugging the `/plugin` "Needs attention" pane — which sometimes caches failure status across reloads.
+
+## 14. Kebab-case and reserved-name checks happen at different stages
+
+**Rule.** Anthropic's `claude.ai` marketplace sync is stricter than the local `/plugin` install flow:
+- Local flow: accepts `UpperCase`, `under_scores`, even short paths. Shows warnings but loads.
+- claude.ai sync: rejects non-kebab-case plugin or marketplace names with no override.
+
+Check kebab-case for both `marketplace.json.name` and every `plugins[].name` before publishing. The fastest way to catch this: run `claude plugin validate .` in the marketplace root.
+
 ## Preflight checklist before shipping a plugin change
 
 - [ ] `plugin.json` declares only non-default paths for `hooks`, `mcpServers`, `lsp`
+- [ ] `plugin.json` lives at `.claude-plugin/plugin.json` (not plugin root)
 - [ ] Version bumped in `plugin.json`
 - [ ] No `type: "prompt"` hooks on per-turn events (PostToolUse:Bash, UserPromptSubmit, PreToolUse:Bash)
 - [ ] No absolute paths — use `${CLAUDE_PLUGIN_ROOT}`
 - [ ] No personal values in `settings.json`
-- [ ] If in an aggregator: marketplace.json version matches, README.md updated
+- [ ] `.mcp.json` uses `{"mcpServers": {...}}` wrapper (not flat form)
+- [ ] MCP server responds to `initialize` RPC when launched directly
+- [ ] `dist/` is in git (not gitignored) OR bundled via `tsup` OR rebuilt via SessionStart hook with `${CLAUDE_PLUGIN_DATA}`
+- [ ] Plugin name and marketplace name are kebab-case
+- [ ] If in an aggregator: marketplace.json version matches plugin.json, README.md updated
 - [ ] Test with `claude --plugin-dir ./my-plugin` in a scratch directory before committing
+- [ ] `claude plugin validate .` passes in the marketplace root
 - [ ] `jq` the `installed_plugins.json` audit command on your own machine — no duplicates for this plugin

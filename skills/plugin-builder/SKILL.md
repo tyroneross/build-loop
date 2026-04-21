@@ -242,6 +242,11 @@ Custom paths in `plugin.json` **supplement** defaults, they don't replace them.
 | Identical hook in source repo and marketplace aggregator | Edit the source repo manifest — cache under `~/.claude/plugins/cache/` is regenerated from the marketplace repo on every sync, overwriting local edits. Commit + push before expecting changes to persist. |
 | Flat `.mcp.json` without `mcpServers` wrapper | Always wrap: `{"mcpServers": {"<name>": {...}}}`. Flat form `{"<name>": {...}}` silently passes `/doctor` but fails at MCP startup — only visible in `/mcp`. |
 | Plugin ships without pre-built `dist/` | Either bundle with `tsup` (single-file output, no runtime deps) OR commit `dist/` to the repo OR add a postinstall rebuild. `tsc`-only output that depends on `node_modules/` will fail when the marketplace sync excludes those dirs. |
+| Removing a marketplace doesn't stick after `/reload-plugins` | Multiple sources re-seed `known_marketplaces.json`: `extraKnownMarketplaces` in `settings.json`, `~/.claude/plugins/.install-manifests/*.json`, and `~/.claude/plugins/marketplaces/<name>/`. Clean all three sources, then rewrite `known_marketplaces.json` last. See `references/plugin-hygiene-lessons.md` § 9. |
+| Partial cache dirs from interrupted `/plugin update` | Two version dirs for the same plugin (one complete, one missing `dist/`/`node_modules/`). Align `installed_plugins.json`'s `version`+`installPath` and delete the incomplete one. See § 10. |
+| `plugin.json` at plugin root instead of `.claude-plugin/plugin.json` | Move it. Only `plugin.json` lives in `.claude-plugin/`; everything else (commands/, skills/, agents/, hooks/) stays at plugin root. |
+| Reserved marketplace name | Avoid `claude-code-marketplace`, `claude-code-plugins`, `claude-plugins-official`, `anthropic-*`, `agent-skills`, `knowledge-work-plugins`, `life-sciences`, plus impersonating variants. Rejected at claude.ai sync. |
+| Non-kebab-case plugin or marketplace name | Local flow tolerates it with a warning; claude.ai sync rejects outright. Use `[a-z0-9][a-z0-9-]*`. Validate with `claude plugin validate .`. |
 
 ## Plugin Hygiene (Preventing Install Chaos)
 
@@ -262,11 +267,37 @@ Returns plugins with multiple install sources. Anything in that list is a duplic
 
 **`extraKnownMarketplaces` hygiene.** Each entry is a registered marketplace that `/plugin` can pull from. If you added a directory source for local dev and later moved to the aggregator, remove the dev entry.
 
+## Building an MCP Server
+
+When the plugin exposes MCP tools (not just hooks/skills/agents), see the dedicated **`mcp-builder` skill** for server implementation, bundling strategies (`tsup` vs `tsc` + SessionStart install hook), stdio transport, tool design rules, and a standalone smoke-test. Plugin-builder covers the `.mcp.json` config; mcp-builder covers the server itself.
+
+## Debugging MCP Failures
+
+When `/plugin` shows "MCP · ✗ failed":
+
+1. **Standalone handshake test.** Launch the server directly with an `initialize` RPC — if it returns valid JSON-RPC, the server is fine and the UI is stale:
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | \
+     CLAUDE_PLUGIN_ROOT=<plugin-path> node <plugin-path>/dist/mcp/server.js
+   ```
+2. **Schema check.** Verify `.mcp.json` has the top-level `"mcpServers"` wrapper (most common root cause).
+3. **Cache completeness.** Confirm `dist/` and (if needed) `node_modules/` exist at the `installPath` listed in `installed_plugins.json`.
+4. **Version alignment.** `version` field and `installPath` dir must agree — mismatches produce phantom failures.
+
+Full playbook in `references/plugin-hygiene-lessons.md` § 13.
+
 ## Additional Resources
 
-For detailed reference material, consult:
-- **`references/manifest-schema.md`** — Complete plugin.json schema with all fields
+Core references (load as needed — don't pre-load all):
+
+- **`references/authoritative-sources.md`** — Anthropic + MCP doc URLs, validation tooling, sanity-test commands, canonical behavior rules. Start here when you need to verify a claim.
+- **`references/manifest-schema.md`** — Complete `plugin.json` schema with all fields
 - **`references/hooks-reference.md`** — All hook events, types, matchers, and patterns
 - **`references/components-guide.md`** — Detailed guide for each component type
 - **`references/distribution.md`** — Marketplace creation, versioning, and sharing
-- **`references/plugin-hygiene-lessons.md`** — Real-world lessons from the RossLabs-AI-Toolkit marketplace rename and related duplicate-install incidents
+- **`references/plugin-hygiene-lessons.md`** — 14 real-world incidents from shipping plugins (duplicate installs, `.mcp.json` schema, marketplace zombies, partial cache dirs, `${CLAUDE_PLUGIN_DATA}` patterns)
+- **`references/build-loop-phase-guidance.md`** — How build-loop phases should handle plugin edits (Assess → Plan → Execute → Review → Iterate)
+
+Related skills:
+- **`mcp-builder`** — MCP server implementation companion
+- **`skill-builder`** — SKILL.md authoring (for skills shipped inside a plugin)
