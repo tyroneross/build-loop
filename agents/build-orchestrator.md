@@ -14,7 +14,7 @@ description: |
   user: "/build add dark mode to the dashboard"
   assistant: "I'll use the build-orchestrator agent to orchestrate the implementation."
   </example>
-model: opus-4-7
+model: claude-opus-4-7
 color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
 ---
@@ -115,7 +115,7 @@ Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; th
 ### Model Tiering (Phase 3 Execute + Phase 4 Review + Phase 6 Learn)
 Consult `Skill("build-loop:model-tiering")` when spawning any subagent. Defaults:
 
-- **Orchestrator** (you): `model: opus-4-7` — planning, coordination, phase gating, sign-off on experimental artifacts
+- **Orchestrator** (you): `model: claude-opus-4-7` — planning, coordination, phase gating, sign-off on experimental artifacts
 - **Implementer** (Execute): `model: sonnet`, `effort: medium`
 - **Adversarial critic** (Review sub-step A): dispatch `sonnet-critic` agent. Read-only. If `pass: false` with `strong-checkpoint` findings, route back to Execute (not Iterate — no iteration counter burn)
 - **Fact-checker** (Review sub-step D): `inherit` (Sonnet in most sessions)
