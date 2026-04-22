@@ -144,7 +144,21 @@ Log the escalation in `.build-loop/state.json.escalations` with fields: `chunk`,
 ### Report & Memory Write (Phase 4 Review, sub-step F)
 Runs only on the final Review pass (not after intermediate Iterate→Review loops).
 - If `availablePlugins.pyramidPrinciple`: invoke `pyramid-principle:pyramid-short-form` for the scorecard
-- **Append a run entry to `.build-loop/state.json.runs[]`** — schema in SKILL.md §Phase 4 sub-step F. Generate a `run_id` for this build (`run_<UTC-ISO-basic>_<sha256(goal)[:8]>`). Capture `filesTouched` (from `git diff --name-only <pre-build-sha>..HEAD`), `diagnosticCommands` (from your session transcript), `manualInterventions` (from any `AskUserQuestion` responses that deviated from default), `active_experimental_artifacts[]` (names of any experimental skills that triggered this run — used by Phase 6 Learn confound tracking), and per-phase `{status, duration_s, root_cause?}`. For each experimental skill that triggered, append its applied-row to `.build-loop/experiments/<name>.jsonl` with `run_id` and `co_applied_experimental_artifacts[]` filled in so Phase 6 Learn can compute confound state correctly.
+- **Append a run entry to `.build-loop/state.json.runs[]`** — delegate to the deterministic writer; do NOT hand-write JSON. The writer generates the `run_id`, handles the atomic append, preserves all legacy top-level keys, and fans out per-experiment `applied` rows with correct `co_applied_experimental_artifacts[]` confound tracking. Schema source-of-truth lives in the script (`scripts/write_run_entry.py`).
+
+  ```bash
+  RUN_ID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py" \
+    --workdir "$PWD" \
+    --goal "$GOAL_SUMMARY" \
+    --outcome pass \
+    --phases-json '{"assess":{"status":"pass","duration_s":12},"plan":{"status":"pass","duration_s":34},"execute":{"status":"pass","duration_s":180},"review":{"status":"pass","duration_s":55},"iterate":{"status":"pass","duration_s":0}}' \
+    --files-touched-from-git \
+    --diagnostic-commands "$(printf 'cmd1\ncmd2\n')" \
+    --manual-interventions-json '[]' \
+    --active-experimental-artifacts "skill-a,skill-b")
+  ```
+
+  Capture `RUN_ID` from stdout and cite it in the scorecard. `--outcome` must be one of `pass|fail|partial`. `--files-touched-from-git` uses `state.json.preBuildSha` (stamp this at Phase 1 ASSESS); falls back silently if the sha is absent. Exit codes: `0` ok, `1` validation error (fix the args and retry — do NOT fall back to hand-writing JSON, which bypasses the file lock), `2` filesystem error (retry once; if it persists, log to `.build-loop/state.json.escalations` and surface to the user).
 - **Store resolved debugger incidents and report outcomes** (if `availablePlugins.claudeCodeDebugger`):
   - For each newly resolved Review-B/Iterate failure: invoke `store` MCP tool with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
   - For each Review-B memory gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied: invoke `outcome` MCP tool with `{incident_id, result: "worked"|"failed"|"modified", notes}`. This trains the verdict classifier.

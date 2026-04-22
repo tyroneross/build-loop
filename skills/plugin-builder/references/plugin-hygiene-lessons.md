@@ -50,6 +50,29 @@ Better: use `EnterWorktree` or a separate test project directory for plugin deve
 
 The marketplace repo is the source of truth. Nothing under `~/.claude/plugins/cache/` is authored — it's all generated.
 
+## 5a. The reverse trap: source-only edits don't take effect at runtime
+
+**What happened (2026-04-22, build-loop).** Edited `~/Desktop/git-folder/build-loop/scripts/write_run_entry.py` in the source repo and updated the orchestrator prose to invoke `${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py`. Tests passed. Claimed success. The orchestrator never saw the new script because `${CLAUDE_PLUGIN_ROOT}` resolves to `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` — a frozen snapshot that only updates on marketplace sync. Source-only edit = runtime silently runs the old version (or in this case, returns "file not found" and the orchestrator falls back to hand-writing JSON, if it remembers to).
+
+**Rule.** The full sync cycle is **source → commit → push → marketplace sync → cache**. Any link that breaks leaves the cache stale.
+
+For the current session you need BOTH: edit source (for persistence) AND copy to cache (for immediate effect). Scripts for doing this safely:
+
+```bash
+# Sync single plugin's source → cache (run from source repo root)
+PLUGIN=build-loop
+MARKET=rosslabs-ai-toolkit
+VERSION=$(jq -r .version .claude-plugin/plugin.json)
+CACHE=~/.claude/plugins/cache/$MARKET/$PLUGIN/$VERSION
+rsync -av --delete --exclude=.git --exclude=node_modules --exclude='__pycache__' ./ "$CACHE/"
+```
+
+This rule applies to EVERY path referenced via `${CLAUDE_PLUGIN_ROOT}/...`: hooks, manifests, SKILL.md, agent definitions, scripts, references, MCP servers, command .md files. Not just the originally-documented hooks + dist/.
+
+**Detection script.** Build-loop ships `scripts/check_cache_sync.py` that greps the source repo for `${CLAUDE_PLUGIN_ROOT}/` references, resolves each, diffs against the cache, and fails with a list of out-of-sync paths. Review-D (Fact-Check) runs it automatically when Phase 1 detects "plugin work" on the target repo.
+
+**Why this class of bug is easy to miss.** Local tests pass (they use the source path directly). Orchestrator-driven use fails silently (cache path returns stale or missing file). The mismatch only surfaces when the orchestrator and the developer use different resolved paths for the same logical file.
+
 ## 6. Aggregator marketplaces hide their own update failures
 
 **What happened.** When a plugin inside `rosslabs-ai-toolkit` ships a fix, the user has to run `/plugin` update on the aggregator, not on the individual plugin. Updates to individual plugins in the aggregator are not auto-pulled when only the plugin's version bumps — the aggregator's own marketplace.json must reflect the new version. Forgetting to update `marketplace.json` means users install stale plugin versions even though the GitHub repo has the fix.

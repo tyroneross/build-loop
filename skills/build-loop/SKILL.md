@@ -1,6 +1,6 @@
 ---
 name: build-loop
-description: Use when making significant multi-step code changes requiring planning, parallel execution, and validation. Not for single-file edits or quick fixes.
+description: "Orchestrated build loop for multi-step code work. TRIGGER on user phrasing: 'build X', 'implement Y', 'create [feature/component/script/page]', 'add [feature/endpoint/skill/agent/hook]', 'ship [thing]', 'wire up X', 'integrate Y', 'refactor across files', 'fix [complex bug]', 'migrate X to Y', 'make X work end-to-end', 'set up X', or any task that spans multiple files and needs plan → execute → review → iterate. Also trigger when the user hands over a spec, research packet, or multi-criterion rubric. SKIP only for: one-line edits, single-file config tweaks, pure Q&A, code explanation without changes, or asks explicitly scoped to 'quick fix' / 'just change X' / 'one-liner'."
 ---
 
 # Build Loop — Orchestrated Development
@@ -33,8 +33,8 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 |-------|---------|----------|
 | `writing-plans` | Phase 3 (Plan) | Write a structured plan directly: goal, tasks with exact file paths, dependency order, test commands |
 | `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
-| `verification-before-completion` | Phase 8 (Report) | Run all test/build/lint commands and confirm output before claiming completion |
-| `simplify` (slash: `/simplify`) | Phase 8 (after Report) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
+| `verification-before-completion` | Phase 4 sub-step F (Report) | Run all test/build/lint commands and confirm output before claiming completion |
+| `simplify` (slash: `/simplify`) | Phase 4 sub-step E (Simplify) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
 | `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
 
 ### Phase quick reference
@@ -71,7 +71,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Architecture scan / impact trace (Assess + Review) | `build-loop:navgator-bridge` — reads `.navgator/architecture/` JSON for blast-radius analysis in Phase 1, runs `navgator rules` diff post-change in Phase 7 | `gator:*` commands if installed | Read component → edit → re-read downstream |
 | Debugger memory-first gate (Review + Iterate) | `build-loop:debugger-bridge` — calls `checkMemoryWithVerdict()` before iterating, escalates to parallel assessment or causal-tree investigation on stuck state; reads logs via `read_logs` MCP; feeds back `outcome` on applied fixes | `claude-code-debugger:debug-loop` direct | `fallbacks.md#debug` |
 | Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer-bridge` — passive observability scan at Phase 1; generates stack-appropriate structured logging / OTel at Phase 5/6 when debug-loop hits `evidence_gap` | `claude-code-debugger:logging-tracer` direct | Inline Tier-1 (zero-dep JSON logger) per stack |
-| Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures, diagnostics, file churn; drafts experimental skills/agents to `.build-loop/skills/experimental/`; auto-promotes to `.build-loop/skills/active/` on A/B wins, auto-removes on regression. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
+| Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures and manual interventions; drafts experimental skills/agents to `.build-loop/skills/experimental/`. Auto-promote to `.build-loop/skills/active/` requires opt-in (`autoPromote: true`) plus effective non-confounded sample ≥ 8; regressions and inconclusive results write proposals to `.build-loop/proposals/` for user confirmation — never auto-remove. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
 | Claude Code plugin authoring / review | `plugin-builder` (personal skill), `plugin-dev:*` family | `build-loop:plugin-hygiene-lessons.md` enforces manifest/hook/marketplace rules in Review-D | Read `plugin-hygiene-lessons.md` verbatim |
 
@@ -196,7 +196,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 ### Understand current state
 1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
-2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command edits.
+2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
 4. **Detect available tools**: test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets.
 5. **Map architecture** using best available approach:
@@ -335,6 +335,7 @@ Nothing false, fabricated, or placeholder reaches the user. Three gates, run in 
 - **Gate 1 — Fact Checker**: Trace every rendered %, $, score, count, or assessment to its data source. Flag "always", "never", "100%", "guaranteed" — replace with accurate language unless genuinely absolute. Every rendered metric needs a traceable path: source → transformation → display.
 - **Gate 2 — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
 - **Gate 3 — Architectural Violation Check** (if NavGator available): load `build-loop:navgator-bridge`, run its Review violation check. Executes `navgator rules --json` and classifies blocking (`circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error) vs warning (`hotspot`, `high-fan-out`, `orphan`). Flags recurrences against `.navgator/lessons/lessons.json`.
+- **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --source <plugin-source-repo>`. Greps source for `${CLAUDE_PLUGIN_ROOT}/...` references, diffs each resolved file against the cache. `[DIVERGED]` or `[MISSING IN CACHE]` on any file the source has is **blocking** — the orchestrator's runtime invocations will hit stale or missing files (see `plugin-builder/references/plugin-hygiene-lessons.md` §5a). Fix: `rsync` source → cache, or bump plugin version + publish if the sync should be durable. Skips silently when cache dir doesn't exist (user hasn't installed the plugin, nothing to break).
 
 Blocking issues (any gate) → route to Iterate. Warnings → include in Report (sub-step F).
 
@@ -366,7 +367,7 @@ Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 
 **Orphan scan** (if NavGator available): invoke `build-loop:navgator-bridge` Report step — runs `navgator dead`, diffs against Assess baseline, surfaces new orphans introduced this build.
 
-**Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. Schema:
+**Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. Delegate to `scripts/write_run_entry.py` — do not hand-write JSON; the script owns the schema, atomic writes, legacy-state migration, and per-experiment confound fan-out. Invocation example in `agents/build-orchestrator.md` §Report & Memory Write. Schema (as the script emits):
 
 ```json
 {
@@ -518,19 +519,19 @@ On future `/build` runs, check this file and adjust proactively.
 ## Process Flow
 
 ```
-ASSESS → DEFINE → PLAN → EXECUTE → CRITIC → OPTIMIZE → VALIDATE
-                            ↑         ↓         ↓           ↓
-                            │    strong-    (if metric   All pass? ──yes──→ FACT CHECK ──pass──→ REPORT → SIMPLIFY → FEEDBACK
-                            │  checkpoint   exists)          ↓                  ↓
-                            └───(re-execute)                no            blocking issues
-                                                             ↓                  ↓
-                                                         ITERATE ←──────────────┘
-                                                        (up to 5x)
+ASSESS → PLAN → EXECUTE → REVIEW ──────────────────────────────────────────→ LEARN (opt)
+                            ↑   │
+                            │   ├─ A. CRITIC ──strong-checkpoint──→ (re-execute, no iter burn)
+                            │   ├─ B. VALIDATE ──┐
+                            │   ├─ C. OPTIMIZE ──┤ (opt-in, mechanical metric only)
+                            │   ├─ D. FACT-CHECK ┤
+                            │   ├─ E. SIMPLIFY   │
+                            │   └─ F. REPORT ────┘ (final pass only → scorecard + runs[] entry)
+                            │                           │
+                            └──── ITERATE (up to 5x) ←──┘ on B/D blocking failures
 ```
 
-CRITIC (Phase 4.5) is the adversarial read-only pass. Strong-checkpoint findings route back to EXECUTE without consuming iteration budget.
-
-OPTIMIZE (Phase 4.7) runs the autoresearch-pattern optimization loop when a mechanical metric exists. Dispatches `optimize-runner` for autonomous iteration, then `overfitting-reviewer` for adversarial review. Skipped when no metric applies.
+Review sub-step A (CRITIC) is the adversarial read-only pass; strong-checkpoint findings route back to EXECUTE without consuming iteration budget. Sub-step C (OPTIMIZE) is opt-in — runs the autoresearch-pattern optimization loop only when a mechanical metric exists; dispatches `optimize-runner` for autonomous iteration, then `overfitting-reviewer` for adversarial review. Sub-step F (REPORT) invokes `scripts/write_run_entry.py` to append the run entry to `state.json.runs[]`; Phase 6 Learn scans that log.
 
 ## References
 

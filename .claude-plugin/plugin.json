@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Orchestrated 5-phase development loop (Assess → Plan → Execute → Review → Iterate) plus optional Learn phase. Review combines critic, validate, optimize, fact-check, simplify, and report as ordered sub-steps. Includes NavGator / claude-code-debugger / logging-tracer bridges with standalone fallbacks (cherry-pick from companion tools without coupling). Opus 4.7 orchestrator, Sonnet execution, Haiku pattern-matching.",
   "author": {
     "name": "Tyrone Ross",
