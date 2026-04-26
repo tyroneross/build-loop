@@ -325,6 +325,13 @@ Exit 0 = clean. Exit 1 = warnings only (continue, log). Exit 2 = must-fix found 
 
 This is the static-analysis gate that catches what mockup-parity misses — colored status pills, ungated `.repeatForever`, raw `UIColor` outside Theme, literal `cornerRadius`, body-copy `.font(.system(size:))`, icon-only `Image(systemName:)` without accessibility labels. Maintained in `scanners/audit-design-rules.mjs`, dependency-free Node 18+, per-platform packs.
 
+**Visual validation** (REQUIRED when `uiTarget != null`): the static scanner cannot catch rendering bugs — an upside-down arc, an invisible track stroke, a row clipped behind a floating tab bar, a chip that wraps. After the scanner passes, render the actual screen via the platform's preferred tool:
+- iOS / macOS / watchOS: `mcp__plugin_ibr_ibr__native_scan` against booted simulator (install + launch the build first)
+- Web: `mcp__plugin_ibr_ibr__scan` against the dev server URL
+- Fallback: `xcrun simctl io booted screenshot` or browser-driven `playwright` if IBR is unavailable
+
+For returning-user states (post-onboarding screens, dashboards with data), use the DebugSeeder pattern (see `templates/ui-subagent-prompt.md` §DebugSeeder) so visual states can be verified in seconds without manual data entry. Build 55 of a real shipped app passed scanner exit 0 but rendered an upside-down semicircle gauge with stray tick marks because no one rendered the actual screen — visual validation is non-negotiable for UI work.
+
 **LLM-as-judge graders second** (for nuanced criteria):
 - Each criterion → its own focused judge prompt
 - Binary pass/fail output only

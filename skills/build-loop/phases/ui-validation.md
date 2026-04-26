@@ -77,7 +77,9 @@ The template covers: skill loading mandate, mockup-vs-rule conflict policy (rule
 
 ## Phase 4 sub-step B (Validate)
 
-Add to the code-based grader pass:
+Two graders, both required when `uiTarget != null`.
+
+### Static scanner
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" \
@@ -91,6 +93,71 @@ Exit code routing:
 - 1 → pass with warnings (log, continue)
 - 2 → fail (route to Phase 5 Iterate; fix must-fix items before continuing)
 
+### Visual validation (lesson from build 53–55)
+
+The static scanner caught zero issues with a semicircle gauge that rendered upside-down with an invisible track stroke and stray floating tick marks. The bug was only visible by rendering the screen and looking at it. **Static rules cannot catch rendering bugs.** Visual validation is a separate, non-negotiable gate.
+
+Per platform:
+
+| Platform | Tool |
+|---|---|
+| iOS / macOS / watchOS | Build → install on booted simulator → launch → `mcp__plugin_ibr_ibr__native_scan` |
+| Web (Next/Vite/Vue) | Start dev server → `mcp__plugin_ibr_ibr__scan` against URL |
+| Fallback | `xcrun simctl io booted screenshot <path>` (iOS), Playwright headless (web) |
+
+Failure modes the visual gate is checking for:
+- Geometry rendering correctly (arcs, charts, gauges, custom paths)
+- Stroke / track visibility against the actual background palette
+- Last row of any scrollable surface clears floating tab bars / safe areas
+- No text wrapping unexpectedly (long dim names, timestamps, labels)
+- No overlapping elements
+- Mockup parity in element placement
+
+If returning-user states need data to render meaningfully (Home dashboards, Profile stats, History rows), use the **DebugSeeder pattern** below to seed test data before scanning.
+
+### DebugSeeder pattern (testability for stateful screens)
+
+UI states reachable only after onboarding / N user actions are unverifiable in a fresh sim install. Add a debug-only seeder gated by `#if DEBUG` and a launch arg, so any subagent can render any state in seconds.
+
+SwiftUI/SwiftData example (from real shipped app):
+
+```swift
+// Services/DebugSeeder.swift
+#if DEBUG
+import Foundation
+import SwiftData
+
+enum DebugSeeder {
+    static func seedIfEmpty(context: ModelContext) {
+        let existing = (try? context.fetch(FetchDescriptor<Session>())) ?? []
+        guard existing.isEmpty else { return }
+        // Insert representative test data spanning a meaningful range:
+        // multiple drill types, dim scores, dates across 7+ days so
+        // weekly aggregations and trend deltas have something to compute.
+        try? context.save()
+    }
+}
+#endif
+```
+
+```swift
+// AppEntryPoint.swift init()
+#if DEBUG
+if CommandLine.arguments.contains("-SeedDebugSessions") {
+    DebugSeeder.seedIfEmpty(context: container.mainContext)
+}
+#endif
+```
+
+Launch with seed:
+```
+xcrun simctl launch booted <bundle-id> -SeedDebugSessions YES -SelectedTab 1
+```
+
+For multi-tab apps, also add a `-SelectedTab N` launch arg so any tab opens directly. Both compile out of release builds.
+
+The seeder pays for itself the first time it catches a visual bug.
+
 ## Phase 4 sub-step D (Fact-Check) — Gate 5
 
 Runs alongside Gate 1 (Fact Checker), Gate 2 (Mock Data Scanner), Gate 3 (NavGator violations), Gate 4 (Plugin Cache Sync). Same scanner as Validate sub-step B, broader scope (full project, not just changed files). Surfaces any pre-existing must-fix violations newly observable due to scanner rule additions.
@@ -99,17 +166,27 @@ Pre-existing must-fix findings on first run for a project: log to `.build-loop/i
 
 ## Acceptance for "production-ready UI on first pass"
 
-A UI build is considered production-ready when:
+A UI build is considered production-ready when ALL of these pass on the first build attempt:
 
 - ✅ Build succeeds
 - ✅ Tests pass (or pre-existing failures are documented)
-- ✅ Mockup-parity verified (visual + element diff)
 - ✅ Design-rule scanner exits 0 on changed files
 - ✅ Mockup-vs-rule conflicts documented in subagent output
-- ✅ IBR scan confirms rendered UI matches mockup intent
+- ✅ **Visual validation: every changed screen rendered and inspected against mockup**
+  - Geometry correct (arcs, charts, custom paths)
+  - No clipping behind floating bars / safe areas
+  - No unexpected text wrapping or element overlaps
+  - Track strokes visible against actual background palette
 - ✅ Reduce Motion smoke test passes (manual or via simulator)
 
-If all seven pass on the first build attempt, the gates worked as designed. If any fail, the gates need tightening — file a feedback note in `.build-loop/feedback.md`.
+If all six pass on the first build attempt, the gates worked as designed. If any fail, the gates need tightening — file a feedback note in `.build-loop/feedback.md`.
+
+Real bugs that bypassed the gates and were only caught visually (build-loop hardening came from these):
+- **Build 53–55 (SpeakSavvy)**: Semicircle gauge rendered upside-down because `Path.addArc clockwise:true` traces the bottom half in SwiftUI's flipped y-axis. Track stroke used `Theme.surfacePrimary` (#1A1F26), invisible against `Theme.background` (#0F1419). Tick marks correctly placed but appeared "stray" because no arc was visible. Static scanner couldn't see this.
+- **Build 53–56 (SpeakSavvy)**: Detailed mode's 7th dim row, Profile's version row, Practice's bottom drill all clipped behind iOS 26 floating tab bar because `safeAreaPadding` didn't push scroll content. Required explicit `Color.clear.frame(height: 100)` spacer.
+- **Build 56 (SpeakSavvy)**: "Engagement" dim name wrapped to 2 lines in History session chips because no `lineLimit` + `minimumScaleFactor` constraint, AND right column timestamps wrapped because no `fixedSize` width policy.
+
+These shipped to TestFlight before being caught — gates are now tightened to prevent recurrence.
 
 ## Tuning the rule packs
 
