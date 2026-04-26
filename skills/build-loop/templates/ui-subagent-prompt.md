@@ -70,7 +70,9 @@ Mandatory pre-return steps:
    ```
    node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<project> --platform=<swiftui|react|web>
    ```
-   **Zero must-fix findings on any file you changed.** Warnings tolerated, must-fix blocks return.
+   **Zero must-fix findings.** Must-fix blocks return.
+
+   **No "out of scope" framing for warnings.** Drift from a rule in any user-facing file is drift, regardless of whether this commit "owns" that file. If your task changes one screen and the scanner shows warnings on adjacent screens, fix the warnings too — the user lives in the app, they don't see commit boundaries. The only acceptable warning is one you explicitly justify in your output (e.g. "fixed font size on numeric chip — Dynamic Type would break tabular alignment"). "Pre-existing" is not a reason; it's a backlog.
 3. If the scanner doesn't exist (older build-loop install), you still must self-audit against the checklist above before returning.
 
 ## Output requirements
