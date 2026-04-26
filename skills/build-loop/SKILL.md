@@ -211,9 +211,25 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 11. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
 12. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
 
+### UI scope and mockup pre-flight (when uiTarget != null)
+12a. **Mockup pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
+   ```
+   node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<mockups_dir> --platform=html --json
+   ```
+   Log conflicts to `.build-loop/issues/mockup-rule-conflicts.md`. Don't block — agents need to know upfront which rules trump the mockup. Mockups are intent, rules are law. See `phases/ui-validation.md` for full guidance.
+
 ### Define goal and scoring criteria
 13. **State the goal** in concrete, measurable terms.
 14. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Show for confirmation.
+
+   **When `uiTarget != null`, the following criteria are REQUIRED and added automatically (not optional)**:
+   - **UI-1 Design-rule compliance**: scanner exits 0 on changed files (must-fix=0). Grader: code (`audit-design-rules.mjs`).
+   - **UI-2 Reduce Motion compliance**: every animation gated on platform's reduce-motion API. Grader: code (scanner rule `animation-without-reducemotion`).
+   - **UI-3 Theme token usage**: no raw color literals or hardcoded radii outside theme files. Grader: code (scanner rules `uicolor-rgb-outside-theme`, `literal-corner-radius`, `hex-color-outside-theme`).
+   - **UI-4 Accessibility labels**: icon-only graphics have explicit labels. Grader: code (scanner rule `sf-symbol-without-label` or web equivalent).
+
+   These exist because mockup-parity ≠ design-rule compliance. Code that matches the mockup but violates the rules is not production-ready. See `phases/ui-validation.md`.
+
 15. **Design eval graders per criterion** using the grading hierarchy:
     - **Prefer code-based graders** (fast, deterministic, cheap): test suite pass/fail, lint/type check, build succeeds, schema validation, accessibility audit
     - **Use LLM-as-judge graders** when code can't check the criterion:
@@ -253,7 +269,14 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
 3. **Parallel agents** where dependency graph allows
 4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs
-5. **UI work**: Load `calm-precision` skill and follow it
+5. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
+   - Mandate to load `calm-precision` and per-platform skills (`ibr:ios-design`/`ibr:apple-platform` for Apple, `frontend-design`/`ibr:mobile-web-ui` for web)
+   - Mockup-vs-rule conflict policy: rule wins; subagent must report `RULE BEATS MOCKUP:` decisions
+   - Inline anti-pattern checklist (status pills, ungated animations, theme-token bypass, Dynamic Type, accessibility labels, touch targets, VoiceOver consistency, no fake buttons)
+   - Required env hooks (e.g. `@Environment(\.accessibilityReduceMotion)` on SwiftUI animations)
+   - Self-verification: run scanner before returning, zero must-fix on changed files
+
+   Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions.
 6. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. Log to `.build-loop/issues/` with context
 7. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
 
@@ -285,13 +308,22 @@ Test every criterion from Assess with evidence.
 
 **Code-based graders first** (fast, deterministic):
 ```
-test suite       → pass/fail
-lint / type check → pass/fail
-build            → pass/fail
-accessibility    → threshold pass/fail (if web)
-schema validation → pass/fail
-custom assertions → pass/fail
+test suite           → pass/fail
+lint / type check    → pass/fail
+build                → pass/fail
+accessibility        → threshold pass/fail (if web)
+schema validation    → pass/fail
+custom assertions    → pass/fail
+design-rule scan     → must-fix=0 pass/fail (uiTarget != null only)
 ```
+
+**Design-rule scan** (when `uiTarget != null`):
+```
+node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<project> --platform=<swiftui|react|web> --json
+```
+Exit 0 = clean. Exit 1 = warnings only (continue, log). Exit 2 = must-fix found (fail; route to Iterate).
+
+This is the static-analysis gate that catches what mockup-parity misses — colored status pills, ungated `.repeatForever`, raw `UIColor` outside Theme, literal `cornerRadius`, body-copy `.font(.system(size:))`, icon-only `Image(systemName:)` without accessibility labels. Maintained in `scanners/audit-design-rules.mjs`, dependency-free Node 18+, per-platform packs.
 
 **LLM-as-judge graders second** (for nuanced criteria):
 - Each criterion → its own focused judge prompt
@@ -336,6 +368,7 @@ Nothing false, fabricated, or placeholder reaches the user. Three gates, run in 
 - **Gate 2 — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
 - **Gate 3 — Architectural Violation Check** (if NavGator available): load `build-loop:navgator-bridge`, run its Review violation check. Executes `navgator rules --json` and classifies blocking (`circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error) vs warning (`hotspot`, `high-fan-out`, `orphan`). Flags recurrences against `.navgator/lessons/lessons.json`.
 - **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --source <plugin-source-repo>`. Greps source for `${CLAUDE_PLUGIN_ROOT}/...` references, diffs each resolved file against the cache. `[DIVERGED]` or `[MISSING IN CACHE]` on any file the source has is **blocking** — the orchestrator's runtime invocations will hit stale or missing files (see `plugin-builder/references/plugin-hygiene-lessons.md` §5a). Fix: `rsync` source → cache, or bump plugin version + publish if the sync should be durable. Skips silently when cache dir doesn't exist (user hasn't installed the plugin, nothing to break).
+- **Gate 5 — Design-Rule Scanner** (only when `uiTarget != null`): run `audit-design-rules.mjs` across full project (broader than Sub-step B's changed-files scope). Surfaces any pre-existing must-fix violations newly observable due to scanner rule additions. Pre-existing findings on first run are logged to `.build-loop/issues/` with break-what-if analysis (user decides scope). New-content findings are blocking. See `phases/ui-validation.md` for tuning.
 
 Blocking issues (any gate) → route to Iterate. Warnings → include in Report (sub-step F).
 
