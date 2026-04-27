@@ -18,6 +18,8 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 ## Core Principles
 
 - **Tools on demand.** Detect what's available, use what's needed. Don't assume any tool exists.
+- **North star first.** Understand the app/repo purpose, primary users, core workflows, and update intent before planning. Every subtask should explain how it contributes to that purpose.
+- **Beauty in the basics.** Core flows, real data, clear hierarchy, useful states, working controls, and accurate information matter more than extra surface area.
 - **Guidelines for creation, guardrails for output.** Be flexible during building. Be strict about what reaches users.
 - **No false data.** No mock data in production. No hardcoded metrics pretending to be real. No unverified claims.
 - **Diagnose before fixing.** Root-cause analysis before code changes. Many errors sharing a pattern = one system problem.
@@ -31,6 +33,8 @@ Combines situational awareness with goal definition so Plan has everything it ne
 
 **Understand state:**
 - Detect project type and tooling (language, framework, test runner, linter, build system)
+- Read deployment policy from `.build-loop/config.json.deploymentPolicy` when present. Default: `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`.
+- Capture app/repo north star and update intent in `.build-loop/intent.md`: purpose, primary users, core jobs, user value, and non-goals.
 - Map relevant architecture (only what the goal touches)
 - Check for prior state (`.build-loop/state.json` from interrupted builds)
 - If goal involves external frameworks or APIs: research current docs before planning
@@ -60,9 +64,9 @@ Combines situational awareness with goal definition so Plan has everything it ne
 ### Phase 3: Execute
 
 - Dispatch parallel work for independent file groups
-- Each worker gets minimal context + integration contract (what interfaces to implement)
-- For UI work: follow established design system or sensible defaults (44px touch targets, 4.5:1 contrast)
-- Surface pre-existing issues separately from new work
+- Each worker gets minimal context + integration contract (what interfaces to implement) + an intent packet explaining how the subtask fits the north star
+- For UI work: follow established design system or sensible defaults (44px touch targets, 4.5:1 contrast). Every visible element must have meaning, working behavior, and a clear user purpose.
+- Surface pre-existing issues separately from new work. If an issue impacts users and is local to the current build, plan and fix it automatically; if too large/risky, log user impact and defer.
 - Checkpoint after major integration points
 
 ### Phase 4: Review
@@ -98,6 +102,8 @@ Blocking issues (any gate) route to Iterate. Warnings land in Report.
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. Append run entry to `.build-loop/state.json.runs[]` with `run_id`, phase statuses, files touched, diagnostic commands, manual interventions, active experimental artifacts.
 
+Before any push/deploy, classify the exact command with `scripts/deployment_policy.py` when available. Follow the returned action: `auto` may run after Review passes; `confirm` requires explicit user confirmation in chat; `block` must not run. Defaults allow preview deploys and Xcode/App Store Connect/TestFlight upload/export flows, while production deploys, releases, publishes, protected-branch pushes, and unknown targets require confirmation.
+
 ### Phase 5: Iterate
 
 For each failed criterion flagged by Review:
@@ -132,6 +138,8 @@ Build loop stores state in `.build-loop/` within the project directory:
 ```
 .build-loop/
 ├── goal.md              # Current build goal
+├── intent.md            # North star, update intent, user value, non-goals
+├── config.json          # Optional repo flags, including deploymentPolicy
 ├── state.json           # Iteration state, phase progress
 ├── feedback.md          # Post-build lessons (one line per build)
 ├── evals/               # Scorecard archives

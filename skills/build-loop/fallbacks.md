@@ -14,6 +14,7 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 
 ### Design principles (Calm Precision, condensed from global `CLAUDE.md`)
 
+- **Intent**: every visible element must help the user act, understand, decide, or recover. Remove controls, nav items, filters, charts, and options that do not work or do not serve the current workflow.
 - **Grouping**: single border around related items; dividers between rows. Never individual borders on list items.
 - **Hierarchy**: Title 14–16px bold → Description 12–14px → Metadata 11–12px muted.
 - **Touch / size**: ≥24px desktop, ≥44px mobile tap targets. Button size reflects intent weight.
@@ -24,6 +25,8 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 - **Disclosure (Hick)**: show less, reveal on demand. Advanced options behind expand/more.
 - **Nav selected state**: text-gray-900, font-medium, 2px bottom border. Never background pills.
 - **Integrity**: no fake/placeholder buttons. Backend exists before UI.
+- **Primary action**: one core hero/primary action by default. Add multiple primary actions only when users genuinely need parallel choices.
+- **Beauty in the basics**: loading, empty, error, disabled, success, and permission states must be useful and polished.
 
 ### Static grep checks (run these at Review-D Fact-Check when IBR absent)
 
@@ -63,6 +66,9 @@ grep -rnE "console\.(log|error|warn|debug)" --include="*.ts" --include="*.tsx" -
 
 # 10. Mock data / faker / placeholder in production paths
 grep -rnE "(faker|@faker-js|lorem ipsum|PLACEHOLDER|TODO:.*REAL_DATA|Math\.random\(\))" --include="*.ts" --include="*.tsx" src/ app/ 2>/dev/null | grep -v "\.test\.\|\.spec\.\|__tests__/\|fixtures/" | head -20
+
+# 11. Dead or decorative UI promises
+grep -rnE "(coming soon|not implemented|TODO|href=\"#\"|onClick=\\{\\(\\) => \\{\\}\\}|disabled)" --include="*.tsx" --include="*.jsx" src/ app/ 2>/dev/null | grep -v "\.test\.\|\.spec\.\|__tests__/" | head -20
 ```
 
 ### File-check matrix

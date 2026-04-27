@@ -21,13 +21,19 @@ The orchestrator classifies intent automatically. Users can override with the st
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
 
+## Intent Capability Pack
+
+Every build uses `references/intent-capability-pack.md`. Phase 1 captures the app/repo north star and the update intent. Phase 2 maps tasks to that intent. Phase 3 includes an intent packet in every subagent prompt. Phase 4 reviews intent fidelity, user value, UI intentionality, data integrity, and simplicity/scalability.
+
+Core rule: build decisions should create user value and a delightful, trustworthy experience. Mock data, dead controls, unused navigation, decorative options, and excessive choices violate the pack when they reach user-facing or user-decision paths.
+
 ## Capability Routing
 
 Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** (the specialized plugin) → **secondary** (another installed plugin that can partially cover) → **inline fallback** (guidance text from `fallbacks.md`, injected verbatim into subagent prompts).
 
 Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` and writes the result to `.build-loop/state.json` under `availablePlugins`. All routing consults that object.
 
-### Core loop skills (always check)
+### Core loop skills/assets (always check)
 
 | Skill | Used In | Fallback |
 |-------|---------|----------|
@@ -36,12 +42,13 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | `verification-before-completion` | Phase 4 sub-step F (Report) | Run all test/build/lint commands and confirm output before claiming completion |
 | `simplify` (slash: `/simplify`) | Phase 4 sub-step E (Simplify) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
 | `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
+| Intent capability pack | Phases 1-4 | Read `references/intent-capability-pack.md`; write `.build-loop/intent.md`; pass the intent packet to every subagent |
 
 ### Phase quick reference
 
 | # | Phase | Purpose | Sub-steps / key actions |
 |---|---|---|---|
-| 1 | **Assess** | Understand state + define goal & criteria | detect tools, map architecture, load memory, write `goal.md` |
+| 1 | **Assess** | Understand state + define goal & criteria | detect tools, map architecture, load memory, write `intent.md` + `goal.md` |
 | 2 | **Plan** | Break work, identify parallel-safe, optimize | writing-plans skill → dependency graph |
 | 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report | sub-steps A-F; B-D can route to Iterate; F runs only on final pass |
@@ -81,7 +88,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 
 **Migration source**: if `.replit` / `replit.nix` present → `migrationSource: "replit"`. Lovable / Bolt / v0 export markers (e.g. `lovable.config`, `bolt.config`, `v0.dev` in comments) → corresponding source. `replit-migrate` skills generalize — load `migration-scan` for any of the above, override hints as needed.
 
-**Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds per `~/.claude/projects/-Users-tyroneross/memory/reference_asc_credentials.md`.
+**Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds per `~/.claude/projects/-Users-tyroneross/memory/reference_asc_credentials.md`. Apply deployment policy first: TestFlight/App Store Connect upload/export defaults to `auto`; App Store production release/submission defaults to `confirm`.
 
 ### Trigger Conditions
 
@@ -199,6 +206,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
 4. **Detect available tools**: test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets.
+   - **Deployment policy**: read `.build-loop/config.json.deploymentPolicy` if present. Defaults are `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Use `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py --workdir "$PWD" --command "<candidate push/deploy command>"` before any push/deploy. Treat helper errors as `confirm`.
 5. **Map architecture** using best available approach:
    - If `.navgator/architecture/index.json` exists → load `build-loop:navgator-bridge` skill, run its Assess blast-radius read. Output goes to `.build-loop/state.json.navgator.assess`. Phase 2 Plan consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, per-file `navgator impact` for top 5 risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
    - Else if `gator:*` is available → use those commands.
@@ -207,9 +215,10 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 7. **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): call `build-loop:debugger-bridge` Assess step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
 8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
-10. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items.
-11. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
-12. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
+10. **Capture north star + update intent**: Use `references/intent-capability-pack.md`. Identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
+11. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
+12. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
+13. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
 
 ### UI scope and mockup pre-flight (when uiTarget != null)
 12a. **Mockup pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
@@ -219,8 +228,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    Log conflicts to `.build-loop/issues/mockup-rule-conflicts.md`. Don't block — agents need to know upfront which rules trump the mockup. Mockups are intent, rules are law. See `phases/ui-validation.md` for full guidance.
 
 ### Define goal and scoring criteria
-13. **State the goal** in concrete, measurable terms.
-14. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Show for confirmation.
+14. **State the goal** in concrete, measurable terms.
+15. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Include intent fidelity/user value when the change affects user experience or product behavior. Show for confirmation.
 
    **When `uiTarget != null`, the following criteria are REQUIRED and added automatically (not optional)**:
    - **UI-1 Design-rule compliance**: scanner exits 0 on changed files (must-fix=0). Grader: code (`audit-design-rules.mjs`).
@@ -230,7 +239,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
    These exist because mockup-parity ≠ design-rule compliance. Code that matches the mockup but violates the rules is not production-ready. See `phases/ui-validation.md`.
 
-15. **Design eval graders per criterion** using the grading hierarchy:
+16. **Design eval graders per criterion** using the grading hierarchy:
     - **Prefer code-based graders** (fast, deterministic, cheap): test suite pass/fail, lint/type check, build succeeds, schema validation, accessibility audit
     - **Use LLM-as-judge graders** when code can't check the criterion:
       - Binary pass/fail only — no Likert scales
@@ -239,9 +248,9 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
       - Use Claude (the running instance) as judge
     - Each criterion gets: `description | grading method | pass condition | evidence required`
     - Load `eval-guide.md` in this skill directory for judge prompt template and scorecard format if needed.
-16. **Write goal file**: Save to `.build-loop/goal.md` in the project directory.
+17. **Write goal file**: Save to `.build-loop/goal.md` in the project directory.
 
-**Output**: Structured state summary + `.build-loop/goal.md` with criteria. Brief.
+**Output**: Structured state summary + `.build-loop/intent.md` + `.build-loop/goal.md` with criteria. Brief.
 
 ## Phase 2: Plan — Steps & Optimization
 
@@ -249,8 +258,9 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 1. **Invoke `writing-plans` skill** for detailed task breakdown
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
-3. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together?
-4. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
+3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
+4. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together?
+5. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
 
 **Optimization checklist** (review the plan for these before proceeding):
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
@@ -258,6 +268,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 - Missing dependencies, interface mismatches, env assumptions?
 - Changes that could conflict with each other (oscillation risk)?
 - Define coordination checkpoints where subagents must sync
+- UI/API/data choices that add options, mocks, or complexity without user value?
 
 **Output**: Plan file with dependency graph, integration points, and optimization notes.
 
@@ -268,7 +279,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 1. **Use `subagent-driven-development`** — dispatch subagents per task
 2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
 3. **Parallel agents** where dependency graph allows
-4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs
+4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs + the intent packet from `.build-loop/intent.md`
 5. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
    - Mandate to load `calm-precision` and per-platform skills (`ibr:ios-design`/`ibr:apple-platform` for Apple, `frontend-design`/`ibr:mobile-web-ui` for web)
    - Mockup-vs-rule conflict policy: rule wins; subagent must report `RULE BEATS MOCKUP:` decisions
@@ -276,8 +287,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    - Required env hooks (e.g. `@Environment(\.accessibilityReduceMotion)` on SwiftUI animations)
    - Self-verification: run scanner before returning, zero must-fix on changed files
 
-   Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions.
-6. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. Log to `.build-loop/issues/` with context
+   Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, and accurate data.
+6. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
 7. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
 
 ## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Report
@@ -406,6 +417,16 @@ Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 **Debugger store + outcome** (if `availablePlugins.claudeCodeDebugger`): for each resolved Review-B/Iterate failure, invoke `store` MCP with `{symptom, root_cause, fix, tags, files}`. For each Review-B memory-gate entry where a prior `KNOWN_FIX`/`LIKELY_MATCH` was applied, invoke `outcome` with `worked`/`failed`/`modified`. Both sides of the memory feedback loop — skipping either breaks learning.
 
 **Orphan scan** (if NavGator available): invoke `build-loop:navgator-bridge` Report step — runs `navgator dead`, diffs against Assess baseline, surfaces new orphans introduced this build.
+
+**Deployment policy gate** (before any push/deploy): run:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" \
+  --workdir "$PWD" \
+  --command "$CANDIDATE_DEPLOY_COMMAND"
+```
+
+Follow the returned `action`: `auto` may proceed after Review passes; `confirm` requires an explicit user confirmation in chat before running the command; `block` must not run and should be reported as a configured repo policy. Defaults favor speed for preview/TestFlight and safety for production/unknown.
 
 **Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. Delegate to `scripts/write_run_entry.py` — do not hand-write JSON; the script owns the schema, atomic writes, legacy-state migration, and per-experiment confound fan-out. Invocation example in `agents/build-orchestrator.md` §Report & Memory Write. Schema (as the script emits):
 

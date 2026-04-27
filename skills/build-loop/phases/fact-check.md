@@ -20,6 +20,7 @@ Scan production code paths for:
 - Placeholder text (lorem ipsum, "TODO", "FIXME") in rendered output
 - Fake metrics: hardcoded percentages, scores, or counts not derived from real computation
 - Mock API responses left in production code (not test files)
+- Fake semantic search, recommendation, chart, metric, summary, or comparison responses where users expect real data to make decisions
 - `faker` library or `Math.random()` generating user-facing data
 - Seed/fixture data rendering outside dev/test environments
 - Commented-out real implementations replaced by stubs
@@ -28,5 +29,5 @@ Scan production code paths for:
 
 ## Resolution
 
-- Blocking issues (fake data rendered to users, unverifiable claims) → route back to Phase 6 (Iterate)
+- Blocking issues (fake data rendered to users or supporting user decisions, unverifiable claims) → route back to Phase 6 (Iterate)
 - Warnings (TODO in comments, minor language issues) → include in Phase 8 report

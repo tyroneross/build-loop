@@ -9,6 +9,8 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 ## Principles
 
 - Self-sufficient: works without any specific tool installed. Bridges to NavGator, claude-code-debugger, IBR, etc. all have **standalone fallbacks** in `skills/build-loop/fallbacks.md` — degraded-but-useful behavior when upstream plugins are absent, not skip-silently.
+- North star first: every build captures app/repo purpose, update intent, user value, and non-goals, then passes that intent to each subagent.
+- Beauty in the basics: core flows, real data, clear hierarchy, working controls, useful states, and accurate information matter more than extra surface area.
 - Tools loaded on demand, not pre-loaded
 - Guidelines for the creation process, guardrails for user-facing output
 - No false data, no mock data in production, no unverified claims
@@ -38,6 +40,8 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 Runtime data stored in `.build-loop/` within consumer projects (created on first use):
 - `goal.md` — current build goal
+- `intent.md` — north star, update intent, user value, and non-goals
+- `config.json` — optional repo flags, including deploymentPolicy
 - `state.json` — iteration state, phase progress, **`runs[]`** for self-improvement scanning
 - `feedback.md` — post-build lessons
 - `evals/` — scorecard archives
