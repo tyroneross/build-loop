@@ -4,6 +4,7 @@ Thumbs.db
 
 # Runtime data (created in consumer projects)
 .build-loop/
+.claude/
 
 # Editor
 *.swp

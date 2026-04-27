@@ -321,3 +321,36 @@ Against the LiquidGradientBackground core `#3A4878` (focus mode steel-blue) — 
 | `.white.opacity(0.3)` | ~2.1:1  | ❌ fails |
 
 Anything at or below 0.5 on a dark gradient fails AA body. `.foregroundStyle(.secondary)` resolves to a SwiftUI-managed semantic color that is guaranteed ≥4.5:1 against the backing material in both light and dark color schemes — switch to it instead of tuning opacity by eye.
+
+---
+
+## WatchConnectivity callback wiring — avoiding dead-signal bugs
+
+**Pattern.** When watch sends a signal via `WCSession.sendMessage(_:)`, iPhone's delegate `WCSessionDelegate.session(_:didReceiveMessage:)` decodes the payload and exposes a closure-based published callback on the connectivity manager:
+
+```swift
+var onBiometricBreakSignalReceived: ((BiometricBreakSignal) -> Void)?
+```
+
+A closure variable like this is useless unless something on the iPhone side assigns into it during app launch. The compiler will not catch a missing assignment because optional closures default to `nil` and silently no-op.
+
+**Audit checkpoint.** For every published callback variable on a connectivity manager, grep for at least one assignment site somewhere in iOS code:
+
+```bash
+grep -rn "onMyCallback = " iOS/ Shared/
+```
+
+If grep returns zero hits, the entire feature path is dead — watch detection runs, the message arrives, and nothing happens on iPhone.
+
+**FlowDoro example.** `onBiometricBreakSignalReceived` was declared in build 73 but inspection during build 78 found two related symptoms:
+1. Build 73 wired the closure to `TimerEngine.handleBiometricBreakSignal`, which surfaces an in-app `CheckInData` sheet — but only when the iPhone app is foreground AND a flow session is running ≥15 minutes. In every other state (app backgrounded, no active session, app closed), the signal was effectively dropped.
+2. Build 78 added a second path on the same closure: an opt-in time-sensitive `UNUserNotification` so the signal produces user-visible behavior even when the iPhone app is not in front. Default off; toggle in `AlertSettingsView`.
+
+**Recommended patterns.**
+- Prefer `NotificationCenter` for fan-out when more than one subscriber may need the signal — avoids closure-stomping where a later assignment overwrites an earlier one.
+- Or use Combine `PassthroughSubject<Signal, Never>` for typed reactive flow with multi-subscriber semantics.
+- Or make callback assignment a constructor parameter (`init(onSignal: @escaping (Signal) -> Void)`) so the compiler enforces wiring at instantiation.
+- For closure-variable APIs that intentionally allow only one subscriber, add a unit test that calls `connectivityManager.simulateMessage(...)` and asserts a side effect — this catches dead-signal regressions before TestFlight.
+
+**Coexisting paths.** When extending an existing closure with a second path (e.g. notification + in-app sheet), put both under the same closure body and gate each independently. Don't reassign the closure — the previous path will be silently lost.
+
