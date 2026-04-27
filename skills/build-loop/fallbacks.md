@@ -227,7 +227,7 @@ const text = body
   .trim();
 ```
 
-**Always note LLM cost** in the Phase 8 report when this fallback runs. Flag that installing `scraper-app` would eliminate the token spend.
+**Always note LLM cost** in the Review-F report when this fallback runs. Flag that installing `scraper-app` would eliminate the token spend.
 
 Do not fetch URLs the user did not explicitly provide or that aren't core to the task. Never fetch from private networks.
 
@@ -344,7 +344,7 @@ When `pyramid-principle:*` is unavailable, use the SCQA-to-key-line format:
 5. **Key lines (3–7)** — MECE arguments that support the governing thought. Each is a claim, not a topic.
 6. **Support** — evidence under each key line.
 
-For Phase 8 scorecard: governing thought = did the build meet the goal; key lines = the scoring criteria; support = evidence rows.
+For the Review-F scorecard: governing thought = did the build meet the goal; key lines = the scoring criteria; support = evidence rows.
 
 ---
 

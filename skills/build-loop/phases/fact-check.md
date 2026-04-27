@@ -29,5 +29,5 @@ Scan production code paths for:
 
 ## Resolution
 
-- Blocking issues (fake data rendered to users or supporting user decisions, unverifiable claims) → route back to Phase 6 (Iterate)
-- Warnings (TODO in comments, minor language issues) → include in Phase 8 report
+- Blocking issues (fake data rendered to users or supporting user decisions, unverifiable claims) → route back to Phase 5 (Iterate)
+- Warnings (TODO in comments, minor language issues) → include in Review-F report

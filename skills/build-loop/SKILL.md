@@ -27,6 +27,12 @@ Every build uses `references/intent-capability-pack.md`. Phase 1 captures the ap
 
 Core rule: build decisions should create user value and a delightful, trustworthy experience. Mock data, dead controls, unused navigation, decorative options, and excessive choices violate the pack when they reach user-facing or user-decision paths.
 
+## Modular Systems Pack
+
+Every non-trivial build uses `references/modular-systems-pack.md`. Build-loop should default to modular, scalable, MECE structure with pyramid-structured plans and reports: high cohesion, loose coupling, stable interfaces, one clear file owner per changed file, and no unowned responsibilities.
+
+This is a default, not dogma. If a simpler or more integrated approach better serves the use case, document `MODULARITY EXCEPTION: <reason>` in the plan or report and explain why that choice improves user value, performance, clarity, or delivery risk.
+
 ## Capability Routing
 
 Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** (the specialized plugin) → **secondary** (another installed plugin that can partially cover) → **inline fallback** (guidance text from `fallbacks.md`, injected verbatim into subagent prompts).
@@ -43,6 +49,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | `simplify` (slash: `/simplify`) | Phase 4 sub-step E (Simplify) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
 | `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
 | Intent capability pack | Phases 1-4 | Read `references/intent-capability-pack.md`; write `.build-loop/intent.md`; pass the intent packet to every subagent |
+| Modular systems pack | Phases 1-4 | Read `references/modular-systems-pack.md`; partition files/tasks MECE; prefer modular scalable boundaries unless an exception is documented |
 
 ### Phase quick reference
 
@@ -71,7 +78,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Bug-pattern memory | `claude-code-debugger:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
 | Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
 | DeepAgents / local-LLM agent work | `build-loop:building-with-deepagents` (SubAgent API, middleware stack, per-agent tool scoping, anti-patterns) | — | Read installed `deepagents` source: `python3 -c 'import deepagents, os; print(os.path.dirname(deepagents.__file__))'` then `graph.py` + `middleware/subagents.py` |
-| Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Phase 8), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
+| Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Review-F reports), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
 | Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
 | Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
 | iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
@@ -216,12 +223,13 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
 10. **Capture north star + update intent**: Use `references/intent-capability-pack.md`. Identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
-11. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
-12. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
-13. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
+11. **Assess modular structure**: Use `references/modular-systems-pack.md`. Identify current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror compact fields to `.build-loop/state.json.structure`.
+12. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
+13. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
+14. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
 
 ### UI scope and mockup pre-flight (when uiTarget != null)
-12a. **Mockup pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
+**UI pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
    ```
    node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<mockups_dir> --platform=html --json
    ```
@@ -229,7 +237,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 ### Define goal and scoring criteria
 14. **State the goal** in concrete, measurable terms.
-15. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Include intent fidelity/user value when the change affects user experience or product behavior. Show for confirmation.
+15. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Include intent fidelity/user value when the change affects user experience or product behavior. Include modularity/MECE/scalability when the change spans modules, agents, domains, repo areas, data boundaries, or long-lived interfaces. Show for confirmation.
 
    **When `uiTarget != null`, the following criteria are REQUIRED and added automatically (not optional)**:
    - **UI-1 Design-rule compliance**: scanner exits 0 on changed files (must-fix=0). Grader: code (`audit-design-rules.mjs`).
@@ -259,8 +267,9 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 1. **Invoke `writing-plans` skill** for detailed task breakdown
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
-4. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together?
-5. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
+4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
+5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
+6. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
 
 **Optimization checklist** (review the plan for these before proceeding):
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
@@ -269,6 +278,9 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 - Changes that could conflict with each other (oscillation risk)?
 - Define coordination checkpoints where subagents must sync
 - UI/API/data choices that add options, mocks, or complexity without user value?
+- MECE gaps or overlaps: unowned responsibilities, shared file ownership, or mixed grouping dimensions?
+- Boundaries that are too tight, too broad, or missing a stable interface?
+- If the plan chooses a simpler/integrated path over modularity, is there a documented `MODULARITY EXCEPTION`?
 
 **Output**: Plan file with dependency graph, integration points, and optimization notes.
 
@@ -279,7 +291,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 1. **Use `subagent-driven-development`** — dispatch subagents per task
 2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
 3. **Parallel agents** where dependency graph allows
-4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs + the intent packet from `.build-loop/intent.md`
+4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs + the intent packet from `.build-loop/intent.md` + the MECE ownership packet from the plan (`owns`, `does not own`, `interface contract`, `integration checkpoint`)
 5. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
    - Mandate to load `calm-precision` and per-platform skills (`ibr:ios-design`/`ibr:apple-platform` for Apple, `frontend-design`/`ibr:mobile-web-ui` for web)
    - Mockup-vs-rule conflict policy: rule wins; subagent must report `RULE BEATS MOCKUP:` decisions
@@ -401,7 +413,7 @@ Run `/simplify` (or load the `simplify` skill directly) against the changed file
 - Remove validation for invariants the type system or upstream already guarantees
 - Reduce abstractions that have exactly one call site
 
-Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
+Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION: <reason>`. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
 
 ### Sub-step F: Report (only on final Review pass)
 
@@ -532,8 +544,8 @@ Build-loop maintains two memory stores. Every build reads both; writes go to exa
 ### When to write memory
 
 - User states a preference or convention: save immediately.
-- A build surfaces a new tool/library/deployment pattern worth reusing: save after Phase 8.
-- A project-specific gotcha or decision emerges: save during Phase 8 REPORT.
+- A build surfaces a new tool/library/deployment pattern worth reusing: save after Review-F.
+- A project-specific gotcha or decision emerges: save during Review-F Report.
 - Do NOT save: ephemeral task details, things already derivable from code or git log, state that changes per build.
 
 ### When to read memory
@@ -562,7 +574,7 @@ Build-loop can author new skills mid-flow when a repeated task pattern emerges a
 
 1. Draft the skill during Phase 4 if the need arises. Use the `plugin-dev:skill-development` skill if available, else `fallbacks.md#agent-authoring` format (but for skills — name, description, body ≤200 lines, progressive disclosure).
 2. Use it immediately in the current build.
-3. At Phase 8, score its usefulness: did it reduce friction? Would you use it next build?
+3. At Review-F, score its usefulness: did it reduce friction? Would you use it next build?
 4. Decide: **keep**, **promote** (project → global), or **drop**.
    - Keep (project) — leave in `.build-loop/skills/`.
    - Promote — move to `~/.claude/skills/`, confirm with user.

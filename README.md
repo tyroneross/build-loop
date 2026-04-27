@@ -89,11 +89,17 @@ Build-loop captures a north star before planning: app/repo purpose, primary user
 
 Decision rule: prefer the simplest durable approach that creates user value. UI work should be intentional and polished in the basics: every button, option, nav item, chart, and message must have meaning and working behavior. Preview or prototype-looking surfaces must not use fake data in production/user decision paths.
 
+### Modular Systems Pack
+
+Build-loop defaults to modular, scalable, MECE structure: high cohesion, loose coupling, stable interfaces, and one clear owner per changed file. Plans and reports use pyramid structure: governing thought first, MECE support lines second, evidence/details third.
+
+This is a decision rule, not architecture for its own sake. When a simpler or more integrated approach is better for the use case, the plan records `MODULARITY EXCEPTION: <reason>` and explains the user, performance, clarity, or delivery benefit.
+
 ### Agents
 
 | Agent | Role | Model |
 |-------|------|-------|
-| **build-orchestrator** | Drives all 8 phases, dispatches subagents | opus (overridable) |
+| **build-orchestrator** | Drives the 5-phase loop plus optional Learn, dispatches subagents | opus (overridable) |
 | **sonnet-critic** | Adversarial read-only review between execution and final validation | sonnet |
 | **fact-checker** | Traces rendered metrics to data sources | inherit (sonnet recommended) |
 | **mock-scanner** | Scans for placeholder/fake data in production code | haiku |
@@ -152,7 +158,7 @@ Build loop stores runtime data in `.build-loop/` within consumer projects:
 ├── goal.md          # Current build goal
 ├── intent.md        # North star, update intent, user value, non-goals
 ├── config.json      # Optional repo flags, including deploymentPolicy
-├── state.json       # Iteration state
+├── state.json       # Iteration state, including compact intent/structure summaries
 ├── feedback.md      # Post-build lessons
 ├── evals/           # Scorecard archives
 └── issues/          # Discovered issues
