@@ -1,19 +1,17 @@
 # build-loop
 
-Orchestrated 8-phase development loop for Claude Code. Brings structure, validation, and fact-checking to significant multi-step code changes.
+Orchestrated 5-phase development loop (+1 optional Learn) for Claude Code. Brings structure, validation, and fact-checking to significant multi-step code changes.
 
 ## Phases
 
 | # | Phase | Purpose |
 |---|-------|---------|
-| 1 | **Assess** | Understand current state — project type, architecture, tools, prior state |
-| 2 | **Define** | Concrete goal + 3-5 scoring criteria with pass/fail conditions |
-| 3 | **Plan** | Task breakdown with dependency order and parallel-safe groups |
-| 4 | **Execute** | Build it — parallel subagents for independent work |
-| 5 | **Validate** | Eval against scoring criteria (code-based + LLM-as-judge) |
-| 6 | **Iterate** | Fix failures, re-validate (5 iterations max) |
-| 7 | **Fact Check** | Verify rendered data traces to real sources, scan for mock data |
-| 8 | **Report** | Final scorecard: verified / unknown / unfixed |
+| 1 | **Assess** | Understand state (project type, architecture, tools, prior state) AND define goal + 3-5 scoring criteria with pass/fail conditions |
+| 2 | **Plan** | Task breakdown with dependency order and parallel-safe groups |
+| 3 | **Execute** | Build it — parallel subagents for independent work |
+| 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report — six ordered sub-steps, single exit point; routes to Iterate on failure |
+| 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) |
+| 6 | **Learn** *(optional)* | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking; auto-promote on metric wins when enabled |
 
 ## Installation
 
@@ -147,7 +145,7 @@ These skills enhance the loop when available but are not required:
 
 ## Cross-Tool Support
 
-This repo includes `AGENTS.md` — the open-standard version of the build loop methodology. If you use Codex, Copilot, Cursor, Jules, or any other AI coding tool, that file provides the same 8-phase workflow without Claude-specific integration.
+This repo includes `AGENTS.md` — the open-standard version of the build loop methodology. If you use Codex, Copilot, Cursor, Jules, or any other AI coding tool, that file provides the same 5-phase (+1 optional Learn) workflow without Claude-specific integration.
 
 ## Project Data
 
