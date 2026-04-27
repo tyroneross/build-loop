@@ -354,3 +354,49 @@ If grep returns zero hits, the entire feature path is dead — watch detection r
 
 **Coexisting paths.** When extending an existing closure with a second path (e.g. notification + in-app sheet), put both under the same closure body and gate each independently. Don't reassign the closure — the previous path will be silently lost.
 
+
+## Test target wiring on XcodeGen Apple projects
+
+A test target that exists in `project.yml` is only invokable by `xcodebuild test` if it is also a member of a scheme's `test.targets` array. Membership in `targets:` alone makes the bundle compile-clean but unreachable from the test action.
+
+**Symptom.** `xcodebuild test -scheme FlowDoro-iOS -only-testing:FlowDoro-UnitTests` returns:
+
+```
+Cannot test target "FlowDoro-UnitTests"... isn't a member of the specified test plan or scheme
+```
+
+**Fix.** In `project.yml`, the scheme's `test.targets` array must include the test bundle by name:
+
+```yaml
+schemes:
+  FlowDoro-iOS:
+    test:
+      config: Debug
+      targets:
+        - FlowDoro-UnitTests
+        - FlowDoro-UITests
+```
+
+Then regenerate (`xcodegen generate --spec project.yml`).
+
+**Platform alignment is part of the wiring.** The test target's `platform:` must match the scheme's runnable destinations. A `bundle.unit-test` declared `platform: macOS` cannot be run from an `FlowDoro-iOS` scheme via `-destination 'platform=iOS Simulator'` — xcodebuild surfaces:
+
+```
+Cannot test target "FlowDoro-UnitTests" on "iPhone 17 Pro": ... does not support iphonesimulator
+```
+
+If the wiring goal is "iOS scheme runs the unit tests on iPhone simulator," the test target itself must be `platform: iOS` (and any source files it pulls from `Shared/` need to compile cleanly for iOS — which is usually free since the iOS app target already compiles them). When you switch a previously-macOS test target to iOS, audit every scheme that referenced it: the macOS scheme's `test.targets` will silently break unless updated to drop the now-iOS test target or replaced with a separate macOS-platform test bundle.
+
+**Audit checkpoint.** Before TestFlight, run a quick grep over `project.yml` to catch test targets not wired anywhere:
+
+```bash
+# every test target name should appear in at least one scheme's test action
+yq '.targets | to_entries | map(select(.value.type | test("bundle"))) | .[].key' project.yml
+yq '.schemes | to_entries | map(.value.test.targets // []) | flatten' project.yml
+```
+
+If a target name appears in the first list but not the second, the test bundle exists but no scheme can run it.
+
+**FlowDoro example (build 79).** `FlowDoro-UnitTests` had been a `bundle.unit-test` on `platform: macOS`, wired into the macOS scheme's `test.targets` only. Builds 71-78 shipped without exercising any of the new code paths in CI. Build 79 added five test files covering AlertConfig codable, pomodoro notification identifier generation, Local Network permission classification, keychain-cache stability, and biometric break-signal default-off wiring. The test target was migrated to `platform: iOS`, added to `FlowDoro-iOS.schemes.test.targets`, and removed from the macOS scheme (which can no longer host an iOS-platform bundle). Net: `xcodebuild test -scheme FlowDoro-iOS -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:FlowDoro-UnitTests` runs 51 tests in ~7 seconds.
+
+**When test isolation must round-trip through `UserDefaults.standard`.** A common pattern in app-level singletons: `init(defaults: UserDefaults = .standard)` reads from injected defaults, but property `didSet` writes target `UserDefaults.standard` unconditionally. Tests that assert "value persists across two store instances" cannot rely on injected defaults for the write path — they have to either snapshot/restore `.standard` in `setUp`/`tearDown`, or refactor production to plumb the same defaults through both read and write. For a test-only access change this is heavier than a simple `private → internal` flip; document the constraint in the test file rather than push a deeper production change.
