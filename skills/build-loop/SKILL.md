@@ -227,6 +227,10 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 12. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
 13. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
 14. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
+15. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
+    - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work, especially via squash-rebase, and suggest checking which paths the other session is touching before editing overlapping files.
+    - **Branch divergence**: `git rev-list --count HEAD..origin/main` and `origin/main..HEAD`. If local main is ahead of origin AND a feature branch will be cut, recommend branching from `origin/main` directly (`git checkout -b <name> origin/main`) so unpushed local commits don't ride into the eventual squash and bundle under a misleading title.
+    - **Recovery if symptoms appear during build** (file writes vanish, system reminders flag "intentional" reverts, `git status` clean): pause edits, run `ps aux | grep claude` + `git log --oneline -- <affected paths>` to identify the colliding session/squash, then re-apply dropped work on a fresh branch from `origin/main`.
 
 ### UI scope and mockup pre-flight (when uiTarget != null)
 **UI pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
