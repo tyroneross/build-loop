@@ -95,6 +95,34 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
 - For UI work, require intentionality: every visible control, nav item, option, message, and chart must have working behavior and a clear user purpose. Prefer one primary action unless multiple choices are genuinely useful.
 - At coordination checkpoints, verify outputs align before continuing
 
+### Phase 3 routing — consult `model-router` per dispatch
+
+Before each sub-agent dispatch in Phase 3, ask the router which provider/MCP tool fits:
+
+```bash
+TASK_ID="t-$(uuidgen | tr 'A-Z' 'a-z' | cut -d- -f1)"
+DECISION=$(python3 ~/.claude/scripts/model-router.py \
+  --task "<one-line task>" \
+  --complexity auto \
+  --phase execute \
+  --task-id "$TASK_ID" \
+  --json)
+```
+
+Dispatch via the indicated `tool_call.name`:
+- `mcp__ollama-local__cheap_complete` → free local Ollama (qwen2.5-coder for medium coding, llama3.2:3b for bounded classify/scan)
+- `mcp__codex__codex` → second-opinion review when keywords match
+- `null` (provider=`claude`) → orchestrator handles it directly
+
+The cost ledger (`~/.bookmark/cost-ledger.jsonl`) auto-tags every MCP call with `$TASK_ID`. Inspect later:
+```bash
+python3 ~/.claude/scripts/cost-ledger-reader.py --by-task --since YYYY-MM-DD
+```
+
+When to skip the router: ambiguous tasks, novel-architecture work, or anything in Phases 1/2 (Assess/Plan) — those always belong to the lead orchestrator.
+
+See SKILL.md §"When to consult `model-router`" for the full policy.
+
 ### Phase 4: Review (sub-steps A-F)
 Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; the orchestrator's job is to route between them.
 

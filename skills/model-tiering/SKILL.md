@@ -101,3 +101,38 @@ Forward-compat note: pinned family aliases (`sonnet`, `opus`) auto-track latest 
 - ⚠️ Sonnet 4.6 token-efficiency claim is single-source (Anthropic announcement). Treat as directionally correct, not proven.
 - ❓ Best-of-N + critic hasn't been tested against single-pass Opus on SWE-bench specifically.
 - ⚠️ Escalation triggers are heuristics, not proven thresholds. Revise after observing 5+ real builds and logging outcomes to `.build-loop/memory/`.
+
+## When to consult `model-router`
+
+For Phase 3 (Execute) sub-agent dispatch, prefer the standalone router over inline tier reasoning when it is available:
+
+```bash
+python3 ~/.claude/scripts/model-router.py \
+  --task "<one-line task summary>" \
+  --complexity auto \
+  --phase execute \
+  --task-id "<task-id-for-cost-ledger>" \
+  --json
+```
+
+The router returns:
+
+```json
+{
+  "provider": "ollama-mcp" | "codex" | "claude",
+  "model": "<model-id>",
+  "tool_call": {"name": "<mcp-tool-name>", "args": {...}},
+  "reason": "...",
+  "evidence_refs": ["<paths to docs that justify this decision>"]
+}
+```
+
+Why prefer the router:
+- **Evidence-cited**: every decision references the doc that supports it (DOE results, model-tiering policy, cost-ledger design)
+- **Deterministic**: same input → same output, auditable across builds
+- **task_id propagates** to MCP tool args, so `cost-ledger-reader.py --by-task` shows per-build-phase economics
+- **Free**: heuristic-only, no LLM call to decide
+
+Fallback when router is unavailable: use the inline tier rules above. The router's policy mirrors them, so behavior is consistent either way.
+
+Full contract and routing matrix: `~/dev/research/topics/llm/llm.build-loop-router-integration-2026-04.md`
