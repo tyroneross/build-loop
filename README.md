@@ -64,13 +64,42 @@ Examples:
 
 Skip the loop for single-file edits, config changes, or fixes under ~20 lines.
 
+## Deployment Policy
+
+Build-loop uses a repo-local policy before running push/deploy commands. If `.build-loop/config.json` is absent, the default is:
+
+```json
+{
+  "deploymentPolicy": {
+    "preview": "auto",
+    "testflight": "auto",
+    "production": "confirm",
+    "unknown": "confirm"
+  }
+}
+```
+
+Meaning: preview deploys and TestFlight/App Store Connect upload/export flows can run automatically after review passes; production deploys, releases, publishes, protected-branch pushes, and unknown targets require explicit confirmation. Repos can override each target with `auto`, `confirm`, or `block`.
+
 ## Components
+
+### Intent Capability Pack
+
+Build-loop captures a north star before planning: app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. It writes this to `.build-loop/intent.md` and passes a compact intent packet to every subagent.
+
+Decision rule: prefer the simplest durable approach that creates user value. UI work should be intentional and polished in the basics: every button, option, nav item, chart, and message must have meaning and working behavior. Preview or prototype-looking surfaces must not use fake data in production/user decision paths.
+
+### Modular Systems Pack
+
+Build-loop defaults to modular, scalable, MECE structure: high cohesion, loose coupling, stable interfaces, and one clear owner per changed file. Plans and reports use pyramid structure: governing thought first, MECE support lines second, evidence/details third.
+
+This is a decision rule, not architecture for its own sake. When a simpler or more integrated approach is better for the use case, the plan records `MODULARITY EXCEPTION: <reason>` and explains the user, performance, clarity, or delivery benefit.
 
 ### Agents
 
 | Agent | Role | Model |
 |-------|------|-------|
-| **build-orchestrator** | Drives all 8 phases, dispatches subagents | opus (overridable) |
+| **build-orchestrator** | Drives the 5-phase loop plus optional Learn, dispatches subagents | opus (overridable) |
 | **sonnet-critic** | Adversarial read-only review between execution and final validation | sonnet |
 | **fact-checker** | Traces rendered metrics to data sources | inherit (sonnet recommended) |
 | **mock-scanner** | Scans for placeholder/fake data in production code | haiku |
@@ -127,7 +156,9 @@ Build loop stores runtime data in `.build-loop/` within consumer projects:
 ```
 .build-loop/
 ├── goal.md          # Current build goal
-├── state.json       # Iteration state
+├── intent.md        # North star, update intent, user value, non-goals
+├── config.json      # Optional repo flags, including deploymentPolicy
+├── state.json       # Iteration state, including compact intent/structure summaries
 ├── feedback.md      # Post-build lessons
 ├── evals/           # Scorecard archives
 └── issues/          # Discovered issues
@@ -151,4 +182,3 @@ Primary Codex surface:
 - MCP config from `(none)` when present
 
 Install the package from this package root using your current Codex plugin install flow. The Codex package is additive only: Claude-specific hooks, slash commands, and agent wiring remain unchanged for Claude Code.
-

@@ -48,12 +48,16 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
 3. Run eval graders and track pass/fail per criterion
 4. Detect convergence issues in the iteration loop
 5. Surface discovered issues — never silently ignore problems
+6. Own the app/repo north star and update intent, then communicate that intent to every subagent
+7. Keep systems modular, scalable, MECE, and pyramid-structured unless a documented exception better serves the use case
 
 ## Orchestration Guidelines
 
 - Load tools and skills on demand as each phase needs them — do not pre-load
 - Scope assessment to goal-relevant areas — not the full codebase
 - Dispatch the fact-checker and mock-scanner agents in parallel before reporting
+- Treat user value as the primary decision rule: faster, clearer, more accurate, easier to navigate, more trustworthy, more scalable, or less cognitively noisy
+- Prefer high-cohesion, loose-coupling, stable-interface designs. If a simpler or integrated approach is better, document `MODULARITY EXCEPTION: <reason>`
 - Terminal output: phase name, key decisions (one line each), status. No filler
 
 ## Phase Coordination
@@ -69,7 +73,10 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
 - **Architecture blast-radius** (if NavGator available): invoke `Skill("build-loop:navgator-bridge")`. It reads `.navgator/architecture/`, runs `navgator impact` on up to 5 highest-risk components, invokes `navgator llm-map` when `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, and writes a compact summary to `.build-loop/state.json.navgator.assess`. Phase 2 Plan consults this for scoping. If `.navgator/architecture/index.json` is missing, the skill emits a one-line note and exits; do not block.
 - **Observability baseline**: invoke `Skill("build-loop:logging-tracer-bridge")` with `{phase: "assess", action: "scan"}`. Records the project's logging level in `.build-loop/state.json.observability` — informational, no code changes at Assess.
 - **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): invoke `build-loop:debugger-bridge` Assess step — calls `list` MCP for recent incidents in this project. One-line context log.
-- **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See SKILL.md §Phase 1 steps 13-16.
+- **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
+- **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
+- **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror a compact version into `.build-loop/state.json.structure`.
+- **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See SKILL.md §Phase 1 steps 14-17.
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent
 
 ### Capability Routing (Phase 3 Execute + Phase 4 Review sub-steps)
@@ -84,7 +91,8 @@ When a phase needs a capability (UI build, debug, web-fetch, screenshot, migrati
 ### Phase 3: Execute (parallel)
 - Identify independent tasks from the plan's dependency graph
 - Dispatch one subagent per independent task with minimal context + capability-routing instructions per above
-- Each agent gets: task description, relevant file paths, integration contract, relevant fallback snippets
+- Each agent gets: task description, relevant file paths, integration contract, relevant fallback snippets, an intent packet from `.build-loop/intent.md` explaining how that task fits the north star, and a MECE ownership packet (`owns`, `does not own`, `interface contract`, `integration checkpoint`)
+- For UI work, require intentionality: every visible control, nav item, option, message, and chart must have working behavior and a clear user purpose. Prefer one primary action unless multiple choices are genuinely useful.
 - At coordination checkpoints, verify outputs align before continuing
 
 ### Phase 4: Review (sub-steps A-F)
@@ -95,8 +103,10 @@ Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; th
   - **Memory-first gate** (if `availablePlugins.claudeCodeDebugger`): invoke `Skill("build-loop:debugger-bridge")` Review-B logic. Calls `read_logs` MCP first, synthesizes symptom, calls `checkMemoryWithVerdict()`. **Default**: route to Iterate as adapted plan — never skip Iterate. `KNOWN_FIX` may direct-apply only when all three gate checks hold (file + version + second signal). If `read_logs` returns empty on a silent failure, flag `evidence_gap: true` — next Iterate attempt must invoke `logging-tracer-bridge`. Record gate in `.build-loop/state.json.debuggerGates.review_b`.
 - **C. Optimize** (opt-in): only when a mechanical metric exists AND user hasn't opted out. Load `build-loop:optimize`. Archive to `.build-loop/optimize/experiments/`. Feed results back to Review-B as evidence.
 - **D. Fact-Check**: dispatch `fact-checker` + `mock-scanner` in parallel. If NavGator available, also run `build-loop:navgator-bridge` Review violation check in parallel. Blocking → Iterate. Warnings → Report.
-- **E. Simplify**: invoke `/simplify` on changed files. Preserve public API, tests, observability.
-- **F. Report** (only on final Review pass, not intermediate): write scorecard to `.build-loop/evals/`, append run entry to `state.json.runs[]`, call debugger `store` + `outcome` MCPs, run `navgator dead` orphan scan. If `platform: "apple"` AND goal includes deploy, invoke `apple-dev` deploy flow.
+- **E. Simplify**: invoke `/simplify` on changed files. Preserve public API, tests, observability, user value, and modular boundaries needed for scalability, accuracy, security, testability, or stable interfaces. Do not simplify by removing necessary states, accuracy, scalability, accessibility, or real data paths. If integrated simplification is better, record `MODULARITY EXCEPTION`.
+- **F. Report** (only on final Review pass, not intermediate): write scorecard to `.build-loop/evals/`, append run entry to `state.json.runs[]`, call debugger `store` + `outcome` MCPs, run `navgator dead` orphan scan. Before any push/deploy, run the deployment policy gate. If action is `auto`, proceed after Review passes; if `confirm`, ask the user before running; if `block`, do not run. If `platform: "apple"` AND goal includes deploy, invoke `apple-dev` deploy flow under the same policy: TestFlight/App Store Connect upload/export defaults to auto, App Store production release/submission defaults to confirm.
+
+Review also checks the intent pack and modular systems pack: does the result advance the north star, satisfy the update intent, avoid fake data in user-decision paths, remove or avoid dead UI, use the simplest durable approach that protects user experience, keep ownership MECE, and preserve modular boundaries that matter?
 
 ### Phase 5: Iterate (up to 5x)
 - Diagnose root cause before fixing — don't blind retry.
@@ -167,6 +177,22 @@ Runs only on the final Review pass (not after intermediate Iterate→Review loop
   - Cross-project learnings (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`
   - Project-specific learnings (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`
 - Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory.
+
+### Deployment Policy
+Repo-local config lives at `.build-loop/config.json`:
+
+```json
+{
+  "deploymentPolicy": {
+    "preview": "auto",
+    "testflight": "auto",
+    "production": "confirm",
+    "unknown": "confirm"
+  }
+}
+```
+
+Targets: `preview` covers preview deploys and non-production branch pushes; `testflight` covers Xcode/App Store Connect/TestFlight upload/export flows; `production` covers production deploys, releases, publishes, and protected branch pushes; `unknown` is anything the classifier cannot identify. Valid actions: `auto`, `confirm`, `block`. Helper errors fail closed: require confirmation.
 
 ### Phase 6: Learn (optional — cross-build pattern detection)
 Runs after Review sub-step F on every build unless `.build-loop/config.json.autoSelfImprove` is false or `runs[]` has fewer than 3 entries.

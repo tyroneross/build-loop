@@ -34,13 +34,14 @@ You are a mock data scanner. Fast and focused. Find placeholder and fake data in
 4. **Mock responses**: API response objects in production code (not test files)
 5. **Random display data**: `Math.random()`, `faker`, or similar generating user-facing values
 6. **Stubs**: Commented-out real implementations replaced by hardcoded returns
+7. **Decision-path fakes**: semantic search results, recommendations, charts, metrics, summaries, or comparisons backed by fake data where users expect real evidence
 
 ## Process
 
 1. Glob for source files (exclude test dirs)
 2. Grep for common mock patterns: `lorem`, `placeholder`, `John Doe`, `test@`, `example.com`, `555-`, `faker`, `Math.random`
 3. For each hit, check if it's in a production code path or test/dev path
-4. Classify: blocking (renders to user) or warning (internal only)
+4. Classify: blocking (renders to user or supports a user decision) or warning (internal only)
 
 ## Output Format
 
