@@ -287,3 +287,37 @@ A tap on a list item that has only one logical follow-action should auto-flow in
 - Configurable row (e.g. "Custom"): single tap = push the editor directly. Set the selection state in `simultaneousGesture` so when the user finishes editing and pops, the upstream surface already reflects the choice.
 
 The intermediate "select, then tap an Edit button to configure" flow is two-tap UX where one will do.
+
+## Visual delta audit pattern
+
+For native iOS/macOS modernization passes scoped from a prior audit, run a three-pass workflow before opening any file:
+
+1. **Source-code extraction** is load-bearing. The audit must cite `file:line` for every delta with a concrete suggested replacement. Vague reports ("inconsistent typography") force re-extraction during execute and double the cost. The audit doc becomes the spec.
+2. **Canonical reference identification**. Name 2–3 modern reference views in the same repo (e.g. `AlertSettingsView`, `SettingsView`, `ProfileSettingsView`) so the audit's "good" target is in-tree, not abstract HIG.
+3. **Structured delta report**. Group by category (color hardcodes / Dynamic Type / spacing / card pattern / interaction / chart hex), count, and rank by user-impact severity.
+
+### IBR's role for native iOS
+
+IBR's `native_scan` extracts a11y tree + bounds + screenshot. It does NOT extract computed font/color/spacing values — those live in the SwiftUI source. Use IBR for touch-target and a11y-label coverage; use grep + Read for the metric audit. Skip IBR snapshot capture in audit-only loops; reserve it for visual regression after a redesign that changes layout.
+
+### Three-tier ROI ordering
+
+Sequence fixes by descending impact:
+
+1. **Colors + dark-mode safety** (highest ROI). Replacing `.foregroundColor(.white.opacity(N))` with `.foregroundStyle(.primary/.secondary/.tertiary)` simultaneously fixes dark-mode adaptation, WCAG contrast, and future-proofs against light-mode variants. Small line count, broad effect.
+2. **Typography Dynamic Type**. Replacing `.font(.system(size: N))` with `.font(.caption / .footnote / .subheadline / .body / .headline / .title3)` enables accessibility text-size scaling. Keep hero anchors (28pt+ ultraLight KPIs) fixed and add `// Hero anchor: intentional fixed size` comments so future audits don't re-flag them.
+3. **Tokens + spacing rhythm**. Hex literals → named Theme tokens; off-grid `padding(.vertical, 6/10/14)` → `Spacing.sm/md/lg`. Lowest individual impact, cumulative polish.
+
+### WCAG body-text math for `.white.opacity(N)`
+
+Against the LiquidGradientBackground core `#3A4878` (focus mode steel-blue) — a representative dark gradient core — alpha-composited approximations:
+
+| Foreground | Approx contrast vs `#3A4878` | WCAG 4.5:1 (body) |
+|---|---|---|
+| `.white.opacity(0.9)` | ~10.6:1 | ✅ pass |
+| `.white.opacity(0.7)` | ~5.7:1  | ✅ pass |
+| `.white.opacity(0.5)` | ~3.8:1  | ⚠️ fails |
+| `.white.opacity(0.35)` | ~2.4:1 | ❌ fails |
+| `.white.opacity(0.3)` | ~2.1:1  | ❌ fails |
+
+Anything at or below 0.5 on a dark gradient fails AA body. `.foregroundStyle(.secondary)` resolves to a SwiftUI-managed semantic color that is guaranteed ≥4.5:1 against the backing material in both light and dark color schemes — switch to it instead of tuning opacity by eye.
