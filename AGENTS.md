@@ -65,6 +65,20 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
 
+**Plan acceptance gate** — required before Phase 3 begins:
+
+1. **`plan-verify` (deterministic, Python stdlib)** — run grep-checkable rules over the plan:
+   ```bash
+   python3 <build-loop>/scripts/plan_verify.py <plan-file> --repo "$PWD" --json
+   ```
+   Catches: deletes/orphans contradicted by repo grep, internal numeric drift, route changes without evidence, package-state contradictions, missing markers, scope-split breadth.
+   - Exit 0 → continue to step 2.
+   - Exit 1 → revise the plan to clear each BLOCKER (or document an explicit override with rationale).
+   - Exit 2 → verifier error; log and continue with step 2 only.
+2. **`plan-critic` (non-deterministic)** — invoke the equivalent reviewer in your tool of choice with the plan + the JSON from step 1. Looks for: less-invasive alternatives considered, MECE quality of phase splits, marker adequacy across long passages, headline drift across sections. Findings cap at WARN — surface but do not auto-block.
+
+Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrator.md`, this file) together when the gate evolves — phase-asymmetric updates have caused silent skips before.
+
 ### Phase 3: Execute
 
 - Dispatch parallel work for independent file groups

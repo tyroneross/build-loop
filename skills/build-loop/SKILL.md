@@ -286,7 +286,19 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 - Boundaries that are too tight, too broad, or missing a stable interface?
 - If the plan chooses a simpler/integrated path over modularity, is there a documented `MODULARITY EXCEPTION`?
 
-**Output**: Plan file with dependency graph, integration points, and optimization notes.
+**Plan acceptance gate** — required before "Output: Plan file":
+
+7. **Run `plan-verify`** (deterministic, grep-checkable rules):
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json
+   ```
+   - Exit 0 → proceed to step 8.
+   - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
+   - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
+   - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
+8. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 7 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
+
+**Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, and plan-critic findings.
 
 ## Phase 3: Execute — Build With Agents
 
