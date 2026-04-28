@@ -1,6 +1,6 @@
 ---
 name: mcp-builder
-description: This skill should be used when the user asks to "build an MCP server", "create an MCP", "ship a Model Context Protocol server", "add MCP tools to my plugin", "package an MCP server for Claude Code", "MCP server won't start", or needs guidance on MCP server implementation, transport, bundling, .mcp.json schema, or shipping MCP inside a Claude Code plugin. Use alongside plugin-builder when the plugin exposes MCP tools — plugin-builder covers the plugin wrapper, this skill covers the server itself.
+description: Use when building, packaging, or debugging an MCP server, adding MCP tools to a plugin, or working on .mcp.json, transport, or bundling. Pair with plugin-builder when the plugin exposes MCP tools.
 ---
 
 # MCP Builder

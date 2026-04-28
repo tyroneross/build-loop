@@ -1,6 +1,6 @@
 ---
 name: build-loop:self-improve
-description: Phase 6 Learn — scan recent build-loop runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user. Use after Review sub-step F (Report), or user-invokable with `/build-loop:self-improve` to trigger a scan outside a build.
+description: Phase 6 Learn — scan recent build-loop runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking. Runs after Report or via `/build-loop:self-improve`.
 version: 0.1.0
 user-invocable: true
 ---

@@ -1,6 +1,6 @@
 ---
 name: optimize
-description: Autonomous metric-driven optimization loop. Measures a number, makes atomic changes, keeps improvements, reverts regressions. Use after implementation for build time, code simplification, test coverage, bundle size, or any mechanical metric.
+description: Autonomous metric-driven optimization. Measures a number, keeps improvements, reverts regressions. Use for build time, code simplification, test coverage, bundle size, latency.
 ---
 
 # Optimize — Autoresearch-Pattern Optimization

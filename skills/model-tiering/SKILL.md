@@ -1,6 +1,6 @@
 ---
 name: model-tiering
-description: Use when choosing which model to assign to a subagent, deciding sonnet vs opus in agent frontmatter, evaluating cheaper model sufficiency, or deciding whether to escalate to opus mid-flow.
+description: Use when choosing a model tier for a subagent, deciding sonnet vs opus in frontmatter, or escalating to opus mid-flow.
 ---
 
 # Model Tiering — Authoritative Reference for Build-Loop

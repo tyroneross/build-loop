@@ -1,6 +1,6 @@
 ---
 name: research
-description: Generate a structured research packet grounded in repo analysis. Use before deciding whether/how to build. Produces: Bottom line, What I found, Best path, Why, Risks, Confidence, Next action.
+description: Generate a repo-grounded research packet before deciding whether/how to build. Pre-decision analysis with risks, best path, confidence, next action.
 ---
 
 # Research — Pre-Decision Analysis

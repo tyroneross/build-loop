@@ -1,6 +1,6 @@
 ---
 name: building-with-deepagents
-description: Use when building, reviewing, or refactoring an agent that imports the OSS `deepagents` package (`from deepagents import create_deep_agent`). Covers the SubAgent API, middleware stack, per-agent tool scoping, streaming, checkpointing, and the anti-patterns we've hit in production. Not for Claude Code `.claude/agents/*.md` subagents — see `agent-builder` for those. OSS-only — no LangChain Cloud or hosted DeepAgents service assumed.
+description: Use when building or refactoring an agent that imports OSS `deepagents` (`from deepagents import create_deep_agent`). Covers SubAgent API, middleware, tool scoping, streaming, checkpointing. Not for `.claude/agents/*.md`.
 ---
 
 # Building With DeepAgents (OSS)

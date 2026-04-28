@@ -1,6 +1,6 @@
 ---
 name: api-registry-bridge
-description: Consult api-registry plugin during build-loop Assess and Iterate phases. Graceful degrade if api-registry not installed. Fires when build-loop detects a new API dependency or an API config attempt fails.
+description: Consult api-registry plugin in Assess and Iterate phases when a new API dependency appears or API config fails. Graceful degrade if api-registry is absent.
 ---
 
 # api-registry-bridge (inside build-loop)

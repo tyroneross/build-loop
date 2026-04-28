@@ -1,6 +1,6 @@
 ---
 name: build-loop
-description: "Orchestrated build loop for multi-step code work. TRIGGER on user phrasing: 'build X', 'implement Y', 'create [feature/component/script/page]', 'add [feature/endpoint/skill/agent/hook]', 'ship [thing]', 'wire up X', 'integrate Y', 'refactor across files', 'fix [complex bug]', 'migrate X to Y', 'make X work end-to-end', 'set up X', or any task that spans multiple files and needs plan → execute → review → iterate. Also trigger when the user hands over a spec, research packet, or multi-criterion rubric. SKIP only for: one-line edits, single-file config tweaks, pure Q&A, code explanation without changes, or asks explicitly scoped to 'quick fix' / 'just change X' / 'one-liner'."
+description: "Orchestrated build loop for multi-step code work. TRIGGER on 'build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', or specs spanning multiple files. SKIP one-line edits, Q&A, quick fixes."
 ---
 
 # Build Loop — Orchestrated Development

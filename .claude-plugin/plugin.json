@@ -1,7 +1,7 @@
 {
   "name": "build-loop",
   "version": "0.3.6",
-  "description": "Orchestrated 5-phase development loop (Assess \u2192 Plan \u2192 Execute \u2192 Review \u2192 Iterate) plus optional Learn phase. Review combines critic, validate, optimize, fact-check, simplify, and report as ordered sub-steps. UI builds (uiTarget != null) get design-rule gates: mockup pre-flight scan, required UI scoring criteria, verbatim subagent-prompt template injection, design-rule static scanner in Validate + Fact-Check, AND visual validation (IBR/simulator render + DebugSeeder pattern for stateful screens) so rendering bugs that pass static rules still get caught. Includes NavGator / claude-code-debugger / logging-tracer bridges with standalone fallbacks. Opus 4.7 orchestrator, Sonnet execution, Haiku pattern-matching.",
+  "description": "Multi-phase build orchestration: assess, plan, execute, review, iterate. Optional UI design gates.",
   "author": {
     "name": "Tyrone Ross",
     "url": "https://github.com/tyroneross"

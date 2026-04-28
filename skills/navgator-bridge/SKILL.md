@@ -1,6 +1,6 @@
 ---
 name: build-loop:navgator-bridge
-description: Read NavGator architecture data during Assess and Review-D (Fact-Check) to compute blast radius before changes and detect new violations after. Filesystem-only — consumes NavGator's JSON outputs, does not require running NavGator CLI mid-build.
+description: Read NavGator architecture data in Assess and Review-D Fact-Check to compute blast radius and detect new violations. Filesystem-only; no NavGator CLI required mid-build.
 version: 0.1.0
 user-invocable: false
 ---

@@ -1,6 +1,6 @@
 ---
 name: authentication
-description: This skill should be used when the user asks to "set up Google OAuth", "add Google sign-in", "add Google Maps / Places / Geocoding / Directions", "sync Google Calendar", "configure Google Cloud Console", "redirect_uri_mismatch", "invalid_grant", "OAuth callback", or needs reference material on auth patterns for third-party services. Currently covers Google Cloud Console end-to-end; extensible to GitHub OAuth, generic OAuth 2.0 callbacks, API key handling, and service-account patterns as those references are added.
+description: Use for Google OAuth, Google sign-in, Google Maps/Places/Geocoding/Directions, Google Calendar sync, Cloud Console setup, redirect_uri_mismatch, invalid_grant, OAuth callbacks, API keys, service accounts.
 ---
 
 # Authentication

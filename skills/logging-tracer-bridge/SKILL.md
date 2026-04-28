@@ -1,6 +1,6 @@
 ---
 name: build-loop:logging-tracer-bridge
-description: Generate stack-appropriate structured logging and optional OpenTelemetry tracing when a build lacks runtime visibility — surfaced in Assess (if project has only print/console.log in production paths), triggered in Review-B/Iterate when debugger-bridge cannot make progress due to silent failures. Delegates to claude-code-debugger's logging-tracer skill when available.
+description: Generate stack-appropriate structured logging and optional OpenTelemetry tracing when a build lacks runtime visibility. Triggered in Assess and Review-B/Iterate on silent failures. Delegates to claude-code-debugger when available.
 version: 0.1.0
 user-invocable: false
 ---

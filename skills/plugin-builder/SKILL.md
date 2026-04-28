@@ -1,6 +1,6 @@
 ---
 name: plugin-builder
-description: This skill should be used when the user asks to "create a plugin", "build a plugin", "scaffold a plugin", "make a Claude Code plugin", "plugin structure", "plugin.json", "convert to plugin", "migrate to plugin", "package as plugin", or needs guidance on plugin directory layout, manifest configuration, component organization, hooks, MCP servers, agents, LSP servers, testing, or distribution for Claude Code plugins.
+description: Use when the user asks to create, build, scaffold, convert, or migrate a Claude Code plugin, or needs guidance on plugin.json, directory layout, hooks, MCP servers, agents, LSP, or distribution.
 ---
 
 # Plugin Builder
