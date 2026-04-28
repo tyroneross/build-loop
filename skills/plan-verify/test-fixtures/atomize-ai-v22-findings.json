@@ -1,0 +1,15 @@
+{
+  "fixture": "atomize-ai-v22.md",
+  "expected_exit_code": 0,
+  "description": "Copy of the current real Atomize AI plan v2.2 (clean by the new standard). Should produce zero BLOCKERs.",
+  "expectations_by_rule_id": {
+    "delete-with-callers": { "max_blocker_count": 0 },
+    "numeric-drift": { "max_blocker_count": 0 },
+    "route-change-evidence": { "max_blocker_count": 0 },
+    "package-state": { "max_blocker_count": 0 },
+    "missing-evidence": {
+      "max_warn_count": 50,
+      "rationale": "WARN budget is generous because long real plans have stylistic claims; the BLOCKER count is the gate."
+    }
+  }
+}

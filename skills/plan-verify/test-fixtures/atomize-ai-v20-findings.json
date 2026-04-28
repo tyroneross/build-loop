@@ -1,0 +1,27 @@
+{
+  "fixture": "atomize-ai-v20.md",
+  "expected_exit_code": 1,
+  "description": "Synthetic fixture with 5 known plan errors. Run with --repo pointing at build-loop repo so grep can disprove the delete claims.",
+  "expectations_by_rule_id": {
+    "delete-with-callers": {
+      "min_blocker_count": 1,
+      "rationale": "Claims to delete scripts/optimize_loop.py (has callers in build-loop repo) and scripts/write_run_entry.py (also has callers). At least one must be flagged BLOCKER."
+    },
+    "numeric-drift": {
+      "min_blocker_count": 1,
+      "rationale": "Phase 1 says '6 orphans', Phase 4 says '5 orphans'. Same noun, different counts in the same doc."
+    },
+    "route-change-evidence": {
+      "min_blocker_count": 1,
+      "rationale": "Claims '308 redirect' and 'deprecate path' without grep-evidence within 3 lines."
+    },
+    "missing-evidence": {
+      "min_warn_count": 1,
+      "rationale": "Factual claim 'recharts is unused' has no ✅/⚠️/❓ marker and no verification source within 3 lines."
+    },
+    "package-state": {
+      "min_warn_count": 0,
+      "rationale": "Optional. Will fire if verifier finds a package manifest to check against."
+    }
+  }
+}

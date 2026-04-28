@@ -79,6 +79,17 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
 - **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See SKILL.md §Phase 1 steps 14-17.
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent
 
+### Phase 2: Plan
+- Follow `Skill("build-loop:build-loop")` §Phase 2 — break work, build dependency graph, MECE-partition file ownership, define integration checkpoints.
+- **Plan acceptance gate** — required before declaring Phase 2 complete and dispatching Phase 3 subagents:
+  1. **`plan-verify` (deterministic)**: run
+     ```bash
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan-file> --repo "$PWD" --json
+     ```
+     Exit 0 → proceed. Exit 1 → revise the plan to clear each BLOCKER, or write an override entry to `.build-loop/state.json.planVerifyOverride[]` with rationale (use sparingly). Exit 2 → log verifier outage in state.json, continue with `plan-critic` alone.
+  2. **`plan-critic` (non-deterministic)**: dispatch the `plan-critic` agent. Pass the plan path AND the JSON from step 1. Critic emits WARN-only findings on alternatives considered, MECE scope, marker adequacy, headline drift. Surface findings to the user but do not auto-block.
+- This gate is symmetric with `skills/build-loop/SKILL.md` §Phase 2 and `AGENTS.md` §Phase 2 — keep all three in sync per `.build-loop/feedback.md:2`.
+
 ### Capability Routing (Phase 3 Execute + Phase 4 Review sub-steps)
 When a phase needs a capability (UI build, debug, web-fetch, screenshot, migration, etc.):
 
