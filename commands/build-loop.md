@@ -1,6 +1,6 @@
 ---
-description: "Orchestrated development loop: assess → define → plan → execute → validate → iterate → fact-check → report"
-argument-hint: "[goal description]"
+description: "Orchestrated development loop: assess → plan → execute → review → iterate. Use --parallel to explicitly authorize Codex subagents/workers."
+argument-hint: "[--parallel] [goal description]"
 ---
 
 {{#if ARGUMENTS}}

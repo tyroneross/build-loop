@@ -83,6 +83,8 @@ Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrato
 
 - Dispatch parallel work for independent file groups
 - Each worker gets minimal context + integration contract (what interfaces to implement) + an intent packet explaining how the subtask fits the north star + a MECE ownership packet defining owned files, non-owned files, interface contracts, and integration checkpoints
+- If the host supports typed subagents, map read-only codebase questions to explorer-style agents and disjoint implementation slices to worker-style agents. If the host requires explicit user authorization for subagents, identify parallel-safe groups but execute locally unless the user asked for delegation, parallelization, workers, or a `--parallel` mode.
+- Do not delegate ambiguous product decisions, final integration, destructive git operations, push/deploy confirmation, or tasks whose result blocks the immediate next lead-session step.
 - For UI work: follow established design system or sensible defaults (44px touch targets, 4.5:1 contrast). Every visible element must have meaning, working behavior, and a clear user purpose.
 - Surface pre-existing issues separately from new work. If an issue impacts users and is local to the current build, plan and fix it automatically; if too large/risky, log user impact and defer.
 - Checkpoint after major integration points

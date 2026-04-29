@@ -11,7 +11,7 @@ A 5-phase development loop (+1 optional): assess state and criteria, plan, execu
 
 Build-loop supports three modes, routed by the orchestrator:
 
-- **Build** (default): Full 9-phase loop for implementation tasks
+- **Build** (default): Full 5-phase loop plus optional Learn for implementation tasks
 - **Optimize**: Autoresearch-pattern optimization for measurable metrics (`/build-loop:optimize`)
 - **Research**: Pre-decision analysis that produces a research packet (`/build-loop:research`)
 
@@ -20,6 +20,18 @@ The orchestrator classifies intent automatically. Users can override with the st
 ## Scope Check
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
+
+## Host Adapters
+
+Build-loop keeps the core method host-neutral, then adapts the execution mechanics to the current coding host.
+
+| Host | Primary surface | Subagent behavior |
+|---|---|---|
+| Claude Code | `agents/*.md`, slash commands, `Skill(...)`, `Agent` tool | Use the existing Claude orchestrator and agent definitions. Do not rewrite Claude agents for Codex behavior. |
+| Codex | `skills/*/SKILL.md`, `AGENTS.md`, templates | Use `references/codex-subagents.md` and `templates/codex-worker-prompt.md` when the user explicitly authorizes subagents or parallel delegation. |
+| Other coding tools | `AGENTS.md` | Follow the same phases and ownership packets with the host's available delegation primitives. |
+
+**Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation/parallel agent work or uses a command flag such as `--parallel`. Without that signal, keep execution local while preserving the MECE plan.
 
 ## Intent Capability Pack
 
@@ -43,13 +55,14 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 
 | Skill | Used In | Fallback |
 |-------|---------|----------|
-| `writing-plans` | Phase 3 (Plan) | Write a structured plan directly: goal, tasks with exact file paths, dependency order, test commands |
-| `subagent-driven-development` | Phase 4 (Execute) | Dispatch parallel agents manually using the Agent tool for independent file groups |
+| `writing-plans` | Phase 2 (Plan) | Write a structured plan directly: goal, tasks with exact file paths, dependency order, test commands |
+| `subagent-driven-development` | Phase 3 (Execute) | Dispatch parallel agents manually using the host's available delegation tool for independent file groups |
 | `verification-before-completion` | Phase 4 sub-step F (Report) | Run all test/build/lint commands and confirm output before claiming completion |
 | `simplify` (slash: `/simplify`) | Phase 4 sub-step E (Simplify) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
 | `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
 | Intent capability pack | Phases 1-4 | Read `references/intent-capability-pack.md`; write `.build-loop/intent.md`; pass the intent packet to every subagent |
 | Modular systems pack | Phases 1-4 | Read `references/modular-systems-pack.md`; partition files/tasks MECE; prefer modular scalable boundaries unless an exception is documented |
+| Codex subagent adapter | Phase 3 (Execute, Codex only) | Read `references/codex-subagents.md`; use `templates/codex-worker-prompt.md` for authorized Codex workers |
 
 ### Phase quick reference
 
@@ -257,7 +270,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
       - Binary pass/fail only — no Likert scales
       - One evaluator per dimension — no multi-dimension God Evaluator
       - Judge reasons in thinking tags, outputs only pass/fail
-      - Use Claude (the running instance) as judge
+      - Use the running host model/session as judge
     - Each criterion gets: `description | grading method | pass condition | evidence required`
     - Load `eval-guide.md` in this skill directory for judge prompt template and scorecard format if needed.
 17. **Write goal file**: Save to `.build-loop/goal.md` in the project directory.
@@ -273,7 +286,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
 4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
-6. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
+6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
+7. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
 
 **Optimization checklist** (review the plan for these before proceeding):
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
@@ -288,7 +302,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 **Plan acceptance gate** — required before "Output: Plan file":
 
-7. **Run `plan-verify`** (deterministic, grep-checkable rules):
+8. **Run `plan-verify`** (deterministic, grep-checkable rules):
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json
    ```
@@ -296,7 +310,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
    - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
    - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
-8. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 7 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
+9. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 8 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
 
 **Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, and plan-critic findings.
 
@@ -308,7 +322,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
 3. **Parallel agents** where dependency graph allows
 4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs + the intent packet from `.build-loop/intent.md` + the MECE ownership packet from the plan (`owns`, `does not own`, `interface contract`, `integration checkpoint`)
-5. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
+5. **Codex execution adapter**: If running in Codex, load `references/codex-subagents.md` before any spawn decision. Spawn `explorer` or `worker` subagents only when the Codex permission gate passed; otherwise execute locally. When spawning a worker, use `templates/codex-worker-prompt.md`, prefer explicit prompt packets over full context forks, and require the worker return changed files, validation, unresolved risks, and integration notes.
+6. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
    - Mandate to load `calm-precision` and per-platform skills (`ibr:ios-design`/`ibr:apple-platform` for Apple, `frontend-design`/`ibr:mobile-web-ui` for web)
    - Mockup-vs-rule conflict policy: rule wins; subagent must report `RULE BEATS MOCKUP:` decisions
    - Inline anti-pattern checklist (status pills, ungated animations, theme-token bypass, Dynamic Type, accessibility labels, touch targets, VoiceOver consistency, no fake buttons)
@@ -316,8 +331,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    - Self-verification: run scanner before returning, zero must-fix on changed files
 
    Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, and accurate data.
-6. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
-7. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
+7. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
+8. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
 
 ## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Report
 
@@ -413,7 +428,7 @@ Nothing false, fabricated, or placeholder reaches the user. Three gates, run in 
 - **Gate 1 — Fact Checker**: Trace every rendered %, $, score, count, or assessment to its data source. Flag "always", "never", "100%", "guaranteed" — replace with accurate language unless genuinely absolute. Every rendered metric needs a traceable path: source → transformation → display.
 - **Gate 2 — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
 - **Gate 3 — Architectural Violation Check** (if NavGator available): load `build-loop:navgator-bridge`, run its Review violation check. Executes `navgator rules --json` and classifies blocking (`circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error) vs warning (`hotspot`, `high-fan-out`, `orphan`). Flags recurrences against `.navgator/lessons/lessons.json`.
-- **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --source <plugin-source-repo>`. Greps source for `${CLAUDE_PLUGIN_ROOT}/...` references, diffs each resolved file against the cache. `[DIVERGED]` or `[MISSING IN CACHE]` on any file the source has is **blocking** — the orchestrator's runtime invocations will hit stale or missing files (see `plugin-builder/references/plugin-hygiene-lessons.md` §5a). Fix: `rsync` source → cache, or bump plugin version + publish if the sync should be durable. Skips silently when cache dir doesn't exist (user hasn't installed the plugin, nothing to break).
+- **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host claude --source <plugin-source-repo>` for Claude runtime surfaces. If the build changes Codex-visible surfaces (`.codex-plugin/`, `AGENTS.md`, `README.md`, `skills/`, or `commands/`), also run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host codex --source <plugin-source-repo>`. `[DIVERGED]`, `[MISSING IN CACHE]`, or stale installed Codex versions are **blocking** when they affect the host being used — runtime invocations will hit stale or missing files. Fix: resync/reinstall the local cache, or bump plugin version + publish if the sync should be durable. Missing cache with no installed version skips silently (user has not installed the plugin, nothing to break).
 - **Gate 5 — Design-Rule Scanner** (only when `uiTarget != null`): run `audit-design-rules.mjs` across full project (broader than Sub-step B's changed-files scope). Surfaces any pre-existing must-fix violations newly observable due to scanner rule additions. Pre-existing findings on first run are logged to `.build-loop/issues/` with break-what-if analysis (user decides scope). New-content findings are blocking. See `phases/ui-validation.md` for tuning.
 
 Blocking issues (any gate) → route to Iterate. Warnings → include in Report (sub-step F).

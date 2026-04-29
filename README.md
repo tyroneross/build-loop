@@ -58,6 +58,7 @@ Examples:
 /build add user notification system with email and push
 /build refactor auth middleware to use JWT
 /build migrate database from SQLite to PostgreSQL
+/build-loop --parallel add billing settings
 ```
 
 Skip the loop for single-file edits, config changes, or fixes under ~20 lines.
@@ -147,6 +148,8 @@ These skills enhance the loop when available but are not required:
 
 This repo includes `AGENTS.md` — the open-standard version of the build loop methodology. If you use Codex, Copilot, Cursor, Jules, or any other AI coding tool, that file provides the same 5-phase (+1 optional Learn) workflow without Claude-specific integration.
 
+Codex-specific subagent behavior lives in `skills/build-loop/references/codex-subagents.md` and `skills/build-loop/templates/codex-worker-prompt.md`. These files are additive: Claude Code continues to use the existing `agents/*.md` runtime, while Codex maps Build Loop ownership packets to explorer/worker-style delegation only when the user explicitly authorizes subagents or parallel work.
+
 ## Project Data
 
 Build loop stores runtime data in `.build-loop/` within consumer projects:
@@ -179,4 +182,14 @@ Primary Codex surface:
 - skills from `./skills` when present
 - MCP config from `(none)` when present
 
+Codex adapter files:
+- `skills/build-loop/references/codex-subagents.md`
+- `skills/build-loop/templates/codex-worker-prompt.md`
+
 Install the package from this package root using your current Codex plugin install flow. The Codex package is additive only: Claude-specific hooks, slash commands, and agent wiring remain unchanged for Claude Code.
+
+To check whether an installed Codex cache is using the current source instructions:
+
+```bash
+python3 scripts/check_cache_sync.py --host codex --source .
+```
