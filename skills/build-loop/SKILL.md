@@ -654,5 +654,5 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:model-tiering` — reference for model selection
 - `build-loop:navgator-bridge` · `build-loop:debugger-bridge` · `build-loop:logging-tracer-bridge` — plugin integrations (cherry-pick pattern)
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
-- `build-loop:authentication` — auth reference library (Google Cloud Console now; extensible)
+- `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
