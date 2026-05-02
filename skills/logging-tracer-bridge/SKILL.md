@@ -1,27 +1,25 @@
 ---
 name: build-loop:logging-tracer-bridge
-description: Generate stack-appropriate structured logging and optional OpenTelemetry tracing when a build lacks runtime visibility. Triggered in Assess and Review-B/Iterate on silent failures. Delegates to claude-code-debugger when available.
-version: 0.1.0
+description: Generate stack-appropriate structured logging and optional OpenTelemetry tracing when a build lacks runtime visibility. Triggered in Assess and Review-B/Iterate on silent failures. Coordinates the now-internal logging-tracer skill.
+version: 0.2.0
 user-invocable: false
 ---
 
-# Logging-Tracer Bridge
+# Logging-Tracer Bridge (internal coordinator)
 
-Folds claude-code-debugger's `logging-tracer` skill into build-loop. Solves "tests failed but I can't tell why" — generates zero-dep structured logging, file-based JSONL for `read_logs` MCP consumption, or OTel tracing when the project already has it.
+As of build-loop 0.6.0 the `logging-tracer` skill is bundled into build-loop. This bridge is the build-loop-specific orchestration layer (when to fire, what to write to state.json, ephemeral-by-default policy) around the internal `build-loop:logging-tracer` skill, which handles tier selection, stack detection, and codegen.
 
-## Cherry-pick principle
+## What this skill does
 
-**claude-code-debugger remains an independent plugin and repository.** This bridge does not embed the debugger's full `logging-tracer` implementation — it delegates when the upstream plugin is available:
+- Coordinates Assess (observability baseline) and Review-B/Iterate (reactive add-instrumentation) flows
+- Records observability state to `.build-loop/state.json.observability.*`
+- Delegates the actual logging codegen and tier selection to `build-loop:logging-tracer`
 
-- If `availablePlugins.claudeCodeDebugger` is true → delegates to `claude-code-debugger:logging-tracer` (upstream handles tier selection and codegen)
-- If upstream is absent → falls back to a **minimum-viable inline Tier-1 helper** (5-8 lines per language: Node, Python, Go, Rust). This is graceful degradation, not a second implementation. Anything more elaborate (Tier 2 JSONL rotation, Tier 3 OTel spans) requires the upstream plugin.
+## What this skill does NOT do
 
-What this bridge does NOT do:
-- Reimplement the upstream's tier selection logic, placement rules, or stack detection
-- Introduce new logging dependencies (no `winston`, `pino`, or OTel installs)
+- Reimplement tier selection, placement rules, or stack detection (those live in `build-loop:logging-tracer`)
+- Introduce new logging dependencies without explicit user approval
 - Preserve instrumentation in the final diff without explicit user approval (see §Ephemeral-by-default)
-
-If upstream is absent and the Tier-1 fallback isn't sufficient, the bridge surfaces this to the user rather than silently expanding scope.
 
 ## When This Fires
 
@@ -68,7 +66,7 @@ User says: "add logging", "no logs", "silent failure", "need visibility", "can't
 If `availablePlugins.claudeCodeDebugger` is true, delegate to the debugger's logging-tracer:
 
 ```
-Skill("claude-code-debugger:logging-tracer") with input {
+Skill("build-loop:logging-tracer") with input {
   language: <detected>,
   framework: <detected>,
   tier: auto | 1 | 2 | 3,

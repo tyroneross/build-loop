@@ -1,29 +1,30 @@
 ---
 name: build-loop:debugger-bridge
-description: Memory-first debugger integration for Review-B Validate and Iterate. On criterion fail, calls claude-code-debugger's checkMemoryWithVerdict to route: apply known fix, adapt prior incident, or escalate.
-version: 0.1.0
+description: Memory-first debugger gate for Review-B Validate and Iterate. On criterion fail, runs the verdict gate (memory search → apply known fix, adapt prior incident, or escalate). Coordinates the now-internal debug-loop, debugging-memory, and logging-tracer skills.
+version: 0.2.0
 user-invocable: false
 ---
 
-# Debugger Bridge
+# Debugger Bridge (internal coordinator)
 
-Folds claude-code-debugger into build-loop surgically. Instead of blind retries at Iterate, check institutional memory first. Most bugs recur; if the debugger has seen this class before, apply the known fix or adapt prior incident notes.
+As of build-loop 0.6.0 the debugger is bundled into build-loop. This skill is the gate logic — memory-first, direct-apply gating, evidence-gap routing — that wraps the now-internal `build-loop:debug-loop`, `build-loop:debugging-memory`, and `build-loop:logging-tracer` skills plus the `debugger` MCP server (`.mcp.json`).
 
-## Cherry-pick principle
+## What this skill does
 
-**claude-code-debugger remains an independent plugin and repository.** This bridge does not embed or duplicate the debugger's memory, verdict classifier, or causal-tree logic — it only consumes the relevant MCP tools and skills:
+- Coordinates the Review-B / Iterate / Review-F memory gate flow (the build-loop-specific orchestration around the debugger primitives)
+- Records gate state to `.build-loop/state.json.debuggerGates.*`
+- Delegates the actual memory lookup, verdict classification, and causal-tree investigation to the internal debugger skills and MCP
 
-- Calls MCP tools: `search`, `store`, `outcome`, `read_logs`, `list` — delegation only
-- Invokes upstream skills: `claude-code-debugger:debugging-memory`, `:assess`, `:debug-loop` — delegation only
-- Writes to `.build-loop/state.json.debuggerGates.*` — bridge's own namespace
+## What this skill does NOT do
 
-What this bridge does NOT do:
-- Reimplement verdict classification or memory search
-- Cache debugger memory locally (always calls live MCP)
+- Reimplement verdict classification or memory search (those live in the internal `debugging-memory` skill and `debugger` MCP)
+- Cache memory locally (always calls live MCP)
 - Call `store` or `outcome` outside Review-F to avoid corrupting training data
 - Duplicate the `assessment-orchestrator` or `debug-loop` internal phases
 
-If the debugger plugin is absent, this bridge skips — consumer falls back to `fallbacks.md#debug` inline guidance (minimum viable; does NOT reimplement debugger memory).
+## Backward-compat note
+
+`.claude-code-debugger/` persistent-state paths in this repo are intentionally preserved for backward-compat with existing user incident memory created when the debugger was a standalone plugin. Do not migrate.
 
 **Use at:**
 - Review-B — when any criterion fails with an error-like signal (exception, test failure, build error)
@@ -36,23 +37,14 @@ If the debugger plugin is absent, this bridge skips — consumer falls back to `
 
 ## Pre-flight
 
-Check installation:
+The debugger is bundled with build-loop. The MCP server (`debugger`, defined in `.mcp.json`) and the three skills (`build-loop:debug-loop`, `build-loop:debugging-memory`, `build-loop:logging-tracer`) are always available when build-loop is installed.
 
-```bash
-# Via state.json set in Assess
-jq -r '.availablePlugins.claudeCodeDebugger' .build-loop/state.json
-```
+If the MCP server fails to start (e.g., `dist/` missing or node not on PATH), fall through to the local-grep fallback:
 
-If `true`, run the steps in this skill against the debugger's MCP tools and skills.
-
-If `false`, **run the standalone fallback** instead of skipping silently. Build-loop carries degraded-but-useful bug-memory when the debugger isn't installed:
-
-- **Load**: `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md` §`bug-memory` — executable token-extract + grep against `.build-loop/issues/`, `.build-loop/feedback.md`, and `.bookmark/`
-- **Verdict shape**: `LOCAL_HIT_EXACT` / `LOCAL_HIT_PARTIAL` / `LOCAL_WEAK` / `LOCAL_NO_MATCH` — same four-state interface as the classifier verdict, but from file grep. No confidence score. No direct-apply path (all verdicts route to Iterate as adapted plan).
-- **Storage**: after resolving a failure, write `.build-loop/issues/YYYY-MM-DD-<slug>.md` with `{symptom, root_cause, fix, files, tags}`. Future builds grep this file.
-- **Flag in Review-F report**: `⚠️ debugger memory via local grep — install claude-code-debugger for classified cross-project memory + training feedback loop`
-
-The fallback covers: this-project failure history, local pattern lookup, manual incident recording. It does NOT cover: cross-project memory, the verdict classifier, causal-tree investigation (`debug-loop`), parallel multi-domain assessment (`/assess`), or the `outcome` training signal — those require the debugger plugin.
+- **Load**: `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md` §`bug-memory` — token-extract + grep against `.build-loop/issues/`, `.build-loop/feedback.md`, and `.bookmark/`
+- **Verdict shape**: `LOCAL_HIT_EXACT` / `LOCAL_HIT_PARTIAL` / `LOCAL_WEAK` / `LOCAL_NO_MATCH` — file-grep verdicts; all route to Iterate as adapted plan (no direct-apply)
+- **Storage**: after resolving a failure, write `.build-loop/issues/YYYY-MM-DD-<slug>.md` with `{symptom, root_cause, fix, files, tags}`
+- **Flag in Review-F report**: `⚠️ debugger MCP unavailable — using local grep fallback`
 
 Do not error, do not block the build.
 
@@ -108,7 +100,7 @@ Before marking a criterion as FAIL and routing to Iterate, query debugger memory
 
    Or via Skill invocation:
    ```
-   Skill("claude-code-debugger:debugging-memory") with input { symptom, budget: 2500 }
+   Skill("build-loop:debugging-memory") with input { symptom, budget: 2500 }
    ```
 
 3. **Act on verdict — all verdicts treat memory as a hypothesis, not a patch**:
@@ -167,10 +159,10 @@ Automatic escalation to causal-tree investigation. Do not attempt a 4th fix with
 
 When the failure symptom touches multiple layers (search queries are slow AND results look wrong → database + frontend):
 
-1. Dispatch `/assess <symptom>` command from claude-code-debugger:
+1. Dispatch `/assess <symptom>` command from build-loop:
 
    ```
-   Skill("claude-code-debugger:assess") with input { symptom, context: current_attempt_diff }
+   Skill("build-loop:assess") with input { symptom, context: current_attempt_diff }
    ```
 
 2. The debugger's `assessment-orchestrator` fans out to relevant domain assessors (api / database / frontend / performance) in parallel.
@@ -186,7 +178,7 @@ When the bug is not multi-layer but deep (same root-cause symptom keeps reappear
 1. Invoke `debug-loop` skill:
 
    ```
-   Skill("claude-code-debugger:debug-loop") with input {
+   Skill("build-loop:debug-loop") with input {
      symptom,
      reproductionSteps: <from Review-B evidence>,
      previousAttempts: <Iterate diffs so far>

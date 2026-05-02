@@ -52,7 +52,7 @@ Source grep for embedded logic vs delegation:
 
 **navgator-bridge:** no function/class definitions. Only filesystem reads (`.navgator/architecture/*.json`) + CLI delegation (`navgator impact`, `rules`, `llm-map`, `dead`). Writes only to its own `state.json.navgator.*` namespace. ✅ cherry-pick clean.
 
-**debugger-bridge:** no function/class definitions. Only MCP delegation (`mcp__plugin_claude_code_debugger__{search,store,outcome,read_logs,list}`) + skill invocation (`claude-code-debugger:{debugging-memory,assess,debug-loop}`). Writes only to its own `state.json.debuggerGates.*` namespace. ✅ cherry-pick clean.
+**debugger-bridge:** no function/class definitions. Only MCP delegation (`mcp__plugin_claude_code_debugger__{search,store,outcome,read_logs,list}`) + skill invocation (`build-loop:{debugging-memory,assess,debug-loop}`). Writes only to its own `state.json.debuggerGates.*` namespace. ✅ cherry-pick clean.
 
 **logging-tracer-bridge:** contains inline Tier-1 helper code (5-8 lines per language: Node, Python, Go, Rust). This is the fallback when `availablePlugins.claudeCodeDebugger` is false. When upstream IS available, bridge delegates (line 54 of SKILL.md). Tier 2 and Tier 3 are explicitly documented as requiring upstream. ✅ graceful degradation, not embedding.
 

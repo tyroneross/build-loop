@@ -1,0 +1,81 @@
+{
+  "name": "@tyroneross/claude-code-debugger",
+  "version": "1.8.0",
+  "description": "Debugging memory system with tiered storage, verdict-first responses, context compression, and parallel assessment - never solve the same bug twice",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "require": "./dist/src/index.js",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "bin": {
+    "claude-code-debugger": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "commands",
+    "skills",
+    "hooks",
+    "agents",
+    ".claude-plugin",
+    ".mcp.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "prepublishOnly": "npm run build",
+    "postinstall": "node dist/src/setup/auto-setup.js || true",
+    "test": "node test-v1.4.0-e2e.js && node test-v1.5.0-e2e.js",
+    "benchmark": "node benchmark-scoring.js",
+    "mcp": "node dist/src/mcp/server.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "debugging",
+    "memory",
+    "claude-code",
+    "incident-tracking",
+    "pattern-recognition",
+    "developer-tools",
+    "opentelemetry",
+    "traces",
+    "parallel-assessment",
+    "sentry",
+    "langchain"
+  ],
+  "author": "Tyrone Ross",
+  "license": "FSL-1.1-MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tyroneross/claude-code-debugger"
+  },
+  "bugs": {
+    "url": "https://github.com/tyroneross/claude-code-debugger/issues"
+  },
+  "homepage": "https://github.com/tyroneross/claude-code-debugger#readme",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "natural": "^8.1.0",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/natural": "^5.1.5",
+    "@types/node": "^20.0.0",
+    "@types/prompts": "^2.4.9",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "npm@10.x",
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}

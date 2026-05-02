@@ -183,7 +183,7 @@ A DeepAgents-based agent is well-built when:
 
 ## Related skills
 
-- `claude-code-debugger:debug-loop` — for investigating agent behavior (tool hallucinations, stuck streams)
+- `build-loop:debug-loop` — for investigating agent behavior (tool hallucinations, stuck streams)
 - `prompt-builder:prompt-builder` — for tightening per-role `system_prompt` text
 - `calm-precision` — if you're also building the UI side of the agent
 

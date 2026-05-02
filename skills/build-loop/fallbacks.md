@@ -235,7 +235,7 @@ Do not fetch URLs the user did not explicitly provide or that aren't core to the
 
 ## debug — Root-cause investigation
 
-When `claude-code-debugger:debug-loop` is unavailable:
+When `build-loop:debug-loop` is unavailable:
 
 1. **Reproduce** — minimal case that fails every time. Write the command/steps down.
 2. **Isolate** — binary-search the diff / commits / inputs until you find the smallest change that flips pass ↔ fail.
@@ -249,7 +249,7 @@ Stop after 3 failed hypotheses and escalate to the user with what was tried.
 
 ## bug-memory — Prior-bug lookup
 
-**Standalone mode when `claude-code-debugger:debugging-memory` is unavailable.** No verdict classifier, no cross-session training. Just a file-grep of this project's prior builds.
+**Standalone mode when `build-loop:debugging-memory` is unavailable.** No verdict classifier, no cross-session training. Just a file-grep of this project's prior builds.
 
 ### Query procedure
 
@@ -299,7 +299,7 @@ Future builds will grep this file. Installing `claude-code-debugger` promotes th
 
 ## logging-fallback — Observability when claude-code-debugger absent
 
-**Standalone mode when `claude-code-debugger:logging-tracer` is unavailable.** Minimum-viable Tier-1 structured logging per language. Covered in `skills/logging-tracer-bridge/SKILL.md` §"Fallback when upstream is absent" — the bridge already contains the standalone code. This fallback section exists only to point at the bridge:
+**Standalone mode when `build-loop:logging-tracer` is unavailable.** Minimum-viable Tier-1 structured logging per language. Covered in `skills/logging-tracer-bridge/SKILL.md` §"Fallback when upstream is absent" — the bridge already contains the standalone code. This fallback section exists only to point at the bridge:
 
 > For zero-dep structured-JSON logging in Node, Python, Go, or Rust, see `skills/logging-tracer-bridge/SKILL.md`. The bridge's Tier-1 fallback is a 5-8 line helper per language that writes to stderr and respects a `DEBUG_TRACE=1` env gate. This is the standalone path; nothing more elaborate is available without the debugger plugin.
 

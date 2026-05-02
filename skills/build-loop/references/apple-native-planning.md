@@ -114,7 +114,7 @@ Use the first-Start pattern with a pre-permission sheet that explains why you ne
 
 ### iPhone (15 states)
 
-Reuse the matrix from `claude-code-debugger:debugging-memory/references/ios-notification-alarm-playbook.md`. Phase 4 (Review) Validate sub-step references this matrix. Mark every row that requires a real device as `⚠️ device-only` in the scorecard; never claim ✅ on a sim-only verification.
+Reuse the matrix from `build-loop:debugging-memory/references/ios-notification-alarm-playbook.md`. Phase 4 (Review) Validate sub-step references this matrix. Mark every row that requires a real device as `⚠️ device-only` in the scorecard; never claim ✅ on a sim-only verification.
 
 ### Apple Watch (11 states)
 

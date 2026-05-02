@@ -1,7 +1,7 @@
 {
   "name": "build-loop",
-  "version": "0.5.0",
-  "description": "Multi-phase build orchestration: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2 (deterministic plan claim verification). Optional UI design gates.",
+  "version": "0.6.0",
+  "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2 (deterministic plan claim verification). Optional UI design gates. Bundled debug-loop, debugging-memory, logging-tracer skills + MCP incident-memory server.",
   "author": {
     "name": "Tyrone Ross",
     "url": "https://github.com/tyroneross"
@@ -20,6 +20,11 @@
     "code-quality",
     "ui-validation",
     "accessibility",
-    "design-rules"
-  ]
+    "design-rules",
+    "debug-loop",
+    "debugging",
+    "causal-tree",
+    "incident-memory"
+  ],
+  "mcpServers": "./.mcp.json"
 }
