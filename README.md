@@ -49,16 +49,16 @@ Add to `~/.claude/settings.json`:
 ## Usage
 
 ```
-/build [goal description]
+/build-loop:run [goal description]
 ```
 
 Examples:
 
 ```
-/build add user notification system with email and push
-/build refactor auth middleware to use JWT
-/build migrate database from SQLite to PostgreSQL
-/build-loop --parallel add billing settings
+/build-loop:run add user notification system with email and push
+/build-loop:run refactor auth middleware to use JWT
+/build-loop:run migrate database from SQLite to PostgreSQL
+/build-loop:run --parallel add billing settings
 ```
 
 Skip the loop for single-file edits, config changes, or fixes under ~20 lines.

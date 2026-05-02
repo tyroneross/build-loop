@@ -21,7 +21,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Claude Code Integration
 
-- `/build-loop [goal]` — triggers the build-loop skill which orchestrates all 5 phases
+- `/build-loop:run [goal]` — triggers the build-loop skill which orchestrates all 5 phases (the bare `/build-loop` form is deprecated due to a namesake collision with the skill of the same qualified name; see `KNOWN-ISSUES.md`)
 - `/build-loop:self-improve` — run Phase 6 Learn alone against recent runs without a new build
 - Build orchestrator agent (Opus 4.7) coordinates phase execution and spawns parallel subagents
 - Fact-checker and mock-scanner agents run in parallel during Review sub-step D

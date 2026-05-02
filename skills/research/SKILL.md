@@ -69,7 +69,7 @@ Produces a repo-grounded research packet without committing to implementation. U
 
 - Standalone: `/build-loop:research [topic]`
 - From build-loop: orchestrator routes RESEARCH-intent requests here instead of the full loop
-- After packet: user decides — `/build-loop` to implement, `/build-loop:optimize` to optimize, or shelve
+- After packet: user decides — `/build-loop:run` to implement, `/build-loop:optimize` to optimize, or shelve
 
 ## State
 

@@ -39,3 +39,13 @@ Agent(
 This bypasses the resolver entirely and produces the same outcome.
 
 **Discovered:** 2026-05-01 by FlowDoro session investigation; root-cause analysis at `~/dev/git-folder/FlowDoro/.bookmark/` (2026-05-01 SNAP entries).
+
+**Resolved:** 2026-05-01 — applied Option 2 (rename slash-command to `commands/run.md`). User surface is now `/build-loop:run [goal]`. Skill name unchanged at `skills/build-loop/SKILL.md`, so all `Skill("build-loop:build-loop")` callers (build-orchestrator agent, downstream plugins) continue to resolve correctly. README + CLAUDE.md updated.
+
+**Sibling colliders — latent risk accepted, 2026-05-01.** Three sibling command/skill pairs share the same namesake-collision shape but were intentionally NOT renamed. UX cost of a suffix was deemed not worth the unverified risk; none have been observed misbehaving in practice. If `Skill("build-loop:<name>")` ever returns the slash-command template for one of these, apply the same Option 2 rename pattern used for `build-loop:build-loop`.
+
+- `commands/optimize.md` ↔ `skills/optimize/SKILL.md` → `build-loop:optimize`
+- `commands/research.md` ↔ `skills/research/SKILL.md` → `build-loop:research`
+- `commands/plan-verify.md` ↔ `skills/plan-verify/SKILL.md` → `build-loop:plan-verify`
+
+`commands/promote-experiment.md` has no namesake skill and was not touched. `skills/self-improve/SKILL.md` has no namesake command and was not touched.
