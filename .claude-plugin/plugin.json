@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Multi-phase build orchestration: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2 (deterministic plan claim verification). Optional UI design gates.",
   "author": {
     "name": "Tyrone Ross",
