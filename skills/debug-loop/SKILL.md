@@ -172,7 +172,7 @@ Summary:
 
 When the failure symptom touches multiple layers (e.g. search queries are slow AND results look wrong → database + frontend + API), the linear causal-tree loop can stall. Branch into parallel assessment instead of pursuing one hypothesis serially:
 
-1. Invoke `Skill("claude-code-debugger:assess")` with the symptom and the current attempt diff. The bundled `assessment-orchestrator` fans out to relevant domain assessors (`api-assessor` / `database-assessor` / `frontend-assessor` / `performance-assessor`) in parallel.
+1. Invoke `Skill("build-loop:assess")` with the symptom and the current attempt diff. The bundled `assessment-orchestrator` fans out to relevant domain assessors (`api-assessor` / `database-assessor` / `frontend-assessor` / `performance-assessor`) in parallel.
 
 2. **Model override**: when invoking from the build-loop orchestrator (Opus 4.7), explicitly pass `model: sonnet` to each domain assessor via the subagent dispatch. Without this override, the assessor agents inherit the orchestrator's tier and you get 4 parallel Opus invocations — wasteful for pattern-matching work that Sonnet handles well. Only escalate individual assessors back to Opus if their initial output flags `confidence: low` or `needs_judgment: true`.
 
@@ -183,6 +183,16 @@ When to use parallel assessment vs continuing the linear loop:
 - Multiple domains may be involved ("search is slow and returns wrong results") → parallel
 - Post-deploy regression with unknown scope → parallel
 - Symptom is sharp and localized to one layer → continue the linear loop
+
+### Extended capability — escalate to standalone supporting plugin
+
+If the bundled assessor coverage isn't enough (e.g., the failure crosses a domain build-loop's bundled assessors don't cover well, or you need cross-build coordination), invoke the bridge:
+
+```
+Skill("build-loop:debugger-bridge") with input { symptom, calledBy: "debug-loop", reason: "stuck-iteration" }
+```
+
+The bridge pre-flights `availablePlugins.claudeCodeDebugger`. If the standalone supporting plugin is installed, it delegates to additional assessor coverage / cross-instance coordination there. If not installed, returns `{ delegated: false }` and you continue with bundled-only capability — no error.
 
 ### State Tracking
 

@@ -155,6 +155,16 @@ After the instrumentation lands:
 3. If tests still fail silently → instrumentation did not solve the visibility problem; escalate to user
 4. **Always revert** at session end unless the user explicitly approved keep-in-diff via the prompt above. The orchestrator (or caller) verifies no `build-loop:trace/` stash entries remain and no unguarded trace calls landed.
 
+## Extended capability — escalate to standalone supporting plugin
+
+If the bundled tier selection / codegen / placement isn't enough (e.g., the project requires a tracer backend or placement intelligence that lives in the standalone supporting plugin only, or you need cross-build log correlation), invoke the bridge:
+
+```
+Skill("build-loop:logging-tracer-bridge") with input { symptom, target_files, tier_hint, calledBy: "logging-tracer" }
+```
+
+The bridge pre-flights `availablePlugins.claudeCodeDebugger`. If the standalone supporting plugin is installed, it delegates to extended observability tooling there. If not installed, returns `{ delegated: false }` and this skill continues with bundled-only Tier 1/2/3 codegen.
+
 ## Log Analysis Guidance
 
 When the user has logs but needs help interpreting them, follow this diagnostic sequence:

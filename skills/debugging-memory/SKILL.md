@@ -261,6 +261,23 @@ When a pattern matches:
 - Apply the recommended approach
 - Note any caveats mentioned
 
+## Extended capability — escalate to standalone supporting plugin
+
+If project-local memory misses but cross-project memory might have a hit, OR the bundled MCP lacks a capability you need (additional assessor coverage, cross-instance coordination), invoke the bridge:
+
+```
+Skill("build-loop:debugger-bridge") with input { symptom, scope: "global", calledBy: "debugging-memory" }
+```
+
+The bridge pre-flights `availablePlugins.claudeCodeDebugger` — if the standalone supporting plugin isn't installed, it returns `{ delegated: false }` and you continue with bundled-only capability. No error, no log noise.
+
+Use this for:
+- A `NO_MATCH` from project memory where cross-project history might still have a relevant incident
+- An ambiguous verdict where additional assessor input would change the routing decision
+- Coordination state that lives in the standalone plugin only
+
+Do NOT use this for: every memory call (it's escalation, not primary path), or when project memory already returned `KNOWN_FIX` (bundled is enough).
+
 ## MCP Tools Quick Reference
 
 | Tool | Purpose |
