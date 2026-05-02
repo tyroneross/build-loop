@@ -74,6 +74,87 @@ Avoid logging:
 - Sensitive data (passwords, tokens, PII) — redact before logging
 - Redundant information already captured by the framework (e.g., Express request logging middleware)
 
+## Ephemeral-by-default (mandatory for diagnostic instrumentation)
+
+When this skill is invoked **reactively** to repair an evidence gap during a debugging session — not proactively at the user's standing request for permanent observability — the instrumentation **must not land in the final diff unless the user explicitly approves it**. Log/tracer patches that survive into commits alter timing, IO, and snapshot behavior — masking rather than fixing the original failure.
+
+Two enforcement mechanisms; choose per invocation. Default to Mechanism A.
+
+### Mechanism A — Runtime gate (preferred)
+
+Wrap every new diagnostic log statement so it is inert unless `DEBUG_TRACE=1` is set:
+
+```typescript
+const __trace = process.env.DEBUG_TRACE === "1";
+function trace(msg: string, meta: Record<string, unknown> = {}) {
+  if (!__trace) return;
+  const entry = { ts: new Date().toISOString(), level: "trace", msg, ...meta };
+  process.stderr.write(JSON.stringify(entry) + "\n");
+}
+```
+
+```python
+import os, json, sys, datetime
+_TRACE = os.environ.get("DEBUG_TRACE") == "1"
+def trace(msg, **meta):
+    if not _TRACE: return
+    entry = {"ts": datetime.datetime.utcnow().isoformat() + "Z", "level": "trace", "msg": msg, **meta}
+    print(json.dumps(entry), file=sys.stderr)
+```
+
+Re-run the failing criterion with `DEBUG_TRACE=1 <test-command>`. Output flows to stderr for `read_logs` MCP to capture. Production paths never execute trace code in normal builds.
+
+### Mechanism B — Throwaway patch
+
+When the change cannot be wrapped in a runtime gate (e.g. language without env access at the call site, or the instrumentation requires structural changes like adding request IDs or new fields to types), apply the change as a `git stash` patch BEFORE re-running:
+
+```bash
+# After the code changes land
+git stash push -u -m "build-loop:trace/<session-id>"
+# Stash applied in-place
+git stash show stash@{0}
+# Re-run the failing criterion
+<test-command>
+# Diagnostics captured in .build-loop/logs/
+# Revert after the capture completes
+git stash drop stash@{0}
+```
+
+The orchestrator tracks the stash entry in `.build-loop/state.json.observability.interventions[].stash_id`. At Review-F the orchestrator MUST verify no stash entries remain with `build-loop:trace/` prefix; if any do, revert them before writing the scorecard.
+
+### Keep-in-diff approval (opt-in only)
+
+To keep instrumentation in the final diff (e.g. the user wants ongoing observability), the caller must invoke `AskUserQuestion`:
+
+```
+Question: "Keep the diagnostic logging added to <files> in the final diff?"
+Options:
+  - "Revert — instrumentation was diagnostic only" (default, recommended)
+  - "Keep — convert to permanent observability (remove DEBUG_TRACE gate or unstash)"
+  - "Keep with gate — leave DEBUG_TRACE wrapping in place"
+```
+
+Default answer on user absence: **revert**. No silent retention. If the user picks "keep", remove the env-flag guard (Mechanism A) or apply the stash and drop the reference (Mechanism B).
+
+## Code placement rules (diagnostic instrumentation)
+
+When adding instrumentation reactively to repair an evidence gap:
+
+- Insert at function entry/exit for functions the investigation flagged — not the whole codebase
+- Never silently catch + log (`catch { log(...) }` without rethrow is an anti-pattern that turns errors into lost signal)
+- Include the variable that was `undefined` / `null` / `nil` in the log entry — bare "error in X" is useless
+- Add exactly ONE trace call per function added; no spam
+- All calls go through the `trace()` helper (Mechanism A) or live in a throwaway stash (Mechanism B) — no unguarded log/print/eprintln statements added to the codebase
+
+## Re-validate after adding
+
+After the instrumentation lands:
+
+1. Re-run the failing criterion with `DEBUG_TRACE=1` (Mechanism A) or stash applied (Mechanism B)
+2. If tests now fail WITH informative output → return the log evidence to the caller as fresh context for the next fix attempt
+3. If tests still fail silently → instrumentation did not solve the visibility problem; escalate to user
+4. **Always revert** at session end unless the user explicitly approved keep-in-diff via the prompt above. The orchestrator (or caller) verifies no `build-loop:trace/` stash entries remain and no unguarded trace calls landed.
+
 ## Log Analysis Guidance
 
 When the user has logs but needs help interpreting them, follow this diagnostic sequence:

@@ -21,10 +21,27 @@ The search returns a **verdict** with matching incidents and patterns.
 
 **Verdict-based decision tree:**
 
-1. **KNOWN_FIX**: Apply the documented fix directly, adapting for current context
-2. **LIKELY_MATCH**: Review the past incident, use it as a starting point
+1. **KNOWN_FIX**: Apply the documented fix directly only when the strict direct-apply gate (below) passes; otherwise adapt the prior incident as a hypothesis and route to the standard fix flow
+2. **LIKELY_MATCH**: Review the past incident, use it as a starting point — never direct-apply
 3. **WEAK_SIGNAL**: Consider loosely related incidents, but investigate fresh
 4. **NO_MATCH**: Proceed with standard debugging, document the solution afterward
+
+## Direct-apply gate (strict)
+
+Compressing a failure to a single-line symptom and then applying a historical fix directly can overfit on superficially similar incidents (same error string, different root cause, version, or layer). Direct-apply on a `KNOWN_FIX` is gated behind three independent checks. **All three must hold** or the verdict falls back to "adapted plan, route through the normal fix flow":
+
+1. **File match**: at least one of the incident's `files[]` exists at the same path in the current project (suffix match is acceptable — `src/auth/session.ts` matches even if relative vs absolute).
+2. **Version match**: if the incident records a framework/library version (e.g. `next@14`, `prisma@5.8`), the current project's equivalent version must be within the same major (and same minor for libraries with pre-1.0 semver). If no version metadata on the incident, this check defaults to **fail** — no direct-apply.
+3. **Second validation signal**: a non-symptom-string match must also agree. At least one of:
+   - An exact stack-frame match (same function name + same file) between current failure and incident
+   - A matching error class/type hierarchy (not just the message text)
+   - A matching log entry from `read_logs` that ran earlier in the gate
+
+If any of the three fails, downgrade to adapted-plan routing and record the downgrade with `direct_apply_blocked_by: "version_mismatch" | "no_file_overlap" | "no_secondary_signal"`.
+
+**Why this is strict**: a bad direct-apply mutates the codebase on a lossy match and then Review-F stores the (wrong) outcome back to memory, reinforcing the false association. The cost of occasionally skipping a legitimate direct-apply is small; the cost of one overfit mutation compounding across sessions is large.
+
+When `KNOWN_FIX` direct-apply is blocked, the caller should treat the verdict as `LIKELY_MATCH` for routing purposes — load the top incident's detail, adapt the fix to current context, and run it through whatever fix flow the caller normally uses (in build-loop, that's Iterate as an adapted plan).
 
 ## Progressive Depth Retrieval
 
@@ -104,6 +121,42 @@ Confirm the fix works:
 - Test the original reproduction steps
 - Run related tests
 - Check for regressions
+
+## Review-F outcome feedback (closing the memory-first loop)
+
+When a build / debugging session completes, close the feedback loop in two steps. Both are required — skipping either degrades the verdict classifier on future runs.
+
+### Step A — Store resolved incidents (write new knowledge)
+
+For each failure resolved during this run, store the incident:
+
+```
+mcp__plugin_claude_code_debugger__store({
+  symptom: "<original failure string>",
+  root_cause: "<what was wrong>",
+  fix: "<diff or description>",
+  tags: ["build-loop", "<project>", "<layer>"],
+  files: ["<paths touched>"]
+})
+```
+
+### Step B — Report outcomes on applied memory (train verdict classification)
+
+For each prior gate where a `KNOWN_FIX` or `LIKELY_MATCH` was applied (whether direct-apply or adapted), report back whether the suggested fix actually worked:
+
+```
+mcp__plugin_claude_code_debugger__outcome({
+  incident_id: "<from the gate record>",
+  result: "worked" | "failed" | "modified",
+  notes: "<one line>"
+})
+```
+
+- `worked`: applied as-is, resolved the criterion on first attempt
+- `modified`: applied the suggested approach but had to adapt substantially (Iterate attempt count > 1 on that criterion)
+- `failed`: applied but criterion still failed; eventually resolved via different fix or not at all
+
+This is the training signal that makes the verdict classifier better over time. **Always call `outcome` for applied gates, even on build failures** — "worked" vs "failed" is meaningful in both outcomes.
 
 ## Incident Documentation
 

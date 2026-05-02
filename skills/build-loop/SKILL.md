@@ -72,7 +72,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | 2 | **Plan** | Break work, identify parallel-safe, optimize | writing-plans skill → dependency graph |
 | 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report | sub-steps A-F; B-D can route to Iterate; F runs only on final pass |
-| 5 | **Iterate** | Fix Review failures, loop back to Review | max 5x; debugger-bridge escalations at attempts 2 & 3 |
+| 5 | **Iterate** | Fix Review failures, loop back to Review | max 5x; orchestrator stuck-iteration cascade (evidence-gap repair → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) |
 | 6 | **Learn** | Cross-build pattern detection + experimental skill drafting | optional; requires `runs[] >= 3`; auto-promote opt-in |
 
 ### Capability routing table
@@ -97,8 +97,8 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
 | Strategic frame / PRD grounding (Assess + Review) | `build-loop:prd-bridge` — reads `docs/prd-*.md` frontmatter (`core_principles`, `load_when`) + Navigation Map + Section Index in Phase 1; verifies diff doesn't violate principles in Phase 5 Fact-Check; recommends `prd-builder` skill if no PRD exists. Falls back to grep on principle keywords if frontmatter parser unavailable. | `prd-builder` skill direct invocation | Phase 1 captures north-star + intent fresh into `intent.md` (existing fallback) |
 | Architecture scan / impact trace (Assess + Review) | `build-loop:navgator-bridge` — reads `.navgator/architecture/` JSON for blast-radius analysis in Phase 1, runs `navgator rules` diff post-change in Phase 7 | `gator:*` commands if installed | Read component → edit → re-read downstream |
-| Debugger memory-first gate (Review + Iterate) | `build-loop:debugger-bridge` — calls `checkMemoryWithVerdict()` before iterating, escalates to parallel assessment or causal-tree investigation on stuck state; reads logs via `read_logs` MCP; feeds back `outcome` on applied fixes | `build-loop:debug-loop` direct | `fallbacks.md#debug` |
-| Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer-bridge` — passive observability scan at Phase 1; generates stack-appropriate structured logging / OTel at Phase 5/6 when debug-loop hits `evidence_gap` | `build-loop:logging-tracer` direct | Inline Tier-1 (zero-dep JSON logger) per stack |
+| Debugger memory-first gate (Review + Iterate) | `build-loop:debugging-memory` — verdict gate (`KNOWN_FIX` / `LIKELY_MATCH` / `WEAK_SIGNAL` / `NO_MATCH`) with strict direct-apply triple-gate (file + version + secondary signal) and Review-F outcome feedback. Orchestrator owns the when-to-fire policy (Review-B + every Iterate attempt) and routes to this skill. | `build-loop:debug-loop` direct (when memory says enter the loop or 3 same-criterion failures) | `fallbacks.md#debug` |
+| Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer` — generates stack-appropriate structured logging / OTel with ephemeral-by-default policy (Mechanism A: `DEBUG_TRACE=1` runtime gate; Mechanism B: `git-stash` throwaway). Invoked reactively when an Iterate attempt flags `evidence_gap: true`. Orchestrator runs the passive Assess scan inline (no skill call needed) and only loads this skill when instrumentation is actually being added. | — | `fallbacks.md#logging-fallback` (inline Tier-1 zero-dep JSON logger per stack) |
 | Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures and manual interventions; drafts experimental skills/agents to `.build-loop/skills/experimental/`. Auto-promote to `.build-loop/skills/active/` requires opt-in (`autoPromote: true`) plus effective non-confounded sample ≥ 8; regressions and inconclusive results write proposals to `.build-loop/proposals/` for user confirmation — never auto-remove. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
 | Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
 | Claude Code plugin authoring / review | `plugin-builder` (personal skill), `plugin-dev:*` family | `build-loop:plugin-hygiene-lessons.md` enforces manifest/hook/marketplace rules in Review-D | Read `plugin-hygiene-lessons.md` verbatim |
@@ -232,8 +232,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    - If `.navgator/architecture/index.json` exists → load `build-loop:navgator-bridge` skill, run its Assess blast-radius read. Output goes to `.build-loop/state.json.navgator.assess`. Phase 2 Plan consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, per-file `navgator impact` for top 5 risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
    - Else if `gator:*` is available → use those commands.
    - Else → Explore agents → file reading.
-6. **Observability baseline** (informational, no changes): load `build-loop:logging-tracer-bridge` to classify the project's logging level (well-instrumented / print-only / silent). Recorded in `.build-loop/state.json.observability`. If Review-B Validate fails with a silent failure, Iterate may trigger this bridge reactively.
-7. **Debugger context priming** (always; debugger is bundled with build-loop): call `build-loop:debugger-bridge` Assess step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
+6. **Observability baseline** (informational, no changes): run a stack-appropriate grep to classify the project's logging level (well-instrumented / print-only / silent) and write to `.build-loop/state.json.observability.level`. The orchestrator handles this inline — `Skill("build-loop:logging-tracer")` is reactive only and is loaded later if Review-B / Iterate hits a silent failure.
+7. **Debugger context priming** (always; debugger is bundled with build-loop): call the debugger `list` MCP tool with `{ filter: { project: "<current>" }, limit: 10 }` to summarize recent incidents in this project. One-line output; no action. If MCP unavailable, fall through to `fallbacks.md#bug-memory`.
 8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Phase 5 Report's Open Recommendations, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
@@ -398,14 +398,14 @@ For returning-user states (post-onboarding screens, dashboards with data), use t
 - Use `verification-before-completion` for evidence-based claims
 - No criterion marked "pass" without proof
 
-**Memory-first gate (on any failing criterion)**: before routing failures to Iterate, load `build-loop:debugger-bridge`. For each failed criterion with an error-like signal (exception, test failure, build error), call its Review-B memory gate. **Memory is a hypothesis, not a patch — every verdict routes to Iterate as an adapted plan by default**:
+**Memory-first gate (on any failing criterion)**: before routing failures to Iterate, the orchestrator runs the gate (read_logs → synthesize symptom → invoke `Skill("build-loop:debugging-memory")` → act on verdict). See `agents/build-orchestrator.md` §Phase 4 sub-step B for the orchestrator's exact when-to-fire and gate-recording policy. **Memory is a hypothesis, not a patch — every verdict routes to Iterate as an adapted plan by default**:
 
 - `KNOWN_FIX` → adapt prior incident as the Iterate fix plan. Direct-apply only when all three gates hold: file match + version match + second validation signal (stack frame, error class, or log entry). Otherwise behave as LIKELY_MATCH.
 - `LIKELY_MATCH` → adapt prior incident as the Iterate fix plan
 - `WEAK_SIGNAL` → note reference in the Iterate plan, investigate normally
 - `NO_MATCH` → standard Iterate fallthrough; store at sub-step F Report for future learning
 
-The memory gate is always on — the debugger (skills + MCP) is bundled with build-loop as of 0.6.0. If the MCP server fails to start, the bridge falls through to a local-grep fallback. See `debugger-bridge/SKILL.md` for the direct-apply gate spec.
+The memory gate is always on — the debugger (skills + MCP) is bundled with build-loop as of 0.6.0. If the MCP server fails to start, the orchestrator falls through to a local-grep fallback. The strict direct-apply triple-gate spec lives in `skills/debugging-memory/SKILL.md` §"Direct-apply gate (strict)".
 
 **Output**: per-criterion pass/fail with evidence. Any `fail` → Iterate. All `pass` → sub-step C.
 
@@ -499,9 +499,11 @@ Entered when Review sub-step A, B, or D finds blocking issues. Critic-only failu
 
 Per attempt:
 1. **Diagnose root cause** — don't just retry. Reads Review's evidence.
-2. **Consult debugger memory (always; debugger is bundled with build-loop)**: at the START of EACH attempt, invoke `build-loop:debugger-bridge` Iterate logic. On attempts 2 and 3, also invoke `build-loop:debug-loop` for deeper investigation:
-   - After 2 consecutive same-root-cause failures → parallel multi-domain assessment via `build-loop:assess`. Pass `model: sonnet` to domain assessors explicitly (override the debugger's default `inherit` to prevent 4× Opus fan-out from the Opus 4.7 orchestrator).
-   - After 3 consecutive failures on the same criterion → causal-tree investigation via `build-loop:debug-loop`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
+2. **Stuck-iteration cascade (always on)**: at the START of EACH attempt, the orchestrator runs the cascade in order — see `agents/build-orchestrator.md` §Phase 5 for the full ladder. Summary:
+   - **Evidence-gap repair (highest priority)**: if the prior gate flagged `evidence_gap: true`, invoke `Skill("build-loop:logging-tracer")` with intent `repair`. Ephemeral-by-default — Mechanism A (`DEBUG_TRACE=1` runtime gate) or Mechanism B (`git-stash` throwaway). Re-run the failed criterion; if output is now informative, proceed with new context.
+   - **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (it may have shifted shape after the prior fix attempt).
+   - **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `claude-code-debugger:assess`. Pass `model: sonnet` to domain assessors explicitly (override `inherit` default to prevent 4× Opus fan-out from the Opus 4.7 orchestrator). The full procedure is documented in `skills/debug-loop/SKILL.md` §"If stuck — parallel multi-domain assessment".
+   - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
 3. **Create targeted fix plan** for failed criteria only.
 4. **Execute fix** (subagents if parallel-safe).
 5. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
@@ -652,7 +654,8 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 
 - `build-loop:research` · `build-loop:optimize` · `build-loop:self-improve` — callable modes
 - `build-loop:model-tiering` — reference for model selection
-- `build-loop:navgator-bridge` · `build-loop:debugger-bridge` · `build-loop:logging-tracer-bridge` — plugin integrations (cherry-pick pattern)
+- `build-loop:navgator-bridge` — NavGator integration (cherry-pick pattern)
+- `build-loop:debugging-memory` · `build-loop:debug-loop` · `build-loop:logging-tracer` — bundled debugger primitives (orchestrator owns when-to-fire, these own the procedural detail)
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)

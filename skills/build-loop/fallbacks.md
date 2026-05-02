@@ -268,7 +268,7 @@ for T in $TOKENS; do
 done | sort -u
 ```
 
-### Degraded verdict (4 states, same shape as debugger-bridge)
+### Degraded verdict (4 states, same shape as the debugging-memory verdict gate)
 
 | State | Match rule | Action |
 |---|---|---|
@@ -299,7 +299,7 @@ Future builds will grep this file. The bundled `build-loop:debugging-memory` ski
 
 ## logging-fallback — Observability when logging-tracer skill fails
 
-The `build-loop:logging-tracer` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill fails to load. Minimum-viable Tier-1 structured logging per language: see `skills/logging-tracer-bridge/SKILL.md` for the 5-8 line helpers (Node, Python, Go, Rust) that write to stderr and respect a `DEBUG_TRACE=1` env gate.
+The `build-loop:logging-tracer` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill fails to load. Minimum-viable Tier-1 structured logging per language: see `skills/logging-tracer/SKILL.md` and `skills/logging-tracer/references/stack-templates.md` for the 5-8 line helpers (Node, Python, Go, Rust) that write to stderr and respect a `DEBUG_TRACE=1` env gate.
 
 ---
 

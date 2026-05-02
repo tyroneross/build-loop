@@ -71,8 +71,21 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
   - `promptEditingExisting` (prompt-builder + user confirmation): editing a prompt that already ships in the product
 - Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist. Project overrides global on conflict
 - **Architecture blast-radius** (if NavGator available): invoke `Skill("build-loop:navgator-bridge")`. It reads `.navgator/architecture/`, runs `navgator impact` on up to 5 highest-risk components, invokes `navgator llm-map` when `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, and writes a compact summary to `.build-loop/state.json.navgator.assess`. Phase 2 Plan consults this for scoping. If `.navgator/architecture/index.json` is missing, the skill emits a one-line note and exits; do not block.
-- **Observability baseline**: invoke `Skill("build-loop:logging-tracer-bridge")` with `{phase: "assess", action: "scan"}`. Records the project's logging level in `.build-loop/state.json.observability` — informational, no code changes at Assess.
-- **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): invoke `build-loop:debugger-bridge` Assess step — calls `list` MCP for recent incidents in this project. One-line context log.
+- **Observability baseline**: detect the project stack and run a passive observability scan (no code changes at Assess) to classify the project's logging level. Run language-aware grep:
+  ```bash
+  # Web / Node
+  grep -rE "console\.(log|error|warn)" --include="*.ts" --include="*.js" --include="*.tsx" --include="*.jsx" src/ app/ pages/ 2>/dev/null | head -20
+  # Python
+  grep -rE "(print\(|pprint\()" --include="*.py" src/ 2>/dev/null | head -20
+  # Structured loggers already present
+  grep -rE "(winston|pino|bunyan|structlog|loguru|logrus|zap|log/slog)" package.json pyproject.toml requirements.txt go.mod 2>/dev/null
+  ```
+  Classify into `well-instrumented` (structured logger detected — do nothing), `print-only` (only `print()` / `console.log` in production paths), or `silent` (no logging at all). Write to `.build-loop/state.json.observability.level`. Informational; Review-B/Iterate may consult this if a silent failure surfaces. Do NOT load `Skill("build-loop:logging-tracer")` at Assess — the skill is reactive only.
+- **Debugger context priming**: the debugger is bundled with build-loop (no plugin gate). Pull recent project incident context so the orchestrator is aware of what's been failing lately:
+  ```
+  mcp__plugin_claude_code_debugger__list({ filter: { project: "<current>" }, limit: 10 })
+  ```
+  One-line summary: "Debugger memory: N recent incidents in this project, top categories: [...]." If memory is empty, skip silently. If the MCP server fails to start, fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep against `.build-loop/issues/`, `.build-loop/feedback.md`, `.bookmark/`) and flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
 - **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
 - **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
 - **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror a compact version into `.build-loop/state.json.structure`.
@@ -139,7 +152,34 @@ Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; th
 
 - **A. Critic**: dispatch `sonnet-critic` on Execute's diff. On `strong-checkpoint` → back to Execute, no iteration burn. On `guidance` → log to `.build-loop/issues/` and proceed. Skip A on re-reviews after Iterate unless Iterate touched new files.
 - **B. Validate**: code graders → LLM-as-judge. If `availablePlugins.ibr` and UI work, invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile. If IBR is absent but the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt — static-analysis grep suite covering the top Calm Precision / a11y violations. Collect evidence. On any FAIL, run the memory-first gate.
-  - **Memory-first gate (always on; debugger is bundled with build-loop)**: on any criterion fail, BEFORE attempting Iterate, invoke `Skill("build-loop:debugger-bridge")` Review-B logic. The bridge calls `read_logs` MCP, synthesizes a symptom, then calls `Skill("build-loop:debugging-memory")` (`checkMemoryWithVerdict()`). **Default**: route to Iterate as an adapted plan — never skip Iterate. If the verdict is `KNOWN_FIX` AND all three direct-apply gates hold (file + version + second signal), the bridge may apply the fix directly without invoking `debug-loop`. If `read_logs` returns empty on a silent failure, flag `evidence_gap: true` — next Iterate attempt must invoke `logging-tracer-bridge` first. Record gate in `.build-loop/state.json.debuggerGates.review_b`.
+  - **Memory-first gate (always on)** — runs on every Review-B criterion failure with an error-like signal (exception, test failure, build error). Skip when failure is expected and mapped (TDD "tests must fail until impl complete") or iteration is from user feedback rather than a reproducible bug. Steps:
+    1. **Read logs first** — call `read_logs` MCP to pull structured log entries for the failure window:
+       ```
+       mcp__plugin_claude_code_debugger__read_logs({
+         source: "project",
+         severity: "error",
+         query: "<criterion keyword>",
+         since: "<phase_5_start_timestamp>"
+       })
+       ```
+       If `read_logs` returns nothing but the test failed silently, set `evidence_gap: true` in the gate record — the next Iterate attempt must repair logging before re-running.
+    2. **Synthesize a symptom string** ≤ 200 chars. Preserve error type, file, key phrase. Good: `Review-B FAIL: criterion "tests pass" — TypeError: Cannot read properties of undefined (reading 'middleware') at src/auth/session.ts:42`. Bad: `Tests failed`.
+    3. **Invoke `Skill("build-loop:debugging-memory")`** with `{ symptom, budget: 2500 }`. The skill calls the `search` MCP and returns a verdict (`KNOWN_FIX` / `LIKELY_MATCH` / `WEAK_SIGNAL` / `NO_MATCH`).
+    4. **Act on verdict** — memory is a hypothesis, not a patch. Default for every verdict is route to Iterate as an adapted plan. Direct-apply for `KNOWN_FIX` requires the strict triple-gate enforced inside the `debugging-memory` skill. If any of `file_match` / `version_match` / `second_signal` fails, downgrade to adapted-plan routing and record `direct_apply_blocked_by` in the gate log.
+    5. **Record the gate** in `.build-loop/state.json.debuggerGates.review_b`:
+       ```json
+       {
+         "timestamp": "ISO-8601",
+         "criterion": "tests pass",
+         "verdict": "LIKELY_MATCH",
+         "confidence": 0.72,
+         "incidentId": "INC_FRONTEND_20260403_112345_abc1",
+         "evidence_gap": false,
+         "appliedFix": false,
+         "direct_apply_blocked_by": "version_mismatch | no_file_overlap | no_secondary_signal | null"
+       }
+       ```
+    6. **Fallback when MCP unavailable**: paste `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` into the gate. Verdict shape becomes `LOCAL_HIT_EXACT` / `LOCAL_HIT_PARTIAL` / `LOCAL_WEAK` / `LOCAL_NO_MATCH` (file-grep verdicts; all route to Iterate as adapted plan, no direct-apply). Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
 - **C. Optimize** (opt-in): only when a mechanical metric exists AND user hasn't opted out. Load `build-loop:optimize`. Archive to `.build-loop/optimize/experiments/`. Feed results back to Review-B as evidence.
 - **D. Fact-Check**: dispatch `fact-checker` + `mock-scanner` in parallel. If NavGator available, also run `build-loop:navgator-bridge` Review violation check in parallel. Blocking → Iterate. Warnings → Report.
 - **E. Simplify**: invoke `/simplify` on changed files. Preserve public API, tests, observability, user value, and modular boundaries needed for scalability, accuracy, security, testability, or stable interfaces. Do not simplify by removing necessary states, accuracy, scalability, accessibility, or real data paths. If integrated simplification is better, record `MODULARITY EXCEPTION`.
@@ -149,15 +189,19 @@ Review also checks the intent pack and modular systems pack: does the result adv
 
 ### Phase 5: Iterate (up to 5x)
 - Diagnose root cause before fixing — don't blind retry.
-- **Stuck-iteration escalation (always on; debugger is bundled with build-loop)**: invoke `Skill("build-loop:debugger-bridge")` Iterate logic at the START of every attempt. It escalates:
-  - If the previous attempt flagged `evidence_gap: true` → invoke `Skill("build-loop:logging-tracer-bridge")` with `{phase: "iterate", action: "repair"}` FIRST. Logging lands, re-validate the failed criterion; if output is now informative, proceed with the new context. If still silent, escalate.
-  - On Iterate attempts 2 and 3 → also invoke `Skill("build-loop:debug-loop")` for deeper causal-tree investigation alongside the bridge's existing routing.
-  - After 2 same-root-cause failures → `Skill("build-loop:assess")` with parallel domain assessors (explicitly pass `model: sonnet` to assessors to override `inherit` default, preventing 4× Opus fan-out from your Opus 4.7 tier)
-  - After 3 same-criterion failures → `Skill("build-loop:debug-loop")` for full causal-tree investigation (do not attempt a 4th fix without it)
+- **Stuck-iteration escalation (always on)** — at the START of every Iterate attempt, run the cascade in order. Stop at the first rule that fires:
+  1. **Evidence-gap repair (highest priority)**: if the previous attempt's gate flagged `evidence_gap: true` (silent failure, no log signal), invoke `Skill("build-loop:logging-tracer")` with intent `repair`, passing the failing criterion + target files identified by the prior `read_logs` empty result. The skill MUST follow its ephemeral-by-default policy (Mechanism A: `DEBUG_TRACE=1` runtime gate, or Mechanism B: `git stash` throwaway). After logging lands:
+     - Re-run the failed Review-B criterion with `DEBUG_TRACE=1 <test-command>` (Mechanism A) or with the stash applied (Mechanism B).
+     - If output is now informative, proceed to Iterate with the log evidence as fresh context.
+     - If still silent after instrumentation, escalate to user.
+     - At Review-F, the orchestrator MUST verify no `build-loop:trace/<session-id>` stash entries remain and no unguarded trace calls landed unless the user explicitly approved keep-in-diff via `AskUserQuestion`.
+  2. **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (the failure may have shifted shape after the prior fix attempt). Same verdict-handling rules as Review-B.
+  3. **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `claude-code-debugger:assess`. The bundled `assessment-orchestrator` fans out to relevant domain assessors (api / database / frontend / performance) in parallel. **Model override**: explicitly pass `model: sonnet` to each domain assessor via the subagent dispatch to avoid 4 parallel Opus invocations from your Opus 4.7 tier. Only escalate individual assessors to Opus if their initial output flags `confidence: low` or `needs_judgment: true`. Aggregate the assessors' ranked findings; use the top action as the next Iterate plan.
+  4. **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Do not attempt a 4th fix without it. The skill runs its own 7-phase cycle (investigate → hypothesize → fix → verify → score → critique → report) with up to 5 internal iterations. When it returns, validate against build-loop's original Review-B criteria. If still failing after 5 internal debug-loop iterations, hard-stop and escalate to user.
 - Create targeted fix plan for failed criteria only; Execute fix.
 - Loop back to Review sub-step B (Validate). Sub-step A usually skipped on re-runs.
 - Convergence rules:
-  - Same failure 2x with same root cause → escalate to user (unless debugger-bridge already escalated first)
+  - Same failure 2x with same root cause → escalate to user (unless the stuck-iteration cascade above already escalated first)
   - Fix A breaks criterion B → flag oscillation, ask user
   - 3+ simultaneous failures after a fix → systemic, stop and reassess
 - Hard stop at 5 iterations; proceed to final Review sub-step F with remaining ❓ Unfixed.
@@ -209,10 +253,10 @@ Runs only on the final Review pass (not after intermediate Iterate→Review loop
   ```
 
   Capture `RUN_ID` from stdout and cite it in the scorecard. `--outcome` must be one of `pass|fail|partial`. `--files-touched-from-git` uses `state.json.preBuildSha` (stamp this at Phase 1 ASSESS); falls back silently if the sha is absent. Exit codes: `0` ok, `1` validation error (fix the args and retry — do NOT fall back to hand-writing JSON, which bypasses the file lock), `2` filesystem error (retry once; if it persists, log to `.build-loop/state.json.escalations` and surface to the user).
-- **Store resolved debugger incidents and report outcomes** (if `availablePlugins.claudeCodeDebugger`):
+- **Store resolved debugger incidents and report outcomes** (debugger is bundled with build-loop — no plugin gate). The full procedure lives in `Skill("build-loop:debugging-memory")` §"Review-F outcome feedback":
   - For each newly resolved Review-B/Iterate failure: invoke `store` MCP tool with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
   - For each Review-B memory gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied: invoke `outcome` MCP tool with `{incident_id, result: "worked"|"failed"|"modified", notes}`. This trains the verdict classifier.
-  Both steps are required to close the memory-first gate's feedback loop.
+  Both steps are required to close the memory-first gate's feedback loop. Skipping `outcome` means the verdict classifier never improves from this build's signal.
 - Write new memory entries to the correct tier:
   - Cross-project learnings (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`
   - Project-specific learnings (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`

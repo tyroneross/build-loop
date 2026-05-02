@@ -168,6 +168,22 @@ Summary:
 - **New regression detected** → fix is causing side effects, reconsider the approach
 - **Hard stop at 5 iterations** → report what's known and what isn't. Never silently loop beyond 5
 
+### If stuck — parallel multi-domain assessment
+
+When the failure symptom touches multiple layers (e.g. search queries are slow AND results look wrong → database + frontend + API), the linear causal-tree loop can stall. Branch into parallel assessment instead of pursuing one hypothesis serially:
+
+1. Invoke `Skill("claude-code-debugger:assess")` with the symptom and the current attempt diff. The bundled `assessment-orchestrator` fans out to relevant domain assessors (`api-assessor` / `database-assessor` / `frontend-assessor` / `performance-assessor`) in parallel.
+
+2. **Model override**: when invoking from the build-loop orchestrator (Opus 4.7), explicitly pass `model: sonnet` to each domain assessor via the subagent dispatch. Without this override, the assessor agents inherit the orchestrator's tier and you get 4 parallel Opus invocations — wasteful for pattern-matching work that Sonnet handles well. Only escalate individual assessors back to Opus if their initial output flags `confidence: low` or `needs_judgment: true`.
+
+3. Aggregate the assessors' ranked findings. The top action becomes the next `HYPOTHESIZE → FIX` plan — feed it back into the loop.
+
+When to use parallel assessment vs continuing the linear loop:
+- Symptom is vague or unclear ("app broken", "something is wrong") → parallel
+- Multiple domains may be involved ("search is slow and returns wrong results") → parallel
+- Post-deploy regression with unknown scope → parallel
+- Symptom is sharp and localized to one layer → continue the linear loop
+
 ### State Tracking
 
 Write iteration state to `.claude-code-debugger/debug-loop/state.json`:
