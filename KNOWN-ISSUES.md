@@ -49,3 +49,31 @@ This bypasses the resolver entirely and produces the same outcome.
 - `commands/plan-verify.md` ↔ `skills/plan-verify/SKILL.md` → `build-loop:plan-verify`
 
 `commands/promote-experiment.md` has no namesake skill and was not touched. `skills/self-improve/SKILL.md` has no namesake command and was not touched.
+
+---
+
+## Plugin merge — 2026-05-02
+
+**What happened.** `claude-code-debugger` (cccd, v1.8.2) was merged into build-loop (0.5.0 → 0.6.0). Build-loop is now the single home for the debugger; cccd remains as a standalone plugin and repository for backward-compat callers but will be deprecated in a follow-up.
+
+**What moved into build-loop:**
+
+| Source (cccd) | Destination (build-loop) |
+|---|---|
+| `agents/{api,database,frontend,performance}-assessor.md`, `assessment-orchestrator.md`, `fix-critique.md`, `root-cause-investigator.md` | `agents/` (7 new agents) |
+| `commands/{assess,debugger,debugger-detail,debugger-scan,debugger-status}.md` | `commands/` (5 new commands, kept names) |
+| `commands/debugger-agent.md` | renamed to `commands/debug.md` (user-facing slash is `/build-loop:debug` to avoid namesake collision with `skills/debug-loop/`) |
+| `commands/{claude-code-debugger,feedback,update}.md` | NOT copied (build-loop has its own front door at `commands/run.md`) |
+| `skills/{debug-loop,debugging-memory,logging-tracer}/` | `skills/` (3 new skills) |
+| `src/`, `cli/`, `dist/`, `package.json`, `package-lock.json`, `tsconfig.json`, `.mcp.json` | top-level (TypeScript MCP server + CLI) |
+| `hooks/hooks.json` Stop entry | merged into `hooks/hooks.json` alongside existing PostToolUse |
+
+**Namespace rewrite.** All `claude-code-debugger:*` qualified-skill references inside build-loop were rewritten to `build-loop:*`. The bridge skills (`debugger-bridge`, `logging-tracer-bridge`) kept their orchestration logic but were retitled as internal coordinators (they no longer indirect to an external plugin).
+
+**Persistent state preserved.** `.claude-code-debugger/` filesystem paths (incident memory, config, log readers) were intentionally NOT renamed. Existing user incident memory created when cccd was a standalone plugin keeps working without migration.
+
+**Backward-compat.** `Skill("claude-code-debugger:*")` callers in other plugins continue to resolve as long as the standalone cccd plugin is installed. New build-loop builds prefer the internal `Skill("build-loop:*")` names. cccd will be deprecated separately once the ecosystem migrates.
+
+**Auto-invocation.** Build-orchestrator now auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate attempts 2 and 3, in addition to the always-on memory-first gate via `debugger-bridge`.
+
+**Why merge instead of cherry-pick bridge.** The debugger is invoked from inside the build loop on every Review-B / Iterate failure — multiple times per build. Loose coupling didn't buy anything except an indirection layer. Other companions (NavGator, IBR) remain external because they're invoked at most a few times per build and have their own use cases outside build-loop.

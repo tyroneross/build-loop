@@ -233,7 +233,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    - Else if `gator:*` is available → use those commands.
    - Else → Explore agents → file reading.
 6. **Observability baseline** (informational, no changes): load `build-loop:logging-tracer-bridge` to classify the project's logging level (well-instrumented / print-only / silent). Recorded in `.build-loop/state.json.observability`. If Review-B Validate fails with a silent failure, Iterate may trigger this bridge reactively.
-7. **Debugger context priming** (if `availablePlugins.claudeCodeDebugger`): call `build-loop:debugger-bridge` Assess step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
+7. **Debugger context priming** (always; debugger is bundled with build-loop): call `build-loop:debugger-bridge` Assess step — invokes `list` MCP to summarize recent incidents in this project. One-line output; no action.
 8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Phase 5 Report's Open Recommendations, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
@@ -405,7 +405,7 @@ For returning-user states (post-onboarding screens, dashboards with data), use t
 - `WEAK_SIGNAL` → note reference in the Iterate plan, investigate normally
 - `NO_MATCH` → standard Iterate fallthrough; store at sub-step F Report for future learning
 
-Skip the memory gate silently when `availablePlugins.claudeCodeDebugger` is false. See `debugger-bridge/SKILL.md` for the direct-apply gate spec.
+The memory gate is always on — the debugger (skills + MCP) is bundled with build-loop as of 0.6.0. If the MCP server fails to start, the bridge falls through to a local-grep fallback. See `debugger-bridge/SKILL.md` for the direct-apply gate spec.
 
 **Output**: per-criterion pass/fail with evidence. Any `fail` → Iterate. All `pass` → sub-step C.
 
@@ -499,7 +499,7 @@ Entered when Review sub-step A, B, or D finds blocking issues. Critic-only failu
 
 Per attempt:
 1. **Diagnose root cause** — don't just retry. Reads Review's evidence.
-2. **Consult debugger memory** (if `availablePlugins.claudeCodeDebugger`): at the start of EACH attempt, invoke `build-loop:debugger-bridge` Iterate logic:
+2. **Consult debugger memory (always; debugger is bundled with build-loop)**: at the START of EACH attempt, invoke `build-loop:debugger-bridge` Iterate logic. On attempts 2 and 3, also invoke `build-loop:debug-loop` for deeper investigation:
    - After 2 consecutive same-root-cause failures → parallel multi-domain assessment via `build-loop:assess`. Pass `model: sonnet` to domain assessors explicitly (override the debugger's default `inherit` to prevent 4× Opus fan-out from the Opus 4.7 orchestrator).
    - After 3 consecutive failures on the same criterion → causal-tree investigation via `build-loop:debug-loop`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
 3. **Create targeted fix plan** for failed criteria only.

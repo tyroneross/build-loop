@@ -235,7 +235,7 @@ Do not fetch URLs the user did not explicitly provide or that aren't core to the
 
 ## debug — Root-cause investigation
 
-When `build-loop:debug-loop` is unavailable:
+The `build-loop:debug-loop` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill or its `debugger` MCP server fails to load:
 
 1. **Reproduce** — minimal case that fails every time. Write the command/steps down.
 2. **Isolate** — binary-search the diff / commits / inputs until you find the smallest change that flips pass ↔ fail.
@@ -249,7 +249,7 @@ Stop after 3 failed hypotheses and escalate to the user with what was tried.
 
 ## bug-memory — Prior-bug lookup
 
-**Standalone mode when `build-loop:debugging-memory` is unavailable.** No verdict classifier, no cross-session training. Just a file-grep of this project's prior builds.
+The `build-loop:debugging-memory` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill or its MCP server fails to load. No verdict classifier, no cross-session training — just a file-grep of this project's prior builds.
 
 ### Query procedure
 
@@ -293,15 +293,13 @@ After resolving a failure, append to `.build-loop/issues/YYYY-MM-DD-<slug>.md`:
 **Tags**: <layer>, <component>, <pattern>
 ```
 
-Future builds will grep this file. Installing `claude-code-debugger` promotes this to a classified, cross-project, ranked memory — but the file-grep works standalone.
+Future builds will grep this file. The bundled `build-loop:debugging-memory` skill (v0.6.0+) promotes this to classified, cross-project, ranked memory — but the file-grep works standalone if the MCP server is down.
 
 ---
 
-## logging-fallback — Observability when claude-code-debugger absent
+## logging-fallback — Observability when logging-tracer skill fails
 
-**Standalone mode when `build-loop:logging-tracer` is unavailable.** Minimum-viable Tier-1 structured logging per language. Covered in `skills/logging-tracer-bridge/SKILL.md` §"Fallback when upstream is absent" — the bridge already contains the standalone code. This fallback section exists only to point at the bridge:
-
-> For zero-dep structured-JSON logging in Node, Python, Go, or Rust, see `skills/logging-tracer-bridge/SKILL.md`. The bridge's Tier-1 fallback is a 5-8 line helper per language that writes to stderr and respects a `DEBUG_TRACE=1` env gate. This is the standalone path; nothing more elaborate is available without the debugger plugin.
+The `build-loop:logging-tracer` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill fails to load. Minimum-viable Tier-1 structured logging per language: see `skills/logging-tracer-bridge/SKILL.md` for the 5-8 line helpers (Node, Python, Go, Rust) that write to stderr and respect a `DEBUG_TRACE=1` env gate.
 
 ---
 

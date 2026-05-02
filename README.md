@@ -22,6 +22,8 @@ Orchestrated 5-phase development loop (+1 optional Learn) for Claude Code. Bring
 /plugin install build-loop@build-loop
 ```
 
+build-loop bundles an MCP server (`debugger`) that provides incident-memory tools (`search`, `store`, `outcome`, `read_logs`, `list`). It is wired automatically via `.mcp.json` and starts on first plugin load.
+
 ### Manual (local development)
 
 ```bash
@@ -62,6 +64,24 @@ Examples:
 ```
 
 Skip the loop for single-file edits, config changes, or fixes under ~20 lines.
+
+### Debugging
+
+```
+/build-loop:debug <symptom>
+```
+
+Examples:
+
+```
+/build-loop:debug tests pass locally but fail in CI
+/build-loop:debug login works once then breaks on refresh
+/build-loop:debug API returns wrong data intermittently
+```
+
+Runs deep iterative root-cause investigation (causal-tree analysis, fix, verify, critique — up to 5 iterations). The build orchestrator also auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate retries (attempts 2 and 3) — you don't have to call it manually during a build.
+
+Quick incident-memory lookup: `/build-loop:debugger`. Multi-domain assessment: `/build-loop:assess`. Memory stats: `/build-loop:debugger-status`.
 
 ## Deployment Policy
 

@@ -17,7 +17,7 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 
 ## Core Principles
 
-- **Tools on demand.** Detect what's available, use what's needed. Don't assume any tool exists.
+- **Tools on demand.** Detect what's available, use what's needed. Don't assume any tool exists. The debugger (skills + MCP) is bundled inside build-loop as of 0.6.0; `/build-loop:debug <symptom>` is always available, and the orchestrator auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate attempts 2 and 3.
 - **North star first.** Understand the app/repo purpose, primary users, core workflows, and update intent before planning. Every subtask should explain how it contributes to that purpose.
 - **Beauty in the basics.** Core flows, real data, clear hierarchy, useful states, working controls, and accurate information matter more than extra surface area.
 - **Modular by default, not by dogma.** Prefer high cohesion, loose coupling, stable interfaces, and scalable boundaries unless a simpler or integrated approach better serves the use case. Document `MODULARITY EXCEPTION: <reason>` when taking that path.

@@ -8,7 +8,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Principles
 
-- Self-sufficient: works without any specific tool installed. Bridges to NavGator, claude-code-debugger, IBR, etc. all have **standalone fallbacks** in `skills/build-loop/fallbacks.md` — degraded-but-useful behavior when upstream plugins are absent, not skip-silently.
+- Self-sufficient: works without any specific tool installed. Bridges to NavGator, IBR, etc. all have **standalone fallbacks** in `skills/build-loop/fallbacks.md` — degraded-but-useful behavior when upstream plugins are absent, not skip-silently. (As of 0.6.0 the debugger is bundled internally; see KNOWN-ISSUES "Plugin merge — 2026-05-02".)
 - North star first: every build captures app/repo purpose, update intent, user value, and non-goals, then passes that intent to each subagent.
 - Beauty in the basics: core flows, real data, clear hierarchy, working controls, useful states, and accurate information matter more than extra surface area.
 - Modular by default, not by dogma: prefer high cohesion, loose coupling, stable interfaces, scalable boundaries, and MECE file/agent ownership unless a documented exception better serves the use case.
@@ -17,11 +17,13 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 - No false data, no mock data in production, no unverified claims
 - Diagnose before fixing, converge or escalate
 - Learn from recurring patterns — auto-draft experimental skills with A/B comparison, user keeps or removes
-- Cherry-pick from companion tools, don't embed. The companion repos (NavGator, claude-code-debugger, IBR) stay independent; bridges only consume their relevant outputs/skills. When companions are absent, fallbacks.md carries the **knowledge of what to look for** even if the deep execution isn't available.
+- Cherry-pick from companion tools, don't embed — except when integration density justifies a merge. The companion repos (NavGator, IBR) stay independent; bridges only consume their relevant outputs/skills. claude-code-debugger was merged inline in 0.6.0 because the debugger is invoked from inside the build loop on every Review-B / Iterate failure (multiple times per build) — keeping it external created loose coupling without a benefit. Other companions remain separate.
 
 ## Claude Code Integration
 
 - `/build-loop:run [goal]` — triggers the build-loop skill which orchestrates all 5 phases (the bare `/build-loop` form is deprecated due to a namesake collision with the skill of the same qualified name; see `KNOWN-ISSUES.md`)
+- `/build-loop:debug <symptom>` — deep iterative root-cause investigation via the bundled `debug-loop` skill (also auto-invoked by the orchestrator on Review-B failures and Iterate attempts 2 and 3)
+- `/build-loop:debugger`, `/build-loop:debugger-detail`, `/build-loop:debugger-scan`, `/build-loop:debugger-status`, `/build-loop:assess` — bundled debugger surface
 - `/build-loop:self-improve` — run Phase 6 Learn alone against recent runs without a new build
 - Build orchestrator agent (Opus 4.7) coordinates phase execution and spawns parallel subagents
 - Fact-checker and mock-scanner agents run in parallel during Review sub-step D

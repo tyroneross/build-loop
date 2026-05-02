@@ -149,10 +149,11 @@ Review also checks the intent pack and modular systems pack: does the result adv
 
 ### Phase 5: Iterate (up to 5x)
 - Diagnose root cause before fixing — don't blind retry.
-- **Stuck-iteration escalation** (if `availablePlugins.claudeCodeDebugger`): invoke `Skill("build-loop:debugger-bridge")` Iterate logic at the start of every attempt. It escalates:
+- **Stuck-iteration escalation (always on; debugger is bundled with build-loop)**: invoke `Skill("build-loop:debugger-bridge")` Iterate logic at the START of every attempt. It escalates:
   - If the previous attempt flagged `evidence_gap: true` → invoke `Skill("build-loop:logging-tracer-bridge")` with `{phase: "iterate", action: "repair"}` FIRST. Logging lands, re-validate the failed criterion; if output is now informative, proceed with the new context. If still silent, escalate.
-  - After 2 same-root-cause failures → `/assess` with parallel domain assessors (explicitly pass `model: sonnet` to assessors to override `inherit` default, preventing 4× Opus fan-out from your Opus 4.7 tier)
-  - After 3 same-criterion failures → `build-loop:debug-loop` for causal-tree investigation
+  - On Iterate attempts 2 and 3 → also invoke `Skill("build-loop:debug-loop")` for deeper causal-tree investigation alongside the bridge's existing routing.
+  - After 2 same-root-cause failures → `Skill("build-loop:assess")` with parallel domain assessors (explicitly pass `model: sonnet` to assessors to override `inherit` default, preventing 4× Opus fan-out from your Opus 4.7 tier)
+  - After 3 same-criterion failures → `Skill("build-loop:debug-loop")` for full causal-tree investigation (do not attempt a 4th fix without it)
 - Create targeted fix plan for failed criteria only; Execute fix.
 - Loop back to Review sub-step B (Validate). Sub-step A usually skipped on re-runs.
 - Convergence rules:
