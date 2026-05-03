@@ -38,11 +38,20 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 FENCE_RE = re.compile(r"^\s*```")
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
 def strip_fenced_blocks(text: str) -> list[tuple[int, str]]:
     """Return list of (1-based line number, line text) with fenced code blocks
-    replaced by empty strings (so line numbers stay stable)."""
+    AND HTML comments replaced by empty strings (so line numbers stay stable).
+
+    HTML comments are stripped because plan authors commonly use `<!-- ... -->`
+    to annotate plans, and comment text containing trigger phrases (e.g.
+    "this plan does not add a new tool") would otherwise trip rules like
+    `tool-without-permission-tier`."""
+    # Strip HTML comments first; preserve line count by replacing with newlines.
+    text = HTML_COMMENT_RE.sub(lambda m: "\n" * m.group().count("\n"), text)
+
     out: list[tuple[int, str]] = []
     in_fence = False
     for i, line in enumerate(text.splitlines(), start=1):
@@ -449,6 +458,145 @@ def rule_less_invasive_shim(plan_path: Path, lines: list[tuple[int, str]]) -> li
 
 
 # ---------------------------------------------------------------------------
+# Security-surface rules (added with security-methodology skill, 2026-05-02)
+# ---------------------------------------------------------------------------
+
+# Rule: tool-without-permission-tier
+# A plan that introduces a new tool, MCP server, or agent capability MUST declare
+# a permission tier (T0–T5 per agent-builder tool-contract.md). Without a tier,
+# the implementer cannot pick the right scanner intensity / approval rule.
+
+NEW_TOOL_RE = re.compile(
+    r"\b(?:new|add|introduce|expose|register|create)\b[^.\n]{0,40}\b"
+    r"(?:tool|mcp\s+server|mcp|plugin|skill|agent\s+capability|function\s+tool|hosted\s+tool)\b",
+    re.IGNORECASE,
+)
+PERMISSION_TIER_RE = re.compile(r"\bT[0-5]\b|\bpermission_tier\b|\bpermission\s+tier\b", re.IGNORECASE)
+
+
+def rule_tool_without_permission_tier(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """BLOCKER: new tool / MCP / plugin / skill introduced in plan without a T0–T5
+    permission tier or `permission_tier` keyword within 10 lines."""
+    out: list[dict[str, Any]] = []
+    n = len(lines)
+    for idx, (lineno, line) in enumerate(lines):
+        if not line:
+            continue
+        if NEW_TOOL_RE.search(line):
+            lo = max(0, idx - 10)
+            hi = min(n, idx + 11)
+            has_tier = any(PERMISSION_TIER_RE.search(lines[j][1] or "") for j in range(lo, hi))
+            if not has_tier:
+                out.append(_finding(
+                    claim_text=line.strip(),
+                    claim_kind="tool_without_permission_tier",
+                    subject={"path": None, "symbol": None, "noun": "tool"},
+                    verification_command=None,
+                    evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                    result="inconclusive",
+                    severity="BLOCKER",
+                    confidence="medium",
+                    rule_id="tool-without-permission-tier",
+                ))
+    return out
+
+
+# Rule: external-call-without-budget-ceiling
+# A plan that introduces a new external API call or LLM call MUST declare a
+# per-call or per-run budget (token cap, request count, timeout, $ ceiling).
+# Without one, the build is a cost-runaway / DoS surface (LLM04).
+
+NEW_EXTCALL_RE = re.compile(
+    r"\b(?:new|add|introduce|integrate|wire\s+up|call|invoke)\b[^.\n]{0,40}\b"
+    r"(?:external\s+api|third[\s-]?party\s+api|llm\s+call|openai|anthropic|api\s+request|http\s+fetch|webhook)\b",
+    re.IGNORECASE,
+)
+BUDGET_RE = re.compile(
+    r"\b(?:budget|max[_\s-]?tokens?|token\s+cap|timeout|rate[_\s-]?limit|ceiling|cost\s+cap|"
+    r"\$\s*\d+|per[_\s-]?run\s+limit|per[_\s-]?call\s+limit)\b",
+    re.IGNORECASE,
+)
+
+
+def rule_external_call_without_budget_ceiling(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN: new external API or LLM call introduced without a budget / ceiling
+    keyword within 10 lines."""
+    out: list[dict[str, Any]] = []
+    n = len(lines)
+    for idx, (lineno, line) in enumerate(lines):
+        if not line:
+            continue
+        if NEW_EXTCALL_RE.search(line):
+            lo = max(0, idx - 10)
+            hi = min(n, idx + 11)
+            has_budget = any(BUDGET_RE.search(lines[j][1] or "") for j in range(lo, hi))
+            if not has_budget:
+                out.append(_finding(
+                    claim_text=line.strip(),
+                    claim_kind="external_call_without_budget",
+                    subject={"path": None, "symbol": None, "noun": "external_call"},
+                    verification_command=None,
+                    evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                    result="inconclusive",
+                    severity="WARN",
+                    confidence="medium",
+                    rule_id="external-call-without-budget-ceiling",
+                ))
+    return out
+
+
+# Rule: risk-surface-change-without-threat-model
+# A plan that surfaces any risk-surface signal (new tool / MCP / LLM call /
+# persistent memory / auth / external API / user-data handling) MUST reference
+# a threat-model artifact OR explicitly declare "threat-model: not-applicable: <reason>".
+
+RISK_SURFACE_RE = re.compile(
+    r"\b(?:new\s+tool|new\s+mcp|new\s+plugin|new\s+skill|new\s+agent|"
+    r"new\s+llm\s+call|llm\s+integration|prompt\s+template|"
+    r"persistent\s+memory|vector\s+store|memory\s+store|"
+    r"auth(?:entication|orization)?\s+(?:change|flow|gate)|"
+    r"identity\s+propagation|permission\s+boundary|"
+    r"new\s+(?:external\s+)?api|outbound\s+(?:fetch|request)|"
+    r"pii|personal\s+data|credentials|regulated\s+data|user\s+data\s+handling)\b",
+    re.IGNORECASE,
+)
+THREAT_MODEL_RE = re.compile(
+    r"\b(?:threat[_\s-]?model|security[_\s-]?review|owasp|asi\d+|llm0\d+|"
+    r"security-methodology|security-reviewer|"
+    r"threat-model:\s*not[\s-]?applicable)\b",
+    re.IGNORECASE,
+)
+
+
+def rule_risk_surface_change_without_threat_model(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """BLOCKER: plan surfaces a risk-surface signal without referencing a
+    threat-model artifact within the entire document."""
+    # Scan the whole doc once for any threat-model reference
+    has_threat_model_doc = any(THREAT_MODEL_RE.search(line) for _, line in lines if line)
+    if has_threat_model_doc:
+        return []
+    # No threat-model reference anywhere — flag the FIRST risk-surface signal
+    out: list[dict[str, Any]] = []
+    for idx, (lineno, line) in enumerate(lines):
+        if not line:
+            continue
+        if RISK_SURFACE_RE.search(line):
+            out.append(_finding(
+                claim_text=line.strip(),
+                claim_kind="risk_surface_change_without_threat_model",
+                subject={"path": None, "symbol": None, "noun": "risk_surface"},
+                verification_command=None,
+                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                result="inconclusive",
+                severity="BLOCKER",
+                confidence="medium",
+                rule_id="risk-surface-change-without-threat-model",
+            ))
+            break  # one finding per plan; the rule is doc-level
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -464,6 +612,9 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_missing_evidence(plan_path, lines))
     findings.extend(rule_scope_split(plan_path, lines))
     findings.extend(rule_less_invasive_shim(plan_path, lines))
+    findings.extend(rule_tool_without_permission_tier(plan_path, lines))
+    findings.extend(rule_external_call_without_budget_ceiling(plan_path, lines))
+    findings.extend(rule_risk_surface_change_without_threat_model(plan_path, lines))
     return findings
 
 

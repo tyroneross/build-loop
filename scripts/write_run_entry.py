@@ -44,6 +44,7 @@ REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
     "active_experimental_artifacts": list,
 }
 VALID_OUTCOMES = {"pass", "fail", "partial"}
+VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 
 
 def log(msg: str) -> None:
@@ -209,11 +210,64 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--manual-interventions-json", default="[]", help="JSON list of {phase, note} objects")
     p.add_argument("--active-experimental-artifacts", default="", help="Comma-separated experimental artifact names that triggered this run")
     p.add_argument("--run-id", default=None, help="Override run_id (default: compute from goal + now)")
+    p.add_argument(
+        "--security-findings-json",
+        default=None,
+        help=(
+            "Path to a JSON file containing a list of security-reviewer findings (or '-' for stdin). "
+            "Each element must be an object with at minimum 'mapped_risks' (list of strings) and "
+            "'severity' (CRITICAL|HIGH|MEDIUM|LOW). Other fields (id, title, evidence, snippet, "
+            "recommendation) pass through. When omitted, no 'security_findings' key is written."
+        ),
+    )
     return p.parse_args(argv)
 
 
 def _split_csv(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def load_security_findings(source: str) -> list[dict] | None:
+    """Read findings JSON from a path or stdin ('-').
+
+    Returns None when the file is missing or empty (caller should not write a 'security_findings'
+    key — semantically equivalent to omitting the flag). Returns a list (possibly empty if the
+    user explicitly passed `[]`) when the file decoded to a list shape.
+
+    Validates that the decoded value is a list of objects, each with a 'mapped_risks' list of
+    strings and a 'severity' string in VALID_SEVERITIES. Other fields pass through unchanged.
+    Raises ValueError on malformed input.
+    """
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        path = Path(source)
+        if not path.exists():
+            log(f"note: --security-findings-json path {source} does not exist; treating as no findings (no security_findings key will be written)")
+            return None
+        raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--security-findings-json is not valid JSON: {e}") from e
+    # Accept either a bare list or the reviewer's full envelope ({"findings": [...], ...}).
+    if isinstance(data, dict) and "findings" in data:
+        data = data["findings"]
+    if not isinstance(data, list):
+        raise ValueError("--security-findings-json must decode to a list (or an object with a 'findings' list)")
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"security_findings[{i}] must be an object, got {type(item).__name__}")
+        if "mapped_risks" not in item or not isinstance(item["mapped_risks"], list):
+            raise ValueError(f"security_findings[{i}].mapped_risks must be a list of strings")
+        if not all(isinstance(r, str) for r in item["mapped_risks"]):
+            raise ValueError(f"security_findings[{i}].mapped_risks must contain only strings")
+        sev = item.get("severity")
+        if not isinstance(sev, str) or sev not in VALID_SEVERITIES:
+            raise ValueError(f"security_findings[{i}].severity must be one of {sorted(VALID_SEVERITIES)}, got {sev!r}")
+    return data
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -234,6 +288,11 @@ def main(argv: list[str] | None = None) -> int:
         manual_interventions = json.loads(args.manual_interventions_json)
         if not isinstance(manual_interventions, list):
             raise ValueError("--manual-interventions-json must decode to a list")
+        security_findings = (
+            load_security_findings(args.security_findings_json)
+            if args.security_findings_json
+            else None
+        )
     except (json.JSONDecodeError, ValueError) as e:
         log(f"validation error: {e}")
         return 1
@@ -263,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         "manualInterventions": manual_interventions,
         "active_experimental_artifacts": active,
     }
+    if security_findings is not None:
+        entry["security_findings"] = security_findings
 
     try:
         validate_entry(entry)

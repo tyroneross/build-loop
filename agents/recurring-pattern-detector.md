@@ -55,6 +55,7 @@ Emit a pattern entry when ANY of these thresholds hit:
 |---|---|---|---|
 | `phase_failure` | Same phase (1..8) fails ≥3 times across runs | phase id + top root_cause | Real rework signal: a repeatedly-failing phase costs iterations and model tokens. |
 | `manual_intervention` | Same note (or near-duplicate) at same phase ≥2 times | phase + canonical note | User time is the most expensive signal in the stack; two is sufficient. |
+| `security_finding` | Same OWASP/ASI/ATLAS risk ID appears in `security_findings[]` across ≥3 runs | mapped_risk ID + dominant severity | Recurring security risk class signals a project-shaped blind spot the implementer keeps re-introducing. A project-local rule catching it earlier is high-leverage. |
 
 ### Removed (were present in v0.1.0)
 
@@ -64,6 +65,42 @@ Emit a pattern entry when ANY of these thresholds hit:
 | `file_churn` | Central routers, schemas, and entry-point files legitimately appear across many builds. Not a pain signal. |
 
 Both types can be re-added later once we have a reliable way to distinguish pain-motivated repetition from steady-state repetition (e.g. co-occurrence with failures within the same run). For now, they produce more noise than signal.
+
+### `security_finding` — input shape and signature rules
+
+Input path (per run entry): `runs[].security_findings[]`. Each finding is the schema emitted by `agents/security-reviewer.md`:
+
+```json
+{
+  "id": "SEC-001",
+  "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+  "title": "...",
+  "mapped_risks": ["LLM01", "ASI06"],
+  "evidence": "path/to/file.ts:NN-MM",
+  "snippet": "...",
+  "recommendation": "..."
+}
+```
+
+If `runs[].security_findings` is missing or empty across all scanned runs, emit no `security_finding` patterns and continue with the other classes. The persistence wiring from Review sub-step F into `state.json.runs[]` may not be complete in every project — silent skip is correct, do not error.
+
+**Signature** (groups findings into one pattern): the `mapped_risks` ID. A finding with `mapped_risks: ["LLM01", "ASI01"]` contributes one count to each ID's bucket. A run that produces three findings sharing `LLM01` counts as **one** run for the `LLM01` bucket, not three — recurrence is across runs, not within.
+
+**Threshold**: same risk ID appears in ≥3 distinct runs.
+
+**Confidence weighting** (overrides the generic threshold×2 rule for this class):
+
+| Confidence | Condition |
+|---|---|
+| `high` | Same risk ID in ≥3 runs AND (any finding is CRITICAL, OR majority of findings are HIGH-or-higher) — security findings at this severity recur for systemic reasons; lower threshold than other classes is intentional |
+| `medium` | Same risk ID in ≥3 runs at majority-MEDIUM severity (mixed but not majority HIGH+) |
+| `low` | Same risk ID in ≥3 runs at all-LOW severity, OR fewer than 3 runs but multiple distinct IDs cluster on one surface (e.g. 2× LLM01 + 2× ASI01 on prompt-injection inputs) |
+
+**Why the bar is lower for `security_finding` than for other classes.** The orchestrator's downstream filter at Phase 6 typically gates on `confidence: high OR count ≥ 4`. With the previous bar (`high` requiring ≥4 runs), unanimous-HIGH or HIGH/HIGH/MEDIUM patterns at exactly 3 occurrences silently dropped. Security recurrences at HIGH+ are highly actionable; the architect should see them after 3 hits, not 4.
+
+The `low` clustering case is the only place this class diverges from "exact ID repetition." It catches a real pain pattern (the implementer keeps shipping prompt-injection-shaped inputs even when the specific finding ID toggles) without becoming a fishing expedition. Cluster only on canonical surface pairs from `skills/security-methodology/references/cross-source-matrix.md`: `(LLM01, ASI01)`, `(LLM02, ASI05)`, `(LLM07, ASI02)`, `(LLM08, ASI03)`, `(LLM05, ASI04)`. No other pairings.
+
+**Skeleton output**: the proposed skill name should be `security-rule-<risk_id>-<short-surface>`, e.g. `security-rule-asi06-memory-poisoning` or `security-rule-llm01-prompt-injection`. The architect agent expands this into a project-local detection rule keyed to file globs from the recurring evidence.
 
 For each emitted pattern, compute:
 
@@ -115,6 +152,25 @@ Emit a single JSON object to stdout. Nothing else. No markdown fences. No prose.
           "purpose": "Auto-generate type-safe middleware scaffolding so Review-B type check does not fail on path resolution."
         }
       }
+    },
+    {
+      "type": "security_finding",
+      "risk_id": "ASI06",
+      "severity_mode": "HIGH",
+      "signature": "ASI06 memory-poisoning",
+      "count": 4,
+      "confidence": "high",
+      "evidence": [
+        { "date": "2026-04-10", "goal": "add session memory", "detail": "SEC-002 HIGH ASI06 — vector store shared across users at src/memory/store.ts:40-58" },
+        { "date": "2026-04-15", "goal": "agent recall tool", "detail": "SEC-001 HIGH ASI06 — recall reads other-tenant rows at src/agent/recall.ts:22-31" }
+      ],
+      "proposal": {
+        "skillSkeleton": {
+          "name": "security-rule-asi06-memory-poisoning",
+          "trigger": "when Phase 3 adds or modifies persistent memory, vector stores, or session state",
+          "purpose": "Project-local detection rule for ASI06 patterns the security-reviewer keeps catching late — flag missing user/session isolation at edit time."
+        }
+      }
     }
   ]
 }
@@ -126,8 +182,9 @@ If no patterns cross threshold, return `{"scannedRuns": N, "patterns": []}`.
 
 - Do not hallucinate runs. Only use what's in state.json.
 - Do not emit patterns below threshold. The caller wants precision, not recall.
-- Do not propose skills for one-off events. 3+ is the floor for `phase_failure`; 2+ for `manual_intervention`.
-- **Only pain signals fire**: `phase_failure` and `manual_intervention`. Do not re-add `diagnostic_repeat` or `file_churn` without explicit design review — they produced skill sprawl in v0.1.0.
+- Do not propose skills for one-off events. 3+ is the floor for `phase_failure` and `security_finding`; 2+ for `manual_intervention`.
+- **Only pain signals fire**: `phase_failure`, `manual_intervention`, and `security_finding`. Do not re-add `diagnostic_repeat` or `file_churn` without explicit design review — they produced skill sprawl in v0.1.0.
+- For `security_finding`: if `runs[].security_findings` is absent or empty across all scanned runs, silently emit zero patterns of this class. Persistence of reviewer output into `state.json.runs[]` may not be wired in every project — never error on missing input.
 - **Dedupe before emit**: skip any pattern whose proposed skill name already exists in active/ or experimental/ directories.
 - **Cap at 2 emitted patterns per scan**, excess → skipped.jsonl for next scan.
 - Ignore phases that always pass — boring is good.
