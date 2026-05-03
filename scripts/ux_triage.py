@@ -24,8 +24,27 @@ import time
 from pathlib import Path
 from typing import Any
 
-SKIP_DIRS = {"node_modules", ".build-loop", ".ibr", "_draft", ".git", "dist", "build", ".next"}
-WEB_EXT = {".tsx", ".jsx", ".vue", ".svelte", ".html"}
+SKIP_DIRS = {
+    # Tooling / build output
+    "node_modules", "dist", "build", ".next", ".turbo", ".cache", ".vercel",
+    # Test / coverage reports (HTML pages with generated buttons that look handlerless)
+    "coverage", "playwright-report", "visual-reports", "visual-viewer-test",
+    "test-results", "tests-results", "html-report",
+    # Plugin/tool runtime data
+    ".build-loop", ".ibr", ".navgator", ".bookmark", ".git", "_draft",
+    # Internal tool / mockup directories (not production code)
+    ".claude", "_archive", "archive",
+    # Common documentation mockup folders
+    "docs/mockups", "docs/_mockups",
+}
+# Glob-style suffix excludes for files (relative path endings to skip)
+SKIP_SUFFIXES = (
+    ".test.tsx", ".test.jsx", ".spec.tsx", ".spec.jsx",
+    ".stories.tsx", ".stories.jsx",
+)
+# Path substrings to skip (catches nested mockup/sample dirs that aren't always at the root)
+SKIP_PATH_CONTAINS = ("/mockups/", "/_mockups/", "/sample-data/", "/__fixtures__/", "/__snapshots__/")
+WEB_EXT = {".tsx", ".jsx", ".vue", ".svelte"}  # static .html is usually docs/mockups, not production UI
 SWIFT_EXT = {".swift"}
 ALL_UI_EXT = WEB_EXT | SWIFT_EXT
 
@@ -71,6 +90,12 @@ def iter_ui_files(workdir: Path) -> list[Path]:
             continue
         if any(part in SKIP_DIRS for part in p.parts):
             continue
+        rel = str(p.relative_to(workdir))
+        if any(rel.endswith(s) for s in SKIP_SUFFIXES):
+            continue
+        if any(s in "/" + rel for s in SKIP_PATH_CONTAINS):
+            continue
+        # Skip generated HTML reports (pattern: contains /coverage/ or generated headers)
         out.append(p)
     return out
 
