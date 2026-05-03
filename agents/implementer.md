@@ -56,7 +56,7 @@ When the plan is ambiguous and you have to make a judgment call, document it in 
 Before returning success:
 
 - **Type check** (if the project has TS): `npx tsc --noEmit` on the changed files only (use `--project` if config supports it). Skip silently if no `tsconfig.json`.
-- **Lint** (if available): `npx eslint <changed-files>` or the project's documented lint command. Skip silently if no eslint config.
+- **Lint** (if available): `npx eslint <changed-files>` or the project's documented lint command. Skip silently if no eslint config OR if the project's lint baseline is non-runnable (e.g. legacy `.eslintrc.json` with no installed eslint binary, or eslint config rejected by the installed version). Return `verifications.lint: "skipped (no runnable eslint)"` — this is canonical and is not a failure. The orchestrator records the gap but does not block. Only report `lint: "fail"` when lint actually ran and reported errors on your changes.
 - **Tests adjacent to the change** (if available): if the project has `*.test.tsx` next to the changed component, run that one test file. Don't run the full suite — that's the orchestrator's job at re-Validate.
 - **Re-grep**: run the plan's Hint pattern against the changed files. If any of the original evidence lines still match, the fix is incomplete — say so.
 

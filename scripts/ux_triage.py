@@ -51,8 +51,11 @@ ALL_UI_EXT = WEB_EXT | SWIFT_EXT
 CHECKS: dict[str, list[tuple[str, str, str]]] = {
     "interactability": [
         # (label, regex, hint)
-        ("button-no-handler-web", r"<button\b[^>]*?(?<!on[A-Z])>", "Button without onClick/onPress handler — verify it has a real action"),
-        # NOTE: link-no-target-web is handled by find_multiline_tag_misses() below — JSX <a> tags
+        # NOTE: button-no-handler-web is handled by find_dead_buttons() below — the line-bound
+        # regex `<button\b[^>]*?(?<!on[A-Z])>` only checked the trailing chars before `>`, so a tag
+        # like `<button onClick={x} className="y">` passed the lookbehind (`"y"` ≠ `on[A-Z]`) and
+        # got falsely flagged. Switched to per-file full-tag scanning.
+        # NOTE: link-no-target-web is handled by find_dead_anchors() below — JSX <a> tags
         # commonly span newlines (`<a\n  href="..."\n>`) which line-bound regex flags as false positives.
         ("icon-button-no-label-web", r"<button[^>]*aria-hidden|<IconButton(?![^>]*aria-label)", "Icon-only button missing aria-label"),
         ("empty-action-swift", r"Button\([^)]*action:\s*\{\s*\}", "SwiftUI Button with empty action closure"),
@@ -132,6 +135,33 @@ def find_dead_anchors(path: Path) -> list[tuple[int, str]]:
         if _HAS_HREF_OR_HANDLER.search(attrs):
             continue
         # Compute the line number of the tag opening
+        line_no = text.count("\n", 0, m.start()) + 1
+        snippet = m.group(0).replace("\n", " ").strip()[:200]
+        hits.append((line_no, snippet))
+    return hits
+
+
+# Multi-line button rule: find every <button ...> opening tag (may span lines), then check
+# whether the tag content has any onX={...} handler OR `disabled` (intentionally non-interactive).
+# Replaces the prior line-bound `<button\b[^>]*?(?<!on[A-Z])>` regex which only inspected the
+# chars immediately before `>` — it flagged `<button onClick={x} className="y">` as dead because
+# `"y"` precedes `>`, not `on[A-Z]`. Per atomize-ai integration test 2026-05-03: 5/9 reported
+# findings were this exact false-positive shape.
+_BUTTON_TAG_RE = re.compile(r"<button\b([^<>]*?)>", re.DOTALL)
+_HAS_HANDLER_OR_DISABLED = re.compile(r"\b(on[A-Z][a-zA-Z]+|disabled|aria-disabled|formAction|type\s*=\s*['\"]submit['\"])")
+
+
+def find_dead_buttons(path: Path) -> list[tuple[int, str]]:
+    """Per-file scan for `<button>` tags missing any handler / disabled state."""
+    hits: list[tuple[int, str]] = []
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return hits
+    for m in _BUTTON_TAG_RE.finditer(text):
+        attrs = m.group(1) or ""
+        if _HAS_HANDLER_OR_DISABLED.search(attrs):
+            continue
         line_no = text.count("\n", 0, m.start()) + 1
         snippet = m.group(0).replace("\n", " ").strip()[:200]
         hits.append((line_no, snippet))
@@ -232,28 +262,43 @@ def main() -> int:
         "by_dimension": {dim: 0 for dim in CHECKS},
     }
 
-    # Multi-line scan: dead <a> tags whose attributes span newlines.
-    # Run before the regex sweep so its findings get the standard severity/queue treatment below.
+    # Multi-line scans: dead <a> and <button> tags whose attributes span newlines, AND
+    # tags whose handlers don't sit at the trailing position. Both are full-tag scans
+    # because the prior line-bound regexes had >90% false-positive rates against real JSX.
+    multi_line_findings: list[tuple[str, str, str, list[tuple[str, int, str]]]] = []  # (label, hint, severity, findings)
+
     dead_anchor_findings: list[tuple[str, int, str]] = []
+    dead_button_findings: list[tuple[str, int, str]] = []
     for path in files:
         if path.suffix not in WEB_EXT:
             continue
         for line_no, snippet in find_dead_anchors(path):
             dead_anchor_findings.append((str(path.relative_to(workdir)), line_no, snippet))
+        for line_no, snippet in find_dead_buttons(path):
+            dead_button_findings.append((str(path.relative_to(workdir)), line_no, snippet))
     if dead_anchor_findings:
-        label = "link-no-target-web"
-        hint = "Anchor without href, onClick, or routing target — likely dead. Multi-line tag scan."
-        severity = "major"
-        arch = classify_architecture_impact(hint, [f for (f, _, _) in dead_anchor_findings])
-        entry_id = make_id("interactability", label, [f for (f, _, _) in dead_anchor_findings])
+        multi_line_findings.append((
+            "link-no-target-web",
+            "Anchor without href, onClick, or routing target — likely dead. Multi-line tag scan.",
+            "major", dead_anchor_findings,
+        ))
+    if dead_button_findings:
+        multi_line_findings.append((
+            "button-no-handler-web",
+            "Button without any onX handler, disabled, or formAction. Multi-line tag scan; recognizes disabled/aria-disabled/type=submit as valid handler-equivalents.",
+            "blocker", dead_button_findings,
+        ))
+    for label, hint, severity, fs in multi_line_findings:
+        arch = classify_architecture_impact(hint, [f for (f, _, _) in fs])
+        entry_id = make_id("interactability", label, [f for (f, _, _) in fs])
         write_entry(
             queue_dir, template,
             entry_id=entry_id, dimension="interactability", severity=severity,
-            label=label, hint=hint, findings=dead_anchor_findings, architecture_impact=arch,
+            label=label, hint=hint, findings=fs, architecture_impact=arch,
         )
         summary["entries"].append({
             "id": entry_id, "dimension": "interactability", "severity": severity,
-            "label": label, "count": len(dead_anchor_findings),
+            "label": label, "count": len(fs),
             "architecture_impact": arch,
             "path": str((queue_dir / f"{entry_id}.md").relative_to(workdir)),
         })
