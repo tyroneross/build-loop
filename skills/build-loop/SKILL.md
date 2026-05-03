@@ -527,7 +527,18 @@ The "code is cheap, AI agents build fast" framing: the orchestrator does NOT def
 - **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 4.6, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
 - **Subagent mode** (orchestrator was itself spawned via `Agent(...)` so the no-sub-sub-agents rule applies): degrade to **inline-implementer mode** — iterate the queue serially, apply each fix following the implementer's protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed). No parallelism, same quality bar. The orchestrator surfaces the degradation in Review-F.
 
-In both modes, each pass returns the same structured outcome (status + files_changed + verifications). Status routing: `fixed`→mark done (delete the .md); `partial`→re-pass; `scope_breach`→ask user; `deferred_architecture`→Review-F; `evidence_stale`→regenerate via `ux_triage.py --clear`. Results re-enter Sub-step B for re-validation. For Validate failures (no queue entry), construct an inline plan in the same shape and treat identically.
+In both modes, each pass returns the same structured outcome (status + files_changed + verifications). Status routing covers all 9 implementer return values:
+- `fixed` → mark done (delete the .md)
+- `partial` → keep entry, re-pass next iteration
+- `scope_breach` → ask user before extending scope
+- `deferred_architecture` → Review-F surfaces for explicit user confirmation
+- `evidence_stale` → regenerate via `ux_triage.py --clear`, then re-pass
+- `plan_malformed` → same as `evidence_stale` (regenerate); log id to `.build-loop/state.json.malformedPlans[]`
+- `needs_dependency` → ask user; never auto-add deps
+- `failed` → re-pass with implementer's `notes` as `additional_context`; after 2 attempts escalate to Opus per `model-tiering`; after 3 surface as ❓ Unfixed
+- `concurrent_modification_detected` → abort current parallel batch (orchestrator partition bug; never transient)
+
+Results re-enter Sub-step B for re-validation. For Validate failures (no queue entry), construct an inline plan in the same shape and treat identically.
 
 **IBR re-validate hook (when uiTarget != null AND IBR available)**: After each implementer subagent reports back AND before re-entering Sub-step B Validate, the orchestrator calls `mcp__plugin_ibr_ibr__interact_and_verify` against the affected route(s) headlessly. Catches "fix introduced a new visual or interaction regression" cheaply, without burning a full Validate cycle. For routes that fail this check twice, optionally invoke `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop — internal iterations count against build-loop's 5-iteration ceiling.
 
