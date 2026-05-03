@@ -14,12 +14,31 @@ This phase guidance treats design rules as gates, not advisories.
 
 Phase 1 ASSESS sets `uiTarget` to one of `web`, `mobile`, or `null` based on project signals (see SKILL.md §Sub-routers — `ios/`, `*.swift`, `*.xcodeproj` → mobile/apple; `app.json` (Expo) → mobile/react-native; else web).
 
-When `uiTarget != null`, the four UI gates wire in automatically:
+When `uiTarget != null`, the UI gates wire in automatically:
 
 1. **Phase 1 (Assess)** — mockup pre-flight scan + required UI scoring criteria
-2. **Phase 3 (Execute)** — verbatim subagent-prompt template injection on every UI dispatch
-3. **Phase 4 sub-step B (Validate)** — design-rule scanner on changed files
-4. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project
+2. **Phase 2 (Plan)** — mockup-gallery hook for major UI work (new page or ≥40% redesign): draft B&W mockups via `mockup-gallery:mockup-session-new` before any UI is written. The exception to build-loop's "actions/functions only, no plugin UI" policy — mockup drafting is itself the action.
+3. **Phase 3 (Execute)** — verbatim subagent-prompt template injection on every UI dispatch
+4. **Phase 4 sub-step B (Validate)** — IBR-first quick pass via `ibr_quickpass.py` (runs project's existing `.ibr-test.json` suite); falls back to design-rule scanner on changed files when IBR unavailable
+5. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project; Gate 7 UX triage scanner (interactability, performance, data-accuracy, usability) writing queue entries to `.build-loop/ux-queue/`; Gate 8 IBR coverage-gap detector drafting new tests for uncovered surfaces
+6. **Phase 5 (Iterate)** — drains the UX queue alongside Validate failures; parallel fan-out (≤4) for independent fixes; IBR `interact_and_verify` after each UI fix before re-validating
+
+## UX scan dimensions (Gate 7)
+
+Static portion runs via `ux_triage.py`. Agent-driven portion runs alongside via `performance-assessor` and `fact-checker` for the dimensions the static scanner can't fully cover.
+
+| Dimension | Static checks | Agent augmentation |
+|---|---|---|
+| Interactability | Buttons without handlers, anchors without href/onClick, icon buttons missing aria-label, empty SwiftUI Button closures | IBR `interact_and_verify` when present (replaces grep for tappability) |
+| Performance | N+1 fetch in forEach/map, unbounded useEffect, full-lib lodash imports | `performance-assessor` agent: profile or simulate the full app, return findings outside static scope |
+| Data accuracy beyond current scope | Hardcoded percent/dollar/year literals in JSX, "as of <date>" strings | `fact-checker` agent: walk full rendered surface, not just changed files |
+| Usability heuristics | Status badges using background color, lists without empty/error branch | LLM judge sub-prompt for hierarchy/empty-state/status-clarity (confidence ≥ medium only) |
+
+Each `blocker` or `major` finding becomes a queue entry from `templates/ux-fix-plan.md`. Minor findings → Review-F report only. `architecture_impact: true` entries pause for user confirmation in Review-F before Iterate dequeues.
+
+## IBR-first ordering (Sub-step B)
+
+When IBR is available and `uiTarget != null`, Sub-step B runs the project's existing `.ibr-test.json` suite via `scripts/ibr_quickpass.py` BEFORE any other validator. Rationale: a passing test suite the project already maintains is the strongest possible signal — much stronger than a grep finding. If the suite passes, sub-step B is green-lit. If any test fails, the failing test's assertion becomes the Iterate fix target directly. Only headless/programmatic IBR surfaces are used; the IBR viewer is never opened by build-loop. Full protocol: `Skill("build-loop:ibr-bridge")`.
 
 ## Skills to load by platform
 

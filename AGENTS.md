@@ -64,6 +64,7 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - Partition files and agents MECE: every changed file has exactly one owner, every required responsibility has an owner, and each group declares `owns`, `does not own`, `interface contract`, and `integration checkpoint`
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
+- **Mockup-first gate for major UI work**: if the plan introduces a new page/screen or makes a major redesign (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause and use a mockup-drafting tool to produce black-and-white mockups before any UI is written. Wait for user feedback; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to the "actions/functions only, no plugin UI surfaces" bridging policy — mockup drafting IS the action.
 
 **Plan acceptance gate** — required before Phase 3 begins:
 
@@ -95,7 +96,7 @@ Six ordered sub-steps; intermediate failures route to Iterate, final pass writes
 
 **Sub-step A — Critic (adversarial read-only)**: dispatch a read-only reviewer against the diff. Catch scope drift, missed edge cases, rubric violations before spending tokens on full validation. Strong-checkpoint findings route back to Execute (no iteration burn); guidance findings are logged.
 
-**Sub-step B — Validate**: code-based graders first (test, lint, type, build), LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Scorecard format:
+**Sub-step B — Validate**: when an IBR-style declarative test runner is installed and the build touches UI, run the project's existing `.ibr-test.json` suite first as a quick pass (`scripts/ibr_quickpass.py --workdir . --scope changed`). A passing existing suite is the strongest possible signal — failing tests route directly to Iterate with the assertion as the rubric. Then code-based graders (test, lint, type, build) and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. Scorecard format:
 
 | # | Criterion | Method | Result | Evidence |
 |---|-----------|--------|--------|----------|
@@ -104,13 +105,17 @@ Six ordered sub-steps; intermediate failures route to Iterate, final pass writes
 
 **Sub-step C — Optimize (opt-in)**: runs only when a mechanical metric exists and the user hasn't disabled it. 3-5 iterations polish. Uses autoresearch pattern: constrained scope + metric + atomic changes + commit-or-revert.
 
-**Sub-step D — Fact-Check & Mock Scan**: three gates in parallel.
+**Sub-step D — Fact-Check, Mock Scan, UX Triage, Coverage**: gates run in parallel.
 
-- *Fact Check*: trace every rendered metric (%, $, score, count) to source. Flag "always", "never", "100%", "guaranteed" — replace unless genuinely absolute.
+- *Fact Check*: trace every rendered metric (%, $, score, count) to source. For UI work, walk the full rendered surface, not just changed files. Flag "always", "never", "100%", "guaranteed" — replace unless genuinely absolute.
 - *Mock Data Scan*: production paths only. Detect lorem ipsum, faker, hardcoded fake values, `Math.random()` in display, placeholder text. Classify blocking (renders to user) vs warning.
 - *Architectural Violations* (if available): `navgator rules --json`. Blocking: circular-dependency, layer-violation, database-isolation, frontend-direct-db. Warning: hotspot, high-fan-out, orphan.
+- *Plugin Cache Sync* (plugin work): resync the local cache when diverged. Defer version bumps until the feature batch is declared complete (see Version Advisor).
+- *Version Advisor* (plugin work): `scripts/version_advisor.py` reads plugin manifest and last-bump SHA, counts commits since via Conventional Commits to propose semver. Default state is `hold` — a one-line note in Report. State `suggest` only when the user creates `.build-loop/release-pending.md`. Never auto-bumps; never blocks.
+- *UX Triage* (UI work): `scripts/ux_triage.py` static-scans interactability, performance, data-accuracy, and usability across the full project. Each blocker/major finding becomes a queue entry in `.build-loop/ux-queue/<id>.md` with a complete fix plan. Agent-driven augmentation (performance, fact-check on broader surface) merges into the same queue.
+- *Coverage Gap* (UI work + IBR available): for each surface in `.build-loop/ibr-quickpass.json.untested_surfaces`, generate a draft `.ibr-test.json` to `.ibr-tests/_draft/`. Drafts never auto-promote; user accepts by `mv` out of `_draft/`.
 
-Blocking issues (any gate) route to Iterate. Warnings land in Report.
+Blocking gates route to Iterate. Queue entries flow into Phase 5's prioritized work list. Warnings land in Report.
 
 **Sub-step E — Simplify**: trim the diff — inline single-use helpers, delete dead branches, remove validation for upstream-guaranteed invariants. Preserve public API, tests, observability, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION`.
 
@@ -126,11 +131,19 @@ Before any push/deploy, classify the exact command with `scripts/deployment_poli
 
 ### Phase 5: Iterate
 
-For each failed criterion flagged by Review:
+Build a prioritized work list per pass: (1) blocking Validate failures, (2) blocker UX queue entries with `architecture_impact: false`, (3) major UX queue entries with `architecture_impact: false`, (4) optimization findings, (5) IBR coverage-gap drafts. Entries with `architecture_impact: true` are deferred to Report for explicit user confirmation, NOT picked up here. Do not defer based on patch size — the only deferral signal is architecture impact.
+
+Partition the list by disjoint `files_touched` and dispatch up to 4 parallel implementer subagents per pass (the standard cap). Sequential groups process after the parallel batch.
+
+When the build touches UI files and an IBR-style runner is installed, after each implementer reports back AND before re-entering Sub-step B, run `interact_and_verify` against the affected route headlessly. Catches new visual/interaction regressions cheaply.
+
+For each fix:
 1. Diagnose root cause (not just symptoms)
-2. Create targeted fix plan
+2. Use the queue entry's `proposed_fix` plan as the prompt (or, for Validate failures, create a targeted fix plan)
 3. Execute fix
 4. Loop back to Review sub-step B (Validate). Sub-step A usually skipped unless the fix touched new files.
+
+**Followup overflow**: when iteration cap is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent build invocation. The followup build skips its own Plan phase for these entries (plans are already complete).
 
 **Convergence rules:**
 - If a criterion fails 3 times with the same root cause: escalate to user
@@ -162,9 +175,20 @@ Build loop stores state in `.build-loop/` within the project directory:
 ├── config.json          # Optional repo flags, including deploymentPolicy
 ├── state.json           # Iteration state, phase progress, structure summary
 ├── feedback.md          # Post-build lessons (one line per build)
+├── release-pending.md   # User-created marker: "feature batch complete, advise version bump"
+├── ibr-quickpass.json   # Summary from scripts/ibr_quickpass.py (UI work + IBR present)
+├── ux-queue/            # UX-impacting findings with full fix plans (drained by Iterate)
+│   └── <id>.md
+├── followup/            # Overflow when iteration cap hit; input to subsequent build
+│   └── <topic>.md
 ├── evals/               # Scorecard archives
 │   └── YYYY-MM-DD-*.md
 └── issues/              # Discovered issues
+```
+
+Project-level (not under `.build-loop/`):
+```
+.ibr-tests/_draft/       # IBR test drafts from Coverage Gap; user mv to accept, rm to reject
 ```
 
 This directory is created on first use. Add `.build-loop/` to your project's `.gitignore`.

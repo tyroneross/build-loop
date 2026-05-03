@@ -290,6 +290,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
 6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
 7. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
+8. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
 
 **Optimization checklist** (review the plan for these before proceeding):
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
@@ -359,6 +360,14 @@ Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violatio
 ### Sub-step B: Validate (graders + memory-first gate)
 
 Test every criterion from Assess with evidence.
+
+**UI validation — IBR-first when present** (`uiTarget != null`): load `Skill("build-loop:ibr-bridge")` and run the quick-pass protocol BEFORE static scanners or LLM judges:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ibr_quickpass.py --workdir "$PWD" --scope changed
+```
+
+If the suite passes, the changed surface is green-lit and Sub-step D continues. If any test fails, route the failing test directly to Iterate — its assertion is the rubric, no extra critic burn. If the script reports `no_tests`, the Coverage-gap gate (Sub-step D) generates initial drafts; Sub-step B falls through to static scanners in the meantime. Per the bridge skill, only headless/programmatic IBR surfaces are used — the IBR viewer is never opened.
 
 **UI validation when IBR is absent**: paste `fallbacks.md#web-ui` into the validation subagent prompt. The fallback contains 10 specific grep checks (Gestalt violations, touch targets, missing handlers, missing aria-labels, status-pill anti-patterns, off-token colors, non-8pt spacing, console leftovers, mock data) plus a file-check matrix for landmarks, focus styles, and viewport tags. Findings get `⚠️ static-analysis only — install IBR for computed-CSS verification` flag in the Review-F report. This is the standalone UI validation path — degraded vs IBR, but not silent.
 
@@ -430,10 +439,13 @@ Nothing false, fabricated, or placeholder reaches the user. Three gates, run in 
 - **Gate 1 — Fact Checker**: Trace every rendered %, $, score, count, or assessment to its data source. Flag "always", "never", "100%", "guaranteed" — replace with accurate language unless genuinely absolute. Every rendered metric needs a traceable path: source → transformation → display.
 - **Gate 2 — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
 - **Gate 3 — Architectural Violation Check** (if NavGator available): load `build-loop:navgator-bridge`, run its Review violation check. Executes `navgator rules --json` and classifies blocking (`circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error) vs warning (`hotspot`, `high-fan-out`, `orphan`). Flags recurrences against `.navgator/lessons/lessons.json`.
-- **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host claude --source <plugin-source-repo>` for Claude runtime surfaces. If the build changes Codex-visible surfaces (`.codex-plugin/`, `AGENTS.md`, `README.md`, `skills/`, or `commands/`), also run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host codex --source <plugin-source-repo>`. `[DIVERGED]`, `[MISSING IN CACHE]`, or stale installed Codex versions are **blocking** when they affect the host being used — runtime invocations will hit stale or missing files. Fix: resync/reinstall the local cache, or bump plugin version + publish if the sync should be durable. Missing cache with no installed version skips silently (user has not installed the plugin, nothing to break).
+- **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host claude --source <plugin-source-repo>` for Claude runtime surfaces. If the build changes Codex-visible surfaces (`.codex-plugin/`, `AGENTS.md`, `README.md`, `skills/`, or `commands/`), also run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host codex --source <plugin-source-repo>`. `[DIVERGED]`, `[MISSING IN CACHE]`, or stale installed Codex versions are **blocking** when they affect the host being used — runtime invocations will hit stale or missing files. Fix: resync/reinstall the local cache. Defer version bumps until the feature batch is declared complete (see Gate 6). Missing cache with no installed version skips silently (user has not installed the plugin, nothing to break).
 - **Gate 5 — Design-Rule Scanner** (only when `uiTarget != null`): run `audit-design-rules.mjs` across full project (broader than Sub-step B's changed-files scope). Surfaces any pre-existing must-fix violations newly observable due to scanner rule additions. Pre-existing findings on first run are logged to `.build-loop/issues/` with break-what-if analysis (user decides scope). New-content findings are blocking. See `phases/ui-validation.md` for tuning.
+- **Gate 6 — Version-Bump Advisor** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. Default state is `hold` — emits a one-line note in Review-F: `"N commits accumulated since vX.Y.Z. Holding version. Create .build-loop/release-pending.md when the batch is ready."` Switches to `suggest` only when `.build-loop/release-pending.md` exists; in `suggest` mode, Review-F proposes `vA.B.C` (semver inferred from Conventional Commits) and asks for explicit user confirmation before any plugin.json edit. Never auto-bumps. Never blocks. The marker file is the user's release signal; build-loop only ever advises.
+- **Gate 7 — UX Triage** (only when `uiTarget != null`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Static-scans for four dimensions — interactability, performance, data-accuracy beyond current scope, usability — across the full project (not just changed files). Each `blocker` or `major` finding becomes a queue entry in `.build-loop/ux-queue/<id>.md` with a complete fix plan, evidence, files-touched, and an `architecture_impact` flag. Minor findings stay in the Review-F report only. The agent layer augments static findings with `performance-assessor` and `fact-checker` agent dispatches against the same surface for dimensions the static scanner can't fully cover. Queue entries feed into Phase 5 Iterate (see "Iterate input contract" below). Never block the current build — UX rot fixes ride along, they don't gate.
+- **Gate 8 — IBR Coverage-Gap** (only when `uiTarget != null` AND IBR available): read `.build-loop/ibr-quickpass.json.untested_surfaces` (written by Sub-step B). For each uncovered surface, generate a draft `.ibr-test.json` via `mcp__plugin_ibr_ibr__plan_test` (or `ibr generate-test --headless`), write to `.ibr-tests/_draft/<id>.ibr-test.json`, and add a queue entry to `.build-loop/ux-queue/` with `dimension: test-coverage`. Drafts are suggestions — the user accepts by `mv` out of `_draft/`, rejects by deleting. Never auto-promotes. See `Skill("build-loop:ibr-bridge")` Coverage-gap protocol for full detail.
 
-Blocking issues (any gate) → route to Iterate. Warnings → include in Report (sub-step F).
+Blocking issues (Gates 1-4) → route to Iterate. Queue entries (Gates 7-8) → flow into Phase 5's prioritized work list. Warnings → include in Report (sub-step F). Auto-bumping is forbidden.
 
 ### Sub-step E: Simplify (trim the diff)
 
@@ -491,11 +503,28 @@ Follow the returned `action`: `auto` may proceed after Review passes; `confirm` 
 
 Capture `filesTouched` from `git diff --name-only` relative to the pre-build HEAD. `diagnosticCommands` and `manualInterventions` come from orchestrator state tracking. `active_experimental_artifacts` lists experimental skills that triggered this run (for Learn's confound tracking).
 
-## Phase 5: Iterate — Fix Review Failures (up to 5x)
+## Phase 5: Iterate — Fix Review Failures + UX Queue (up to 5x)
 
-**Goal**: Fix failures surfaced by Review, systematically not blindly. Loops back to Review after each fix.
+**Goal**: Fix failures surfaced by Review *plus* drain the UX queue accumulated by Sub-step D Gates 7-8, systematically not blindly. Loops back to Review after each pass.
 
-Entered when Review sub-step A, B, or D finds blocking issues. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn.
+Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux-queue/` is non-empty. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn.
+
+**Iterate input contract (prioritized work list)**:
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 | Blocking Validate failures (Sub-step B) | Test/lint/build/IBR test-suite fails |
+| 2 | Blocker UX queue entries with `architecture_impact: false` | `.build-loop/ux-queue/*.md` filtered |
+| 3 | Major UX queue entries with `architecture_impact: false` | Same source, lower severity |
+| 4 | Optimization findings (Sub-step C) | Opt-in |
+| 5 | IBR coverage-gap drafts (`dimension: test-coverage`) | Lowest — additions, not fixes |
+| **deferred** | Any UX entry with `architecture_impact: true` | Surfaces in Review-F for explicit user confirmation; Iterate does not pick up |
+
+The "code is cheap, AI agents build fast" framing: the orchestrator does NOT defer based on patch size. It defers only when `architecture_impact: true` (new component, new data flow, navigation graph change, schema migration, auth provider swap). Everything else is fair game for the current loop.
+
+**Parallel fan-out**: After dequeue, partition entries by `files_touched` into independent groups (no overlapping files). Up to 4 implementer subagents run in parallel per pass — the hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch completes. Each subagent uses the `templates/ux-fix-plan.md` plan from its queue entry as the prompt. Results re-enter Sub-step B for re-validation.
+
+**IBR re-validate hook (when uiTarget != null AND IBR available)**: After each implementer subagent reports back AND before re-entering Sub-step B Validate, the orchestrator calls `mcp__plugin_ibr_ibr__interact_and_verify` against the affected route(s) headlessly. Catches "fix introduced a new visual or interaction regression" cheaply, without burning a full Validate cycle. For routes that fail this check twice, optionally invoke `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop — internal iterations count against build-loop's 5-iteration ceiling.
 
 Per attempt:
 1. **Diagnose root cause** — don't just retry. Reads Review's evidence.
@@ -504,10 +533,12 @@ Per attempt:
    - **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (it may have shifted shape after the prior fix attempt).
    - **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `claude-code-debugger:assess`. Pass `model: sonnet` to domain assessors explicitly (override `inherit` default to prevent 4× Opus fan-out from the Opus 4.7 orchestrator). The full procedure is documented in `skills/debug-loop/SKILL.md` §"If stuck — parallel multi-domain assessment".
    - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
-3. **Create targeted fix plan** for failed criteria only.
-4. **Execute fix** (subagents if parallel-safe).
-5. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
-6. **Track**: attempt count, what failed, what was attempted, what changed.
+3. **Build the prioritized work list** from the table above (Validate failures + UX queue).
+4. **Partition for parallel fan-out**: group by disjoint `files_touched`; dispatch ≤4 subagents in parallel.
+5. **Execute fixes**; for UI files, run the IBR re-validate hook before continuing.
+6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
+7. **Followup overflow**: when the iteration cap (5) is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips its own Plan phase for these entries.
+8. **Track**: attempt count, what failed, what was attempted, what changed, queue depth before/after each pass.
 
 **Convergence detection**:
 - Same criterion fails 2x with same root cause → escalate to user

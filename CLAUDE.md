@@ -49,12 +49,25 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 - `feedback.md` — post-build lessons
 - `evals/` — scorecard archives
 - `issues/` — discovered issues
+- `release-pending.md` — user-created marker signaling "in-flight feature batch is complete; advise version bump." Read by Sub-step D Gate 6 (`scripts/version_advisor.py`). Empty file = use defaults; body = release notes. User deletes after the bump commit lands.
+- `ux-queue/<id>.md` — UX-impacting findings from Sub-step D Gate 7 (`scripts/ux_triage.py`) and Gate 8 (IBR coverage gaps), each with a complete fix plan from `templates/ux-fix-plan.md`. Drained by Phase 5 Iterate.
+- `followup/<topic>.md` — overflow when iteration cap is reached with queue entries remaining. Becomes input to a subsequent `/build-loop:run` invocation; Plan phase is skipped for these entries.
+- `ibr-quickpass.json` — summary of IBR test-suite quick pass written by `scripts/ibr_quickpass.py`. Read by Sub-step D Gate 8 to surface untested surfaces.
 - `skills/experimental/` — auto-drafted skills from Phase 6 Learn (remove with `rm -rf`)
 - `agents/experimental/` — auto-drafted agents from Phase 6 Learn
 - `skills/active/` — auto-promoted skills (opt-in; requires `autoPromote: true` + effective sample ≥ 8)
 - `proposals/` — pending promotion/removal proposals awaiting user confirmation
 - `experiments/<name>.jsonl` — A/B tracking log per experimental artifact
 - `experiments/discarded.jsonl` — Opus-rejected drafts with reasons
+
+Project-level (NOT under `.build-loop/`):
+- `.ibr-tests/_draft/<id>.ibr-test.json` — IBR test drafts authored by Sub-step D Gate 8 for surfaces the existing suite doesn't cover. The user accepts a draft by `mv` out of `_draft/`; rejects by `rm`. Build-loop never auto-promotes.
+
+## Plugin Bridging Policy
+
+When build-loop integrates capabilities from other plugins, **bridge the actions and functions, not the UI surfaces**. Programmatic calls (CLI flags, MCP tools, headless modes) compose well; viewer dashboards and persistent browser sessions don't belong inside an automated loop. The IBR bridge demonstrates this — see `skills/ibr-bridge/SKILL.md` §Cherry-pick principle for the allowed/forbidden split.
+
+**Documented exception**: `mockup-gallery` is invoked from Phase 2 Plan for major UI work (new pages, ≥40% redesigns) to draft black-and-white mockups before any UI is written. Mockup drafting IS the action, and the user has explicitly authorized this pattern as the only place build-loop spawns plugin UI.
 
 ## Cross-Tool Support
 

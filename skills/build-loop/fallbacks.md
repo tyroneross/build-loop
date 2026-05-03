@@ -12,6 +12,8 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 
 **Standalone mode when IBR is not installed.** Build-loop cannot compute CSS values or drive a browser, but it CAN grep the code for specific violations the IBR scan would have caught. The checks below are the minimum-viable static-analysis subset.
 
+> **Precedence note**: when IBR IS installed, `Skill("build-loop:ibr-bridge")` takes priority. The bridge runs the project's existing `.ibr-test.json` suite first, augments with `interact_and_verify` and `validate_tokens`, and only falls back to the grep matrix below when IBR returns `ibr_unavailable` or `no_tests`. The bridge uses headless/programmatic IBR surfaces only — never the viewer UI.
+
 ### Design principles (Calm Precision, condensed from global `CLAUDE.md`)
 
 - **Intent**: every visible element must help the user act, understand, decide, or recover. Remove controls, nav items, filters, charts, and options that do not work or do not serve the current workflow.

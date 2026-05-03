@@ -100,6 +100,7 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
 
 ### Phase 2: Plan
 - Follow `Skill("build-loop:build-loop")` §Phase 2 — break work, build dependency graph, MECE-partition file ownership, define integration checkpoints.
+- **Mockup-first gate for major UI work**: if the plan introduces a *new page/screen* OR makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. **This is build-loop's documented exception to the "actions/functions only, no plugin UI surfaces" policy** — mockup-gallery's drafting flow is itself the action and the user has explicitly authorized this pattern.
 - **Plan acceptance gate** — required before declaring Phase 2 complete and dispatching Phase 3 subagents:
   1. **`plan-verify` (deterministic)**: run
      ```bash
@@ -157,7 +158,12 @@ See SKILL.md §"When to consult `model-router`" for the full policy.
 Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; the orchestrator's job is to route between them.
 
 - **A. Critic**: dispatch `sonnet-critic` on Execute's diff. On `strong-checkpoint` → back to Execute, no iteration burn. On `guidance` → log to `.build-loop/issues/` and proceed. Skip A on re-reviews after Iterate unless Iterate touched new files. **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 4.6, read-only) in parallel with `sonnet-critic`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed. After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
-- **B. Validate**: code graders → LLM-as-judge. If `availablePlugins.ibr` and UI work, invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile. If IBR is absent but the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt — static-analysis grep suite covering the top Calm Precision / a11y violations.
+- **B. Validate**: code graders → LLM-as-judge. **IBR-first when present and UI work**: load `Skill("build-loop:ibr-bridge")` and run the quick-pass BEFORE any other validator:
+  ```bash
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ibr_quickpass.py --workdir "$PWD" --scope changed
+  ```
+  Interpret the JSON: `pass == ran` → green-light, proceed to D; any `fail` → route the failing test to Iterate (test assertion is the rubric, no extra critic burn); `no_tests` or `ibr_unavailable` → fall through to scanners. The script writes `.build-loop/ibr-quickpass.json` for Sub-step D Gate 8 to read. **No IBR viewer/dashboard UI is invoked** — only headless/programmatic surfaces per `Skill("build-loop:ibr-bridge")` §Cherry-pick principle.
+  If `availablePlugins.ibr` and UI work AND quick-pass green, also invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile for design-rule depth. If IBR is absent and the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt — static-analysis grep suite covering the top Calm Precision / a11y violations.
   - **Plugin-tests advisory check (auto-runs when build touches plugin metadata; non-blocking)** — if Phase 3 Execute's diff contains any of these path globs, run `Skill("build-loop:plugin-tests")` as part of Validate:
     - `*.claude-plugin/plugin.json`, `*.claude-plugin/marketplace.json`
     - `commands/*.md` (added/renamed/removed)
@@ -196,7 +202,11 @@ Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; th
        ```
     6. **Fallback when MCP unavailable**: paste `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` into the gate. Verdict shape becomes `LOCAL_HIT_EXACT` / `LOCAL_HIT_PARTIAL` / `LOCAL_WEAK` / `LOCAL_NO_MATCH` (file-grep verdicts; all route to Iterate as adapted plan, no direct-apply). Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
 - **C. Optimize** (opt-in): only when a mechanical metric exists AND user hasn't opted out. Load `build-loop:optimize`. Archive to `.build-loop/optimize/experiments/`. Feed results back to Review-B as evidence.
-- **D. Fact-Check**: dispatch `fact-checker` + `mock-scanner` in parallel. If NavGator available, also run `build-loop:navgator-bridge` Review violation check in parallel. Blocking → Iterate. Warnings → Report.
+- **D. Fact-Check**: dispatch `fact-checker` + `mock-scanner` in parallel. If NavGator available, also run `build-loop:navgator-bridge` Review violation check in parallel. **Plus the new gates from SKILL.md §Sub-step D**:
+  - **Gate 6 — Version-Bump Advisor** (when `pluginWork: true`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. State `hold` (default) → one-line note in Review-F. State `suggest` (marker `.build-loop/release-pending.md` exists) → propose semver and ask user before any plugin.json edit. Never auto-bump.
+  - **Gate 7 — UX Triage** (when `uiTarget != null`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Each `blocker`/`major` finding becomes a queue entry in `.build-loop/ux-queue/`. Then dispatch `performance-assessor` (full-app sweep) and `fact-checker` (broader file glob, full rendered surface) in parallel for the agent-augmentation portion; merge their findings into the same queue.
+  - **Gate 8 — IBR Coverage-Gap** (when `uiTarget != null` AND IBR available): read `.build-loop/ibr-quickpass.json.untested_surfaces`. For each, generate a draft `.ibr-test.json` to `.ibr-tests/_draft/<id>.ibr-test.json` via `mcp__plugin_ibr_ibr__plan_test` (programmatic only). Add a queue entry with `dimension: test-coverage`. Drafts never auto-promote.
+  Blocking (Gates 1-4) → Iterate. Queue entries (Gates 7-8) → flow into Phase 5's prioritized work list. Warnings → Report.
 - **E. Simplify**: invoke `/simplify` on changed files. Preserve public API, tests, observability, user value, and modular boundaries needed for scalability, accuracy, security, testability, or stable interfaces. Do not simplify by removing necessary states, accuracy, scalability, accessibility, or real data paths. If integrated simplification is better, record `MODULARITY EXCEPTION`.
 - **F. Report** (only on final Review pass, not intermediate): write scorecard to `.build-loop/evals/`, append run entry to `state.json.runs[]`, call debugger `store` + `outcome` MCPs, run `navgator dead` orphan scan. Before any push/deploy, run the deployment policy gate. If action is `auto`, proceed after Review passes; if `confirm`, ask the user before running; if `block`, do not run. If `platform: "apple"` AND goal includes deploy, invoke `apple-dev` deploy flow under the same policy: TestFlight/App Store Connect upload/export defaults to auto, App Store production release/submission defaults to confirm.
 
@@ -213,13 +223,22 @@ Review also checks the intent pack and modular systems pack: does the result adv
   2. **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (the failure may have shifted shape after the prior fix attempt). Same verdict-handling rules as Review-B.
   3. **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `claude-code-debugger:assess`. The bundled `assessment-orchestrator` fans out to relevant domain assessors (api / database / frontend / performance) in parallel. **Model override**: explicitly pass `model: sonnet` to each domain assessor via the subagent dispatch to avoid 4 parallel Opus invocations from your Opus 4.7 tier. Only escalate individual assessors to Opus if their initial output flags `confidence: low` or `needs_judgment: true`. Aggregate the assessors' ranked findings; use the top action as the next Iterate plan.
   4. **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Do not attempt a 4th fix without it. The skill runs its own 7-phase cycle (investigate → hypothesize → fix → verify → score → critique → report) with up to 5 internal iterations. When it returns, validate against build-loop's original Review-B criteria. If still failing after 5 internal debug-loop iterations, hard-stop and escalate to user.
-- Create targeted fix plan for failed criteria only; Execute fix.
+- **Build the prioritized work list** for this pass — Validate failures + queue entries, in this order:
+  1. Blocking Validate failures
+  2. Blocker UX queue entries with `architecture_impact: false`
+  3. Major UX queue entries with `architecture_impact: false`
+  4. Optimization findings (Sub-step C)
+  5. IBR coverage-gap drafts (`dimension: test-coverage`) — additions, processed last
+  Entries with `architecture_impact: true` are deferred to Review-F for explicit user confirmation, NOT included in this pass. Do NOT defer based on patch size — code is cheap, AI agents build fast. The only deferral signal is architecture impact.
+- **Partition for parallel fan-out**: group entries by disjoint `files_touched` (no overlapping files). Dispatch up to 4 implementer subagents in parallel — the hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch completes. Each subagent's prompt is the queue entry's `proposed_fix` from `templates/ux-fix-plan.md`. For Validate failures, fall back to the per-criterion targeted fix plan as before.
+- **IBR re-validate hook (UI work + IBR present)**: after each implementer subagent reports back AND before re-entering Sub-step B, call `mcp__plugin_ibr_ibr__interact_and_verify` against the affected route(s) headlessly. Catches new visual/interaction regressions cheaply. For routes that fail this twice, optionally `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop (internal iterations count against build-loop's 5-cap). No IBR viewer is opened.
 - Loop back to Review sub-step B (Validate). Sub-step A usually skipped on re-runs.
+- **Followup overflow**: when iteration cap is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips Plan phase for these entries.
 - Convergence rules:
   - Same failure 2x with same root cause → escalate to user (unless the stuck-iteration cascade above already escalated first)
   - Fix A breaks criterion B → flag oscillation, ask user
   - 3+ simultaneous failures after a fix → systemic, stop and reassess
-- Hard stop at 5 iterations; proceed to final Review sub-step F with remaining ❓ Unfixed.
+- Hard stop at 5 iterations; proceed to final Review sub-step F with remaining ❓ Unfixed and queue overflow written to `.build-loop/followup/`.
 
 ### Model Tiering (Phase 3 Execute + Phase 4 Review + Phase 6 Learn)
 Consult `Skill("build-loop:model-tiering")` when spawning any subagent. Defaults:
