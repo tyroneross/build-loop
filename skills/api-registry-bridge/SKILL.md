@@ -1,6 +1,7 @@
 ---
 name: api-registry-bridge
 description: Consult api-registry plugin in Assess and Iterate phases when a new API dependency appears or API config fails. Graceful degrade if api-registry is absent.
+user-invocable: false
 ---
 
 # api-registry-bridge (inside build-loop)

@@ -1,3 +1,9 @@
+---
+description: "Load full incident or pattern details from debugging memory"
+allowed-tools: Bash, Read
+argument-hint: "<INC_* or PTN_* id>"
+---
+
 # Debugger Detail
 
 Load full details for a specific incident or pattern from debugging memory.
