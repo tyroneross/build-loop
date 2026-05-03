@@ -104,3 +104,22 @@ Both can be installed; neither shadows the other. The `debugger-bridge` skill ex
 **Resolved:** 2026-05-03 — orchestrator now degrades gracefully to **inline-implementer mode** when `Agent` is unavailable. Same protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed) applied serially by the orchestrator itself instead of dispatched in parallel to subagents. Quality bar unchanged; parallelism lost. The Review-F report now surfaces a `⚠️ Phase 5 ran in subagent mode — no parallel fan-out` note when degradation kicks in.
 
 **For full parallelism**, invoke `/build-loop:run` directly in a top-level session (not via Agent dispatch from a parent). Top-level mode dispatches up to 4 implementer subagents in parallel per partition group. Subagent mode is the safe fallback, not the intended primary path.
+
+## Items requiring fresh session to test — surfaced 2026-05-03
+
+The following build-loop 0.9.0+ behaviors cannot be exercised inside a session that already loaded the plugin before the behavior was added:
+
+1. **`Agent(subagent_type="build-loop:implementer", ...)` direct dispatch**: Claude Code's agent registry loads at session start; agents added mid-session are not hot-reloaded. The implementer agent (shipped in `f3eac63`) is structurally validated by `plugin-dev:plugin-validator` and statically reachable in the symlinked cache, but cannot be live-dispatched in the session that added it. Test path: start a fresh session, then `Agent(subagent_type="build-loop:implementer", prompt=...)`.
+
+2. **Top-level Phase 5 parallel fan-out**: requires the orchestrator to run at top-level (user's session) with the `Agent` tool available. Subagent context strips `Agent` (no-sub-sub-agents enforcement) and falls through to inline-implementer mode. Test path: start a fresh session, run `/build-loop:run "drain UX queue"` directly (not via `Agent(subagent_type="build-loop:build-orchestrator")`).
+
+3. **Mockup-gallery Phase 2 hook**: only triggers when Phase 2 detects a "new page/screen or ≥40% redesign." Requires a real plan that meets the trigger. Synthetic exercise possible but low-value; first real major-UI build will exercise it.
+
+4. **Orchestrator runtime routing of new statuses** (`plan_malformed`, `needs_dependency`, `failed` escalation, `concurrent_modification_detected`): documented in build-orchestrator.md and SKILL.md as of `41b4203`, but only invoked when an implementer dispatch returns one of these statuses. Synthetic exercise would require dispatching the implementer with deliberately broken plans, which itself blocks on item 1.
+
+**What IS testable mid-session and was verified**:
+- Script-level: `version_advisor.py` (Gate 6), `ibr_quickpass.py` (Gate 8), `ux_triage.py` (Gate 7) — all edge cases including parallel pool, comment-strip, stable IDs, multi-line tag matching.
+- Inline-implementer fallback path (the load-bearing alternative to item 1) — drained 3 atomize-ai queue entries with 14 file modifications, all verifications green.
+- `plugin-dev:plugin-validator` static review of all build-loop agents including the new implementer.
+
+**Workaround for item 1**: write a queue entry to `.build-loop/ux-queue/<id>.md` and let the orchestrator's inline-implementer fallback handle it. Same protocol, same quality bar, no parallelism.

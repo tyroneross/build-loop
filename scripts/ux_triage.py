@@ -121,22 +121,39 @@ def grep_file(path: Path, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
 # Using DOTALL because JSX wraps attributes onto multiple lines for readability.
 _A_TAG_RE = re.compile(r"<a\b([^<>]*?)>", re.DOTALL)
 _HAS_HREF_OR_HANDLER = re.compile(r"\b(href|onClick|onPress|onTap|to)\s*=")
+# Strip JS/TS/TSX comments so JSX-shaped patterns inside `// 7. <a>` documentation
+# don't trigger false positives. Replace comment bodies with spaces of equal length
+# so line numbers reported by finditer match the original file.
+_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def _strip_comments(text: str) -> str:
+    def _spacer(m: re.Match[str]) -> str:
+        # Preserve newlines so line numbers stay accurate; everything else → space
+        return "".join(c if c == "\n" else " " for c in m.group(0))
+    text = _BLOCK_COMMENT_RE.sub(_spacer, text)
+    text = _LINE_COMMENT_RE.sub(_spacer, text)
+    return text
 
 
 def find_dead_anchors(path: Path) -> list[tuple[int, str]]:
     """Per-file scan for `<a>` tags missing href/onClick across multi-line attribute lists."""
     hits: list[tuple[int, str]] = []
     try:
-        text = path.read_text(errors="replace")
+        raw = path.read_text(errors="replace")
     except OSError:
         return hits
+    text = _strip_comments(raw)
     for m in _A_TAG_RE.finditer(text):
         attrs = m.group(1) or ""
         if _HAS_HREF_OR_HANDLER.search(attrs):
             continue
         # Compute the line number of the tag opening
         line_no = text.count("\n", 0, m.start()) + 1
-        snippet = m.group(0).replace("\n", " ").strip()[:200]
+        # Snippet from the ORIGINAL text so the user sees the real source line, not the stripped version
+        snippet_end = raw.find("\n", m.start())
+        snippet = raw[m.start():snippet_end if snippet_end > -1 else m.end()].strip()[:200]
         hits.append((line_no, snippet))
     return hits
 
@@ -155,15 +172,17 @@ def find_dead_buttons(path: Path) -> list[tuple[int, str]]:
     """Per-file scan for `<button>` tags missing any handler / disabled state."""
     hits: list[tuple[int, str]] = []
     try:
-        text = path.read_text(errors="replace")
+        raw = path.read_text(errors="replace")
     except OSError:
         return hits
+    text = _strip_comments(raw)
     for m in _BUTTON_TAG_RE.finditer(text):
         attrs = m.group(1) or ""
         if _HAS_HANDLER_OR_DISABLED.search(attrs):
             continue
         line_no = text.count("\n", 0, m.start()) + 1
-        snippet = m.group(0).replace("\n", " ").strip()[:200]
+        snippet_end = raw.find("\n", m.start())
+        snippet = raw[m.start():snippet_end if snippet_end > -1 else m.end()].strip()[:200]
         hits.append((line_no, snippet))
     return hits
 
