@@ -1,11 +1,11 @@
 ---
 name: optimize
-description: Autonomous metric-driven optimization. Measures a number, keeps improvements, reverts regressions. Use for build time, code simplification, test coverage, bundle size, latency.
+description: Metric-driven optimization with DOE by default. Triggers on "run optimization", "optimize this", "make this faster", "improve my app", "speed up X", "reduce <metric>". Defaults to multi-factor Design of Experiments (full / fractional factorial / Plackett-Burman) when ≥2 factors are involved; falls back to single-variable autoresearch for 1-factor cases. If user doesn't specify factors, scans the codebase, proposes candidates, and asks for confirmation before running anything.
 ---
 
-# Optimize — Autoresearch-Pattern Optimization
+# Optimize — DOE-First with Autoresearch Fallback
 
-Karpathy's autoresearch adapted for post-implementation optimization: define a mechanical metric, constrain the scope, iterate autonomously. Keeps what improves, reverts what doesn't.
+Combines Design of Experiments (multi-factor, statistically rigorous) with Karpathy-style autoresearch (single-factor, hypothesis-driven). DOE is the default; autoresearch is the single-variable special case. Both keep what improves and revert regressions, but DOE plans the full experiment matrix up front and recovers main effects + interactions; autoresearch is a sequential greedy local search.
 
 ## When to Use
 
@@ -19,11 +19,56 @@ After Phase 4 (Execute) when a mechanical metric exists:
 
 Skip when the metric is subjective or requires human judgment.
 
-## Phase 1: SETUP (Opus)
+## Phase 1: SETUP (Opus) — Three-Branch Routing
 
-Highest-leverage phase. Wrong metric = Goodhart's Law.
+Highest-leverage phase. Wrong metric = Goodhart's Law. Wrong factors = wasted runs.
 
-Define:
+### Step 1.1 — Detect trigger shape
+
+| Branch | Trigger | Action |
+|---|---|---|
+| **A. Power-user explicit** | User supplied factors via CLI flag, `.build-loop/optimize/factors.json`, or inline ("optimize batch_size, retries, workers for throughput") | Skip suggestion; use the user's factors directly |
+| **B. Vague optimization** *(default)* | "run optimization", "make my app faster", "improve performance", "speed up", "reduce <metric>" without naming factors | Run factor-identification scan; propose candidates; **AskUserQuestion to confirm before running** |
+| **C. Single-variable explicit** | "simplify this file", "reduce build time", scoped `/build-loop:optimize <known-target>` | Skip DOE; run autoresearch (existing behavior, Phase 2 LOOP unchanged) |
+
+### Step 1.2 — Branch A or B: factor identification
+
+**Branch A** (factors pre-supplied): validate shape `[{name, low, high}, ...]` or `[{name, levels: [...]}, ...]`. Skip to Step 1.3.
+
+**Branch B** (suggest factors): run the codebase scanner, present candidates, ask for confirmation.
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_suggest_factors.py --workdir "$PWD" --top 12 --json
+```
+Returns ranked candidates (UPPER_SNAKE constants near tuning keywords, env vars with numeric defaults, etc.). For each, the scanner suggests low/center/high levels.
+
+**Then AskUserQuestion** (multi-select, all candidates pre-checked):
+> "Which of these should I optimize?"
+> [✓] BATCH_SIZE (currently 32) — try [16, 32, 64]
+> [✓] RETRIES (currently 3) — try [1, 3, 5]
+> [ ] TIMEOUT_MS (currently 5000) — try [3000, 5000, 8000]
+> Free-text: "add my own factor / change levels"
+> Decline path: "skip optimization"
+
+Only proceed once the user confirms. Do NOT auto-run optimization on heuristic candidates without explicit user buy-in — false positives are common (toast delays, breakpoints, port numbers all look numeric to the scanner but aren't perf knobs).
+
+### Step 1.3 — Design selection (Branches A + B with k≥2)
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_doe.py detect <k>
+```
+Auto-routes by factor count: `k=1` → fall back to autoresearch (Branch C), `2 ≤ k ≤ 3` → 2^k full factorial (4–8 runs), `4 ≤ k ≤ 7` → 2^(k-p) fractional R-III/IV (8 runs), `k ≥ 8` → Plackett-Burman 12-run screening (handles up to 11).
+
+Generate the matrix:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_doe.py generate \
+  --factors "$(cat .build-loop/optimize/factors.json)" \
+  --design auto --seed "$RANDOM" \
+  > .build-loop/optimize/doe.json
+```
+
+### Step 1.4 — Branch C: autoresearch setup
+
+Single-factor — keep the existing setup. Define:
 1. `target` — what to optimize (name)
 2. `scope` — which files can change (glob or list)
 3. `metric_cmd` — shell command → number
@@ -34,7 +79,7 @@ Define:
 8. `metric_warmups` — warmup runs discarded before measuring (default 0)
 9. `metric_aggregate` — how to combine samples (`last`, `mean`, `median`, `p95`, etc.)
 
-Auto-detection: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"` to discover available targets.
+Auto-detection: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"` to discover available single-variable targets.
 
 Initialize:
 ```bash
@@ -44,6 +89,28 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py   --init --workdir "$PWD"
 For latency work such as semantic search, do not optimize on one timer reading. Use a representative query set, run multiple measured samples, discard at least one warmup when cold starts matter, and aggregate with `median` or `p95`.
 
 ## Phase 2: LOOP (Sonnet)
+
+### Branch A/B (DOE) — run the matrix
+
+For each row in `.build-loop/optimize/doe.json` (in randomized `run_order`):
+1. Apply the factor values from `runs[i]._factors` to the codebase / config / env
+2. Run `metric_cmd` (with `metric_samples` and `metric_warmups` from setup)
+3. Run `guard_cmd` (must exit 0)
+4. Append to `.build-loop/optimize/results.jsonl`: `{"run_id": i, "value": <number>, "guard_ok": true}`
+5. Revert factor changes (each run is from the same baseline; DOE doesn't accumulate)
+
+After all runs complete, fit effects:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_doe.py analyze \
+  --design .build-loop/optimize/doe.json \
+  --results .build-loop/optimize/results.jsonl \
+  --direction "<lower|higher>" \
+  > .build-loop/optimize/effects.json
+```
+
+Output: ranked main effects + interactions, `r2` if non-saturated, best run id with the winning factor levels. Apply the winning combination as a single commit. Optionally hand off to autoresearch for local search around the DOE-identified optimum (run `optimize_loop.py` with the DOE-best as the starting baseline).
+
+### Branch C (autoresearch) — single-variable greedy
 
 Dispatch the `optimize-runner` agent. It executes:
 
