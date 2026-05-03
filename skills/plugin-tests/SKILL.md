@@ -15,7 +15,7 @@ This is the **static** tier — pure text/JSON validation, zero runtime dependen
 
 - **User direct** — `/build-loop:test [test-name]` or any of: "test plugin", "validate plugin", "lint plugin", "verify manifest", "check skill resolution", "run plugin tests"
 - **Orchestrator intent routing** — TEST mode (4th mode alongside Build / Optimize / Research) — `agents/build-orchestrator.md` §Intent Routing
-- **Orchestrator auto-dispatch in Phase 4 Review-B Validate** (always on, since v0.7.3) — when Phase 3 Execute's diff touches any plugin metadata path: `*.claude-plugin/*.json`, `commands/*.md`, `skills/*/SKILL.md`, `agents/*.md`, `.mcp.json`, `hooks/hooks.json`, or any path referenced by `mcpServers`. Exit 1 routes into the memory-first gate as a test failure; exit 2 logs and continues without blocking.
+- **Orchestrator auto-dispatch in Phase 4 Review-B Validate** (always on, since v0.7.3; advisory-not-blocking since v0.7.4) — when Phase 3 Execute's diff touches any plugin metadata path: `*.claude-plugin/*.json`, `commands/*.md`, `skills/*/SKILL.md`, `agents/*.md`, `.mcp.json`, `hooks/hooks.json`, or any path referenced by `mcpServers`. Findings are written to `.build-loop/state.json.pluginTests` and surfaced in the Review-F Report — they do NOT block the build or auto-route to Iterate. Static-analysis is heuristic (regex over markdown frontmatter); the user decides whether each finding is a real defect or a false positive.
 - **Pre-publish gate** when bumping a plugin version (the human-driven equivalent of the auto-dispatch — run `/build-loop:test --strict` before pushing)
 
 ## What's tested
@@ -50,10 +50,12 @@ Each script is independent — running one without the others is fine. Each foll
 ## Exit codes
 
 - `0` — all tests pass
-- `1` — at least one test failed (CI gate)
+- `1` — at least one test failed (advisory in Review-B; hard CI gate when invoked via `/build-loop:test --strict` or run directly in CI)
 - `2` — runner error (test script itself crashed)
 
-The orchestrator surfaces `1` as a Review-B Validate failure → routes to Iterate. `2` is treated as a verifier outage and logged but doesn't block.
+The orchestrator records findings under `.build-loop/state.json.pluginTests` and surfaces a one-line summary in the Review-F Report. **It does not gate the build on plugin-tests results.** Why: static-analysis findings are heuristic (regex/pattern matches over markdown frontmatter) and false positives are common — 3 hit on initial rollout (legitimate user-invocable bridge, filesystem-based pre-flight, PRD-absence prose). A blocking gate that flaps gets disabled, which destroys the value. Surfacing as advisory keeps the signal alive while letting the user judge edge cases.
+
+For pre-publish checks, run with `--strict` to make the CLI exit non-zero on any finding (without involving the orchestrator).
 
 ## Adding new tests
 
