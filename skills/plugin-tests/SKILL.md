@@ -13,10 +13,10 @@ This is the **static** tier — pure text/JSON validation, zero runtime dependen
 
 ## When this skill fires
 
-- User says: "test plugin", "validate plugin", "lint plugin", "verify manifest", "check skill resolution", "run plugin tests"
-- Orchestrator routes a TEST-intent build (4th mode alongside Build / Optimize / Research)
-- Phase 4 Review-B Validate when the build touches plugin metadata files (`*.claude-plugin/plugin.json`, `*/SKILL.md`, `commands/*.md`, `.mcp.json`)
-- Pre-publish gate when bumping a plugin version
+- **User direct** — `/build-loop:test [test-name]` or any of: "test plugin", "validate plugin", "lint plugin", "verify manifest", "check skill resolution", "run plugin tests"
+- **Orchestrator intent routing** — TEST mode (4th mode alongside Build / Optimize / Research) — `agents/build-orchestrator.md` §Intent Routing
+- **Orchestrator auto-dispatch in Phase 4 Review-B Validate** (always on, since v0.7.3) — when Phase 3 Execute's diff touches any plugin metadata path: `*.claude-plugin/*.json`, `commands/*.md`, `skills/*/SKILL.md`, `agents/*.md`, `.mcp.json`, `hooks/hooks.json`, or any path referenced by `mcpServers`. Exit 1 routes into the memory-first gate as a test failure; exit 2 logs and continues without blocking.
+- **Pre-publish gate** when bumping a plugin version (the human-driven equivalent of the auto-dispatch — run `/build-loop:test --strict` before pushing)
 
 ## What's tested
 
