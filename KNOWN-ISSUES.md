@@ -94,3 +94,13 @@ Both can be installed; neither shadows the other. The `debugger-bridge` skill ex
 **Impact on callers.** Internal build-loop callers (orchestrator Assess priming, Review-B `read_logs`, Review-F `store`/`outcome`, debugging-memory skill) were updated to the new qualified names. External callers using `mcp__plugin_claude_code_debugger__*` continue to work as long as the standalone plugin is installed — they target the standalone deliberately.
 
 **Verification.** `python3 scripts/test_mcp_registration.py` now passes all 5 checks without skipping `ServerNamingHygiene` (previously skipped with a hint).
+
+## Phase 5 fan-out is mode-dependent — surfaced 2026-05-03
+
+**Symptom.** When the `build-orchestrator` agent is dispatched as a subagent (via `Agent(subagent_type="build-loop:build-orchestrator", ...)` from any parent session), it cannot spawn implementer subagents during Phase 5 — the no-sub-sub-agents rule from `~/.claude/CLAUDE.md` §Sub-Agents applies. First observed during the live test of v0.9.0's parallel UX-fix fan-out: orchestrator halted before any implementer dispatch, reporting "no `Task`/`Agent` tool in orchestrator tool surface."
+
+**Root cause.** The orchestrator's frontmatter declares `tools: [..., "Agent", ...]`, but the runtime strips `Agent` from any agent that itself runs as a subagent (preventing the cascade documented in user CLAUDE.md). This is a hard constraint, not a bug.
+
+**Resolved:** 2026-05-03 — orchestrator now degrades gracefully to **inline-implementer mode** when `Agent` is unavailable. Same protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed) applied serially by the orchestrator itself instead of dispatched in parallel to subagents. Quality bar unchanged; parallelism lost. The Review-F report now surfaces a `⚠️ Phase 5 ran in subagent mode — no parallel fan-out` note when degradation kicks in.
+
+**For full parallelism**, invoke `/build-loop:run` directly in a top-level session (not via Agent dispatch from a parent). Top-level mode dispatches up to 4 implementer subagents in parallel per partition group. Subagent mode is the safe fallback, not the intended primary path.
