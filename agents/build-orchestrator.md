@@ -39,7 +39,12 @@ Before starting the 5-phase loop, classify the user's intent:
 - Route: Load `build-loop:research` skill. Run Phase 1 (Assess) only, output a research packet, stop. Do NOT proceed to Phase 2 (Plan).
 - Standalone: `/build-loop:research [topic]`
 
-When ambiguous, default to BUILD. The user can always redirect with `/build-loop:optimize` or `/build-loop:research`.
+**TEST** — User wants to validate plugin metadata, manifest, skill resolution, MCP wiring, or trigger-phrase coverage.
+- Signals: "test plugin", "validate plugin", "lint plugin", "verify manifest", "check skill resolution", "run plugin tests", "namesake collision", "MCP registration check"
+- Route: Load `build-loop:plugin-tests` skill. Static-analysis only (stdlib Python, sub-second). Skip Phases 2-5; report pass/fail per test class. For runtime tests (live MCP, real Skill() invocation, UI), proceed to a normal Build with a focused goal instead.
+- Standalone: `/build-loop:test [test-name]`
+
+When ambiguous, default to BUILD. The user can always redirect with `/build-loop:optimize`, `/build-loop:research`, or `/build-loop:test`.
 
 ## Your Core Responsibilities
 
@@ -69,6 +74,7 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
   - `structuredWriting` (pyramid-principle): user-visible copy, README, CHANGELOG, docs, PR description, status update, exec summary, information architecture
   - `promptAuthoring` (prompt-builder): product LLM prompts, agent instructions, eval judges, semantic-search query rewriting, RAG prompts
   - `promptEditingExisting` (prompt-builder + user confirmation): editing a prompt that already ships in the product
+  - `riskSurfaceChange` (security-methodology + security-reviewer): the build introduces or modifies any of — a new tool / MCP server / plugin / skill, a new LLM call or shipped prompt, persistent agent memory or vector store, an auth / authz / identity / permission boundary, an external API call, or handling of new user-data classes (PII, financial, health, credentials, regulated). Flip is sticky for the whole build. Routes Phase 4 Review-A to dispatch `security-reviewer` after `sonnet-critic`, and arms plan-verify rule 10 (`risk-surface-change-without-threat-model`) at Phase 2.
 - Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist. Project overrides global on conflict
 - **Architecture blast-radius** (if NavGator available): invoke `Skill("build-loop:navgator-bridge")`. It reads `.navgator/architecture/`, runs `navgator impact` on up to 5 highest-risk components, invokes `navgator llm-map` when `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, and writes a compact summary to `.build-loop/state.json.navgator.assess`. Phase 2 Plan consults this for scoping. If `.navgator/architecture/index.json` is missing, the skill emits a one-line note and exits; do not block.
 - **Observability baseline**: detect the project stack and run a passive observability scan (no code changes at Assess) to classify the project's logging level. Run language-aware grep:
@@ -150,7 +156,7 @@ See SKILL.md §"When to consult `model-router`" for the full policy.
 ### Phase 4: Review (sub-steps A-F)
 Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; the orchestrator's job is to route between them.
 
-- **A. Critic**: dispatch `sonnet-critic` on Execute's diff. On `strong-checkpoint` → back to Execute, no iteration burn. On `guidance` → log to `.build-loop/issues/` and proceed. Skip A on re-reviews after Iterate unless Iterate touched new files.
+- **A. Critic**: dispatch `sonnet-critic` on Execute's diff. On `strong-checkpoint` → back to Execute, no iteration burn. On `guidance` → log to `.build-loop/issues/` and proceed. Skip A on re-reviews after Iterate unless Iterate touched new files. **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 4.6, read-only) in parallel with `sonnet-critic`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed. After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
 - **B. Validate**: code graders → LLM-as-judge. If `availablePlugins.ibr` and UI work, invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile. If IBR is absent but the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt — static-analysis grep suite covering the top Calm Precision / a11y violations. Collect evidence. On any FAIL, run the memory-first gate.
   - **Memory-first gate (always on)** — runs on every Review-B criterion failure with an error-like signal (exception, test failure, build error). Skip when failure is expected and mapped (TDD "tests must fail until impl complete") or iteration is from user feedback rather than a reproducible bug. Steps:
     1. **Read logs first** — call `read_logs` MCP to pull structured log entries for the failure window:
