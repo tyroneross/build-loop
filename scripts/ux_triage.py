@@ -52,7 +52,8 @@ CHECKS: dict[str, list[tuple[str, str, str]]] = {
     "interactability": [
         # (label, regex, hint)
         ("button-no-handler-web", r"<button\b[^>]*?(?<!on[A-Z])>", "Button without onClick/onPress handler — verify it has a real action"),
-        ("link-no-target-web", r"<a\b(?![^>]*\bhref=)(?![^>]*\bonClick=)", "Anchor without href or onClick — likely dead"),
+        # NOTE: link-no-target-web is handled by find_multiline_tag_misses() below — JSX <a> tags
+        # commonly span newlines (`<a\n  href="..."\n>`) which line-bound regex flags as false positives.
         ("icon-button-no-label-web", r"<button[^>]*aria-hidden|<IconButton(?![^>]*aria-label)", "Icon-only button missing aria-label"),
         ("empty-action-swift", r"Button\([^)]*action:\s*\{\s*\}", "SwiftUI Button with empty action closure"),
     ],
@@ -112,6 +113,31 @@ def grep_file(path: Path, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
     return hits
 
 
+# Multi-line tag rule: find every <a ...> opening tag (may span lines), then check
+# whether the tag content has href= or onClick=. If neither, it's a dead link.
+# Using DOTALL because JSX wraps attributes onto multiple lines for readability.
+_A_TAG_RE = re.compile(r"<a\b([^<>]*?)>", re.DOTALL)
+_HAS_HREF_OR_HANDLER = re.compile(r"\b(href|onClick|onPress|onTap|to)\s*=")
+
+
+def find_dead_anchors(path: Path) -> list[tuple[int, str]]:
+    """Per-file scan for `<a>` tags missing href/onClick across multi-line attribute lists."""
+    hits: list[tuple[int, str]] = []
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return hits
+    for m in _A_TAG_RE.finditer(text):
+        attrs = m.group(1) or ""
+        if _HAS_HREF_OR_HANDLER.search(attrs):
+            continue
+        # Compute the line number of the tag opening
+        line_no = text.count("\n", 0, m.start()) + 1
+        snippet = m.group(0).replace("\n", " ").strip()[:200]
+        hits.append((line_no, snippet))
+    return hits
+
+
 def severity_for(dimension: str, label: str, count: int) -> str:
     if dimension == "interactability" and "no-handler" in label:
         return "blocker"
@@ -130,7 +156,11 @@ def classify_architecture_impact(hint: str, files: list[str]) -> bool:
 
 
 def make_id(dimension: str, label: str, files: list[str]) -> str:
-    h = hashlib.sha256("|".join([dimension, label, *sorted(files)]).encode()).hexdigest()[:8]
+    # Stable ID across re-runs: hash dimension+label only. Same finding-class
+    # always lands on the same .md filename regardless of how many evidence
+    # files appear or in what order. Prevents the "queue accretes duplicates
+    # on each --clear-less run" bug.
+    h = hashlib.sha256("|".join([dimension, label]).encode()).hexdigest()[:8]
     return f"{dimension}-{label}-{h}"
 
 
@@ -201,6 +231,33 @@ def main() -> int:
         "entries": [],
         "by_dimension": {dim: 0 for dim in CHECKS},
     }
+
+    # Multi-line scan: dead <a> tags whose attributes span newlines.
+    # Run before the regex sweep so its findings get the standard severity/queue treatment below.
+    dead_anchor_findings: list[tuple[str, int, str]] = []
+    for path in files:
+        if path.suffix not in WEB_EXT:
+            continue
+        for line_no, snippet in find_dead_anchors(path):
+            dead_anchor_findings.append((str(path.relative_to(workdir)), line_no, snippet))
+    if dead_anchor_findings:
+        label = "link-no-target-web"
+        hint = "Anchor without href, onClick, or routing target — likely dead. Multi-line tag scan."
+        severity = "major"
+        arch = classify_architecture_impact(hint, [f for (f, _, _) in dead_anchor_findings])
+        entry_id = make_id("interactability", label, [f for (f, _, _) in dead_anchor_findings])
+        write_entry(
+            queue_dir, template,
+            entry_id=entry_id, dimension="interactability", severity=severity,
+            label=label, hint=hint, findings=dead_anchor_findings, architecture_impact=arch,
+        )
+        summary["entries"].append({
+            "id": entry_id, "dimension": "interactability", "severity": severity,
+            "label": label, "count": len(dead_anchor_findings),
+            "architecture_impact": arch,
+            "path": str((queue_dir / f"{entry_id}.md").relative_to(workdir)),
+        })
+        summary["by_dimension"]["interactability"] = summary["by_dimension"].get("interactability", 0) + 1
 
     for dimension, checks in CHECKS.items():
         for label, regex_str, hint in checks:
