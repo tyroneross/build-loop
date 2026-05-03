@@ -235,7 +235,7 @@ Do not fetch URLs the user did not explicitly provide or that aren't core to the
 
 ## debug — Root-cause investigation
 
-The `build-loop:debug-loop` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill or its `debugger` MCP server fails to load:
+The `build-loop:debug-loop` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill or its `build-loop-debugger` MCP server fails to load:
 
 1. **Reproduce** — minimal case that fails every time. Write the command/steps down.
 2. **Isolate** — binary-search the diff / commits / inputs until you find the smallest change that flips pass ↔ fail.

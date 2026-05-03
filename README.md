@@ -22,7 +22,7 @@ Orchestrated 5-phase development loop (+1 optional Learn) for Claude Code. Bring
 /plugin install build-loop@build-loop
 ```
 
-build-loop bundles an MCP server (`debugger`) that provides incident-memory tools (`search`, `store`, `outcome`, `read_logs`, `list`). It is wired automatically via `.mcp.json` and starts on first plugin load.
+build-loop bundles an MCP server (`build-loop-debugger`) that provides incident-memory tools (`search`, `store`, `outcome`, `read_logs`, `list`). It is wired automatically via `.mcp.json` and starts on first plugin load. The name is plugin-prefixed to coexist with the standalone `claude-code-debugger` plugin's `debugger` server (both can be installed; neither shadows the other).
 
 ### Manual (local development)
 

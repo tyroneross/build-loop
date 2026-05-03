@@ -274,6 +274,17 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     include_interactions = (k <= 3)
     effects = fit_effects(matrix, y, include_interactions=include_interactions)
     findings = rank_findings(effects, factor_names)
+    direction = args.direction or "lower"
+    best_run_idx = int(np.argmin(y)) if direction == "lower" else int(np.argmax(y))
+    # Pull concrete factor levels for the best run, when the design file embeds
+    # them under runs[i]._factors (always written by cmd_generate). If the
+    # design lacks that mapping (legacy file), best_factors is omitted.
+    best_factors: dict | None = None
+    runs_block = design_data.get("runs")
+    if isinstance(runs_block, list) and 0 <= best_run_idx < len(runs_block):
+        candidate = runs_block[best_run_idx].get("_factors")
+        if isinstance(candidate, dict):
+            best_factors = candidate
     output = {
         "summary": {
             "design_type": design_data["design"]["type"],
@@ -283,9 +294,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "intercept": effects["intercept"],
         },
         "ranked_effects": findings,
-        "best_run": int(np.argmin(y)) if "lower" in (args.direction or "lower") else int(np.argmax(y)),
-        "best_value": float(np.min(y)) if "lower" in (args.direction or "lower") else float(np.max(y)),
+        "best_run": best_run_idx,
+        "best_value": float(np.min(y)) if direction == "lower" else float(np.max(y)),
+        "direction": direction,
     }
+    if best_factors is not None:
+        output["best_factors"] = best_factors
     print(json.dumps(output, indent=2))
     return 0
 

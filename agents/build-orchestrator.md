@@ -89,7 +89,7 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
   Classify into `well-instrumented` (structured logger detected — do nothing), `print-only` (only `print()` / `console.log` in production paths), or `silent` (no logging at all). Write to `.build-loop/state.json.observability.level`. Informational; Review-B/Iterate may consult this if a silent failure surfaces. Do NOT load `Skill("build-loop:logging-tracer")` at Assess — the skill is reactive only.
 - **Debugger context priming**: the debugger is bundled with build-loop (no plugin gate). Pull recent project incident context so the orchestrator is aware of what's been failing lately:
   ```
-  mcp__plugin_claude_code_debugger__list({ filter: { project: "<current>" }, limit: 10 })
+  mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })
   ```
   One-line summary: "Debugger memory: N recent incidents in this project, top categories: [...]." If memory is empty, skip silently. If the MCP server fails to start, fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep against `.build-loop/issues/`, `.build-loop/feedback.md`, `.bookmark/`) and flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
 - **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
@@ -170,7 +170,7 @@ Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; th
   - **Memory-first gate (always on)** — runs on every Review-B criterion failure with an error-like signal (exception, test failure, build error). Skip when failure is expected and mapped (TDD "tests must fail until impl complete") or iteration is from user feedback rather than a reproducible bug. Steps:
     1. **Read logs first** — call `read_logs` MCP to pull structured log entries for the failure window:
        ```
-       mcp__plugin_claude_code_debugger__read_logs({
+       mcp__plugin_build-loop-debugger__read_logs({
          source: "project",
          severity: "error",
          query: "<criterion keyword>",

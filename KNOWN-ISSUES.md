@@ -77,3 +77,20 @@ This bypasses the resolver entirely and produces the same outcome.
 **Auto-invocation.** Build-orchestrator runs the always-on memory-first gate at Review-B (calling `Skill("build-loop:debugging-memory")`), invokes `Skill("build-loop:logging-tracer")` reactively on `evidence_gap`, and escalates to `claude-code-debugger:assess` (parallel domain assessors) at 2 same-root-cause failures and `Skill("build-loop:debug-loop")` (causal-tree) at 3 same-criterion failures. The full cascade lives in `agents/build-orchestrator.md` §Phase 5.
 
 **Why merge instead of cherry-pick bridge.** The debugger is invoked from inside the build loop on every Review-B / Iterate failure — multiple times per build. Loose coupling didn't buy anything except an indirection layer. Other companions (NavGator, IBR) remain external because they're invoked at most a few times per build and have their own use cases outside build-loop.
+
+---
+
+## Bundled MCP server name collision — resolved 2026-05-01 (v0.8.2)
+
+**Symptom.** Both build-loop's bundled debugger and the standalone `claude-code-debugger` plugin previously registered an MCP server named `debugger`. When both plugins were installed, only one server "won" at runtime — the other was silently shadowed. Tools surfaced under `mcp__plugin_<name>__*` qualified names sometimes hit the wrong implementation depending on plugin load order.
+
+**Fix (v0.8.2).** Renamed the bundled server in `.mcp.json` from `debugger` to `build-loop-debugger`. The standalone `claude-code-debugger` plugin's server remains `debugger` (unchanged). Now:
+
+- Bundled (always present in build-loop): `mcp__plugin_build-loop-debugger__{search,store,outcome,read_logs,list}`
+- Standalone (only when `claude-code-debugger` is also installed): `mcp__plugin_claude_code_debugger__*`
+
+Both can be installed; neither shadows the other. The `debugger-bridge` skill explicitly delegates to the standalone `mcp__plugin_claude_code_debugger__*` surface for cross-project memory and additional assessor coverage when escalating beyond bundled capability.
+
+**Impact on callers.** Internal build-loop callers (orchestrator Assess priming, Review-B `read_logs`, Review-F `store`/`outcome`, debugging-memory skill) were updated to the new qualified names. External callers using `mcp__plugin_claude_code_debugger__*` continue to work as long as the standalone plugin is installed — they target the standalone deliberately.
+
+**Verification.** `python3 scripts/test_mcp_registration.py` now passes all 5 checks without skipping `ServerNamingHygiene` (previously skipped with a hint).

@@ -24,7 +24,7 @@ This is the **static** tier — pure text/JSON validation, zero runtime dependen
 |---|---|---|
 | `scripts/test_skill_resolution.py` | Namesake collisions (commands/X.md + skills/X/SKILL.md), frontmatter `name:` drift from dir name | `build-loop:build-loop` collision (shipped through 6 versions undetected before 0.4.1) |
 | `scripts/test_plugin_manifest.py` | Required manifest fields, version sync between plugin.json and marketplace.json, MCP path resolution, every command has frontmatter, skill name uniqueness | 0.4.0/0.3.2 marketplace drift; missing frontmatter on `commands/debugger-detail.md` |
-| `scripts/test_mcp_registration.py` | `.mcp.json` shape, referenced binaries exist, server-name hygiene (warns on bare names that collide across plugins) | The `debugger` server-name collision between bundled and standalone |
+| `scripts/test_mcp_registration.py` | `.mcp.json` shape, referenced binaries exist, server-name hygiene (warns on bare names that collide across plugins) | The `debugger` bare-name collision risk between bundled and standalone (resolved in 0.8.2 by naming the bundled server `build-loop-debugger`) |
 | `scripts/test_trigger_phrases.py` | Curated (skill, phrase) coverage in skill `description:` fields | Trigger-phrase gaps after the multi-provider auth audit |
 | `scripts/test_bridge_preflight.py` | Every `*-bridge/SKILL.md` has an availability/absence check + `user-invocable: false` | api-registry-bridge missing `user-invocable: false`; bridges that hard-fail when their target plugin isn't installed |
 

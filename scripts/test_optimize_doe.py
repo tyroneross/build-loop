@@ -243,5 +243,146 @@ class PyDOE3EquivalenceTests(unittest.TestCase):
                         "2^(5-2) fractional differs from pyDOE3")
 
 
+class HandoffToAutoresearchTests(unittest.TestCase):
+    """Exercise the full DOE → autoresearch pipeline.
+
+    Steps:
+      1. Generate a 3-factor full factorial design (8 runs).
+      2. Synthesize measurements with a known optimum.
+      3. Analyze — verify the resulting effects.json includes `best_factors`.
+      4. Initialize an autoresearch experiment with `--baseline-config` pointing
+         at the effects.json. Verify experiment.json embeds `doe_baseline` with
+         the DOE-best factor values.
+
+    Lives here (not test_optimize_loop) because the handoff is the bridge
+    between the two scripts; this test owns the integration contract.
+    """
+
+    LOOP_SCRIPT = HERE / "optimize_loop.py"
+
+    def _make_throwaway_repo(self, tmp: Path) -> None:
+        """optimize_loop.init expects a git repo and a runnable metric command."""
+        subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=tmp, check=True)
+        (tmp / "README.md").write_text("seed\n")
+        subprocess.run(["git", "add", "."], cwd=tmp, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=tmp, check=True)
+
+    def test_analyze_emits_best_factors(self) -> None:
+        factors = [
+            {"name": "batch_size", "low": 16, "high": 64},
+            {"name": "retries", "low": 1, "high": 5},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            # Generate
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), "generate",
+                 "--factors", json.dumps(factors), "--design", "full", "--seed", "0"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            design = json.loads(r.stdout)
+            (tmp / "design.json").write_text(json.dumps(design))
+            # Fake measurements: y = 100 - 8*x1 - 2*x2 (lower is better)
+            matrix = np.array(design["matrix"])
+            y = 100 - 8 * matrix[:, 0] - 2 * matrix[:, 1]
+            with (tmp / "results.jsonl").open("w") as f:
+                for i in range(len(y)):
+                    f.write(json.dumps({"run_id": i, "value": float(y[i])}) + "\n")
+            # Analyze with direction=lower → best run minimizes y → both factors high
+            r2 = subprocess.run(
+                [sys.executable, str(SCRIPT), "analyze",
+                 "--design", str(tmp / "design.json"),
+                 "--results", str(tmp / "results.jsonl"),
+                 "--direction", "lower"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(r2.returncode, 0, r2.stderr)
+            effects = json.loads(r2.stdout)
+            self.assertIn("best_factors", effects, "analyze must emit best_factors block")
+            self.assertEqual(effects["best_factors"], {"batch_size": 64, "retries": 5})
+            self.assertEqual(effects["direction"], "lower")
+
+    def test_optimize_loop_init_consumes_baseline_config(self) -> None:
+        factors = [
+            {"name": "batch_size", "low": 16, "high": 64},
+            {"name": "retries", "low": 1, "high": 5},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            self._make_throwaway_repo(tmp)
+            # Generate + analyze
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), "generate",
+                 "--factors", json.dumps(factors), "--design", "full", "--seed", "0"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            design = json.loads(r.stdout)
+            design_path = tmp / "design.json"
+            results_path = tmp / "results.jsonl"
+            effects_path = tmp / "effects.json"
+            design_path.write_text(json.dumps(design))
+            matrix = np.array(design["matrix"])
+            y = 100 - 8 * matrix[:, 0] - 2 * matrix[:, 1]
+            with results_path.open("w") as f:
+                for i in range(len(y)):
+                    f.write(json.dumps({"run_id": i, "value": float(y[i])}) + "\n")
+            r2 = subprocess.run(
+                [sys.executable, str(SCRIPT), "analyze",
+                 "--design", str(design_path), "--results", str(results_path),
+                 "--direction", "lower"],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(r2.returncode, 0, r2.stderr)
+            effects_path.write_text(r2.stdout)
+            # Initialize autoresearch experiment with baseline-config handoff
+            r3 = subprocess.run(
+                [sys.executable, str(self.LOOP_SCRIPT),
+                 "--init", "--workdir", str(tmp),
+                 "--target", "throughput",
+                 "--metric-cmd", "echo 42",
+                 "--direction", "lower",
+                 "--baseline-config", str(effects_path)],
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(r3.returncode, 0, r3.stderr)
+            # Verify experiment.json embeds doe_baseline
+            exp_path = tmp / ".build-loop" / "optimize" / "experiment.json"
+            self.assertTrue(exp_path.is_file(), f"experiment.json not created at {exp_path}")
+            exp = json.loads(exp_path.read_text())
+            self.assertIn("doe_baseline", exp, "experiment.json missing doe_baseline block")
+            self.assertEqual(exp["doe_baseline"]["factors"],
+                             {"batch_size": 64, "retries": 5})
+            self.assertEqual(exp["doe_baseline"]["direction"], "lower")
+            self.assertIn("design_type", exp["doe_baseline"])
+
+    def test_optimize_loop_init_rejects_missing_best_factors(self) -> None:
+        """A legacy effects.json without best_factors should fail loudly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            self._make_throwaway_repo(tmp)
+            legacy_effects = tmp / "legacy.json"
+            legacy_effects.write_text(json.dumps({
+                "summary": {"design_type": "full", "n_runs": 4, "n_factors": 2,
+                            "r2": 1.0, "intercept": 50},
+                "ranked_effects": [],
+                "best_run": 0,
+                "best_value": 42,
+                # NO best_factors key
+            }))
+            r = subprocess.run(
+                [sys.executable, str(self.LOOP_SCRIPT),
+                 "--init", "--workdir", str(tmp),
+                 "--target", "x", "--metric-cmd", "echo 1",
+                 "--baseline-config", str(legacy_effects)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("best_factors", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

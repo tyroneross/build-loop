@@ -227,6 +227,15 @@ def main(argv: list[str] | None = None) -> int:
                    choices=["high", "medium", "low"],
                    help="filter out candidates below this confidence")
     p.add_argument("--json", action="store_true", help="JSON output (default: human-readable)")
+    p.add_argument(
+        "--research-levels", action="store_true",
+        help="Mark high-confidence candidates with `needs_research: true` so the "
+             "calling skill can opt in to consulting build-loop:research for "
+             "best-practice level suggestions. The script itself never calls "
+             "research — it only flags candidates worth researching. The "
+             "orchestrator decides whether to invoke the research skill based "
+             "on user confirmation. Off by default.",
+    )
     args = p.parse_args(argv)
 
     root = Path(args.workdir).resolve()
@@ -242,7 +251,21 @@ def main(argv: list[str] | None = None) -> int:
     candidates = rank_candidates(candidates, args.top)
 
     if args.json:
-        print(json.dumps([asdict(c) for c in candidates], indent=2))
+        rows = [asdict(c) for c in candidates]
+        if args.research_levels:
+            # Mark high-confidence candidates whose name matches a known
+            # tuning-keyword pattern as research-eligible. The skill text
+            # explains how the orchestrator consumes this.
+            for r in rows:
+                if r.get("confidence") == "high":
+                    name_lower = r.get("name", "").lower()
+                    if any(kw in name_lower for kw in TUNING_KEYWORDS):
+                        r["needs_research"] = True
+                        r["research_topic"] = (
+                            f"best-practice levels for {r['name']} "
+                            f"(currently {r.get('current_value')})"
+                        )
+        print(json.dumps(rows, indent=2))
     else:
         if not candidates:
             print("No tunable parameters found.")

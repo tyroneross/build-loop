@@ -7,8 +7,10 @@ Checks:
   ConfigShape         — .mcp.json (or referenced file from plugin.json) is
                         valid JSON with the expected `mcpServers` key
   ServerNamingHygiene — server names should be plugin-prefixed to avoid name
-                        collisions across installed plugins (catches the
-                        bundled-vs-standalone "debugger" collision risk)
+                        collisions across installed plugins (build-loop ships
+                        its bundled server as `build-loop-debugger` so it does
+                        not collide with the standalone `claude-code-debugger`
+                        plugin's `debugger` server)
   CommandResolves     — for each server with command:"node" or similar, the
                         referenced script path resolves under CLAUDE_PLUGIN_ROOT
   NoDuplicateNames    — within this plugin, every server name is unique
@@ -95,6 +97,10 @@ class ServerNamingHygieneTests(unittest.TestCase):
     Multiple plugins each registering server name 'debugger' will collide —
     only one wins at runtime, the others are silently shadowed. Bare names
     aren't blocked by Claude Code, but they are a footgun.
+
+    Build-loop ships its bundled server as `build-loop-debugger` to coexist
+    cleanly with the standalone `claude-code-debugger` plugin's `debugger`
+    server. Both can be installed; both register; neither shadows the other.
     """
 
     def test_server_names_avoid_common_unprefixed_names(self) -> None:
@@ -105,7 +111,12 @@ class ServerNamingHygieneTests(unittest.TestCase):
         plugin_name = plugin_data.get("name", "")
         # Commonly-collisional bare names (likely to clash with another plugin)
         risky = {"debugger", "memory", "search", "auth", "logger", "tracer"}
-        risks = [n for n in servers if n in risky and not n.startswith(plugin_name)]
+        # A server is "prefixed" if its name starts with the plugin name OR
+        # contains it (e.g., plugin "build-loop" + server "build-loop-debugger").
+        risks = [
+            n for n in servers
+            if n in risky and plugin_name and plugin_name not in n
+        ]
         if risks:
             self.skipTest(
                 f"server name(s) {risks} are not plugin-prefixed and may collide "

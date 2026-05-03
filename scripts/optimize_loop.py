@@ -295,6 +295,14 @@ def init_experiment(workdir: Path, config: dict) -> Path:
         "iterations_kept": 0,
         "iterations_total": 0,
     }
+    # Optional DOE handoff: when --init was given --baseline-config <effects.json>,
+    # the caller's `config` already has a `doe_baseline` block. Record it so the
+    # autoresearch agent can apply the DOE-identified factor levels as the
+    # starting point before generating new hypotheses. The agent reads
+    # experiment.json.doe_baseline.factors before its first iteration.
+    doe_baseline = config.get("doe_baseline")
+    if isinstance(doe_baseline, dict):
+        experiment["doe_baseline"] = doe_baseline
     _save_experiment(workdir, experiment)
 
     results_path = _results_path(workdir)
@@ -602,6 +610,15 @@ def _cli() -> None:
         default="last",
         help="aggregation applied to measured metric runs",
     )
+    parser.add_argument(
+        "--baseline-config",
+        default=None,
+        help="(--init only) path to a DOE effects.json. Reads the best run's "
+             "factor levels and records them in experiment.json.doe_baseline so "
+             "the autoresearch agent can apply them as the starting point "
+             "before its first iteration. Optional; when omitted, the loop "
+             "starts from the current working tree.",
+    )
 
     args = parser.parse_args()
     workdir = Path(args.workdir).resolve()
@@ -626,10 +643,44 @@ def _cli() -> None:
         if not config["metric_cmd"]:
             print("ERROR: --metric-cmd required for --init", file=sys.stderr)
             sys.exit(1)
+        # Optional DOE→autoresearch handoff: read the DOE best run's factor
+        # levels from an effects.json file produced by `optimize_doe.py analyze`.
+        if args.baseline_config:
+            bc_path = Path(args.baseline_config).resolve()
+            if not bc_path.is_file():
+                print(f"ERROR: --baseline-config path not found: {bc_path}", file=sys.stderr)
+                sys.exit(1)
+            try:
+                effects_data = json.loads(bc_path.read_text())
+            except json.JSONDecodeError as e:
+                print(f"ERROR: --baseline-config is not valid JSON: {e}", file=sys.stderr)
+                sys.exit(1)
+            best_factors = effects_data.get("best_factors")
+            if not isinstance(best_factors, dict) or not best_factors:
+                print(
+                    "ERROR: --baseline-config does not contain a 'best_factors' block. "
+                    "Regenerate the design with a current optimize_doe.py (which embeds "
+                    "_factors in design.json runs) and re-run analyze.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            config["doe_baseline"] = {
+                "source": str(bc_path),
+                "best_run": effects_data.get("best_run"),
+                "best_value": effects_data.get("best_value"),
+                "direction": effects_data.get("direction"),
+                "factors": best_factors,
+                "design_type": effects_data.get("summary", {}).get("design_type"),
+            }
         path = init_experiment(workdir, config)
         exp = load_experiment(workdir)
         print(f"Experiment initialized: {path}")
         print(f"Baseline: {exp['baseline_value']}")
+        if "doe_baseline" in exp:
+            print(
+                f"DOE baseline applied: best_run={exp['doe_baseline'].get('best_run')} "
+                f"factors={exp['doe_baseline'].get('factors')}"
+            )
 
     elif args.log:
         for field_name in ("iteration", "commit", "metric", "delta", "status", "description"):

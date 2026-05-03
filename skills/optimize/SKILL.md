@@ -51,6 +51,16 @@ Returns ranked candidates (UPPER_SNAKE constants near tuning keywords, env vars 
 
 Only proceed once the user confirms. Do NOT auto-run optimization on heuristic candidates without explicit user buy-in — false positives are common (toast delays, breakpoints, port numbers all look numeric to the scanner but aren't perf knobs).
 
+**Optional: research-backed levels (opt-in).** If `availablePlugins.research` is true AND the user explicitly asks for "research-backed levels" (or accepts the prompt below), append `--research-levels` to the scanner invocation:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_suggest_factors.py --workdir "$PWD" --top 12 --json --research-levels
+```
+
+The scanner adds `needs_research: true` and a `research_topic` string to high-confidence candidates whose names match known tuning keywords (BATCH_SIZE, TIMEOUT, WORKERS, etc.). For each marked candidate, invoke `Skill("build-loop:research")` with the topic string ("best-practice levels for BATCH_SIZE (currently 32)"). Use the returned ranges to augment — not replace — the scanner's heuristic levels in the AskUserQuestion prompt. Default behavior is heuristic-only because research adds latency (a few minutes per candidate); the opt-in is for cases where the user wants level recommendations grounded in benchmarks rather than evenly-spaced guesses around the current value.
+
+The script never calls research itself — it only flags candidates worth researching. The orchestrator decides whether to invoke the research skill based on the user's explicit opt-in.
+
 ### Step 1.3 — Design selection (Branches A + B with k≥2)
 
 ```bash
@@ -108,7 +118,20 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_doe.py analyze \
   > .build-loop/optimize/effects.json
 ```
 
-Output: ranked main effects + interactions, `r2` if non-saturated, best run id with the winning factor levels. Apply the winning combination as a single commit. Optionally hand off to autoresearch for local search around the DOE-identified optimum (run `optimize_loop.py` with the DOE-best as the starting baseline).
+Output: ranked main effects + interactions, `r2` if non-saturated, best run id with the winning factor levels. The output also includes a `best_factors` block mapping factor names to their concrete values at the best run. Apply the winning combination as a single commit.
+
+**Optional handoff to autoresearch.** For local search around the DOE-identified optimum, initialize an autoresearch experiment using the effects.json as the starting baseline:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py \
+  --init --workdir "$PWD" \
+  --target "<name>" \
+  --metric-cmd "<cmd>" --guard-cmd "<cmd>" \
+  --direction "<lower|higher>" \
+  --baseline-config .build-loop/optimize/effects.json
+```
+
+`--baseline-config` reads the DOE best-run factor levels and records them in `experiment.json.doe_baseline.factors`. The autoresearch agent reads that block before its first iteration, applies those values as the starting point, then iterates from there. Without `--baseline-config`, the loop starts from the current working tree as before.
 
 ### Branch C (autoresearch) — single-variable greedy
 

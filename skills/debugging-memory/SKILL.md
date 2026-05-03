@@ -131,7 +131,7 @@ When a build / debugging session completes, close the feedback loop in two steps
 For each failure resolved during this run, store the incident:
 
 ```
-mcp__plugin_claude_code_debugger__store({
+mcp__plugin_build-loop-debugger__store({
   symptom: "<original failure string>",
   root_cause: "<what was wrong>",
   fix: "<diff or description>",
@@ -145,7 +145,7 @@ mcp__plugin_claude_code_debugger__store({
 For each prior gate where a `KNOWN_FIX` or `LIKELY_MATCH` was applied (whether direct-apply or adapted), report back whether the suggested fix actually worked:
 
 ```
-mcp__plugin_claude_code_debugger__outcome({
+mcp__plugin_build-loop-debugger__outcome({
   incident_id: "<from the gate record>",
   result: "worked" | "failed" | "modified",
   notes: "<one line>"
