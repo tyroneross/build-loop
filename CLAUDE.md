@@ -63,6 +63,19 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 Project-level (NOT under `.build-loop/`):
 - `.ibr-tests/_draft/<id>.ibr-test.json` — IBR test drafts authored by Sub-step D Gate 8 for surfaces the existing suite doesn't cover. The user accepts a draft by `mv` out of `_draft/`; rejects by `rm`. Build-loop never auto-promotes.
 
+## Native Architecture & Debugging Skills (Sourced from Canonical Repos)
+
+Architecture and debugging are load-bearing for nearly every build, so build-loop owns native copies under:
+
+- `skills/architecture/{scan,impact,trace,rules,dead,review}/SKILL.md` — copied from NavGator (`~/dev/git-folder/NavGator/`)
+- `skills/debugging/{memory,store,assess,debug-loop}/SKILL.md` — copied from claude-code-debugger (`~/dev/git-folder/claude-code-debugger/`)
+
+Each native SKILL.md carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks both trees, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md.
+
+The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are now deprecation stubs that point at the native skills; remove after one release cycle. The orchestrator (`agents/build-orchestrator.md`) calls native skills directly — Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
+
+**Why native, not bridges**: bridges drift silently against their upstream source; native sourced skills have provenance, are version-tracked, and can be audited with one script.
+
 ## Plugin Bridging Policy
 
 When build-loop integrates capabilities from other plugins, **bridge the actions and functions, not the UI surfaces**. Programmatic calls (CLI flags, MCP tools, headless modes) compose well; viewer dashboards and persistent browser sessions don't belong inside an automated loop. The IBR bridge demonstrates this — see `skills/ibr-bridge/SKILL.md` §Cherry-pick principle for the allowed/forbidden split.

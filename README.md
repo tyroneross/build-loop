@@ -153,6 +153,25 @@ The pattern amortizes Opus cost across many Sonnet subagents. Typical build: Opu
 - No improvement after 2 consecutive iterations → change strategy
 - **Hard stop at 5 iterations**
 
+## Native Architecture & Debugging Skills
+
+Architecture and debugging are used on nearly every build, so build-loop ships its own copies of the canonical NavGator and claude-code-debugger skills under:
+
+- `skills/architecture/{scan,impact,trace,rules,dead,review}/` — sourced from NavGator
+- `skills/debugging/{memory,store,assess,debug-loop}/` — sourced from claude-code-debugger
+
+Each native SKILL.md frontmatter carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 at copy time). The orchestrator calls them directly in Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
+
+Drift detection is a deliberate, opt-in pass:
+
+```bash
+python3 scripts/sync_skills.py
+# or
+Skill("build-loop:sync-skills")
+```
+
+The script recomputes each `source_hash` against the canonical upstream file and reports drift. Read-only — never auto-updates a SKILL.md. The legacy `skills/navgator-bridge/` and `skills/debugger-bridge/` are deprecation stubs and will be removed after one release cycle.
+
 ## External Skill Dependencies
 
 These skills enhance the loop when available but are not required:
