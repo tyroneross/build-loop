@@ -123,3 +123,22 @@ The following build-loop 0.9.0+ behaviors cannot be exercised inside a session t
 - `plugin-dev:plugin-validator` static review of all build-loop agents including the new implementer.
 
 **Workaround for item 1**: write a queue entry to `.build-loop/ux-queue/<id>.md` and let the orchestrator's inline-implementer fallback handle it. Same protocol, same quality bar, no parallelism.
+
+---
+
+## Marketplace `autoUpdate: true` does not actually re-install drifted plugins — 2026-05-03
+
+**Symptom.** A user marketplace declared in `~/.claude/settings.json.extraKnownMarketplaces` with `autoUpdate: true` keeps the marketplace's local checkout (`~/.claude/plugins/marketplaces/<name>/`) refreshed against the catalog source, but Claude Code does not re-install the per-plugin files into each entry's `installPath` (`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`). Result: the marketplace catalog declares e.g. `navgator: 0.8.2`, but `installed_plugins.json` still points its installPath at `…/navgator/0.8.1/`, and `Skill("navgator:…")` calls load the old code.
+
+**Reproduction.** Confirmed 2026-05-03 with `rosslabs-ai-toolkit`. Catalog declared `navgator 0.8.2` + `claude-code-debugger 1.8.2`; registry pointed at `0.8.1` and `1.8.1` respectively. Same shape applies to any user marketplace with `autoUpdate: true` plus catalog `source: { source: "github", repo: "<owner>/<repo>" }` entries.
+
+**Root cause (suspected, not authoritatively confirmed against Claude Code internals).** The `autoUpdate` flag appears wired only to the marketplace-checkout refresh path, not to a per-entry diff-and-reinstall pass. Filing a Claude Code bug is the right long-term fix; in the meantime see workaround.
+
+**Workaround (deployed 2026-05-03).** SessionStart hook script `~/.claude/scripts/hooks/marketplace-autoupdate.py` reads the registry, compares each entry's effective version (on-disk `plugin.json` first, falling back to the registry's `version` field) against the catalog's declared version, and on drift: clones the catalog source into a fresh `cache/<mkt>/<plugin>/<catalog-version>/` directory, verifies the cloned `plugin.json` `version` matches the catalog (rejects on mismatch — likely upstream packaging error), then atomically rewrites `installed_plugins.json` to point at the new dir. Old version dirs are retained for rollback. Lock file at `~/.claude/plugins/.marketplace-autoupdate.lock` prevents concurrent runs. Kill switch: `touch ~/.claude/settings.json.disable-marketplace-autoupdate`. Log: `~/.claude/logs/marketplace-autoupdate.log`. 30-second budget; over-budget plugins defer to the next session. Always exits 0 — never blocks session start.
+
+**Caveats and known holes.**
+- The official `claude-plugins-official` marketplace uses a different catalog shape (`source: "./relative-path"` strings, no per-plugin `version` fields); the script logs them as unsupported and skips. Those plugins are bundled with the marketplace checkout itself and update implicitly when `autoUpdate: true` refreshes the marketplace tree.
+- `@local` marketplace entries (e.g. local-dev symlinks under `installPath`) are skipped — local-dev iteration is not a drift target.
+- Plugins whose GitHub repo lacks `.claude-plugin/plugin.json` at the repo root (verified 2026-05-03 for `agent-builder`, `agent-astronomer`, `stratagem`) cannot be auto-updated by this script — the verify-before-swap step rejects them. Those repos need root-level `.claude-plugin/plugin.json` before the hook can update them.
+
+**Resolution criteria.** Remove this entry once Claude Code's `autoUpdate: true` actually re-installs catalog drift into `installPath`. The hook can then be deleted (`rm ~/.claude/scripts/hooks/marketplace-autoupdate.py` and remove the matching SessionStart entry from `~/.claude/settings.json`).
