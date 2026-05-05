@@ -60,7 +60,15 @@ CREATE TABLE IF NOT EXISTS episode_events (
   last_validated  TIMESTAMPTZ,
   last_accessed   TIMESTAMPTZ,
   closing_commit  TEXT,
-  files_touched   TEXT[]
+  files_touched   TEXT[],
+  -- v3 metadata (design §16, added 2026-05-04)
+  confidence_source        TEXT,
+  confirmation_count       INTEGER DEFAULT 0,
+  valid_until              TIMESTAMPTZ,
+  causal_parent_id         TEXT,
+  embedding_model_version  TEXT,
+  domain                   TEXT,
+  goal                     TEXT
 );
 
 -- ----------------------------------------------------------------------
@@ -87,7 +95,15 @@ CREATE TABLE IF NOT EXISTS semantic_facts (
   last_validated     TIMESTAMPTZ,
   last_accessed      TIMESTAMPTZ,
   closing_commit     TEXT,
-  files_touched      TEXT[]
+  files_touched      TEXT[],
+  -- v3 metadata (design §16, added 2026-05-04)
+  confidence_source        TEXT,
+  confirmation_count       INTEGER DEFAULT 0,
+  valid_until              TIMESTAMPTZ,
+  causal_parent_id         TEXT,
+  embedding_model_version  TEXT,
+  domain                   TEXT,
+  goal                     TEXT
 );
 
 -- ----------------------------------------------------------------------
@@ -175,6 +191,26 @@ ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS last_accessed  TIMESTAMPTZ;
 ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS closing_commit TEXT;
 ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS files_touched  TEXT[];
 
+-- ----------------------------------------------------------------------
+-- v3 metadata column backfill (idempotent, design §16, added 2026-05-04)
+-- Mirror this block in `migrate_schema_v3.py`.
+-- ----------------------------------------------------------------------
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS confidence_source        TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS confirmation_count       INTEGER DEFAULT 0;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS valid_until              TIMESTAMPTZ;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS causal_parent_id         TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS embedding_model_version  TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS domain                   TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS goal                     TEXT;
+
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS confidence_source        TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS confirmation_count       INTEGER DEFAULT 0;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS valid_until              TIMESTAMPTZ;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS causal_parent_id         TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS embedding_model_version  TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS domain                   TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS goal                     TEXT;
+
 -- B-tree indexes for time-series + lookup
 CREATE INDEX IF NOT EXISTS episode_events_user_time_idx
   ON episode_events (user_id, occurred_at DESC);
@@ -194,6 +230,16 @@ CREATE INDEX IF NOT EXISTS episode_events_project_task_category_idx
 
 CREATE INDEX IF NOT EXISTS episode_events_last_accessed_idx
   ON episode_events (last_accessed DESC NULLS LAST);
+
+-- v3 metadata-filter indexes (design §16)
+CREATE INDEX IF NOT EXISTS semantic_facts_domain_goal_idx
+  ON semantic_facts (domain, goal);
+
+CREATE INDEX IF NOT EXISTS semantic_facts_causal_parent_id_idx
+  ON semantic_facts (causal_parent_id) WHERE causal_parent_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS episode_events_domain_goal_idx
+  ON episode_events (domain, goal);
 
 -- GIN for hybrid full-text search on raw_content
 CREATE INDEX IF NOT EXISTS episode_events_raw_content_fts_idx

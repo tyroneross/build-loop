@@ -90,6 +90,49 @@ VALID_TASK_CATEGORIES = {
     "unknown",
 }
 
+# v3 metadata enums (added 2026-05-04, design §16).
+# `confidence_source` decouples *who asserted* from *how it was captured*
+# (the pre-existing `source` field still records the capture mechanism).
+VALID_CONFIDENCE_SOURCES = {
+    "user_statement",
+    "ai_inference",
+    "tool_extraction",
+    "external_import",
+    "unknown",
+}
+# `domain` is a stricter MECE axis than `primary_tag` (which stays as a
+# legacy alias). Keep this enum closed; expand only with a TAXONOMY bump.
+VALID_DOMAINS = {
+    "ui",
+    "api",
+    "data",
+    "search",
+    "auth",
+    "build",
+    "infra",
+    "tooling",
+    "docs",
+    "test",
+    "meta",
+    "unknown",
+}
+# `goal` captures *why* the work was done — orthogonal to domain.
+VALID_GOALS = {
+    "user-value",
+    "reliability",
+    "performance",
+    "security",
+    "dev-velocity",
+    "maintainability",
+    "compliance",
+    "learning",
+    "unknown",
+}
+
+# Default embedding model version. Re-embed is required when the active
+# backend's model changes; the version stamp is what makes that detectable.
+DEFAULT_EMBEDDING_MODEL_VERSION = "mxbai-embed-large-v1"
+
 VALID_EVENT_KINDS = {
     "run_completed",
     "run_failed",
@@ -206,6 +249,14 @@ def _parse_yaml_value(val: str) -> Any:
         return val[1:-1]
     if val.startswith('"') and val.endswith('"'):
         return val[1:-1]
+    # Bare integer (positive or negative). Floats are intentionally NOT coerced
+    # — none of the v1/v2/v3 fields are floats and matching ".5" eagerly would
+    # collide with date-like or version-like strings.
+    if re.match(r"^-?\d+$", val):
+        try:
+            return int(val)
+        except ValueError:
+            pass
     if val.startswith("[") and val.endswith("]"):
         inner = val[1:-1].strip()
         if not inner:
@@ -513,6 +564,14 @@ def db_dualwrite(
             "author": fm.get("author"),
             "files_touched": fm.get("files_touched") or [],
             "closing_commit": fm.get("closing_commit"),
+            # v3 mirrored into JSONB (design §16) so older readers still see them.
+            "confidence_source": fm.get("confidence_source"),
+            "confirmation_count": fm.get("confirmation_count"),
+            "valid_until": fm.get("valid_until"),
+            "causal_parent_id": fm.get("causal_parent_id"),
+            "embedding_model_version": fm.get("embedding_model_version"),
+            "domain": fm.get("domain"),
+            "goal": fm.get("goal"),
         }
         # Schema is operator-controlled (CLI flag), not user input. Validate shape
         # to keep the f-string interpolation safe; psycopg cannot bind table names.
@@ -523,11 +582,21 @@ def db_dualwrite(
         sql = (
             f"INSERT INTO {schema}.semantic_facts "
             "(subject, predicate, object, confidence, status, embedding, metadata, "
-            " project, tool, model, task_category, author, files_touched, closing_commit) "
+            " project, tool, model, task_category, author, files_touched, closing_commit, "
+            " confidence_source, confirmation_count, valid_until, causal_parent_id, "
+            " embedding_model_version, domain, goal) "
             "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
+            " %s, %s, %s, %s, %s, %s, %s, "
             " %s, %s, %s, %s, %s, %s, %s);"
         )
         files = fm.get("files_touched") or []
+        # confirmation_count may arrive from frontmatter as int already; coerce
+        # defensively because YAML scalars sometimes parse as strings.
+        cc_val = fm.get("confirmation_count")
+        try:
+            cc_db = int(cc_val) if cc_val is not None else 0
+        except (TypeError, ValueError):
+            cc_db = 0
         execute(
             sql,
             (
@@ -544,6 +613,13 @@ def db_dualwrite(
                 fm.get("author"),
                 list(files) if isinstance(files, list) else [],
                 fm.get("closing_commit"),
+                fm.get("confidence_source"),
+                cc_db,
+                fm.get("valid_until"),
+                fm.get("causal_parent_id"),
+                fm.get("embedding_model_version"),
+                fm.get("domain"),
+                fm.get("goal"),
             ),
         )
         log(f"db dual-write: inserted semantic_facts row for decision {decision_id}")
@@ -628,6 +704,52 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--closing-commit", default=None, help="Git SHA that closed this decision. Default: null.")
     p.add_argument("--last-validated", default=None, help="ISO date for last_validated. Default: null.")
     p.add_argument("--last-accessed", default=None, help="ISO date for last_accessed. Default: null.")
+
+    # v3 metadata (design §16). All optional at the CLI; defaults applied
+    # in `apply_v3_defaults` so legacy callers continue to work.
+    p.add_argument(
+        "--confidence-source",
+        default=None,
+        help=(
+            "Who asserted the fact (decoupled from `source`, which is *how* it was captured). "
+            f"One of: {sorted(VALID_CONFIDENCE_SOURCES)}. Default: derived from --source "
+            "(manual→user_statement, auto-*→ai_inference, migration→external_import)."
+        ),
+    )
+    p.add_argument(
+        "--confirmation-count",
+        default=None,
+        help="Times this memory was successfully acted upon. Integer >= 0. Default: 0.",
+    )
+    p.add_argument(
+        "--valid-until",
+        default=None,
+        help="Explicit expiration as ISO date (YYYY-MM-DD or full ISO-8601). Default: null.",
+    )
+    p.add_argument(
+        "--causal-parent-id",
+        default=None,
+        help="Decision id this one was caused by. Enables decision-chain queries. Default: null.",
+    )
+    p.add_argument(
+        "--embedding-model-version",
+        default=None,
+        help=(
+            f"Model that produced the embedding stored alongside this fact. Default: "
+            f"$EMBED_MODEL env var if set, else {DEFAULT_EMBEDDING_MODEL_VERSION!r}. "
+            "Triggers re-embed when the model id changes."
+        ),
+    )
+    p.add_argument(
+        "--domain",
+        default=None,
+        help=f"Subject domain (stricter MECE than primary_tag). One of: {sorted(VALID_DOMAINS)}. Default: 'unknown'.",
+    )
+    p.add_argument(
+        "--goal",
+        default=None,
+        help=f"Why the work was done. One of: {sorted(VALID_GOALS)}. Default: 'unknown'.",
+    )
 
     # DB dual-write (Phase 2)
     p.add_argument("--db", dest="db", action="store_true", default=True, help="Enable Postgres dual-write (default)")
@@ -738,6 +860,113 @@ def apply_v2_defaults(
         "files_touched": files_touched,
         "closing_commit": closing_commit,
     }
+
+
+# ---------- v3 metadata defaults & validator (design §16) ----------
+
+
+def _confidence_source_default_for_source(source: str) -> str:
+    """Map the existing `source` field to a sensible `confidence_source`
+    default. The two fields are orthogonal but correlate at write time."""
+    if source == "manual":
+        return "user_statement"
+    if source == "migration":
+        return "external_import"
+    if isinstance(source, str) and source.startswith("auto-"):
+        return "ai_inference"
+    if source == "orchestrator":
+        return "ai_inference"
+    return "unknown"
+
+
+def _default_embedding_model_version() -> str:
+    """Read $EMBED_MODEL env var (set by embed_backend's deployment config)
+    or fall back to the canonical default. The env var convention matches
+    `embed_backend._select_backend()`, so v3 entries written during a
+    process where MLX/Ollama selected a non-default model will record that
+    model id verbatim."""
+    return os.environ.get("EMBED_MODEL") or DEFAULT_EMBEDDING_MODEL_VERSION
+
+
+def apply_v3_defaults(
+    *,
+    confidence_source: str | None,
+    confirmation_count: str | int | None,
+    valid_until: str | None,
+    causal_parent_id: str | None,
+    embedding_model_version: str | None,
+    domain: str | None,
+    goal: str | None,
+    source: str,
+) -> dict[str, Any]:
+    """Apply schema-v3 defaults. Returns a dict of the 7 v3 fields.
+
+    Defaults follow design §16. CLI args arrive as strings; this helper
+    coerces `confirmation_count` to int and leaves the rest as-is.
+    """
+    if confidence_source is None:
+        confidence_source = _confidence_source_default_for_source(source)
+    if confirmation_count is None:
+        cc_int: int = 0
+    else:
+        try:
+            cc_int = int(confirmation_count)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"confirmation_count must be int, got {confirmation_count!r}") from e
+    if embedding_model_version is None:
+        embedding_model_version = _default_embedding_model_version()
+    if domain is None:
+        domain = "unknown"
+    if goal is None:
+        goal = "unknown"
+    return {
+        "confidence_source": confidence_source,
+        "confirmation_count": cc_int,
+        "valid_until": valid_until,
+        "causal_parent_id": causal_parent_id,
+        "embedding_model_version": embedding_model_version,
+        "domain": domain,
+        "goal": goal,
+    }
+
+
+def validate_v3(v3: dict[str, Any]) -> None:
+    """Raise ValueError on any v3 field violation."""
+    cs = v3.get("confidence_source")
+    if cs not in VALID_CONFIDENCE_SOURCES:
+        raise ValueError(
+            f"confidence_source {cs!r} not in {sorted(VALID_CONFIDENCE_SOURCES)}"
+        )
+    cc = v3.get("confirmation_count")
+    if not isinstance(cc, int) or isinstance(cc, bool):
+        raise ValueError(f"confirmation_count must be int, got {type(cc).__name__}")
+    if cc < 0:
+        raise ValueError(f"confirmation_count must be >= 0, got {cc}")
+    vu = v3.get("valid_until")
+    if vu not in (None, "null", ""):
+        if not isinstance(vu, str) or not _valid_iso_date(vu):
+            raise ValueError(f"valid_until must be ISO date or null, got {vu!r}")
+    emv = v3.get("embedding_model_version")
+    if not isinstance(emv, str) or not emv.strip():
+        raise ValueError(f"embedding_model_version must be a non-empty string, got {emv!r}")
+    d = v3.get("domain")
+    if d not in VALID_DOMAINS:
+        raise ValueError(f"domain {d!r} not in {sorted(VALID_DOMAINS)}")
+    g = v3.get("goal")
+    if g not in VALID_GOALS:
+        raise ValueError(f"goal {g!r} not in {sorted(VALID_GOALS)}")
+    cp = v3.get("causal_parent_id")
+    if cp is not None and (not isinstance(cp, str) or not cp.strip()):
+        raise ValueError(f"causal_parent_id must be a non-empty string or null, got {cp!r}")
+
+
+_ISO_DATE_VALIDATE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})?)?$"
+)
+
+
+def _valid_iso_date(s: str) -> bool:
+    return bool(_ISO_DATE_VALIDATE_RE.match(s))
 
 
 def validate_v2(v2: dict[str, Any]) -> None:
@@ -900,6 +1129,18 @@ def _do_write(
             infer_files=getattr(args, "infer_files_touched", False),
         )
         validate_v2(v2)
+        # v3 (design §16). Applied AFTER v2 so v3 defaults can read v2.source.
+        v3 = apply_v3_defaults(
+            confidence_source=getattr(args, "confidence_source", None),
+            confirmation_count=getattr(args, "confirmation_count", None),
+            valid_until=getattr(args, "valid_until", None),
+            causal_parent_id=getattr(args, "causal_parent_id", None),
+            embedding_model_version=getattr(args, "embedding_model_version", None),
+            domain=getattr(args, "domain", None),
+            goal=getattr(args, "goal", None),
+            source=args.source,
+        )
+        validate_v3(v3)
     except ValueError as e:
         log(f"validation error: {e}")
         return 1
@@ -931,6 +1172,14 @@ def _do_write(
         "last_accessed": v2["last_accessed"],
         "files_touched": v2["files_touched"],
         "closing_commit": v2["closing_commit"],
+        # v3 (design §16) — appended after v2 to keep canonical order stable.
+        "confidence_source": v3["confidence_source"],
+        "confirmation_count": v3["confirmation_count"],
+        "valid_until": v3["valid_until"],
+        "causal_parent_id": v3["causal_parent_id"],
+        "embedding_model_version": v3["embedding_model_version"],
+        "domain": v3["domain"],
+        "goal": v3["goal"],
     }
     body = {
         "context": args.context,
@@ -972,6 +1221,14 @@ def _do_write(
                     "task_category": v2["task_category"],
                     "author": v2["author"],
                     "source": args.source,
+                    # v3 mirror (design §16)
+                    "confidence_source": v3["confidence_source"],
+                    "confirmation_count": v3["confirmation_count"],
+                    "valid_until": v3["valid_until"],
+                    "causal_parent_id": v3["causal_parent_id"],
+                    "embedding_model_version": v3["embedding_model_version"],
+                    "domain": v3["domain"],
+                    "goal": v3["goal"],
                     "dedup_key": f"decision:{auto_supersede_id}:superseded_by:{new_id}",
                 },
             )
@@ -993,6 +1250,14 @@ def _do_write(
                 "confidence": args.confidence,
                 "source": args.source,
                 "supersedes": auto_supersede_id,
+                # v3 mirror (design §16)
+                "confidence_source": v3["confidence_source"],
+                "confirmation_count": v3["confirmation_count"],
+                "valid_until": v3["valid_until"],
+                "causal_parent_id": v3["causal_parent_id"],
+                "embedding_model_version": v3["embedding_model_version"],
+                "domain": v3["domain"],
+                "goal": v3["goal"],
                 "dedup_key": f"decision:{new_id}:{accept_kind}",
             },
         )

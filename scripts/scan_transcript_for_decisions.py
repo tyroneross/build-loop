@@ -550,6 +550,22 @@ def write_trusted(workdir: Path, item: dict, db: bool) -> tuple[bool, str]:
         Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
     )
     model = os.environ.get("CLAUDE_MODEL") or "claude-opus-4-7"
+    # v3 metadata for skill-driven captures (design §16).
+    # - `confidence_source`: 'user_statement' iff confidence==explicit AND the
+    #   item carries a verbal_marker / direct quote (signal-based per the
+    #   auto-decision-capture skill); else 'ai_inference'. Fallback default
+    #   inside write_decision will mirror this from `source` if we omit it,
+    #   but we set it explicitly so the wire trail is unambiguous.
+    # - `embedding_model_version`: omitted; the writer will read $EMBED_MODEL
+    #   or fall back to mxbai-embed-large-v1 — matches whichever backend is live.
+    # - `domain` / `goal`: 'unknown' for now. Auto-inference deferred to v4.
+    has_verbal_marker = bool(
+        item.get("verbal_marker")
+        or (isinstance(item.get("evidence"), str) and item.get("evidence", "").strip())
+    )
+    confidence_source = (
+        "user_statement" if (confidence == "explicit" and has_verbal_marker) else "ai_inference"
+    )
     args = [
         sys.executable, str(WRITE_DECISION_SCRIPT),
         "--workdir", str(workdir),
@@ -569,6 +585,10 @@ def write_trusted(workdir: Path, item: dict, db: bool) -> tuple[bool, str]:
         "--model", model,
         "--task-category", (item.get("task_category") or "unknown"),
         "--author", "auto",
+        # v3
+        "--confidence-source", confidence_source,
+        "--domain", (item.get("domain") or "unknown"),
+        "--goal", (item.get("goal") or "unknown"),
     ]
     if not db:
         args.append("--no-db")
@@ -624,6 +644,11 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
     )
     model = os.environ.get("CLAUDE_MODEL") or "claude-opus-4-7"
+    # v3 metadata (design §16). Tier-3 captures are by definition LLM-derived
+    # and unconfirmed, so confidence_source defaults to 'ai_inference'.
+    embed_model_version = (
+        os.environ.get("EMBED_MODEL") or "mxbai-embed-large-v1"
+    )
     fm: dict[str, Any] = {
         "id": new_id,
         "slug": slug,
@@ -647,6 +672,14 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         "last_accessed": None,
         "files_touched": [],
         "closing_commit": None,
+        # v3 (design §16) — quarantined captures are unconfirmed by definition.
+        "confidence_source": "ai_inference",
+        "confirmation_count": 0,
+        "valid_until": None,
+        "causal_parent_id": None,
+        "embedding_model_version": embed_model_version,
+        "domain": (item.get("domain") or "unknown"),
+        "goal": (item.get("goal") or "unknown"),
     }
     body = {
         "context": item.get("context") or "",

@@ -151,6 +151,48 @@ signal:
 - env vars / settings / runtime config → `config`
 - everything else → `unknown` (let the user override later via `/knowledge:review`)
 
+### v3 metadata fields (skill-driven captures, design §16)
+
+Frontmatter v3 (added 2026-05-04) adds seven more fields. The writer fills
+sensible defaults, but skill-driven captures should set the three that
+benefit from conversational signal:
+
+| Field | Skill default | When to override |
+|---|---|---|
+| `--confidence-source` | `user_statement` if confidence=`explicit` AND a verbal marker / quote is captured; else `ai_inference` | Set explicitly whenever you can attribute the assertion. `user_statement` for direct quotes ("let's go with X"); `ai_inference` for topic-coherent inferences; `tool_extraction` if the value came from a deterministic tool output rather than the conversation |
+| `--domain` | `unknown` | **Set explicitly** when the conversational scope is clear: `ui` for visual / interaction work, `api` for endpoint contracts, `data` for storage layer, `search` for retrieval / recall / indexing, `auth` for identity / permissions, `build` for compilation / packaging / CI, `infra` for deploy / hosting / runtime, `tooling` for dev workflow / CLI / linters, `docs` for documentation, `test` for test-suite work, `meta` for cross-cutting / process / architecture |
+| `--goal` | `unknown` | **Set explicitly** when the user's framing makes intent clear: `user-value` for end-user-visible improvements, `reliability` for bug fixes / robustness, `performance` for speed / cost / efficiency, `security` for hardening, `dev-velocity` for developer-experience gains, `maintainability` for refactor / readability, `compliance` for regulated requirements, `learning` for spike / explore |
+| `--confirmation-count` | `0` | Almost never override at write time — the bumper hook (future) increments this on successful action |
+| `--valid-until` | `null` | Set when the decision is bound to a date — quarterly OKR, vendor contract end, model deprecation |
+| `--causal-parent-id` | `null` | Set when this decision is downstream of a specific prior decision (use the 4-digit id) |
+| `--embedding-model-version` | `$EMBED_MODEL` env or `mxbai-embed-large-v1` | Almost never override; the writer reads the active backend automatically |
+
+**Examples — `domain` and `goal` from conversational context:**
+
+| User said | `domain` | `goal` |
+|---|---|---|
+| "fix this bug in the search retrieval" | `search` | `reliability` |
+| "speed up the homepage loader" | `ui` | `performance` |
+| "rotate the API keys before Friday" | `auth` | `security` |
+| "rewrite the auth middleware to be testable" | `auth` | `maintainability` |
+| "add a CSV export to the dashboard" | `ui` | `user-value` |
+| "investigate which queue library to use" | `infra` | `learning` |
+| "update the CONTRIBUTING.md" | `docs` | `dev-velocity` |
+| "tighten the lint rules" | `tooling` | `maintainability` |
+
+When in doubt, leave them as `unknown` rather than guess — the user can
+backfill via `/knowledge:review`.
+
+**`confidence_source` — when to set what:**
+
+- Direct verbal marker (the user typed it) → `user_statement`
+- Choice converter (Claude offered A/B/C, user picked one) → `user_statement`
+- Action confirmation (user did the thing Claude proposed) → `user_statement`
+- Topic-coherent inference (no direct quote, but the topic stood) → `ai_inference`
+- Pulled from external memory / migration import / vector-DB sync → `external_import`
+- Deterministic tool output (e.g., `git log`, `grep`) → `tool_extraction`
+- Genuinely cannot tell → `unknown`
+
 Output is the new 4-digit decision ID on stdout (e.g. `0042`). Errors go
 to stderr.
 

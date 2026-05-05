@@ -25,6 +25,13 @@ last_validated: null
 last_accessed: null
 files_touched: []
 closing_commit: null
+confidence_source: external_import
+confirmation_count: 0
+valid_until: null
+causal_parent_id: null
+embedding_model_version: mxbai-embed-large-v1
+domain: test
+goal: unknown
 ---
 
 # Sonnet-heavy pattern meta-test (self-build)

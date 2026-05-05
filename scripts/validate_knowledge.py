@@ -24,7 +24,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from write_decision import (  # type: ignore  # noqa: E402
     CONFIDENCE_ORDER,
+    VALID_CONFIDENCE_SOURCES,
     VALID_CONFIDENCES,
+    VALID_DOMAINS,
+    VALID_GOALS,
     VALID_SOURCES,
     VALID_STATUSES,
     VALID_TASK_CATEGORIES,
@@ -61,6 +64,18 @@ OPTIONAL_V2_KEYS = [
     "last_accessed",
     "files_touched",
     "closing_commit",
+]
+
+# v3 optional fields (informational; design §16). Validator only enforces
+# shape when present, so pre-migration files don't fail validation.
+OPTIONAL_V3_KEYS = [
+    "confidence_source",
+    "confirmation_count",
+    "valid_until",
+    "causal_parent_id",
+    "embedding_model_version",
+    "domain",
+    "goal",
 ]
 
 # ISO-date-or-null pattern; allows full ISO-8601 with or without time.
@@ -147,6 +162,41 @@ def validate_decision_file(
         dv = fm.get(df)
         if dv not in (None, "null", "") and not _ISO_DATE_RE.match(str(dv)):
             errors.append(f"{path}: {df} must be ISO date or null, got {dv!r}")
+
+    # v3 metadata (design §16). Treat as informational when entirely absent
+    # (pre-migration files) but enforce shape when present.
+    cs = fm.get("confidence_source")
+    if cs is not None and cs not in VALID_CONFIDENCE_SOURCES:
+        errors.append(
+            f"{path}: confidence_source={cs!r} not in {sorted(VALID_CONFIDENCE_SOURCES)}"
+        )
+    cc = fm.get("confirmation_count")
+    if cc is not None:
+        # YAML-tiny parser may return int or string.
+        try:
+            cc_int = int(cc)
+        except (TypeError, ValueError):
+            errors.append(f"{path}: confirmation_count must be int >= 0, got {cc!r}")
+        else:
+            if cc_int < 0:
+                errors.append(f"{path}: confirmation_count must be >= 0, got {cc_int}")
+    vu = fm.get("valid_until")
+    if vu not in (None, "null", "") and not _ISO_DATE_RE.match(str(vu)):
+        errors.append(f"{path}: valid_until must be ISO date or null, got {vu!r}")
+    cp = fm.get("causal_parent_id")
+    if cp not in (None, "null", "") and not (isinstance(cp, str) and cp.strip()):
+        errors.append(f"{path}: causal_parent_id must be a non-empty string or null, got {cp!r}")
+    emv = fm.get("embedding_model_version")
+    if emv is not None and (not isinstance(emv, str) or not emv.strip()):
+        errors.append(
+            f"{path}: embedding_model_version must be a non-empty string, got {emv!r}"
+        )
+    dom = fm.get("domain")
+    if dom is not None and dom not in VALID_DOMAINS:
+        errors.append(f"{path}: domain={dom!r} not in {sorted(VALID_DOMAINS)}")
+    gl = fm.get("goal")
+    if gl is not None and gl not in VALID_GOALS:
+        errors.append(f"{path}: goal={gl!r} not in {sorted(VALID_GOALS)}")
 
     sup = fm.get("supersedes")
     if sup not in (None, "null", ""):

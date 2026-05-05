@@ -69,6 +69,11 @@ def hybrid_search_facts(
     model: str | None = None,
     task_category: str | None = None,
     author: str | None = None,
+    # v3 filters (design §16) — applied BEFORE cosine/BM25 ranking, same
+    # typed-column-or-JSONB-fallback pattern as v2.
+    domain: str | None = None,
+    goal: str | None = None,
+    confidence_source: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run hybrid search over semantic_facts.
 
@@ -102,6 +107,9 @@ def hybrid_search_facts(
     _add_meta_filter("model", model)
     _add_meta_filter("task_category", task_category)
     _add_meta_filter("author", author)
+    _add_meta_filter("domain", domain)
+    _add_meta_filter("goal", goal)
+    _add_meta_filter("confidence_source", confidence_source)
 
     where_sql = " AND ".join(where_clauses)
     sql = (
@@ -276,6 +284,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default=None, help="Filter facts to this model")
     p.add_argument("--task-category", default=None, help="Filter facts to this task category")
     p.add_argument("--author", default=None, help="Filter facts to this author")
+    # v3 metadata filters (design §16). Applied BEFORE cosine/BM25 ranking.
+    p.add_argument("--domain", default=None, help="Filter facts to this domain")
+    p.add_argument("--goal", default=None, help="Filter facts to this goal")
+    p.add_argument(
+        "--confidence-source",
+        default=None,
+        help="Filter facts to this confidence_source (e.g. user_statement)",
+    )
     p.add_argument("--no-bump-last-accessed", action="store_true", help="Skip the last_accessed bump on returned rows")
     args = p.parse_args(argv)
 
@@ -299,6 +315,9 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             task_category=args.task_category,
             author=args.author,
+            domain=args.domain,
+            goal=args.goal,
+            confidence_source=args.confidence_source,
         )
         episodes = (
             hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
