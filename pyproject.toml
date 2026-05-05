@@ -21,6 +21,14 @@ dependencies = [
 test = [
     "pytest>=8",
 ]
+# Optional Postgres dual-write deps. Required by:
+#   scripts/db.py            — episodic memory writes
+#   scripts/sync_navgator_lessons.py (Chunk 7) — NavGator lessons sync
+# Sync scripts gracefully degrade when these aren't installed; tests
+# stub psycopg out entirely. Install with `uv pip install -e .[db]`.
+db = [
+    "psycopg[binary]>=3.1",
+]
 
 # Real Python package lives at src/build_loop/ so `python -m build_loop.architecture`
 # resolves cleanly. The parent plan referenced `src/architecture/` as shorthand;
