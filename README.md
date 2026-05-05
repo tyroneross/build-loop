@@ -172,6 +172,14 @@ Skill("build-loop:sync-skills")
 
 The script recomputes each `source_hash` against the canonical upstream file and reports drift. Read-only — never auto-updates a SKILL.md. The legacy `skills/navgator-bridge/` and `skills/debugger-bridge/` are deprecation stubs and will be removed after one release cycle.
 
+## Architecture engine (Chunk 1 shipped)
+
+Native Python architecture engine under `src/build_loop/architecture/`. Walks the repo (.gitignore-aware), parses Python via `ast` and TS/JS via tree-sitter, persists a NavGator-shape index under `.build-loop/architecture/`, and exposes pure-function impact/trace/rules/dead analyses. NavGator becomes optional escalation, not a hard dependency.
+
+```bash
+uv run python -m build_loop.architecture {scan|impact|trace|rules|dead|connections} [--json]
+```
+
 ## External Skill Dependencies
 
 These skills enhance the loop when available but are not required:
