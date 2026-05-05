@@ -36,12 +36,18 @@ without a concrete signal.
 
 | Signal | Confidence | Write target | Write timing | Example |
 |---|---|---|---|---|
-| **Direct verbal marker** | `explicit` | trusted (`.episodic/decisions/`) | immediately on user turn | "let's go with X" / "ship it" / "use Y" |
+| **Direct verbal marker (user)** | `explicit` | trusted (`.episodic/decisions/`) | immediately on user turn | "let's go with X" / "ship it" / "use Y" |
 | **Choice converter** | `explicit` | trusted | immediately | Claude offered A/B/C; user said "B" |
-| **Action-confirmation** | `confirmed` | trusted | after action accepted | Claude proposed → wrote code → user accepted |
+| **Implementation declarative (agent)** | `explicit` | trusted | when stated in agent reasoning | "I'll use X for Y", "going with X over Y because Z", "implementing via X". For build-orchestrator subagents specifically — task-execution language IS a decision signal. |
+| **Tradeoff statement** | `explicit` | trusted | when "X over Y because Z" appears | "extend YAML parser instead of changing test expectations" / "use X (Apache-2.0) over Y (GPL-3) because licensing" |
+| **Threshold/parameter declaration with rationale** | `explicit` | trusted | when a numeric/named value is bound to reasoning | "cosine 0.85 because design ref §12 cites Mem0/Zep production consensus" / "default budget 25s leaves headroom on cold qwen3:8b" |
+| **Default-value selection** | `confirmed` | trusted | when a default is declared | "default: `claude-opus-4-7` (current top model)" / "fall back to ollama on MLX failure" |
+| **Action-confirmation (user)** | `confirmed` | trusted | after action accepted | Claude proposed → wrote code → user accepted without reverting |
 | **Continuation pattern** | `confirmed` | trusted | when topic shifts past decision | proposal stood while conversation moved on |
 | **Topic-coherent inference** | `inferred` | trusted, **overwriteable** | aggressive — written during session | Claude pattern-matched a position; user did not object but did not endorse |
 | **Pure pattern-match from prior conversation** | `assumed` | trusted, **overwriteable** | aggressive — written during session | inferred from past decisions or memory |
+
+**Note on agent-style language (build-orchestrator subagents, implementer subagents).** Task-execution language ("I'll add X", "extending Y", "default to Z") is just as much a decision signal as user-conversational language ("let's use Y"). Earlier versions of this skill under-captured agent decisions because the patterns were tuned only for user-Claude back-and-forth. The three middle rows above (Implementation declarative / Tradeoff / Threshold) are the explicit fix. **If you are reasoning as a subagent and you make any of those moves, capture it.**
 
 **Tier 1 + 2 (explicit + confirmed) live captures during the session.**
 Use `scripts/write_decision.py` directly with `--confidence explicit` or

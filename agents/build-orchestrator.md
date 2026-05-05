@@ -210,6 +210,24 @@ Review runs as 6 ordered sub-steps. See SKILL.md §Phase 4 for the full spec; th
 - **E. Simplify**: invoke `/simplify` on changed files. Preserve public API, tests, observability, user value, and modular boundaries needed for scalability, accuracy, security, testability, or stable interfaces. Do not simplify by removing necessary states, accuracy, scalability, accessibility, or real data paths. If integrated simplification is better, record `MODULARITY EXCEPTION`.
 - **F. Report** (only on final Review pass, not intermediate): write scorecard to `.build-loop/evals/`, append run entry to `state.json.runs[]`, invoke `Skill("build-loop:debugging-store")` for each newly resolved Review-B/Iterate failure (writes via the bundled debugger `store` MCP and calls `outcome` for any prior incidents that were applied), and invoke `Skill("build-loop:architecture-dead")` for the orphan scan (diffs against the Phase 1 Assess baseline to surface ONLY new orphans introduced this build). Before any push/deploy, run the deployment policy gate. If action is `auto`, proceed after Review passes; if `confirm`, ask the user before running; if `block`, do not run. If `platform: "apple"` AND goal includes deploy, invoke `apple-dev` deploy flow under the same policy: TestFlight/App Store Connect upload/export defaults to auto, App Store production release/submission defaults to confirm.
 
+  **Episodic memory capture (when `.episodic/` exists in the project)**: subagents do not reliably auto-fire the `auto-decision-capture` skill mid-task. To make decision capture deterministic for build-orchestrator runs, invoke the transcript scan explicitly before completing Phase 5 Report:
+
+  ```bash
+  # Locate this session's transcript. Claude Code sets $CLAUDE_TRANSCRIPT_PATH
+  # for hook contexts; in subagent contexts it may be unset, in which case fall
+  # back to the most-recent .jsonl under ~/.claude/projects/<encoded-cwd>/.
+  TRANSCRIPT="${CLAUDE_TRANSCRIPT_PATH:-$(ls -t ~/.claude/projects/*/$(basename "$CLAUDE_PROJECT_DIR" | tr '[:upper:]' '[:lower:]')*.jsonl 2>/dev/null | head -1)}"
+  if [ -d "$CLAUDE_PROJECT_DIR/.episodic" ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+    python3 "$CLAUDE_PROJECT_DIR/scripts/scan_transcript_for_decisions.py" \
+      --transcript "$TRANSCRIPT" \
+      --workdir "$CLAUDE_PROJECT_DIR" \
+      --log-file "${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log" \
+      2>&1 | tail -3
+  fi
+  ```
+
+  Include the resulting capture count in the Report line as `Captures: trusted=N, review=M, skipped_dup=K`. The script always exits 0 (per its hook contract) so this never fails the build. **This complements** the auto-decision-capture skill (interactive sessions) and the Stop hook (user-session-end) — three mechanisms covering three contexts.
+
 Review also checks the intent pack and modular systems pack: does the result advance the north star, satisfy the update intent, avoid fake data in user-decision paths, remove or avoid dead UI, use the simplest durable approach that protects user experience, keep ownership MECE, and preserve modular boundaries that matter?
 
 ### Phase 5: Iterate (up to 5x)

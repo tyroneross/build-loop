@@ -369,13 +369,33 @@ def build_prompt_c(transcript_text: str, prior_decisions: str, allowed_tags: lis
         "  }\n\n"
         "Rules:\n"
         "- Only capture if there is textual signal. No speculation without evidence.\n"
-        "- explicit = direct verbal marker (\"let's go with X\", \"use Y\")\n"
-        "- confirmed = action accepted or topic moved past proposal without objection\n"
-        "- inferred = topic-coherent inference; user did not object but did not endorse\n"
+        "- explicit = ANY of these patterns count as explicit:\n"
+        "    * Direct verbal marker (user): \"let's go with X\", \"use Y\", \"ship it\"\n"
+        "    * Implementation declarative (agent): \"I'll use X for Y\", \"going with X over Y\",\n"
+        "      \"implementing via X\", \"extending Z\". Task-execution language is a decision\n"
+        "      signal — capture it the same as user-conversational language.\n"
+        "    * Tradeoff statement: \"X over Y because Z\", \"chose X instead of Y because Z\".\n"
+        "      The word \"because\" with a paired alternative is a strong explicit signal.\n"
+        "    * Threshold/parameter declaration with rationale: \"cosine 0.85 because design ref\n"
+        "      §12 cites Mem0/Zep consensus\". A numeric or named value bound to reasoning is\n"
+        "      a captured decision.\n"
+        "- confirmed = action accepted or topic moved past proposal without objection;\n"
+        "    default-value selection (\"default: X\", \"fall back to Y on failure\")\n"
+        "- inferred = topic-coherent inference without explicit endorsement\n"
         "- assumed = pure pattern-match from prior conversation, weak evidence\n"
         + tags_clause +
         "- Do NOT output anything outside the JSON array.\n"
         "- Empty array is acceptable when the transcript has no decisions.\n\n"
+        "Examples of agent-style decisions you SHOULD capture:\n"
+        '  - \"I\\u2019ll add `psycopg[binary]` to requirements.txt\" → '
+        '{decision:\"Add psycopg[binary] dependency for persistent DB connection\",'
+        ' confidence:\"explicit\", primary_tag:\"tooling\"}\n'
+        '  - \"extend YAML parser instead of changing test expectations\" → '
+        '{decision:\"Extend custom YAML parser to handle bare ints (vs PyYAML or test refactor)\",'
+        ' confidence:\"explicit\", primary_tag:\"tooling\"}\n'
+        '  - \"default to nomic-embed-text-v1.5 unless EMBED_MODEL is set\" → '
+        '{decision:\"Default embedding model is nomic-embed-text-v1.5; env var override available\",'
+        ' confidence:\"confirmed\", primary_tag:\"data\"}\n\n'
         f"Existing decisions (do not duplicate):\n{prior_decisions or '(none)'}\n\n"
         "Transcript:\n"
         f"{transcript_text}\n"
