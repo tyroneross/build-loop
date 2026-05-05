@@ -170,7 +170,7 @@ python3 scripts/sync_skills.py
 Skill("build-loop:sync-skills")
 ```
 
-The script recomputes each `source_hash` against the canonical upstream file and reports drift. Read-only — never auto-updates a SKILL.md. The legacy `skills/navgator-bridge/` and `skills/debugger-bridge/` are deprecation stubs and will be removed after one release cycle.
+The script recomputes each `source_hash` against the canonical upstream file and reports drift. Read-only — never auto-updates a SKILL.md. The legacy `skills/navgator-bridge/` and `skills/debugger-bridge/` deprecation stubs were removed in v0.10.0 — the orchestrator and downstream skills call the native skills directly.
 
 ## Architecture engine (Chunk 1 shipped)
 

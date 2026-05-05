@@ -261,15 +261,16 @@ When a pattern matches:
 - Apply the recommended approach
 - Note any caveats mentioned
 
-## Extended capability — escalate to standalone supporting plugin
+## Extended capability — global-scope memory + cross-domain assessors
 
-If project-local memory misses but cross-project memory might have a hit, OR the bundled MCP lacks a capability you need (additional assessor coverage, cross-instance coordination), invoke the bridge:
+If project-local memory misses but cross-project memory might have a hit, re-call this skill with broader scope, or escalate to the assess skill for additional domain assessor coverage:
 
 ```
-Skill("build-loop:debugger-bridge") with input { symptom, scope: "global", calledBy: "debugging-memory" }
+Skill("build-loop:debugging-memory") with input { symptom, scope: "global", calledBy: "debugging-memory" }
+Skill("build-loop:debugging-assess") with input { symptom, scope: "global" }
 ```
 
-The bridge pre-flights `availablePlugins.claudeCodeDebugger` — if the standalone supporting plugin isn't installed, it returns `{ delegated: false }` and you continue with bundled-only capability. No error, no log noise.
+Both are native skills sourced from claude-code-debugger and use the bundled debugger MCP. If the MCP is unavailable, the skills fall back to local grep across `.build-loop/issues/` and `.build-loop/feedback.md` — no error, just narrower coverage.
 
 Use this for:
 - A `NO_MATCH` from project memory where cross-project history might still have a relevant incident
