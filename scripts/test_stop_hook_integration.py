@@ -143,8 +143,36 @@ class StopHookIntegrationTests(unittest.TestCase):
         self._pre_pollution_subjects = self._snapshot_production_subjects()
 
     def tearDown(self) -> None:
+        # The hook now backgrounds the scan via `nohup ... &` — wait for any
+        # in-flight bg process holding the global lock to release before
+        # we delete the workdir, otherwise the bg process tries to read
+        # --transcript from a deleted path and fails silently.
+        self._wait_for_bg_scan_to_finish(timeout_s=200)
         self._cleanup_test_pollution()
         self.tmp.cleanup()
+
+    def _wait_for_bg_scan_to_finish(self, timeout_s: float = 200.0) -> None:
+        """Block until /tmp/build-loop-scan.lock is no longer held, or timeout."""
+        import fcntl
+        import time
+
+        lock_path = Path("/tmp/build-loop-scan.lock")
+        if not lock_path.exists():
+            return
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                fd = os.open(str(lock_path), os.O_RDWR)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    return  # lock free, no bg scan running
+                finally:
+                    os.close(fd)
+            except BlockingIOError:
+                time.sleep(0.5)
+            except OSError:
+                return  # lock file gone or unreadable
 
     def _snapshot_production_subjects(self) -> set[str]:
         """Return the set of (subject, object) tuples currently in the
@@ -185,20 +213,18 @@ class StopHookIntegrationTests(unittest.TestCase):
     def test_hook_command_runs_end_to_end_with_live_qwen(self) -> None:
         """The exact command from hooks.json runs cleanly and produces files.
 
-        We invoke via /bin/sh to mirror Claude Code's hook execution
-        contract. Pass `CLAUDE_PROJECT_DIR` and `CLAUDE_TRANSCRIPT_PATH`
-        so the hook resolves paths correctly.
+        The hook now backgrounds the scan via ``nohup ... &`` so the hook
+        itself returns in <500ms; the actual scan completes asynchronously.
+        We poll the artifact dirs until decisions appear OR a timeout, then
+        assert the captured count.
         """
+        import time
+
         cmd = _extract_scan_command_from_hooks_json()
 
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
         env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
-        # The hook's prefix `test -d "$CLAUDE_PROJECT_DIR/.episodic"` will
-        # pass; rest of the command pipes scan_transcript output through
-        # `head -3` and ORs with `true` to swallow failure. We can't easily
-        # detect "did the script run" from the hook command line; we
-        # validate by checking artifact files exist after the run.
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
@@ -206,25 +232,35 @@ class StopHookIntegrationTests(unittest.TestCase):
             text=True,
             env=env,
             cwd=str(self.workdir),
-            timeout=180,  # qwen3:8b cold call can be slow
+            timeout=10,  # hook itself returns fast; bg process polled below
         )
         # Hook contract: never fail the session.
         self.assertEqual(cp.returncode, 0, msg=f"hook exited nonzero. stdout={cp.stdout!r} stderr={cp.stderr!r}")
+        # Backgrounding contract: terminal stays clean.
+        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+        self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
 
-        # Confirm the hook actually invoked the scanner: scanner logs go
-        # to stdout (head -3 truncates), but artifacts are durable.
+        # Poll for the backgrounded scan's artifacts. qwen3:8b cold call
+        # can take 30-60s; allow up to 180s.
         review_dir = self.workdir / ".episodic" / "decisions" / "_review"
         trusted_dir = self.workdir / ".episodic" / "decisions"
-        review_files = list(review_dir.glob("*.md"))
-        trusted_files = [f for f in trusted_dir.glob("[0-9][0-9][0-9][0-9]-*.md") if f.is_file()]
+        deadline = time.monotonic() + 180
+        review_files: list = []
+        trusted_files: list = []
+        while time.monotonic() < deadline:
+            review_files = list(review_dir.glob("*.md"))
+            trusted_files = [f for f in trusted_dir.glob("[0-9][0-9][0-9][0-9]-*.md") if f.is_file()]
+            if (len(review_files) + len(trusted_files)) >= 1:
+                break
+            time.sleep(2)
+
         total = len(review_files) + len(trusted_files)
         self.assertGreaterEqual(
             total,
             1,
             msg=(
-                f"Expected at least 1 captured decision (trusted or review), "
-                f"got 0. Hook stdout: {cp.stdout!r}, stderr: {cp.stderr!r}, "
-                f"workdir contents: trusted={trusted_files}, review={review_files}"
+                f"Expected at least 1 captured decision (trusted or review) within 180s, "
+                f"got 0. workdir contents: trusted={trusted_files}, review={review_files}"
             ),
         )
 
@@ -370,6 +406,67 @@ class StopHookHardeningTests(unittest.TestCase):
             except OSError:
                 pass
             os.close(fd)
+
+    def test_hook_returns_immediately_via_backgrounding(self) -> None:
+        """The hook command MUST return in <500ms regardless of scan duration.
+
+        Per user direction: hooks must work in background and not interrupt
+        normal Claude Code session-end timing. The hook command uses
+        ``nohup ... &`` so the scan runs detached; the hook itself
+        exits 0 immediately.
+
+        Important: the hook command in hooks.json doesn't pass
+        ``--mock-llm-output``, so its backgrounded scan would call live
+        qwen3:8b (cold start 30-120s) and hold the global lock for that
+        long, polluting subsequent tests. We test by directly invoking the
+        scanner script with ``--mock-llm-output`` (empty array) wrapped in
+        ``nohup ... & exit 0`` to mirror the hook's backgrounding shape
+        without the live LLM work. This isolates the latency concern
+        (does ``& exit 0`` return fast?) from the LLM-call concern
+        (covered by the live-qwen integration test).
+        """
+        import time
+
+        # Mock LLM output: empty array → script exits cleanly, fast.
+        mock_path = self.workdir / "mock-llm.json"
+        mock_path.write_text("[]")
+
+        scanner = REPO / "scripts" / "scan_transcript_for_decisions.py"
+        log_dir = self.workdir / "fakehome" / ".local" / "state" / "build-loop"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "scan.log"
+        # Use a per-test lock to avoid contention with live-qwen test.
+        lock_file = self.workdir / "test.lock"
+
+        # Mirror hooks.json's backgrounding pattern exactly.
+        cmd = (
+            f'nohup python3 "{scanner}" '
+            f'--workdir "{self.workdir}" '
+            f'--transcript "{self.transcript}" '
+            f'--mock-llm-output "{mock_path}" '
+            f'--log-file "{log_file}" '
+            f'--lock-file "{lock_file}" '
+            f'</dev/null >/dev/null 2>&1 & exit 0'
+        )
+
+        t0 = time.perf_counter()
+        cp = subprocess.run(
+            ["/bin/sh", "-c", cmd],
+            capture_output=True,
+            text=True,
+            cwd=str(self.workdir),
+            timeout=5,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr!r}")
+        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+        self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
+        self.assertLess(
+            elapsed_ms,
+            500,
+            msg=f"hook took {elapsed_ms:.0f}ms; backgrounding regressed (expected <500ms)",
+        )
 
 
 if __name__ == "__main__":

@@ -637,7 +637,11 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Stop-hook end-of-session decision sweep.")
-    p.add_argument("--workdir", default=".", help="Project root containing .episodic/")
+    p.add_argument(
+        "--workdir",
+        default=os.environ.get("CLAUDE_PROJECT_DIR", "."),
+        help="Project root containing .episodic/. Defaults to $CLAUDE_PROJECT_DIR or cwd.",
+    )
     p.add_argument(
         "--transcript",
         default=os.environ.get("CLAUDE_TRANSCRIPT_PATH", ""),

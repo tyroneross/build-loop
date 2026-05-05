@@ -22,8 +22,8 @@
           },
           {
             "type": "command",
-            "command": "test -d \"$CLAUDE_PROJECT_DIR/.episodic\" && python3 \"$CLAUDE_PROJECT_DIR/scripts/scan_transcript_for_decisions.py\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log\" >/dev/null 2>&1 || true",
-            "timeout": 60000
+            "command": "test -d \"$CLAUDE_PROJECT_DIR/.episodic\" && nohup python3 \"$CLAUDE_PROJECT_DIR/scripts/scan_transcript_for_decisions.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log\" </dev/null >/dev/null 2>&1 & exit 0",
+            "timeout": 5000
           }
         ]
       }
