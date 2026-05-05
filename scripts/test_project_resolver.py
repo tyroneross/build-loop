@@ -22,11 +22,14 @@ import project_resolver  # type: ignore  # noqa: E402
 
 
 class PathsResolverTests(unittest.TestCase):
-    def test_default_root_is_build_loop_memory(self) -> None:
+    def test_default_root_uses_default_constant(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AGENT_MEMORY_ROOT", None)
             root = _paths.agent_memory_root()
-            self.assertTrue(str(root).endswith("/dev/git-folder/build-loop-memory"))
+            self.assertEqual(
+                root,
+                Path(os.path.expanduser(_paths.DEFAULT_AGENT_MEMORY_ROOT)),
+            )
 
     def test_root_env_override(self) -> None:
         with mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": "/tmp/custom-root"}, clear=False):
@@ -104,15 +107,15 @@ class ProjectResolverParseTests(unittest.TestCase):
         text = (
             "default: _unscoped\n"
             "projects:\n"
-            "  - path: ~/dev/git-folder/build-loop\n"
-            "    project: build-loop\n"
-            "  - path: ~/dev/git-folder/atomize-ai\n"
-            "    project: atomize-ai\n"
+            "  - path: ~/repos/example-app\n"
+            "    project: example-app\n"
+            "  - path: ~/repos/another-app\n"
+            "    project: another-app\n"
         )
         data = project_resolver._parse_projects_yaml(text)
         self.assertEqual(data["default"], "_unscoped")
         self.assertEqual(len(data["projects"]), 2)
-        self.assertEqual(data["projects"][0]["project"], "build-loop")
+        self.assertEqual(data["projects"][0]["project"], "example-app")
 
     def test_parse_skips_comments_and_blanks(self) -> None:
         text = (
@@ -142,8 +145,8 @@ class ResolveProjectTests(unittest.TestCase):
             "    project: build-loop\n"
             "  - path: /repo/build-loop/sub\n"
             "    project: build-loop-sub\n"
-            "  - path: /repo/atomize-ai\n"
-            "    project: atomize-ai\n",
+            "  - path: /repo/example-app\n"
+            "    project: example-app\n",
             encoding="utf-8",
         )
         self._env_patch = mock.patch.dict(

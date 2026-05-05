@@ -84,7 +84,7 @@ KNOWN_FACTS = [
         "subject": "decision:0002",
         "predicate": "performance",
         "object": "API p50 latency budget set at 100ms",
-        "project": "speaksavvy",
+        "project": "acme-app",
         "tool": "codex",
         "model": "gpt-5.4",
         "task_category": "bugfix",
@@ -134,7 +134,7 @@ def run_recall(query: str, **filters: str) -> str:
     ]
     # Phase B: when this test's caller did not pass --project explicitly,
     # disable default project-scoping so the test's controlled fixture rows
-    # (which include rows tagged 'speaksavvy', 'build-loop', etc.) all stay
+    # (which include rows tagged 'acme-app', 'build-loop', etc.) all stay
     # eligible for ranking. Tests that DO want project filtering pass
     # `project=...` via **filters and we honor that.
     if "project" not in filters:
@@ -185,7 +185,7 @@ class RecallFilterTests(unittest.TestCase):
         subjects = _extract_subjects(out)
         self.assertIn("decision:0001", subjects)
         self.assertIn("decision:0003", subjects)
-        self.assertNotIn("decision:0002", subjects, msg=f"speaksavvy fact leaked: {out}")
+        self.assertNotIn("decision:0002", subjects, msg=f"acme-app fact leaked: {out}")
 
     def test_task_category_filter_returns_only_matching(self) -> None:
         out = run_recall("performance budgets", task_category="research")

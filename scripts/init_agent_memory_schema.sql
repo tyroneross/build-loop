@@ -11,11 +11,10 @@
 --   psql -d agent_memory -v schema=tmp_test_schema  -f scripts/init_agent_memory_schema.sql
 --
 -- Default when -v is not provided: `personal_memory` (the global schema
--- introduced in the Phase B cutover; see
--- ~/.claude/plans/are-the-database-amnd-kind-cook.md).
+-- introduced in the Phase B cutover).
 --
--- Source design: ~/dev/research/topics/repo-episodic-memory-framework/
--- repo-episodic-memory-framework.md §13.
+-- Source design: see the project's repo-episodic-memory-framework
+-- design doc, §13.
 
 \set ON_ERROR_STOP on
 

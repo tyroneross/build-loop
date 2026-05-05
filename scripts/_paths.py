@@ -26,6 +26,7 @@ inspection. They never mkdir or touch files; callers handle creation.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -58,15 +59,45 @@ def decisions_root() -> Path:
     return agent_memory_root() / "decisions"
 
 
+# Project tag whitelist: alphanumerics, underscore, dash, dot. No path
+# separators, no leading dot+dot, no leading slash. Length 1..127. The
+# leading underscore allowance covers the canonical ``_unscoped`` tag.
+_SAFE_PROJECT_TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+
+
+def _safe_project_tag(tag: str) -> str:
+    """Return ``tag`` if it is safe to use as a directory name.
+
+    Rejects path-traversal sequences (``..``, ``/``, ``\\``) and
+    suspicious characters that could escape the decisions tree on
+    case-insensitive or symlink-following filesystems.
+    """
+    if not tag or not _SAFE_PROJECT_TAG_RE.match(tag) or tag in {".", ".."}:
+        raise ValueError(f"unsafe project tag: {tag!r}")
+    return tag
+
+
 def decisions_dir_for_project(project: str) -> Path:
     """Return ``decisions_root() / <project>``.
 
-    No validation on ``project`` — caller is responsible for resolving
-    the right tag (typically via ``project_resolver.resolve_project``).
+    Validates ``project`` against ``_safe_project_tag`` to prevent
+    directory traversal. Empty strings collapse to ``_unscoped``.
+    Then asserts the resolved path is rooted under ``decisions_root()``
+    to defend against symlink-based escapes.
     """
     if not project:
         project = "_unscoped"
-    return decisions_root() / project
+    safe = _safe_project_tag(project)
+    candidate = (decisions_root() / safe).resolve()
+    root_resolved = decisions_root().resolve()
+    # Path.is_relative_to was added in 3.9; fall back to startswith on str.
+    rel = str(candidate)
+    root_str = str(root_resolved)
+    if not (rel == root_str or rel.startswith(root_str + os.sep)):
+        raise ValueError(
+            f"project tag {project!r} resolves outside decisions_root()"
+        )
+    return decisions_root() / safe
 
 
 def legacy_decisions_dir(workdir: Path) -> Path:

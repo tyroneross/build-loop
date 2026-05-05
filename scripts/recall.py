@@ -100,9 +100,24 @@ def hybrid_search_facts(
     ]
     params: list[Any] = [emb, q, q, q, emb, q, q, q, confidence_floor]
 
+    # Allowlist of fields that may be interpolated into the WHERE clause.
+    # Any caller passing a `field` outside this set will raise ValueError.
+    # This converts the implicit safety assumption (only called with
+    # literals) into an enforced contract — defense against future
+    # callers that derive `field` from external input.
+    _ALLOWED_FILTER_FIELDS = frozenset({
+        "project", "tool", "model", "task_category", "author",
+        "domain", "goal", "confidence_source",
+    })
+
+    def _check_field(field: str) -> None:
+        if field not in _ALLOWED_FILTER_FIELDS:
+            raise ValueError(f"unsafe filter field: {field!r}")
+
     def _add_meta_filter(field: str, value: str | None) -> None:
         if value is None:
             return
+        _check_field(field)
         # Typed column OR JSONB fallback.
         where_clauses.append(
             f"(COALESCE({field}, metadata->>'{field}') = %s)"
@@ -117,6 +132,7 @@ def hybrid_search_facts(
         """
         if not values:
             return
+        _check_field(field)
         where_clauses.append(
             f"(COALESCE({field}, metadata->>'{field}') = ANY(%s))"
         )
