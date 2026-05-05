@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Hybrid retrieval entry point for repo-local episodic memory.
+
+Embeds the query via local Ollama (`nomic-embed-text`, 768-dim) and runs
+a hybrid search against `agent_memory.<schema>.semantic_facts` and
+`episode_events`:
+
+  - cosine similarity over `embedding` (HNSW index)
+  - pg_trgm word_similarity over `subject`, `predicate`, `object`
+  - GIN to_tsvector full-text over episode_events.raw_content
+
+Results are scored, deduped, and a small text summary is written to
+stdout (target ~500-1500 tokens; truncated if longer).
+
+Contract:
+  stdout      -> compact text summary (top-K relevant facts)
+  stderr      -> log lines
+  exit 0      -> success
+  exit 1      -> validation error
+  exit 2      -> filesystem / DB error
+
+Phase 1 Assess can call this script instead of reading INDEX.md
+wholesale. See `skills/knowledge/references/recall-integration.md`.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from db import query, vector_literal  # type: ignore  # noqa: E402
+from write_decision import (  # type: ignore  # noqa: E402
+    CONFIDENCE_ORDER,
+    log,
+    ollama_embed,
+)
+
+DEFAULT_SCHEMA = "build_loop_memory"
+DEFAULT_LIMIT = 5
+DEFAULT_NEIGHBOR_WINDOW = 3
+DEFAULT_FLOOR = "confirmed"
+
+
+def confidence_to_float(c: str) -> float:
+    return {"assumed": 0.25, "inferred": 0.5, "confirmed": 0.75, "explicit": 1.0}[c]
+
+
+def _safe_schema(schema: str) -> str:
+    if not re.match(r"^[a-z][a-z0-9_]*$", schema):
+        raise ValueError(f"unsafe schema name: {schema!r}")
+    return schema
+
+
+def hybrid_search_facts(
+    q: str,
+    embedding: list[float],
+    schema: str,
+    limit: int,
+    confidence_floor: float,
+) -> list[dict[str, Any]]:
+    """Run hybrid search over semantic_facts.
+
+    Score = 0.6 * cosine_sim + 0.4 * trigram_sim
+    Filters by status='active' and confidence >= floor.
+    """
+    schema = _safe_schema(schema)
+    emb = vector_literal(embedding)
+    sql = (
+        "SELECT "
+        "    id::text AS id, "
+        "    subject, predicate, object, confidence, status, metadata, valid_from, "
+        "    (1 - (embedding <=> %s::vector)) AS cosine_sim, "
+        "    GREATEST(similarity(subject, %s), similarity(predicate, %s), similarity(object, %s)) AS trgm_sim, "
+        "    (0.6 * (1 - (embedding <=> %s::vector)) "
+        "        + 0.4 * GREATEST(similarity(subject, %s), similarity(predicate, %s), similarity(object, %s))) AS score "
+        f"FROM {schema}.semantic_facts "
+        "WHERE status = 'active' "
+        "  AND embedding IS NOT NULL "
+        "  AND confidence >= %s "
+        "ORDER BY score DESC "
+        "LIMIT %s"
+    )
+    return query(
+        sql,
+        (emb, q, q, q, emb, q, q, q, confidence_floor, int(limit)),
+    )
+
+
+def hybrid_search_episodes(
+    q: str,
+    embedding: list[float],
+    schema: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Episode-events hybrid search: cosine + ts_rank."""
+    schema = _safe_schema(schema)
+    emb = vector_literal(embedding)
+    sql = (
+        "SELECT "
+        "    id::text AS id, "
+        "    session_id::text AS session_id, "
+        "    seq_num, occurred_at, actor, verb, object, raw_content, "
+        "    (1 - (embedding <=> %s::vector)) AS cosine_sim, "
+        "    ts_rank(to_tsvector('english', coalesce(raw_content,'')), "
+        "            plainto_tsquery('english', %s)) AS ts_rank_score "
+        f"FROM {schema}.episode_events "
+        "WHERE embedding IS NOT NULL "
+        "ORDER BY (1 - (embedding <=> %s::vector)) DESC "
+        "LIMIT %s"
+    )
+    return query(sql, (emb, q, emb, int(limit)))
+
+
+def neighbor_expand(
+    schema: str,
+    seed_ids: list[str],
+    window: int,
+) -> list[dict[str, Any]]:
+    """For each episode id, return surrounding events in the same session
+    (seq_num within +/- window). Deduped on id.
+    """
+    if not seed_ids:
+        return []
+    schema = _safe_schema(schema)
+    sql = (
+        "WITH seeds AS ( "
+        "  SELECT id, session_id, seq_num "
+        f"  FROM {schema}.episode_events "
+        "  WHERE id::text = ANY(%s) "
+        ") "
+        "SELECT DISTINCT ON (e.id::text) "
+        "  e.id::text AS id, e.session_id::text AS session_id, "
+        "  e.seq_num, e.occurred_at, e.actor, e.verb, e.raw_content "
+        f"FROM {schema}.episode_events e "
+        "JOIN seeds s ON e.session_id = s.session_id "
+        "            AND abs(e.seq_num - s.seq_num) <= %s "
+        "ORDER BY e.id::text, e.session_id, e.seq_num"
+    )
+    return query(sql, (list(seed_ids), int(window)))
+
+
+def render(
+    query: str,
+    facts: list[dict[str, Any]],
+    episodes: list[dict[str, Any]],
+    expanded: list[dict[str, Any]],
+    confidence_floor: str,
+    char_budget: int,
+) -> str:
+    out: list[str] = []
+    out.append(f"# Recall — query: {query!r}")
+    out.append(f"_confidence floor: {confidence_floor}; semantic facts={len(facts)}; episodes={len(episodes)}_")
+    out.append("")
+    if facts:
+        out.append("## Top semantic facts")
+        for f in facts:
+            md = f.get("metadata") or {}
+            if isinstance(md, str):
+                try:
+                    md = json.loads(md)
+                except Exception:  # noqa: BLE001
+                    md = {}
+            score = f.get("score")
+            label = f"[{f.get('subject')} | {f.get('predicate')}]"
+            obj = (f.get("object") or "").replace("\n", " ")
+            confidence_label = (
+                f"conf={f.get('confidence', '?')}"
+                + (f", confidence_label={md.get('confidence')}" if md.get("confidence") else "")
+            )
+            tags = md.get("tags") or []
+            entity = md.get("entity")
+            line = (
+                f"- score={score:.3f} {label}\n"
+                f"  object: {obj}\n"
+                f"  {confidence_label}, entity={entity}, tags={tags}\n"
+            )
+            out.append(line)
+    if episodes:
+        out.append("")
+        out.append("## Top episode events")
+        for e in episodes:
+            content = (e.get("raw_content") or "").replace("\n", " ")
+            score = e.get("cosine_sim")
+            out.append(f"- score={score:.3f} actor={e.get('actor')} verb={e.get('verb')} object={e.get('object')}")
+            out.append(f"  excerpt: {content[:200]}")
+        if expanded:
+            out.append("")
+            out.append("## Neighbor-expanded context")
+            for e in expanded[:20]:
+                content = (e.get("raw_content") or "").replace("\n", " ")
+                out.append(f"- session={e.get('session_id')[:8]} seq={e.get('seq_num')} {e.get('actor')}: {content[:120]}")
+    text = "\n".join(out)
+    if len(text) > char_budget:
+        text = text[: char_budget - 50] + "\n\n[truncated to char budget]"
+    return text
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Hybrid recall over agent_memory")
+    p.add_argument("--query", required=True)
+    p.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    p.add_argument(
+        "--confidence-floor",
+        default=DEFAULT_FLOOR,
+        choices=sorted(CONFIDENCE_ORDER),
+    )
+    p.add_argument("--neighbor-window", type=int, default=DEFAULT_NEIGHBOR_WINDOW)
+    p.add_argument("--schema", default=DEFAULT_SCHEMA)
+    p.add_argument("--embed-model", default="nomic-embed-text")
+    p.add_argument("--char-budget", type=int, default=8000)  # ~1500 tokens
+    p.add_argument("--no-episodes", action="store_true", help="Skip episode_events search")
+    args = p.parse_args(argv)
+
+    embedding = ollama_embed(args.query, args.embed_model)
+    if embedding is None:
+        log("recall: ollama embed unavailable; cannot run cosine search")
+        return 2
+
+    floor = confidence_to_float(args.confidence_floor)
+
+    try:
+        facts = hybrid_search_facts(args.query, embedding, args.schema, args.limit, floor)
+        episodes = (
+            hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
+            if not args.no_episodes
+            else []
+        )
+        expanded = (
+            neighbor_expand(args.schema, [e["id"] for e in episodes], args.neighbor_window)
+            if episodes
+            else []
+        )
+    except Exception as e:  # noqa: BLE001
+        log(f"recall: {e}")
+        return 2
+
+    text = render(args.query, facts, episodes, expanded, args.confidence_floor, args.char_budget)
+    print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

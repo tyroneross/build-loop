@@ -1,0 +1,16 @@
+# Build-loop runtime Python dependencies.
+#
+# Most build-loop scripts target Python 3.11+ stdlib only. The repo-local
+# episodic memory framework (Phase 2+3, scripts/write_decision.py et al.)
+# pulls in psycopg for low-latency persistent connections to the local
+# Postgres + pgvector sidecar.
+#
+# Install (recommended via uv):
+#   uv pip install --system -r requirements.txt
+#
+# Or with pip + PEP 668 override on Homebrew Python:
+#   pip3 install --break-system-packages -r requirements.txt
+#
+# psycopg[binary] bundles the libpq C bindings so no Postgres client lib
+# install is required at the system level.
+psycopg[binary]>=3.2,<4

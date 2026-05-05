@@ -19,6 +19,11 @@
             "type": "command",
             "command": "npx @tyroneross/claude-code-debugger mine --days 1 --store 2>/dev/null || true",
             "timeout": 30000
+          },
+          {
+            "type": "command",
+            "command": "test -d \"$CLAUDE_PROJECT_DIR/.episodic\" && python3 \"$CLAUDE_PROJECT_DIR/scripts/scan_transcript_for_decisions.py\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" 2>&1 | head -3 || true",
+            "timeout": 60000
           }
         ]
       }
