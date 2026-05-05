@@ -352,6 +352,59 @@ def cmd_diagram(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# ACP subcommands (Chunk 3 — aliases over scripts/build_acp.py + slice_acp.py)
+# ---------------------------------------------------------------------------
+
+
+def _scripts_dir() -> Path:
+    """Locate the repo's scripts/ directory.
+
+    The architecture package lives at ``<repo>/src/build_loop/architecture/``,
+    so ``parents[3]`` is the repo root.
+    """
+    return Path(__file__).resolve().parents[3] / "scripts"
+
+
+def cmd_acp(args: argparse.Namespace) -> int:
+    """Run scripts/build_acp.py inline (import + call, no subprocess)."""
+    repo = _resolve_repo(args.repo)
+    sys.path.insert(0, str(_scripts_dir()))
+    try:
+        import build_acp  # type: ignore
+    finally:
+        # Keep scripts/ on path for symmetry with __main__ invocation.
+        pass
+
+    cli_args: List[str] = ["--repo", str(repo)]
+    if args.out:
+        cli_args += ["--out", args.out]
+    if args.json:
+        cli_args.append("--json")
+    if args.no_state_update:
+        cli_args.append("--no-state-update")
+    return build_acp.main(cli_args)
+
+
+def cmd_acp_slice(args: argparse.Namespace) -> int:
+    repo = _resolve_repo(args.repo)
+    sys.path.insert(0, str(_scripts_dir()))
+    try:
+        import slice_acp  # type: ignore
+    finally:
+        pass
+
+    cli_args: List[str] = ["--repo", str(repo), "--files", *args.files,
+                           "--depth", str(args.depth)]
+    if args.lessons_match:
+        cli_args.append("--lessons-match")
+    if args.in_path:
+        cli_args += ["--in", args.in_path]
+    if args.out:
+        cli_args += ["--out", args.out]
+    return slice_acp.main(cli_args)
+
+
+# ---------------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------------
 
@@ -436,6 +489,42 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--focus", default=None, help="Component name to focus on (mode=focus).")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_diagram)
+
+    # ACP build + slice (Chunk 3 — thin aliases over ``scripts/build_acp.py``
+    # and ``scripts/slice_acp.py`` so callers can use the unified
+    # ``python -m build_loop.architecture`` entry point.
+    s = sub.add_parser(
+        "acp",
+        help="Build the Architecture Context Pack (.build-loop/architecture/acp.json).",
+    )
+    s.add_argument("--out", help="Output path (defaults to .build-loop/architecture/acp.json).")
+    s.add_argument("--json", action="store_true", help="Emit summary JSON to stdout.")
+    s.add_argument(
+        "--no-state-update",
+        action="store_true",
+        help="Skip writing state.json.architecture.acpPath.",
+    )
+    s.set_defaults(func=cmd_acp)
+
+    s = sub.add_parser(
+        "acp-slice",
+        help="Narrow the ACP to a file set for a single subagent dispatch.",
+    )
+    s.add_argument(
+        "--files", nargs="+", required=True,
+        help="Repo-relative or absolute file paths.",
+    )
+    s.add_argument("--depth", type=int, default=1, help="Neighbor walk depth (default 1).")
+    s.add_argument(
+        "--lessons-match", action="store_true",
+        help="Match lesson signatures against staged-file content.",
+    )
+    s.add_argument(
+        "--in", dest="in_path",
+        help="Input ACP path (defaults to <repo>/.build-loop/architecture/acp.json).",
+    )
+    s.add_argument("--out", help="Output path (defaults to stdout).")
+    s.set_defaults(func=cmd_acp_slice)
 
     return p
 
