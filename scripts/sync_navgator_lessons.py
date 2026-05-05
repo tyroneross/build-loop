@@ -64,6 +64,16 @@ CLI
     --global-only       only sync ~/.navgator/lessons/global-lessons.json
     --dry-run           don't open a DB connection or write anything
     --workdir PATH      project root (default: cwd)
+    --lessons-file PATH override the lessons source — treat the given file as the
+                        single project-local lessons.json and skip both the
+                        NavGator project-local + global discovery. Used by
+                        Chunk 8's promotion pipeline to feed
+                        ``.build-loop/architecture/lessons.json`` through the
+                        same Postgres write path with a different subject prefix.
+    --source-prefix STR override the ``subject = '<prefix><lesson_id>'`` mapping.
+                        Default ``lesson:nav:`` (NavGator origin). Chunk 8's
+                        promotion script passes ``lesson:bl:`` so build-loop-
+                        native lessons land in distinct semantic_facts rows.
 
 DSN resolution (matches build-loop convention from ``scripts/db.py``):
     1. $BUILD_LOOP_DATABASE_URL (preferred, plan-doc convention)
@@ -250,6 +260,7 @@ def _upsert_lesson(
     lesson: dict,
     project: str | None,
     embedding: list[float] | None,
+    subject_prefix: str = "lesson:nav:",
 ) -> None:
     """DELETE-then-INSERT a single lesson row in one transaction.
 
@@ -262,7 +273,7 @@ def _upsert_lesson(
         raise ValueError(f"unsafe schema name: {schema!r}")
 
     lesson_id = str(lesson.get("id", ""))
-    subject = f"lesson:nav:{lesson_id}"
+    subject = f"{subject_prefix}{lesson_id}"
     predicate = str(lesson.get("category", "") or "uncategorized")
     obj_summary = str(lesson.get("pattern", "") or "")
     promoted = bool(lesson.get("promoted", False))
@@ -388,6 +399,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Postgres schema. Default: $AGENT_MEMORY_SCHEMA or 'personal_memory'.",
     )
+    p.add_argument(
+        "--lessons-file",
+        default=None,
+        help=(
+            "Override lessons source. When set, the given file is treated as the "
+            "single project-local lessons.json and the NavGator project-local + "
+            "global discovery is skipped. Used by Chunk 8's build-loop-native "
+            "promotion pipeline."
+        ),
+    )
+    p.add_argument(
+        "--source-prefix",
+        default="lesson:nav:",
+        help=(
+            "Subject prefix written into semantic_facts.subject "
+            "(default 'lesson:nav:'). Chunk 8's promotion script passes "
+            "'lesson:bl:' to keep build-loop-native lessons in distinct rows."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -434,22 +464,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     project_tag = _detect_project_tag(workdir)
+    subject_prefix = args.source_prefix or "lesson:nav:"
 
     project_lessons: list[dict] = []
     global_lessons: list[dict] = []
     skipped_templates = 0
 
-    if not args.global_only:
-        path = workdir / ".navgator" / "lessons" / "lessons.json"
+    if args.lessons_file:
+        # Override mode: treat --lessons-file as the sole project-local
+        # source. Skip NavGator's project-local + global discovery so
+        # promotion-fed lessons don't double-sync.
+        path = Path(args.lessons_file)
+        if not path.is_absolute():
+            path = (workdir / path).resolve()
         real, skipped = _read_lessons_file(path)
         project_lessons = real
         skipped_templates += skipped
+    else:
+        if not args.global_only:
+            path = workdir / ".navgator" / "lessons" / "lessons.json"
+            real, skipped = _read_lessons_file(path)
+            project_lessons = real
+            skipped_templates += skipped
 
-    if not args.project_only:
-        path = Path.home() / ".navgator" / "lessons" / "global-lessons.json"
-        real, skipped = _read_lessons_file(path)
-        global_lessons = real
-        skipped_templates += skipped
+        if not args.project_only:
+            path = Path.home() / ".navgator" / "lessons" / "global-lessons.json"
+            real, skipped = _read_lessons_file(path)
+            global_lessons = real
+            skipped_templates += skipped
 
     errors: list[str] = []
     synced = 0
@@ -507,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
                     lesson=lesson,
                     project=project_tag,
                     embedding=embedding,
+                    subject_prefix=subject_prefix,
                 )
                 synced += 1
             except Exception as exc:  # noqa: BLE001 - psycopg + unforeseen
@@ -528,6 +571,7 @@ def main(argv: list[str] | None = None) -> int:
                     lesson=lesson,
                     project=None,
                     embedding=embedding,
+                    subject_prefix=subject_prefix,
                 )
                 global_synced += 1
             except Exception as exc:  # noqa: BLE001

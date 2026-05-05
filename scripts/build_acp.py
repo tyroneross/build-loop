@@ -26,6 +26,8 @@ import argparse
 import datetime as _dt
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -51,6 +53,8 @@ ACP_FILENAME = "acp.json"
 TOP_RISK_LIMIT = 10
 RECENT_VIOLATION_LIMIT = 50
 HUB_FAN_IN_THRESHOLD = 10  # ≥ this = "hub"; top-3 of those = "hotspot"
+LESSON_DIFF_DEPTH = 10     # `git diff HEAD~N` window for full-ACP lesson matching
+LESSON_FILE_CONTENT_LINES = 50  # cap content read per file when matching signatures
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +207,132 @@ def _compute_recent_violations(
     return violations, payload
 
 
+def _git_recent_changed_files(repo_root: Path, depth: int = LESSON_DIFF_DEPTH) -> List[Path]:
+    """Return absolute paths of files changed in the last ``depth`` commits.
+
+    Falls back to ``git status --porcelain`` (un-committed changes) when the
+    diff command fails. On any error returns an empty list — never raises.
+    Filters out paths that no longer exist.
+    """
+    paths: List[Path] = []
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--name-only", f"HEAD~{depth}"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            paths = [
+                (repo_root / line.strip())
+                for line in proc.stdout.splitlines()
+                if line.strip()
+            ]
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        paths = []
+
+    if not paths:
+        try:
+            proc = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                for line in proc.stdout.splitlines():
+                    s = line.strip()
+                    if not s:
+                        continue
+                    # Lines look like " M path", "?? path", "A  path".
+                    parts = s.split(maxsplit=1)
+                    if len(parts) == 2:
+                        paths.append(repo_root / parts[1])
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            return []
+
+    return [p for p in paths if p.exists() and p.is_file()]
+
+
+def _read_capped(path: Path, max_lines: int = LESSON_FILE_CONTENT_LINES) -> str:
+    """Read up to ``max_lines`` lines, returning joined text. Returns "" on error."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            buf: List[str] = []
+            for i, line in enumerate(fh):
+                if i >= max_lines:
+                    break
+                buf.append(line)
+        return "".join(buf)
+    except OSError:
+        return ""
+
+
+def _match_lessons_in_scope(
+    repo_root: Path, changed_files: Sequence[Path]
+) -> List[Dict[str, Any]]:
+    """For each lesson in ``.build-loop/architecture/lessons.json``, test its
+    signature regex(es) against the union of changed file paths AND a capped
+    sample of each file's content. Returns one entry per matched lesson with
+    a compact payload safe to embed in the ACP.
+    """
+    lessons_path = arch_dir(repo_root) / "lessons.json"
+    raw = read_json(lessons_path)
+    if not raw:
+        return []
+    lessons = raw.get("lessons") or []
+    if not lessons:
+        return []
+
+    # Pre-compute path strings + content samples for matching.
+    file_strs: List[Tuple[Path, str, str]] = []
+    for f in changed_files:
+        rel = (
+            str(f.relative_to(repo_root)) if str(f).startswith(str(repo_root)) else str(f)
+        )
+        file_strs.append((f, rel.replace(os.sep, "/"), _read_capped(f)))
+
+    matched: List[Dict[str, Any]] = []
+    for lesson in lessons:
+        sigs = lesson.get("signature") or []
+        if isinstance(sigs, str):
+            sigs = [sigs] if sigs else []
+        if not sigs:
+            continue
+        compiled: List[Tuple[str, "re.Pattern"]] = []
+        for sig in sigs:
+            try:
+                compiled.append((sig, re.compile(sig)))
+            except re.error:
+                continue
+        if not compiled:
+            continue
+
+        hit: Optional[Tuple[str, str]] = None  # (matched_signature, matched_file)
+        for path, rel, content in file_strs:
+            for sig, rx in compiled:
+                if rx.search(rel) or (content and rx.search(content)):
+                    hit = (sig, rel)
+                    break
+            if hit:
+                break
+        if hit is None:
+            continue
+        matched.append(
+            {
+                "id": lesson.get("id"),
+                "category": lesson.get("category"),
+                "pattern": lesson.get("pattern"),
+                "severity": lesson.get("severity"),
+                "matched_signature": hit[0],
+                "matched_file": hit[1],
+            }
+        )
+    return matched
+
+
 def build_acp(repo_root: Path) -> Dict[str, Any]:
     arch = arch_dir(repo_root)
 
@@ -224,6 +354,16 @@ def build_acp(repo_root: Path) -> Dict[str, Any]:
     cycle_members = _cycle_member_set(raw_violations)
     top_risk = _compute_top_risk(components, rev, cycle_members)
 
+    # Phase 1 back-pressure: surface lessons whose signature regex matches any
+    # file in the recent change window. Failures here are non-fatal — an empty
+    # array is the same as "no lessons in scope" for downstream consumers.
+    try:
+        changed = _git_recent_changed_files(repo_root)
+        lessons_in_scope = _match_lessons_in_scope(repo_root, changed)
+    except Exception as exc:  # pragma: no cover — defensive
+        print(f"warn: lessons_in_scope match failed: {exc}", file=sys.stderr)
+        lessons_in_scope = []
+
     return {
         "schema_version": ACP_SCHEMA_VERSION,
         "scan_ts": scan_ts,
@@ -232,7 +372,7 @@ def build_acp(repo_root: Path) -> Dict[str, Any]:
         "top_risk": top_risk,
         "recent_violations": recent,
         "files_touched_slice": None,
-        "lessons_in_scope": [],
+        "lessons_in_scope": lessons_in_scope,
     }
 
 

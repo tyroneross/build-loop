@@ -297,6 +297,99 @@ def test_taxonomy_mapping(monkeypatch):
         assert cs in {"auto-confirmed", "auto-inferred"}
 
 
+def test_lessons_file_flag_overrides_discovery(
+    monkeypatch, isolated_env, mock_embed, mock_psycopg
+):
+    """--lessons-file PATH treats the given file as the project-local source.
+
+    Even when the canonical NavGator project-local path also exists, the
+    override file wins and the canonical one is skipped (else we'd double-sync).
+    """
+    workdir = isolated_env / "proj"
+    workdir.mkdir()
+    # Canonical NavGator project-local path — should be SKIPPED.
+    _write_project_lessons(workdir, [_real_lesson(99)])
+    # Override file — should be the SOLE source.
+    override_path = workdir / ".build-loop" / "architecture" / "lessons.json"
+    override_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "1.0.0",
+        "lessons": [_real_lesson(1, promoted=True), _real_lesson(2)],
+    }
+    override_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    buf = _capture_stdout(monkeypatch)
+    rc = sync_mod.main(
+        [
+            "--workdir", str(workdir),
+            "--lessons-file", str(override_path),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    # 2 lessons from the override file; the canonical lesson-99 is skipped
+    # entirely because --lessons-file flips us into override mode.
+    assert out["synced"] == 2
+    assert out["global_synced"] == 0
+
+
+def test_source_prefix_lesson_bl(
+    monkeypatch, isolated_env, mock_embed, mock_psycopg
+):
+    """--source-prefix lesson:bl: must land in DELETE/INSERT subjects."""
+    workdir = isolated_env / "proj"
+    workdir.mkdir()
+    override = workdir / ".build-loop" / "architecture" / "lessons.json"
+    override.parent.mkdir(parents=True, exist_ok=True)
+    override.write_text(
+        json.dumps({"schema_version": "1.0.0", "lessons": [_real_lesson(1)]}),
+        encoding="utf-8",
+    )
+
+    buf = _capture_stdout(monkeypatch)
+    rc = sync_mod.main(
+        [
+            "--workdir", str(workdir),
+            "--lessons-file", str(override),
+            "--source-prefix", "lesson:bl:",
+        ]
+    )
+    assert rc == 0
+
+    conn = mock_psycopg["conn"]
+    # Find the INSERT and inspect its first param (subject column).
+    insert_sql, insert_params = next(
+        (s, p) for s, p in conn.executed if "INSERT INTO" in s
+    )
+    subject = insert_params[0]
+    assert subject.startswith("lesson:bl:"), f"subject={subject!r}"
+    # And the matching DELETE.
+    delete_sql, delete_params = next(
+        (s, p) for s, p in conn.executed if "DELETE FROM" in s
+    )
+    assert delete_params[0].startswith("lesson:bl:")
+
+
+def test_default_source_prefix_lesson_nav(
+    monkeypatch, isolated_env, mock_embed, mock_psycopg
+):
+    """Backward-compat: default flow (no flags) still uses 'lesson:nav:'."""
+    workdir = isolated_env / "proj"
+    workdir.mkdir()
+    _write_project_lessons(workdir, [_real_lesson(1)])
+
+    buf = _capture_stdout(monkeypatch)
+    rc = sync_mod.main(["--workdir", str(workdir), "--project-only"])
+    assert rc == 0
+
+    conn = mock_psycopg["conn"]
+    insert_sql, insert_params = next(
+        (s, p) for s, p in conn.executed if "INSERT INTO" in s
+    )
+    subject = insert_params[0]
+    assert subject.startswith("lesson:nav:")
+
+
 def test_dry_run_no_writes(monkeypatch, isolated_env, mock_embed):
     """--dry-run never touches psycopg.connect."""
     connect_called = {"count": 0}
