@@ -325,9 +325,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             continue
-        rule_id = str(raw.get("rule_id", "") or "")
+        # Accept both shapes:
+        #   - {"rule_id", "components": [...], ...}  (long-form, capture-native)
+        #   - {"rule",    "component_id": "...",     (short-form, native engine
+        #                "component_ids": [...]}      build_loop.architecture
+        #                                             rules emits this shape)
+        rule_id = str(raw.get("rule_id") or raw.get("rule") or "")
         severity = str(raw.get("severity", "") or "")
-        components = raw.get("components", []) or []
+        components = raw.get("components")
+        if components is None:
+            # Fall back to component_ids[] or single component_id.
+            cids = raw.get("component_ids")
+            if cids is None and raw.get("component_id"):
+                cids = [raw.get("component_id")]
+            components = cids or []
         if not isinstance(components, list):
             components = [str(components)]
         message = str(raw.get("message", "") or "")

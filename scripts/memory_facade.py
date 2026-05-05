@@ -142,48 +142,89 @@ def read_runs(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any
 DECISION_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
+def _resolve_decision_dirs(workdir: Path) -> List[Path]:
+    """Decisions may live in two places after the v0.10.0 cutover:
+
+      1. <workdir>/.episodic/decisions/                    (legacy per-repo)
+      2. ~/dev/git-folder/build-loop-memory/decisions/<project>/
+         (new repo-deletion-survivable global store; project resolves via
+         scripts/_paths.py + scripts/project_resolver.py)
+
+    Both shapes are read; results merge. The resolver is best-effort —
+    when imports fail we still fall back to the legacy path.
+    """
+    dirs: List[Path] = []
+    legacy = workdir / ".episodic" / "decisions"
+    if legacy.is_dir():
+        dirs.append(legacy)
+    try:
+        from _paths import decisions_dir_for_project  # type: ignore  # noqa: PLC0415
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+        proj = resolve_project(workdir)
+        if proj:
+            new_dir = decisions_dir_for_project(proj)
+            if new_dir.is_dir() and new_dir not in dirs:
+                dirs.append(new_dir)
+    except Exception:  # noqa: BLE001 — best-effort path resolution
+        pass
+    return dirs
+
+
 def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    dec_dir = workdir / ".episodic" / "decisions"
     reasons: List[str] = []
-    if not dec_dir.is_dir():
+    dec_dirs = _resolve_decision_dirs(workdir)
+    if not dec_dirs:
         return [], reasons
     out: List[Dict[str, Any]] = []
-    for p in sorted(dec_dir.glob("*.md")):
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError as e:
-            reasons.append(f"decision_read_error: {p.name} {e}")
-            continue
-        m = DECISION_FRONTMATTER_RE.match(text)
-        title = ""
-        ts_raw: Optional[str] = None
-        primary_tag = ""
-        if m:
-            for line in m.group(1).splitlines():
-                if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip('"').strip("'")
-                elif line.startswith("date:"):
-                    ts_raw = line.split(":", 1)[1].strip().strip('"').strip("'")
-                elif line.startswith("primary_tag:"):
-                    primary_tag = line.split(":", 1)[1].strip().strip('"').strip("'")
-        if not _q_match(text + " " + title, query):
-            continue
-        # Derive a brief summary: first non-frontmatter, non-empty body line.
-        body = text[m.end():] if m else text
-        summary_lines = [
-            ln.strip() for ln in body.splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-        ]
-        summary = summary_lines[0][:240] if summary_lines else ""
-        out.append({
-            "_kind": "decisions",
-            "_recency_ts": _parse_iso(ts_raw),
-            "id": p.stem,
-            "title": title,
-            "primary_tag": primary_tag,
-            "path": str(p.relative_to(workdir)),
-            "summary": summary,
-        })
+    seen_ids: set[str] = set()
+    for dec_dir in dec_dirs:
+        for p in sorted(dec_dir.glob("*.md")):
+            stem = p.stem
+            # Skip browseable index files; only NNNN-... shape decisions count.
+            if stem.upper().startswith("INDEX") or stem.startswith("_"):
+                continue
+            if stem in seen_ids:
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError as e:
+                reasons.append(f"decision_read_error: {p.name} {e}")
+                continue
+            m = DECISION_FRONTMATTER_RE.match(text)
+            title = ""
+            ts_raw: Optional[str] = None
+            primary_tag = ""
+            if m:
+                for line in m.group(1).splitlines():
+                    if line.startswith("title:"):
+                        title = line.split(":", 1)[1].strip().strip('"').strip("'")
+                    elif line.startswith("date:"):
+                        ts_raw = line.split(":", 1)[1].strip().strip('"').strip("'")
+                    elif line.startswith("primary_tag:"):
+                        primary_tag = line.split(":", 1)[1].strip().strip('"').strip("'")
+            if not _q_match(text + " " + title, query):
+                continue
+            body = text[m.end():] if m else text
+            summary_lines = [
+                ln.strip() for ln in body.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            summary = summary_lines[0][:240] if summary_lines else ""
+            try:
+                rel_path = str(p.relative_to(workdir))
+            except ValueError:
+                # File lives outside workdir (global store) — record absolute.
+                rel_path = str(p)
+            out.append({
+                "_kind": "decisions",
+                "_recency_ts": _parse_iso(ts_raw),
+                "id": stem,
+                "title": title,
+                "primary_tag": primary_tag,
+                "path": rel_path,
+                "summary": summary,
+            })
+            seen_ids.add(stem)
     out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
     return out[:limit], reasons
 

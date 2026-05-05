@@ -55,8 +55,37 @@ If your findings exceed the budget, truncate the `findings[]` array and add `"_t
 1. Check freshness — wait if needed (see Failure modes).
 2. Run `python -m build_loop.architecture acp` to refresh `.build-loop/architecture/acp.json`.
 3. Read the ACP. Surface up to 5 hotspots (highest blast_radius), all `recent_violations`, all `lessons_in_scope`.
-4. `summary` ≤ 200 words: count + layers + top risk component name.
-5. `follow_up`: which components a Plan-phase chunk should treat as risky.
+4. **Persist the baseline as a decision** so cross-session recall can warm-start the next Phase 1. Run once per baseline (idempotent topic-identity supersession by primary_tag+entity in `write_decision.py`):
+
+    ```bash
+    SCAN_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    COMPONENTS=$(jq '.component_count // .components_count // 0' .build-loop/architecture/index.json)
+    CONNECTIONS=$(jq '.connection_count // .connections_count // 0' .build-loop/architecture/index.json)
+    VIOLATIONS=$(jq '.violations | length' .episodic/architecture/known_violations.json 2>/dev/null || echo 0)
+
+    python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/scripts/write_decision.py" \
+      --workdir "$PWD" \
+      --title "Architecture baseline scan: ${COMPONENTS} components, ${CONNECTIONS} connections" \
+      --decision "Baseline captured at ${SCAN_TS}; ACP path .build-loop/architecture/acp.json recorded for downstream phase use." \
+      --context "Top hotspots and recent violations summarized in the scout's envelope; full ACP at .build-loop/architecture/acp.json." \
+      --consequences "Cross-session recall available via scripts/recall.py and scripts/memory_facade.py; Phase 1 in next session uses this as warm start." \
+      --tags "architecture,proposed:baseline,proposed:scout,proposed:arch-baseline" \
+      --primary-tag "architecture" \
+      --entity "baseline-scan" \
+      --confidence "confirmed" \
+      --confidence-source "tool_extraction" \
+      --status "accepted" \
+      --source "auto-confirmed" \
+      --domain "meta" \
+      --goal "maintainability" \
+      --task-category "research" \
+      --no-db
+    ```
+
+   Use `--no-db` because Phase 1 must not block on Postgres availability; the `consolidate_memory.py` Stop-hook step will sync the file row into `semantic_facts` later. Record the resulting decision id (stdout) in `findings[].side_effects: "wrote_decision_<id>"`. If `write_decision.py` is missing or returns non-zero, log `"write_decision_failed"` and proceed — the scan still happened.
+
+5. `summary` ≤ 200 words: count + layers + top risk component name. Cite the decision id from step 4.
+6. `follow_up`: which components a Plan-phase chunk should treat as risky.
 
 ### `chunk-impact` (Phase 2 Plan, parallel fan-out)
 

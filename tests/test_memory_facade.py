@@ -34,6 +34,12 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Synthetic project root with state.json runs and a couple of decisions."""
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
     monkeypatch.setattr(mf, "_DEBUGGER_RUNNER_OVERRIDE", None)
+    # Isolate from the live agent-memory store during tests — point
+    # AGENT_MEMORY_ROOT at an empty subdir under tmp_path so the global
+    # decisions store has nothing to merge in.
+    isolated_root = tmp_path / "_agent_memory_root"
+    isolated_root.mkdir()
+    monkeypatch.setenv("AGENT_MEMORY_ROOT", str(isolated_root))
 
     bl = tmp_path / ".build-loop"
     bl.mkdir()
