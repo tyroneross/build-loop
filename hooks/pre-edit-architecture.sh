@@ -11,10 +11,13 @@
 #   1. Bail silently if `.build-loop/architecture/file_map.json` does not exist
 #      (engine not initialized).
 #   2. Parse `file_path` from stdin JSON; bail on missing/invalid input.
-#   3. Resolve to repo-relative path; bail if not in file_map.
-#   4. Mark stale (always — even if a scan is in flight, orchestrator must see
+#   3. Bail silently if file extension is not in the source-code allowlist
+#      (.py .ts .tsx .js .jsx .mjs .cjs). Doc-only edits (.md, .txt, .json,
+#      images) never mark architecture stale or fire a scan.
+#   4. Resolve to repo-relative path; bail if not in file_map.
+#   5. Mark stale (always — even if a scan is in flight, orchestrator must see
 #      stale=true before reading ACP).
-#   5. Fire `_arch_scan_bg.py` (single-flight flock inside the worker).
+#   6. Fire `_arch_scan_bg.py` (single-flight flock inside the worker).
 
 WORKDIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 ARCH_DIR="$WORKDIR/.build-loop/architecture"
@@ -32,10 +35,11 @@ WORKER="$SCRIPT_DIR/_arch_scan_bg.py"
 STDIN_JSON=$(cat 2>/dev/null)
 [ -n "$STDIN_JSON" ] || exit 0
 
-# Parse file_path; resolve relative to workdir; check file_map membership.
+# Parse file_path; gate by extension allowlist; check file_map membership.
 REL_PATH=$(WORKDIR="$WORKDIR" FILE_MAP="$FILE_MAP" STDIN_JSON="$STDIN_JSON" python3 - <<'PYEOF' 2>/dev/null
 import json, os, sys
 from pathlib import Path
+ALLOWED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 try:
     payload = json.loads(os.environ["STDIN_JSON"])
 except (KeyError, json.JSONDecodeError):
@@ -43,6 +47,10 @@ except (KeyError, json.JSONDecodeError):
 ti = payload.get("tool_input") or {}
 fp = ti.get("file_path") or ti.get("path") or ti.get("filename")
 if not fp:
+    sys.exit(0)
+# Extension allowlist gate — bail on .md/.txt/.json/etc. before any I/O.
+ext = Path(fp).suffix.lower()
+if ext not in ALLOWED_EXTS:
     sys.exit(0)
 workdir = Path(os.environ["WORKDIR"]).resolve()
 abs_path = (workdir / fp).resolve() if not os.path.isabs(fp) else Path(fp).resolve()
