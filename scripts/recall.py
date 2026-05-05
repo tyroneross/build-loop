@@ -34,14 +34,20 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from _paths import default_schema as _default_schema  # type: ignore  # noqa: E402
 from db import query, vector_literal  # type: ignore  # noqa: E402
 from embed_backend import embed as _embed  # type: ignore  # noqa: E402
+from project_resolver import resolve_project  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     CONFIDENCE_ORDER,
     log,
 )
 
-DEFAULT_SCHEMA = "build_loop_memory"
+# Module-level constant kept for back-compat with tests that import it.
+# Resolved at import time from $AGENT_MEMORY_SCHEMA, default
+# 'personal_memory'. The CLI re-resolves at parse time so a test
+# manipulating the env after import still gets the right default.
+DEFAULT_SCHEMA = _default_schema()
 DEFAULT_LIMIT = 5
 DEFAULT_NEIGHBOR_WINDOW = 3
 DEFAULT_FLOOR = "confirmed"
@@ -65,6 +71,7 @@ def hybrid_search_facts(
     confidence_floor: float,
     *,
     project: str | None = None,
+    projects: list[str] | None = None,
     tool: str | None = None,
     model: str | None = None,
     task_category: str | None = None,
@@ -102,7 +109,24 @@ def hybrid_search_facts(
         )
         params.append(value)
 
-    _add_meta_filter("project", project)
+    def _add_meta_in_filter(field: str, values: list[str] | None) -> None:
+        """Multi-value IN filter for the project default-scoping case.
+
+        Uses ANY(%s) so we can pass a Python list as a single param. The
+        COALESCE keeps the v2-typed-column-or-JSONB-fallback pattern.
+        """
+        if not values:
+            return
+        where_clauses.append(
+            f"(COALESCE({field}, metadata->>'{field}') = ANY(%s))"
+        )
+        params.append(list(values))
+
+    # `projects` (list) wins over single `project` if both are passed.
+    if projects:
+        _add_meta_in_filter("project", projects)
+    else:
+        _add_meta_filter("project", project)
     _add_meta_filter("tool", tool)
     _add_meta_filter("model", model)
     _add_meta_filter("task_category", task_category)
@@ -270,7 +294,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(CONFIDENCE_ORDER),
     )
     p.add_argument("--neighbor-window", type=int, default=DEFAULT_NEIGHBOR_WINDOW)
-    p.add_argument("--schema", default=DEFAULT_SCHEMA)
+    p.add_argument(
+        "--schema",
+        default=None,
+        help="Postgres schema. Default: $AGENT_MEMORY_SCHEMA or 'personal_memory'.",
+    )
     p.add_argument(
         "--embed-model",
         default="mxbai-embed-large",
@@ -279,7 +307,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--char-budget", type=int, default=8000)  # ~1500 tokens
     p.add_argument("--no-episodes", action="store_true", help="Skip episode_events search")
     # v2 metadata filters (design §15). Applied BEFORE cosine/BM25 ranking.
-    p.add_argument("--project", default=None, help="Filter facts to this project")
+    p.add_argument(
+        "--project",
+        default=None,
+        help=(
+            "Filter facts to this project. Repeat or comma-separate to pass "
+            "multiple. Default (when omitted): the project tag for the current "
+            "cwd (via projects.yaml) plus '_unscoped'. Use --all-projects to "
+            "disable default scoping."
+        ),
+    )
+    p.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Disable default project scoping; return matches across every project tag.",
+    )
     p.add_argument("--tool", default=None, help="Filter facts to this authoring tool")
     p.add_argument("--model", default=None, help="Filter facts to this model")
     p.add_argument("--task-category", default=None, help="Filter facts to this task category")
@@ -294,6 +336,33 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--no-bump-last-accessed", action="store_true", help="Skip the last_accessed bump on returned rows")
     args = p.parse_args(argv)
+
+    if args.schema is None:
+        args.schema = _default_schema()
+
+    # Resolve the effective project filter:
+    #   --all-projects → no project filter
+    #   --project foo[,bar] → those tags exactly
+    #   neither → resolve_project(cwd) + '_unscoped' (default scoping)
+    explicit_projects: list[str] | None = None
+    single_project: str | None = None
+    if args.all_projects:
+        explicit_projects = None
+        single_project = None
+    elif args.project:
+        parts = [p.strip() for p in args.project.split(",") if p.strip()]
+        if len(parts) > 1:
+            explicit_projects = parts
+        elif len(parts) == 1:
+            single_project = parts[0]
+    else:
+        cwd_project = resolve_project(Path.cwd())
+        # Always include _unscoped so cross-project lessons surface in any
+        # cwd. If the resolver itself returned _unscoped, dedupe.
+        if cwd_project == "_unscoped":
+            explicit_projects = ["_unscoped"]
+        else:
+            explicit_projects = [cwd_project, "_unscoped"]
 
     try:
         embedding = _embed(args.query)
@@ -310,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
             args.schema,
             args.limit,
             floor,
-            project=args.project,
+            project=single_project,
+            projects=explicit_projects,
             tool=args.tool,
             model=args.model,
             task_category=args.task_category,
