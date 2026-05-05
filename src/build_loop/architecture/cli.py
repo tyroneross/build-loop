@@ -7,6 +7,14 @@ Subcommands (all support ``--json``):
     connections <component-or-file>
     rules [--json]
     dead [--json]
+    llm-map [--json]                          (NavGator-only)
+    schema [model] [--json]                   (NavGator-only)
+    diagram [--mode summary|focus|layer] [--focus NAME] [--json]  (NavGator-only)
+
+Global flag ``--mode {auto,native,navgator}`` (default ``auto``) routes through
+``adapter.Adapter``. Native engine is canonical for ported capabilities; the
+last three subcommands are NavGator-only and require either a ``navgator`` CLI
+on PATH or a NavGator MCP server registered in ``.mcp.json``.
 """
 
 from __future__ import annotations
@@ -20,6 +28,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import analysis as A
+from .adapter import (
+    Adapter,
+    AdapterError,
+    CapabilityNotAvailable,
+    NavGatorNotAvailable,
+)
 from .scanner import scan_repo
 from .schemas import Component, Connection, SCHEMA_VERSION
 from .storage import (
@@ -267,15 +281,97 @@ def cmd_dead(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Adapter-routed subcommands (NavGator-only capabilities)
+# ---------------------------------------------------------------------------
+
+
+def _adapter_for(args: argparse.Namespace) -> Adapter:
+    return Adapter(mode=getattr(args, "mode", "auto"))
+
+
+def _emit_adapter_result(result: Dict[str, Any]) -> int:
+    """Print adapter JSON and pick an exit code.
+
+    Exit 0 always, with one exception: a result like
+    ``{"available": False, ...}`` (NavGator unavailable in auto mode for an
+    escalation-only capability) is still exit 0 — the caller asked for a graceful
+    fallback and got one. Real errors raise and are caught by callers below.
+    """
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_llm_map(args: argparse.Namespace) -> int:
+    repo = _resolve_repo(args.repo)
+    try:
+        result = _adapter_for(args).llm_map(repo)
+    except CapabilityNotAvailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except NavGatorNotAvailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except AdapterError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return _emit_adapter_result(result)
+
+
+def cmd_schema(args: argparse.Namespace) -> int:
+    repo = _resolve_repo(args.repo)
+    try:
+        result = _adapter_for(args).schema(repo, model=args.model)
+    except CapabilityNotAvailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except NavGatorNotAvailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except AdapterError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return _emit_adapter_result(result)
+
+
+def cmd_diagram(args: argparse.Namespace) -> int:
+    repo = _resolve_repo(args.repo)
+    try:
+        result = _adapter_for(args).diagram(
+            repo, mode=args.diagram_mode, focus=args.focus
+        )
+    except CapabilityNotAvailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except NavGatorNotAvailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except AdapterError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return _emit_adapter_result(result)
+
+
+# ---------------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="build_loop.architecture",
-        description="Build-loop native architecture engine (Chunk 1).",
+        description="Build-loop native architecture engine + NavGator adapter.",
     )
     p.add_argument("--repo", help="Repo root (defaults to cwd)")
+    p.add_argument(
+        "--mode",
+        choices=["auto", "native", "navgator"],
+        default="auto",
+        help=(
+            "Capability backend. 'auto' (default): native engine for ported "
+            "capabilities, NavGator for llm-map/schema/diagram if installed; "
+            "'native': force native engine (escalation-only commands fail with "
+            "exit 2); 'navgator': force NavGator subprocess."
+        ),
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("scan", help="Scan the repo and write index/graph/manifest.")
@@ -309,6 +405,37 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("dead", help="Find orphan components / unused packages.")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_dead)
+
+    # NavGator-only escalation capabilities (routed through the adapter).
+    s = sub.add_parser(
+        "llm-map",
+        help="Map LLM use cases (NavGator-only; --mode=native exits 2).",
+    )
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_llm_map)
+
+    s = sub.add_parser(
+        "schema",
+        help="Show DB schema reads/writes (NavGator-only; --mode=native exits 2).",
+    )
+    s.add_argument("model", nargs="?", default=None, help="Optional model name to focus on.")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_schema)
+
+    s = sub.add_parser(
+        "diagram",
+        help="Render an architecture diagram (NavGator-only; --mode=native exits 2).",
+    )
+    s.add_argument(
+        "--mode",
+        dest="diagram_mode",
+        choices=["summary", "focus", "layer"],
+        default="summary",
+        help="Diagram style.",
+    )
+    s.add_argument("--focus", default=None, help="Component name to focus on (mode=focus).")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_diagram)
 
     return p
 
