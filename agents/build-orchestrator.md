@@ -69,6 +69,7 @@ When ambiguous, default to BUILD. The user can always redirect with `/build-loop
 
 ### Phase 1: Assess
 - Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` and write the JSON result into `.build-loop/state.json` under `availablePlugins`
+- **Capability shortlist**: build-loop now exposes ~113 surfaces (agents + skills + commands + hooks + MCP servers + scripts). To stay inside Anthropic's Tool Search ≤8-candidate guidance, narrow the decision space before each phase. Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build_capability_registry.py --workdir "$PWD"` once at session start (registry is cached at `.build-loop/capability-registry.json`; rebuild only when surfaces change). Then for each phase, dispatch `Skill("build-loop:capabilities")` with the phase number and the goal text, OR shell out: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/capability_shortlist.py --phase <N> --intent "<goal>" --json`. The skill writes the shortlist into `.build-loop/state.json.activeCapabilities[]`. Treat the shortlist as the routing baseline for that phase; only escalate outside it when no entry fits.
 - Set sub-routers: `uiTarget`, `platform`, `migrationSource`. See SKILL.md §Capability Routing
 - Set triggers per SKILL.md §Trigger Conditions. Scan the goal text and the set of files the plan will touch, then set boolean flags under `.build-loop/state.json.triggers`:
   - `structuredWriting` (pyramid-principle): user-visible copy, README, CHANGELOG, docs, PR description, status update, exec summary, information architecture
