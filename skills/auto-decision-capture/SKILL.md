@@ -230,6 +230,39 @@ The Stop hook in `hooks/hooks.json` invokes
 If ollama is unreachable, the hook logs a no-op and exits 0 — never
 fails the session.
 
+### Per-session opt-out
+
+Create `.episodic/.no-capture` to skip the auto-capture sweep for the
+current session. The script exits 0 immediately on startup with a log
+line. Remove the file when you want the sweep back on:
+
+```bash
+touch .episodic/.no-capture     # disable for this session
+rm .episodic/.no-capture        # re-enable
+```
+
+This is a per-repo flag; it does not affect other projects.
+
+### Hardening contract (Stop-hook safety)
+
+The script self-imposes guardrails so the Stop hook never disrupts a
+coding session:
+
+- **Wall-clock budget** — default 25s, override with env `SCAN_BUDGET_S`.
+  Checked before the LLM call and between writes. On overrun the script
+  logs `budget exceeded` and exits 0 with whatever was already written.
+  The hook timeout (60s) is a backstop; the budget should always fire
+  first.
+- **Single-flight lock** — `fcntl.flock` on `/tmp/build-loop-scan.lock`
+  (override with `--lock-file`). A second concurrent invocation exits 0
+  immediately with a log line. Prevents contention when sessions end
+  close together.
+- **Output suppression** — the hook command redirects stdout and stderr
+  to `/dev/null`. The durable record is the log file at
+  `${XDG_STATE_HOME}/build-loop/scan.log` (default
+  `~/.local/state/build-loop/scan.log`). Override with `--log-file`. The
+  log file auto-rotates when it exceeds 10 MB (last 1 MB kept).
+
 ## Confidence floor at retrieval
 
 `write_decision.py`'s INDEX regenerator filters by `confidence >= confirmed`

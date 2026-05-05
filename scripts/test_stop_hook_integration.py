@@ -272,5 +272,105 @@ class StopHookIntegrationTests(unittest.TestCase):
         self.assertEqual(review, [])
 
 
+class StopHookHardeningTests(unittest.TestCase):
+    """Offline hardening tests: output suppression, lock contention.
+
+    These do NOT require ollama. They use the `.no-capture` flag to make
+    the scanner exit before any LLM call, then verify the hook command
+    shape suppresses output and respects the lock.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        (self.workdir / ".semantic").mkdir(parents=True)
+        (self.workdir / ".episodic" / "decisions" / "_history").mkdir(parents=True)
+        (self.workdir / ".episodic" / "decisions" / "_review").mkdir(parents=True)
+        (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
+        (self.workdir / "scripts").symlink_to(REPO / "scripts")
+        # Force the scanner to early-exit so we don't depend on ollama.
+        (self.workdir / ".episodic" / ".no-capture").touch()
+
+        self.transcript = self.workdir / "transcript.jsonl"
+        with self.transcript.open("w") as f:
+            for line in _seed_transcript_with_explicit_decision():
+                f.write(json.dumps(line) + "\n")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_hook_command_suppresses_output(self) -> None:
+        """The exact hook command produces no stdout/stderr to the calling shell."""
+        cmd = _extract_scan_command_from_hooks_json()
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
+        env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+        # Re-route HOME so the default --log-file path doesn't pollute the user's real state dir.
+        env["HOME"] = str(self.workdir / "fakehome")
+        env["XDG_STATE_HOME"] = str(self.workdir / "fakehome" / ".local" / "state")
+
+        cp = subprocess.run(
+            ["/bin/sh", "-c", cmd],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(self.workdir),
+            timeout=15,
+        )
+        self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr!r}")
+        # Critical: terminal stays clean.
+        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+        self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
+
+    def test_hook_lock_contention_skips_silently(self) -> None:
+        """When another scan holds the lock, the hook exits 0 with no terminal output."""
+        import fcntl
+        # Remove the .no-capture flag so the script reaches the lock-acquire path.
+        no_cap = self.workdir / ".episodic" / ".no-capture"
+        if no_cap.exists():
+            no_cap.unlink()
+
+        # The hook command uses the script's default lock at /tmp/build-loop-scan.lock.
+        # Hold it from this process and verify the subprocess exits cleanly without LLM.
+        lock_path = Path("/tmp/build-loop-scan.lock")
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            cmd = _extract_scan_command_from_hooks_json()
+            env = os.environ.copy()
+            env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
+            env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+            env["HOME"] = str(self.workdir / "fakehome")
+            env["XDG_STATE_HOME"] = str(self.workdir / "fakehome" / ".local" / "state")
+            # Belt-and-braces: zero budget so any regression in lock handling
+            # would still cause a fast bail before the LLM is consulted.
+            env["SCAN_BUDGET_S"] = "0"
+
+            cp = subprocess.run(
+                ["/bin/sh", "-c", cmd],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(self.workdir),
+                timeout=15,
+            )
+            self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr!r}")
+            self.assertEqual(cp.stdout, "")
+            self.assertEqual(cp.stderr, "")
+
+            # The lock-skip should be visible in the log file.
+            log_file = Path(env["XDG_STATE_HOME"]) / "build-loop" / "scan.log"
+            self.assertTrue(log_file.exists(), msg="log file not created")
+            contents = log_file.read_text()
+            self.assertIn("another scan", contents.lower(), msg=f"log contents: {contents!r}")
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

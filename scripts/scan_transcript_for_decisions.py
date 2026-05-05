@@ -14,11 +14,25 @@ and writes results into `.episodic/decisions/`:
 Dedup against existing `semantic_facts` is best-effort and uses the same
 embedding pipeline as write_decision.py. Threshold ≥0.85 → IGNORE; <0.85 → INSERT.
 
-Hook contract: never fail the session. Any error logs and exits 0.
+Hook contract — never fail the session:
+  - Any error logs and exits 0
+  - Wall-clock budget (`SCRIPT_WALL_CLOCK_BUDGET_S`, default 25s, env override
+    `SCAN_BUDGET_S`) is checked before the LLM call and between writes; on
+    overrun the script logs "budget exceeded" and exits 0 with whatever it
+    has completed (writes are individually atomic via write_decision.py)
+  - A non-blocking `fcntl.flock` on `/tmp/build-loop-scan.lock` (or the
+    `--lock-file` override) prevents concurrent sessions from contending;
+    a held lock causes immediate clean exit 0
+  - `.episodic/.no-capture` (per-session opt-out) causes immediate clean exit 0
+  - Output is written to the log file (`--log-file`, default
+    `$XDG_STATE_HOME/build-loop/scan.log` or `~/.local/state/build-loop/scan.log`)
+    AND to stderr; the Stop hook redirects stderr to /dev/null so terminal
+    stays clean. Log file is auto-rotated when it exceeds 10 MB (kept tail = 1 MB).
 
 Usage:
   scan_transcript_for_decisions.py --transcript <path>
   scan_transcript_for_decisions.py --transcript <path> --mock-llm-output <json-file>
+  scan_transcript_for_decisions.py --transcript <path> --log-file <path>
   scan_transcript_for_decisions.py --transcript $CLAUDE_TRANSCRIPT_PATH
 
 Exit codes: always 0 unless --strict is passed (CI testing).
@@ -26,6 +40,7 @@ Exit codes: always 0 unless --strict is passed (CI testing).
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -33,6 +48,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,12 +57,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 # Lazy imports from write_decision so test fixtures share the same primitives.
+# Note: write_decision.log is intentionally NOT imported — we define a
+# module-local log() below that tees to a log file as well as stderr.
 from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     LockedFile,
     atomic_write_bytes,
     emit_frontmatter,
-    log,
     next_id,
     parse_frontmatter,
     render_madr,
@@ -58,6 +75,154 @@ DEFAULT_EMBED_MODEL = "mxbai-embed-large"
 DEFAULT_LLM_TIMEOUT_S = 120
 DEDUP_THRESHOLD = 0.85
 WRITE_DECISION_SCRIPT = HERE / "write_decision.py"
+
+# Wall-clock budget contract: the script self-imposes a tighter budget
+# than the Claude Code hook timeout (60s). Default 25s leaves plenty of
+# headroom even on a cold qwen3:8b call. Override via env `SCAN_BUDGET_S`.
+# When budget is exceeded, the script logs and exits 0 cleanly with
+# whatever was already written. Individual writes are atomic
+# (write_decision.py uses fcntl + os.replace) so partial completion is safe.
+SCRIPT_WALL_CLOCK_BUDGET_S = 25
+
+# Default lock file. Overrideable via --lock-file. Lives in /tmp because
+# multiple Claude Code sessions across different repos all converge on
+# this single mutex (the rate limit we want is "one scan running at a time
+# on this machine", not "one per repo").
+DEFAULT_LOCK_FILE = "/tmp/build-loop-scan.lock"
+
+# Log rotation policy.
+LOG_ROTATE_TRIGGER_BYTES = 10 * 1024 * 1024  # 10 MB
+LOG_ROTATE_KEEP_BYTES = 1 * 1024 * 1024  # 1 MB tail
+
+
+# ---------- log file (tee to stderr + optional log file) ----------
+
+
+# Module-level state set by main() before any other code runs.
+_LOG_FILE_PATH: Path | None = None
+_LOG_ROTATED_THIS_RUN = False
+
+
+def _default_log_file() -> Path:
+    """XDG state dir for the scan log."""
+    base = os.environ.get("XDG_STATE_HOME")
+    if base:
+        return Path(base) / "build-loop" / "scan.log"
+    return Path.home() / ".local" / "state" / "build-loop" / "scan.log"
+
+
+def _maybe_rotate_log(path: Path) -> None:
+    """Rotate the log file if it exceeds LOG_ROTATE_TRIGGER_BYTES.
+
+    Cheap policy: read the last LOG_ROTATE_KEEP_BYTES of the file and
+    rewrite. Done once per process (the `_LOG_ROTATED_THIS_RUN` guard) to
+    avoid stat()-on-every-log.
+    """
+    global _LOG_ROTATED_THIS_RUN
+    if _LOG_ROTATED_THIS_RUN:
+        return
+    _LOG_ROTATED_THIS_RUN = True
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    if size <= LOG_ROTATE_TRIGGER_BYTES:
+        return
+    try:
+        with path.open("rb") as f:
+            f.seek(-LOG_ROTATE_KEEP_BYTES, os.SEEK_END)
+            tail = f.read()
+        # Snap to next newline so we don't start mid-line.
+        nl = tail.find(b"\n")
+        if nl != -1:
+            tail = tail[nl + 1 :]
+        marker = (
+            f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} "
+            f"[scan] log rotated (was {size} bytes, kept last ~{LOG_ROTATE_KEEP_BYTES})\n"
+        ).encode("utf-8")
+        atomic_write_bytes(path, marker + tail)
+    except OSError:
+        # Rotation is best-effort; never block the hook on it.
+        return
+
+
+def log(msg: str) -> None:
+    """Tee log message to stderr and (when configured) the log file.
+
+    Format: `2026-05-04T20:35:00Z [scan] message`. Always terminates with \\n.
+    The Stop hook redirects stderr to /dev/null, so the durable record is
+    the log file. Stdout is never written to (keeps `>/dev/null 2>&1`
+    redirection clean and parseable for callers).
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    line = f"{ts} [scan] {msg}\n"
+    # stderr (terminal-visible only when caller does not redirect)
+    sys.stderr.write(line)
+    # log file (durable; debugging path)
+    if _LOG_FILE_PATH is not None:
+        try:
+            _LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _maybe_rotate_log(_LOG_FILE_PATH)
+            with _LOG_FILE_PATH.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except OSError:
+            # Logging must never crash the hook.
+            pass
+
+
+# ---------- wall-clock budget ----------
+
+
+_START_TIME: float = 0.0
+_BUDGET_S: int = SCRIPT_WALL_CLOCK_BUDGET_S
+
+
+def budget_exceeded() -> bool:
+    """Return True if elapsed wall-clock since main() start exceeds the budget."""
+    if _BUDGET_S <= 0:
+        # Zero / negative budget treated as "exceeded immediately" so the
+        # caller bails before doing any work. Useful for tests.
+        return True
+    return (time.monotonic() - _START_TIME) > _BUDGET_S
+
+
+# ---------- single-flight lock ----------
+
+
+def acquire_lock(lock_path: Path) -> int | None:
+    """Try to acquire a non-blocking exclusive flock on `lock_path`.
+
+    Returns the open file descriptor on success (caller is responsible
+    for keeping it open for the lifetime of the process — the lock is
+    released automatically when the fd is closed or the process exits).
+    Returns None if another process holds the lock — caller should log
+    and exit 0.
+
+    Cross-platform: uses Python's `fcntl.flock`, available on macOS and
+    Linux. Works regardless of whether `flock(1)` is installed.
+    """
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log(f"scan: lock path parent unavailable ({e}); proceeding without lock")
+        return -1  # sentinel: no lock acquired but proceed
+    try:
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        log(f"scan: lock file open failed ({e}); proceeding without lock")
+        return -1
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    except OSError as e:
+        log(f"scan: lock acquire failed ({e}); proceeding without lock")
+        os.close(fd)
+        return -1
+    return fd
 
 
 # ---------- transcript reading ----------
@@ -499,20 +664,72 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Exit non-zero on any error. Default is to swallow errors (hook-friendly).",
     )
+    p.add_argument(
+        "--log-file",
+        default=None,
+        help=(
+            "Append timestamped log lines to this file (in addition to stderr). "
+            "Default: $XDG_STATE_HOME/build-loop/scan.log (or ~/.local/state/build-loop/scan.log)."
+        ),
+    )
+    p.add_argument(
+        "--lock-file",
+        default=DEFAULT_LOCK_FILE,
+        help=(
+            "Path to the single-flight lock file. Default /tmp/build-loop-scan.lock. "
+            "If the lock is held by another scan, this invocation exits 0 immediately."
+        ),
+    )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _LOG_FILE_PATH, _START_TIME, _BUDGET_S
+
+    # Stamp wall-clock start before anything else so budget covers the full run.
+    _START_TIME = time.monotonic()
+
     try:
         args = parse_args(argv)
     except SystemExit as e:
         # Hooks must not fail the session.
         return 1 if e.code else 0
 
+    # Wire the log-file destination first so every log() call below is captured.
+    _LOG_FILE_PATH = Path(args.log_file).expanduser() if args.log_file else _default_log_file()
+
+    # Resolve budget: CLI default (constant) or env override.
+    try:
+        env_budget = os.environ.get("SCAN_BUDGET_S")
+        _BUDGET_S = int(env_budget) if env_budget is not None else SCRIPT_WALL_CLOCK_BUDGET_S
+    except ValueError:
+        _BUDGET_S = SCRIPT_WALL_CLOCK_BUDGET_S
+
     workdir = Path(args.workdir).resolve()
     episodic = workdir / ".episodic"
     if not episodic.exists():
         log(f"scan: no .episodic/ at {episodic}; skipping (project does not opt in)")
+        return 0
+
+    # Per-session opt-out: presence of .episodic/.no-capture skips all work.
+    no_capture = episodic / ".no-capture"
+    if no_capture.exists():
+        log("scan: skipping per .no-capture flag")
+        return 0
+
+    # Single-flight lock: skip if another scan is already running.
+    lock_path = Path(args.lock_file).expanduser()
+    lock_fd = acquire_lock(lock_path)
+    if lock_fd is None:
+        log(f"scan: another scan holds {lock_path}; skipping this invocation")
+        return 0
+    # NOTE: we keep `lock_fd` open until the process exits; that's the lock lifetime.
+
+    # Budget check #1: argparse + lock are essentially free, but if the
+    # caller set a degenerate budget (e.g. tests use SCAN_BUDGET_S=0 to
+    # force the bail path) we honor it here.
+    if budget_exceeded():
+        log(f"scan: budget exceeded ({_BUDGET_S}s); bailing with partial results (no work done)")
         return 0
 
     transcript_path = Path(args.transcript) if args.transcript else None
@@ -530,6 +747,10 @@ def main(argv: list[str] | None = None) -> int:
             log(f"scan: mock LLM output file not found: {e}")
             return 1 if args.strict else 0
     else:
+        # Budget check #2: LLM call is the longest operation; skip if no time left.
+        if budget_exceeded():
+            log(f"scan: budget exceeded ({_BUDGET_S}s); bailing before LLM call")
+            return 0
         prior = load_prior_decisions_summary(workdir)
         allowed_tags = _load_allowed_tags(workdir)
         prompt = build_prompt_c(transcript_text, prior, allowed_tags=allowed_tags)
@@ -549,6 +770,13 @@ def main(argv: list[str] | None = None) -> int:
     review_count = 0
     skipped_dup = 0
     for item in items:
+        # Budget check #3: between writes. Each write is atomic so partial completion is safe.
+        if budget_exceeded():
+            log(
+                f"scan: budget exceeded ({_BUDGET_S}s); bailing with partial results "
+                f"(trusted={trusted_count}, review={review_count}, skipped_dup={skipped_dup})"
+            )
+            return 0
         confidence = (item.get("confidence") or "").strip()
 
         # Dedup check on the decision text — only when we have DB access.

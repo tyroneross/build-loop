@@ -249,5 +249,138 @@ class ScanTranscriptLiveTests(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
 
 
+class HardeningTests(unittest.TestCase):
+    """Offline tests for Stop-hook hardening (budget, log file, no-capture, lock).
+
+    These tests do NOT require ollama; they use --mock-llm-output to drive
+    the script with canned LLM responses, or rely on early-exit paths
+    (no-capture, lock contention, missing transcript).
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        (self.workdir / ".semantic").mkdir(parents=True)
+        (self.workdir / ".episodic" / "decisions" / "_history").mkdir(parents=True)
+        (self.workdir / ".episodic" / "decisions" / "_review").mkdir(parents=True)
+        (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
+        self.transcript = self.workdir / "transcript.jsonl"
+        _seed_transcript(self.transcript)
+        # Per-test log file lives inside tmpdir so we don't pollute
+        # ~/.local/state/build-loop/scan.log.
+        self.log_file = self.workdir / "scan.log"
+        # Per-test lock file so parallel tests don't collide on /tmp/build-loop-scan.lock.
+        self.lock_file = self.workdir / "scan.lock"
+        # Mock LLM output: one tier-3 (inferred) item that hits write_review.
+        self.mock_path = self.workdir / "mock-llm.json"
+        self.mock_path.write_text(
+            json.dumps([
+                {
+                    "decision": "Use pytest for the api package",
+                    "evidence": "ok, let's use pytest for the api package.",
+                    "confidence": "inferred",
+                    "primary_tag": "tooling",
+                    "entity": "api",
+                    "tags": ["tooling", "testing"],
+                    "context": "User confirmed pytest as the test framework",
+                    "alternatives": "",
+                    "rationale": "Topic-coherent confirmation",
+                }
+            ])
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run(self, extra: list[str], timeout: int = 30, env: dict | None = None) -> subprocess.CompletedProcess:
+        args = [
+            sys.executable, str(SCRIPT),
+            "--workdir", str(self.workdir),
+            "--transcript", str(self.transcript),
+            "--no-db",
+            "--log-file", str(self.log_file),
+            "--lock-file", str(self.lock_file),
+        ] + extra
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=merged_env)
+
+    def test_log_file_written(self) -> None:
+        """--log-file writes timestamped lines; stdout stays empty on success."""
+        cp = self._run(["--mock-llm-output", str(self.mock_path)])
+        self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
+        self.assertTrue(self.log_file.exists(), msg="log file not created")
+        contents = self.log_file.read_text()
+        self.assertIn("[scan]", contents, msg=f"log file missing tag: {contents!r}")
+        # Each log line must start with an ISO-8601-ish timestamp (Z suffix).
+        first_line = contents.strip().splitlines()[0]
+        self.assertRegex(first_line, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z \[scan\]")
+        # Stdout is empty on success (script does not print to stdout).
+        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+
+    def test_no_capture_flag_skips_immediately(self) -> None:
+        """`.episodic/.no-capture` causes immediate clean exit before any work."""
+        (self.workdir / ".episodic" / ".no-capture").touch()
+        cp = self._run(["--mock-llm-output", str(self.mock_path)])
+        self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
+        contents = self.log_file.read_text() if self.log_file.exists() else ""
+        self.assertIn("no-capture", contents.lower(), msg=f"expected no-capture log: {contents!r}")
+        # No artifacts written.
+        review_dir = self.workdir / ".episodic" / "decisions" / "_review"
+        self.assertEqual(len(list(review_dir.glob("*.md"))), 0)
+
+    def test_budget_exceeded_exits_clean(self) -> None:
+        """SCAN_BUDGET_S=0 forces budget-exceeded path; script exits 0 with log message."""
+        cp = self._run(
+            ["--mock-llm-output", str(self.mock_path)],
+            env={"SCAN_BUDGET_S": "0"},
+        )
+        self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
+        contents = self.log_file.read_text() if self.log_file.exists() else ""
+        self.assertIn("budget exceeded", contents.lower(), msg=f"expected budget log: {contents!r}")
+
+    def test_log_rotation_when_oversize(self) -> None:
+        """Log file >10MB gets truncated to last 1MB on next write."""
+        # Pre-fill with 12MB of garbage to trigger rotation
+        oversized = b"X" * (12 * 1024 * 1024)
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        self.log_file.write_bytes(oversized)
+        # Use --no-capture path so we don't depend on ollama; it still calls log()
+        (self.workdir / ".episodic" / ".no-capture").touch()
+        cp = self._run([])
+        self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
+        size_after = self.log_file.stat().st_size
+        # After rotation, file should be ≤ ~1MB + a few new lines (well under 2MB)
+        self.assertLess(size_after, 2 * 1024 * 1024, msg=f"rotation didn't shrink log; size={size_after}")
+        # And the rotation marker line should be present.
+        contents = self.log_file.read_text(errors="replace")
+        self.assertIn("rotated", contents.lower())
+
+    def test_lock_contention_skips_cleanly(self) -> None:
+        """Second concurrent invocation skips with non-error log when lock held."""
+        import fcntl
+        # Hold the lock from this process; the subprocess should fail to acquire and exit 0.
+        self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(self.lock_file), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Use SCAN_BUDGET_S=0 as a safety net: even if the lock check
+            # silently regressed and let the subprocess through, the
+            # zero-budget would force an immediate bail before any LLM call.
+            # The test still asserts "another scan" log line is the actual
+            # exit reason.
+            cp = self._run([], env={"SCAN_BUDGET_S": "0"})
+            self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
+            contents = self.log_file.read_text() if self.log_file.exists() else ""
+            self.assertIn("another scan", contents.lower(), msg=f"expected lock-skip log: {contents!r}")
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

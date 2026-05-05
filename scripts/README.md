@@ -133,6 +133,27 @@ The `scan_transcript_for_decisions.py` extraction step uses
 (cursor-back / erase-line escape codes) that corrupt JSON spans even
 when stdout is piped.
 
+#### Stop-hook hardening contract
+
+The Stop hook can never disrupt a coding session. The script enforces:
+
+- **Wall-clock budget** — default 25s (override via env `SCAN_BUDGET_S`).
+  Checked before the LLM call and between writes; on overrun the script
+  logs `budget exceeded` and exits 0 with whatever was already written.
+  The Claude Code hook timeout (60s) is a backstop, not the primary control.
+- **Single-flight lock** — Python `fcntl.flock` on
+  `/tmp/build-loop-scan.lock` (override via `--lock-file`). A second
+  concurrent scan exits 0 immediately with a log line. This is portable
+  on macOS (which doesn't ship `flock(1)`).
+- **Output suppression** — the hook command in `hooks/hooks.json`
+  redirects both stdout and stderr to `/dev/null`. The durable record is
+  the log file at `${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log`
+  (override via `--log-file`). The log auto-rotates when it exceeds
+  10 MB (last 1 MB kept).
+- **Per-session opt-out** — `touch .episodic/.no-capture` in the project
+  root to skip the auto-capture sweep for the current session. Remove
+  the file to re-enable.
+
 ### Required runtime services
 
 All Phase 2 / Phase 3 tests require:
