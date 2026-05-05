@@ -234,6 +234,133 @@ def test_shortlist_cli_smoke() -> None:
     assert data["shortlist_size"] <= cs.SHORTLIST_CAP
 
 
+# ---------------------------------------------------------------------------
+# Priority 13 (run #4): Shortlist relevance refinements
+# ---------------------------------------------------------------------------
+
+def _make_state(tmp_path: Path, **fields) -> Path:
+    """Helper: write a synthetic .build-loop/state.json."""
+    state_dir = tmp_path / ".build-loop"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "state.json"
+    base = {
+        "uiTarget": None,
+        "platform": None,
+        "migrationSource": None,
+        "triggers": {
+            "promptAuthoring": False,
+            "promptEditingExisting": False,
+        },
+    }
+    base.update(fields)
+    state_path.write_text(json.dumps(base), encoding="utf-8")
+    return state_path
+
+
+def test_shortlist_demotes_ibr_when_no_uitarget(real_registry: dict, tmp_path: Path) -> None:
+    """Priority 13: with `uiTarget: null`, ibr-bridge should fall out of top 8.
+
+    The synthetic workdir's state.json declares no UI work; the demotion
+    penalty (5pts) drops ibr/ui-validation entries below relevant entries.
+    """
+    _make_state(tmp_path, uiTarget=None)
+    out = cs.shortlist(
+        real_registry, phase=4,
+        intent="validate the project diff for correctness",
+        workdir=tmp_path,
+    )
+    names = {r["name"] for r in out["results"]}
+    assert "build-loop:ibr-bridge" not in names, (
+        f"ibr-bridge surfaced in top 8 despite uiTarget=null: {names}"
+    )
+    # Also assert no ui-validation category dominates the top
+    cats = [r["category"] for r in out["results"]]
+    assert cats.count("ui-validation") == 0, (
+        f"ui-validation entries surfaced: {[r for r in out['results'] if r['category'] == 'ui-validation']}"
+    )
+
+
+def test_shortlist_collapses_plugin_surface_redundancy(real_registry: dict, tmp_path: Path) -> None:
+    """Priority 13: ≥3 entries sharing (category, plugin_namespace) collapse to ≤2.
+
+    Phase 5 debugging intent surfaces many debugger-family entries. The
+    collapse rule keeps at most 2 per (category, namespace) group, preferring
+    higher-tier surfaces (skill > agent > command). The shortlist should not
+    return 3+ /debug* commands or 3+ skills/debugging/* skills.
+    """
+    _make_state(tmp_path)
+    out = cs.shortlist(
+        real_registry, phase=5,
+        intent="debug failing tests and diagnose root cause",
+        workdir=tmp_path,
+    )
+    # Count entries per (category, plugin_namespace).
+    from collections import Counter
+    counts = Counter()
+    for r in out["results"]:
+        # Reconstruct namespace using the shipped helper.
+        # Reach into the registry to get the source_path.
+        source_path = r.get("source_path") or ""
+        # Reconstruct the entry shape needed by _plugin_namespace.
+        proxy = {"source_path": source_path, "name": r["name"]}
+        ns = cs._plugin_namespace(proxy)
+        counts[(r["category"], ns)] += 1
+    over_cap = {k: v for k, v in counts.items() if v > 2}
+    assert not over_cap, (
+        f"Plugin surface collapse failed; over-cap groups: {over_cap}\n"
+        f"results: {[r['name'] for r in out['results']]}"
+    )
+
+
+def test_shortlist_memory_audit_preserves_relevance(real_registry: dict, tmp_path: Path) -> None:
+    """Priority 13: regression smoke — memory-audit intent stays ≥7/8 memory-categorized.
+
+    Run #3 baseline was 7/8 (1 meta entry at #8). Ensure refinements don't
+    push memory entries out of the top 8.
+    """
+    _make_state(tmp_path)
+    out = cs.shortlist(
+        real_registry, phase=1,
+        intent="audit memory invocation",
+        workdir=tmp_path,
+    )
+    memory_count = sum(1 for r in out["results"] if r["category"] == "memory")
+    assert memory_count >= 7, (
+        f"memory-categorized entries dropped to {memory_count}/8; "
+        f"results: {[(r['name'], r['category']) for r in out['results']]}"
+    )
+
+
+def test_shortlist_demotes_replit_when_no_migration(real_registry: dict, tmp_path: Path) -> None:
+    """Priority 13: replit-migrate entries demoted when migrationSource is null."""
+    _make_state(tmp_path, migrationSource=None)
+    out = cs.shortlist(
+        real_registry, phase=3,
+        intent="execute the build",
+        workdir=tmp_path,
+    )
+    for r in out["results"]:
+        assert "replit" not in r["name"].lower(), (
+            f"replit-migrate entry surfaced despite no migrationSource: {r['name']}"
+        )
+
+
+def test_plugin_namespace_helper() -> None:
+    """Priority 13: `_plugin_namespace` collapses related debugger surfaces."""
+    # Commands all collapse to 'debug'.
+    assert cs._plugin_namespace({"source_path": "commands/debug.md", "name": "/debug"}) == "debug"
+    assert cs._plugin_namespace(
+        {"source_path": "commands/debugger-detail.md", "name": "/debugger-detail"}
+    ) == "debug"
+    # Skills group by their parent dir.
+    assert cs._plugin_namespace(
+        {"source_path": "skills/debugging/memory/SKILL.md", "name": "build-loop:debugging-memory-search"}
+    ) == "debugging"
+    assert cs._plugin_namespace(
+        {"source_path": "skills/architecture/scan/SKILL.md", "name": "build-loop:architecture-scan"}
+    ) == "architecture"
+
+
 def test_cache_into_state_appends(tmp_path: Path) -> None:
     state_path = tmp_path / ".build-loop" / "state.json"
     state_path.parent.mkdir(parents=True)

@@ -23,6 +23,28 @@ from typing import Any, Dict, List, Optional, Sequence
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
 SHORTLIST_CAP = 8
 
+# Tier preference for plugin-surface collapse: higher-tier surface wins.
+# Skill is canonical, agent is structured-flow, command is user-invokable,
+# script is the lowest-level executable, mcp_tool/hook in between.
+SURFACE_TIER_RANK = {
+    "skill": 5,
+    "agent": 4,
+    "command": 3,
+    "mcp_tool": 2,
+    "hook": 2,
+    "script": 1,
+}
+
+# Penalty applied when a trigger-demoted entry is detected. Empirical: 5pts
+# is enough to drop an off-topic entry (intent score 5-7) below relevant
+# entries (intent score 10+) without removing it entirely from the registry.
+TRIGGER_DEMOTION_PENALTY = 5
+
+# Names containing these tokens get demoted when the matching trigger is off.
+_UI_VALIDATION_TOKENS = ("ibr", "frontend-design", "calm-precision", "ui-guidance")
+_PROMPT_TOKENS = ("prompt-builder", "prompt_builder")
+_MIGRATION_TOKENS = ("replit-migrate", "replit_migrate")
+
 PHASE_CATEGORIES: Dict[int, Dict[str, List[str]]] = {
     1: {"primary": ["architecture", "planning", "memory", "observability"], "secondary": ["meta"]},
     2: {"primary": ["planning", "architecture", "validation"], "secondary": ["meta"]},
@@ -111,12 +133,200 @@ def score_entry(
     return score, reasons
 
 
+def _plugin_namespace(entry: Dict[str, Any]) -> str:
+    """Derive a plugin/family key from an entry's source_path or name.
+
+    Multiple surfaces from the same plugin family (e.g. `commands/debug.md`,
+    `commands/debugger.md`, `skills/debugging/*`, `agents/*-debugger.md`) all
+    collapse to the same namespace. Used by `apply_plugin_surface_collapse`.
+
+    Heuristic by precedence:
+      1. `skills/<family>/...` → `family` (after stripping leading namespace
+         like `build-loop:` if present).
+      2. `commands/<base>.md` → strip surface prefixes like `debugger-` →
+         family root.
+      3. `agents/<base>.md` → strip suffixes like `-agent`, `-scout`,
+         `-builder` → family root.
+      4. `.mcp.json`-derived tool names → `mcp:<server>` part.
+      5. Fallback: leading word of entry name.
+    """
+    src = entry.get("source_path") or ""
+    name = (entry.get("name") or "").lower()
+    if src.startswith("skills/"):
+        # skills/debugging/memory/SKILL.md → 'debugging'
+        parts = src.split("/", 2)
+        if len(parts) >= 2:
+            return parts[1].replace("-", "_")
+    if src.startswith("commands/"):
+        base = Path(src).stem.lower()
+        # 'debugger-detail' / 'debugger-scan' / 'debugger-status' → 'debug'
+        for prefix in ("debugger", "debug"):
+            if base.startswith(prefix):
+                return "debug"
+        return base.split("-")[0]
+    if src.startswith("agents/"):
+        base = Path(src).stem.lower()
+        for suffix in ("-agent", "-scout", "-builder", "-critic", "-checker", "-scanner"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+        return base.replace("-", "_")
+    if "debugger" in name or "debug" in name.split(":")[-1]:
+        # mcp:build-loop-debugger and similar
+        return "debug"
+    return name.split(":")[0].split("-")[0]
+
+
+def apply_plugin_surface_collapse(
+    scored: List[tuple],
+) -> List[tuple]:
+    """Collapse plugin-surface redundancy.
+
+    When ≥3 entries share the same `(category, plugin_namespace)`, keep at
+    most 2 representatives — preferring higher-tier surface
+    (skill > agent > command > mcp_tool/hook > script). The kept survivors
+    keep their original score; collapsed entries are dropped. Order within
+    the input is preserved for kept entries.
+    """
+    # Group by (category, namespace).
+    groups: Dict[tuple, List[int]] = {}
+    for idx, (_score, _reasons, e) in enumerate(scored):
+        key = (e.get("category", ""), _plugin_namespace(e))
+        groups.setdefault(key, []).append(idx)
+
+    drop_indices: set = set()
+    for key, idxs in groups.items():
+        if len(idxs) < 3:
+            continue
+        # Sort indices by (kind tier desc, score desc, name asc) and keep top-2.
+        def _rank(i: int):
+            score, _r, e = scored[i]
+            return (
+                -SURFACE_TIER_RANK.get(e.get("kind", ""), 0),
+                -score,
+                e.get("name", ""),
+            )
+
+        ordered = sorted(idxs, key=_rank)
+        for victim_idx in ordered[2:]:
+            drop_indices.add(victim_idx)
+    return [t for i, t in enumerate(scored) if i not in drop_indices]
+
+
+def _infer_triggers_from_repo(workdir: Path) -> Dict[str, Any]:
+    """Best-effort heuristics when state.json doesn't have trigger fields.
+
+    Looks at on-disk file extensions and config files.
+    Returns dict with `uiTarget`, `migrationSource`, `promptAuthoring`.
+    """
+    inferred: Dict[str, Any] = {
+        "uiTarget": None,
+        "migrationSource": None,
+        "promptAuthoring": False,
+        "promptEditingExisting": False,
+    }
+    try:
+        # uiTarget: any UI extensions present
+        for pattern in ("*.tsx", "*.swift", "*.kt", "*.dart"):
+            if any(workdir.rglob(pattern)):
+                inferred["uiTarget"] = "auto"
+                break
+    except OSError:
+        pass
+    try:
+        if (workdir / ".replit").exists() or (workdir / "replit.nix").exists():
+            inferred["migrationSource"] = "replit"
+    except OSError:
+        pass
+    return inferred
+
+
+def _read_state_triggers(workdir: Path) -> Dict[str, Any]:
+    """Read .build-loop/state.json triggers + sub-routers; fall back to heuristic."""
+    state_path = workdir / ".build-loop" / "state.json"
+    state: Dict[str, Any] = {}
+    try:
+        if state_path.is_file():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        state = {}
+
+    triggers = state.get("triggers", {}) or {}
+    out = {
+        "uiTarget": state.get("uiTarget"),
+        "platform": state.get("platform"),
+        "migrationSource": state.get("migrationSource"),
+        "promptAuthoring": triggers.get("promptAuthoring", False),
+        "promptEditingExisting": triggers.get("promptEditingExisting", False),
+    }
+    # If state.json absent or fields missing entirely, fall back to repo heuristics.
+    if not state_path.is_file() or (
+        out["uiTarget"] is None and out["migrationSource"] is None
+        and not out["promptAuthoring"] and not out["promptEditingExisting"]
+    ):
+        inferred = _infer_triggers_from_repo(workdir)
+        for k, v in inferred.items():
+            if out.get(k) in (None, False):
+                out[k] = v
+    return out
+
+
+def apply_trigger_demotion(
+    scored: List[tuple],
+    triggers: Dict[str, Any],
+) -> List[tuple]:
+    """Demote off-topic entries based on phase-1 sub-routers and triggers.
+
+    Penalty subtracted (TRIGGER_DEMOTION_PENALTY); reason appended. Order is
+    preserved; the caller re-sorts by score afterwards.
+
+    Rules:
+    - `uiTarget` is None → demote any entry with `category=ui-validation` or
+      whose name contains an IBR/UI-validation token.
+    - Both `promptAuthoring` and `promptEditingExisting` False → demote
+      `prompt-builder*` entries.
+    - `migrationSource` is None → demote `replit-migrate*` entries.
+    """
+    ui_off = triggers.get("uiTarget") is None
+    prompt_off = (
+        not triggers.get("promptAuthoring") and not triggers.get("promptEditingExisting")
+    )
+    migration_off = triggers.get("migrationSource") is None
+
+    out: List[tuple] = []
+    for score, reasons, e in scored:
+        cat = (e.get("category") or "").lower()
+        name_l = (e.get("name") or "").lower()
+        penalty = 0
+        notes: List[str] = []
+        if ui_off and (cat == "ui-validation"
+                       or any(tok in name_l for tok in _UI_VALIDATION_TOKENS)):
+            penalty += TRIGGER_DEMOTION_PENALTY
+            notes.append("demote:no-ui-target")
+        if prompt_off and any(tok in name_l for tok in _PROMPT_TOKENS):
+            penalty += TRIGGER_DEMOTION_PENALTY
+            notes.append("demote:no-prompt-work")
+        if migration_off and any(tok in name_l for tok in _MIGRATION_TOKENS):
+            penalty += TRIGGER_DEMOTION_PENALTY
+            notes.append("demote:no-migration")
+        if penalty:
+            out.append((score - penalty, list(reasons) + notes, e))
+        else:
+            out.append((score, reasons, e))
+    return out
+
+
 def shortlist(
     registry: Dict[str, Any],
     phase: int,
     intent: str,
     kinds: Optional[Sequence[str]] = None,
+    workdir: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    """Score and shortlist registry entries against (phase, intent).
+
+    `workdir` defaults to the repo root; passed through to trigger reads
+    so synthetic test fixtures can override.
+    """
     entries: List[Dict[str, Any]] = list(registry.get("entries", []) or [])
     if kinds:
         kinds_set = set(kinds)
@@ -141,6 +351,15 @@ def shortlist(
             if cat in primary or cat in secondary:
                 base = 3 if cat in primary else 1
                 scored.append((base, [f"phase-only:{cat}"], e))
+
+    # P13 refinements (run #4): collapse plugin-surface redundancy so a
+    # single plugin can't dominate the shortlist; demote off-topic
+    # categories based on Phase 1 sub-routers (uiTarget, migrationSource)
+    # and triggers (promptAuthoring/promptEditingExisting).
+    scored = apply_plugin_surface_collapse(scored)
+    if workdir is not None:
+        triggers = _read_state_triggers(Path(workdir))
+        scored = apply_trigger_demotion(scored, triggers)
 
     scored.sort(key=lambda t: (-t[0], t[2].get("name", "")))
     out_entries = []
@@ -210,7 +429,7 @@ def main(argv: Optional[List[str]] = None) -> int:
               file=sys.stderr)
         return 1
 
-    result = shortlist(registry, args.phase, args.intent, args.kind)
+    result = shortlist(registry, args.phase, args.intent, args.kind, workdir=workdir)
     if not args.no_cache:
         cache_into_state(workdir, result)
 
