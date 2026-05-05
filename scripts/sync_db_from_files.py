@@ -101,13 +101,23 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
             (subject,),
         )
         files_touched = fm.get("files_touched") or []
+        # Coerce confirmation_count to int (YAML parser may return string)
+        cc = fm.get("confirmation_count")
+        try:
+            confirmation_count_val = int(cc) if cc is not None else 0
+        except (TypeError, ValueError):
+            confirmation_count_val = 0
         execute(
             (
                 f"INSERT INTO {schema}.semantic_facts "
                 "(subject, predicate, object, confidence, status, embedding, metadata, "
-                " project, tool, model, task_category, author, files_touched, closing_commit) "
+                " project, tool, model, task_category, author, files_touched, closing_commit, "
+                " confidence_source, confirmation_count, valid_until, causal_parent_id, "
+                " embedding_model_version, domain, goal) "
                 "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
-                " %s, %s, %s, %s, %s, %s, %s);"
+                " %s, %s, %s, %s, %s, %s, %s, "
+                " %s, %s, %s, %s, "
+                " %s, %s, %s);"
             ),
             (
                 subject,
@@ -123,6 +133,13 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
                 fm.get("author"),
                 list(files_touched) if isinstance(files_touched, list) else [],
                 fm.get("closing_commit"),
+                fm.get("confidence_source"),
+                confirmation_count_val,
+                fm.get("valid_until"),
+                fm.get("causal_parent_id"),
+                fm.get("embedding_model_version"),
+                fm.get("domain"),
+                fm.get("goal"),
             ),
         )
         return True
