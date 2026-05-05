@@ -94,6 +94,25 @@ def test_atomic_write_round_trip(tmp_path: Path) -> None:
     assert data["n"] == 1
 
 
+def test_no_unknown_category(registry: dict) -> None:
+    """Priority 9: every capability classifies into a real category.
+
+    'unknown' is the keyword-map fallback — used when no CATEGORY_KEYWORDS
+    pattern matches. A non-zero count means CATEGORY_KEYWORDS needs an entry
+    for the new surface. Drives the orchestrator's shortlist toward
+    relevance: every surface contributes a category signal.
+    """
+    unknowns = [e for e in registry["entries"] if e["category"] == "unknown"]
+    assert unknowns == [], (
+        "Capabilities classified as 'unknown' — extend "
+        "scripts/build_capability_registry.py:CATEGORY_KEYWORDS:\n"
+        + "\n".join(
+            f"  - {e['name']} ({e['kind']}) — {e.get('description', '')[:80]}"
+            for e in unknowns
+        )
+    )
+
+
 def test_registry_cli_writes_to_default_path(tmp_path: Path) -> None:
     """Smoke-test the CLI on a synthetic minimal repo."""
     # Synthesize a tiny repo with one of each kind.

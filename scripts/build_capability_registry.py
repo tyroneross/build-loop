@@ -59,14 +59,29 @@ REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
 # orchestrator-style surfaces also mention review/validate/build in passing
 # but fundamentally belong in `meta`.
 CATEGORY_KEYWORDS = [
+    # `meta` is checked first because orchestrator-layer surfaces also mention
+    # review/validate/build in passing but fundamentally belong here. Covers
+    # routing infrastructure (shortlist, project resolver, CWD→tag), model
+    # selection (tiering), capability-registry tooling, slice/subagent
+    # dispatch helpers, and transcript miners.
     ("meta",         ("orchestrat", "self-improv", "pattern-detector",
-                      "promote-experiment", "build-orchestrator", "build_orchestrator")),
+                      "promote-experiment", "build-orchestrator", "build_orchestrator",
+                      "shortlist", "capability registry", "capability-registry",
+                      "narrow", "decision space", "subagent dispatch",
+                      "project tag", "project_resolver", "cwd to a project",
+                      "model tier", "model_tier", "model-tier", "tier",
+                      "transcript", "pattern-miner", "pattern miner",
+                      "slice", "acp")),
     ("architecture", ("architect", "navgator", "blast_radius", "blast-radius",
                       "blast radius", "scout", "scan repo", "component", "graph")),
     ("debugging",    ("debug", "debugger", "incident", "root cause", "root-cause",
                       "trace", "logging-tracer", "memory-first")),
+    # Validation includes plugin-hygiene checks (cache sync, namesake
+    # collisions) and api-dependency contract checks.
     ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic",
-                      "review", "rubric", "lint")),
+                      "review", "rubric", "lint", "cache sync", "cache-sync",
+                      "collision", "namesake", "api dependency", "api-registry",
+                      "api config", "api-config")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
