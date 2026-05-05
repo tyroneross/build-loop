@@ -184,15 +184,15 @@ When to use parallel assessment vs continuing the linear loop:
 - Post-deploy regression with unknown scope → parallel
 - Symptom is sharp and localized to one layer → continue the linear loop
 
-### Extended capability — escalate to standalone supporting plugin
+### Extended capability — cross-domain assessor escalation
 
-If the bundled assessor coverage isn't enough (e.g., the failure crosses a domain build-loop's bundled assessors don't cover well, or you need cross-build coordination), invoke the bridge:
+If the bundled assessor coverage isn't enough (e.g., the failure crosses a domain build-loop's bundled assessors don't cover well, or you need cross-build coordination), escalate via the native debugging skills:
 
 ```
-Skill("build-loop:debugger-bridge") with input { symptom, calledBy: "debug-loop", reason: "stuck-iteration" }
+Skill("build-loop:debugging-assess") with input { symptom, scope: "global", calledBy: "debug-loop", reason: "stuck-iteration" }
 ```
 
-The bridge pre-flights `availablePlugins.claudeCodeDebugger`. If the standalone supporting plugin is installed, it delegates to additional assessor coverage / cross-instance coordination there. If not installed, returns `{ delegated: false }` and you continue with bundled-only capability — no error.
+The native skill is sourced from claude-code-debugger and includes domain-specific assessors (api / database / frontend / performance). It uses the bundled debugger MCP for cross-build memory; if the MCP is unavailable, falls back to local grep across `.build-loop/issues/` and `.build-loop/feedback.md` — no error, just narrower coverage.
 
 ### State Tracking
 

@@ -597,6 +597,128 @@ def rule_risk_surface_change_without_threat_model(plan_path: Path, lines: list[t
 
 
 # ---------------------------------------------------------------------------
+# Rule: schema-migration-full-chain (priority 10/11, 2026-05-05)
+# ---------------------------------------------------------------------------
+# Recurring pattern: writer emits keys X, reader expects keys Y, drift goes
+# undetected until runtime. Two instances on this branch alone (Chunk 7
+# NavGator-lessons sync; Priority 7 index.json key alias).
+#
+# Trigger when the plan touches schema/serializer/storage files OR mentions
+# changes to `to_dict|to_index|asdict|from_dict|from_index|@dataclass`.
+# Require at least one of:
+#   (a) matching test fixture file in tests/
+#   (b) reader-side file (json.loads/json.load callers — heuristic: any
+#       *.py path in the plan that's NOT the writer file)
+#   (c) explicit override: `override: schema-migration-full-chain` in the
+#       plan markdown
+# Severity: WARN by default — false-positive risk on greenfield schemas
+# where writer + reader land in the same file. WARN doesn't block the gate.
+
+SCHEMA_FILE_RE = re.compile(
+    r"(?:^|[\s`(])"                       # path boundary
+    r"((?:[\w./-]*?/)?"                   # optional dir prefix
+    r"(?:scripts/migrate_[\w_-]+|"        # migration scripts
+    r"src/[\w/-]+/(?:schemas|storage)\.py|"  # schemas.py / storage.py
+    r"[\w/-]+/_schema\.py))"              # *_schema.py
+    r"(?:[\s`):,]|$)",                    # boundary
+    re.IGNORECASE,
+)
+# Method/decorator names that signal serializer changes.
+SCHEMA_METHOD_RE = re.compile(
+    r"\b(?:to_dict|to_index|asdict|from_dict|from_index)\b|@dataclass\b",
+    re.IGNORECASE,
+)
+# Paths that look like test fixtures: tests/... or .../test_*.py / *_test.py
+TEST_PATH_RE = re.compile(
+    r"(?:^|[\s`(])"
+    r"((?:[\w./-]*?/)?tests?/[\w/-]+\.py|[\w/-]*?test_[\w_-]+\.py|[\w/-]*?[\w_-]+_test\.py)"
+    r"(?:[\s`):,]|$)",
+    re.IGNORECASE,
+)
+# Reader-side hints: any .py path mentioned that calls json.load(s) — we
+# can't run the import graph from a markdown plan, so we accept ANY .py path
+# in the plan beyond the writer files as evidence the reader side is in
+# scope. The keyword "reader" / "json.loads" / "json.load" is also enough.
+READER_HINT_RE = re.compile(
+    r"\b(?:json\.loads?|reader|consumer|deserialize|deserializ|read[_\s-]?side)\b",
+    re.IGNORECASE,
+)
+# Explicit override marker.
+OVERRIDE_RE = re.compile(
+    r"override\s*:\s*schema-migration-full-chain", re.IGNORECASE,
+)
+
+
+def rule_schema_migration_full_chain(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN: plan touches schema/serializer/migration files but lacks
+    co-changes for the reader side (test fixture, reader file, or explicit
+    override).
+
+    The rule scans the entire plan once: if any line names a schema/migration
+    path OR a serializer method, AND no line provides co-change evidence, we
+    emit ONE finding pointing at the first triggering line. WARN-only — the
+    plan author may still be correct on greenfield schemas; the goal is to
+    surface the question so the reader-side gets named explicitly."""
+    out: list[dict[str, Any]] = []
+
+    # Single-pass scan — collect signals.
+    schema_writer_paths: list[tuple[int, str, str]] = []  # (lineno, path, raw_line)
+    serializer_methods: list[tuple[int, str]] = []       # (lineno, raw_line)
+    test_paths: set[str] = set()
+    reader_hints: list[tuple[int, str]] = []              # (lineno, raw_line)
+    has_override = False
+
+    for lineno, line in lines:
+        if not line:
+            continue
+        if OVERRIDE_RE.search(line):
+            has_override = True
+        for m in SCHEMA_FILE_RE.finditer(line):
+            schema_writer_paths.append((lineno, m.group(1), line))
+        if SCHEMA_METHOD_RE.search(line):
+            serializer_methods.append((lineno, line))
+        for m in TEST_PATH_RE.finditer(line):
+            test_paths.add(m.group(1))
+        if READER_HINT_RE.search(line):
+            reader_hints.append((lineno, line))
+
+    # No signal → nothing to flag.
+    if not (schema_writer_paths or serializer_methods):
+        return out
+    # Explicit override silences the rule.
+    if has_override:
+        return out
+    # Co-change satisfied by EITHER a test fixture OR a reader hint.
+    if test_paths:
+        return out
+    if reader_hints:
+        return out
+
+    # Pick the first triggering line for the finding evidence.
+    if schema_writer_paths:
+        lineno, path, raw = schema_writer_paths[0]
+        subject_path = path
+        snippet = raw.strip()
+    else:
+        lineno, raw = serializer_methods[0]
+        subject_path = None
+        snippet = raw.strip()
+
+    out.append(_finding(
+        claim_text=snippet,
+        claim_kind="schema_migration_full_chain",
+        subject={"path": subject_path, "symbol": None, "noun": "schema_migration"},
+        verification_command=None,
+        evidence={"file": str(plan_path), "line": lineno, "snippet": snippet},
+        result="inconclusive",
+        severity="WARN",
+        confidence="medium",
+        rule_id="schema-migration-full-chain",
+    ))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -615,6 +737,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_tool_without_permission_tier(plan_path, lines))
     findings.extend(rule_external_call_without_budget_ceiling(plan_path, lines))
     findings.extend(rule_risk_surface_change_without_threat_model(plan_path, lines))
+    findings.extend(rule_schema_migration_full_chain(plan_path, lines))
     return findings
 
 

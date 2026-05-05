@@ -1,0 +1,776 @@
+{
+  "created_at": "2026-05-05T00:00:00Z",
+  "schema_version": "1.0.0",
+  "violations": {
+    "016281512ac7": {
+      "components": [],
+      "decision_id": "0084",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "src/build_loop/__init__ has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "02e01c073c6e": {
+      "components": [],
+      "decision_id": "0029",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/write_run_entry has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "05a1ac207dac": {
+      "components": [],
+      "decision_id": "0077",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/write_decision has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "05d6add99357": {
+      "components": [],
+      "decision_id": "0012",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/consolidate_memory has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "09883517900d": {
+      "components": [],
+      "decision_id": "0035",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_detect_decision_rot has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "0d22867ad729": {
+      "components": [],
+      "decision_id": "0082",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "skills/build-loop/detect-plugins has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "10cb79483772": {
+      "components": [],
+      "decision_id": "0019",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_deployment_policy has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "10f10cc431ba": {
+      "components": [],
+      "decision_id": "0032",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/_paths has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "15a2b3bd30fd": {
+      "components": [],
+      "decision_id": "0040",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_project_resolver has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "19520720d540": {
+      "components": [],
+      "decision_id": "0054",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_metadata_v2_schema has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "1aaada125e8f": {
+      "components": [],
+      "decision_id": "0051",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/sync_skills has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "27eab130dab2": {
+      "components": [],
+      "decision_id": "0071",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_recall_filters_v3 has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "28bf8f9080cf": {
+      "components": [],
+      "decision_id": "0049",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/migrate_feedback_to_decisions has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "2a5098bd1dcc": {
+      "components": [],
+      "decision_id": "0065",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/ux_triage has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "2bf87c9d9fed": {
+      "components": [],
+      "decision_id": "0027",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_embed_backend has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "2bf99287e106": {
+      "components": [],
+      "decision_id": "0063",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/deployment_policy has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "2c50b38503b5": {
+      "components": [],
+      "decision_id": "0044",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/transcript-pattern-miner has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "323d1d967e31": {
+      "components": [],
+      "decision_id": "0081",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/dev-tools/experiment_metrics has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "33b1367f4d73": {
+      "components": [],
+      "decision_id": "0068",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/migrate_schema_v3 has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "35dc9b5a6703": {
+      "components": [],
+      "decision_id": "0016",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/migrate_playbooks_to_procedural has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "3b7462376203": {
+      "components": [],
+      "decision_id": "0053",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_trigger_phrases has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "3bdc2fcc8ad2": {
+      "components": [],
+      "decision_id": "0075",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_metadata_v3_schema has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "3da48a3f9c62": {
+      "components": [],
+      "decision_id": "0048",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_stop_hook_integration has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "3e1577c7b343": {
+      "components": [],
+      "decision_id": "0033",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/embed_backend has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "424b54ce9529": {
+      "components": [],
+      "decision_id": "0031",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/collision_scan has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "47ba265d962b": {
+      "components": [],
+      "decision_id": "0050",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/sync_db_from_files has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "480cebd5eb7d": {
+      "components": [],
+      "decision_id": "0076",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_write_run_entry has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "4ea5135f85e6": {
+      "components": [],
+      "decision_id": "0017",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/capture_arch_violation has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "4ef012497a21": {
+      "components": [],
+      "decision_id": "0070",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_mcp_registration has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "529e1eb677b1": {
+      "components": [],
+      "decision_id": "0078",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/migrate_schema_v2 has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "52f267b721b4": {
+      "components": [],
+      "decision_id": "0079",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_plugin_manifest has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "58dec8558060": {
+      "components": [],
+      "decision_id": "0025",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_scan_transcript_for_decisions has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "65561cdf3f26": {
+      "components": [],
+      "decision_id": "0034",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/knowledge_review has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "65601f3860ea": {
+      "components": [],
+      "decision_id": "0039",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_regenerate_knowledge_index has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "663853f2cd17": {
+      "components": [],
+      "decision_id": "0023",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_sync_db_from_files has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "672a7a95bc2b": {
+      "components": [],
+      "decision_id": "0018",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_write_decision has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "6d13f2d96a93": {
+      "components": [],
+      "decision_id": "0057",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/research_packet has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "6f442288e231": {
+      "components": [],
+      "decision_id": "0011",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_bridge_preflight has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "72ea6572a158": {
+      "components": [],
+      "decision_id": "0022",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/recall has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "752ffc7d4b54": {
+      "components": [],
+      "decision_id": "0069",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/scan_transcript_for_decisions has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "76a0de3b91c0": {
+      "components": [],
+      "decision_id": "0062",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_recall has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "76aa471375cd": {
+      "components": [],
+      "decision_id": "0038",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_migrate_schema_v2 has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "7a9386de6407": {
+      "components": [],
+      "decision_id": "0080",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_plan_verify has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "7d62186dad2a": {
+      "components": [],
+      "decision_id": "0036",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/procedural_governance has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "844615c03012": {
+      "components": [],
+      "decision_id": "0052",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/sync_navgator_lessons has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "89fcc726093b": {
+      "components": [],
+      "decision_id": "0030",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/optimize_suggest_factors has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "8d0b3df82c08": {
+      "components": [],
+      "decision_id": "0020",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/detect_decision_rot has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "964370356a95": {
+      "components": [],
+      "decision_id": "0074",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/swift-platform-parity has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "9723944a46de": {
+      "components": [],
+      "decision_id": "0045",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/validate_knowledge has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "a56a088c11e9": {
+      "components": [],
+      "decision_id": "0064",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/optimize_doe has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "a8aaca95e5ee": {
+      "components": [],
+      "decision_id": "0058",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_revoke_decision has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "af128373a603": {
+      "components": [],
+      "decision_id": "0021",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_knowledge_review_command has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "afbd30f86479": {
+      "components": [],
+      "decision_id": "0056",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/project_resolver has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "b0f67efb90fe": {
+      "components": [],
+      "decision_id": "0043",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_skill_resolution has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "b488af1236e8": {
+      "components": [],
+      "decision_id": "0014",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/db has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "bacd83825ed9": {
+      "components": [],
+      "decision_id": "0010",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/check_cache_sync has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "c0ce99791fe3": {
+      "components": [],
+      "decision_id": "0042",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/regenerate_knowledge_index has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "c29576c44e32": {
+      "components": [],
+      "decision_id": "0072",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_consolidate_memory has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "c368cdf8df71": {
+      "components": [],
+      "decision_id": "0059",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_recall_filters has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "c7fbafe798cd": {
+      "components": [],
+      "decision_id": "0028",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/supersede_decision has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "ce96840159b3": {
+      "components": [],
+      "decision_id": "0026",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_validate_knowledge has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "d1bd314bb4e4": {
+      "components": [],
+      "decision_id": "0009",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "hooks/_arch_scan_bg has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "d5ef911c45c8": {
+      "components": [],
+      "decision_id": "0047",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/version_advisor has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "d7a68596f659": {
+      "components": [],
+      "decision_id": "0067",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_check_cache_sync has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "e100a7c10741": {
+      "components": [],
+      "decision_id": "0013",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/revoke_decision has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "e5c1f0631dc7": {
+      "components": [],
+      "decision_id": "0060",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/architecture_freshness has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "e80530a49c94": {
+      "components": [],
+      "decision_id": "0041",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_init_schema has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "e89bb68ff41a": {
+      "components": [],
+      "decision_id": "0055",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_procedural_governance has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "eaae3ceb0e97": {
+      "components": [],
+      "decision_id": "0085",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "src/index has 16 total edges (threshold 15)",
+      "rule_id": "hotspot",
+      "severity": "info"
+    },
+    "eaf10ff3b724": {
+      "components": [],
+      "decision_id": "0015",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_optimize_doe has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "eb68357e4367": {
+      "components": [],
+      "decision_id": "0037",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/_test_helpers has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "f17679d87cb7": {
+      "components": [],
+      "decision_id": "0024",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_migrate_schema_v3 has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "f4e78222a082": {
+      "components": [],
+      "decision_id": "0061",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/plan_verify has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "f70cf2eecde9": {
+      "components": [],
+      "decision_id": "0073",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/ibr_quickpass has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "f8c0df354eb0": {
+      "components": [],
+      "decision_id": "0046",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_supersede_decision has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "f91e2678cca7": {
+      "components": [],
+      "decision_id": "0083",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "skills/build-loop/scanners/audit-design-rules has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    },
+    "fc88ed58b78b": {
+      "components": [],
+      "decision_id": "0066",
+      "first_seen": "2026-05-05T22:18:09Z",
+      "last_seen": "2026-05-05T22:18:09Z",
+      "last_seen_count": 1,
+      "message": "scripts/test_dedup_path has no incoming or outgoing imports",
+      "rule_id": "orphan",
+      "severity": "warn"
+    }
+  }
+}

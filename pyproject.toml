@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "build-loop"
+version = "0.10.0"
+description = "Build-loop — orchestrated 5-phase development loop. Chunk 1 ships the native Python architecture engine."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Tyrone Ross" }]
+dependencies = [
+    "tree-sitter>=0.21",
+    "tree-sitter-typescript",
+    "networkx>=3",
+    "pathspec>=0.12",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+]
+# Optional Postgres dual-write deps. Required by:
+#   scripts/db.py            — episodic memory writes
+#   scripts/sync_navgator_lessons.py (Chunk 7) — NavGator lessons sync
+# Sync scripts gracefully degrade when these aren't installed; tests
+# stub psycopg out entirely. Install with `uv pip install -e .[db]`.
+db = [
+    "psycopg[binary]>=3.1",
+]
+
+# Real Python package lives at src/build_loop/ so `python -m build_loop.architecture`
+# resolves cleanly. The parent plan referenced `src/architecture/` as shorthand;
+# this nested layout honours the dotted import path requirement.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["build_loop*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

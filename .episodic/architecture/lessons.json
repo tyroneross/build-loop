@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0.0",
+  "created_at": "2026-05-05T00:00:00Z",
+  "description": "Meta-lessons captured during the architecture-awareness initiative (priorities 1-11). Each lesson documents a recurring failure mode and the durable guardrail that catches it.",
+  "lessons": [
+    {
+      "id": "lesson-bl-stdin-stdout-shape-mismatch",
+      "category": "api-contract",
+      "title": "Silent rule-shape mismatch between caller and callee",
+      "summary": "scripts/capture_arch_violation.py expected stdin envelopes with key `rule_id`, but the native architecture engine emits `rule`. The capture script silently dedup'd zero violations because the lookup keyed on a missing field. Caught only when the verification check explicitly listed written decisions and counted zero.",
+      "signature_regexes": [
+        "(\\brule_id\\b|\\brule\\b).*\\b(KeyError|missing|None)\\b",
+        "stdin\\s+(envelope|contract).*\\b(rule_id|rule)\\b",
+        "Reading\\s+0\\s+violations.*written\\s+0\\s+decisions"
+      ],
+      "trigger_files": [
+        "scripts/capture_arch_violation.py",
+        "src/build_loop/architecture/rules.py"
+      ],
+      "guardrail": {
+        "kind": "test",
+        "path": "tests/test_capture_violation_contract.py",
+        "description": "Fuzz-style test that pipes both `{\"rule\": ...}` and `{\"rule_id\": ...}` shapes; assert capture script handles both. Closes the contract loop."
+      },
+      "first_observed": "2026-05-04",
+      "decision_id": "stdin-stdout-shape-mismatch",
+      "see_also": [
+        "references/memory-systems.md"
+      ]
+    },
+    {
+      "id": "lesson-bl-cli-routed-callers",
+      "category": "data-flow",
+      "title": "Explore-agent dead-code false positives on CLI-routed scripts",
+      "summary": "build_acp.py / slice_acp.py were flagged dead by an exploratory dead-code scan, but they are CLI-routed (invoked via `python -m <module>` or argparse subcommands). Static grep for module-level imports misses these callers. Caught only by the orchestrator verifying live callers (`grep -r build_acp\\|slice_acp scripts/ skills/`) before any move.",
+      "signature_regexes": [
+        "\\bdead-code\\b.*\\b(false[\\s-]positive|FP)\\b",
+        "python\\s+-m\\s+\\S+",
+        "argparse\\s+subcommand",
+        "subprocess.*\\[\"python\"\\]"
+      ],
+      "trigger_files": [
+        "scripts/build_acp.py",
+        "scripts/slice_acp.py"
+      ],
+      "guardrail": {
+        "kind": "doc",
+        "path": "references/capability-routing.md",
+        "section": "Caller-detection caveats",
+        "description": "Documents the CLI-routed-callers blind spot so the next dead-code sweep verifies callers via runtime invocation paths (subprocess, python -m, slash commands), not just static import grep."
+      },
+      "first_observed": "2026-05-04",
+      "see_also": []
+    },
+    {
+      "id": "lesson-bl-decision-store-path-cutover",
+      "category": "memory-architecture",
+      "title": "Decision-store path cutover ambiguity (legacy vs new canonical)",
+      "summary": "Decisions are stored under TWO paths: legacy `<repo>/.episodic/decisions/` and new `~/dev/git-folder/build-loop-memory/decisions/<project>/`. A verification check failed because the rule looked at the legacy path while the new canonical was authoritative. The memory facade (`scripts/memory_facade.py`) is the read API and fans out across both — bypassing it leads to phantom misses.",
+      "signature_regexes": [
+        "\\.episodic/decisions/.*not\\s+found",
+        "build-loop-memory/decisions",
+        "decision\\s+(file|store).*(legacy|canonical|new\\s+path)"
+      ],
+      "trigger_files": [
+        "scripts/write_decision.py",
+        "scripts/memory_facade.py"
+      ],
+      "guardrail": {
+        "kind": "doc",
+        "path": "references/memory-systems.md",
+        "section": "Decision-store paths over time",
+        "description": "Documents both decision-store paths (legacy + canonical) and names the facade as the only supported read API. Direct path access is fragile."
+      },
+      "first_observed": "2026-05-04",
+      "see_also": [
+        "lesson-bl-stdin-stdout-shape-mismatch"
+      ]
+    }
+  ]
+}
