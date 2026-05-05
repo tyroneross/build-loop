@@ -72,7 +72,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--notes", default="")
     p.add_argument("--db", dest="db", action="store_true", default=True)
     p.add_argument("--no-db", dest="db", action="store_false")
-    p.add_argument("--schema", default="build_loop_memory")
+    p.add_argument(
+        "--schema",
+        default=None,
+        help="Postgres schema. Default: $AGENT_MEMORY_SCHEMA or 'personal_memory'.",
+    )
     p.add_argument("--embed-model", default="nomic-embed-text")
     return p.parse_args(argv)
 
@@ -82,6 +86,13 @@ def main(argv: list[str] | None = None) -> int:
         args = parse_args(argv)
     except SystemExit as e:
         return 1 if e.code else 0
+
+    if args.schema is None:
+        HERE_LOCAL = Path(__file__).resolve().parent
+        if str(HERE_LOCAL) not in sys.path:
+            sys.path.insert(0, str(HERE_LOCAL))
+        from _paths import default_schema as _ds  # noqa: PLC0415
+        args.schema = _ds()
 
     workdir = Path(args.workdir).resolve()
     if not re.match(r"^\d{4}$", args.old_id):

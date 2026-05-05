@@ -111,7 +111,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"validation error: feedback file not found at {fb}", file=sys.stderr)
         return 1
 
-    decisions_dir = workdir / ".episodic" / "decisions"
+    HERE_LOCAL = Path(__file__).resolve().parent
+    import sys as _sys
+    if str(HERE_LOCAL) not in _sys.path:
+        _sys.path.insert(0, str(HERE_LOCAL))
+    from _paths import legacy_decisions_dir  # noqa: PLC0415
+    decisions_dir = legacy_decisions_dir(workdir)
     decisions_dir.mkdir(parents=True, exist_ok=True)
 
     entries = parse_feedback_lines(fb.read_text(encoding="utf-8"))

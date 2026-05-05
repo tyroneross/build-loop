@@ -79,7 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     workdir = Path(args.workdir).resolve()
-    decisions_dir = workdir / ".episodic" / "decisions"
+    HERE_LOCAL = Path(__file__).resolve().parent
+    import sys as _sys
+    if str(HERE_LOCAL) not in _sys.path:
+        _sys.path.insert(0, str(HERE_LOCAL))
+    from _paths import legacy_decisions_dir  # noqa: PLC0415
+    decisions_dir = legacy_decisions_dir(workdir)
     issues_dir = workdir / ".episodic" / "issues"
 
     if not decisions_dir.exists() and not issues_dir.exists():

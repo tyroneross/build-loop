@@ -236,12 +236,23 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Knowledge review report")
     p.add_argument("--workdir", default=".")
     p.add_argument("--rot-threshold-days", type=int, default=90)
-    p.add_argument("--schema", default="build_loop_memory")
+    p.add_argument(
+        "--schema",
+        default=None,
+        help="Postgres schema. Default: $AGENT_MEMORY_SCHEMA or 'personal_memory'.",
+    )
     p.add_argument("--symbol-paths", default="scripts,src,app",
                    help="Comma-separated paths to grep for procedure symbols")
     p.add_argument("--no-db", action="store_true",
                    help="Skip the Open conflicts section (no DB query)")
     args = p.parse_args(argv)
+    if args.schema is None:
+        HERE_LOCAL = Path(__file__).resolve().parent
+        import sys as _sys
+        if str(HERE_LOCAL) not in _sys.path:
+            _sys.path.insert(0, str(HERE_LOCAL))
+        from _paths import default_schema as _ds  # noqa: PLC0415
+        args.schema = _ds()
 
     workdir = Path(args.workdir).resolve()
 

@@ -49,8 +49,10 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from _paths import default_schema as _default_schema  # type: ignore  # noqa: E402
 
-DEFAULT_SCHEMA = "build_loop_memory"
+# Resolved at import time from $AGENT_MEMORY_SCHEMA (default 'personal_memory').
+DEFAULT_SCHEMA = _default_schema()
 
 # Confidence-to-float mapping mirrors write_decision.py
 _CONF_FLOAT = {"assumed": 0.25, "inferred": 0.5, "confirmed": 0.75, "explicit": 1.0}

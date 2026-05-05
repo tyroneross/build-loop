@@ -376,8 +376,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--schema",
-        default="build_loop_memory",
-        help="Postgres schema to migrate. Default: build_loop_memory.",
+        default=None,
+        help="Postgres schema to migrate. Default: $AGENT_MEMORY_SCHEMA or 'personal_memory'.",
     )
     p.add_argument("--no-db", action="store_true", help="Skip the DB migration step.")
     p.add_argument("--no-files", action="store_true", help="Skip MADR file migration.")
@@ -388,6 +388,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.schema is None:
+        HERE_LOCAL = Path(__file__).resolve().parent
+        import sys as _sys
+        if str(HERE_LOCAL) not in _sys.path:
+            _sys.path.insert(0, str(HERE_LOCAL))
+        from _paths import default_schema as _ds  # noqa: PLC0415
+        args.schema = _ds()
     workdir = Path(args.workdir).resolve()
     if not (workdir / ".episodic").exists() and not args.no_files:
         log(f"no .episodic/ at {workdir}; nothing to migrate")

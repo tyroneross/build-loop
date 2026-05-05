@@ -45,7 +45,12 @@ def parse_iso_date(s: str) -> datetime | None:
 
 
 def detect_rot(workdir: Path, threshold_days: int) -> list[dict]:
-    decisions_dir = workdir / ".episodic" / "decisions"
+    HERE_LOCAL = Path(__file__).resolve().parent
+    import sys as _sys
+    if str(HERE_LOCAL) not in _sys.path:
+        _sys.path.insert(0, str(HERE_LOCAL))
+    from _paths import legacy_decisions_dir  # noqa: PLC0415
+    decisions_dir = legacy_decisions_dir(workdir)
     if not decisions_dir.exists():
         return []
     now = datetime.now(timezone.utc)
