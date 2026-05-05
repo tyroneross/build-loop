@@ -1,27 +1,39 @@
 -- init_agent_memory_schema.sql
 --
--- Initialize the build_loop_memory schema in the agent_memory database.
+-- Initialize a per-project schema in the agent_memory database.
 --
 -- Idempotent (uses CREATE … IF NOT EXISTS / CREATE OR REPLACE).
--- Run with:  psql -d agent_memory -f scripts/init_agent_memory_schema.sql
 --
--- Per-project schema strategy: each consumer project gets its own schema
--- inside the single agent_memory DB. This file initializes
--- `build_loop_memory` for the build-loop project. To bootstrap another
--- project, copy this file and replace the schema name.
+-- Schema is parameterized via the psql -v variable `schema`. Pass it on
+-- the command line:
+--
+--   psql -d agent_memory -v schema=personal_memory -f scripts/init_agent_memory_schema.sql
+--   psql -d agent_memory -v schema=tmp_test_schema  -f scripts/init_agent_memory_schema.sql
+--
+-- Default when -v is not provided: `personal_memory` (the global schema
+-- introduced in the Phase B cutover; see
+-- ~/.claude/plans/are-the-database-amnd-kind-cook.md).
 --
 -- Source design: ~/dev/research/topics/repo-episodic-memory-framework/
 -- repo-episodic-memory-framework.md §13.
 
 \set ON_ERROR_STOP on
 
+-- Default the `schema` psql variable when the caller didn't pass -v schema=...
+\if :{?schema}
+\echo Using schema: :schema
+\else
+\set schema personal_memory
+\echo Using default schema: :schema
+\endif
+
 -- Required extensions.
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Per-project schema (parameterizable; default build_loop_memory).
-CREATE SCHEMA IF NOT EXISTS build_loop_memory;
-SET search_path TO build_loop_memory, public;
+-- Per-project schema.
+CREATE SCHEMA IF NOT EXISTS :"schema";
+SET search_path TO :"schema", public;
 
 -- ----------------------------------------------------------------------
 -- sessions
@@ -140,11 +152,15 @@ CREATE TABLE IF NOT EXISTS procedures (
 -- Indexes
 -- ----------------------------------------------------------------------
 -- HNSW vector indexes (cosine ops). pgvector >= 0.5 supports HNSW.
+-- DO blocks cannot read psql variables, so we resolve schemaname dynamically
+-- via current_schema() (we set search_path above to the target schema).
 DO $$
+DECLARE
+  s text := current_schema();
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'build_loop_memory' AND indexname = 'episode_events_embedding_hnsw'
+    WHERE schemaname = s AND indexname = 'episode_events_embedding_hnsw'
   ) THEN
     EXECUTE 'CREATE INDEX episode_events_embedding_hnsw ON episode_events
              USING hnsw (embedding vector_cosine_ops)';
@@ -152,7 +168,7 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'build_loop_memory' AND indexname = 'semantic_facts_embedding_hnsw'
+    WHERE schemaname = s AND indexname = 'semantic_facts_embedding_hnsw'
   ) THEN
     EXECUTE 'CREATE INDEX semantic_facts_embedding_hnsw ON semantic_facts
              USING hnsw (embedding vector_cosine_ops)';
@@ -160,7 +176,7 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'build_loop_memory' AND indexname = 'procedures_embedding_hnsw'
+    WHERE schemaname = s AND indexname = 'procedures_embedding_hnsw'
   ) THEN
     EXECUTE 'CREATE INDEX procedures_embedding_hnsw ON procedures
              USING hnsw (embedding vector_cosine_ops)';
@@ -259,4 +275,4 @@ CREATE OR REPLACE VIEW active_facts AS
   SELECT * FROM semantic_facts WHERE status = 'active';
 
 -- Done.
-SELECT 'init_agent_memory_schema: ok' AS status;
+SELECT 'init_agent_memory_schema: ok in schema ' || current_schema() AS status;
