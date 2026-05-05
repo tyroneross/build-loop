@@ -349,8 +349,12 @@ Runs after Review sub-step F on every build unless `.build-loop/config.json.auto
    - Honor `.build-loop/skills/.demoted` (do not re-promote names listed there).
    - If `autoPromote` is false (default): every row above becomes "write proposal, no file moves or deletes."
 8. Append concise synthesis to the Review sub-step F report — include any auto-promotes, proposals written, and extend-sample logs. If `autoPromote: false`, state this clearly so the user knows proposals accumulated. If none of the above fired: one line — "N runs scanned, no patterns crossed threshold, no sample-complete experiments this run."
+9. **Episodic memory consolidation** (Phase 4 wiring — runs unconditionally after step 8 when `.episodic/` is present in the repo). Two scripts in this order:
+   - `python3 scripts/consolidate_memory.py --workdir "$PWD"` — reads `.semantic/_candidates.jsonl` (typically populated by the Stop-hook batch sweep), embeds each, dedups against `agent_memory.<schema>.semantic_facts` per cosine ladder (≥0.90 IGNORE, 0.85-0.90 MERGE/UPDATE, <0.85 INSERT, equal-confidence different-object → CONFLICT row in `fact_conflicts`). No-op when `_candidates.jsonl` is missing.
+   - `python3 scripts/procedural_governance.py --workdir "$PWD" --mode detect-patterns` — clusters `state.json.runs[].root_cause` and writes `.procedural/_candidates.jsonl` for any cluster ≥3 incidents. This is the procedural-memory analogue of the experimental-skill drafting in steps 3-5.
+   Surface counts in the Phase 6 summary line: `consolidated: N inserted / M merged / K conflicts; procedural candidates: J added`. Do NOT auto-draft procedures — `--mode auto-draft` is gated until ≥5 hand-authored procedures exist (design ref §14, third phase of the procedural learning curve), and is left for explicit user invocation.
 
-Never write outside `.build-loop/`. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.
+Never write outside `.build-loop/` and `.episodic/` / `.semantic/` / `.procedural/`. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.
 
 ## Output Format
 

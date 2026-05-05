@@ -280,3 +280,35 @@ search at lower confidence.
 
 When unsure between two confidence levels, pick the lower. The system
 self-heals as more signal arrives.
+
+## When the user runs `/knowledge:review`, surface…
+
+The review surface (loaded by `build-loop:knowledge-review`, backed by
+`scripts/knowledge_review.py`) shows four sections of decisions and
+procedures awaiting human attention:
+
+1. **Review queue** — tier-3 / inferred captures sitting in
+   `.episodic/decisions/_review/` (written there by either the Stop-hook
+   batch sweep or in-session aggressive `inferred` captures from this
+   skill). User promotes or dismisses each.
+2. **Decision rot** — accepted decisions where `last_validated` (or
+   `date` if absent) is older than 90 days. User marks-validated,
+   supersedes, or revokes. Long-running decisions accumulate rot until
+   touched.
+3. **Open conflicts** — `fact_conflicts` rows (resolved=FALSE) created
+   when `consolidate_memory.py` detected two semantic facts with the
+   same `(subject, predicate, confidence)` but different `object`. User
+   resolves by superseding one.
+4. **Stale procedures** — procedure files whose `depends_on` symbols
+   are no longer present in the codebase (run by
+   `procedural_governance.py --mode validate-symbols`).
+
+**Cross-reference**: when this skill writes aggressively at tier 3
+(`inferred`) and the same `primary_tag + entity` keeps getting
+overwritten, that's a signal the user's intent is unstable. The
+review queue surfaces it; the user takes the explicit decision and
+pins it. The overwrite path then stops firing.
+
+Consolidation (`scripts/consolidate_memory.py`) is the related batch
+script for promoting `.semantic/_candidates.jsonl` entries into
+`semantic_facts`.

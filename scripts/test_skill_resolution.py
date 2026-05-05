@@ -44,6 +44,10 @@ ACCEPTED_SIBLINGS: set[str] = {
     "build-loop:optimize",
     "build-loop:plan-verify",
     "build-loop:research",
+    # Phase 4 episodic memory review surface — slash command and skill
+    # share a name by design: command loads the skill which holds the
+    # full review-surface contract (read-only, four sections).
+    "build-loop:knowledge-review",
 }
 
 FINDING_KEYS = (

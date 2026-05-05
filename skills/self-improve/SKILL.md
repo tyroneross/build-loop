@@ -123,6 +123,39 @@ If nothing was created, emit:
 Scanned N runs. No recurring patterns crossed confidence threshold. Nothing created.
 ```
 
+### 7. Episodic memory consolidation (Phase 4 wiring)
+
+After steps 1-6 complete, run the memory-consolidation pass. This is the
+hook that wires recurring-pattern detection into the four-memory-types
+framework — when the orchestrator sees the same root cause N times, it
+becomes both an experimental skill (above) AND a procedural-memory
+candidate (below).
+
+Run in this order:
+
+```bash
+# Promote any pending semantic candidates into agent_memory.semantic_facts
+# (no-op if .semantic/_candidates.jsonl is missing)
+python3 scripts/consolidate_memory.py --workdir "$PWD"
+
+# Surface recurring root_causes as procedural candidates
+# (writes .procedural/_candidates.jsonl entries crossing the 3-incident threshold)
+python3 scripts/procedural_governance.py --workdir "$PWD" --mode detect-patterns
+```
+
+Both are safe to re-run; both no-op when nothing qualifies. The first
+fans out the auto-capture batch sweep results into the indexed
+`semantic_facts` table; the second draws from the same
+`state.json.runs[]` that step 1 just scanned, so the procedural
+candidates align with the experimental skills drafted in steps 3-5.
+
+Auto-drafting of procedures (`procedural_governance.py --mode auto-draft`)
+remains gated until 5 hand-authored procedures exist in `.procedural/`
+— the third phase of the procedural learning curve from design ref §14.
+
+If consolidation surfaces a CONFLICT, the orchestrator surfaces the
+count in the Phase 6 summary — never auto-resolves.
+
 ## Data Contracts
 
 ### `.build-loop/state.json.runs[]` extensions (writer: build-orchestrator during Review sub-step F)
