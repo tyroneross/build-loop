@@ -25,6 +25,8 @@ sys.path.insert(0, str(HERE))
 WRITE = HERE / "write_decision.py"
 VALIDATE = HERE / "validate_knowledge.py"
 
+from _test_helpers import MemIsolationMixin  # noqa: E402
+
 
 TAXONOMY = """---
 type: taxonomy
@@ -64,6 +66,10 @@ def write(workdir: Path, **kw) -> subprocess.CompletedProcess:
         "--source", kw.pop("source", "manual"),
         "--no-db",
     ]
+    # Allow explicit --project override but don't default it: some v2 tests
+    # assert on the entity-prefix-derived project value.
+    if "project" in kw:
+        args.extend(["--project", kw.pop("project")])
     for k, v in kw.items():
         args.extend([f"--{k.replace('_', '-')}", v])
     return _run(args)
@@ -79,8 +85,9 @@ def parse_fm(text: str) -> dict:
     return parse_frontmatter(text) or {}
 
 
-class V2SchemaTests(unittest.TestCase):
+class V2SchemaTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
@@ -90,12 +97,16 @@ class V2SchemaTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     # M-A: defaults populate the 9 new fields when not passed.
     def test_defaults_populate_v2_fields(self) -> None:
         r = write(self.workdir, entity="build-loop:foo")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        # File routing uses resolve_project(workdir) which returns "_unscoped"
+        # (no projects.yaml in tmpdir). The frontmatter project field is derived
+        # from the entity prefix "build-loop:foo" → "build-loop".
+        f = next(self._decisions_dir("_unscoped").glob("0001-*.md"))
         fm = parse_fm(f.read_text())
         # All 9 v2 fields must be present.
         for k in (
@@ -128,7 +139,7 @@ class V2SchemaTests(unittest.TestCase):
             closing_commit="abc123",
         )
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        f = next(self._decisions_dir("foo").glob("0001-*.md"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["project"], "foo")
         self.assertEqual(fm["tool"], "codex")

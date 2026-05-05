@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -24,6 +25,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "write_decision.py"
+
+sys.path.insert(0, str(HERE))
+from _test_helpers import MemIsolationMixin  # noqa: E402
 
 
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -72,8 +76,9 @@ schema_version: 1
 """
 
 
-class WriteDecisionTests(unittest.TestCase):
+class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         # Seed minimal directory structure + TAXONOMY
@@ -85,6 +90,7 @@ class WriteDecisionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def _base_args(self, **overrides: str) -> list[str]:
         args = {
@@ -99,6 +105,7 @@ class WriteDecisionTests(unittest.TestCase):
             "--entity": "build-loop",
             "--confidence": "explicit",
             "--source": "manual",
+            "--project": "test-default",
         }
         args.update(overrides)
         flat: list[str] = []
@@ -114,7 +121,8 @@ class WriteDecisionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=f"stderr={result.stderr}")
         self.assertEqual(result.stdout.strip(), "0001")
 
-        files = list((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        ddir = self._decisions_dir("test-default")
+        files = list(ddir.glob("0001-*.md"))
         self.assertEqual(len(files), 1)
         body = files[0].read_text()
         self.assertIn("id: '0001'", body)
@@ -122,13 +130,13 @@ class WriteDecisionTests(unittest.TestCase):
         self.assertIn("primary_tag: testing", body)
         self.assertIn("confidence: explicit", body)
 
-        index = (self.workdir / ".episodic" / "decisions" / "INDEX.md").read_text()
+        index = (ddir / "INDEX.md").read_text()
         self.assertIn("0001", index)
         self.assertIn("Use pytest for testing", index)
 
         events = [
             json.loads(line)
-            for line in (self.workdir / ".episodic" / "events.jsonl").read_text().splitlines()
+            for line in self._events_path().read_text().splitlines()
             if line.strip()
         ]
         self.assertEqual(len(events), 1)
@@ -143,6 +151,7 @@ class WriteDecisionTests(unittest.TestCase):
                 "--primary-tag": "testing",
                 "--entity": f"e{i}",
                 "--confidence": "explicit",
+                "--project": "test-default",
             }))
             self.assertEqual(r.returncode, 0, msg=r.stderr)
             self.assertEqual(r.stdout.strip(), f"{i:04d}")
@@ -158,6 +167,7 @@ class WriteDecisionTests(unittest.TestCase):
                 "--title": f"Concurrent {idx}",
                 "--entity": f"concurrent-{idx}",
                 "--primary-tag": "tooling",
+                "--project": "test-default",
             }))
             with lock:
                 results.append(r)
@@ -171,10 +181,11 @@ class WriteDecisionTests(unittest.TestCase):
         ids = sorted(r.stdout.strip() for r in results)
         self.assertEqual(ids, ["0001", "0002"])
 
-        index = (self.workdir / ".episodic" / "decisions" / "INDEX.md").read_text()
+        ddir = self._decisions_dir("test-default")
+        index = (ddir / "INDEX.md").read_text()
         self.assertIn("0001", index)
         self.assertIn("0002", index)
-        self.assertEqual(len(list((self.workdir / ".episodic" / "decisions").glob("0*.md"))), 2)
+        self.assertEqual(len(list(ddir.glob("0*.md"))), 2)
 
     # ---- topic-identity supersession ----
 
@@ -197,14 +208,15 @@ class WriteDecisionTests(unittest.TestCase):
         self.assertEqual(r2.returncode, 0, msg=r2.stderr)
         self.assertEqual(r2.stdout.strip(), "0002")
 
-        history = list((self.workdir / ".episodic" / "decisions" / "_history").glob("0001-v*.md"))
+        ddir = self._decisions_dir("test-default")
+        history = list((ddir / "_history").glob("0001-v*.md"))
         self.assertEqual(len(history), 1)
         self.assertTrue(history[0].name.startswith("0001-v1"))
 
-        current = list((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        current = list(ddir.glob("0001-*.md"))
         self.assertEqual(current, [], f"0001 should be moved out of decisions/, found {current}")
 
-        body_0002 = next((self.workdir / ".episodic" / "decisions").glob("0002-*.md")).read_text()
+        body_0002 = next(ddir.glob("0002-*.md")).read_text()
         self.assertIn("supersedes: '0001'", body_0002)
 
         body_history = history[0].read_text()
@@ -213,7 +225,7 @@ class WriteDecisionTests(unittest.TestCase):
 
         events = [
             json.loads(l)
-            for l in (self.workdir / ".episodic" / "events.jsonl").read_text().splitlines()
+            for l in self._events_path().read_text().splitlines()
             if l.strip()
         ]
         kinds = [e["kind"] for e in events]

@@ -15,8 +15,11 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 WRITE = HERE / "write_decision.py"
 INDEX = HERE / "regenerate_knowledge_index.py"
+
+from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
 
 TAXONOMY = """---
 type: taxonomy
@@ -55,8 +58,9 @@ def run_write(workdir: Path, **kw) -> str:
     return r.stdout.strip()
 
 
-class IndexTests(unittest.TestCase):
+class IndexTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
@@ -66,17 +70,22 @@ class IndexTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def test_index_shape_with_three_decisions(self) -> None:
+        # regenerate_knowledge_index reads from workdir/.episodic/decisions/ (legacy path).
+        # Write files there directly to avoid Phase-C routing via write_decision.py.
         for i, conf in enumerate(["explicit", "confirmed", "inferred"], start=1):
-            run_write(
+            write_legacy_madr(
                 self.workdir,
-                title=f"Decision {i}",
-                primary_tag="process",
-                entity=f"e{i}",
+                f"000{i}",
+                "2026-05-05",
+                f"Decision {i}",
+                f"e{i}",
+                "process",
                 confidence=conf,
             )
-        # Run the index regenerator to be safe (writer also regenerates).
+        # Run the index regenerator.
         r = subprocess.run(
             [sys.executable, str(INDEX), "--workdir", str(self.workdir)],
             capture_output=True, text=True,
@@ -89,7 +98,9 @@ class IndexTests(unittest.TestCase):
         self.assertNotIn("Decision 3", index_text)
 
     def test_lower_confidence_floor_includes_inferred(self) -> None:
-        run_write(self.workdir, title="Low", primary_tag="process", entity="e-low", confidence="inferred")
+        write_legacy_madr(
+            self.workdir, "0001", "2026-05-05", "Low", "e-low", "process", confidence="inferred"
+        )
         r = subprocess.run(
             [
                 sys.executable,

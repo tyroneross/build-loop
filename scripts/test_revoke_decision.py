@@ -22,8 +22,11 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "revoke_decision.py"
 WRITE_DECISION = HERE / "write_decision.py"
+
+from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess:
@@ -74,30 +77,31 @@ schema_version: 1
 """
 
 
-class RevokeTests(unittest.TestCase):
+class RevokeTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
         (self.workdir / ".episodic" / "decisions" / "_history").mkdir(parents=True)
         (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
 
-        # Seed a decision to revoke
-        cp = run_write([
-            "--workdir", str(self.workdir),
-            "--title", "Use pytest for testing",
-            "--decision", "Adopt pytest",
-            "--tags", "tooling,testing",
-            "--primary-tag", "testing",
-            "--entity", "build-loop",
-            "--confidence", "inferred",
-            "--no-db",
-        ])
-        self.assertEqual(cp.returncode, 0, msg=f"seed write failed: {cp.stderr}")
-        self.decision_id = cp.stdout.strip()
+        # Seed a decision directly in the legacy path so revoke_decision.py
+        # (which reads from workdir/.episodic/decisions/) can find it.
+        write_legacy_madr(
+            self.workdir,
+            "0001",
+            "2026-05-05",
+            "Use pytest for testing",
+            "build-loop",
+            "testing",
+            confidence="inferred",
+        )
+        self.decision_id = "0001"
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def test_revoke_happy_path(self) -> None:
         cp = run([

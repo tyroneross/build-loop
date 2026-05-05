@@ -42,6 +42,8 @@ sys.path.insert(0, str(HERE))
 WRITE = HERE / "write_decision.py"
 VALIDATE = HERE / "validate_knowledge.py"
 
+from _test_helpers import MemIsolationMixin  # noqa: E402
+
 
 TAXONOMY = """---
 type: taxonomy
@@ -83,6 +85,7 @@ def write(workdir: Path, **kw) -> subprocess.CompletedProcess:
         "--entity", kw.pop("entity", "build-loop:t"),
         "--confidence", kw.pop("confidence", "explicit"),
         "--source", kw.pop("source", "manual"),
+        "--project", kw.pop("project", "test-v3"),
         "--no-db",
     ]
     for k, v in kw.items():
@@ -106,21 +109,23 @@ def _seed(workdir: Path) -> None:
     (workdir / ".semantic" / "TAXONOMY.md").write_text(TAXONOMY)
 
 
-class V3SchemaTests(unittest.TestCase):
+class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         _seed(self.workdir)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     # --- defaults ---
 
     def test_defaults_populate_v3_fields_manual_source(self) -> None:
         r = write(self.workdir, entity="build-loop:foo", source="manual")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
         fm = parse_fm(f.read_text())
         # All 7 v3 fields present.
         for k in (
@@ -140,14 +145,14 @@ class V3SchemaTests(unittest.TestCase):
     def test_defaults_confidence_source_for_auto_source(self) -> None:
         r = write(self.workdir, entity="build-loop:foo", source="auto-explicit")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["confidence_source"], "ai_inference")
 
     def test_defaults_confidence_source_for_migration_source(self) -> None:
         r = write(self.workdir, entity="build-loop:foo", source="migration")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["confidence_source"], "external_import")
 
@@ -165,7 +170,7 @@ class V3SchemaTests(unittest.TestCase):
             embedding_model_version="mxbai-embed-large-v1",
         )
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["domain"], "search")
         self.assertEqual(fm["goal"], "reliability")
@@ -196,7 +201,7 @@ class V3SchemaTests(unittest.TestCase):
             causal_parent_id=first_id,
         )
         self.assertEqual(r2.returncode, 0, msg=r2.stderr)
-        f = next((self.workdir / ".episodic" / "decisions").glob(f"{r2.stdout.strip()}-*.md"))
+        f = next(self._decisions_dir("test-v3").glob(f"{r2.stdout.strip()}-*.md"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["causal_parent_id"], first_id)
 

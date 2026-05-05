@@ -18,10 +18,13 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 WRITE = HERE / "write_decision.py"
 SYNC = HERE / "sync_db_from_files.py"
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
 TEST_SCHEMA = "test_schema_sync"
+
+from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
 
 TAXONOMY = """---
 type: taxonomy
@@ -77,23 +80,21 @@ def teardown_schema() -> None:
     psql_exec(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
 
 
-def write_decision(workdir: Path, title: str, entity: str, tag: str = "process") -> str:
-    cmd = [
-        sys.executable, str(WRITE),
-        "--workdir", str(workdir),
-        "--title", title,
-        "--decision", f"Decided to do {title}",
-        "--tags", tag,
-        "--primary-tag", tag,
-        "--entity", entity,
-        "--confidence", "explicit",
-        "--source", "manual",
-        "--no-db",
-    ]
-    cp = subprocess.run(cmd, capture_output=True, text=True)
-    if cp.returncode != 0:
-        raise RuntimeError(cp.stderr)
-    return cp.stdout.strip()
+def write_decision(workdir: Path, title: str, entity: str, tag: str = "process", _id: str | None = None) -> str:
+    """Write a decision into workdir/.episodic/decisions/ (legacy path).
+
+    Uses write_legacy_madr so files land where sync_db_from_files.py (legacy
+    mode) expects them, independent of Phase-C AGENT_MEMORY_ROOT routing.
+    Auto-increments _id based on how many *.md files already exist.
+    """
+    import datetime as _dt
+    existing = list((workdir / ".episodic" / "decisions").glob("[0-9][0-9][0-9][0-9]-*.md"))
+    if _id is None:
+        nxt = (max(int(f.name[:4]) for f in existing) + 1) if existing else 1
+        _id = f"{nxt:04d}"
+    date = _dt.date.today().isoformat()
+    p = write_legacy_madr(workdir, _id, date, title, entity, tag)
+    return _id
 
 
 def sync(workdir: Path, rebuild: bool = False) -> subprocess.CompletedProcess:
@@ -107,7 +108,7 @@ def sync(workdir: Path, rebuild: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, timeout=120)
 
 
-class SyncTests(unittest.TestCase):
+class SyncTests(MemIsolationMixin, unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -118,6 +119,7 @@ class SyncTests(unittest.TestCase):
         teardown_schema()
 
     def setUp(self) -> None:
+        super().setUp()
         psql_exec(f"TRUNCATE TABLE {TEST_SCHEMA}.semantic_facts CASCADE;")
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
@@ -127,6 +129,7 @@ class SyncTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def test_sync_three_files_yields_three_rows(self) -> None:
         write_decision(self.workdir, "Use pytest", "ent-a", "tooling")

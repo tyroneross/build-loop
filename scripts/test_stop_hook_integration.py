@@ -34,9 +34,12 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 REPO = HERE.parent
 HOOKS_JSON = REPO / "hooks" / "hooks.json"
 SCAN_SCRIPT = HERE / "scan_transcript_for_decisions.py"
+
+from _test_helpers import MemIsolationMixin  # noqa: E402
 
 
 def _ollama_ready() -> bool:
@@ -107,7 +110,7 @@ def _extract_scan_command_from_hooks_json() -> str:
     raise AssertionError("scan_transcript_for_decisions hook not found in hooks.json")
 
 
-class StopHookIntegrationTests(unittest.TestCase):
+class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
     """Live integration test. Slow (~30-60s)."""
 
     @classmethod
@@ -119,6 +122,10 @@ class StopHookIntegrationTests(unittest.TestCase):
             )
 
     def setUp(self) -> None:
+        # MemIsolationMixin.setUp isolates AGENT_MEMORY_ROOT to a tmpdir.
+        # Call super() BEFORE setting up self.workdir since _events_path()
+        # requires self.workdir.
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
@@ -150,6 +157,7 @@ class StopHookIntegrationTests(unittest.TestCase):
         self._wait_for_bg_scan_to_finish(timeout_s=200)
         self._cleanup_test_pollution()
         self.tmp.cleanup()
+        super().tearDown()
 
     def _wait_for_bg_scan_to_finish(self, timeout_s: float = 200.0) -> None:
         """Block until /tmp/build-loop-scan.lock is no longer held, or timeout."""
@@ -238,6 +246,10 @@ class StopHookIntegrationTests(unittest.TestCase):
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
         env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+        # Phase C: pass the isolated AGENT_MEMORY_ROOT so the backgrounded
+        # scan (and any write_decision.py it spawns) writes to the tmpdir,
+        # not to the real ~/dev/git-folder/build-loop-memory store.
+        env["AGENT_MEMORY_ROOT"] = self._memroot.name
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
@@ -253,16 +265,19 @@ class StopHookIntegrationTests(unittest.TestCase):
         self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
         self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
 
-        # Poll for the backgrounded scan's artifacts. qwen3:8b cold call
-        # can take 30-60s; allow up to 180s.
-        review_dir = self.workdir / ".episodic" / "decisions" / "_review"
-        trusted_dir = self.workdir / ".episodic" / "decisions"
+        # Phase C: decision files land in <AGENT_MEMORY_ROOT>/decisions/<project>/.
+        # We don't know the project tag (derived from workdir basename), so
+        # scan all per-project subdirs in the isolated memroot.
+        decisions_root = Path(self._memroot.name) / "decisions"
         deadline = time.monotonic() + 180
         review_files: list = []
         trusted_files: list = []
         while time.monotonic() < deadline:
-            review_files = list(review_dir.glob("*.md"))
-            trusted_files = [f for f in trusted_dir.glob("[0-9][0-9][0-9][0-9]-*.md") if f.is_file()]
+            review_files = list(decisions_root.rglob("_review/*.md"))
+            trusted_files = [
+                f for f in decisions_root.rglob("[0-9][0-9][0-9][0-9]-*.md")
+                if f.is_file() and "_review" not in f.parts and "_history" not in f.parts
+            ]
             if (len(review_files) + len(trusted_files)) >= 1:
                 break
             time.sleep(2)
@@ -273,7 +288,7 @@ class StopHookIntegrationTests(unittest.TestCase):
             1,
             msg=(
                 f"Expected at least 1 captured decision (trusted or review) within 180s, "
-                f"got 0. workdir contents: trusted={trusted_files}, review={review_files}"
+                f"got 0. memroot contents: trusted={trusted_files}, review={review_files}"
             ),
         )
 
@@ -306,6 +321,7 @@ class StopHookIntegrationTests(unittest.TestCase):
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
         env["CLAUDE_TRANSCRIPT_PATH"] = str(bogus)
+        env["AGENT_MEMORY_ROOT"] = self._memroot.name
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
@@ -316,8 +332,9 @@ class StopHookIntegrationTests(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
-        # No files should be produced
-        review = list((self.workdir / ".episodic" / "decisions" / "_review").glob("*.md"))
+        # No files should be produced in the isolated memroot.
+        decisions_root = Path(self._memroot.name) / "decisions"
+        review = list(decisions_root.rglob("_review/*.md")) if decisions_root.exists() else []
         self.assertEqual(review, [])
 
 

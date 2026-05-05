@@ -29,7 +29,10 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "scan_transcript_for_decisions.py"
+
+from _test_helpers import MemIsolationMixin  # noqa: E402
 
 
 def _ollama_ready() -> bool:
@@ -99,7 +102,7 @@ def _seed_transcript(path: Path) -> None:
     path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
 
 
-class ScanTranscriptLiveTests(unittest.TestCase):
+class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
     """Live-ollama tests. Slow (~30-60s per LLM-touching test)."""
 
     @classmethod
@@ -111,6 +114,7 @@ class ScanTranscriptLiveTests(unittest.TestCase):
             )
 
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
@@ -123,23 +127,33 @@ class ScanTranscriptLiveTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def test_live_extraction_produces_at_least_one_artifact(self) -> None:
         """End-to-end: live qwen3:8b extracts ≥1 decision from a transcript."""
-        cp = run(
+        env = os.environ.copy()
+        env["AGENT_MEMORY_ROOT"] = self._memroot.name
+        cp = subprocess.run(
             [
+                sys.executable, str(SCRIPT),
                 "--workdir", str(self.workdir),
                 "--transcript", str(self.transcript),
                 "--no-db",  # avoid touching production schema during tests
             ],
+            capture_output=True,
+            text=True,
+            env=env,
             timeout=180,  # qwen3:8b cold start can be slow
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
 
-        review_dir = self.workdir / ".episodic" / "decisions" / "_review"
-        trusted_dir = self.workdir / ".episodic" / "decisions"
-        review_files = list(review_dir.glob("*.md"))
-        trusted_files = [f for f in trusted_dir.glob("[0-9][0-9][0-9][0-9]-*.md") if f.is_file()]
+        # Phase C: decision files land in <AGENT_MEMORY_ROOT>/decisions/<project>/.
+        decisions_root = Path(self._memroot.name) / "decisions"
+        review_files = list(decisions_root.rglob("_review/*.md")) if decisions_root.exists() else []
+        trusted_files = [
+            f for f in (decisions_root.rglob("[0-9][0-9][0-9][0-9]-*.md") if decisions_root.exists() else [])
+            if f.is_file() and "_review" not in f.parts and "_history" not in f.parts
+        ]
 
         # The live LLM may classify the explicit decision as either:
         #   - "explicit" with primary_tag in our taxonomy → trusted (1 file)
@@ -249,7 +263,7 @@ class ScanTranscriptLiveTests(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
 
 
-class HardeningTests(unittest.TestCase):
+class HardeningTests(MemIsolationMixin, unittest.TestCase):
     """Offline tests for Stop-hook hardening (budget, log file, no-capture, lock).
 
     These tests do NOT require ollama; they use --mock-llm-output to drive
@@ -258,6 +272,7 @@ class HardeningTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
@@ -291,6 +306,7 @@ class HardeningTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def _run(self, extra: list[str], timeout: int = 30, env: dict | None = None) -> subprocess.CompletedProcess:
         args = [
@@ -302,6 +318,8 @@ class HardeningTests(unittest.TestCase):
             "--lock-file", str(self.lock_file),
         ] + extra
         merged_env = os.environ.copy()
+        # Phase C: inject isolated AGENT_MEMORY_ROOT so writes go to tmpdir.
+        merged_env["AGENT_MEMORY_ROOT"] = self._memroot.name
         if env:
             merged_env.update(env)
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=merged_env)

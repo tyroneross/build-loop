@@ -15,8 +15,11 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 WRITE = HERE / "write_decision.py"
 VALIDATE = HERE / "validate_knowledge.py"
+
+from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
 
 TAXONOMY = """---
 type: taxonomy
@@ -62,8 +65,9 @@ def validate(workdir: Path) -> subprocess.CompletedProcess:
     )
 
 
-class ValidateTests(unittest.TestCase):
+class ValidateTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
@@ -73,15 +77,23 @@ class ValidateTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def test_clean_corpus_passes(self) -> None:
-        write(self.workdir, title="A", entity="e1", primary_tag="tooling", tags="tooling")
-        write(self.workdir, title="B", entity="e2", primary_tag="testing", tags="testing")
+        # validate_knowledge reads from workdir/.episodic/decisions/ — use the
+        # legacy writer helper so files land where the validator expects them.
+        write_legacy_madr(self.workdir, "0001", "2026-05-05", "A", "e1", "tooling")
+        write_legacy_madr(self.workdir, "0002", "2026-05-05", "B", "e2", "testing")
         r = validate(self.workdir)
         self.assertEqual(r.returncode, 0, msg=r.stderr)
 
     def test_proposed_tag_accepted(self) -> None:
-        write(self.workdir, title="A", entity="e1", primary_tag="tooling", tags="tooling,proposed:experimental")
+        # Write a valid MADR directly; proposed: tags on the tags list are accepted.
+        path = write_legacy_madr(self.workdir, "0001", "2026-05-05", "A", "e1", "tooling")
+        text = path.read_text()
+        # Inject a proposed: tag into the tags line.
+        text = text.replace("tags: [tooling]", "tags: [tooling, proposed:experimental]")
+        path.write_text(text)
         r = validate(self.workdir)
         self.assertEqual(r.returncode, 0, msg=r.stderr)
 
@@ -111,9 +123,9 @@ source: manual
         self.assertIn("random-tag", r.stderr)
 
     def test_unresolved_supersedes_link_rejected(self) -> None:
-        write(self.workdir, title="A", entity="e1", primary_tag="tooling", tags="tooling")
-        # Hand-edit the file to claim it supersedes a non-existent id.
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
+        # Place a valid MADR in the legacy path and hand-edit it to claim it
+        # supersedes a non-existent decision — the validator should reject that.
+        f = write_legacy_madr(self.workdir, "0001", "2026-05-05", "A", "e1", "tooling")
         text = f.read_text().replace("supersedes: null", "supersedes: '9999'")
         f.write_text(text)
         r = validate(self.workdir)

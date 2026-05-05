@@ -23,8 +23,11 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "supersede_decision.py"
 WRITE_DECISION = HERE / "write_decision.py"
+
+from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
 
 
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -76,15 +79,23 @@ schema_version: 1
 """
 
 
-class SupersedeTests(unittest.TestCase):
+_TEST_PROJECT = "_unscoped"
+
+
+class SupersedeTests(MemIsolationMixin, unittest.TestCase):
     def setUp(self) -> None:
+        super().setUp()
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
         (self.workdir / ".episodic" / "decisions" / "_history").mkdir(parents=True)
         (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
 
-        # Seed an initial decision (0001).
+        # Seed the initial decision WITHOUT --project so write_decision.py
+        # uses resolve_project(workdir) → "_unscoped". This matches what
+        # supersede_decision.py's delegate call will use (it also doesn't
+        # pass --project), so both the initial file and the supersession
+        # resolution operate on the same "_unscoped" project path.
         cp = run_write([
             "--workdir", str(self.workdir),
             "--title", "Use pytest for testing",
@@ -98,8 +109,22 @@ class SupersedeTests(unittest.TestCase):
         self.assertEqual(cp.returncode, 0, msg=f"seed write failed: {cp.stderr}")
         self.first_id = cp.stdout.strip()
 
+        # Also place a stub in the legacy path so supersede_decision.py's
+        # find_decision_file() pre-check can locate it (reads from
+        # workdir/.episodic/decisions/).
+        write_legacy_madr(
+            self.workdir,
+            self.first_id,
+            "2026-05-05",
+            "Use pytest for testing",
+            "build-loop",
+            "testing",
+            confidence="explicit",
+        )
+
     def tearDown(self) -> None:
         self.tmp.cleanup()
+        super().tearDown()
 
     def test_supersede_happy_path(self) -> None:
         cp = run([
@@ -119,8 +144,11 @@ class SupersedeTests(unittest.TestCase):
         self.assertNotEqual(new_id, self.first_id)
         self.assertEqual(len(new_id), 4)
 
+        # Phase C: decision files live in AGENT_MEMORY_ROOT/decisions/<project>/
+        ddir = self._decisions_dir(_TEST_PROJECT)
+
         # Old file moved to _history/<id>-v1.md
-        history = list((self.workdir / ".episodic" / "decisions" / "_history").glob(f"{self.first_id}-v*.md"))
+        history = list((ddir / "_history").glob(f"{self.first_id}-v*.md"))
         self.assertEqual(len(history), 1, msg=f"expected 1 history file, got {history}")
         history_text = history[0].read_text()
         self.assertIn("status: superseded", history_text)
@@ -132,7 +160,7 @@ class SupersedeTests(unittest.TestCase):
         )
 
         # New decision present
-        new_files = list((self.workdir / ".episodic" / "decisions").glob(f"{new_id}-*.md"))
+        new_files = list(ddir.glob(f"{new_id}-*.md"))
         self.assertEqual(len(new_files), 1)
         new_text = new_files[0].read_text()
         self.assertTrue(
@@ -142,10 +170,10 @@ class SupersedeTests(unittest.TestCase):
         )
 
         # INDEX regenerated and references new entry
-        index = (self.workdir / ".episodic" / "decisions" / "INDEX.md").read_text()
+        index = (ddir / "INDEX.md").read_text()
         self.assertIn(new_id, index)
 
-        # decision_superseded event in events.jsonl
+        # decision_superseded event in events.jsonl (stays local to workdir)
         events = (self.workdir / ".episodic" / "events.jsonl").read_text().splitlines()
         kinds = [json.loads(l)["kind"] for l in events]
         self.assertIn("decision_superseded", kinds)
