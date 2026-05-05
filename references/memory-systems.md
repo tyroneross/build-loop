@@ -15,9 +15,13 @@ The **memory facade** at `scripts/memory_facade.py` exposes one `recall(query, k
 
 ## Read protocol — Phase 1 Assess
 
-1. Load `~/.build-loop/memory/MEMORY.md` (global) and `.build-loop/memory/MEMORY.md` (project) if they exist. Project overrides global on key conflict.
-2. Invoke `Skill("build-loop:debugging-memory")` with `intent: "list-recent"` to surface recent project incidents (one-line summary).
-3. Pull recent debugger incident context via the MCP `list` tool: `mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })`. If MCP fails, fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` and flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
+Mirror of the orchestrator's executable steps. Each line is a runnable action; empty results are valid; never raise on a missing backend.
+
+1. **MEMORY.md tiers**: `Read("~/.build-loop/memory/MEMORY.md")` (global) AND `Read("<repo>/.build-loop/memory/MEMORY.md")` (project). Project overrides global on key conflict. Empty/absent files: skip silently.
+2. **Run-history priming** (added Priority 12, 2026-05-05): `Read(".build-loop/state.json")` and inspect `runs[-3:]` for prior-build outcomes/root_cause. This catches "this build follows a similar one — here's what happened" before a fresh `recall()` query is shaped.
+3. **Unified recall**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall --query "<goal-keywords>" --limit 10` — one read across all four backends. Returns the canonical envelope (see facade docstring). Inspect `reasons[]` for backend-unavailable signals; never block on them.
+4. **Debugger incidents (priming)**: invoke `Skill("build-loop:debugging-memory")` with `intent: "list-recent"` for one-line summaries of recent project incidents. MCP failure → fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory`; flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
+5. **Per-MCP fallback** (only if step 4 used the fallback): `mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })` is the direct MCP shape used inside the skill — surfaced here for diagnostic reference.
 
 ## Write protocol — Phase 4 Review sub-step F
 
