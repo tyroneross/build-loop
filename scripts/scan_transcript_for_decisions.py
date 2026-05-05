@@ -509,12 +509,15 @@ def parse_llm_output(raw: str) -> list[dict]:
 # ---------- dedup against semantic_facts (best-effort) ----------
 
 
-def is_duplicate(text: str, embed_model: str, schema: str = "build_loop_memory") -> bool:
+def is_duplicate(text: str, embed_model: str, schema: str | None = None) -> bool:
     """Return True if `text` cosine-similar to any existing semantic_facts row at ≥ DEDUP_THRESHOLD.
 
     Best-effort. Returns False on any error so we err toward writing.
     Uses the persistent psycopg connection from `db.py`.
     """
+    if schema is None:
+        from _paths import default_schema as _ds  # noqa: PLC0415
+        schema = _ds()
     try:
         try:
             embedding = _embed(text)
@@ -566,9 +569,16 @@ def write_trusted(workdir: Path, item: dict, db: bool) -> tuple[bool, str]:
     # writer's default ('claude-opus-4-7') is used. `task_category` is
     # 'unknown' here — Claude is encouraged to set it explicitly via the
     # auto-decision-capture skill when conversational signal is clear.
-    project = (
-        Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
-    )
+    # Project tag: prefer the projects.yaml resolver (Phase B), fall back to
+    # legacy basename behavior so existing call sites (no projects.yaml or
+    # path not registered) keep their previous tag.
+    try:
+        from project_resolver import resolve_project as _resolve_project  # noqa: PLC0415
+        project = _resolve_project(Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir))
+    except Exception:  # noqa: BLE001
+        project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
+    if not project:
+        project = "build-loop"
     model = os.environ.get("CLAUDE_MODEL") or "claude-opus-4-7"
     # v3 metadata for skill-driven captures (design §16).
     # - `confidence_source`: 'user_statement' iff confidence==explicit AND the
@@ -660,9 +670,13 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         confidence = "inferred"
 
     # v2 metadata mirroring write_trusted's logic.
-    project = (
-        Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
-    )
+    try:
+        from project_resolver import resolve_project as _resolve_project  # noqa: PLC0415
+        project = _resolve_project(Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir))
+    except Exception:  # noqa: BLE001
+        project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
+    if not project:
+        project = "build-loop"
     model = os.environ.get("CLAUDE_MODEL") or "claude-opus-4-7"
     # v3 metadata (design §16). Tier-3 captures are by definition LLM-derived
     # and unconfirmed, so confidence_source defaults to 'ai_inference'.

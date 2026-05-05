@@ -24,6 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from _paths import default_schema as _default_schema  # type: ignore  # noqa: E402
 from db import execute, execute_script, vector_literal  # type: ignore  # noqa: E402
 from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
@@ -157,7 +158,11 @@ def truncate_facts(schema: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Sync Postgres state from canonical markdown files")
     p.add_argument("--workdir", default=".", help="Project root")
-    p.add_argument("--schema", default="build_loop_memory")
+    p.add_argument(
+        "--schema",
+        default=None,
+        help="Postgres schema. Default: $AGENT_MEMORY_SCHEMA or 'personal_memory'.",
+    )
     p.add_argument(
         "--embed-model",
         default="mxbai-embed-large",
@@ -166,6 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rebuild", action="store_true", help="TRUNCATE semantic_facts before upserting")
     p.add_argument("--include-history", action="store_true", help="Also upsert _history/ files")
     args = p.parse_args(argv)
+    if args.schema is None:
+        args.schema = _default_schema()
 
     workdir = Path(args.workdir).resolve()
     files = list_decision_files(workdir, args.include_history)

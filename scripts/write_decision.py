@@ -52,6 +52,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+# Local resolver imports — must precede any default-arg evaluation.
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from _paths import (  # type: ignore  # noqa: E402
+    cutover_lock_active,
+    decisions_dir_for_project,
+    default_schema as _default_schema,
+    dual_write_enabled,
+    legacy_schema as _legacy_schema,
+)
+from project_resolver import resolve_project  # type: ignore  # noqa: E402
+
 LOCK_TIMEOUT_S = 15
 CONFIDENCE_ORDER = {"assumed": 0, "inferred": 1, "confirmed": 2, "explicit": 3}
 VALID_CONFIDENCES = set(CONFIDENCE_ORDER)
@@ -754,7 +767,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # DB dual-write (Phase 2)
     p.add_argument("--db", dest="db", action="store_true", default=True, help="Enable Postgres dual-write (default)")
     p.add_argument("--no-db", dest="db", action="store_false", help="Skip DB dual-write")
-    p.add_argument("--schema", default="build_loop_memory", help="Postgres schema for this project")
+    p.add_argument(
+        "--schema",
+        default=None,
+        help=(
+            "Postgres schema for this project. Default: $AGENT_MEMORY_SCHEMA "
+            "or 'personal_memory'. During the dual-write transitional window "
+            "(AGENT_MEMORY_DUAL_WRITE=1) the legacy 'build_loop_memory' schema "
+            "is also written to."
+        ),
+    )
     p.add_argument(
         "--embed-model",
         default="mxbai-embed-large",
@@ -1002,10 +1024,22 @@ def validate_tags(tags: list[str], primary_tag: str, taxonomy: dict[str, set[str
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Cutover-lock guard: when /tmp/agent-memory-cutover.lock is present,
+    # exit cleanly with no side effects so in-flight callers (Stop hook,
+    # auto-decision-capture, build-orchestrator Phase 5) bail without
+    # splitting state across old/new during the freeze window.
+    if cutover_lock_active():
+        print("cutover in progress, skipping", file=sys.stderr)
+        return 0
+
     try:
         args = parse_args(argv)
     except SystemExit as e:
         return 1 if e.code else 0
+
+    # Resolve --schema default lazily so $AGENT_MEMORY_SCHEMA can override.
+    if args.schema is None:
+        args.schema = _default_schema()
 
     workdir = Path(args.workdir).resolve()
     decisions_dir = workdir / ".episodic" / "decisions"
@@ -1268,6 +1302,28 @@ def _do_write(
     # 8) DB dual-write (best-effort)
     if args.db:
         db_dualwrite(new_id, fm, body_text, workdir, args.schema, args.embed_model)
+
+    # 9) Phase B transitional dual-write (env-flag gated).
+    # When AGENT_MEMORY_DUAL_WRITE=1, also write the .md to the new global
+    # decisions root and insert a row into the legacy schema. With no env
+    # vars set, this is a strict no-op — preserves byte-identical behavior.
+    if dual_write_enabled():
+        # File-side: <agent_memory_root>/decisions/<project>/<NNNN-...md>.
+        # Use the SAME id and filename so the two artifacts can be matched
+        # 1:1 by name during Phase D drift checks.
+        try:
+            new_project_dir = decisions_dir_for_project(fm["project"])
+            new_project_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(new_project_dir / new_filename, body_text.encode("utf-8"))
+            log(
+                f"dual-write: mirrored decision {new_id} to {new_project_dir / new_filename}"
+            )
+        except OSError as e:
+            log(f"dual-write: file mirror failed (legacy write succeeded): {e}")
+        # DB-side: also INSERT into the *legacy* schema so reads from
+        # build_loop_memory still see this row during the cutover window.
+        if args.db and args.schema != _legacy_schema():
+            db_dualwrite(new_id, fm, body_text, workdir, _legacy_schema(), args.embed_model)
 
     print(new_id)
     log(f"wrote decision {new_id} to {new_path}")
