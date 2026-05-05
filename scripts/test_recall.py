@@ -45,8 +45,16 @@ def psql_exec(sql: str) -> None:
 
 def setup_test_schema() -> None:
     psql_exec(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
-    text = SCHEMA_SQL.read_text().replace("build_loop_memory", TEST_SCHEMA)
-    psql_exec(text)
+    # Phase B: SCHEMA_SQL is parameterized via `psql -v schema=...`.
+    # Apply with the variable bound to TEST_SCHEMA.
+    psql_bin = shutil.which("psql") or "/opt/homebrew/opt/postgresql@15/bin/psql"
+    cp = subprocess.run(
+        [psql_bin, "-d", _db_url(), "-v", "ON_ERROR_STOP=1", "-v",
+         f"schema={TEST_SCHEMA}", "-q", "-f", str(SCHEMA_SQL)],
+        capture_output=True, text=True, timeout=60,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr)
 
 
 def teardown_test_schema() -> None:
@@ -91,6 +99,9 @@ def run_recall(query: str) -> str:
             "--schema", TEST_SCHEMA,
             "--no-episodes",
             "--confidence-floor", "explicit",
+            # Phase B: bypass the new default project-scoping; the seed
+            # facts in this test don't populate the `project` column.
+            "--all-projects",
         ],
         capture_output=True, text=True, timeout=60,
     )

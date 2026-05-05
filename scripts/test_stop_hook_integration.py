@@ -174,18 +174,26 @@ class StopHookIntegrationTests(unittest.TestCase):
             except OSError:
                 return  # lock file gone or unreadable
 
-    def _snapshot_production_subjects(self) -> set[str]:
-        """Return the set of (subject, object) tuples currently in the
-        production schema. We use this as a baseline so tearDown can
-        delete rows that appeared during the test.
+    def _snapshot_production_subjects(self) -> dict[str, set[str]]:
+        """Return baseline ids per production-schema name (Phase B may write
+        to both `personal_memory` and `build_loop_memory` when dual-write is
+        on; default writes go to `personal_memory`).
         """
         sys.path.insert(0, str(REPO / "scripts"))
+        out: dict[str, set[str]] = {}
         try:
+            from _paths import default_schema, legacy_schema  # type: ignore
+            schemas = {default_schema(), legacy_schema()}
             from db import close_connection, query
-            rows = query("SELECT id::text AS id FROM build_loop_memory.semantic_facts")
-            return {r["id"] for r in rows}
+            for s in schemas:
+                try:
+                    rows = query(f"SELECT id::text AS id FROM {s}.semantic_facts")
+                    out[s] = {r["id"] for r in rows}
+                except Exception:  # noqa: BLE001
+                    out[s] = set()
+            return out
         except Exception:  # noqa: BLE001
-            return set()
+            return {}
         finally:
             try:
                 close_connection()
@@ -193,20 +201,25 @@ class StopHookIntegrationTests(unittest.TestCase):
                 pass
 
     def _cleanup_test_pollution(self) -> None:
-        """Delete any rows that appeared in build_loop_memory.semantic_facts
-        between setUp and tearDown.
+        """Delete any rows that appeared in either tracked schema between
+        setUp and tearDown.
         """
         try:
             from db import close_connection, execute, query
             close_connection()  # discard any state from inside the hook subprocess
-            current = {r["id"] for r in query("SELECT id::text AS id FROM build_loop_memory.semantic_facts")}
-            new_ids = current - self._pre_pollution_subjects
-            if new_ids:
-                # Bulk delete the new rows by id
-                execute(
-                    "DELETE FROM build_loop_memory.semantic_facts WHERE id::text = ANY(%s)",
-                    (list(new_ids),),
-                )
+            for schema, baseline in self._pre_pollution_subjects.items():
+                try:
+                    current = {r["id"] for r in query(
+                        f"SELECT id::text AS id FROM {schema}.semantic_facts"
+                    )}
+                except Exception:  # noqa: BLE001
+                    continue
+                new_ids = current - baseline
+                if new_ids:
+                    execute(
+                        f"DELETE FROM {schema}.semantic_facts WHERE id::text = ANY(%s)",
+                        (list(new_ids),),
+                    )
         except Exception:  # noqa: BLE001
             pass
 

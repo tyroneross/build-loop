@@ -42,15 +42,16 @@ def _read_db_url() -> str:
 
 
 def apply_schema_with_substitution(test_schema: str) -> tuple[int, str, str]:
-    """Read the canonical SQL file and substitute the schema name, then apply."""
-    text = SCHEMA_SQL.read_text()
-    # Replace 'build_loop_memory' (the production schema) with the test schema
-    text = text.replace("build_loop_memory", test_schema)
+    """Apply the canonical SQL file with `psql -v schema=<test_schema>`.
+
+    Phase B: the SQL file is now parameterized via the psql `:schema`
+    variable, so we no longer string-replace the literal schema name.
+    """
     psql_bin = shutil.which("psql") or "/opt/homebrew/opt/postgresql@15/bin/psql"
     db_url = os.environ.get("DATABASE_URL") or _read_db_url()
     cp = subprocess.run(
-        [psql_bin, "-d", db_url, "-v", "ON_ERROR_STOP=1"],
-        input=text,
+        [psql_bin, "-d", db_url, "-v", "ON_ERROR_STOP=1", "-v",
+         f"schema={test_schema}", "-f", str(SCHEMA_SQL)],
         capture_output=True,
         text=True,
         timeout=60,

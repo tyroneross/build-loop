@@ -53,8 +53,14 @@ def _embed_via_backend(text: str) -> list[float]:
 
 def setup_schema() -> None:
     psql_exec(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
-    text = SCHEMA_SQL.read_text().replace("build_loop_memory", TEST_SCHEMA)
-    psql_exec(text)
+    psql_bin = shutil.which("psql") or "/opt/homebrew/opt/postgresql@15/bin/psql"
+    cp = subprocess.run(
+        [psql_bin, "-d", _db_url(), "-v", "ON_ERROR_STOP=1", "-v",
+         f"schema={TEST_SCHEMA}", "-q", "-f", str(SCHEMA_SQL)],
+        capture_output=True, text=True, timeout=60,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(cp.stderr)
 
 
 def teardown_schema() -> None:
@@ -126,6 +132,13 @@ def run_recall(query: str, **filters: str) -> str:
         "--confidence-floor", "explicit",
         "--no-bump-last-accessed",  # avoid mutating rows during read tests
     ]
+    # Phase B: when this test's caller did not pass --project explicitly,
+    # disable default project-scoping so the test's controlled fixture rows
+    # (which include rows tagged 'speaksavvy', 'build-loop', etc.) all stay
+    # eligible for ranking. Tests that DO want project filtering pass
+    # `project=...` via **filters and we honor that.
+    if "project" not in filters:
+        args.append("--all-projects")
     for k, v in filters.items():
         args.extend([f"--{k.replace('_', '-')}", v])
     cp = subprocess.run(args, capture_output=True, text=True, timeout=60)

@@ -64,10 +64,10 @@ def psql_exec(sql: str) -> str:
 def setup_schema() -> None:
     psql_exec(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
     psql_bin = shutil.which("psql") or "/opt/homebrew/opt/postgresql@15/bin/psql"
-    text = SCHEMA_SQL.read_text().replace("build_loop_memory", TEST_SCHEMA)
     cp = subprocess.run(
-        [psql_bin, "-d", _db_url(), "-v", "ON_ERROR_STOP=1", "-q"],
-        input=text, capture_output=True, text=True, timeout=60,
+        [psql_bin, "-d", _db_url(), "-v", "ON_ERROR_STOP=1", "-v",
+         f"schema={TEST_SCHEMA}", "-q", "-f", str(SCHEMA_SQL)],
+        capture_output=True, text=True, timeout=60,
     )
     if cp.returncode != 0:
         raise RuntimeError(cp.stderr)
