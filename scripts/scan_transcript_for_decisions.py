@@ -295,9 +295,17 @@ def _render_turn(obj: dict) -> str:
 
 
 def load_prior_decisions_summary(workdir: Path, limit: int = 20) -> str:
-    decisions_dir = workdir / ".episodic" / "decisions"
+    # Phase C cutover: read from the global build-loop-memory store under
+    # decisions_dir_for_project(<project>). Falls back to legacy .episodic/
+    # for repos that haven't yet been migrated.
+    from _paths import decisions_dir_for_project as _ddfp  # noqa: PLC0415
+    from project_resolver import resolve_project as _rp  # noqa: PLC0415
+    decisions_dir = _ddfp(_rp(workdir))
     if not decisions_dir.exists():
-        return ""
+        # Legacy fallback during the soak window; harmless if missing.
+        decisions_dir = workdir / ".episodic" / "decisions"
+        if not decisions_dir.exists():
+            return ""
     files = sorted(decisions_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))[-limit:]
     rows: list[str] = []
     for f in files:
@@ -635,12 +643,15 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     File-only — no event emitted, no DB write, no INDEX entry. The user
     promotes by `mv` out of `_review/` (or runs a future /knowledge:review).
     """
-    review_dir = workdir / ".episodic" / "decisions" / "_review"
-    review_dir.mkdir(parents=True, exist_ok=True)
-
-    # Allocate ID space distinct from trusted decisions to avoid clashes if user moves files.
-    decisions_dir = workdir / ".episodic" / "decisions"
+    # Phase C cutover: tier-3 review captures land in the global store under
+    # <agent_memory_root>/decisions/<project>/_review/ alongside trusted decisions.
+    from _paths import decisions_dir_for_project as _ddfp  # noqa: PLC0415
+    from project_resolver import resolve_project as _rp  # noqa: PLC0415
+    project_tag = _rp(workdir)
+    decisions_dir = _ddfp(project_tag)
+    review_dir = decisions_dir / "_review"
     history_dir = decisions_dir / "_history"
+    review_dir.mkdir(parents=True, exist_ok=True)
     used: set[int] = set()
     for d in (decisions_dir, history_dir, review_dir):
         if d.exists():

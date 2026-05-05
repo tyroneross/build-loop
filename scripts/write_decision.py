@@ -60,8 +60,6 @@ from _paths import (  # type: ignore  # noqa: E402
     cutover_lock_active,
     decisions_dir_for_project,
     default_schema as _default_schema,
-    dual_write_enabled,
-    legacy_schema as _legacy_schema,
 )
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
@@ -1042,7 +1040,13 @@ def main(argv: list[str] | None = None) -> int:
         args.schema = _default_schema()
 
     workdir = Path(args.workdir).resolve()
-    decisions_dir = workdir / ".episodic" / "decisions"
+
+    # Phase C cutover (2026-05-05): decision files now live in the global
+    # build-loop-memory store under <agent_memory_root>/decisions/<project>/.
+    # `events.jsonl` stays local to the project — it's a per-repo activity
+    # log, not a decision artifact.
+    project_tag = args.project or resolve_project(workdir)
+    decisions_dir = decisions_dir_for_project(project_tag)
     history_dir = decisions_dir / "_history"
     events_path = workdir / ".episodic" / "events.jsonl"
 
@@ -1299,31 +1303,11 @@ def _do_write(
         log(f"filesystem error: {e}")
         return 2
 
-    # 8) DB dual-write (best-effort)
+    # 8) DB write to the post-cutover schema (default: personal_memory).
+    # The Phase B dual-write block was removed at Phase C cutover (2026-05-05).
+    # Legacy schema (build_loop_memory) is now read-only; it gets dropped in Phase D.
     if args.db:
         db_dualwrite(new_id, fm, body_text, workdir, args.schema, args.embed_model)
-
-    # 9) Phase B transitional dual-write (env-flag gated).
-    # When AGENT_MEMORY_DUAL_WRITE=1, also write the .md to the new global
-    # decisions root and insert a row into the legacy schema. With no env
-    # vars set, this is a strict no-op — preserves byte-identical behavior.
-    if dual_write_enabled():
-        # File-side: <agent_memory_root>/decisions/<project>/<NNNN-...md>.
-        # Use the SAME id and filename so the two artifacts can be matched
-        # 1:1 by name during Phase D drift checks.
-        try:
-            new_project_dir = decisions_dir_for_project(fm["project"])
-            new_project_dir.mkdir(parents=True, exist_ok=True)
-            atomic_write_bytes(new_project_dir / new_filename, body_text.encode("utf-8"))
-            log(
-                f"dual-write: mirrored decision {new_id} to {new_project_dir / new_filename}"
-            )
-        except OSError as e:
-            log(f"dual-write: file mirror failed (legacy write succeeded): {e}")
-        # DB-side: also INSERT into the *legacy* schema so reads from
-        # build_loop_memory still see this row during the cutover window.
-        if args.db and args.schema != _legacy_schema():
-            db_dualwrite(new_id, fm, body_text, workdir, _legacy_schema(), args.embed_model)
 
     print(new_id)
     log(f"wrote decision {new_id} to {new_path}")

@@ -34,6 +34,29 @@ from write_decision import (  # type: ignore  # noqa: E402
 
 
 def list_decision_files(workdir: Path, include_history: bool) -> list[Path]:
+    """Find decision files to sync.
+
+    Phase C cutover: when ``workdir`` resolves to the global agent_memory
+    root, walk every ``decisions/<project>/`` subdirectory. Otherwise
+    treat ``workdir`` as a per-repo legacy ``.episodic/decisions/`` source.
+    Both modes support ``--include-history`` for the ``_history/`` subtree.
+    """
+    from _paths import agent_memory_root, decisions_root  # noqa: PLC0415
+    workdir = Path(workdir).resolve()
+    files: list[Path] = []
+    if workdir == agent_memory_root().resolve() or workdir == decisions_root().resolve():
+        # Global mode: iterate per-project subdirs.
+        root = decisions_root() if workdir == agent_memory_root().resolve() else workdir
+        if not root.exists():
+            return []
+        for project_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            files.extend(sorted(project_dir.glob("[0-9][0-9][0-9][0-9]-*.md")))
+            if include_history:
+                history = project_dir / "_history"
+                if history.exists():
+                    files.extend(sorted(history.glob("*.md")))
+        return files
+    # Legacy mode: per-repo .episodic/decisions/.
     decisions_dir = workdir / ".episodic" / "decisions"
     if not decisions_dir.exists():
         return []
