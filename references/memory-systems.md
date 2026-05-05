@@ -59,3 +59,18 @@ Write new memory entries to the correct tier:
 - **Project-specific learnings** (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`.
 
 Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory.
+
+## Decision-store paths over time
+
+Decisions live under TWO paths today (canonical + legacy). The orchestrator and any verification check MUST go through `scripts/memory_facade.py` (the read API), not the raw filesystem.
+
+| Path | Status | Notes |
+|---|---|---|
+| `~/dev/git-folder/build-loop-memory/decisions/<project>/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
+| `<repo>/.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` | Legacy (still tracked) | Pre-cutover decisions; some projects still write here during transition. The facade's read fan-out covers it. |
+
+**Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` fans out across both paths and merges results. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover` in `.episodic/architecture/lessons.json`.
+
+**Write path**: `scripts/write_decision.py` writes to the canonical (new) path by default. The legacy path is only written when explicitly requested by tests fixturing pre-cutover state.
+
+**INDEX.md**: each decision-store directory has its own `INDEX.md`. The facade reads both indexes and merges by ID. Do NOT edit `INDEX.md` by hand — `write_decision.py` regenerates it atomically as part of the memory-triad write.
