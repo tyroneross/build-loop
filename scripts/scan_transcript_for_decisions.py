@@ -41,20 +41,20 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 # Lazy imports from write_decision so test fixtures share the same primitives.
+from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     LockedFile,
     atomic_write_bytes,
     emit_frontmatter,
     log,
     next_id,
-    ollama_embed,
     parse_frontmatter,
     render_madr,
     slugify,
 )
 
 DEFAULT_LLM_MODEL = "qwen3:8b-q4_K_M"
-DEFAULT_EMBED_MODEL = "nomic-embed-text"
+DEFAULT_EMBED_MODEL = "mxbai-embed-large"
 DEFAULT_LLM_TIMEOUT_S = 120
 DEDUP_THRESHOLD = 0.85
 WRITE_DECISION_SCRIPT = HERE / "write_decision.py"
@@ -331,8 +331,10 @@ def is_duplicate(text: str, embed_model: str, schema: str = "build_loop_memory")
     Uses the persistent psycopg connection from `db.py`.
     """
     try:
-        embedding = ollama_embed(text, embed_model)
-        if embedding is None:
+        try:
+            embedding = _embed(text)
+        except Exception as e:  # noqa: BLE001
+            log(f"scan: embed unavailable for dedup ({e}); treating as new")
             return False
         if not re.match(r"^[a-z][a-z0-9_]*$", schema):
             return False

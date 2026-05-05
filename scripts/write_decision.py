@@ -19,11 +19,12 @@ Topic-identity supersession (design §10):
     - lower confidence is rejected (exit 1)
 
 Postgres dual-write (Phase 2, opt-in via --db / --no-db, default --db):
-  After file writes succeed, embed the decision body via local Ollama
-  (`nomic-embed-text`, 768-dim, via the `ollama` CLI / HTTP fallback),
-  then INSERT a row into `agent_memory.<schema>.semantic_facts` over a
-  persistent psycopg connection (`scripts/db.py`). DB errors LOG and
-  continue — the file is canonical; DB is regenerable via
+  After file writes succeed, embed the decision body via the
+  `embed_backend` abstraction (MLX `mxbai-embed-large-v1` by default,
+  Ollama `mxbai-embed-large` fallback, both 1024-dim), then INSERT a
+  row into `agent_memory.<schema>.semantic_facts` over a persistent
+  psycopg connection (`scripts/db.py`). DB errors LOG and continue —
+  the file is canonical; DB is regenerable via
   `sync_db_from_files.py`.
 
 Contract:
@@ -44,8 +45,6 @@ import fcntl
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -452,17 +451,21 @@ def db_dualwrite(
     body_text: str,
     workdir: Path,
     schema: str,
-    embed_model: str,
+    embed_model: str,  # retained for back-compat; embed_backend reads its own env
 ) -> None:
     """Embed body and INSERT into agent_memory.<schema>.semantic_facts.
 
     Best-effort: any failure is logged and swallowed. The file is canonical.
-    Uses the persistent psycopg connection from `db.py`.
+    Uses the persistent psycopg connection from `db.py`. Embedding goes
+    through `embed_backend.embed` (MLX default, Ollama fallback, 1024-dim).
     """
     try:
-        embedding = ollama_embed(body_text, embed_model)
-        if embedding is None:
-            log(f"db dual-write: embed unavailable; skipping db row for decision {decision_id}")
+        from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
+
+        try:
+            embedding = _embed(body_text)
+        except Exception as e:  # noqa: BLE001
+            log(f"db dual-write: embed unavailable ({e}); skipping db row for decision {decision_id}")
             return
         # Local import keeps Phase 1 (`--no-db` test runs) from requiring psycopg.
         from db import execute, vector_literal  # type: ignore  # noqa: PLC0415
@@ -509,44 +512,24 @@ def _confidence_to_float(c: str | None) -> float:
 
 
 def ollama_embed(text: str, model: str) -> list[float] | None:
-    """Call `ollama embeddings` via subprocess. Returns None if unavailable."""
-    if not shutil.which("ollama"):
-        return None
-    try:
-        # The ollama CLI provides `ollama embed` (newer) or `ollama embeddings` (older).
-        # Try the modern HTTP-style via `ollama embed` first; fall back to a python-call.
-        cp = subprocess.run(
-            ["ollama", "embed", model, text],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if cp.returncode == 0 and cp.stdout.strip():
-            # Modern ollama CLI returns JSON array per line; tolerate either shape.
-            try:
-                data = json.loads(cp.stdout.strip())
-                if isinstance(data, list) and data and isinstance(data[0], (int, float)):
-                    return [float(x) for x in data]
-                if isinstance(data, dict) and "embedding" in data:
-                    return [float(x) for x in data["embedding"]]
-            except json.JSONDecodeError:
-                pass
-        # Fallback: hit the local HTTP API directly via curl-equivalent stdlib.
-        import urllib.request
+    """Deprecation shim. Delegates to `embed_backend.embed`.
 
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/embeddings",
-            data=json.dumps({"model": model, "prompt": text}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        emb = payload.get("embedding")
-        if isinstance(emb, list):
-            return [float(x) for x in emb]
+    Kept for back-compat with code that previously imported this name
+    from write_decision (e.g. recall.py, sync_db_from_files.py,
+    scan_transcript_for_decisions.py). Returns None on any error so
+    legacy callers' "if embedding is None: skip" branches still work.
+
+    The `model` argument is ignored — embed_backend reads $EMBED_BACKEND
+    and $EMBED_MODEL from the environment. This is intentional: the
+    abstraction owns model selection now, not the caller.
+    """
+    try:
+        from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
+
+        return _embed(text)
     except Exception as e:  # noqa: BLE001
-        log(f"ollama embed: {e}")
-    return None
+        log(f"embed_backend (legacy ollama_embed shim): {e}")
+        return None
 
 
 # NOTE: `psql_run` was removed when production scripts migrated to psycopg
@@ -593,7 +576,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--db", dest="db", action="store_true", default=True, help="Enable Postgres dual-write (default)")
     p.add_argument("--no-db", dest="db", action="store_false", help="Skip DB dual-write")
     p.add_argument("--schema", default="build_loop_memory", help="Postgres schema for this project")
-    p.add_argument("--embed-model", default="nomic-embed-text", help="Ollama embed model (must match schema dim 768)")
+    p.add_argument(
+        "--embed-model",
+        default="mxbai-embed-large",
+        help=(
+            "Legacy flag kept for back-compat. Embedding model is now selected by "
+            "$EMBED_BACKEND ('mlx' default, 'ollama' fallback) and $EMBED_MODEL via "
+            "scripts/embed_backend.py. Both backends produce 1024-dim vectors."
+        ),
+    )
     return p.parse_args(argv)
 
 

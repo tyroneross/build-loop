@@ -2,7 +2,7 @@
 """Test recall.py end-to-end against a temporary test schema.
 
 - Inserts 5 known facts via the schema's semantic_facts table.
-- Embeds each via Ollama nomic-embed-text.
+- Embeds each via embed_backend (MLX default, Ollama fallback, 1024-dim).
 - Runs recall.py for one of the known queries.
 - Asserts the matching fact appears in the top 3 results.
 """
@@ -53,15 +53,11 @@ def teardown_test_schema() -> None:
     psql_exec(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
 
 
-def ollama_embed_via_http(text: str) -> list[float]:
-    import urllib.request
-    req = urllib.request.Request(
-        "http://127.0.0.1:11434/api/embeddings",
-        data=json.dumps({"model": "nomic-embed-text", "prompt": text}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return [float(x) for x in json.loads(resp.read().decode("utf-8"))["embedding"]]
+def _embed_via_backend(text: str) -> list[float]:
+    """Use embed_backend so the test honors $EMBED_BACKEND (mlx default)."""
+    sys.path.insert(0, str(HERE))
+    import embed_backend  # type: ignore
+    return embed_backend.embed(text)
 
 
 KNOWN_FACTS = [
@@ -75,7 +71,7 @@ KNOWN_FACTS = [
 
 def insert_known_facts() -> None:
     for subject, predicate, obj in KNOWN_FACTS:
-        emb = ollama_embed_via_http(obj)
+        emb = _embed_via_backend(obj)
         emb_lit = "[" + ",".join(f"{x:.6f}" for x in emb) + "]"
         sql = (
             f"INSERT INTO {TEST_SCHEMA}.semantic_facts "

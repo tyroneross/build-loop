@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Hybrid retrieval entry point for repo-local episodic memory.
 
-Embeds the query via local Ollama (`nomic-embed-text`, 768-dim) and runs
+Embeds the query via `embed_backend.embed` (MLX `mxbai-embed-large-v1`
+default, Ollama `mxbai-embed-large` fallback, both 1024-dim) and runs
 a hybrid search against `agent_memory.<schema>.semantic_facts` and
 `episode_events`:
 
@@ -34,10 +35,10 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from db import query, vector_literal  # type: ignore  # noqa: E402
+from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     CONFIDENCE_ORDER,
     log,
-    ollama_embed,
 )
 
 DEFAULT_SCHEMA = "build_loop_memory"
@@ -211,14 +212,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--neighbor-window", type=int, default=DEFAULT_NEIGHBOR_WINDOW)
     p.add_argument("--schema", default=DEFAULT_SCHEMA)
-    p.add_argument("--embed-model", default="nomic-embed-text")
+    p.add_argument(
+        "--embed-model",
+        default="mxbai-embed-large",
+        help="Legacy flag; ignored. Backend chosen via $EMBED_BACKEND.",
+    )
     p.add_argument("--char-budget", type=int, default=8000)  # ~1500 tokens
     p.add_argument("--no-episodes", action="store_true", help="Skip episode_events search")
     args = p.parse_args(argv)
 
-    embedding = ollama_embed(args.query, args.embed_model)
-    if embedding is None:
-        log("recall: ollama embed unavailable; cannot run cosine search")
+    try:
+        embedding = _embed(args.query)
+    except Exception as e:  # noqa: BLE001
+        log(f"recall: embed unavailable ({e}); cannot run cosine search")
         return 2
 
     floor = confidence_to_float(args.confidence_floor)

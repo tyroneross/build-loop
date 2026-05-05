@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS episode_events (
   object        TEXT,
   raw_content   TEXT,                     -- verbatim, never trimmed
   summary       TEXT,
-  embedding     VECTOR(768),              -- nomic-embed-text dimension
+  embedding     VECTOR(1024),             -- mxbai-embed-large / mlx-community/mxbai-embed-large-v1
   metadata      JSONB
 );
 
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS semantic_facts (
   status             TEXT DEFAULT 'active',  -- 'proposed', 'active', 'superseded', 'retracted'
   valid_from         TIMESTAMPTZ DEFAULT now(),
   valid_to           TIMESTAMPTZ,
-  embedding          VECTOR(768),
+  embedding          VECTOR(1024),
   metadata           JSONB
 );
 
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS procedures (
   status              TEXT DEFAULT 'active',
   created_at          TIMESTAMPTZ DEFAULT now(),
   last_validated_at   TIMESTAMPTZ,
-  embedding           VECTOR(768)
+  embedding           VECTOR(1024)
 );
 
 -- ----------------------------------------------------------------------

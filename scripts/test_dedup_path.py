@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test the cosine-similarity dedup path against real ollama embeddings.
+"""Test the cosine-similarity dedup path against real embeddings.
 
 Seeds a known fact directly via the live psycopg connection (so we
 control exactly what string is embedded), then calls `is_duplicate(...)`
@@ -7,9 +7,11 @@ with:
   1. A near-paraphrase of the seeded text → expect True (≥ 0.85 cosine)
   2. An unrelated string                  → expect False
 
-This exercises the live nomic-embed-text pipeline end to end without
-mocking. Test schema is dropped on teardown to avoid polluting the
-production `build_loop_memory` schema.
+This exercises the live embedding pipeline end to end without mocking.
+Embedding goes through `embed_backend.embed` (MLX `mxbai-embed-large-v1`
+default, Ollama `mxbai-embed-large` fallback, both 1024-dim). Test
+schema is dropped on teardown to avoid polluting the production
+`build_loop_memory` schema.
 
 Note on embedding seed:
   We embed and insert the same short text we test paraphrases against.
@@ -19,14 +21,11 @@ Note on embedding seed:
 """
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
-import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -36,11 +35,15 @@ TEST_SCHEMA = "test_schema_dedup"
 sys.path.insert(0, str(HERE))
 
 
-def _ollama_ready() -> bool:
-    if not shutil.which("ollama"):
+def _embed_backend_ready() -> bool:
+    """True if either MLX (default) is importable or Ollama+mxbai is up."""
+    try:
+        import embed_backend  # type: ignore  # noqa: F401
+        # Try a 1-token call. Whichever backend wins, we're good.
+        v = embed_backend.embed("ping")
+        return len(v) == 1024
+    except Exception:
         return False
-    cp = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
-    return cp.returncode == 0 and "nomic-embed-text" in cp.stdout
 
 
 def _db_url() -> str:
@@ -81,15 +84,16 @@ def teardown_schema() -> None:
     _psql_apply(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
 
 
-def _embed_via_http(text: str) -> list[float]:
-    """Minimal HTTP embedding call. Fails loud if ollama is unreachable."""
-    req = urllib.request.Request(
-        "http://127.0.0.1:11434/api/embeddings",
-        data=json.dumps({"model": "nomic-embed-text", "prompt": text}).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return [float(x) for x in json.loads(r.read().decode())["embedding"]]
+def _embed_via_backend(text: str) -> list[float]:
+    """Embed via the same abstraction the production code uses.
+
+    This way, the seed embedding and the dedup-check embedding are
+    produced by the same backend (and therefore the same numerical
+    distance space) — even if MLX is the default and Ollama is the
+    fallback for the runtime path.
+    """
+    import embed_backend  # type: ignore
+    return embed_backend.embed(text)
 
 
 KNOWN_TEXT = "Postgres with pgvector is the memory substrate"
@@ -101,10 +105,10 @@ class DedupPathTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        if not _ollama_ready():
+        if not _embed_backend_ready():
             raise RuntimeError(
-                "ollama daemon must be running with nomic-embed-text pulled. "
-                "Run `ollama pull nomic-embed-text` and ensure `ollama serve` is up."
+                "embed_backend not ready: install mlx-embeddings (macOS) "
+                "OR run `ollama serve` with `mxbai-embed-large` pulled."
             )
         setup_schema()
 
@@ -135,7 +139,7 @@ class DedupPathTests(unittest.TestCase):
         """Insert a single fact whose embedding is the embedding of KNOWN_TEXT."""
         from db import execute, vector_literal
 
-        emb = _embed_via_http(KNOWN_TEXT)
+        emb = _embed_via_backend(KNOWN_TEXT)
         execute(
             (
                 f"INSERT INTO {TEST_SCHEMA}.semantic_facts "
@@ -149,7 +153,7 @@ class DedupPathTests(unittest.TestCase):
         """Cosine ≥ 0.85 → is_duplicate returns True."""
         from scan_transcript_for_decisions import is_duplicate
 
-        result = is_duplicate(NEAR_PARAPHRASE, "nomic-embed-text", schema=TEST_SCHEMA)
+        result = is_duplicate(NEAR_PARAPHRASE, "mxbai-embed-large", schema=TEST_SCHEMA)
         self.assertTrue(
             result,
             msg=f"Near-paraphrase should be classified as duplicate (≥ 0.85 cosine), got {result}",

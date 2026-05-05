@@ -2,8 +2,9 @@
 """Rebuild Postgres state from canonical markdown files.
 
 Reads every `.episodic/decisions/*.md` (excluding `_history/` by default;
-`--include-history` opts in), embeds the body via Ollama, and upserts
-into `agent_memory.<schema>.semantic_facts`.
+`--include-history` opts in), embeds the body via `embed_backend.embed`
+(MLX default, Ollama fallback, 1024-dim), and upserts into
+`agent_memory.<schema>.semantic_facts`.
 
 Usage:
   python3 sync_db_from_files.py --workdir <repo>           # incremental upsert
@@ -24,9 +25,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from db import execute, execute_script, vector_literal  # type: ignore  # noqa: E402
+from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     log,
-    ollama_embed,
     parse_frontmatter,
 )
 
@@ -62,9 +63,10 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
         log(f"skip: no id in frontmatter for {path}")
         return False
 
-    embedding = ollama_embed(text, embed_model)
-    if embedding is None:
-        log(f"skip: embed failed for {path}")
+    try:
+        embedding = _embed(text)
+    except Exception as e:  # noqa: BLE001
+        log(f"skip: embed failed for {path}: {e}")
         return False
 
     subject = f"decision:{decision_id}"
@@ -121,7 +123,11 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Sync Postgres state from canonical markdown files")
     p.add_argument("--workdir", default=".", help="Project root")
     p.add_argument("--schema", default="build_loop_memory")
-    p.add_argument("--embed-model", default="nomic-embed-text")
+    p.add_argument(
+        "--embed-model",
+        default="mxbai-embed-large",
+        help="Legacy flag; ignored. Backend chosen via $EMBED_BACKEND.",
+    )
     p.add_argument("--rebuild", action="store_true", help="TRUNCATE semantic_facts before upserting")
     p.add_argument("--include-history", action="store_true", help="Also upsert _history/ files")
     args = p.parse_args(argv)
