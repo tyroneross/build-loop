@@ -6,9 +6,9 @@ Stdlib only. Run: python3 test_plugin_manifest.py
 Checks:
   ManifestExists       — .claude-plugin/plugin.json present and valid JSON
   RequiredFields       — name, version, description, author all present + non-empty
-  VersionShape         — semver (`X.Y.Z[-pre]`) and matches across plugin.json
-                          and marketplace.json (catches the v0.4.0/v0.3.2 drift
-                          that hit this repo before)
+  VersionShape         — semver (`X.Y.Z[-pre]`) and matches across plugin.json,
+                          Codex plugin.json, and marketplace.json (catches the
+                          version drift that hit this repo before)
   McpServersReference  — if plugin.json declares `mcpServers`, the referenced
                           file/path must exist and be valid JSON
   SkillNameUniqueness  — every SKILL.md frontmatter `name:` is unique within
@@ -29,6 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
+CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 SKILLS_DIR = REPO_ROOT / "skills"
 COMMANDS_DIR = REPO_ROOT / "commands"
@@ -102,6 +103,14 @@ class VersionShapeTests(unittest.TestCase):
     def test_plugin_version_is_semver(self) -> None:
         data = load_json(PLUGIN_JSON)
         self.assertRegex(data["version"], SEMVER_RE, f"plugin.json version {data['version']!r} not semver")
+
+    def test_codex_manifest_matches_plugin_name_and_version(self) -> None:
+        if not CODEX_PLUGIN_JSON.is_file():
+            self.skipTest(f"{CODEX_PLUGIN_JSON} not present (no Codex plugin surface)")
+        plugin = load_json(PLUGIN_JSON)
+        codex = load_json(CODEX_PLUGIN_JSON)
+        self.assertEqual(codex.get("name"), plugin["name"], ".codex-plugin/plugin.json name differs from Claude manifest")
+        self.assertEqual(codex.get("version"), plugin["version"], ".codex-plugin/plugin.json version differs from Claude manifest")
 
     def test_marketplace_versions_match_plugin(self) -> None:
         if not MARKETPLACE_JSON.is_file():
