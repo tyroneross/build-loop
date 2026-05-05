@@ -9,6 +9,11 @@ date: '2026-05-05'
 tags: [architecture, data, tooling]
 primary_tag: data
 entity: 'build-loop:phase-4-consolidation'
+project: build-loop
+tool: claude-code
+model: unknown
+task_category: unknown
+author: tyroneross
 source: auto-explicit
 related_runs: []
 related_decisions: []
@@ -16,6 +21,10 @@ supersedes: null
 superseded_by: null
 bookmark_snapshot_id: null
 captured_turn_excerpt: 'build-loop run Phase 4: P4.1 consolidate_memory.py — dedup against existing semantic_facts via cosine >= 0.85'
+last_validated: null
+last_accessed: null
+files_touched: []
+closing_commit: null
 ---
 
 # Phase 4: cosine 0.85 dedup threshold for memory consolidation

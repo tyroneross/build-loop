@@ -115,8 +115,41 @@ python3 scripts/write_decision.py \
   --entity "<scope: project name or module>" \
   --confidence explicit \
   --source auto-explicit \
-  --captured-turn-excerpt "<≤200 chars from the user's turn>"
+  --captured-turn-excerpt "<≤200 chars from the user's turn>" \
+  --tool claude-code \
+  --model claude-opus-4-7 \
+  --task-category bugfix \
+  --author auto
 ```
+
+### v2 metadata fields (skill-driven captures)
+
+Frontmatter v2 (added 2026-05-04, design §15) attaches five required
+fields and four optional fields to every decision. The writer applies
+sensible defaults so legacy callers still work, but skill-driven
+captures should set these explicitly when the signal is clear:
+
+| Field | Skill default | Example | When to override |
+|---|---|---|---|
+| `--tool` | `claude-code` (Stop hook fires inside Claude Code) | `claude-code` | If the conversation references another tool authoring the decision (rare) |
+| `--model` | `claude-opus-4-7` (or `$CLAUDE_MODEL`) | `claude-sonnet-4-6` | When you know the active sub-agent's model |
+| `--author` | `auto` (skill-driven captures) | `auto` | Always `auto` for in-session skill writes |
+| `--project` | derived from entity prefix or `$CLAUDE_PROJECT_DIR` | `build-loop` | Almost never; the default is right |
+| `--task-category` | `unknown` if no signal | `bugfix`, `feature`, `refactor`, `research`, `docs`, `migration`, `experiment`, `config` | **Set explicitly** whenever the conversational signal is clear (user said "fix this bug" → `bugfix`; "add this feature" → `feature`; "investigate why X" → `research`) |
+| `--files-touched` | `[]` (or `--infer-files-touched` for git diff) | `src/auth/session.ts,src/auth/middleware.ts` | When the decision is bound to a specific file set |
+
+**Inferring `task_category` from the conversation** — pick the strongest
+signal:
+
+- "fix the bug where…" / "this error…" / "broken since…" → `bugfix`
+- "add the X feature" / "build a new…" / "implement…" → `feature`
+- "clean up…" / "extract…" / "rename…" without behavior change → `refactor`
+- "investigate / understand / what's the best way" → `research`
+- "update the docs" / "README" / "changelog" → `docs`
+- "migrate from X to Y" / "schema change" → `migration`
+- "try / spike / experiment" → `experiment`
+- env vars / settings / runtime config → `config`
+- everything else → `unknown` (let the user override later via `/knowledge:review`)
 
 Output is the new 4-digit decision ID on stdout (e.g. `0042`). Errors go
 to stderr.

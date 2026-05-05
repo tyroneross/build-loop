@@ -9,6 +9,13 @@ date: YYYY-MM-DD
 tags: [primary-tag, secondary-tag]
 primary_tag: primary-tag
 entity: subject-of-decision
+# v2 metadata (added 2026-05-04). All required at write time; defaults are
+# applied by `scripts/write_decision.py` so manual MADR drafts can omit them.
+project: project-name
+tool: claude-code
+model: claude-opus-4-7
+task_category: feature
+author: tyroneross
 source: manual
 related_runs: []
 related_decisions: []
@@ -16,6 +23,10 @@ supersedes: null
 superseded_by: null
 bookmark_snapshot_id: null
 captured_turn_excerpt: null
+last_validated: null
+last_accessed: null
+files_touched: []
+closing_commit: null
 ---
 
 # {Title}

@@ -119,7 +119,7 @@ Closed enum:
 
 ## 7. Frontmatter required fields (decisions)
 
-Required:
+Required (v1 base):
 - `id` — zero-padded 4-digit decimal, allocated by `write_decision.py`
 - `slug` — kebab-case, derived from title
 - `title` — full sentence
@@ -133,6 +133,13 @@ Required:
   (e.g. `build-loop`, `auth-flow`, `chart-pipeline`)
 - `source` — see §6
 
+Required (v2; defaults applied by writer — see §9):
+- `project` — repo-scoped namespace
+- `tool` — authoring tool (closed enum)
+- `model` — free-form model ID
+- `task_category` — closed enum
+- `author` — free-form author identifier
+
 Optional:
 - `related_runs` — list of run_ids
 - `related_decisions` — list of decision IDs
@@ -140,6 +147,10 @@ Optional:
 - `superseded_by` — single decision ID that replaces this
 - `bookmark_snapshot_id` — provenance for auto-captured decisions
 - `captured_turn_excerpt` — first ~200 chars of triggering user turn
+- `last_validated` — null | ISO date
+- `last_accessed` — null | ISO date
+- `files_touched` — list of repo-relative paths
+- `closing_commit` — null | git SHA
 
 ## 8. Procedural memory frontmatter (design §14)
 
@@ -155,7 +166,86 @@ Required for entries under `.procedural/<name>/procedure.md`:
 - `depends_on` — list of `{symbol, min_version, last_verified}`
 - `invalidation_signal` — string description (or null)
 
-## 9. No sensitivity-keyword filter (per user direction, design §10)
+## 9. v2 metadata fields (added 2026-05-04, design §15)
+
+Frontmatter v2 adds nine fields to every decision and mirrors them onto
+`events.jsonl` lines and `semantic_facts.metadata`. Defaults are applied
+by `scripts/write_decision.py` at write time so callers without new args
+still produce valid frontmatter. The validator requires all of
+`project`, `tool`, `model`, `task_category`, `author` after defaults are
+applied; the remaining four (`last_validated`, `last_accessed`,
+`files_touched`, `closing_commit`) are optional.
+
+### 9.1 `project` — string
+
+Repo-scoped namespace, separate from `entity` (which targets a module
+inside the project). Default: derived from `entity` prefix before `:`
+(e.g. `build-loop:foo` → `build-loop`), else basename of
+`$CLAUDE_PROJECT_DIR`, else `unknown`. Examples: `build-loop`,
+`speaksavvy`, `atomize-ai`.
+
+### 9.2 `tool` — closed enum
+
+The agentic tool that authored the entry. Closed enum:
+
+- `claude-code` — Anthropic Claude Code CLI (default for in-session captures)
+- `codex` — OpenAI Codex CLI / GPT-5.x runs
+- `cursor` — Cursor IDE
+- `aider` — Aider CLI
+- `goose` — Block Goose
+- `manual` — human-authored MADR
+- `migration` — bulk-migration script (one-shot data imports)
+- `unknown` — escape hatch for retroactive backfill
+
+### 9.3 `model` — free-form string
+
+Model ID such as `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5.4`,
+`qwen3:8b-q4_K_M`. Free-form (not enum) so new models do not require a
+TAXONOMY edit. Convention: lowercase with hyphens, vendor prefix where
+ambiguous. `unknown` and `migration` are reserved for backfill.
+
+### 9.4 `task_category` — closed enum
+
+Closed enum, drives metadata-filter retrieval:
+
+- `feature` — new capability
+- `bugfix` — defect repair
+- `refactor` — internal restructuring without behavior change
+- `research` — investigation / analysis
+- `docs` — documentation
+- `migration` — schema or data move
+- `experiment` — exploratory / spike
+- `config` — settings, env, runtime config
+- `unknown` — escape hatch (default for skill-driven captures that lack a clear signal)
+
+### 9.5 `author` — string
+
+Free-form author identifier. Default: `$USER` env var. Reserved values:
+`auto` for skill-driven captures.
+
+### 9.6 `last_validated` — null | ISO date
+
+Timestamp of last user re-validation via `/knowledge:review`. Used by
+`detect_decision_rot.py`. Null until first validation.
+
+### 9.7 `last_accessed` — null | ISO date
+
+Bumped by `recall.py` whenever a decision ranks in the top-K returned.
+Optional; informational only. Used by future staleness scoring.
+
+### 9.8 `files_touched` — list of repo-relative paths
+
+Paths the decision applies to. Populated automatically by
+`write_decision.py` from `git diff --name-only HEAD~1 HEAD` when a recent
+commit is detected, or explicitly via `--files-touched a,b,c`. Default:
+empty list.
+
+### 9.9 `closing_commit` — null | git SHA
+
+The commit that closed/landed the decision. Set manually via
+`supersede_decision.py` or by a future post-commit hook. Default: null.
+
+## 10. No sensitivity-keyword filter (per user direction, design §10)
 
 Earlier drafts proposed a sensitivity-keyword exclusion list for
 auto-capture. User direction: do NOT filter on sensitivity keywords.

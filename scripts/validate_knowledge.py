@@ -27,12 +27,15 @@ from write_decision import (  # type: ignore  # noqa: E402
     VALID_CONFIDENCES,
     VALID_SOURCES,
     VALID_STATUSES,
+    VALID_TASK_CATEGORIES,
+    VALID_TOOLS,
     VALID_TYPES,
     load_taxonomy,
     parse_frontmatter,
 )
 
 REQUIRED_DECISION_KEYS = [
+    # v1 base
     "id",
     "slug",
     "title",
@@ -44,7 +47,24 @@ REQUIRED_DECISION_KEYS = [
     "primary_tag",
     "entity",
     "source",
+    # v2 metadata (design §15) — defaults applied at write time
+    "project",
+    "tool",
+    "model",
+    "task_category",
+    "author",
 ]
+
+# v2 optional fields (informational; values may be null/[]).
+OPTIONAL_V2_KEYS = [
+    "last_validated",
+    "last_accessed",
+    "files_touched",
+    "closing_commit",
+]
+
+# ISO-date-or-null pattern; allows full ISO-8601 with or without time.
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:?\d{2})?)?$")
 
 
 def collect_decision_files(workdir: Path) -> list[Path]:
@@ -104,6 +124,29 @@ def validate_decision_file(
 
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(fm.get("date", ""))):
         errors.append(f"{path}: date must be YYYY-MM-DD, got {fm.get('date')!r}")
+
+    # v2 metadata (design §15)
+    tool = fm.get("tool")
+    if tool is not None and tool not in VALID_TOOLS:
+        errors.append(f"{path}: tool={tool!r} not in {sorted(VALID_TOOLS)}")
+    tc = fm.get("task_category")
+    if tc is not None and tc not in VALID_TASK_CATEGORIES:
+        errors.append(f"{path}: task_category={tc!r} not in {sorted(VALID_TASK_CATEGORIES)}")
+    for sf in ("project", "model", "author"):
+        sv = fm.get(sf)
+        if sv is not None and (not isinstance(sv, str) or not sv.strip()):
+            errors.append(f"{path}: {sf} must be a non-empty string, got {sv!r}")
+    ft = fm.get("files_touched")
+    if ft is not None and not isinstance(ft, list):
+        errors.append(f"{path}: files_touched must be a list, got {type(ft).__name__}")
+    elif isinstance(ft, list):
+        for p in ft:
+            if not isinstance(p, str):
+                errors.append(f"{path}: files_touched item {p!r} must be string")
+    for df in ("last_validated", "last_accessed"):
+        dv = fm.get(df)
+        if dv not in (None, "null", "") and not _ISO_DATE_RE.match(str(dv)):
+            errors.append(f"{path}: {df} must be ISO date or null, got {dv!r}")
 
     sup = fm.get("supersedes")
     if sup not in (None, "null", ""):

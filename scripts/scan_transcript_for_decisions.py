@@ -540,6 +540,16 @@ def write_trusted(workdir: Path, item: dict, db: bool) -> tuple[bool, str]:
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     confidence = (item.get("confidence") or "inferred").strip()
     source = "auto-confirmed" if confidence == "confirmed" else "auto-explicit"
+    # v2 metadata for skill-driven captures (design §15). The Stop hook
+    # always runs inside Claude Code, so tool='claude-code' and author='auto'.
+    # `model` follows env var $CLAUDE_MODEL when present; otherwise the
+    # writer's default ('claude-opus-4-7') is used. `task_category` is
+    # 'unknown' here — Claude is encouraged to set it explicitly via the
+    # auto-decision-capture skill when conversational signal is clear.
+    project = (
+        Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
+    )
+    model = os.environ.get("CLAUDE_MODEL") or "claude-opus-4-7"
     args = [
         sys.executable, str(WRITE_DECISION_SCRIPT),
         "--workdir", str(workdir),
@@ -554,6 +564,11 @@ def write_trusted(workdir: Path, item: dict, db: bool) -> tuple[bool, str]:
         "--confidence", confidence,
         "--source", source,
         "--captured-turn-excerpt", (item.get("evidence") or "")[:200],
+        "--project", project,
+        "--tool", "claude-code",
+        "--model", model,
+        "--task-category", (item.get("task_category") or "unknown"),
+        "--author", "auto",
     ]
     if not db:
         args.append("--no-db")
@@ -604,6 +619,11 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         # Anything coming through write_review is by definition tier-3; clamp.
         confidence = "inferred"
 
+    # v2 metadata mirroring write_trusted's logic.
+    project = (
+        Path(os.environ.get("CLAUDE_PROJECT_DIR") or workdir).name or "build-loop"
+    )
+    model = os.environ.get("CLAUDE_MODEL") or "claude-opus-4-7"
     fm: dict[str, Any] = {
         "id": new_id,
         "slug": slug,
@@ -615,9 +635,18 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
         "tags": tags,
         "primary_tag": primary_tag,
         "entity": entity,
+        "project": project,
+        "tool": "claude-code",
+        "model": model,
+        "task_category": (item.get("task_category") or "unknown"),
+        "author": "auto",
         "source": "auto-inferred" if confidence == "inferred" else "auto-assumed",
         "review_origin": "stop-hook-batch",
         "captured_turn_excerpt": (item.get("evidence") or "")[:200],
+        "last_validated": None,
+        "last_accessed": None,
+        "files_touched": [],
+        "closing_commit": None,
     }
     body = {
         "context": item.get("context") or "",

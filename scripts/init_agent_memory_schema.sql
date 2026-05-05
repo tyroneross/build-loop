@@ -39,18 +39,28 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- episode_events  (raw episodic stream)
 -- ----------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS episode_events (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id    UUID REFERENCES sessions(id) ON DELETE SET NULL,
-  user_id       TEXT NOT NULL,
-  seq_num       INTEGER NOT NULL,
-  occurred_at   TIMESTAMPTZ DEFAULT now(),
-  actor         TEXT NOT NULL,            -- 'user', 'agent', 'tool', 'system'
-  verb          TEXT NOT NULL,            -- 'said', 'called', 'returned', 'decided'
-  object        TEXT,
-  raw_content   TEXT,                     -- verbatim, never trimmed
-  summary       TEXT,
-  embedding     VECTOR(1024),             -- mxbai-embed-large / mlx-community/mxbai-embed-large-v1
-  metadata      JSONB
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id      UUID REFERENCES sessions(id) ON DELETE SET NULL,
+  user_id         TEXT NOT NULL,
+  seq_num         INTEGER NOT NULL,
+  occurred_at     TIMESTAMPTZ DEFAULT now(),
+  actor           TEXT NOT NULL,          -- 'user', 'agent', 'tool', 'system'
+  verb            TEXT NOT NULL,          -- 'said', 'called', 'returned', 'decided'
+  object          TEXT,
+  raw_content     TEXT,                   -- verbatim, never trimmed
+  summary         TEXT,
+  embedding       VECTOR(1024),           -- mxbai-embed-large / mlx-community/mxbai-embed-large-v1
+  metadata        JSONB,
+  -- v2 metadata (design §15, added 2026-05-04)
+  project         TEXT,
+  tool            TEXT,
+  model           TEXT,
+  task_category   TEXT,
+  author          TEXT,
+  last_validated  TIMESTAMPTZ,
+  last_accessed   TIMESTAMPTZ,
+  closing_commit  TEXT,
+  files_touched   TEXT[]
 );
 
 -- ----------------------------------------------------------------------
@@ -67,7 +77,17 @@ CREATE TABLE IF NOT EXISTS semantic_facts (
   valid_from         TIMESTAMPTZ DEFAULT now(),
   valid_to           TIMESTAMPTZ,
   embedding          VECTOR(1024),
-  metadata           JSONB
+  metadata           JSONB,
+  -- v2 metadata (design §15, added 2026-05-04)
+  project            TEXT,
+  tool               TEXT,
+  model              TEXT,
+  task_category      TEXT,
+  author             TEXT,
+  last_validated     TIMESTAMPTZ,
+  last_accessed      TIMESTAMPTZ,
+  closing_commit     TEXT,
+  files_touched      TEXT[]
 );
 
 -- ----------------------------------------------------------------------
@@ -131,12 +151,49 @@ BEGIN
   END IF;
 END $$;
 
+-- ----------------------------------------------------------------------
+-- v2 metadata column backfill (idempotent — runs on already-existing tables)
+-- design §15. Mirror this block in `migrate_schema_v2.py` for cross-tool runs.
+-- ----------------------------------------------------------------------
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS project        TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS tool           TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS model          TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS task_category  TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS author         TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS last_validated TIMESTAMPTZ;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS last_accessed  TIMESTAMPTZ;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS closing_commit TEXT;
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS files_touched  TEXT[];
+
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS project        TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS tool           TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS model          TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS task_category  TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS author         TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS last_validated TIMESTAMPTZ;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS last_accessed  TIMESTAMPTZ;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS closing_commit TEXT;
+ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS files_touched  TEXT[];
+
 -- B-tree indexes for time-series + lookup
 CREATE INDEX IF NOT EXISTS episode_events_user_time_idx
   ON episode_events (user_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS semantic_facts_subject_predicate_status_idx
   ON semantic_facts (subject, predicate, status);
+
+-- v2 metadata-filter indexes (design §15)
+CREATE INDEX IF NOT EXISTS semantic_facts_project_task_category_idx
+  ON semantic_facts (project, task_category);
+
+CREATE INDEX IF NOT EXISTS semantic_facts_last_accessed_idx
+  ON semantic_facts (last_accessed DESC NULLS LAST);
+
+CREATE INDEX IF NOT EXISTS episode_events_project_task_category_idx
+  ON episode_events (project, task_category);
+
+CREATE INDEX IF NOT EXISTS episode_events_last_accessed_idx
+  ON episode_events (last_accessed DESC NULLS LAST);
 
 -- GIN for hybrid full-text search on raw_content
 CREATE INDEX IF NOT EXISTS episode_events_raw_content_fts_idx

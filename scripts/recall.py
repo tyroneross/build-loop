@@ -63,14 +63,47 @@ def hybrid_search_facts(
     schema: str,
     limit: int,
     confidence_floor: float,
+    *,
+    project: str | None = None,
+    tool: str | None = None,
+    model: str | None = None,
+    task_category: str | None = None,
+    author: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run hybrid search over semantic_facts.
 
     Score = 0.6 * cosine_sim + 0.4 * trigram_sim
     Filters by status='active' and confidence >= floor.
+
+    Metadata filters (design §15) apply BEFORE the cosine/BM25 ranking.
+    Each filter prefers the typed column but falls back to JSONB metadata
+    so retrieval still works if the v2 migration hasn't been applied yet.
     """
     schema = _safe_schema(schema)
     emb = vector_literal(embedding)
+    where_clauses = [
+        "status = 'active'",
+        "embedding IS NOT NULL",
+        "confidence >= %s",
+    ]
+    params: list[Any] = [emb, q, q, q, emb, q, q, q, confidence_floor]
+
+    def _add_meta_filter(field: str, value: str | None) -> None:
+        if value is None:
+            return
+        # Typed column OR JSONB fallback.
+        where_clauses.append(
+            f"(COALESCE({field}, metadata->>'{field}') = %s)"
+        )
+        params.append(value)
+
+    _add_meta_filter("project", project)
+    _add_meta_filter("tool", tool)
+    _add_meta_filter("model", model)
+    _add_meta_filter("task_category", task_category)
+    _add_meta_filter("author", author)
+
+    where_sql = " AND ".join(where_clauses)
     sql = (
         "SELECT "
         "    id::text AS id, "
@@ -80,16 +113,34 @@ def hybrid_search_facts(
         "    (0.6 * (1 - (embedding <=> %s::vector)) "
         "        + 0.4 * GREATEST(similarity(subject, %s), similarity(predicate, %s), similarity(object, %s))) AS score "
         f"FROM {schema}.semantic_facts "
-        "WHERE status = 'active' "
-        "  AND embedding IS NOT NULL "
-        "  AND confidence >= %s "
+        f"WHERE {where_sql} "
         "ORDER BY score DESC "
         "LIMIT %s"
     )
-    return query(
-        sql,
-        (emb, q, q, q, emb, q, q, q, confidence_floor, int(limit)),
-    )
+    params.append(int(limit))
+    return query(sql, tuple(params))
+
+
+def bump_last_accessed(schema: str, fact_ids: list[str]) -> None:
+    """Update `last_accessed = now()` on the semantic_facts rows that ranked top-K.
+
+    Best-effort. Failures log and continue — recall must succeed even
+    when the column is absent (pre-migration installs).
+    """
+    if not fact_ids:
+        return
+    schema = _safe_schema(schema)
+    try:
+        from db import execute  # type: ignore  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        execute(
+            f"UPDATE {schema}.semantic_facts SET last_accessed = now() WHERE id::text = ANY(%s)",
+            (list(fact_ids),),
+        )
+    except Exception as e:  # noqa: BLE001
+        log(f"recall: bump_last_accessed failed (continuing): {e}")
 
 
 def hybrid_search_episodes(
@@ -219,6 +270,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--char-budget", type=int, default=8000)  # ~1500 tokens
     p.add_argument("--no-episodes", action="store_true", help="Skip episode_events search")
+    # v2 metadata filters (design §15). Applied BEFORE cosine/BM25 ranking.
+    p.add_argument("--project", default=None, help="Filter facts to this project")
+    p.add_argument("--tool", default=None, help="Filter facts to this authoring tool")
+    p.add_argument("--model", default=None, help="Filter facts to this model")
+    p.add_argument("--task-category", default=None, help="Filter facts to this task category")
+    p.add_argument("--author", default=None, help="Filter facts to this author")
+    p.add_argument("--no-bump-last-accessed", action="store_true", help="Skip the last_accessed bump on returned rows")
     args = p.parse_args(argv)
 
     try:
@@ -230,7 +288,18 @@ def main(argv: list[str] | None = None) -> int:
     floor = confidence_to_float(args.confidence_floor)
 
     try:
-        facts = hybrid_search_facts(args.query, embedding, args.schema, args.limit, floor)
+        facts = hybrid_search_facts(
+            args.query,
+            embedding,
+            args.schema,
+            args.limit,
+            floor,
+            project=args.project,
+            tool=args.tool,
+            model=args.model,
+            task_category=args.task_category,
+            author=args.author,
+        )
         episodes = (
             hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
             if not args.no_episodes
@@ -244,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # noqa: BLE001
         log(f"recall: {e}")
         return 2
+
+    if not args.no_bump_last_accessed and facts:
+        bump_last_accessed(args.schema, [f["id"] for f in facts])
 
     text = render(args.query, facts, episodes, expanded, args.confidence_floor, args.char_budget)
     print(text)

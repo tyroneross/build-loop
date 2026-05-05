@@ -81,6 +81,14 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
         "source": fm.get("source"),
         "date": fm.get("date"),
         "file": str(path.name),
+        # v2 fields mirrored into JSONB so older readers still see them.
+        "project": fm.get("project"),
+        "tool": fm.get("tool"),
+        "model": fm.get("model"),
+        "task_category": fm.get("task_category"),
+        "author": fm.get("author"),
+        "files_touched": fm.get("files_touched") or [],
+        "closing_commit": fm.get("closing_commit"),
     }
     if not re.match(r"^[a-z][a-z0-9_]*$", schema):
         log(f"unsafe schema name: {schema!r}")
@@ -92,11 +100,14 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
             f"DELETE FROM {schema}.semantic_facts WHERE subject = %s;",
             (subject,),
         )
+        files_touched = fm.get("files_touched") or []
         execute(
             (
                 f"INSERT INTO {schema}.semantic_facts "
-                "(subject, predicate, object, confidence, status, embedding, metadata) "
-                "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb);"
+                "(subject, predicate, object, confidence, status, embedding, metadata, "
+                " project, tool, model, task_category, author, files_touched, closing_commit) "
+                "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
+                " %s, %s, %s, %s, %s, %s, %s);"
             ),
             (
                 subject,
@@ -105,6 +116,13 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
                 confidence_to_float(fm.get("confidence")),
                 vector_literal(embedding),
                 json.dumps(metadata, ensure_ascii=False),
+                fm.get("project"),
+                fm.get("tool"),
+                fm.get("model"),
+                fm.get("task_category"),
+                fm.get("author"),
+                list(files_touched) if isinstance(files_touched, list) else [],
+                fm.get("closing_commit"),
             ),
         )
         return True

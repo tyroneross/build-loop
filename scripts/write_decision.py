@@ -66,6 +66,30 @@ VALID_SOURCES = {
     "orchestrator",
 }
 VALID_TYPES = {"decision", "issue", "research"}
+# v2 metadata enums (added 2026-05-04, design §15).
+# `tool` and `task_category` are closed; `model`, `author`, `project` are free-form.
+VALID_TOOLS = {
+    "claude-code",
+    "codex",
+    "cursor",
+    "aider",
+    "goose",
+    "manual",
+    "migration",
+    "unknown",
+}
+VALID_TASK_CATEGORIES = {
+    "feature",
+    "bugfix",
+    "refactor",
+    "research",
+    "docs",
+    "migration",
+    "experiment",
+    "config",
+    "unknown",
+}
+
 VALID_EVENT_KINDS = {
     "run_completed",
     "run_failed",
@@ -481,16 +505,29 @@ def db_dualwrite(
             "confidence": fm.get("confidence"),
             "source": fm.get("source"),
             "date": fm.get("date"),
+            # v2 fields mirrored into JSONB so older readers still see them.
+            "project": fm.get("project"),
+            "tool": fm.get("tool"),
+            "model": fm.get("model"),
+            "task_category": fm.get("task_category"),
+            "author": fm.get("author"),
+            "files_touched": fm.get("files_touched") or [],
+            "closing_commit": fm.get("closing_commit"),
         }
         # Schema is operator-controlled (CLI flag), not user input. Validate shape
         # to keep the f-string interpolation safe; psycopg cannot bind table names.
         if not re.match(r"^[a-z][a-z0-9_]*$", schema):
             raise ValueError(f"unsafe schema name: {schema!r}")
+        # v2: write typed columns when present (graceful degrade if migration
+        # hasn't run yet — caught by the broad except below).
         sql = (
             f"INSERT INTO {schema}.semantic_facts "
-            "(subject, predicate, object, confidence, status, embedding, metadata) "
-            "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb);"
+            "(subject, predicate, object, confidence, status, embedding, metadata, "
+            " project, tool, model, task_category, author, files_touched, closing_commit) "
+            "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
+            " %s, %s, %s, %s, %s, %s, %s);"
         )
+        files = fm.get("files_touched") or []
         execute(
             sql,
             (
@@ -500,6 +537,13 @@ def db_dualwrite(
                 _confidence_to_float(fm.get("confidence")),
                 vector_literal(embedding),
                 json.dumps(metadata, ensure_ascii=False),
+                fm.get("project"),
+                fm.get("tool"),
+                fm.get("model"),
+                fm.get("task_category"),
+                fm.get("author"),
+                list(files) if isinstance(files, list) else [],
+                fm.get("closing_commit"),
             ),
         )
         log(f"db dual-write: inserted semantic_facts row for decision {decision_id}")
@@ -572,6 +616,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--bookmark-snapshot-id", default=None)
     p.add_argument("--captured-turn-excerpt", default=None)
 
+    # v2 metadata (design §15). All optional at the CLI; defaults applied
+    # in `_apply_v2_defaults` so legacy callers continue to work.
+    p.add_argument("--project", default=None, help="Repo-scoped project name. Default: derived from --entity prefix or $CLAUDE_PROJECT_DIR basename.")
+    p.add_argument("--tool", default=None, help=f"Authoring tool. One of: {sorted(VALID_TOOLS)}. Default: 'claude-code' (manual MADRs use 'manual').")
+    p.add_argument("--model", default=None, help="Free-form model ID. Default: 'claude-opus-4-7'.")
+    p.add_argument("--task-category", default=None, help=f"Task category. One of: {sorted(VALID_TASK_CATEGORIES)}. Default: 'unknown'.")
+    p.add_argument("--author", default=None, help="Free-form author identifier. Default: $USER env var, else 'unknown'.")
+    p.add_argument("--files-touched", default=None, help="Comma-separated repo-relative paths. Default: empty list (or git diff if --infer-files-touched).")
+    p.add_argument("--infer-files-touched", action="store_true", help="Populate files_touched from `git diff --name-only HEAD~1 HEAD` when no --files-touched is given.")
+    p.add_argument("--closing-commit", default=None, help="Git SHA that closed this decision. Default: null.")
+    p.add_argument("--last-validated", default=None, help="ISO date for last_validated. Default: null.")
+    p.add_argument("--last-accessed", default=None, help="ISO date for last_accessed. Default: null.")
+
     # DB dual-write (Phase 2)
     p.add_argument("--db", dest="db", action="store_true", default=True, help="Enable Postgres dual-write (default)")
     p.add_argument("--no-db", dest="db", action="store_false", help="Skip DB dual-write")
@@ -590,6 +647,115 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def split_csv(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+# ---------- v2 metadata defaults (design §15) ----------
+
+
+def _derive_project(entity: str | None, workdir: Path) -> str:
+    """Default project: prefix of entity before ':' if present, else
+    $CLAUDE_PROJECT_DIR basename, else workdir basename, else 'unknown'.
+    """
+    if entity and ":" in entity:
+        prefix = entity.split(":", 1)[0].strip()
+        if prefix:
+            return prefix
+    cpd = os.environ.get("CLAUDE_PROJECT_DIR")
+    if cpd:
+        name = Path(cpd).name
+        if name:
+            return name
+    name = workdir.name
+    return name or "unknown"
+
+
+def _git_diff_files(workdir: Path) -> list[str]:
+    """Return repo-relative paths from `git diff --name-only HEAD~1 HEAD`.
+    Returns [] on any error (no commits yet, not a repo, missing git, etc.)."""
+    import subprocess  # noqa: PLC0415
+    try:
+        cp = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    if cp.returncode != 0:
+        return []
+    return [line.strip() for line in cp.stdout.splitlines() if line.strip()]
+
+
+def apply_v2_defaults(
+    *,
+    project: str | None,
+    tool: str | None,
+    model: str | None,
+    task_category: str | None,
+    author: str | None,
+    files_touched: list[str] | None,
+    closing_commit: str | None,
+    last_validated: str | None,
+    last_accessed: str | None,
+    source: str,
+    entity: str,
+    workdir: Path,
+    infer_files: bool = False,
+) -> dict[str, Any]:
+    """Apply schema-v2 defaults. Returns a dict of the 9 v2 fields.
+
+    Defaults follow design §15 / TAXONOMY.md §9. The `source` value
+    influences the `tool` default ('manual' source → 'manual' tool;
+    'migration' source → 'migration'; everything else → 'claude-code').
+    """
+    if tool is None:
+        if source == "manual":
+            tool = "manual"
+        elif source == "migration":
+            tool = "migration"
+        else:
+            tool = "claude-code"
+    if model is None:
+        model = "claude-opus-4-7"
+    if task_category is None:
+        task_category = "unknown"
+    if author is None:
+        author = os.environ.get("USER") or "unknown"
+    if project is None:
+        project = _derive_project(entity, workdir)
+    if files_touched is None:
+        files_touched = _git_diff_files(workdir) if infer_files else []
+    return {
+        "project": project,
+        "tool": tool,
+        "model": model,
+        "task_category": task_category,
+        "author": author,
+        "last_validated": last_validated,
+        "last_accessed": last_accessed,
+        "files_touched": files_touched,
+        "closing_commit": closing_commit,
+    }
+
+
+def validate_v2(v2: dict[str, Any]) -> None:
+    """Raise ValueError on any v2 field violation."""
+    if v2["tool"] not in VALID_TOOLS:
+        raise ValueError(f"tool {v2['tool']!r} not in {sorted(VALID_TOOLS)}")
+    if v2["task_category"] not in VALID_TASK_CATEGORIES:
+        raise ValueError(
+            f"task_category {v2['task_category']!r} not in {sorted(VALID_TASK_CATEGORIES)}"
+        )
+    if not isinstance(v2["files_touched"], list):
+        raise ValueError("files_touched must be a list")
+    for p in v2["files_touched"]:
+        if not isinstance(p, str):
+            raise ValueError(f"files_touched item must be string, got {type(p).__name__}")
+    for f in ("project", "model", "author"):
+        if not v2[f] or not isinstance(v2[f], str):
+            raise ValueError(f"{f} must be a non-empty string")
 
 
 def validate_tags(tags: list[str], primary_tag: str, taxonomy: dict[str, set[str]]) -> None:
@@ -713,6 +879,31 @@ def _do_write(
     new_path = decisions_dir / new_filename
 
     # 3) Build frontmatter
+    # Apply v2 defaults (design §15). Validate before writing.
+    files_touched_arg: list[str] | None = None
+    if getattr(args, "files_touched", None):
+        files_touched_arg = split_csv(args.files_touched)
+    try:
+        v2 = apply_v2_defaults(
+            project=getattr(args, "project", None),
+            tool=getattr(args, "tool", None),
+            model=getattr(args, "model", None),
+            task_category=getattr(args, "task_category", None),
+            author=getattr(args, "author", None),
+            files_touched=files_touched_arg,
+            closing_commit=getattr(args, "closing_commit", None),
+            last_validated=getattr(args, "last_validated", None),
+            last_accessed=getattr(args, "last_accessed", None),
+            source=args.source,
+            entity=args.entity,
+            workdir=workdir,
+            infer_files=getattr(args, "infer_files_touched", False),
+        )
+        validate_v2(v2)
+    except ValueError as e:
+        log(f"validation error: {e}")
+        return 1
+
     fm: dict[str, Any] = {
         "id": new_id,
         "slug": slug,
@@ -724,6 +915,11 @@ def _do_write(
         "tags": tags,
         "primary_tag": args.primary_tag,
         "entity": args.entity,
+        "project": v2["project"],
+        "tool": v2["tool"],
+        "model": v2["model"],
+        "task_category": v2["task_category"],
+        "author": v2["author"],
         "source": args.source,
         "related_runs": split_csv(args.related_runs),
         "related_decisions": split_csv(args.related_decisions),
@@ -731,6 +927,10 @@ def _do_write(
         "superseded_by": None,
         "bookmark_snapshot_id": args.bookmark_snapshot_id,
         "captured_turn_excerpt": args.captured_turn_excerpt,
+        "last_validated": v2["last_validated"],
+        "last_accessed": v2["last_accessed"],
+        "files_touched": v2["files_touched"],
+        "closing_commit": v2["closing_commit"],
     }
     body = {
         "context": args.context,
@@ -766,6 +966,11 @@ def _do_write(
                     "superseded_by": new_id,
                     "primary_tag": args.primary_tag,
                     "entity": args.entity,
+                    "project": v2["project"],
+                    "tool": v2["tool"],
+                    "model": v2["model"],
+                    "task_category": v2["task_category"],
+                    "author": v2["author"],
                     "source": args.source,
                     "dedup_key": f"decision:{auto_supersede_id}:superseded_by:{new_id}",
                 },
@@ -780,6 +985,11 @@ def _do_write(
                 "title": args.title,
                 "primary_tag": args.primary_tag,
                 "entity": args.entity,
+                "project": v2["project"],
+                "tool": v2["tool"],
+                "model": v2["model"],
+                "task_category": v2["task_category"],
+                "author": v2["author"],
                 "confidence": args.confidence,
                 "source": args.source,
                 "supersedes": auto_supersede_id,

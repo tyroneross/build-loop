@@ -9,6 +9,11 @@ date: '2026-04-13'
 tags: [infra, process]
 primary_tag: infra
 entity: 'build-loop:pin-vs-inherit-decision'
+project: build-loop
+tool: migration
+model: unknown
+task_category: unknown
+author: tyroneross
 source: migration
 related_runs: []
 related_decisions: []
@@ -16,6 +21,10 @@ supersedes: null
 superseded_by: null
 bookmark_snapshot_id: null
 captured_turn_excerpt: null
+last_validated: null
+last_accessed: null
+files_touched: []
+closing_commit: null
 ---
 
 # Pin-vs-inherit decision
