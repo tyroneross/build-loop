@@ -15,13 +15,73 @@ The **memory facade** at `scripts/memory_facade.py` exposes one `recall(query, k
 
 ## Read protocol — Phase 1 Assess
 
-Mirror of the orchestrator's executable steps. Each line is a runnable action; empty results are valid; never raise on a missing backend.
+Mirrors the write-protocol's executable shape (fenced commands + return-shape table + graceful-degradation matrix). Each step is independently safe to run; empty results are valid; never raise on a missing backend. The orchestrator's Phase 1 imperative (5 numbered steps in `agents/build-orchestrator.md`) MUST stay in lock-step with this section — when call wiring changes, update both.
 
-1. **MEMORY.md tiers**: `Read("~/.build-loop/memory/MEMORY.md")` (global) AND `Read("<repo>/.build-loop/memory/MEMORY.md")` (project). Project overrides global on key conflict. Empty/absent files: skip silently.
-2. **Run-history priming** (added Priority 12, 2026-05-05): `Read(".build-loop/state.json")` and inspect `runs[-3:]` for prior-build outcomes/root_cause. This catches "this build follows a similar one — here's what happened" before a fresh `recall()` query is shaped.
-3. **Unified recall**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall --query "<goal-keywords>" --limit 10` — one read across all four backends. Returns the canonical envelope (see facade docstring). Inspect `reasons[]` for backend-unavailable signals; never block on them.
-4. **Debugger incidents (priming)**: invoke `Skill("build-loop:debugging-memory")` with `intent: "list-recent"` for one-line summaries of recent project incidents. MCP failure → fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory`; flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
-5. **Per-MCP fallback** (only if step 4 used the fallback): `mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })` is the direct MCP shape used inside the skill — surfaced here for diagnostic reference.
+### 1. MEMORY.md tiers (global + project)
+
+```bash
+# Global tier (cross-project preferences and learnings)
+Read("~/.build-loop/memory/MEMORY.md")
+# Project tier (overrides global on key conflict)
+Read("<repo>/.build-loop/memory/MEMORY.md")
+```
+
+**Return shape**: markdown text (or empty string if absent). Project keys override global. **Degradation**: missing file → empty string, no error.
+
+### 2. Run-history priming (state.json runs[-3:])
+
+```bash
+# Slice the last 3 prior-run entries.
+python3 -c "import json; s=json.load(open('.build-loop/state.json')); [print(r.get('run_id'), r.get('outcome'), r.get('root_cause','')) for r in s.get('runs',[])[-3:]]"
+```
+
+**Return shape**: zero to three lines, each `<run_id> <outcome> <root_cause>`. Catches "this build follows a similar one" context before `recall()` is queried. **Degradation**: missing/empty `runs[]` → no output, continue.
+
+### 3. Unified recall facade (one read across four backends)
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall \
+  --query "<goal-keywords>" \
+  --limit 10
+```
+
+**Return shape**: JSON envelope `{ results: [...], reasons: [...], elapsed_ms: N }`. Each result row is `{ store, score, payload }`. Inspect `reasons[]` for `db_unavailable` / `mcp_unavailable` / `path_missing` signals — those are data, not failures. **Degradation**: any backend down → that backend reports a `reason`; remaining backends still return rows.
+
+### 4. Debugger incidents priming (recent-list)
+
+```text
+Skill("build-loop:debugging-memory") with { intent: "list-recent" }
+```
+
+**Return shape**: one-line summary `"N recent incidents in this project, top categories: [...]"`. Counts feed Phase 1's awareness of what's been failing lately. **Degradation**: MCP unreachable → fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep over `.build-loop/issues/` and `.build-loop/feedback.md`). Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
+
+### 5. Per-MCP shape (diagnostic reference; use only when step 4's fallback fired)
+
+```text
+mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })
+```
+
+**Return shape**: `{ incidents: [{ id, symptom, root_cause, fix, tags, created_at }, ...] }`. Surfaced here so a diagnostic check (e.g. "is the MCP actually returning anything?") doesn't have to traverse the skill abstraction.
+
+### Return-shape & exit-code summary
+
+| Step | Surface | Return shape | Empty-OK | On backend down |
+|---|---|---|---|---|
+| 1 | `Read()` (filesystem) | markdown text | yes | empty string |
+| 2 | python slice over `state.json` | up to 3 lines | yes | no output |
+| 3 | `memory_facade.py recall` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
+| 4 | `Skill("build-loop:debugging-memory")` | one-line text summary | yes | grep-fallback per `fallbacks.md#bug-memory` |
+| 5 | `mcp__plugin_build-loop-debugger__list` | `{ incidents: [...] }` | yes | step 4 already covered the fallback |
+
+### Graceful-degradation matrix
+
+| Failure mode | Step 1 | Step 2 | Step 3 | Step 4 | Step 5 |
+|---|---|---|---|---|---|
+| Postgres unavailable | n/a | n/a | `reason: db_unavailable` for semantic backend, others continue | n/a | n/a |
+| MCP server unreachable | n/a | n/a | `reason: mcp_unavailable` | grep fallback | unusable; rely on step 4 fallback |
+| `state.json` missing | n/a | no output | recall still runs other backends | n/a | n/a |
+| MEMORY.md absent | empty | n/a | recall covers semantic/decision backends | n/a | n/a |
+| All backends down | empty | empty | envelope w/ all `reasons` populated, `results: []` | grep fallback | n/a |
 
 ## Write protocol — Phase 4 Review sub-step F
 
