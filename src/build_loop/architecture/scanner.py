@@ -336,13 +336,27 @@ class ScanResult:
     files_scanned: int
 
     def to_index(self) -> Dict[str, object]:
+        # Schema-key parity: NavGator and the orchestrator state.json field
+        # convention both use the plural form ("components_count",
+        # "connections_count") and "last_scan". Build-loop's native engine
+        # historically emitted the singular forms ("component_count",
+        # "connection_count") plus "generated_at". Both are written so any
+        # consumer (orchestrator state read, NavGator-shape adapter,
+        # downstream tools) sees what it expects. Treat all six as a single
+        # contract; tests in test_schema_parity.py lock the invariant.
+        now_ms = int(time.time() * 1000)
+        comp_count = len(self.components)
+        conn_count = len(self.connections)
         return {
             "schema_version": SCHEMA_VERSION,
-            "component_count": len(self.components),
-            "connection_count": len(self.connections),
+            "component_count": comp_count,
+            "components_count": comp_count,
+            "connection_count": conn_count,
+            "connections_count": conn_count,
             "components": [c.to_dict() for c in self.components],
             "connections": [c.to_dict() for c in self.connections],
-            "generated_at": int(time.time() * 1000),
+            "generated_at": now_ms,
+            "last_scan": now_ms,
         }
 
 

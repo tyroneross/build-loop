@@ -136,15 +136,24 @@ def cmd_scan(args: argparse.Namespace) -> int:
     }
     write_timeline(repo, timeline)
 
+    # Manifest keys mirror index.json's parity contract — plural alias keys
+    # plus `last_scan` are written alongside the original singular forms so
+    # NavGator-shape consumers and orchestrator state readers both see what
+    # they expect. See ScanResult.to_index() for the full contract.
+    comp_count = len(result.components)
+    conn_count = len(result.connections)
     write_manifest(repo, {
         "schema_version": SCHEMA_VERSION,
         "generator": "build-loop-native",
         "generator_version": "0.1.0",
         "repo_root": str(repo),
-        "component_count": len(result.components),
-        "connection_count": len(result.connections),
+        "component_count": comp_count,
+        "components_count": comp_count,
+        "connection_count": conn_count,
+        "connections_count": conn_count,
         "files_scanned": result.files_scanned,
         "generated_at": now_ms,
+        "last_scan": now_ms,
         "last_full_scan_at": now_ms if not args.incremental else (prior.get("last_full_scan_at") or 0),
         "last_incremental_at": now_ms if args.incremental else (prior.get("last_incremental_at") or 0),
         "elapsed_ms": elapsed_ms,
