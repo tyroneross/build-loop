@@ -53,3 +53,6 @@ namespaces = false
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+markers = [
+    "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
+]
