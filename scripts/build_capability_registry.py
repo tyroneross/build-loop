@@ -92,7 +92,10 @@ CATEGORY_KEYWORDS = [
                       "backend health", "backend_health",
                       # Phase B/D additions:
                       "search_vector", "chunk_context", "pagerank",
-                      "wikilink", "graph leg", "contextual retrieval")),
+                      "wikilink", "graph leg", "contextual retrieval",
+                      # Phase C/G additions:
+                      "rerank", "wiki", "rrf", "cross-encoder",
+                      "federation", "daemon")),
     ("testing",      ("test", "pytest", "jest", "vitest", "spec")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",
                       "version_advisor")),
