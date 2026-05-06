@@ -89,7 +89,10 @@ CATEGORY_KEYWORDS = [
     ("observability", ("observ", "tracing", "telemetry", "logging", "log")),
     ("memory",       ("memory", "decision", "recall", "knowledge", "episodic",
                       "semantic", "embedding", "embed_backend", "retrieval",
-                      "backend health", "backend_health")),
+                      "backend health", "backend_health",
+                      # Phase B/D additions:
+                      "search_vector", "chunk_context", "pagerank",
+                      "wikilink", "graph leg", "contextual retrieval")),
     ("testing",      ("test", "pytest", "jest", "vitest", "spec")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",
                       "version_advisor")),

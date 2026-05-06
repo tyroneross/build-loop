@@ -250,21 +250,39 @@ def apply_multipliers(
     *,
     now: datetime | None = None,
     recency_field: str = "valid_from",
+    ppr: Mapping[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Apply quality + recency multipliers to a list of fused/reranked rows.
+
+    Phase B: now also blends a normalised PageRank prior when `ppr` is
+    provided (recall_graph.pagerank_prior output). Phase A passed `None`
+    here, leaving the W_PPR weight inert; with `ppr` populated the
+    weight kicks in additively in the same shape as recency.
 
     Mutation contract: returns a NEW list of NEW dicts. Each row gets:
       - `_quality_mult`   : the quality multiplier applied
       - `_recency_score`  : the recency component (0..1)
+      - `_ppr_score`      : the PageRank prior component (0..1) when ppr given
       - `_temporal_query` : bool, true if temporal weights were used
-      - `score`           : original score × quality mult, then optionally
-                            blended with recency via the temporal-aware
-                            standard/temporal recency weights.
+      - `score`           : original score × quality mult, blended with
+                            recency and (optionally) PPR via the
+                            temporal-aware standard/temporal weights.
     """
     if not rows:
         return []
     is_temporal = is_temporal_query(query)
     w_recency = TEMPORAL_W_RECENCY if is_temporal else STANDARD_W_RECENCY
+    w_ppr = TEMPORAL_W_PPR if is_temporal else STANDARD_W_PPR
+
+    # Normalise PPR per-result-set so the additive blend stays bounded
+    # to roughly the recency scale. Without this the long-tailed PPR
+    # distribution would let a high-PageRank node sweep the ranking.
+    ppr_norm: dict[str, float] = {}
+    if ppr:
+        # Restrict to ids actually in the result set so we min-max over
+        # the *visible* candidates, not the whole graph.
+        present = {str(r.get("id")): float(ppr.get(str(r.get("id")), 0.0)) for r in rows}
+        ppr_norm = normalize_scores(present)
 
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -275,16 +293,22 @@ def apply_multipliers(
         merged["_recency_score"] = rec
         merged["_temporal_query"] = is_temporal
 
+        # PPR component (0 when no ppr passed).
+        rid = str(r.get("id") or "")
+        ppr_component = ppr_norm.get(rid, 0.0) if ppr_norm else 0.0
+        merged["_ppr_score"] = ppr_component
+
         # Quality.
         qmult = quality_multiplier(r)
         merged["_quality_mult"] = qmult
 
         base = float(r.get("score", 0.0))
-        # Blend recency in additively (same shape as combined_rerank_score
-        # but with already-blended cos+lex+ppr collapsed into `base`).
-        # Apply quality multiplier last so the recency boost can't
+        # Blend recency + PPR in additively (same shape as
+        # combined_rerank_score but with already-blended cos+lex
+        # collapsed into `base`).
+        # Apply quality multiplier last so the recency/PPR boost can't
         # rescue a superseded row.
-        blended = base + (w_recency * rec)
+        blended = base + (w_recency * rec) + (w_ppr * ppr_component)
         merged["score"] = blended * qmult
         out.append(merged)
 

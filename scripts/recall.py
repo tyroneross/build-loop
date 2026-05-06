@@ -9,11 +9,16 @@ DIFFERENT vector spaces) and runs a hybrid search against
 Phase A pipeline (--mode hybrid, default):
   1. vector leg — pgvector cosine over `embedding` (HNSW index)
   2. sparse leg — tsvector + ts_rank over `search_vector` GENERATED column
-  3. RRF fusion (k=60, Cormack/Clarke/Buettcher 2009)
-  4. cross-encoder rerank (BAAI/bge-reranker-v2-m3 via sentence-transformers,
+  3. graph leg (Phase B) — BFS depth-2 from top-K vector+sparse seeds
+     over `recall_graph.get_cached_graph()` (markdown wikilinks +
+     path mentions + cross-decision citations); empty when no edges
+     or `--no-graph` set
+  4. RRF fusion (k=60, Cormack/Clarke/Buettcher 2009; up to 3 input legs)
+  5. cross-encoder rerank (BAAI/bge-reranker-v2-m3 via sentence-transformers,
      MPS on Apple Silicon, CPU fallback) — optional dep [retrieval]
-  5. quality + recency multipliers (lifted from vault_vector.py)
-  6. trim to limit
+  6. quality + recency multipliers (lifted from vault_vector.py); the
+     `ppr_norm` weight is now populated from `recall_graph.pagerank_prior`
+  7. trim to limit
 
 Legacy modes:
   --mode vector_only — today's pure-cosine behavior (REGRESSION BASELINE)
@@ -329,6 +334,8 @@ def run_search(
     goal: str | None = None,
     confidence_source: str | None = None,
     rerank_disabled: bool = False,
+    graph_disabled: bool = False,
+    decisions_dir: str | Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute the search pipeline for the requested mode.
 
@@ -365,11 +372,13 @@ def run_search(
         "mode": mode,
         "vector_count": None,
         "sparse_count": None,
+        "graph_count": None,
         "fused_count": None,
         "reranked_count": None,
         "embed_ms": 0,
         "vector_ms": 0,
         "sparse_ms": 0,
+        "graph_ms": 0,
         "rrf_ms": 0,
         "rerank_ms": 0,
         "multiplier_ms": 0,
@@ -445,9 +454,46 @@ def run_search(
     leg_stats["sparse_ms"] = int((_time.monotonic() - t0) * 1000)
     leg_stats["sparse_count"] = len(sparse_hits)
 
-    # RRF fuse.
+    # Graph leg (Phase B). Seeds from the top-K of vector + sparse so
+    # we walk *from* the most query-relevant nodes rather than the
+    # whole graph. Empty when no edges exist or --no-graph is set.
+    graph_hits: list[dict[str, Any]] = []
+    ppr_for_multipliers: dict[str, float] = {}
+    if not graph_disabled:
+        try:
+            from recall_graph import (  # type: ignore  # noqa: PLC0415
+                get_cached_graph,
+                graph_walk_leg,
+            )
+            ddir = Path(decisions_dir) if decisions_dir else Path(".episodic/decisions")
+            t0 = _time.monotonic()
+            g, ppr = get_cached_graph(ddir)
+            # Seeds: dedup ids from the top of vector + sparse legs.
+            seeds_seen: set[str] = set()
+            seed_ids: list[str] = []
+            for row in (vector_hits[:5] + sparse_hits[:5]):
+                rid = str(row.get("id") or "")
+                if not rid or rid in seeds_seen:
+                    continue
+                seeds_seen.add(rid)
+                seed_ids.append(rid)
+            graph_hits = graph_walk_leg(seed_ids, g, ppr=ppr)
+            leg_stats["graph_ms"] = int((_time.monotonic() - t0) * 1000)
+            leg_stats["graph_count"] = len(graph_hits)
+            ppr_for_multipliers = ppr
+        except Exception as e:  # noqa: BLE001
+            log(f"recall: graph leg failed ({e}); continuing without graph")
+            graph_hits = []
+            leg_stats["graph_count"] = 0
+    else:
+        leg_stats["graph_count"] = 0
+
+    # RRF fuse — three legs when graph hits exist, two otherwise.
     t0 = _time.monotonic()
-    fused = rrf_fuse([vector_hits, sparse_hits], k=60, limit=limit * 2)
+    legs_for_rrf: list[list[dict[str, Any]]] = [vector_hits, sparse_hits]
+    if graph_hits:
+        legs_for_rrf.append(graph_hits)
+    fused = rrf_fuse(legs_for_rrf, k=60, limit=limit * 2)
     leg_stats["rrf_ms"] = int((_time.monotonic() - t0) * 1000)
     leg_stats["fused_count"] = len(fused)
 
@@ -461,9 +507,13 @@ def run_search(
         leg_stats["rerank_ms"] = int((_time.monotonic() - t0) * 1000)
     leg_stats["reranked_count"] = len(reranked)
 
-    # Quality + recency multipliers.
+    # Quality + recency multipliers, with the activated PPR weight.
     t0 = _time.monotonic()
-    final = apply_multipliers(reranked, query)[:limit]
+    final = apply_multipliers(
+        reranked,
+        query,
+        ppr=ppr_for_multipliers or None,
+    )[:limit]
     leg_stats["multiplier_ms"] = int((_time.monotonic() - t0) * 1000)
 
     return final, leg_stats
@@ -490,6 +540,23 @@ def main(argv: list[str] | None = None) -> int:
             "In --mode hybrid, skip the cross-encoder rerank stage. "
             "Useful for A/B comparing fusion-only vs full pipeline, or "
             "when sentence-transformers is intentionally not installed."
+        ),
+    )
+    p.add_argument(
+        "--no-graph",
+        action="store_true",
+        help=(
+            "In --mode hybrid, skip the Phase B knowledge-graph leg "
+            "(BFS over markdown wikilinks + path mentions + decision "
+            "citations). Useful for A/B safety even within hybrid mode."
+        ),
+    )
+    p.add_argument(
+        "--decisions-dir",
+        default=None,
+        help=(
+            "Override the markdown decisions directory used by the "
+            "Phase B graph leg. Defaults to '.episodic/decisions'."
         ),
     )
     p.add_argument(
@@ -596,6 +663,8 @@ def main(argv: list[str] | None = None) -> int:
             goal=args.goal,
             confidence_source=args.confidence_source,
             rerank_disabled=args.no_rerank,
+            graph_disabled=args.no_graph,
+            decisions_dir=args.decisions_dir,
         )
     except RuntimeError as e:
         # Embed backend down — only fatal in vector_only / hybrid modes.
