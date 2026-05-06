@@ -24,16 +24,26 @@ from rerank import DummyEncoder, is_available, rerank  # noqa: E402
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def _reset_singleton():
+def _reset_singleton(monkeypatch):
     """Reset rerank.py's module-level singleton between tests so monkey-
-    patches don't leak."""
+    patches don't leak.
+
+    Also forces in-process routing so a live Phase G daemon on the
+    developer's box doesn't bypass the mocked _try_import_cross_encoder
+    in tests that exercise the in-process fallback contract. Tests that
+    specifically verify daemon routing (test_rerank_daemon.py) opt OUT
+    by setting their own state.
+    """
     rerank_mod._MODEL = None
     rerank_mod._MODEL_DEVICE = None
     rerank_mod._FALLBACK_LOGGED = False
+    rerank_mod._DAEMON_AVAILABLE = None
+    monkeypatch.setenv("RERANK_FORCE_INPROCESS", "1")
     yield
     rerank_mod._MODEL = None
     rerank_mod._MODEL_DEVICE = None
     rerank_mod._FALLBACK_LOGGED = False
+    rerank_mod._DAEMON_AVAILABLE = None
 
 
 def test_dummy_encoder_reorders_by_overlap():

@@ -115,16 +115,27 @@ def test_parse_truncates_long_excerpt():
 
 # ---------------------------------------------------------------------------
 # Subprocess routing
+#
+# Phase I added an in-process `wiki_local` short-circuit that runs first
+# when the real vault is present on disk. These tests explicitly target
+# the subprocess fallback path, so they pin WIKI_FORCE_SUBPROCESS=1 to
+# bypass the in-process route. The wiki_local path has its own coverage
+# in tests/test_wiki_local.py.
 # ---------------------------------------------------------------------------
 
 
-def test_wiki_search_returns_empty_on_missing_cli(monkeypatch):
+@pytest.fixture(autouse=False)
+def _force_subprocess(monkeypatch):
+    monkeypatch.setenv("WIKI_FORCE_SUBPROCESS", "1")
+
+
+def test_wiki_search_returns_empty_on_missing_cli(monkeypatch, _force_subprocess):
     monkeypatch.setenv(wiki_client.ENV_CLI, "/nonexistent/path/to/llmwiki")
     monkeypatch.setattr(wiki_client.shutil, "which", lambda _: None)
     assert wiki_search("anything") == []
 
 
-def test_wiki_search_returns_empty_on_nonzero_exit(monkeypatch, tmp_path):
+def test_wiki_search_returns_empty_on_nonzero_exit(monkeypatch, tmp_path, _force_subprocess):
     fake_cli = tmp_path / "fake_llmwiki"
     fake_cli.write_text("#!/bin/sh\nexit 3\n")
     fake_cli.chmod(0o755)
@@ -139,7 +150,7 @@ def test_wiki_search_returns_empty_on_empty_query():
     assert wiki_search("   ") == []
 
 
-def test_wiki_search_returns_empty_on_timeout(monkeypatch, tmp_path):
+def test_wiki_search_returns_empty_on_timeout(monkeypatch, tmp_path, _force_subprocess):
     fake_cli = tmp_path / "fake_llmwiki"
     fake_cli.write_text("#!/bin/sh\nsleep 5\n")
     fake_cli.chmod(0o755)
@@ -148,7 +159,7 @@ def test_wiki_search_returns_empty_on_timeout(monkeypatch, tmp_path):
     assert wiki_search("query", timeout_s=0.1) == []
 
 
-def test_wiki_search_parses_real_subprocess_output(monkeypatch, tmp_path):
+def test_wiki_search_parses_real_subprocess_output(monkeypatch, tmp_path, _force_subprocess):
     """End-to-end: a fake CLI that prints SAMPLE_OUTPUT must yield 3 results."""
     fake_cli = tmp_path / "fake_llmwiki"
     fake_cli.write_text(

@@ -70,6 +70,19 @@ OLLAMA_TIMEOUT_S = 60
 # OLLAMA_KEEP_ALIVE env (matches Ollama's own env var name).
 OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "24h")
 
+# ---- Daemon (Phase H) ---------------------------------------------------
+# Long-running stdlib HTTP server that holds the embedder backend in
+# memory across recall.py invocations. Probed once per process; cached.
+# When the daemon is up, every embed() call routes through it (~10-20ms
+# loopback overhead vs ~3000ms cold MLX load per fresh process).
+EMBED_DAEMON_HOST = os.environ.get("EMBED_DAEMON_HOST", "127.0.0.1")
+try:
+    EMBED_DAEMON_PORT = int(os.environ.get("EMBED_DAEMON_PORT", "8766"))
+except ValueError:
+    EMBED_DAEMON_PORT = 8766
+EMBED_DAEMON_PROBE_TIMEOUT_S = 0.1  # 100ms — fast fail when daemon is down.
+EMBED_DAEMON_CALL_TIMEOUT_S = 30.0  # generous; covers MLX cold-loaded large batches.
+
 
 def _log(msg: str) -> None:
     print(f"[embed_backend] {msg}", file=sys.stderr, flush=True)
@@ -190,15 +203,178 @@ class MLXBackend:
         return "mlx"
 
 
+# ---------- Daemon backend (Phase H) ----------
+
+
+class DaemonBackend:
+    """HTTP client for `scripts/embed_daemon.py`.
+
+    Speaks the same `embed`/`embed_batch`/`name` interface as the in-process
+    backends so `_select_backend()` can hand it to callers unchanged. The
+    daemon holds the model in memory across recall.py invocations,
+    eliminating the ~3000ms MLX cold-load cliff on every fresh process.
+
+    Failure handling: any HTTP error is raised so `_select_backend()` can
+    fall back to the in-process MLX/Ollama path. Once the in-process
+    backend is selected for this process, the daemon is not retried —
+    keeps latency predictable and avoids per-call probe cost.
+    """
+
+    def __init__(
+        self,
+        *,
+        host: str = EMBED_DAEMON_HOST,
+        port: int = EMBED_DAEMON_PORT,
+        backend_name: str = "unknown",
+        model: str = "unknown",
+    ) -> None:
+        self.host = host
+        self.port = port
+        # Carries the BACKEND the daemon advertises (mlx|ollama) plus its
+        # model id, so callers asking active_backend() / active_model()
+        # see the underlying truth, not the literal string "daemon".
+        self._daemon_backend = backend_name
+        self.model = model
+        self._conn = None  # lazy http.client.HTTPConnection
+
+    def _ensure_conn(self):
+        import http.client  # noqa: PLC0415
+
+        if self._conn is None:
+            self._conn = http.client.HTTPConnection(
+                self.host, self.port, timeout=EMBED_DAEMON_CALL_TIMEOUT_S
+            )
+        return self._conn
+
+    def _post_embed(self, texts: list[str]) -> list[list[float]]:
+        body = json.dumps({"texts": texts}).encode("utf-8")
+        for attempt in (1, 2):
+            try:
+                conn = self._ensure_conn()
+                conn.request(
+                    "POST",
+                    "/embed",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Connection": "keep-alive",
+                    },
+                )
+                resp = conn.getresponse()
+                payload = resp.read()
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"embed daemon HTTP {resp.status}: {payload[:200]!r}"
+                    )
+                data = json.loads(payload)
+                if not data.get("ok"):
+                    raise RuntimeError(
+                        f"embed daemon not-ok: {data.get('error', 'unknown')}"
+                    )
+                embs = data.get("embeddings")
+                if not isinstance(embs, list):
+                    raise RuntimeError(
+                        "embed daemon: missing 'embeddings' in response"
+                    )
+                return [[float(x) for x in row] for row in embs]
+            except (ConnectionError, OSError, RuntimeError):
+                # Reset and retry once. If the daemon was up at probe but
+                # has since died, this gives us one shot to reconnect
+                # before kicking back to the caller for fallback.
+                try:
+                    if self._conn is not None:
+                        self._conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._conn = None
+                if attempt == 2:
+                    raise
+        raise RuntimeError("embed daemon: unreachable")
+
+    def embed(self, text: str) -> list[float]:
+        out = self._post_embed([text])
+        if not out:
+            raise RuntimeError("embed daemon returned empty embeddings list")
+        return out[0]
+
+    def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        return self._post_embed(list(texts))
+
+    def name(self) -> str:
+        # Surface the underlying backend rather than "daemon" so callers
+        # writing rows tag them with the actual model that produced them.
+        return self._daemon_backend or "daemon"
+
+
 # ---------- module-level singleton ----------
 
-_BACKEND = None  # type: ignore  # OllamaBackend | MLXBackend | None
+_BACKEND = None  # type: ignore  # OllamaBackend | MLXBackend | DaemonBackend | None
 _FALLBACK_REASON: str | None = None
+_DAEMON_PROBED: bool = False  # Per-process probe latch.
+
+
+def _probe_daemon() -> DaemonBackend | None:
+    """One-shot probe of the embed daemon's /health endpoint.
+
+    Latched via `_DAEMON_PROBED` so we never re-probe within the same
+    process. If `EMBED_FORCE_INPROCESS` is set, the probe is skipped
+    entirely and returns None — used by tests and by users diagnosing
+    a degraded daemon.
+
+    Returns a configured `DaemonBackend` when the daemon is up AND
+    reports `warm: true`, else None.
+    """
+    global _DAEMON_PROBED
+    if _DAEMON_PROBED:
+        # Caller checks this through the cached _BACKEND singleton.
+        return None
+    _DAEMON_PROBED = True
+    if os.environ.get("EMBED_FORCE_INPROCESS"):
+        return None
+    try:
+        import urllib.request  # noqa: PLC0415
+
+        url = f"http://{EMBED_DAEMON_HOST}:{EMBED_DAEMON_PORT}/health"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=EMBED_DAEMON_PROBE_TIMEOUT_S) as resp:  # noqa: S310
+            body = json.loads(resp.read().decode("utf-8"))
+        # Daemon is "available" iff it claims the backend is warm. A
+        # daemon serving in degraded mode (backend not loaded) returns
+        # 503 on POST, so treating warm=False as unavailable lets us
+        # fall back to the in-process path which may succeed via a
+        # different load path.
+        if body.get("ok") and body.get("warm"):
+            backend_name = body.get("backend", "unknown")
+            model_name = body.get("model", "unknown")
+            _log(
+                f"embed daemon up at {EMBED_DAEMON_HOST}:{EMBED_DAEMON_PORT} "
+                f"(backend={backend_name} model={model_name})"
+            )
+            return DaemonBackend(
+                backend_name=backend_name,
+                model=model_name,
+            )
+    except Exception as e:  # noqa: BLE001
+        # Quiet by design — probe failures are routine when the daemon
+        # isn't running. Logged at debug level only.
+        _log_debug = os.environ.get("EMBED_BACKEND_DEBUG")
+        if _log_debug:
+            _log(f"embed daemon probe failed: {e!r}")
+    return None
 
 
 def _select_backend():
     global _BACKEND, _FALLBACK_REASON
     if _BACKEND is not None:
+        return _BACKEND
+
+    # Phase H: try the daemon FIRST. When it's up, this is the entire
+    # selection — we don't load MLX/Ollama in-process at all.
+    daemon = _probe_daemon()
+    if daemon is not None:
+        _BACKEND = daemon
         return _BACKEND
 
     requested = os.environ.get("EMBED_BACKEND", "mlx").lower().strip()
@@ -271,11 +447,13 @@ def fallback_reason() -> str | None:
 def reset_for_tests() -> None:
     """Clear the singleton so tests can re-select with new env.
 
-    Closes the Ollama HTTP connection if one was open to avoid
-    ResourceWarning on rapid backend switches.
+    Closes the Ollama / Daemon HTTP connection if one was open to avoid
+    ResourceWarning on rapid backend switches. Also clears the
+    per-process daemon-probe latch so `_select_backend()` will probe
+    the daemon again on the next call.
     """
-    global _BACKEND, _FALLBACK_REASON
-    if _BACKEND is not None and isinstance(_BACKEND, OllamaBackend):
+    global _BACKEND, _FALLBACK_REASON, _DAEMON_PROBED
+    if _BACKEND is not None and isinstance(_BACKEND, (OllamaBackend, DaemonBackend)):
         try:
             if _BACKEND._conn is not None:
                 _BACKEND._conn.close()
@@ -283,6 +461,7 @@ def reset_for_tests() -> None:
             pass
     _BACKEND = None
     _FALLBACK_REASON = None
+    _DAEMON_PROBED = False
 
 
 if __name__ == "__main__":
