@@ -172,13 +172,41 @@ Skill("build-loop:sync-skills")
 
 The script recomputes each `source_hash` against the canonical upstream file and reports drift. Read-only — never auto-updates a SKILL.md. The legacy `skills/navgator-bridge/` and `skills/debugger-bridge/` deprecation stubs were removed in v0.10.0 — the orchestrator and downstream skills call the native skills directly.
 
-## Architecture engine (Chunk 1 shipped)
+## Architecture awareness
 
-Native Python architecture engine under `src/build_loop/architecture/`. Walks the repo (.gitignore-aware), parses Python via `ast` and TS/JS via tree-sitter, persists a NavGator-shape index under `.build-loop/architecture/`, and exposes pure-function impact/trace/rules/dead analyses. NavGator becomes optional escalation, not a hard dependency.
+Build-loop owns native architecture awareness end-to-end. NavGator is now an optional escalation adapter, not a hard dependency.
+
+**Native engine** (`src/build_loop/architecture/`)
+Python-native scanner: `.gitignore`-aware walk, Python via `ast`, TS/JS via tree-sitter. Pure-function `compute_impact / trace_dataflow / check_rules / find_dead`. Output schema-parity with NavGator (component/connection JSON shapes verbatim) under `.build-loop/architecture/`.
 
 ```bash
-uv run python -m build_loop.architecture {scan|impact|trace|rules|dead|connections} [--json]
+uv run python -m build_loop.architecture {scan|impact|trace|rules|dead|connections|acp|acp-slice|llm-map|schema|diagram} \
+    [--mode auto|native|navgator] [--json] [--incremental|--full]
 ```
+
+**`architecture-scout` subagent** (`agents/architecture-scout.md`)
+Sonnet, read-only, dispatched by the orchestrator at six phase points with one of five task types: `baseline`, `chunk-impact`, `review-rules`, `iterate-subgraph`, `learn-sync`. Decides native-vs-NavGator escalation per task. Returns ≤500-word JSON envelope; owns architecture-related side effects (violation capture, lessons sync).
+
+**Architecture Context Pack (ACP)** (`scripts/build_acp.py`, `scripts/slice_acp.py`)
+Compact JSON summary of current architecture state: top hotspots, recent violations, lessons-in-scope. Sliceable per file set with reverse-deps depth=1 + 4 KB cap. Embedded in subagent briefs at Phase 2 / 3 / 4 / 5.
+
+**Aggressive freshness** (`hooks/session-start-architecture.sh`, `hooks/pre-edit-architecture.sh`)
+SessionStart fires an incremental scan when manifest > 24 h old. PreToolUse Edit/Write triggers an async incremental scan when the touched file is parseable (extension allowlist: `.py .ts .tsx .js .jsx .mjs .cjs`); single-flight via `fcntl.flock`. Doc-only edits never fire scans.
+
+**Capability registry + ≤8 shortlist** (`scripts/build_capability_registry.py`, `scripts/capability_shortlist.py`, `skills/capabilities/SKILL.md`)
+116 capabilities indexed across 6 kinds (agent / skill / command / hook / mcp_tool / script) and 10 categories. Phase 1 invocation is **mandatory** — populates `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion, keeping the orchestrator below the empirical tool-selection ceiling. Phase 2 / 3 dispatchers read the cache instead of re-scoring.
+
+**Memory facade** (`scripts/memory_facade.py`)
+Unified `recall(query, kind, project, limit, skip_postgres)` over four backends — `state.json.runs[]` · episodic `.episodic/decisions/` (legacy) and `~/dev/git-folder/build-loop-memory/decisions/<project>/` (canonical) · Postgres `semantic_facts` · debugger MCP `search`. Graceful degradation throughout; CLI mirrors the API including `--skip-postgres`.
+
+**Backend health probe** (`scripts/backend_health.py`)
+Phase 1 sub-step probes each memory backend with per-backend 5 s timeout. Output: `runs: OK N | decisions: OK <legacy> + <canonical> | semantic: ok|down | debugger: ok|down`. Envelope cached at `state.json.architecture.backendHealth`. Phase 5 Iterate consumes it to short-circuit Postgres lookups when down.
+
+**Plan-verify rules** (`scripts/plan_verify.py`)
+Now includes `schema-migration-full-chain` — flags any commit touching writer/storage/schema files without matching test fixture or reader-path co-change. Catches the recurring drift pattern where writer keys diverge from reader expectations.
+
+**Decision capture loop**
+Every architecture violation surfaced by `rules` becomes a deduplicated decision in the canonical episodic store via `scripts/capture_arch_violation.py`. Recurring violations (≥3× across runs) get promoted to project-local lessons by `scripts/promote_violation_to_lesson.py` and one-way-synced into Postgres `semantic_facts` for cross-project recall by `scripts/sync_navgator_lessons.py`.
 
 ## External Skill Dependencies
 
