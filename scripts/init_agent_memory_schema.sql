@@ -114,7 +114,12 @@ CREATE TABLE IF NOT EXISTS semantic_facts (
   causal_parent_id         TEXT,
   embedding_model_version  TEXT,
   domain                   TEXT,
-  goal                     TEXT
+  goal                     TEXT,
+  -- Phase D (Anthropic Contextual Retrieval, added 2026-05-06).
+  -- Dense ~80-token "this decision comes from {context}" summary
+  -- prepended to the embedding text on write. Migration script for
+  -- existing installs: scripts/migrate_add_chunk_context_column.py.
+  chunk_context            TEXT
 );
 
 -- ----------------------------------------------------------------------
@@ -217,6 +222,8 @@ ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS causal_parent_id         TEX
 ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS embedding_model_version  TEXT;
 ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS domain                   TEXT;
 ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS goal                     TEXT;
+-- Phase D (added 2026-05-06).
+ALTER TABLE semantic_facts ADD COLUMN IF NOT EXISTS chunk_context            TEXT;
 
 ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS confidence_source        TEXT;
 ALTER TABLE episode_events ADD COLUMN IF NOT EXISTS confirmation_count       INTEGER DEFAULT 0;

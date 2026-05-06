@@ -552,12 +552,39 @@ def db_dualwrite(
     Best-effort: any failure is logged and swallowed. The file is canonical.
     Uses the persistent psycopg connection from `db.py`. Embedding goes
     through `embed_backend.embed` (MLX default, Ollama fallback, 1024-dim).
+
+    Phase D (Anthropic Contextual Retrieval): also generates a
+    `chunk_context` ~80-token summary via
+    `contextual_prepend.generate_chunk_context` and prepends it to the
+    embedded text. The chunk_context is also passed through to the new
+    `chunk_context` column when present (graceful no-op when the
+    migration hasn't run). When the local LLM router is unavailable
+    (no Ollama target pulled), chunk_context is empty and behaviour
+    reverts to the pre-Phase-D path. Caller may pre-populate
+    `fm['chunk_context']` (e.g. mirrored from frontmatter); when set,
+    we use it verbatim instead of regenerating.
     """
     try:
         from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
 
+        # Phase D: best-effort chunk_context. Caller-provided wins to
+        # avoid double-generation when the writer pre-populated fm.
+        chunk_context = (fm.get("chunk_context") or "").strip()
+        if not chunk_context:
+            try:
+                from contextual_prepend import (  # type: ignore  # noqa: PLC0415
+                    generate_chunk_context,
+                )
+                chunk_context = generate_chunk_context(body_text, max_tokens=100)
+            except Exception as e:  # noqa: BLE001
+                log(f"db dual-write: chunk_context unavailable ({e}); proceeding without prepend")
+                chunk_context = ""
+
+        embed_text = (
+            f"{chunk_context}\n\n{body_text}" if chunk_context else body_text
+        )
         try:
-            embedding = _embed(body_text)
+            embedding = _embed(embed_text)
         except Exception as e:  # noqa: BLE001
             log(f"db dual-write: embed unavailable ({e}); skipping db row for decision {decision_id}")
             return
@@ -591,6 +618,9 @@ def db_dualwrite(
             "embedding_model_version": fm.get("embedding_model_version"),
             "domain": fm.get("domain"),
             "goal": fm.get("goal"),
+            # Phase D: mirrored into JSONB so readers without the new
+            # column still see it.
+            "chunk_context": chunk_context or None,
         }
         # Schema is operator-controlled (CLI flag), not user input. Validate shape
         # to keep the f-string interpolation safe; psycopg cannot bind table names.
@@ -598,15 +628,20 @@ def db_dualwrite(
             raise ValueError(f"unsafe schema name: {schema!r}")
         # v2: write typed columns when present (graceful degrade if migration
         # hasn't run yet — caught by the broad except below).
+        # Phase D: include chunk_context in the column list. If the
+        # column is absent (migration not run), the INSERT raises and
+        # the broad `except Exception` below logs + swallows; in that
+        # mode the caller can fall back to sync_db_from_files.py to
+        # regenerate.
         sql = (
             f"INSERT INTO {schema}.semantic_facts "
             "(subject, predicate, object, confidence, status, embedding, metadata, "
             " project, tool, model, task_category, author, files_touched, closing_commit, "
             " confidence_source, confirmation_count, valid_until, causal_parent_id, "
-            " embedding_model_version, domain, goal) "
+            " embedding_model_version, domain, goal, chunk_context) "
             "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
             " %s, %s, %s, %s, %s, %s, %s, "
-            " %s, %s, %s, %s, %s, %s, %s);"
+            " %s, %s, %s, %s, %s, %s, %s, %s);"
         )
         files = fm.get("files_touched") or []
         # confirmation_count may arrive from frontmatter as int already; coerce
@@ -616,31 +651,77 @@ def db_dualwrite(
             cc_db = int(cc_val) if cc_val is not None else 0
         except (TypeError, ValueError):
             cc_db = 0
-        execute(
-            sql,
-            (
-                subject,
-                predicate,
-                obj_summary,
-                _confidence_to_float(fm.get("confidence")),
-                vector_literal(embedding),
-                json.dumps(metadata, ensure_ascii=False),
-                fm.get("project"),
-                fm.get("tool"),
-                fm.get("model"),
-                fm.get("task_category"),
-                fm.get("author"),
-                list(files) if isinstance(files, list) else [],
-                fm.get("closing_commit"),
-                fm.get("confidence_source"),
-                cc_db,
-                fm.get("valid_until"),
-                fm.get("causal_parent_id"),
-                fm.get("embedding_model_version"),
-                fm.get("domain"),
-                fm.get("goal"),
-            ),
-        )
+        try:
+            execute(
+                sql,
+                (
+                    subject,
+                    predicate,
+                    obj_summary,
+                    _confidence_to_float(fm.get("confidence")),
+                    vector_literal(embedding),
+                    json.dumps(metadata, ensure_ascii=False),
+                    fm.get("project"),
+                    fm.get("tool"),
+                    fm.get("model"),
+                    fm.get("task_category"),
+                    fm.get("author"),
+                    list(files) if isinstance(files, list) else [],
+                    fm.get("closing_commit"),
+                    fm.get("confidence_source"),
+                    cc_db,
+                    fm.get("valid_until"),
+                    fm.get("causal_parent_id"),
+                    fm.get("embedding_model_version"),
+                    fm.get("domain"),
+                    fm.get("goal"),
+                    chunk_context or None,
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            # Most likely cause: migrate_add_chunk_context_column.py
+            # hasn't run yet (column missing). Retry without the new
+            # column so writers on un-migrated installs don't lose the
+            # row entirely. The next sync_db_from_files run will
+            # backfill chunk_context once the migration lands.
+            if "chunk_context" not in str(e):
+                raise
+            log(f"db dual-write: chunk_context column missing ({e}); retrying legacy shape")
+            sql_legacy = (
+                f"INSERT INTO {schema}.semantic_facts "
+                "(subject, predicate, object, confidence, status, embedding, metadata, "
+                " project, tool, model, task_category, author, files_touched, closing_commit, "
+                " confidence_source, confirmation_count, valid_until, causal_parent_id, "
+                " embedding_model_version, domain, goal) "
+                "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb, "
+                " %s, %s, %s, %s, %s, %s, %s, "
+                " %s, %s, %s, %s, %s, %s, %s);"
+            )
+            execute(
+                sql_legacy,
+                (
+                    subject,
+                    predicate,
+                    obj_summary,
+                    _confidence_to_float(fm.get("confidence")),
+                    vector_literal(embedding),
+                    json.dumps(metadata, ensure_ascii=False),
+                    fm.get("project"),
+                    fm.get("tool"),
+                    fm.get("model"),
+                    fm.get("task_category"),
+                    fm.get("author"),
+                    list(files) if isinstance(files, list) else [],
+                    fm.get("closing_commit"),
+                    fm.get("confidence_source"),
+                    cc_db,
+                    fm.get("valid_until"),
+                    fm.get("causal_parent_id"),
+                    fm.get("embedding_model_version"),
+                    fm.get("domain"),
+                    fm.get("goal"),
+                ),
+            )
         log(f"db dual-write: inserted semantic_facts row for decision {decision_id}")
     except Exception as e:  # noqa: BLE001
         log(f"db dual-write: error (file write succeeded; DB regenerable via sync_db_from_files.py): {e}")
