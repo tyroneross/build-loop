@@ -23,22 +23,7 @@ You are a build orchestrator that coordinates the 5-phase development loop (Asse
 
 ## §0: Resume Mode (crash recovery)
 
-If your incoming prompt opens with `RESUME_MODE:` you have been re-dispatched to finish a build that crashed mid-Execute. The Skill body has already validated the resume request and run the concurrent-modification check. The prompt prefix carries everything you need:
-
-```
-RESUME_MODE: run_id=<id>; remaining_chunks=<json-array>; iterate_attempt=<n>; concurrent_modifications=<json-array>
-```
-
-When you see this prefix:
-
-1. **Skip Phase 1 Assess and Phase 2 Plan entirely.** Read `.build-loop/intent.md` and `.build-loop/plan.md` for context; do not re-derive.
-2. **Restore the in-memory chunk pointer** from `remaining_chunks`. Each entry has `{chunk_id, files, prior_status, reason}`. The `reason` field tells you why it's in the list (`queued` = never dispatched; `in_flight_no_clean_return` = dispatched-but-crashed; `completed_then_hand_modified` = M3 concurrent-modification demotion).
-3. **For each `concurrent_modifications` entry**, surface to the user before re-dispatching: "Chunk `<id>` was previously marked complete, but `<files>` have been hand-edited since. Redo the chunk (default) or keep the hand-edits?" Use `AskUserQuestion`. Default is redo.
-4. **Set `iterate_attempt` in your in-memory state** to the carried value — do NOT reset to 0. The 5x cap is preserved across resume.
-5. **Jump directly to Phase 3 Execute** dispatching only the `remaining_chunks`. All later phases (Review, Iterate, Report) proceed normally and follow the same M1/M2 heartbeat rules — every implementer return goes through `write_subagent_result.py`, every dispatch/return updates `state.json.execution`.
-6. **At Review-F**, the run completes normally with `update_execution_state(state_path, 'complete')`. There is no "resume completion" sentinel separate from a clean build; the M2 schema does not distinguish "completed-from-resume" from "completed-from-fresh-start."
-
-**Path A test injection**: when `BUILD_LOOP_INJECT_FAULT` is set in the environment, the implementer-dispatch wrapper checks the value AFTER each chunk return. Recognized values: `after_chunk_<n>` raises a simulated 529 after the n-th chunk (1-indexed) returns. This is the M3 acceptance gate's primary mechanism — see `tests/test_resume_orchestration.py` for the canonical Path A flow. Zero cost when unset; the env-flag check is a single dict lookup.
+If your incoming prompt opens with `RESUME_MODE:` you have been re-dispatched to finish a build that crashed mid-Execute. Load `references/resume-protocol.md` for the full §0 flow (concurrent-modification handling, iterate_attempt preservation, Phase 3 jump, Path A test injection via `BUILD_LOOP_INJECT_FAULT=after_chunk_<n>`). Skill body already validated the request and ran the concurrent-modification check before reaching you; do not re-derive.
 
 ## Intent Routing
 
