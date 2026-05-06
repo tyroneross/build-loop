@@ -103,31 +103,100 @@ def probe_runs(workdir: Path) -> Dict[str, Any]:
 # Backend 2: episodic decisions/
 # ---------------------------------------------------------------------------
 
-def probe_decisions(workdir: Path) -> Dict[str, Any]:
-    """Probe `.episodic/decisions/*.md`. Filesystem-only."""
-    started = time.monotonic()
-    decisions_dir = workdir / ".episodic" / "decisions"
-    if not decisions_dir.is_dir():
-        return {
-            "ok": False,
-            "reason": "episodic_dir_missing",
-            "count": 0,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-        }
+def _resolve_canonical_decisions_dir(workdir: Path) -> Optional[Path]:
+    """Resolve the canonical (global) decisions directory for this project.
+
+    Mirrors `memory_facade._resolve_decision_dirs` — uses `_paths` and
+    `project_resolver` to land on
+    `~/dev/git-folder/build-loop-memory/decisions/<project>/`. Returns
+    `None` on any resolution failure (graceful degradation contract).
+    """
     try:
-        count = sum(1 for _ in decisions_dir.glob("*.md"))
+        # Both modules live under scripts/, importable when this file is
+        # imported by tests (which prepend scripts/ to sys.path) or by the
+        # CLI (where scripts/ is the parent dir).
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from _paths import decisions_dir_for_project  # type: ignore  # noqa: PLC0415
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+        proj = resolve_project(workdir)
+        if not proj:
+            return None
+        return decisions_dir_for_project(proj)
+    except Exception:  # noqa: BLE001 — best-effort resolution
+        return None
+
+
+def _probe_one_decisions_dir(path: Optional[Path]) -> Dict[str, Any]:
+    """Probe a single decisions directory; return a `{ok, count, path, [reason]}` dict."""
+    if path is None:
+        return {"ok": False, "count": 0, "path": None, "reason": "unresolved"}
+    if not path.is_dir():
+        return {"ok": False, "count": 0, "path": str(path), "reason": "dir_missing"}
+    try:
+        count = sum(1 for _ in path.glob("*.md"))
     except OSError as e:
         return {
             "ok": False,
-            "reason": f"episodic_dir_unreadable: {type(e).__name__}",
             "count": 0,
-            "duration_ms": int((time.monotonic() - started) * 1000),
+            "path": str(path),
+            "reason": f"dir_unreadable: {type(e).__name__}",
         }
-    return {
-        "ok": True,
-        "count": count,
-        "duration_ms": int((time.monotonic() - started) * 1000),
+    return {"ok": True, "count": count, "path": str(path)}
+
+
+def probe_decisions(workdir: Path) -> Dict[str, Any]:
+    """Probe both decision stores and return a structured envelope.
+
+    Two stores after the v0.10.0 cutover (mirrors `memory_facade`'s read
+    path):
+
+      1. **Legacy (per-repo)**: `<workdir>/.episodic/decisions/*.md`
+      2. **Canonical (global)**: `~/dev/git-folder/build-loop-memory/
+         decisions/<project>/*.md` (resolved via `_paths` +
+         `project_resolver`).
+
+    Envelope shape (Priority 20):
+
+        {
+          "ok": <True if either store has files>,
+          "count": <legacy_count + canonical_count>,
+          "duration_ms": <int>,
+          "legacy":    {"ok": bool, "count": int, "path": str|None, ...},
+          "canonical": {"ok": bool, "count": int, "path": str|None, ...},
+          "reason":    "<aggregate reason when both DOWN>"  # only on DOWN
+        }
+
+    Backward-compat: top-level `ok` / `count` / `duration_ms` keys retain
+    the pre-Priority-20 contract so any consumer reading those fields keeps
+    working. New callers that need to distinguish the two stores read the
+    `legacy` / `canonical` sub-keys.
+    """
+    started = time.monotonic()
+    legacy_path = workdir / ".episodic" / "decisions"
+    canonical_path = _resolve_canonical_decisions_dir(workdir)
+
+    legacy = _probe_one_decisions_dir(legacy_path)
+    canonical = _probe_one_decisions_dir(canonical_path)
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    any_ok = legacy["ok"] or canonical["ok"]
+    total_count = (legacy["count"] if legacy["ok"] else 0) + (
+        canonical["count"] if canonical["ok"] else 0
+    )
+
+    envelope: Dict[str, Any] = {
+        "ok": any_ok,
+        "count": total_count,
+        "duration_ms": duration_ms,
+        "legacy": legacy,
+        "canonical": canonical,
     }
+    if not any_ok:
+        # Aggregate reason — useful for the one-liner.
+        envelope["reason"] = "no decision stores"
+    return envelope
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +325,17 @@ def _format_one_liner(envelope: Dict[str, Any]) -> str:
                  if runs.get("ok") else f"runs: DOWN {runs.get('reason', 'unknown')}")
     decisions = envelope.get("decisions", {})
     if decisions.get("ok"):
-        parts.append(f"decisions: OK {decisions.get('count', 0)} entries")
+        # Priority 20 — show legacy + canonical split when both shapes are present.
+        legacy = decisions.get("legacy") or {}
+        canonical = decisions.get("canonical") or {}
+        if "legacy" in decisions and "canonical" in decisions:
+            legacy_n = legacy.get("count", 0) if legacy.get("ok") else 0
+            canonical_n = canonical.get("count", 0) if canonical.get("ok") else 0
+            parts.append(
+                f"decisions: OK {legacy_n} legacy + {canonical_n} canonical"
+            )
+        else:
+            parts.append(f"decisions: OK {decisions.get('count', 0)} entries")
     else:
         parts.append(f"decisions: DOWN {decisions.get('reason', 'unknown')}")
     semantic = envelope.get("semantic", {})

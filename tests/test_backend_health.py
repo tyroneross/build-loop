@@ -29,8 +29,15 @@ import backend_health as bh  # type: ignore  # noqa: E402
 
 @pytest.fixture
 def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Synthetic project root with state.json + .episodic/decisions/."""
+    """Synthetic project root with state.json + .episodic/decisions/.
+
+    Pins AGENT_MEMORY_ROOT to a tmp path so the canonical decisions probe
+    (Priority 20) resolves to a non-existent dir — keeps the legacy-only
+    assertions in pre-Priority-20 tests deterministic. Tests that exercise
+    the canonical probe override this in their own scope.
+    """
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.setenv("AGENT_MEMORY_ROOT", str(tmp_path / "_no_canonical"))
     bh.set_debugger_runner(None)
     bh.set_semantic_runner(None)
 
@@ -129,16 +136,21 @@ def test_state_json_population_after_write(workdir: Path) -> None:
     assert state["architecture"]["backendHealth"]["summary"] == env["summary"]
 
 
-def test_graceful_when_state_json_missing(tmp_path: Path) -> None:
+def test_graceful_when_state_json_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No `.build-loop/state.json` should not crash; runs reports state_json_missing."""
-    # Create an empty workdir with no .build-loop/.
+    # Create an empty workdir with no .build-loop/. Pin canonical to a
+    # missing path so this test stays deterministic across hosts that may
+    # have a populated ~/dev/git-folder/build-loop-memory/decisions/.
+    monkeypatch.setenv("AGENT_MEMORY_ROOT", str(tmp_path / "_no_canonical"))
     bh.set_debugger_runner(lambda: (False, "stubbed"))
     bh.set_semantic_runner(lambda: (False, "stubbed"))
 
     env = bh.run_health_check(tmp_path)
     assert env["runs"]["ok"] is False
     assert env["runs"]["reason"] == "state_json_missing"
-    # Other backends still classifiable (decisions just reports episodic_dir_missing).
+    # Other backends still classifiable (decisions reports both stores DOWN).
     assert env["decisions"]["ok"] is False
 
 
