@@ -17,6 +17,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -419,7 +420,7 @@ def cache_into_state(workdir: Path, result: Dict[str, Any]) -> None:
         "intent": result["intent"][:240],
         "shortlist": [r["name"] for r in result["results"]],
         "results": result["results"],
-        "generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
     cap = state.get("activeCapabilities")
