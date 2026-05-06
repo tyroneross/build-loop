@@ -351,6 +351,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Filter facts to this confidence_source (e.g. user_statement)",
     )
     p.add_argument("--no-bump-last-accessed", action="store_true", help="Skip the last_accessed bump on returned rows")
+    p.add_argument(
+        "--stats",
+        action="store_true",
+        help="Emit per-leg timing JSON to stderr (embed_ms, facts_ms, episodes_ms, neighbor_ms, total_ms, backend, dim)",
+    )
     args = p.parse_args(argv)
 
     if args.schema is None:
@@ -380,8 +385,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             explicit_projects = [cwd_project, "_unscoped"]
 
+    import time as _time
+    timing: dict[str, Any] = {}
+    started_total = _time.monotonic()
+
     try:
+        t0 = _time.monotonic()
         embedding = _embed(args.query)
+        timing["embed_ms"] = int((_time.monotonic() - t0) * 1000)
     except Exception as e:  # noqa: BLE001
         log(f"recall: embed unavailable ({e}); cannot run cosine search")
         return 2
@@ -389,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     floor = confidence_to_float(args.confidence_floor)
 
     try:
+        t0 = _time.monotonic()
         facts = hybrid_search_facts(
             args.query,
             embedding,
@@ -405,16 +417,21 @@ def main(argv: list[str] | None = None) -> int:
             goal=args.goal,
             confidence_source=args.confidence_source,
         )
-        episodes = (
-            hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
-            if not args.no_episodes
-            else []
-        )
-        expanded = (
-            neighbor_expand(args.schema, [e["id"] for e in episodes], args.neighbor_window)
-            if episodes
-            else []
-        )
+        timing["facts_ms"] = int((_time.monotonic() - t0) * 1000)
+        if args.no_episodes:
+            episodes = []
+            timing["episodes_ms"] = 0
+        else:
+            t0 = _time.monotonic()
+            episodes = hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
+            timing["episodes_ms"] = int((_time.monotonic() - t0) * 1000)
+        if episodes:
+            t0 = _time.monotonic()
+            expanded = neighbor_expand(args.schema, [e["id"] for e in episodes], args.neighbor_window)
+            timing["neighbor_ms"] = int((_time.monotonic() - t0) * 1000)
+        else:
+            expanded = []
+            timing["neighbor_ms"] = 0
     except Exception as e:  # noqa: BLE001
         log(f"recall: {e}")
         return 2
@@ -424,6 +441,19 @@ def main(argv: list[str] | None = None) -> int:
 
     text = render(args.query, facts, episodes, expanded, args.confidence_floor, args.char_budget)
     print(text)
+
+    if args.stats:
+        timing["total_ms"] = int((_time.monotonic() - started_total) * 1000)
+        timing["embed_dim"] = len(embedding)
+        try:
+            from embed_backend import active_backend  # type: ignore  # noqa: E402
+            timing["backend"] = active_backend()
+        except Exception:  # noqa: BLE001
+            timing["backend"] = "unknown"
+        timing["facts_count"] = len(facts)
+        timing["episodes_count"] = len(episodes)
+        print(f"[recall.stats] {json.dumps(timing)}", file=sys.stderr)
+
     return 0
 
 

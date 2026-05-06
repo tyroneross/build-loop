@@ -180,3 +180,89 @@ def test_exit_code_zero_when_backends_down(workdir: Path, capsys: pytest.Capture
     out = capsys.readouterr().out
     payload = json.loads(out)
     assert "summary" in payload
+
+
+# ---------------------------------------------------------------------------
+# Phase F-prime: retrieval-stack probes (embedder + FTS)
+# ---------------------------------------------------------------------------
+
+def test_include_retrieval_off_by_default(workdir: Path) -> None:
+    """Without --include-retrieval, embedder/fts keys MUST NOT appear.
+
+    Keeps the existing Phase 1 envelope shape stable for callers that
+    already consume backendHealth.
+    """
+    env = bh.run_health_check(workdir)
+    assert "embedder" not in env
+    assert "fts" not in env
+
+
+def test_include_retrieval_on_adds_both_probes(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With --include-retrieval, both probes appear and have a duration."""
+    # Stub the embedder import path so the test doesn't need a live Ollama.
+    import types
+    fake_mod = types.ModuleType("embed_backend")
+    fake_mod.EMBED_DIM = 1024  # type: ignore[attr-defined]
+    fake_mod.embed = lambda text: [0.1] * 1024  # type: ignore[attr-defined]
+    fake_mod.active_backend = lambda: "ollama"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "embed_backend", fake_mod)
+
+    env = bh.run_health_check(workdir, include_retrieval=True)
+    assert "embedder" in env
+    assert "fts" in env
+    assert env["embedder"]["ok"] is True
+    assert env["embedder"]["dim"] == 1024
+    assert env["embedder"]["backend"] == "ollama"
+    assert "duration_ms" in env["embedder"]
+    # FTS will be DOWN here (no Postgres), but probe must classify gracefully.
+    assert env["fts"]["ok"] is False
+    assert "reason" in env["fts"]
+
+
+def test_embedder_probe_detects_dim_mismatch(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the embedder returns the wrong dim, the probe must flag it.
+
+    This is the silent-fallback class — e.g. accidentally configuring a
+    768-dim model when the schema expects 1024.
+    """
+    import types
+    fake_mod = types.ModuleType("embed_backend")
+    fake_mod.EMBED_DIM = 1024  # type: ignore[attr-defined]
+    fake_mod.embed = lambda text: [0.1] * 768  # wrong dim  # type: ignore[attr-defined]
+    fake_mod.active_backend = lambda: "ollama"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "embed_backend", fake_mod)
+
+    env = bh.run_health_check(workdir, include_retrieval=True)
+    assert env["embedder"]["ok"] is False
+    assert "dim_mismatch" in env["embedder"]["reason"]
+
+
+def test_embedder_probe_handles_import_failure(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If embed_backend can't even import, probe degrades gracefully."""
+    import types
+    # Inject a module that raises on attribute access.
+    class _BrokenImport(types.ModuleType):
+        def __getattr__(self, name: str):
+            raise RuntimeError(f"module not properly installed: {name}")
+    monkeypatch.setitem(sys.modules, "embed_backend", _BrokenImport("embed_backend"))
+
+    env = bh.run_health_check(workdir, include_retrieval=True)
+    # Either import_failed or embed_failed is acceptable — both are graceful.
+    assert env["embedder"]["ok"] is False
+    assert env["embedder"]["reason"] is not None
+
+
+def test_summary_includes_retrieval_when_enabled(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one-liner picks up the new fields when include_retrieval=True."""
+    import types
+    fake_mod = types.ModuleType("embed_backend")
+    fake_mod.EMBED_DIM = 1024  # type: ignore[attr-defined]
+    fake_mod.embed = lambda text: [0.1] * 1024  # type: ignore[attr-defined]
+    fake_mod.active_backend = lambda: "mlx"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "embed_backend", fake_mod)
+
+    env = bh.run_health_check(workdir, include_retrieval=True)
+    summary = env["summary"]
+    assert "embedder:" in summary
+    assert "mlx" in summary  # backend name surfaced
+    assert "fts:" in summary

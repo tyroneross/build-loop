@@ -48,6 +48,13 @@ OLLAMA_HOST = "127.0.0.1"
 OLLAMA_PORT = 11434
 OLLAMA_TIMEOUT_S = 60
 
+# Daemon-side keep-alive override. Default Ollama evicts an idle model
+# after 5 minutes — re-paying ~250-500ms model-load on the next call.
+# 24h matches the cadence of a typical work session and amortizes warmup
+# across every Stop hook firing in that window. Override per-process via
+# OLLAMA_KEEP_ALIVE env (matches Ollama's own env var name).
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "24h")
+
 
 def _log(msg: str) -> None:
     print(f"[embed_backend] {msg}", file=sys.stderr, flush=True)
@@ -72,7 +79,11 @@ class OllamaBackend:
         return self._conn
 
     def _post_one(self, text: str) -> list[float]:
-        body = json.dumps({"model": self.model, "prompt": text}).encode("utf-8")
+        body = json.dumps({
+            "model": self.model,
+            "prompt": text,
+            "keep_alive": OLLAMA_KEEP_ALIVE,
+        }).encode("utf-8")
         # Try persistent conn; on failure recreate once.
         for attempt in (1, 2):
             try:

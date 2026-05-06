@@ -88,7 +88,7 @@ CATEGORY_KEYWORDS = [
                       "deploy")),
     ("observability", ("observ", "tracing", "telemetry", "logging", "log")),
     ("memory",       ("memory", "decision", "recall", "knowledge", "episodic",
-                      "semantic", "embedding", "embed_backend",
+                      "semantic", "embedding", "embed_backend", "retrieval",
                       "backend health", "backend_health")),
     ("testing",      ("test", "pytest", "jest", "vitest", "spec")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",

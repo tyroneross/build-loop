@@ -317,6 +317,100 @@ def probe_debugger(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept fo
 # Driver
 # ---------------------------------------------------------------------------
 
+def probe_embedder(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept for API symmetry
+    """Probe the embedder backend by issuing a single canary embed call.
+
+    Catches the silent-fallback class of failure where MLX is broken and
+    Ollama silently takes over (or vice versa). Verifies vector dimension
+    matches the schema (1024). Records active backend + latency.
+
+    Soft-fail: never raises. Returns ``{ok: False, reason: ...}`` if the
+    embedder can't return a vector at all.
+    """
+    started = time.monotonic()
+    out: Dict[str, Any] = {"ok": False, "duration_ms": 0}
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        # Local import — keeps backend_health.py importable on hosts
+        # without embed_backend's transitive deps installed.
+        from embed_backend import EMBED_DIM, active_backend, embed  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        out["reason"] = f"import_failed:{type(exc).__name__}"
+        out["duration_ms"] = int((time.monotonic() - started) * 1000)
+        return out
+    try:
+        vec = embed("backend_health canary")
+    except Exception as exc:  # noqa: BLE001
+        out["reason"] = f"embed_failed:{type(exc).__name__}"
+        out["duration_ms"] = int((time.monotonic() - started) * 1000)
+        return out
+    out["duration_ms"] = int((time.monotonic() - started) * 1000)
+    if not isinstance(vec, list) or len(vec) != EMBED_DIM:
+        out["reason"] = f"dim_mismatch:expected_{EMBED_DIM}_got_{len(vec) if isinstance(vec, list) else type(vec).__name__}"
+        return out
+    try:
+        out["backend"] = active_backend()
+    except Exception:  # noqa: BLE001
+        out["backend"] = "unknown"
+    out["dim"] = len(vec)
+    out["ok"] = True
+    return out
+
+
+def probe_fts(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept for API symmetry
+    """Probe Postgres for full-text-search readiness.
+
+    Surfaces three things hybrid retrieval depends on:
+      - pg_trgm extension present (used by today's recall.py)
+      - tsvector / GIN index present on semantic_facts.object (Phase A target)
+      - HNSW index present on semantic_facts.embedding
+
+    Each missing piece is reported individually so Phase A can detect
+    work needed without re-running the migration script. Soft-fail.
+    """
+    started = time.monotonic()
+    out: Dict[str, Any] = {"ok": False, "duration_ms": 0}
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from db import query  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        out["reason"] = f"import_failed:{type(exc).__name__}"
+        out["duration_ms"] = int((time.monotonic() - started) * 1000)
+        return out
+    schema = os.environ.get("AGENT_MEMORY_SCHEMA", "personal_memory")
+    try:
+        ext_rows = query("SELECT extname FROM pg_extension WHERE extname IN ('pg_trgm', 'vector')")
+        extensions = {r[0] for r in ext_rows} if ext_rows else set()
+        idx_rows = query(
+            "SELECT indexname, indexdef FROM pg_indexes "
+            "WHERE schemaname = %s AND tablename = 'semantic_facts'",
+            (schema,),
+        ) or []
+    except Exception as exc:  # noqa: BLE001
+        # Mirror probe_semantic's failure-classifier so the one-liner stays consistent.
+        msg = str(exc).lower()
+        if "could not connect" in msg or "connection refused" in msg or "no such host" in msg:
+            out["reason"] = "postgres_unavailable"
+        else:
+            out["reason"] = f"query_failed:{type(exc).__name__}"
+        out["duration_ms"] = int((time.monotonic() - started) * 1000)
+        return out
+    idx_defs = " ".join((d or "") for _name, d in idx_rows).lower()
+    out["pg_trgm"] = "pg_trgm" in extensions
+    out["pgvector"] = "vector" in extensions
+    out["hnsw_on_embedding"] = "hnsw" in idx_defs and "embedding" in idx_defs
+    out["gin_on_object"] = "gin" in idx_defs and ("to_tsvector" in idx_defs or "tsvector" in idx_defs)
+    out["duration_ms"] = int((time.monotonic() - started) * 1000)
+    # Phase A acceptance: pg_trgm + pgvector + HNSW are required today;
+    # gin_on_object is the new piece Phase A will add. Mark ok based on
+    # today's set so the canary doesn't false-alarm pre-Phase-A.
+    out["ok"] = out["pg_trgm"] and out["pgvector"] and out["hnsw_on_embedding"]
+    if not out["ok"]:
+        missing = [k for k in ("pg_trgm", "pgvector", "hnsw_on_embedding") if not out[k]]
+        out["reason"] = "missing:" + ",".join(missing)
+    return out
+
+
 def _format_one_liner(envelope: Dict[str, Any]) -> str:
     """Human-readable single line. Matches verification rule 5 contract."""
     parts: List[str] = []
@@ -351,11 +445,31 @@ def _format_one_liner(envelope: Dict[str, Any]) -> str:
     else:
         r = (debugger.get("reason") or "unknown").split(":")[0]
         parts.append(f"debugger: DOWN {r}")
+    embedder = envelope.get("embedder")
+    if embedder is not None:
+        if embedder.get("ok"):
+            parts.append(f"embedder: OK {embedder.get('backend', '?')}/{embedder.get('dim', '?')}d {embedder.get('duration_ms', 0)}ms")
+        else:
+            r = (embedder.get("reason") or "unknown").split(":")[0]
+            parts.append(f"embedder: DOWN {r}")
+    fts = envelope.get("fts")
+    if fts is not None:
+        if fts.get("ok"):
+            gin = " +gin" if fts.get("gin_on_object") else ""
+            parts.append(f"fts: OK pg_trgm+hnsw{gin}")
+        else:
+            r = (fts.get("reason") or "unknown").split(":")[0]
+            parts.append(f"fts: DOWN {r}")
     return " | ".join(parts)
 
 
-def run_health_check(workdir: Path) -> Dict[str, Any]:
-    """Run all four backend probes; respect the 30s total budget."""
+def run_health_check(workdir: Path, *, include_retrieval: bool = False) -> Dict[str, Any]:
+    """Run all backend probes; respect the 30s total budget.
+
+    ``include_retrieval`` adds embedder + FTS probes. Off by default to
+    keep the existing Phase 1 latency budget intact; SessionStart / Phase F
+    callers pass True to surface silent retrieval-stack breakage.
+    """
     started_all = time.monotonic()
     envelope: Dict[str, Any] = {}
 
@@ -367,6 +481,9 @@ def run_health_check(workdir: Path) -> Dict[str, Any]:
         # Filesystem probes overshot — extreme edge case. Mark remaining as skipped.
         envelope["semantic"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
         envelope["debugger"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
+        if include_retrieval:
+            envelope["embedder"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
+            envelope["fts"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
     else:
         envelope["semantic"] = probe_semantic(workdir)
         elapsed = time.monotonic() - started_all
@@ -374,6 +491,18 @@ def run_health_check(workdir: Path) -> Dict[str, Any]:
             envelope["debugger"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
         else:
             envelope["debugger"] = probe_debugger(workdir)
+        if include_retrieval:
+            elapsed = time.monotonic() - started_all
+            if elapsed >= TOTAL_BUDGET_S:
+                envelope["embedder"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
+                envelope["fts"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
+            else:
+                envelope["embedder"] = probe_embedder(workdir)
+                elapsed = time.monotonic() - started_all
+                if elapsed >= TOTAL_BUDGET_S:
+                    envelope["fts"] = {"ok": False, "reason": "budget_exhausted", "duration_ms": 0}
+                else:
+                    envelope["fts"] = probe_fts(workdir)
 
     envelope["generated_at"] = datetime.now(timezone.utc).isoformat()
     envelope["total_duration_ms"] = int((time.monotonic() - started_all) * 1000)
@@ -406,10 +535,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--quiet", action="store_true", help="Suppress one-liner; only write to state.json")
     parser.add_argument("--no-cache", action="store_true",
                         help="Do not write to state.json.architecture.backendHealth")
+    parser.add_argument("--include-retrieval", action="store_true",
+                        help="Add embedder + FTS probes (catches silent retrieval-stack breakage)")
     args = parser.parse_args(argv)
 
     workdir = Path(args.workdir).resolve()
-    envelope = run_health_check(workdir)
+    envelope = run_health_check(workdir, include_retrieval=args.include_retrieval)
 
     if not args.no_cache:
         write_into_state(workdir, envelope)
