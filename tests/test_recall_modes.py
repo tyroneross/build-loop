@@ -139,3 +139,116 @@ def test_vector_only_byte_identical_returns_legacy_score(monkeypatch):
         assert "_rrf_score" not in f
         assert "_rerank_score" not in f
         assert "_quality_mult" not in f
+
+
+# ---------------------------------------------------------------------------
+# Phase B: graph leg
+# ---------------------------------------------------------------------------
+
+
+def test_hybrid_with_no_graph_disables_graph_leg(tmp_path, monkeypatch):
+    """--no-graph (graph_disabled=True) suppresses the graph leg entirely."""
+    facts, stats = recall_mod.run_search(
+        "q", "build_loop_memory", 5, 0.5,
+        mode="hybrid", rerank_disabled=True, graph_disabled=True,
+    )
+    assert stats["graph_count"] == 0
+    assert stats["graph_ms"] == 0
+
+
+def test_hybrid_graph_leg_runs_when_corpus_present(tmp_path, monkeypatch):
+    """When a decisions dir exists with edges, the graph leg fires and
+    contributes to the fused result list."""
+    import recall_graph as rg
+    rg.invalidate_cache()
+    d = tmp_path / "decisions"
+    d.mkdir(parents=True)
+    # Build a decision corpus where ids match the FAKE vector-leg seeds
+    # (V0..V4) so the BFS actually walks something.
+    for i in range(5):
+        (d / f"000{i}-2026-05-06-x.md").write_text(
+            "---\n"
+            f"id: 'V{i}'\n"
+            f"slug: x{i}\n"
+            "title: t\ntype: decision\nstatus: accepted\nconfidence: explicit\n"
+            "date: '2026-05-06'\nprimary_tag: meta\n---\n\n"
+            f"Cross [[V{(i + 1) % 5}]] reference.\n",
+            encoding="utf-8",
+        )
+    facts, stats = recall_mod.run_search(
+        "q", "build_loop_memory", 5, 0.5,
+        mode="hybrid", rerank_disabled=True,
+        decisions_dir=str(d),
+    )
+    assert stats["graph_count"] is not None
+    assert stats["graph_count"] > 0
+
+
+def test_hybrid_graph_leg_failure_is_silent(tmp_path, monkeypatch):
+    """If the graph leg raises, the hybrid pipeline must continue with
+    vector + sparse results."""
+    import recall_graph as rg
+
+    def _boom(*a, **kw):
+        raise RuntimeError("simulated graph failure")
+
+    monkeypatch.setattr(rg, "get_cached_graph", _boom)
+    facts, stats = recall_mod.run_search(
+        "q", "build_loop_memory", 5, 0.5,
+        mode="hybrid", rerank_disabled=True,
+    )
+    assert stats["graph_count"] == 0
+    # Vector hits must still surface.
+    assert any(f["id"].startswith("V") for f in facts)
+
+
+def test_acceptance_graph_walk_outranks_pure_cosine(tmp_path, monkeypatch):
+    """Phase B acceptance gate (synthetic-fixture form per the spec).
+
+    Setup: a query whose terminology appears ONLY in a decision the
+    pure-vector leg ranks low, but which is reachable via a graph edge
+    from a decision the vector leg ranks high. The graph leg's BFS
+    contribution must lift the connected decision into the fused result
+    set above its pure-cosine rank.
+
+    We assert the connected decision id ('GRAPH_HIT') appears in the
+    fused output AT ALL — pure vector_only does not return it, but
+    hybrid+graph does.
+    """
+    import recall_graph as rg
+    rg.invalidate_cache()
+    d = tmp_path / "decisions"
+    d.mkdir(parents=True)
+    # The fake vector leg returns V0..V4. The graph corpus links V0 →
+    # GRAPH_HIT (a decision id the vector leg never returns).
+    (d / "0001-2026-05-06-v0.md").write_text(
+        "---\nid: 'V0'\nslug: v0\ntitle: t\ntype: decision\n"
+        "status: accepted\nconfidence: explicit\ndate: '2026-05-06'\n"
+        "primary_tag: meta\n---\n\nLinks to [[GRAPH_HIT]].\n",
+        encoding="utf-8",
+    )
+    (d / "0002-2026-05-06-graph-hit.md").write_text(
+        "---\nid: 'GRAPH_HIT'\nslug: graph-hit\ntitle: t\ntype: decision\n"
+        "status: accepted\nconfidence: explicit\ndate: '2026-05-06'\n"
+        "primary_tag: meta\n---\n\nThe graph-only target.\n",
+        encoding="utf-8",
+    )
+
+    # Pure vector_only — GRAPH_HIT not present.
+    facts_v, _ = recall_mod.run_search(
+        "q", "build_loop_memory", 5, 0.5, mode="vector_only",
+    )
+    assert all(f["id"] != "GRAPH_HIT" for f in facts_v)
+
+    # Hybrid with graph leg — GRAPH_HIT must surface through BFS from
+    # the V0 seed.
+    facts_h, stats_h = recall_mod.run_search(
+        "q", "build_loop_memory", 5, 0.5,
+        mode="hybrid", rerank_disabled=True,
+        decisions_dir=str(d),
+    )
+    assert stats_h["graph_count"] is not None and stats_h["graph_count"] > 0
+    assert any(f["id"] == "GRAPH_HIT" for f in facts_h), (
+        "Phase B acceptance: graph-reachable result must appear in hybrid "
+        "fused output even when pure vector misses it."
+    )

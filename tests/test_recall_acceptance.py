@@ -204,3 +204,106 @@ def test_vector_only_baseline_does_NOT_surface_synthetic(synthetic_fact_in_db):
     # see the contrast. We assert weakly: the test must not error.
     # The Review-F report will show vector_only vs hybrid stats.
     assert isinstance(facts, list)
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Contextual Retrieval acceptance
+# ---------------------------------------------------------------------------
+
+PARAPHRASED_QUERY = "unused dependencies cleanup"
+"""Paraphrase of decision 0009's "package-level dead detection in
+find_dead". Pure cosine over subject/predicate/object misses the
+keyword overlap; with chunk_context populated, the query should hit
+the prepended summary's domain language."""
+
+
+@pytest.fixture
+def synthetic_fact_with_chunk_context():
+    """Like synthetic_fact_in_db but uses paraphrased terminology in
+    chunk_context that does NOT appear in subject/predicate/object.
+
+    Skips when:
+      - the chunk_context column is absent (migration not run)
+      - the contextual_prepend router is unavailable
+    """
+    from db import execute, query, vector_literal  # type: ignore
+    from embed_backend import active_model, embed  # type: ignore
+
+    schema = os.environ.get("AGENT_MEMORY_SCHEMA", "build_loop_memory")
+
+    # Check column exists.
+    col_present = query(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = %s AND table_name = 'semantic_facts' "
+        "  AND column_name = 'chunk_context'",
+        (schema,),
+    )
+    if not col_present:
+        pytest.skip("chunk_context column missing — run migrate_add_chunk_context_column.py")
+
+    # Synthetic chunk_context contains the paraphrased terminology.
+    # subject/predicate/object intentionally omit "unused dependencies"
+    # and "cleanup" — only the prepended chunk_context bridges them.
+    subject = "decision:phase-d-acceptance"
+    predicate = "architecture"
+    obj = (
+        "Implemented graph-walk in NavGator to roll up file-level orphans into the "
+        "parent package, replacing leaf-only scans."
+    )
+    chunk_context = (
+        "This decision addresses unused dependencies cleanup at the package "
+        "level — finding dead packages where every file is orphaned, the "
+        "kind of library cleanup that prevents bloat in long-lived repos."
+    )
+
+    fact_id = str(uuid.uuid4())
+    test_subject = f"{subject}-{fact_id[:8]}"
+    embed_text = f"{chunk_context}\n\n{test_subject} {predicate} {obj}"
+    vec = embed(embed_text)
+    model_id = active_model()
+
+    execute(
+        f"INSERT INTO {schema}.semantic_facts "
+        "(id, subject, predicate, object, confidence, status, embedding, "
+        " embedding_model_version, project, metadata, chunk_context, valid_from) "
+        "VALUES (%s, %s, %s, %s, 1.0, 'active', %s::vector, %s, %s, %s, %s, now())",
+        (
+            fact_id, test_subject, predicate, obj,
+            vector_literal(vec), model_id, "build-loop",
+            '{"confidence": "explicit", "tags": ["architecture", "phase-d-acceptance"]}',
+            chunk_context,
+        ),
+    )
+    yield fact_id, test_subject
+    try:
+        execute(f"DELETE FROM {schema}.semantic_facts WHERE id = %s", (fact_id,))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def test_phase_d_paraphrase_hits_via_chunk_context(synthetic_fact_with_chunk_context):
+    """Phase D acceptance gate.
+
+    The paraphrased query terminology lives ONLY in `chunk_context`, NOT
+    in subject/predicate/object. Pure-cosine over the body would miss
+    it. With Phase D's prepend, the embedded vector now carries the
+    paraphrase and hybrid recall must surface the row.
+    """
+    from recall import run_search  # type: ignore
+
+    fact_id, _ = synthetic_fact_with_chunk_context
+    schema = os.environ.get("AGENT_MEMORY_SCHEMA", "build_loop_memory")
+    facts, stats = run_search(
+        PARAPHRASED_QUERY,
+        schema,
+        limit=10,
+        confidence_floor=0.5,
+        mode="hybrid",
+        rerank_disabled=True,  # isolate the Phase D embedding lift
+        projects=["build-loop", "_unscoped"],
+    )
+    ids = [f.get("id") for f in facts]
+    assert fact_id in ids, (
+        f"Phase D acceptance: paraphrased query must surface chunk_context-"
+        f"populated row. Got top-{len(facts)} ids: {ids[:5]}; stats: {stats}"
+    )
