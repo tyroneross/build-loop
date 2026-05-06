@@ -93,6 +93,7 @@ When ambiguous, default to BUILD.
 - For UI work, require intentionality: every visible control, nav item, option, message, and chart must have working behavior and a clear user purpose. Prefer one primary action unless multiple choices are genuinely useful.
 - At coordination checkpoints, verify outputs align before continuing.
 - Consult `model-router` per dispatch — see `references/capability-routing.md` §"Phase 3 routing".
+- **M1 — Persist subagent envelopes immediately on receipt (crash-recovery)**: after each implementer subagent returns, BEFORE making any further routing decision, atomic-write its envelope to `.build-loop/subagent-results/<run-id>/<chunk-id>.attempt-<n>.json` via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_subagent_result.py --workdir "$PWD" --run-id "<run-id>" --envelope -` (envelope JSON via stdin). The `<run-id>` is `state.json.execution.run_id`. The `<n>` is the implementer's attempt count for this chunk in this build (1 for first try, 2 for retries). Failure of this write is a hard error — re-attempt once, then surface to the user; never silently drop the envelope. This step exists so that if the orchestrator's Claude subagent stream terminates mid-Execute (529, OOM, kill -9), the resumed orchestrator can read these files and skip work that already shipped. See `docs/plans/crash-recovery-state-json.md` §M1 for rationale.
 
 ### Phase 4: Review (sub-steps A–F)
 
