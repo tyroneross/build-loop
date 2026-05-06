@@ -26,6 +26,14 @@ mkdir -p "$LOG_DIR" 2>/dev/null
 #    installed or running.
 ( command -v ollama >/dev/null 2>&1 && nohup ollama list </dev/null >/dev/null 2>&1 & )
 
+# Note on cross-encoder rerank: a SessionStart bash subshell warm() doesn't
+# help because the warmed model dies with the subshell — every recall.py
+# call is a fresh Python process that re-pays the ~5-6s sentence-transformers
+# load. Real fix is a long-running rerank daemon (FastAPI/gRPC) that holds
+# the model in memory across calls. Tracked as Phase G in research entry
+# build-loop-search-architecture. Until then, accept the cold-load cost on
+# the first recall.py invocation per session.
+
 # 2. Health canary, backgrounded so SessionStart returns immediately.
 #    Output goes to state.json + a rotating log; nothing reaches the
 #    user's terminal.
