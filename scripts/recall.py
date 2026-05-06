@@ -2,13 +2,22 @@
 """Hybrid retrieval entry point for repo-local episodic memory.
 
 Embeds the query via `embed_backend.embed` (MLX `mxbai-embed-large-v1`
-default, Ollama `mxbai-embed-large` fallback, both 1024-dim) and runs
-a hybrid search against `agent_memory.<schema>.semantic_facts` and
-`episode_events`:
+default, Ollama `bge-m3` fallback after Phase A — both 1024-dim but in
+DIFFERENT vector spaces) and runs a hybrid search against
+`agent_memory.<schema>.semantic_facts` and `episode_events`.
 
-  - cosine similarity over `embedding` (HNSW index)
-  - pg_trgm word_similarity over `subject`, `predicate`, `object`
-  - GIN to_tsvector full-text over episode_events.raw_content
+Phase A pipeline (--mode hybrid, default):
+  1. vector leg — pgvector cosine over `embedding` (HNSW index)
+  2. sparse leg — tsvector + ts_rank over `search_vector` GENERATED column
+  3. RRF fusion (k=60, Cormack/Clarke/Buettcher 2009)
+  4. cross-encoder rerank (BAAI/bge-reranker-v2-m3 via sentence-transformers,
+     MPS on Apple Silicon, CPU fallback) — optional dep [retrieval]
+  5. quality + recency multipliers (lifted from vault_vector.py)
+  6. trim to limit
+
+Legacy modes:
+  --mode vector_only — today's pure-cosine behavior (REGRESSION BASELINE)
+  --mode sparse_only — tsvector only (useful when Ollama is down)
 
 Results are scored, deduped, and a small text summary is written to
 stdout (target ~500-1500 tokens; truncated if longer).
@@ -51,6 +60,9 @@ DEFAULT_SCHEMA = _default_schema()
 DEFAULT_LIMIT = 5
 DEFAULT_NEIGHBOR_WINDOW = 3
 DEFAULT_FLOOR = "confirmed"
+DEFAULT_MODE = "hybrid"
+VALID_MODES = ("hybrid", "vector_only", "sparse_only")
+PER_LEG_OVERFETCH = 21  # Atomize HYBRID_VECTOR_LIMIT — see research entry
 
 
 def confidence_to_float(c: str) -> float:
@@ -300,10 +312,186 @@ def render(
     return text
 
 
+def run_search(
+    query: str,
+    schema: str,
+    limit: int,
+    confidence_floor: float,
+    *,
+    mode: str = DEFAULT_MODE,
+    project: str | None = None,
+    projects: list[str] | None = None,
+    tool: str | None = None,
+    model: str | None = None,
+    task_category: str | None = None,
+    author: str | None = None,
+    domain: str | None = None,
+    goal: str | None = None,
+    confidence_source: str | None = None,
+    rerank_disabled: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Execute the search pipeline for the requested mode.
+
+    Returns (facts, leg_stats). leg_stats carries per-leg timings and
+    counts for --stats observability and is shaped:
+        {
+          "mode": str,
+          "vector_count": int | None,   # None = leg not run
+          "sparse_count": int | None,
+          "fused_count":  int | None,
+          "reranked_count": int | None,
+          "embed_ms": int,              # 0 if no embed run
+          "vector_ms": int,
+          "sparse_ms": int,
+          "rrf_ms":    int,
+          "rerank_ms": int,
+          "multiplier_ms": int,
+        }
+
+    Modes:
+      vector_only  - REGRESSION BASELINE. Today's hybrid_search_facts
+                     (cosine 0.6 + pg_trgm 0.4). No FTS, no rerank, no
+                     multipliers. Byte-identical to pre-Phase-A behavior.
+      sparse_only  - tsvector + ts_rank only. No embed required —
+                     usable when Ollama is down. No rerank.
+      hybrid       - Full pipeline: vector + sparse + RRF fuse +
+                     cross-encoder rerank + quality/recency multipliers.
+    """
+    import time as _time
+    if mode not in VALID_MODES:
+        raise ValueError(f"unknown --mode {mode!r}; valid: {VALID_MODES}")
+
+    leg_stats: dict[str, Any] = {
+        "mode": mode,
+        "vector_count": None,
+        "sparse_count": None,
+        "fused_count": None,
+        "reranked_count": None,
+        "embed_ms": 0,
+        "vector_ms": 0,
+        "sparse_ms": 0,
+        "rrf_ms": 0,
+        "rerank_ms": 0,
+        "multiplier_ms": 0,
+    }
+
+    # ---------------- vector_only: legacy path, byte-identical contract.
+    if mode == "vector_only":
+        t0 = _time.monotonic()
+        embedding = _embed(query)
+        leg_stats["embed_ms"] = int((_time.monotonic() - t0) * 1000)
+
+        t0 = _time.monotonic()
+        facts = hybrid_search_facts(
+            query, embedding, schema, limit, confidence_floor,
+            project=project, projects=projects, tool=tool, model=model,
+            task_category=task_category, author=author,
+            domain=domain, goal=goal, confidence_source=confidence_source,
+        )
+        leg_stats["vector_ms"] = int((_time.monotonic() - t0) * 1000)
+        leg_stats["vector_count"] = len(facts)
+        return facts, leg_stats
+
+    # ---------------- sparse_only: no embed required.
+    if mode == "sparse_only":
+        from keyword_search import keyword_search_facts  # type: ignore  # noqa: PLC0415
+
+        t0 = _time.monotonic()
+        facts = keyword_search_facts(
+            query, schema, limit, confidence_floor,
+            project=project, projects=projects, tool=tool, model=model,
+            task_category=task_category, author=author,
+            domain=domain, goal=goal, confidence_source=confidence_source,
+        )
+        leg_stats["sparse_ms"] = int((_time.monotonic() - t0) * 1000)
+        leg_stats["sparse_count"] = len(facts)
+        return facts, leg_stats
+
+    # ---------------- hybrid: full pipeline.
+    from keyword_search import keyword_search_facts  # type: ignore  # noqa: PLC0415
+    from rrf import rrf_fuse  # type: ignore  # noqa: PLC0415
+    from rerank import rerank as cross_rerank  # type: ignore  # noqa: PLC0415
+    from recall_multipliers import apply_multipliers  # type: ignore  # noqa: PLC0415
+
+    # Vector leg (cosine over embedding column).
+    t0 = _time.monotonic()
+    embedding = _embed(query)
+    leg_stats["embed_ms"] = int((_time.monotonic() - t0) * 1000)
+
+    t0 = _time.monotonic()
+    vector_hits = hybrid_search_facts(
+        query, embedding, schema, PER_LEG_OVERFETCH, confidence_floor,
+        project=project, projects=projects, tool=tool, model=model,
+        task_category=task_category, author=author,
+        domain=domain, goal=goal, confidence_source=confidence_source,
+    )
+    leg_stats["vector_ms"] = int((_time.monotonic() - t0) * 1000)
+    leg_stats["vector_count"] = len(vector_hits)
+
+    # Sparse leg (tsvector + ts_rank). Tolerate missing column —
+    # falls back to empty list so the hybrid pipeline still produces
+    # results even if migrate_add_fts_column hasn't been applied.
+    t0 = _time.monotonic()
+    try:
+        sparse_hits = keyword_search_facts(
+            query, schema, PER_LEG_OVERFETCH, confidence_floor,
+            project=project, projects=projects, tool=tool, model=model,
+            task_category=task_category, author=author,
+            domain=domain, goal=goal, confidence_source=confidence_source,
+        )
+    except Exception as e:  # noqa: BLE001
+        log(f"recall: sparse leg failed ({e}); continuing vector-only this query")
+        sparse_hits = []
+    leg_stats["sparse_ms"] = int((_time.monotonic() - t0) * 1000)
+    leg_stats["sparse_count"] = len(sparse_hits)
+
+    # RRF fuse.
+    t0 = _time.monotonic()
+    fused = rrf_fuse([vector_hits, sparse_hits], k=60, limit=limit * 2)
+    leg_stats["rrf_ms"] = int((_time.monotonic() - t0) * 1000)
+    leg_stats["fused_count"] = len(fused)
+
+    # Cross-encoder rerank (no-op when sentence-transformers absent or
+    # rerank explicitly disabled). Pool size capped inside rerank.py.
+    if rerank_disabled:
+        reranked = fused[:limit]
+    else:
+        t0 = _time.monotonic()
+        reranked = cross_rerank(query, fused, top_k=limit)
+        leg_stats["rerank_ms"] = int((_time.monotonic() - t0) * 1000)
+    leg_stats["reranked_count"] = len(reranked)
+
+    # Quality + recency multipliers.
+    t0 = _time.monotonic()
+    final = apply_multipliers(reranked, query)[:limit]
+    leg_stats["multiplier_ms"] = int((_time.monotonic() - t0) * 1000)
+
+    return final, leg_stats
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Hybrid recall over agent_memory")
     p.add_argument("--query", required=True)
     p.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    p.add_argument(
+        "--mode",
+        default=DEFAULT_MODE,
+        choices=VALID_MODES,
+        help=(
+            "Search pipeline: hybrid (default; vector+sparse+RRF+rerank+multipliers), "
+            "vector_only (today's pre-Phase-A behavior; regression baseline), "
+            "sparse_only (tsvector only; usable when Ollama is down)."
+        ),
+    )
+    p.add_argument(
+        "--no-rerank",
+        action="store_true",
+        help=(
+            "In --mode hybrid, skip the cross-encoder rerank stage. "
+            "Useful for A/B comparing fusion-only vs full pipeline, or "
+            "when sentence-transformers is intentionally not installed."
+        ),
+    )
     p.add_argument(
         "--confidence-floor",
         default=DEFAULT_FLOOR,
@@ -317,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--embed-model",
-        default="mxbai-embed-large",
+        default="bge-m3",
         help="Legacy flag; ignored. Backend chosen via $EMBED_BACKEND.",
     )
     p.add_argument("--char-budget", type=int, default=8000)  # ~1500 tokens
@@ -389,24 +577,15 @@ def main(argv: list[str] | None = None) -> int:
     timing: dict[str, Any] = {}
     started_total = _time.monotonic()
 
-    try:
-        t0 = _time.monotonic()
-        embedding = _embed(args.query)
-        timing["embed_ms"] = int((_time.monotonic() - t0) * 1000)
-    except Exception as e:  # noqa: BLE001
-        log(f"recall: embed unavailable ({e}); cannot run cosine search")
-        return 2
-
     floor = confidence_to_float(args.confidence_floor)
 
     try:
-        t0 = _time.monotonic()
-        facts = hybrid_search_facts(
+        facts, leg_stats = run_search(
             args.query,
-            embedding,
             args.schema,
             args.limit,
             floor,
+            mode=args.mode,
             project=single_project,
             projects=explicit_projects,
             tool=args.tool,
@@ -416,25 +595,41 @@ def main(argv: list[str] | None = None) -> int:
             domain=args.domain,
             goal=args.goal,
             confidence_source=args.confidence_source,
+            rerank_disabled=args.no_rerank,
         )
-        timing["facts_ms"] = int((_time.monotonic() - t0) * 1000)
-        if args.no_episodes:
-            episodes = []
-            timing["episodes_ms"] = 0
-        else:
-            t0 = _time.monotonic()
-            episodes = hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
-            timing["episodes_ms"] = int((_time.monotonic() - t0) * 1000)
-        if episodes:
-            t0 = _time.monotonic()
-            expanded = neighbor_expand(args.schema, [e["id"] for e in episodes], args.neighbor_window)
-            timing["neighbor_ms"] = int((_time.monotonic() - t0) * 1000)
-        else:
-            expanded = []
-            timing["neighbor_ms"] = 0
+    except RuntimeError as e:
+        # Embed backend down — only fatal in vector_only / hybrid modes.
+        log(f"recall: {e}")
+        return 2
     except Exception as e:  # noqa: BLE001
         log(f"recall: {e}")
         return 2
+    timing.update(leg_stats)
+
+    # Episodes search uses the cosine path; only run when we have an
+    # embedding (sparse_only mode skips episode events too — they have
+    # no tsvector column today and re-adding one is Phase B work).
+    episodes: list[dict[str, Any]] = []
+    expanded: list[dict[str, Any]] = []
+    if not args.no_episodes and args.mode != "sparse_only":
+        try:
+            t0 = _time.monotonic()
+            embedding = _embed(args.query)  # cached by embed_backend after run_search
+            episodes = hybrid_search_episodes(args.query, embedding, args.schema, args.limit)
+            timing["episodes_ms"] = int((_time.monotonic() - t0) * 1000)
+            if episodes:
+                t0 = _time.monotonic()
+                expanded = neighbor_expand(args.schema, [e["id"] for e in episodes], args.neighbor_window)
+                timing["neighbor_ms"] = int((_time.monotonic() - t0) * 1000)
+            else:
+                timing["neighbor_ms"] = 0
+        except Exception as e:  # noqa: BLE001
+            log(f"recall: episodes leg failed ({e}); continuing")
+            timing["episodes_ms"] = 0
+            timing["neighbor_ms"] = 0
+    else:
+        timing["episodes_ms"] = 0
+        timing["neighbor_ms"] = 0
 
     if not args.no_bump_last_accessed and facts:
         bump_last_accessed(args.schema, [f["id"] for f in facts])
@@ -444,12 +639,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.stats:
         timing["total_ms"] = int((_time.monotonic() - started_total) * 1000)
-        timing["embed_dim"] = len(embedding)
         try:
-            from embed_backend import active_backend  # type: ignore  # noqa: E402
+            from embed_backend import EMBED_DIM, active_backend, active_model  # type: ignore  # noqa: E402,PLC0415
+            timing["embed_dim"] = EMBED_DIM
             timing["backend"] = active_backend()
+            timing["embed_model"] = active_model()
         except Exception:  # noqa: BLE001
-            timing["backend"] = "unknown"
+            timing.setdefault("backend", "unknown")
         timing["facts_count"] = len(facts)
         timing["episodes_count"] = len(episodes)
         print(f"[recall.stats] {json.dumps(timing)}", file=sys.stderr)

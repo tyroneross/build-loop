@@ -30,6 +30,17 @@ db = [
     "psycopg[binary]>=3.1",
 ]
 
+# Optional hybrid-retrieval rerank deps (Phase A chunk 4).
+# When installed, recall.py's --mode hybrid pipeline runs a
+# BAAI/bge-reranker-v2-m3 cross-encoder (sentence-transformers, MPS on
+# Apple Silicon, CPU fallback) over the top-50 RRF-fused candidates.
+# When absent, the pipeline degrades silently to RRF-only ordering.
+# Install with `uv pip install -e .[retrieval]`.
+retrieval = [
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+]
+
 # Real Python package lives at src/build_loop/ so `python -m build_loop.architecture`
 # resolves cleanly. The parent plan referenced `src/architecture/` as shorthand;
 # this nested layout honours the dotted import path requirement.
@@ -42,3 +53,6 @@ namespaces = false
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+markers = [
+    "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
+]
