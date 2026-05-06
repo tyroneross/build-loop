@@ -61,6 +61,38 @@ if [ -f "$SCRIPT_DIR/rerank_daemon.py" ]; then
     fi
 fi
 
+# 1c. Embed daemon (Phase H). Same architectural fix as 1b — long-running
+#     stdlib http.server holds the embedder backend (MLX
+#     mxbai-embed-large-v1, or Ollama bge-m3 fallback) in memory across
+#     recall.py invocations, eliminating the ~3000ms cold-load cliff per
+#     fresh process. Independent of the rerank daemon: different port
+#     (8766 vs 8765), different PID file. Both daemons spawn here in
+#     parallel and each survives across recall.py invocations.
+EMBED_DAEMON_PID_FILE="$LOG_DIR/embed-daemon.pid"
+if [ -f "$SCRIPT_DIR/embed_daemon.py" ]; then
+    EMBED_DAEMON_PORT_VAL="${EMBED_DAEMON_PORT:-8766}"
+    embed_daemon_alive=0
+    if [ -f "$EMBED_DAEMON_PID_FILE" ]; then
+        existing_pid=$(cat "$EMBED_DAEMON_PID_FILE" 2>/dev/null)
+        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+            embed_daemon_alive=1
+        fi
+    fi
+    # Belt-and-suspenders: probe the port too — handles stale PID files
+    # left after a hard kill.
+    if [ "$embed_daemon_alive" = "0" ]; then
+        if curl -fsS --max-time 0.2 "http://127.0.0.1:${EMBED_DAEMON_PORT_VAL}/health" >/dev/null 2>&1; then
+            embed_daemon_alive=1
+        fi
+    fi
+    if [ "$embed_daemon_alive" = "0" ]; then
+        nohup python3 "$SCRIPT_DIR/embed_daemon.py" \
+            </dev/null \
+            >>"$LOG_DIR/embed-daemon.log" 2>&1 &
+        disown 2>/dev/null
+    fi
+fi
+
 # 2. Health canary, backgrounded so SessionStart returns immediately.
 #    Output goes to state.json + a rotating log; nothing reaches the
 #    user's terminal.

@@ -209,7 +209,16 @@ def wiki_search(
 ) -> list[dict[str, Any]]:
     """Run `llmwiki search <query> -k <k>` and parse to Result dicts.
 
-    Graceful skip contract:
+    Phase I routing: try the in-process `wiki_local` module first
+    (avoids the ~920ms subprocess fork + JSON parse cost). Fall back to
+    the legacy `llmwiki` subprocess CLI when:
+      - `WIKI_FORCE_SUBPROCESS=1` is set (test / safety override)
+      - `wiki_local.is_available()` is False (vault store missing)
+      - `wiki_local.search()` raises (parse error, unreadable file, ...)
+    Subprocess remains the failure-mode floor so the leg never goes silent
+    on hosts where the in-process path can't load.
+
+    Graceful skip contract for the subprocess path:
       - CLI missing → log once, return [].
       - CLI returns non-zero → log once, return [].
       - CLI times out → log once, return [].
@@ -218,6 +227,18 @@ def wiki_search(
     """
     if not query or not query.strip():
         return []
+
+    # Phase I in-process path. Skip if user forced subprocess.
+    if not os.environ.get("WIKI_FORCE_SUBPROCESS"):
+        try:
+            import wiki_local  # type: ignore  # noqa: PLC0415
+            if wiki_local.is_available():
+                return wiki_local.search(query, k=k)
+        except ImportError:
+            _log.debug("wiki_local not importable; falling back to subprocess")
+        except Exception as e:  # noqa: BLE001
+            _log.warning("wiki_local.search raised (%s); falling back to subprocess", e)
+
     resolved = _resolve_cli(cli)
     if resolved is None:
         _log.debug("wiki CLI not found; skipping wiki leg")
