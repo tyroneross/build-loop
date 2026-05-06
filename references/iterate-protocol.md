@@ -2,6 +2,15 @@
 
 Up to 5 iterations. Loaded on demand at Phase 5.
 
+## Backend short-circuit (Priority 21)
+
+Read `state.json.architecture.backendHealth` (set during Phase 1 Assess by `backend_health.py`) at the start of each Iterate cycle. For each backend that's down, propagate the skip-flag to every memory call in this iterate cycle:
+
+- `semantic.ok == false` → pass `skip_postgres=True` to `recall()` calls. The Postgres connection is bypassed entirely (no env-var check, no `import psycopg`, no `connect_timeout`), saving roughly 3 seconds per call across the memory-first gate's many lookups. The `reasons[]` envelope returns `skipped_postgres` (distinct from `db_unavailable: ...`) so the iterate brief can surface intentional skip vs genuine backend-down.
+- `debugger.ok == false` → set `kind="runs"` or `kind="decisions"` on `recall()` calls instead of leaving `kind=None`, so the debugger MCP probe is skipped. Equivalent escape hatch in Phase 4 Review-B's debugging-memory verdict gate: skip the MCP `search` probe and fall through directly to the local-grep fallback at `skills/build-loop/fallbacks.md#bug-memory`.
+
+Log the degradation in the iterate brief — one line per skipped backend. The graceful-degradation contract is preserved either way; this step only saves wall-clock time.
+
 ## Stuck-iteration escalation cascade (always on)
 
 At the START of every Iterate attempt, run the cascade in order. Stop at the first rule that fires:

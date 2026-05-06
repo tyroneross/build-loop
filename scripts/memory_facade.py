@@ -238,8 +238,22 @@ def read_semantic(
     query: str,
     limit: int,
     project: Optional[str],
+    skip_postgres: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read semantic_facts from Postgres.
+
+    `skip_postgres=True` (Priority 21): bypass the backend entirely without
+    even attempting a connection. Reason recorded as `skipped_postgres`
+    (distinct from `db_unavailable: ...` so the consumer can tell whether
+    the skip was intentional vs the backend genuinely down). Used by the
+    Phase 5 Iterate Backend Short-circuit when `state.json.architecture.
+    backendHealth.semantic.ok == false` — saves the 3-second connect_timeout
+    on every recall during the iterate cycle.
+    """
     reasons: List[str] = []
+    if skip_postgres:
+        reasons.append("skipped_postgres")
+        return [], reasons
     db_url = os.environ.get("BUILD_LOOP_DATABASE_URL", "").strip()
     if not db_url:
         reasons.append("db_unavailable: BUILD_LOOP_DATABASE_URL unset")
@@ -381,8 +395,17 @@ def recall(
     project: Optional[str] = None,
     limit: int = DEFAULT_LIMIT,
     workdir: Optional[Path] = None,
+    skip_postgres: bool = False,
 ) -> Dict[str, Any]:
-    """Unified read across the four memory backends. See module docstring."""
+    """Unified read across the four memory backends. See module docstring.
+
+    `skip_postgres=True` (Priority 21): the Postgres-backed semantic backend
+    is bypassed entirely. Used by Phase 5 Iterate's Backend Short-circuit
+    step when `state.json.architecture.backendHealth.semantic.ok == false`.
+    The `reasons[]` envelope marks the skip as `skipped_postgres` (distinct
+    from `db_unavailable: ...`) so consumers can tell intentional skip
+    from genuine backend-down.
+    """
     if kind is not None and kind not in KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {KINDS}")
     workdir = (workdir or Path.cwd()).resolve()
@@ -396,7 +419,9 @@ def recall(
         results["decisions"], r = read_decisions(workdir, query, limit)
         reasons.extend(r)
     if kind in (None, "semantic"):
-        results["semantic"], r = read_semantic(workdir, query, limit, project)
+        results["semantic"], r = read_semantic(
+            workdir, query, limit, project, skip_postgres=skip_postgres,
+        )
         reasons.extend(r)
     if kind in (None, "debugger"):
         results["debugger"], r = read_debugger(workdir, query, limit, project)
