@@ -17,6 +17,70 @@ Build-loop supports three modes, routed by the orchestrator:
 
 The orchestrator classifies intent automatically. Users can override with the standalone commands.
 
+## Per-Commit Mode (Self-Recursive Builds)
+
+Per-commit mode splits a multi-commit build into one independent orchestrator dispatch per commit, so each commit reviews and lands cleanly before the next one starts. It activates automatically when the working directory IS the runtime — that is, when the user is editing the build-loop plugin itself (or any plugin whose runtime symlink points back to the working tree). It can also be explicitly opted into or out of via skill arguments.
+
+### Detection
+
+Phase 1 Assess writes `selfRecursive.enabled: true|false` to `.build-loop/state.json` (commit 1 wired this via `scripts/detect_self_recursive.py`). The skill body MUST read this field BEFORE deciding which dispatch shape to use. If the field is absent, treat it as `false`.
+
+### Mode Resolution
+
+| Skill arg | `selfRecursive` | Resulting mode |
+|---|---|---|
+| `--per-commit` (explicit) | either | per-commit |
+| `--no-per-commit` (explicit) | either | single-orchestrator |
+| (none) | true | per-commit (default for self-recursive) |
+| (none) | false | single-orchestrator (today's behavior) |
+
+Passing both `--per-commit` and `--no-per-commit` is a user error — fail loud with a one-line message naming the conflict and stop before any dispatch.
+
+### Dispatch Contract (Per-Commit Mode)
+
+1. **Plan first, dispatch many.** The skill body invokes a single planning orchestrator (Phase 1 Assess + Phase 2 Plan only). Its return must include a per-commit work list at `.build-loop/per-commit-plan.json` with this exact JSON shape:
+
+   ```json
+   {
+     "run_id": "run_<UTC>_<hash>",
+     "commits": [
+       {
+         "id": "c1",
+         "subject": "feat(scripts): add foo helper",
+         "scope": "...",
+         "files_planned": ["scripts/foo.py", "tests/test_foo.py"],
+         "spec": "verbatim packet for the implementer orchestrator",
+         "depends_on": []
+       }
+     ],
+     "branch": "feat/...",
+     "from_branch": "main"
+   }
+   ```
+
+2. **Per-commit orchestrator dispatch.** For each commit in the plan (respecting `depends_on`), the skill body dispatches a fresh `Agent(subagent_type="build-loop:build-orchestrator", ...)` carrying ONLY that commit's packet plus a `PER_COMMIT_DISPATCH: { commit_id, run_id, prior_commit_hashes }` prompt prefix. Each dispatched orchestrator runs Phase 3 Execute + Phase 4 Review for ITS commit only, then commits and returns. The dispatched orchestrator's behavior on the prefix is documented in `agents/build-orchestrator.md` §0a.
+
+3. **Aggregate.** The skill body collects each orchestrator's return envelope and writes a final report combining all commits' results. On partial failure (commit N fails), do NOT dispatch downstream commits; retain `.build-loop/per-commit-plan.json` so a subsequent `/build-loop:run --resume` invocation can pick up where it stopped.
+
+### State.json schema
+
+The per-commit dispatcher tracks its own progress under a `perCommit` block alongside the existing `execution` block:
+
+```json
+{
+  "perCommit": {
+    "enabled": true,
+    "mode_source": "self_recursive_default|explicit_flag|opt_out",
+    "plan_path": ".build-loop/per-commit-plan.json",
+    "completed": [{"commit_id": "c1", "hash": "abc123", "completed_at": "..."}],
+    "in_flight": "c2",
+    "queued": ["c3"]
+  }
+}
+```
+
+M2's `execution.iterate_attempt` continues to track per-commit-orchestrator attempt counters (each dispatched orchestrator manages its own iterate counter) — do not duplicate iteration tracking inside `perCommit`.
+
 ## Scope Check
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.

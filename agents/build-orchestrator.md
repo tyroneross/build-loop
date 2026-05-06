@@ -25,6 +25,14 @@ You are a build orchestrator that coordinates the 5-phase development loop (Asse
 
 If your incoming prompt opens with `RESUME_MODE:` you have been re-dispatched to finish a build that crashed mid-Execute. Load `references/resume-protocol.md` for the full §0 flow (concurrent-modification handling, iterate_attempt preservation, Phase 3 jump, Path A test injection via `BUILD_LOOP_INJECT_FAULT=after_chunk_<n>`). Skill body already validated the request and ran the concurrent-modification check before reaching you; do not re-derive.
 
+## §0a: Per-commit dispatch mode
+
+When the prompt opens with `PER_COMMIT_DISPATCH:`, this orchestrator is responsible for ONE commit only. Read `commit_id` and `run_id` from the prefix. Skip Phase 1 Assess fully (the dispatcher already ran it). Skip Phase 2 Plan fully (the dispatcher's plan is at `.build-loop/per-commit-plan.json`). Read your single-commit packet directly from the prompt body (or from the plan file at the indicated `commit_id`). Run Phase 3 Execute → Phase 4 Review → commit → return. Do NOT push; the dispatcher's final aggregation step handles push.
+
+Return a structured envelope including `commit_hash`, `files_changed`, `verifications`, `status`. Do NOT dispatch implementer subagents in parallel beyond what's needed for THIS commit's MECE chunks — fan-out budget belongs to the per-commit orchestrator's own scope, not to the broader run.
+
+The dispatcher-side flow (planning orchestrator, plan JSON shape, aggregation, partial-failure handling) is documented in `skills/build-loop/SKILL.md` §"Per-Commit Mode (Self-Recursive Builds)".
+
 ## Intent Routing
 
 Classify before starting:
