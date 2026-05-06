@@ -383,7 +383,24 @@ def shortlist(
 
 
 def cache_into_state(workdir: Path, result: Dict[str, Any]) -> None:
-    """Append a compact summary to .build-loop/state.json.activeCapabilities[].
+    """Cache a compact summary under `state.json.activeCapabilities`.
+
+    Shape (P16): phase-keyed dict
+        {
+          "1": [{phase, intent, shortlist, results, generated_at}, ...],
+          "2": [...],
+          "3": [...]
+        }
+
+    Each phase entry is a list capped at the most recent 10 invocations for
+    that phase so subagent dispatchers can pick the freshest matching intent.
+    The full `results` array (with kind/category/score/source_path/description)
+    is preserved so consumers can embed shortlist context directly into a
+    subagent brief without re-running the matcher.
+
+    Backward-compat read path: when a caller reads the field, it may
+    encounter the legacy flat list shape from before P16 (`[{phase, ...}, ...]`).
+    Use `read_active_capabilities()` to abstract over both.
 
     Best-effort: failures are ignored (this is a hint surface, not source
     of truth).
@@ -395,19 +412,81 @@ def cache_into_state(workdir: Path, result: Dict[str, Any]) -> None:
         state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
     except (OSError, json.JSONDecodeError):
         return
-    cap_list = state.get("activeCapabilities") or []
-    cap_list.append({
+
+    phase_key = str(result["phase"])
+    entry = {
         "phase": result["phase"],
         "intent": result["intent"][:240],
         "shortlist": [r["name"] for r in result["results"]],
+        "results": result["results"],
         "generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
-    })
-    # Keep last 50.
-    state["activeCapabilities"] = cap_list[-50:]
+    }
+
+    cap = state.get("activeCapabilities")
+    if isinstance(cap, list):
+        # Migrating from legacy flat-list shape: regroup into phase-keyed dict.
+        new_cap: Dict[str, List[Dict[str, Any]]] = {}
+        for old_entry in cap:
+            if not isinstance(old_entry, dict):
+                continue
+            old_phase = str(old_entry.get("phase", "?"))
+            new_cap.setdefault(old_phase, []).append(old_entry)
+        cap = new_cap
+    elif not isinstance(cap, dict):
+        cap = {}
+
+    bucket = list(cap.get(phase_key) or [])
+    bucket.append(entry)
+    # Keep the last 10 invocations per phase — fresher entries win on lookup.
+    cap[phase_key] = bucket[-10:]
+    state["activeCapabilities"] = cap
     try:
         state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def read_active_capabilities(
+    state: Dict[str, Any],
+    phase: int,
+    fallback_phase: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Return the most-recent shortlist results[] for `phase`.
+
+    Tolerates both the new phase-keyed dict shape and the legacy flat-list
+    shape so older state.json files keep working without an explicit
+    migration step. Returns `[]` when no cached shortlist matches.
+
+    `fallback_phase`: when no entry exists for `phase`, fall back to this
+    phase before giving up. Used by Phase 3 to read Phase 2's shortlist
+    when Phase 3 isn't separately scored.
+    """
+    cap = state.get("activeCapabilities")
+    if not cap:
+        return []
+    if isinstance(cap, dict):
+        bucket = cap.get(str(phase)) or []
+        if not bucket and fallback_phase is not None:
+            bucket = cap.get(str(fallback_phase)) or []
+        if not bucket:
+            return []
+        latest = bucket[-1]
+        return list(latest.get("results") or [])
+    if isinstance(cap, list):
+        # Legacy flat-list shape — pick the most recent matching phase entry.
+        for entry in reversed(cap):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("phase") == phase:
+                return list(entry.get("results") or [])
+        if fallback_phase is not None:
+            for entry in reversed(cap):
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("phase") == fallback_phase:
+                    return list(entry.get("results") or [])
+        return []
+    return []
 
 
 def main(argv: Optional[List[str]] = None) -> int:

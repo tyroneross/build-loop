@@ -362,6 +362,7 @@ def test_plugin_namespace_helper() -> None:
 
 
 def test_cache_into_state_appends(tmp_path: Path) -> None:
+    """P16: cache_into_state writes a phase-keyed dict, not a flat list."""
     state_path = tmp_path / ".build-loop" / "state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(json.dumps({"phase": "test"}), encoding="utf-8")
@@ -373,4 +374,7 @@ def test_cache_into_state_appends(tmp_path: Path) -> None:
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["phase"] == "test"  # preserved
     assert "activeCapabilities" in state
-    assert state["activeCapabilities"][-1]["shortlist"] == ["foo", "bar"]
+    assert isinstance(state["activeCapabilities"], dict), \
+        "P16: activeCapabilities must be a phase-keyed dict, not a flat list"
+    assert "1" in state["activeCapabilities"]
+    assert state["activeCapabilities"]["1"][-1]["shortlist"] == ["foo", "bar"]
