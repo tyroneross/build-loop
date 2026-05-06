@@ -500,7 +500,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-cache", action="store_true",
                         help="Do not append the result to state.json.activeCapabilities[]")
+    parser.add_argument("--cache-into-state", action="store_true",
+                        help="Explicitly cache the result to state.json.activeCapabilities[<phase>]. "
+                             "Caching already happens by default; this flag exists so callers "
+                             "(notably the orchestrator's mandatory Phase 1 invocation) can be "
+                             "explicit about intent. Mutually exclusive with --no-cache.")
     args = parser.parse_args(argv)
+
+    if args.no_cache and args.cache_into_state:
+        print("error: --no-cache and --cache-into-state are mutually exclusive",
+              file=sys.stderr)
+        return 2
 
     workdir = Path(args.workdir).resolve()
     registry = ensure_registry(workdir)
@@ -510,6 +520,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     result = shortlist(registry, args.phase, args.intent, args.kind, workdir=workdir)
+    # Default behavior is cache-on. --cache-into-state is an explicit reaffirmation
+    # that callers (e.g. the orchestrator's mandatory Phase 1 step) use to express
+    # intent and exercise the same atomic write path (cache_into_state) used by
+    # subagents reading via read_active_capabilities().
     if not args.no_cache:
         cache_into_state(workdir, result)
 
