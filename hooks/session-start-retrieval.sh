@@ -26,13 +26,40 @@ mkdir -p "$LOG_DIR" 2>/dev/null
 #    installed or running.
 ( command -v ollama >/dev/null 2>&1 && nohup ollama list </dev/null >/dev/null 2>&1 & )
 
-# Note on cross-encoder rerank: a SessionStart bash subshell warm() doesn't
-# help because the warmed model dies with the subshell — every recall.py
-# call is a fresh Python process that re-pays the ~5-6s sentence-transformers
-# load. Real fix is a long-running rerank daemon (FastAPI/gRPC) that holds
-# the model in memory across calls. Tracked as Phase G in research entry
-# build-loop-search-architecture. Until then, accept the cold-load cost on
-# the first recall.py invocation per session.
+# 1b. Rerank daemon (Phase G). The fix for the cold-load cliff: a
+#     long-running stdlib http.server holds bge-reranker-v2-m3 in memory
+#     across recall.py invocations. SessionStart spawns it once,
+#     fire-and-forget, with a PID-file single-instance guard so N
+#     concurrent SessionStart hooks don't create N daemons.
+#
+#     Earlier note (kept for memory): a bash-subshell warm() doesn't help
+#     because the warmed model dies with the subshell. The daemon fixes
+#     that by being a separate, persistent process the SessionStart hook
+#     only touches via spawn-if-not-running.
+DAEMON_PID_FILE="$LOG_DIR/rerank-daemon.pid"
+if [ -f "$SCRIPT_DIR/rerank_daemon.py" ]; then
+    DAEMON_PORT="${RERANK_DAEMON_PORT:-8765}"
+    daemon_alive=0
+    if [ -f "$DAEMON_PID_FILE" ]; then
+        existing_pid=$(cat "$DAEMON_PID_FILE" 2>/dev/null)
+        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+            daemon_alive=1
+        fi
+    fi
+    # Belt-and-suspenders: also probe the port — handles the case where
+    # the PID file got stale but a process is still bound to the port.
+    if [ "$daemon_alive" = "0" ]; then
+        if curl -fsS --max-time 0.2 "http://127.0.0.1:${DAEMON_PORT}/health" >/dev/null 2>&1; then
+            daemon_alive=1
+        fi
+    fi
+    if [ "$daemon_alive" = "0" ]; then
+        nohup python3 "$SCRIPT_DIR/rerank_daemon.py" \
+            </dev/null \
+            >>"$LOG_DIR/rerank-daemon.log" 2>&1 &
+        disown 2>/dev/null
+    fi
+fi
 
 # 2. Health canary, backgrounded so SessionStart returns immediately.
 #    Output goes to state.json + a rotating log; nothing reaches the

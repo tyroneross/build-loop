@@ -283,6 +283,21 @@ def render(
                 except Exception:  # noqa: BLE001
                     md = {}
             score = f.get("score")
+            # Wiki hits (Phase C) get a distinct prefix and surface the
+            # vault path so the user can jump to the source page.
+            if f.get("source") == "wiki":
+                label = f"[wiki] {f.get('subject')}"
+                if f.get("predicate"):
+                    label += f" § {f.get('predicate')}"
+                obj = (f.get("object") or "").replace("\n", " ")
+                wiki_path = f.get("wiki_path") or ""
+                line = (
+                    f"- score={score:.3f} {label}\n"
+                    f"  excerpt: {obj}\n"
+                    f"  wiki_path={wiki_path}\n"
+                )
+                out.append(line)
+                continue
             label = f"[{f.get('subject')} | {f.get('predicate')}]"
             obj = (f.get("object") or "").replace("\n", " ")
             confidence_label = (
@@ -335,6 +350,7 @@ def run_search(
     confidence_source: str | None = None,
     rerank_disabled: bool = False,
     graph_disabled: bool = False,
+    wiki_disabled: bool = False,
     decisions_dir: str | Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Execute the search pipeline for the requested mode.
@@ -373,12 +389,14 @@ def run_search(
         "vector_count": None,
         "sparse_count": None,
         "graph_count": None,
+        "wiki_count": None,
         "fused_count": None,
         "reranked_count": None,
         "embed_ms": 0,
         "vector_ms": 0,
         "sparse_ms": 0,
         "graph_ms": 0,
+        "wiki_ms": 0,
         "rrf_ms": 0,
         "rerank_ms": 0,
         "multiplier_ms": 0,
@@ -488,11 +506,36 @@ def run_search(
     else:
         leg_stats["graph_count"] = 0
 
-    # RRF fuse — three legs when graph hits exist, two otherwise.
+    # Wiki leg (Phase C). Federates Tyrone's Obsidian LLM Wiki via the
+    # subprocess CLI at ~/ObsidianVault/tools/scripts/llmwiki. The CLI
+    # does its own vector + lexical + PageRank rerank inside the vault;
+    # we treat each returned page as one ranked candidate and let RRF
+    # arbitrate against the in-repo legs. Empty when CLI is missing,
+    # the env disables it, or the call fails — graceful skip throughout.
+    wiki_hits: list[dict[str, Any]] = []
+    if not wiki_disabled:
+        try:
+            from wiki_client import wiki_search  # type: ignore  # noqa: PLC0415
+
+            t0 = _time.monotonic()
+            wiki_hits = wiki_search(query, k=limit * 2)
+            leg_stats["wiki_ms"] = int((_time.monotonic() - t0) * 1000)
+            leg_stats["wiki_count"] = len(wiki_hits)
+        except Exception as e:  # noqa: BLE001
+            log(f"recall: wiki leg failed ({e}); continuing without wiki")
+            wiki_hits = []
+            leg_stats["wiki_count"] = 0
+    else:
+        leg_stats["wiki_count"] = 0
+
+    # RRF fuse — up to four legs (vector, sparse, graph, wiki). Empty
+    # legs are skipped so the rrf_fuse contract still holds.
     t0 = _time.monotonic()
     legs_for_rrf: list[list[dict[str, Any]]] = [vector_hits, sparse_hits]
     if graph_hits:
         legs_for_rrf.append(graph_hits)
+    if wiki_hits:
+        legs_for_rrf.append(wiki_hits)
     fused = rrf_fuse(legs_for_rrf, k=60, limit=limit * 2)
     leg_stats["rrf_ms"] = int((_time.monotonic() - t0) * 1000)
     leg_stats["fused_count"] = len(fused)
@@ -549,6 +592,16 @@ def main(argv: list[str] | None = None) -> int:
             "In --mode hybrid, skip the Phase B knowledge-graph leg "
             "(BFS over markdown wikilinks + path mentions + decision "
             "citations). Useful for A/B safety even within hybrid mode."
+        ),
+    )
+    p.add_argument(
+        "--no-wiki",
+        action="store_true",
+        help=(
+            "In --mode hybrid, skip the Phase C wiki federation leg "
+            "(subprocess to Tyrone's Obsidian LLM Wiki via "
+            "~/ObsidianVault/tools/scripts/llmwiki). Useful for A/B "
+            "safety, or when running on a machine without the vault."
         ),
     )
     p.add_argument(
@@ -664,6 +717,7 @@ def main(argv: list[str] | None = None) -> int:
             confidence_source=args.confidence_source,
             rerank_disabled=args.no_rerank,
             graph_disabled=args.no_graph,
+            wiki_disabled=args.no_wiki,
             decisions_dir=args.decisions_dir,
         )
     except RuntimeError as e:
@@ -701,7 +755,15 @@ def main(argv: list[str] | None = None) -> int:
         timing["neighbor_ms"] = 0
 
     if not args.no_bump_last_accessed and facts:
-        bump_last_accessed(args.schema, [f["id"] for f in facts])
+        # Wiki hits live outside agent_memory.semantic_facts and have
+        # ids like 'wiki:page-id#section' (not UUIDs). Filter them out
+        # before bumping last_accessed or Postgres will raise.
+        bump_ids = [
+            f["id"] for f in facts
+            if f.get("source") != "wiki" and not str(f.get("id", "")).startswith("wiki:")
+        ]
+        if bump_ids:
+            bump_last_accessed(args.schema, bump_ids)
 
     text = render(args.query, facts, episodes, expanded, args.confidence_floor, args.char_budget)
     print(text)

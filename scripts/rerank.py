@@ -37,6 +37,7 @@ Public API:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -49,10 +50,23 @@ plateaus past ~100 (arXiv 2411.11767 "Drowning in Documents"). On a local
 M-series box, 50 is the speed/quality knee — saves ~30ms per query vs 100
 with negligible quality cost on build-loop's identifier-dense queries."""
 
+# Daemon (Phase G) — long-running process that holds the model in memory
+# across recall.py invocations. Probed lazily once per process; cached.
+DAEMON_HOST = os.environ.get("RERANK_DAEMON_HOST", "127.0.0.1")
+try:
+    DAEMON_PORT = int(os.environ.get("RERANK_DAEMON_PORT", "8765"))
+except ValueError:
+    DAEMON_PORT = 8765
+DAEMON_PROBE_TIMEOUT_S = 0.1  # 100ms — fast fail when daemon is down.
+DAEMON_CALL_TIMEOUT_S = 30.0  # cross-encoder forward pass + queue wait.
+
 # Module-level singleton state.
 _MODEL: Any | None = None
 _MODEL_DEVICE: str | None = None
 _FALLBACK_LOGGED: bool = False
+# Daemon probe cache: None = not yet probed, True/False = probe result.
+# Reset between tests via the same fixture that resets _MODEL.
+_DAEMON_AVAILABLE: bool | None = None
 
 _log = logging.getLogger("build_loop.rerank")
 if not _log.handlers:
@@ -136,6 +150,129 @@ def _ensure_loaded(model_id: str | None = None) -> Any | None:
     return _MODEL
 
 
+# ---------------------------------------------------------------------------
+# Daemon client (Phase G)
+# ---------------------------------------------------------------------------
+
+
+def _daemon_url(path: str) -> str:
+    return f"http://{DAEMON_HOST}:{DAEMON_PORT}{path}"
+
+
+def _probe_daemon() -> bool:
+    """One-shot probe of the rerank daemon's /health endpoint.
+
+    Cached for the process lifetime via `_DAEMON_AVAILABLE` so we don't
+    pay a probe per rerank() call. The cache is invalidated implicitly
+    if the daemon dies mid-process — in which case the next POST will
+    raise and `_call_daemon` returns None, forcing a fall-through to the
+    in-process path.
+    """
+    global _DAEMON_AVAILABLE
+    if _DAEMON_AVAILABLE is not None:
+        return _DAEMON_AVAILABLE
+    if os.environ.get("RERANK_FORCE_INPROCESS"):
+        _DAEMON_AVAILABLE = False
+        return False
+    try:
+        import urllib.request  # noqa: PLC0415
+
+        req = urllib.request.Request(_daemon_url("/health"), method="GET")
+        with urllib.request.urlopen(req, timeout=DAEMON_PROBE_TIMEOUT_S) as resp:  # noqa: S310
+            body = json.loads(resp.read().decode("utf-8"))
+        # Daemon is "available" iff it claims the model is warm. A daemon
+        # serving in degraded mode (model not loaded) returns 503 on POST,
+        # so treating warm=False as unavailable lets us fall back to the
+        # in-process path which may succeed via a different model load
+        # path (e.g. retry after a transient torch/sentence-transformers
+        # import error).
+        if body.get("ok") and body.get("warm"):
+            _DAEMON_AVAILABLE = True
+            _log.info(
+                "rerank daemon up at %s (model=%s device=%s)",
+                _daemon_url(""), body.get("model"), body.get("device"),
+            )
+            return True
+    except Exception as e:  # noqa: BLE001
+        _log.debug("rerank daemon probe failed: %s", e)
+    _DAEMON_AVAILABLE = False
+    return False
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON-serialize values that semantic_facts rows carry but stdlib
+    json doesn't natively handle.
+
+    Postgres returns datetime for `valid_from`, UUID for `id`, etc. The
+    cross-encoder only scores subject/predicate/object so we coerce the
+    rest to strings for transport. Round-trip integrity isn't required
+    — the daemon returns its own results dict and recall.py uses those
+    fields directly.
+    """
+    import datetime as _dt  # noqa: PLC0415
+    import uuid as _uuid  # noqa: PLC0415
+
+    if isinstance(obj, (_dt.datetime, _dt.date, _dt.time)):
+        return obj.isoformat()
+    if isinstance(obj, _uuid.UUID):
+        return str(obj)
+    if isinstance(obj, (set, frozenset)):
+        return list(obj)
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    # Last resort: stringify. Better than failing the whole rerank.
+    return str(obj)
+
+
+def _call_daemon(
+    query: str,
+    candidates: Sequence[dict[str, Any]],
+    top_k: int,
+) -> list[dict[str, Any]] | None:
+    """POST /rerank to the daemon. Returns None on any failure so the
+    caller can fall back to in-process scoring.
+    """
+    global _DAEMON_AVAILABLE
+    try:
+        import urllib.error  # noqa: PLC0415
+        import urllib.request  # noqa: PLC0415
+
+        body = json.dumps(
+            {
+                "query": query,
+                "candidates": list(candidates),
+                "top_k": int(top_k),
+            },
+            default=_json_default,
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            _daemon_url("/rerank"),
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=DAEMON_CALL_TIMEOUT_S) as resp:  # noqa: S310
+            payload = json.loads(resp.read().decode("utf-8"))
+        if not payload.get("ok"):
+            _log.warning("daemon rerank returned not-ok: %s", payload.get("error"))
+            return None
+        results = payload.get("results")
+        if not isinstance(results, list):
+            _log.warning("daemon rerank returned non-list results")
+            return None
+        return results
+    except urllib.error.HTTPError as e:
+        # 503 (model not warm) or 5xx — invalidate the cache so we don't
+        # keep hitting a degraded daemon for the rest of the process.
+        _log.warning("daemon HTTPError %s; falling back to in-process", e.code)
+        _DAEMON_AVAILABLE = False
+        return None
+    except Exception as e:  # noqa: BLE001
+        _log.warning("daemon call failed (%s); falling back to in-process", e)
+        _DAEMON_AVAILABLE = False
+        return None
+
+
 def _default_text_fn(row: dict[str, Any]) -> str:
     """Build the document text the cross-encoder scores against the query.
 
@@ -194,6 +331,15 @@ def rerank(
     if not query or not query.strip():
         # No query to rerank against; preserve input order.
         return list(candidates)[: top_k if top_k and top_k > 0 else None]
+
+    # Daemon route (Phase G): only when caller didn't inject a test model
+    # (DummyEncoder & friends MUST exercise the in-process glue).
+    if model is None and _probe_daemon():
+        # Effective top-k for the daemon: -1 / 0 / None means "return all".
+        effective_top_k = top_k if (top_k and top_k > 0) else len(candidates)
+        daemon_results = _call_daemon(query, candidates, effective_top_k)
+        if daemon_results is not None:
+            return daemon_results
 
     encoder = model if model is not None else _ensure_loaded()
     if encoder is None:
