@@ -63,6 +63,20 @@ mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit:
 
 **Return shape**: `{ incidents: [{ id, symptom, root_cause, fix, tags, created_at }, ...] }`. Surfaced here so a diagnostic check (e.g. "is the MCP actually returning anything?") doesn't have to traverse the skill abstraction.
 
+### 6. Backend health check (Priority 17)
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
+```
+
+**Why this exists**: `recall()` (step 3) gracefully degrades on Postgres-down or MCP-down — the orchestrator never visibly logs which backends responded. The health-check surface makes that explicit so the Phase 1 Assess brief can tell the user whether memory is at full or partial capacity.
+
+**Return shape**: stdout one-liner `runs: OK N entries | decisions: OK N entries | semantic: DOWN postgres_unavailable | debugger: DOWN mcp_unreachable`. Full JSON envelope is written to `state.json.architecture.backendHealth` (`{ runs: {ok, count}, decisions: {ok, count}, semantic: {ok, reason?}, debugger: {ok, reason?}, summary, generated_at, total_duration_ms }`).
+
+**Budget**: 5s per backend, 30s total. Exit 0 even when all backends are down — graceful degradation is the contract.
+
+**Surface in the Phase 1 Assess brief**: the orchestrator must echo the one-liner so the user can see backend availability before any work begins.
+
 ### Return-shape & exit-code summary
 
 | Step | Surface | Return shape | Empty-OK | On backend down |
@@ -72,6 +86,7 @@ mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit:
 | 3 | `memory_facade.py recall` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
 | 4 | `Skill("build-loop:debugging-memory")` | one-line text summary | yes | grep-fallback per `fallbacks.md#bug-memory` |
 | 5 | `mcp__plugin_build-loop-debugger__list` | `{ incidents: [...] }` | yes | step 4 already covered the fallback |
+| 6 | `scripts/backend_health.py` | one-liner + JSON envelope written to `state.json.architecture.backendHealth` | n/a | per-backend `ok: false` + `reason`; other backends still probable |
 
 ### Graceful-degradation matrix
 
