@@ -46,6 +46,23 @@ REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
 VALID_OUTCOMES = {"pass", "fail", "partial"}
 VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 
+# M2 — execution-state heartbeat (crash-recovery)
+EXECUTION_SCHEMA_VERSION = 1
+EXECUTION_VALID_PHASES = {"execute", "review", "iterate", "report"}
+EXECUTION_VALID_ACTIONS = {
+    "start",            # initialize execution block (Phase 1 Assess complete, before chunk dispatch)
+    "dispatch_chunk",   # move chunk_id queued → in_flight; refresh heartbeat
+    "return_chunk",     # move chunk_id in_flight → completed with status; refresh heartbeat
+    "phase_transition", # update phase field
+    "iterate_attempt",  # increment iterate_attempt (preserves 5x cap across resume)
+    "complete",         # phase=report; clean-completion sentinel
+}
+EXECUTION_RETURN_STATUSES = {
+    "fixed", "partial", "scope_breach", "deferred_architecture",
+    "evidence_stale", "plan_malformed", "needs_dependency", "failed",
+    "concurrent_modification_detected",
+}
+
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -146,6 +163,103 @@ def append_run_entry(state_path: Path, entry: dict) -> None:
             state["runs"] = runs
         runs.append(entry)
         atomic_write_bytes(state_path, (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def update_execution_state(
+    state_path: Path,
+    action: str,
+    *,
+    run_id: str | None = None,
+    chunk_id: str | None = None,
+    status: str | None = None,
+    phase: str | None = None,
+    queued_chunks: list[str] | None = None,
+    file_ownership: dict[str, list[str]] | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """M2 — atomic update of state.json.execution heartbeat block.
+
+    Args:
+        state_path: path to .build-loop/state.json
+        action: one of EXECUTION_VALID_ACTIONS
+        run_id: required for action='start'; ignored otherwise (read from existing block)
+        chunk_id: required for dispatch_chunk / return_chunk
+        status: required for return_chunk; one of EXECUTION_RETURN_STATUSES
+        phase: required for phase_transition; one of EXECUTION_VALID_PHASES
+        queued_chunks: required for action='start'; the initial work list
+        file_ownership: required for action='start'; chunk_id → list[file]
+        now: injection seam for tests
+
+    Returns the new execution block. Raises ValueError on bad input. Atomic via LockedFile.
+    Sub-5ms typical (one read, one write, one fsync, indented JSON).
+    """
+    if action not in EXECUTION_VALID_ACTIONS:
+        raise ValueError(f"action must be one of {sorted(EXECUTION_VALID_ACTIONS)}, got {action!r}")
+    ts = iso_utc(now)
+
+    with LockedFile(state_path):
+        state = read_json(state_path) or {}
+        if not isinstance(state, dict):
+            raise ValueError(f"{state_path} is not a JSON object at top level")
+        execution = state.get("execution")
+        if execution is not None and not isinstance(execution, dict):
+            raise ValueError(f"{state_path}.execution exists but is not an object (got {type(execution).__name__})")
+
+        if action == "start":
+            if not run_id or not isinstance(run_id, str):
+                raise ValueError("action='start' requires run_id")
+            if queued_chunks is None or not isinstance(queued_chunks, list):
+                raise ValueError("action='start' requires queued_chunks: list[str]")
+            if file_ownership is None or not isinstance(file_ownership, dict):
+                raise ValueError("action='start' requires file_ownership: dict[str, list[str]]")
+            execution = {
+                "schema_version": EXECUTION_SCHEMA_VERSION,
+                "run_id": run_id,
+                "phase": "execute",
+                "iterate_attempt": 0,
+                "in_flight_chunks": [],
+                "completed_chunks": [],
+                "queued_chunks": list(queued_chunks),
+                "file_ownership": {k: list(v) for k, v in file_ownership.items()},
+                "started_at": ts,
+                "last_heartbeat_at": ts,
+                "crashed_at": None,
+            }
+        else:
+            if not isinstance(execution, dict):
+                raise ValueError(f"action={action!r} requires an existing execution block (run start first)")
+            if action == "dispatch_chunk":
+                if not chunk_id:
+                    raise ValueError("action='dispatch_chunk' requires chunk_id")
+                if chunk_id in execution.get("queued_chunks", []):
+                    execution["queued_chunks"].remove(chunk_id)
+                if chunk_id not in execution.setdefault("in_flight_chunks", []):
+                    execution["in_flight_chunks"].append(chunk_id)
+            elif action == "return_chunk":
+                if not chunk_id:
+                    raise ValueError("action='return_chunk' requires chunk_id")
+                if status not in EXECUTION_RETURN_STATUSES:
+                    raise ValueError(f"status must be one of {sorted(EXECUTION_RETURN_STATUSES)}, got {status!r}")
+                if chunk_id in execution.get("in_flight_chunks", []):
+                    execution["in_flight_chunks"].remove(chunk_id)
+                execution.setdefault("completed_chunks", []).append({
+                    "chunk_id": chunk_id,
+                    "status": status,
+                    "completed_at": ts,
+                })
+            elif action == "phase_transition":
+                if phase not in EXECUTION_VALID_PHASES:
+                    raise ValueError(f"phase must be one of {sorted(EXECUTION_VALID_PHASES)}, got {phase!r}")
+                execution["phase"] = phase
+            elif action == "iterate_attempt":
+                execution["iterate_attempt"] = int(execution.get("iterate_attempt", 0)) + 1
+            elif action == "complete":
+                execution["phase"] = "report"
+
+        execution["last_heartbeat_at"] = ts
+        state["execution"] = execution
+        atomic_write_bytes(state_path, (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        return execution
 
 
 def append_experiment_row(jsonl_path: Path, row: dict) -> None:
@@ -352,4 +466,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-modified
+
