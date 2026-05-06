@@ -142,6 +142,14 @@ VALID_GOALS = {
 
 # Default embedding model version. Re-embed is required when the active
 # backend's model changes; the version stamp is what makes that detectable.
+#
+# Static fallback only — call sites that need accuracy should call
+# `embed_backend.active_model()` after at least one embed has run, which
+# returns the actual model the active backend is configured to use.
+# The literal here covers two cases: (1) tests that don't exercise the
+# embedder at all, and (2) doc-only writes that pre-date the bge-m3
+# Phase A migration. Phase A's Ollama default is bge-m3; the MLX default
+# remains mxbai-embed-large-v1.
 DEFAULT_EMBEDDING_MODEL_VERSION = "mxbai-embed-large-v1"
 
 VALID_EVENT_KINDS = {
@@ -777,11 +785,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--embed-model",
-        default="mxbai-embed-large",
+        default="bge-m3",
         help=(
             "Legacy flag kept for back-compat. Embedding model is now selected by "
             "$EMBED_BACKEND ('mlx' default, 'ollama' fallback) and $EMBED_MODEL via "
-            "scripts/embed_backend.py. Both backends produce 1024-dim vectors."
+            "scripts/embed_backend.py. Ollama default is bge-m3 (Phase A); MLX default "
+            "is mxbai-embed-large-v1. Both produce 1024-dim vectors but live in "
+            "DIFFERENT vector spaces — never mix without re-embedding."
         ),
     )
     return p.parse_args(argv)

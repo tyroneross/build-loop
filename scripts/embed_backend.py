@@ -5,8 +5,15 @@ Default: MLX (`mlx-community/mxbai-embed-large-v1`, 1024-dim). Faster
 per-call once warm (~10ms) and dramatically faster on batches (~2ms
 amortized at batch=10) compared to Ollama HTTP (~15ms warm).
 
-Fallback: Ollama (`mxbai-embed-large`, 1024-dim). Same base weights as
-the MLX model, so cross-backend cosine ≥ 0.96 on identical text.
+Fallback: Ollama (`bge-m3`, 1024-dim). Hybrid recall Phase A migrated
+the Ollama default from `mxbai-embed-large` to BGE-M3 — same dimension,
+better hybrid retrieval performance, ColBERT-mode-ready for Phase E
+late-interaction. The MLX default stays at mxbai-embed-large-v1 because
+no `mlx-community/bge-m3` weights are cached locally; cross-backend
+vectors are NOT comparable, so callers writing rows must record
+`embedding_model_version` and recall must re-embed when querying rows
+written by a different model. See research entry
+`build-loop-search-architecture` for rationale.
 
 The active backend is chosen on first call from $EMBED_BACKEND
 ({"mlx","ollama"}, default "mlx"). If MLX init fails (import error,
@@ -20,10 +27,12 @@ Public API:
   embed([t1, t2, ...])       -> list[list[float]]        (batched)
   dimension()                -> int                       (always 1024)
   active_backend()           -> "mlx" | "ollama"          (after first call)
+  active_model()             -> model id string           (after first call)
 
 Env vars:
   EMBED_BACKEND   "mlx" (default) or "ollama"
-  EMBED_MODEL     model id (defaults: mxbai for both backends)
+  EMBED_MODEL     model id (defaults: mxbai-embed-large-v1 for MLX,
+                  bge-m3 for Ollama)
   MLX_FORCE_FAIL  any truthy value forces fallback (used by tests)
 
 Output format: Python lists of floats. Callers don't need numpy / mlx.
@@ -43,7 +52,13 @@ from typing import Sequence
 
 EMBED_DIM = 1024
 MLX_DEFAULT_MODEL = "mlx-community/mxbai-embed-large-v1"
-OLLAMA_DEFAULT_MODEL = "mxbai-embed-large"
+# Phase A hybrid-recall migration: Ollama default switched from
+# `mxbai-embed-large` to `bge-m3`. Both are 1024-dim, so the pgvector
+# column dimension is unchanged, but the vector spaces are NOT
+# comparable. Rows written by mxbai must be re-embedded with bge-m3
+# before recall can fuse them with bge-m3-embedded queries — see
+# scripts/migrate_reembed_to_bgem3.py.
+OLLAMA_DEFAULT_MODEL = "bge-m3"
 OLLAMA_HOST = "127.0.0.1"
 OLLAMA_PORT = 11434
 OLLAMA_TIMEOUT_S = 60
@@ -234,6 +249,17 @@ def dimension() -> int:
 def active_backend() -> str:
     """Return 'mlx' or 'ollama' (after first embed call)."""
     return _select_backend().name()
+
+
+def active_model() -> str:
+    """Return the model identifier the active backend is configured to use.
+
+    Useful for `embedding_model_version` provenance: every write should
+    record which model produced the vector so cross-space mismatches can
+    be detected at recall time.
+    """
+    backend = _select_backend()
+    return getattr(backend, "model", None) or getattr(backend, "model_id", "unknown")
 
 
 def fallback_reason() -> str | None:

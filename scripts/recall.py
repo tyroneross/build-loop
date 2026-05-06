@@ -2,13 +2,22 @@
 """Hybrid retrieval entry point for repo-local episodic memory.
 
 Embeds the query via `embed_backend.embed` (MLX `mxbai-embed-large-v1`
-default, Ollama `mxbai-embed-large` fallback, both 1024-dim) and runs
-a hybrid search against `agent_memory.<schema>.semantic_facts` and
-`episode_events`:
+default, Ollama `bge-m3` fallback after Phase A — both 1024-dim but in
+DIFFERENT vector spaces) and runs a hybrid search against
+`agent_memory.<schema>.semantic_facts` and `episode_events`.
 
-  - cosine similarity over `embedding` (HNSW index)
-  - pg_trgm word_similarity over `subject`, `predicate`, `object`
-  - GIN to_tsvector full-text over episode_events.raw_content
+Phase A pipeline (--mode hybrid, default):
+  1. vector leg — pgvector cosine over `embedding` (HNSW index)
+  2. sparse leg — tsvector + ts_rank over `search_vector` GENERATED column
+  3. RRF fusion (k=60, Cormack/Clarke/Buettcher 2009)
+  4. cross-encoder rerank (BAAI/bge-reranker-v2-m3 via sentence-transformers,
+     MPS on Apple Silicon, CPU fallback) — optional dep [retrieval]
+  5. quality + recency multipliers (lifted from vault_vector.py)
+  6. trim to limit
+
+Legacy modes:
+  --mode vector_only — today's pure-cosine behavior (REGRESSION BASELINE)
+  --mode sparse_only — tsvector only (useful when Ollama is down)
 
 Results are scored, deduped, and a small text summary is written to
 stdout (target ~500-1500 tokens; truncated if longer).
@@ -317,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--embed-model",
-        default="mxbai-embed-large",
+        default="bge-m3",
         help="Legacy flag; ignored. Backend chosen via $EMBED_BACKEND.",
     )
     p.add_argument("--char-budget", type=int, default=8000)  # ~1500 tokens
