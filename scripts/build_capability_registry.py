@@ -77,7 +77,11 @@ CATEGORY_KEYWORDS = [
                       "state.json checkpoint", "resume_resolver",
                       "subagent envelope", "subagent_result", "heartbeat",
                       "incomplete build", "run_id provenance",
-                      "stop hook annotation")),
+                      "stop hook annotation",
+                      # Self-recursion / dogfood signals:
+                      "self-recursive", "self_recursive", "dogfood",
+                      "drift", "manifest version", "working-copy branch",
+                      "working copy", "branch echo")),
     ("architecture", ("architect", "navgator", "blast_radius", "blast-radius",
                       "blast radius", "scout", "scan repo", "component", "graph")),
     ("debugging",    ("debug", "debugger", "incident", "root cause", "root-cause",
