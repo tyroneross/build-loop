@@ -454,6 +454,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--project", default=None)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--workdir", default=str(REPO_ROOT_DEFAULT))
+    parser.add_argument(
+        "--skip-postgres",
+        action="store_true",
+        help="Skip the Postgres semantic backend entirely (no env-var read, no connect attempt). "
+             "Use when state.json.architecture.backendHealth.semantic.ok is false.",
+    )
     args = parser.parse_args(argv)
 
     env = recall(
@@ -462,6 +468,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         project=args.project,
         limit=args.limit,
         workdir=Path(args.workdir).resolve(),
+        skip_postgres=args.skip_postgres,
     )
     json.dump(env, sys.stdout, indent=2, default=str)
     sys.stdout.write("\n")

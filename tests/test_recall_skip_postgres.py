@@ -13,6 +13,7 @@ so consumers can tell intentional skip from genuine backend-down.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -105,6 +106,64 @@ def test_skip_postgres_default_off_preserves_legacy_behavior(workdir: Path) -> N
     # connection failure depending on host); both are valid pre-P21 tokens.
     assert any(r.startswith("db_unavailable") for r in reasons), (
         f"default path didn't emit any db_unavailable token: {reasons}"
+    )
+
+
+def test_cli_passthrough_skip_postgres_flag(workdir: Path) -> None:
+    """Priority 23: CLI must expose --skip-postgres so shell-out callers
+    (bridges, hooks, subprocess invocations from other phases) can opt out
+    of Postgres just like Python callers can. The flag must reach recall()
+    and produce `skipped_postgres` in the envelope's reasons[]."""
+    import subprocess
+    import sys
+
+    script = Path(mf.__file__).resolve()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--query", "anything",
+            "--workdir", str(workdir),
+            "--skip-postgres",
+            "--limit", "1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, (
+        f"CLI exit nonzero: {result.returncode}\nstderr: {result.stderr}"
+    )
+    envelope = json.loads(result.stdout)
+    reasons = envelope.get("reasons") or []
+    assert "skipped_postgres" in reasons, (
+        f"--skip-postgres did not propagate to recall(); reasons={reasons}"
+    )
+
+
+def test_cli_default_does_not_skip_postgres(workdir: Path) -> None:
+    """Sanity: omitting the CLI flag preserves legacy behavior."""
+    import subprocess
+    import sys
+
+    script = Path(mf.__file__).resolve()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--query", "anything",
+            "--workdir", str(workdir),
+            "--limit", "1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0
+    envelope = json.loads(result.stdout)
+    reasons = envelope.get("reasons") or []
+    assert "skipped_postgres" not in reasons, (
+        f"CLI leaked skipped_postgres without flag: {reasons}"
     )
 
 
