@@ -1,19 +1,34 @@
 """Pure analysis functions over the component/connection graph.
 
-No I/O — functions take ``components`` + ``connections`` and return reports.
-This makes them trivially unit-testable on synthetic graphs.
+Most functions are pure — they take ``components`` + ``connections`` and return
+reports, which makes them trivially unit-testable on synthetic graphs.
+
+The package-level dead-code helpers ``find_unused_packages`` and the
+``repo_root``-aware path through ``find_dead`` need disk access to read manifest
+files and re-walk source for external import names. Those helpers tolerate
+missing manifests and unreadable files, returning empty results rather than
+raising.
 
 Uses ``networkx`` for graph operations (cycles, descendants, reachability).
 """
 
 from __future__ import annotations
 
+import os
+import re
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import networkx as nx
 
 from .schemas import Component, Connection
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover — build-loop pins >=3.11 in pyproject.toml
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +275,15 @@ class DeadReport:
 def find_dead(
     components: Sequence[Component],
     connections: Sequence[Connection],
+    repo_root: Path | str | None = None,
 ) -> DeadReport:
+    """Find orphan components and (optionally) declared-but-unused packages.
+
+    The component-level orphan walk is pure — it only needs the in-memory graph.
+    Package-level detection requires ``repo_root`` so we can read manifests and
+    re-walk source for external import names. When ``repo_root`` is omitted the
+    report carries an empty ``unused_packages`` list and a note explaining why.
+    """
     g = build_digraph(components, connections)
     orphans: List[str] = []
     for c in components:
@@ -272,11 +295,253 @@ def find_dead(
             continue
         if g.degree(c.component_id) == 0:
             orphans.append(c.component_id)
+
+    unused: List[str] = []
+    notes: List[str] = []
+    if repo_root is not None:
+        try:
+            unused = find_unused_packages(repo_root, components)
+        except Exception as exc:  # never break a scan over manifest parsing
+            notes.append(f"package-level dead detection failed: {exc!r}")
+    else:
+        notes.append("package-level dead detection skipped (no repo_root passed)")
+
     return DeadReport(
         orphan_components=sorted(orphans),
-        unused_packages=[],  # populated in Chunk 8 alongside native lessons store.
-        notes=["Chunk 1 detects orphan components only; package-level dead detection arrives in Chunk 8."],
+        unused_packages=sorted(unused),
+        notes=notes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Package-level dead detection helpers
+# ---------------------------------------------------------------------------
+
+# Build/runtime tools that legitimately appear in manifests without being
+# imported from any source file. Conservative — false positives here are worse
+# than false negatives, since the goal is to surface real cleanup candidates.
+_RUNTIME_ONLY_NPM = {
+    "typescript", "tsx", "ts-node", "tsup", "tsc-watch",
+    "eslint", "prettier", "jest", "vitest", "mocha", "chai", "ava",
+    "vite", "webpack", "rollup", "esbuild", "parcel", "swc", "@swc/core",
+    "next", "nuxt", "remix", "astro", "expo",
+    "tailwindcss", "postcss", "autoprefixer", "sass", "less",
+    "husky", "lint-staged", "concurrently", "rimraf", "cross-env", "dotenv-cli",
+    "nodemon", "pm2", "supervisor",
+    "@types/node", "@types/jest", "@types/react", "@types/react-dom",
+}
+_RUNTIME_ONLY_NPM_PREFIXES = ("@types/", "eslint-", "@eslint/", "prettier-",
+                              "babel-", "@babel/", "vite-plugin-", "rollup-plugin-",
+                              "@rollup/", "webpack-")
+
+_RUNTIME_ONLY_PIP = {
+    "pip", "setuptools", "wheel", "build", "uv",
+    "pytest", "pytest-cov", "pytest-xdist", "pytest-mock",
+    "ruff", "black", "isort", "mypy", "pyright", "flake8",
+    "twine", "tox", "nox", "pre-commit", "coverage",
+}
+
+
+def _read_npm_packages(repo_root: Path) -> Set[str]:
+    pkg_json = repo_root / "package.json"
+    if not pkg_json.exists():
+        return set()
+    try:
+        import json
+        data = json.loads(pkg_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    declared: Set[str] = set()
+    for key in ("dependencies", "devDependencies", "peerDependencies",
+                "optionalDependencies"):
+        block = data.get(key) or {}
+        if isinstance(block, dict):
+            declared.update(block.keys())
+    return declared
+
+
+_PIP_REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.\-]+)")
+
+
+def _normalize_pip_name(name: str) -> str:
+    """PEP 503 normalization — case fold + collapse runs of ``-_.``."""
+    return re.sub(r"[-_.]+", "-", name).strip().lower()
+
+
+def _read_pip_packages(repo_root: Path) -> Set[str]:
+    declared: Set[str] = set()
+
+    pyproj = repo_root / "pyproject.toml"
+    if pyproj.exists():
+        try:
+            data = tomllib.loads(pyproj.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            data = {}
+        proj = data.get("project") or {}
+        for spec in proj.get("dependencies") or []:
+            m = _PIP_REQ_NAME_RE.match(spec or "")
+            if m:
+                declared.add(_normalize_pip_name(m.group(1)))
+        for group in (proj.get("optional-dependencies") or {}).values():
+            for spec in group or []:
+                m = _PIP_REQ_NAME_RE.match(spec or "")
+                if m:
+                    declared.add(_normalize_pip_name(m.group(1)))
+        for group in (data.get("dependency-groups") or {}).values():  # PEP 735
+            for spec in group or []:
+                if isinstance(spec, str):
+                    m = _PIP_REQ_NAME_RE.match(spec)
+                    if m:
+                        declared.add(_normalize_pip_name(m.group(1)))
+        uv_block = (data.get("tool") or {}).get("uv") or {}
+        for spec in uv_block.get("dev-dependencies") or []:
+            m = _PIP_REQ_NAME_RE.match(spec or "")
+            if m:
+                declared.add(_normalize_pip_name(m.group(1)))
+
+    for req_name in ("requirements.txt", "requirements-dev.txt"):
+        req = repo_root / req_name
+        if not req.exists():
+            continue
+        try:
+            for line in req.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith(("#", "-")):
+                    continue
+                m = _PIP_REQ_NAME_RE.match(line)
+                if m:
+                    declared.add(_normalize_pip_name(m.group(1)))
+        except OSError:
+            continue
+
+    return declared
+
+
+def _toplevel_external_npm(spec: str) -> Optional[str]:
+    if not spec or spec.startswith((".", "/", "node:")):
+        return None
+    if spec.startswith("@"):
+        # Scoped package: @scope/name[/sub] -> @scope/name
+        parts = spec.split("/", 2)
+        if len(parts) < 2:
+            return None
+        return f"{parts[0]}/{parts[1]}"
+    return spec.split("/", 1)[0]
+
+
+def _toplevel_external_py(module: str) -> Optional[str]:
+    if not module or module.startswith("."):
+        return None
+    return module.split(".", 1)[0]
+
+
+def _is_python_stdlib(name: str) -> bool:
+    # sys.stdlib_module_names is available on 3.10+ — covers us at >=3.11.
+    return name in getattr(sys, "stdlib_module_names", set())
+
+
+def _used_external_packages(
+    repo_root: Path,
+    components: Sequence[Component],
+) -> Tuple[Set[str], Set[str]]:
+    """Return (used_npm_packages, used_pip_packages_normalized)."""
+    # Local import to avoid a top-of-module cycle: scanner imports schemas
+    # eagerly; analysis is otherwise stdlib + networkx only.
+    from .scanner import (
+        JS_EXTS, PY_EXTS, TS_EXTS,
+        _py_imports, _resolve_py_import,
+        _ts_imports, _resolve_ts_import,
+    )
+
+    rel_files: Set[str] = set()
+    file_paths: List[Tuple[str, str]] = []  # (rel, ext)
+    for c in components:
+        rel = c.metadata.get("file") if c.metadata else None
+        if not rel:
+            continue
+        rel_files.add(rel)
+        file_paths.append((rel, os.path.splitext(rel)[1].lower()))
+
+    used_npm: Set[str] = set()
+    used_pip: Set[str] = set()
+
+    for rel, ext in file_paths:
+        full = repo_root / rel
+        try:
+            source = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if ext in PY_EXTS:
+            for spec_str, _line in _py_imports(source):
+                if _resolve_py_import(spec_str, rel, rel_files) is not None:
+                    continue  # in-tree
+                top = _toplevel_external_py(spec_str)
+                if top and not _is_python_stdlib(top):
+                    used_pip.add(_normalize_pip_name(top))
+        elif ext in TS_EXTS or ext in JS_EXTS:
+            is_tsx = ext == ".tsx"
+            for spec_str, _line in _ts_imports(source, is_tsx):
+                if _resolve_ts_import(spec_str, rel, rel_files) is not None:
+                    continue  # in-tree
+                top = _toplevel_external_npm(spec_str)
+                if top:
+                    used_npm.add(top)
+    return used_npm, used_pip
+
+
+# Map normalized pip names back to the canonical distribution name where the
+# import name diverges. Conservative — only entries that bite in practice. Each
+# row says "if this distribution is declared but not imported, look for the
+# import name on the right before flagging".
+_PIP_IMPORT_ALIASES: Dict[str, Set[str]] = {
+    "pyyaml":               {"yaml"},
+    "psycopg":              {"psycopg"},
+    "psycopg-binary":       {"psycopg"},
+    "beautifulsoup4":       {"bs4"},
+    "pillow":               {"pil"},
+    "scikit-learn":         {"sklearn"},
+    "opencv-python":        {"cv2"},
+    "google-cloud-storage": {"google"},
+    "google-api-python-client": {"googleapiclient", "google"},
+}
+
+
+def find_unused_packages(
+    repo_root: Path | str,
+    components: Sequence[Component],
+) -> List[str]:
+    """Return packages declared in manifests but never imported from source.
+
+    Filters out well-known build/runtime tools that legitimately appear in
+    manifests without an explicit import (linters, bundlers, type stubs, etc.).
+    """
+    repo_root = Path(repo_root)
+    declared_npm = _read_npm_packages(repo_root)
+    declared_pip = {_normalize_pip_name(p) for p in _read_pip_packages(repo_root)}
+    used_npm, used_pip = _used_external_packages(repo_root, components)
+
+    unused: List[str] = []
+
+    for pkg in declared_npm:
+        if pkg in _RUNTIME_ONLY_NPM:
+            continue
+        if any(pkg.startswith(prefix) for prefix in _RUNTIME_ONLY_NPM_PREFIXES):
+            continue
+        if pkg in used_npm:
+            continue
+        unused.append(pkg)
+
+    for pkg in declared_pip:
+        if pkg in _RUNTIME_ONLY_PIP:
+            continue
+        if pkg in used_pip:
+            continue
+        aliases = _PIP_IMPORT_ALIASES.get(pkg, set())
+        if aliases and any(_normalize_pip_name(a) in used_pip for a in aliases):
+            continue
+        unused.append(pkg)
+
+    return unused
 
 
 # ---------------------------------------------------------------------------

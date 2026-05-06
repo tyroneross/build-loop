@@ -276,16 +276,20 @@ def cmd_dead(args: argparse.Namespace) -> int:
     if not comps:
         print("No index found. Run `scan` first.", file=sys.stderr)
         return 2
-    report = A.find_dead(comps, conns)
+    report = A.find_dead(comps, conns, repo_root=repo)
     if args.json:
         print(json.dumps({"ok": True, **report.to_dict()}, indent=2))
     else:
-        if not report.orphan_components:
-            print("dead ok — no orphans")
-        else:
+        if not report.orphan_components and not report.unused_packages:
+            print("dead ok — no orphans, no unused packages")
+        if report.orphan_components:
             print(f"orphan components ({len(report.orphan_components)}):")
             for cid in report.orphan_components:
                 print(f"  {cid}")
+        if report.unused_packages:
+            print(f"unused packages ({len(report.unused_packages)}):")
+            for pkg in report.unused_packages:
+                print(f"  {pkg}")
     return 0
 
 

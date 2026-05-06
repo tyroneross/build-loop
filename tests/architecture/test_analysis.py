@@ -121,3 +121,87 @@ def test_find_dead_orphan_only() -> None:
     # A and B are connected, must NOT be orphans.
     assert "A" not in report.orphan_components
     assert "B" not in report.orphan_components
+    # Without repo_root, package-level detection is skipped (notes explain why).
+    assert report.unused_packages == []
+    assert any("repo_root" in n for n in report.notes)
+
+
+# ---------------------------------------------------------------------------
+# Package-level dead detection
+# ---------------------------------------------------------------------------
+
+def _make_file_component(rel: str) -> Component:
+    return Component(
+        component_id=f"COMP_{rel.replace('/', '_')}",
+        name=rel.rsplit(".", 1)[0],
+        type="component",
+        role={"purpose": "", "layer": "backend", "critical": False},
+        source={"detection_method": "auto", "config_files": [rel], "confidence": 1.0},
+        metadata={"file": rel, "kind": "source-file"},
+        stable_id=f"STABLE_{rel}",
+    )
+
+
+def test_find_unused_packages_npm(tmp_path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"dependencies": {"left-pad": "^1.0.0", "react": "^18.0.0", '
+        '"@scope/used": "^1.0.0", "@scope/dead": "^1.0.0"}, '
+        '"devDependencies": {"typescript": "^5.0.0", "vite": "^5.0.0"}}',
+        encoding="utf-8",
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.ts").write_text(
+        "import React from 'react';\nimport {x} from '@scope/used/sub';\n",
+        encoding="utf-8",
+    )
+    components = [_make_file_component("src/app.ts")]
+    from build_loop.architecture.analysis import find_unused_packages
+    unused = find_unused_packages(tmp_path, components)
+    # left-pad declared, never imported
+    assert "left-pad" in unused
+    # @scope/dead declared, never imported (scoped)
+    assert "@scope/dead" in unused
+    # Imported packages must NOT appear
+    assert "react" not in unused
+    assert "@scope/used" not in unused
+    # Build-only tools must be filtered out even though they're declared
+    assert "typescript" not in unused
+    assert "vite" not in unused
+
+
+def test_find_unused_packages_pip(tmp_path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "0"\n'
+        'dependencies = ["requests>=2", "pyyaml", "left-pad-py"]\n'
+        '[project.optional-dependencies]\ntest = ["pytest>=8"]\n',
+        encoding="utf-8",
+    )
+    src = tmp_path / "demo"
+    src.mkdir()
+    (src / "main.py").write_text(
+        "import requests\nimport yaml\nimport os\n",
+        encoding="utf-8",
+    )
+    components = [_make_file_component("demo/main.py")]
+    from build_loop.architecture.analysis import find_unused_packages
+    unused = find_unused_packages(tmp_path, components)
+    # Declared but never imported
+    assert "left-pad-py" in unused
+    # requests imported directly
+    assert "requests" not in unused
+    # pyyaml imports as `yaml` — alias map must save it
+    assert "pyyaml" not in unused
+    # pytest is in the runtime-only allowlist
+    assert "pytest" not in unused
+
+
+def test_find_dead_with_repo_root_populates_unused(tmp_path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"dependencies": {"unused-dep": "^1.0.0"}}', encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "x.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    components = [_make_file_component("src/x.ts")]
+    report = find_dead(components, [], repo_root=tmp_path)
+    assert "unused-dep" in report.unused_packages

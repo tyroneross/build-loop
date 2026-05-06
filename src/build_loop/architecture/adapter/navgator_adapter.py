@@ -460,7 +460,7 @@ class Adapter:
         comps, conns = self._load_graph(wd)
         if not comps:
             return {"ok": False, "error": "No index found. Run `scan` first."}
-        report = A.find_dead(comps, conns)
+        report = A.find_dead(comps, conns, repo_root=wd)
         return {"ok": True, **report.to_dict()}
 
     # -- Escalation-only capabilities --------------------------------------

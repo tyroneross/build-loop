@@ -1,9 +1,11 @@
 """Lessons store — read/write ``.build-loop/architecture/lessons.json``.
 
 Mirrors NavGator's lesson shape (id, category, pattern, signature, severity,
-context, example, validation, promoted). Chunk 1 ships the storage primitives
-only; Chunk 8 adds ingestion, promotion logic, and back-pressure into Phase 1
-Assess.
+context, example, validation, promoted). The ingestion + promotion pipeline
+lives at script-layer (``scripts/capture_arch_violation.py`` →
+``scripts/promote_violation_to_lesson.py``) and the cross-project sync at
+``scripts/sync_navgator_lessons.py``; this module owns the on-disk shape and
+basic CRUD.
 """
 
 from __future__ import annotations
