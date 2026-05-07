@@ -283,6 +283,8 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 
 **Goal**: Break work into executable steps, then optimize the plan before execution.
 
+0. **If no plan exists yet**: check whether `.build-loop/plan.md` is absent or empty. If so, invoke `Skill("build-loop:spec-writing")` to draft a build-loop-compatible plan markdown before proceeding. The spec-writing skill walks the 8-item completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation) and runs `check_checklist.py` + `plan-critic` on the output. It writes the plan to `docs/plans/<feature-slug>.md` and commits it before any implementation branches are cut. Only continue to step 1 once the spec-writing skill returns a plan path. Skip this step when a valid plan already exists and passed `plan-verify` on the previous run.
+
 1. **Invoke `writing-plans` skill** for detailed task breakdown
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
