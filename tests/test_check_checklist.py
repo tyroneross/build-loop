@@ -40,7 +40,12 @@ def _run(plan_path: Path, *, quiet: bool = True) -> tuple[int, dict]:
 
 
 def _all_8_items_answered() -> str:
-    """Return a plan markdown with all 8 checklist items properly answered."""
+    """
+    Return a plan markdown with all 14 checklist items properly answered.
+    Named _all_8_items_answered for backward compat with existing tests;
+    now includes items 9-14 as the verifier requires all 14.
+    Does not write a sibling handoff file — item 14 is answered N/A.
+    """
     return """\
 # Plan: Test Feature
 
@@ -53,6 +58,12 @@ Item 5 — Server/client boundary: lib/podcast-accessor.ts has import 'server-on
 Item 6 — Concurrency: Prisma upsert on unique(userId, episodeId) index; no transaction needed
 Item 7 — Observability: structuredLog on each LLM call with userId, charCount, latencyMs, cost
 Item 8 — Input validation: Zod schema z.object({episodeId: z.string().uuid()}) at top of POST handler
+Item 9 — Stable ID traceability: N/A: no P0 scope in this patch
+Item 10 — JSON spec object: N/A: doc-only change, no spec object required
+Item 11 — Blocking-and-novel question gate: no open questions; all non-blocking resolved as assumptions
+Item 12 — Low-reversibility ADRs: N/A: all decisions are reversible
+Item 13 — Analytical lens: N/A: trivial patch, no analytical lens required
+Item 14 — Handoff document: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -114,7 +125,7 @@ Some scope.
 
 
 def _partial_checklist(answered_count: int) -> str:
-    """Answer only the first `answered_count` items."""
+    """Answer only the first `answered_count` items (out of 14)."""
     all_items = [
         "Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts",
         "Item 2 — External APIs: N/A: no external APIs",
@@ -124,6 +135,12 @@ def _partial_checklist(answered_count: int) -> str:
         "Item 6 — Concurrency: Prisma upsert on unique index",
         "Item 7 — Observability: structuredLog with userId and outcome",
         "Item 8 — Input validation: Zod schema at route handler entry",
+        "Item 9 — Stable ID traceability: N/A: no P0 scope",
+        "Item 10 — JSON spec object: N/A: doc-only change",
+        "Item 11 — Blocking-and-novel question gate: N/A: no open questions",
+        "Item 12 — Low-reversibility ADRs: N/A: all reversible",
+        "Item 13 — Analytical lens: JTBD — fuzzy user problem space",
+        "Item 14 — Handoff document: N/A: no implementation tasks",
     ]
     lines = "\n".join(all_items[:answered_count])
     return f"""\
@@ -140,6 +157,10 @@ Partial spec for testing.
 
 
 def _placeholder_answers() -> str:
+    """
+    Items 1-6: placeholder answers (invalid). Items 7-8: answered. Items 9-14: answered N/A.
+    Expect 6 bad findings (items 1-6).
+    """
     return """\
 # Plan: Placeholder Answers
 
@@ -152,6 +173,12 @@ Item 5 — Server/client boundary: none
 Item 6 — Concurrency:
 Item 7 — Observability: N/A: no side effects here, logging not needed
 Item 8 — Input validation: Zod schema at route handler entry with z.object({id: z.string()})
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only change
+Item 11 — Blocking-and-novel question gate: N/A: no open questions
+Item 12 — Low-reversibility ADRs: N/A: all reversible
+Item 13 — Analytical lens: N/A: trivial change
+Item 14 — Handoff document: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -204,18 +231,19 @@ class TestNoChecklistBlock:
         _, payload = _run(plan)
         assert payload["checklist_found"] is False
 
-    def test_all_8_flagged(self, tmp_path: Path) -> None:
+    def test_all_14_flagged(self, tmp_path: Path) -> None:
         plan = tmp_path / "plan.md"
         plan.write_text(_no_checklist_block(), encoding="utf-8")
         _, payload = _run(plan)
-        assert payload["missing_count"] == 8
+        assert payload["missing_count"] == 14
 
 
 class TestPartialChecklist:
     @pytest.mark.parametrize("answered,expected_missing", [
-        (0, 8),
-        (4, 4),
-        (7, 1),
+        (0, 14),
+        (4, 10),
+        (7, 7),
+        (13, 1),
     ])
     def test_partial_flags_correct_count(
         self, tmp_path: Path, answered: int, expected_missing: int
@@ -250,7 +278,6 @@ class TestPlaceholderAnswers:
     def test_na_with_reason_counts_as_answered(self, tmp_path: Path) -> None:
         """'N/A: <reason>' must pass — it's a legitimate answer."""
         plan = tmp_path / "plan.md"
-        # Use partial checklist — first 3 items use N/A style
         content = """\
 # Plan: NA Test
 
@@ -263,6 +290,12 @@ Item 5 — Server/client boundary: lib/widget-accessor.ts has import 'server-onl
 Item 6 — Concurrency: Prisma upsert on unique(userId, widgetId)
 Item 7 — Observability: structuredLog on widget create with userId and widgetType
 Item 8 — Input validation: Zod at POST /api/widgets with z.object({type: z.string()})
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only change
+Item 11 — Blocking-and-novel question gate: N/A: no open questions
+Item 12 — Low-reversibility ADRs: N/A: all decisions are reversible
+Item 13 — Analytical lens: N/A: trivial widget patch
+Item 14 — Handoff document: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -298,8 +331,409 @@ class TestJsonOutputShape:
             for key in ("item_id", "label", "status"):
                 assert key in f, f"Finding missing key '{key}': {f}"
 
-    def test_exactly_8_findings(self, tmp_path: Path) -> None:
+    def test_exactly_14_findings(self, tmp_path: Path) -> None:
         plan = tmp_path / "plan.md"
         plan.write_text(_all_8_items_answered(), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 8
+        assert len(payload["findings"]) == 14
+
+    def test_structural_warnings_key_present(self, tmp_path: Path) -> None:
+        """structural_warnings must always be present in output (may be empty list)."""
+        plan = tmp_path / "plan.md"
+        plan.write_text(_all_8_items_answered(), encoding="utf-8")
+        _, payload = _run(plan)
+        assert "structural_warnings" in payload
+        assert "structural_warning_count" in payload
+
+    def test_exactly_14_findings_with_items_9_to_14(self, tmp_path: Path) -> None:
+        """When all 14 items are answered, findings list has 14 entries."""
+        plan = tmp_path / "plan.md"
+        plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
+        _, payload = _run(plan)
+        assert len(payload["findings"]) == 14, (
+            f"Expected 14 findings; got {len(payload['findings'])}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers for items 9-14 tests
+# ---------------------------------------------------------------------------
+
+def _all_14_items_answered(tmp_path: Path) -> str:
+    """
+    Full plan with all 14 checklist items answered plus structural elements
+    required by items 9-14: ID chains, JSON spec section, ADR heading,
+    analytical lens, and a sibling .handoff.md (written by the fixture helper).
+    """
+    # Write the sibling handoff file so item 14 check passes
+    handoff = tmp_path / "plan.handoff.md"
+    handoff.write_text(
+        "# Handoff: plan\n\nWhen implementing F-01, read ADR-001 and satisfy T-01.\n",
+        encoding="utf-8",
+    )
+    return """\
+# Plan: Test Feature
+
+<!-- checklist
+Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts (grep confirmed, 12 uses)
+Item 2 — External APIs: OpenAI Chat API — 10,000 TPM, 500 RPM per org; max 4096 tokens
+Item 3 — Rate-limit criterion: 10 calls/hour per user for OpenAI Chat; 429 triggers retry
+Item 4 — Discoverability: Nav → Dashboard → New Feature tab; empty state shows "Get started" CTA
+Item 5 — Server/client boundary: lib/podcast-accessor.ts has import 'server-only'; types in lib/podcast-shared.ts
+Item 6 — Concurrency: Prisma upsert on unique(userId, episodeId) index; no transaction needed
+Item 7 — Observability: structuredLog on each LLM call with userId, charCount, latencyMs, cost
+Item 8 — Input validation: Zod schema z.object({episodeId: z.string().uuid()}) at top of POST handler
+Item 9 — Stable ID traceability: U-01 → F-01 → D-01 → T-01 trace chain documented in Locked Decisions
+Item 10 — JSON spec object: Spec Object (JSON) section present with needs[], features[], tests[]
+Item 11 — Blocking-and-novel question gate: all open questions carry blocking-test annotation; non-blocking ones converted to assumptions
+Item 12 — Low-reversibility ADRs: ADR-001 covers DB choice (Postgres); ADR-002 covers auth provider (Better Auth)
+Item 13 — Analytical lens: QFD — need-to-feature mapping for requirements; DSM for cross-component deps
+Item 14 — Handoff document: plan.handoff.md generated alongside this plan
+-->
+
+## Goal
+
+Add podcast feature with LLM summarisation.
+
+## Locked Decisions
+
+Analytical lens: QFD — need-to-feature mapping
+
+| Decision | Type | ADR |
+|----------|------|-----|
+| PostgreSQL as primary DB | low-reversibility | ADR-001 |
+| Better Auth for auth provider | low-reversibility | ADR-002 |
+
+Trace: U-01 (user needs podcast summary) → F-01 (summarisation endpoint) → D-01 (summary text field) → T-01 (acceptance: returns 200 with summary)
+
+## Scope
+
+In scope: summarisation endpoint.
+
+### Out of scope
+
+Mobile app changes.
+
+## Spec Object (JSON)
+
+```json
+{
+  "needs": [{"id": "U-01", "description": "User needs podcast summary", "priority": "P0"}],
+  "features": [{"id": "F-01", "need_ids": ["U-01"], "description": "Summarisation endpoint"}],
+  "data_points": [{"id": "D-01", "feature_ids": ["F-01"], "description": "summary text field"}],
+  "tests": [{"id": "T-01", "feature_ids": ["F-01"], "description": "Returns 200 with summary"}],
+  "adrs": [
+    {"id": "A-01", "decision": "PostgreSQL", "alternatives": ["MySQL", "SQLite"], "rollback": "Dump and restore"},
+    {"id": "A-02", "decision": "Better Auth", "alternatives": ["NextAuth", "Clerk"], "rollback": "Swap provider config"}
+  ]
+}
+```
+
+## ADR-001: PostgreSQL
+
+Context: Need a relational DB. Alternatives: MySQL (less native jsonb), SQLite (no concurrent writes). Rollback: pg_dump + restore.
+
+## ADR-002: Better Auth
+
+Context: Auth provider choice. Alternatives: NextAuth (more boilerplate), Clerk (vendor lock-in). Rollback: swap provider config + migrate sessions.
+
+## Six-Commit Table
+
+| # | Commit subject | Files owned | Depends on |
+|---|----------------|-------------|------------|
+| 1 | feat(api): add summarise endpoint | app/api/summarise/route.ts | — |
+
+## F-Criteria (functional)
+
+| Criterion | Pass condition | Grader |
+|-----------|---------------|--------|
+| Auth | 401 on unauth | curl |
+| F-01 [P0] | Returns 200 with summary text T-01 | integration test |
+
+## Q-Criteria (quality)
+
+| Criterion | Pass condition | Grader |
+|-----------|---------------|--------|
+| TypeScript | tsc exits 0 | CI |
+
+## Risks
+
+None identified.
+
+## Out of Scope
+
+Mobile app changes.
+"""
+
+
+def _plan_missing_items_9_to_14(tmp_path: Path) -> str:
+    """Plan with items 1-8 answered but items 9-14 missing from checklist block."""
+    return """\
+# Plan: Partial Feature
+
+<!-- checklist
+Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts
+Item 2 — External APIs: N/A: no external APIs
+Item 3 — Rate-limit criterion: N/A: no paid APIs
+Item 4 — Discoverability: Nav → Settings → Feature tab; empty state CTA
+Item 5 — Server/client boundary: import 'server-only' in lib/accessor.ts
+Item 6 — Concurrency: Prisma upsert on unique index
+Item 7 — Observability: structuredLog with userId and outcome
+Item 8 — Input validation: Zod schema at route handler entry
+-->
+
+## Goal
+
+Missing items 9-14 from checklist.
+"""
+
+
+def _plan_no_json_spec_section() -> str:
+    """Plan with all 14 checklist items answered but no ## Spec Object (JSON) section."""
+    return """\
+# Plan: No JSON Spec
+
+<!-- checklist
+Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts
+Item 2 — External APIs: N/A
+Item 3 — Rate-limit criterion: N/A
+Item 4 — Discoverability: N/A: API-only
+Item 5 — Server/client boundary: N/A: server-only
+Item 6 — Concurrency: Prisma upsert
+Item 7 — Observability: structuredLog on create
+Item 8 — Input validation: Zod at POST handler
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: present
+Item 11 — Blocking-and-novel question gate: no open questions; all non-blocking resolved as assumptions
+Item 12 — Low-reversibility ADRs: N/A: all decisions are reversible
+Item 13 — Analytical lens: JTBD — fuzzy user problem space
+Item 14 — Handoff document: N/A: no implementation tasks
+-->
+
+## Goal
+
+Missing the actual JSON spec section despite the checklist claiming it is present.
+
+## Locked Decisions
+
+Analytical lens: JTBD
+"""
+
+
+def _plan_open_questions_without_annotation() -> str:
+    """Plan with Open Questions section but entries missing blocking-test annotation."""
+    return """\
+# Plan: Bad Open Questions
+
+<!-- checklist
+Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts
+Item 2 — External APIs: N/A
+Item 3 — Rate-limit criterion: N/A
+Item 4 — Discoverability: N/A: API-only
+Item 5 — Server/client boundary: N/A
+Item 6 — Concurrency: Prisma upsert
+Item 7 — Observability: structuredLog
+Item 8 — Input validation: Zod
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only
+Item 11 — Blocking-and-novel question gate: open questions annotated
+Item 12 — Low-reversibility ADRs: N/A
+Item 13 — Analytical lens: QFD
+Item 14 — Handoff document: N/A
+-->
+
+## Goal
+
+Open questions test.
+
+## Locked Decisions
+
+Analytical lens: QFD
+
+## Open Questions
+
+- Should we support multi-tenant mode?
+- Which cache TTL to use?
+
+## Risks
+
+None.
+"""
+
+
+def _plan_with_annotated_open_questions() -> str:
+    """Plan with Open Questions properly annotated with blocking-test references."""
+    return """\
+# Plan: Good Open Questions
+
+<!-- checklist
+Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts
+Item 2 — External APIs: N/A
+Item 3 — Rate-limit criterion: N/A
+Item 4 — Discoverability: N/A: API-only
+Item 5 — Server/client boundary: N/A
+Item 6 — Concurrency: Prisma upsert
+Item 7 — Observability: structuredLog
+Item 8 — Input validation: Zod
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only
+Item 11 — Blocking-and-novel question gate: all questions carry blocking-test annotations
+Item 12 — Low-reversibility ADRs: N/A
+Item 13 — Analytical lens: QFD
+Item 14 — Handoff document: N/A
+-->
+
+## Goal
+
+Good open questions test.
+
+## Locked Decisions
+
+Analytical lens: QFD
+
+## Open Questions
+
+- Should we support multi-tenant mode? blocking-test: T-05
+- Which cache TTL to use? blocking-test: T-07
+
+## Risks
+
+None.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Tests for items 9-14
+# ---------------------------------------------------------------------------
+
+class TestItems9To14ChecklistBlock:
+    """Items 9-14 checklist block presence — exit code and finding counts."""
+
+    def test_missing_items_9_to_14_causes_exit_1(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_plan_missing_items_9_to_14(tmp_path), encoding="utf-8")
+        code, payload = _run(plan)
+        assert code == 1
+
+    def test_missing_items_9_to_14_flagged_correctly(self, tmp_path: Path) -> None:
+        """6 items (9-14) missing → missing_count includes those 6."""
+        plan = tmp_path / "plan.md"
+        plan.write_text(_plan_missing_items_9_to_14(tmp_path), encoding="utf-8")
+        _, payload = _run(plan)
+        assert payload["missing_count"] == 6, (
+            f"Expected 6 missing items; got {payload['missing_count']}"
+        )
+
+    def test_all_14_items_answered_exits_0(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
+        code, payload = _run(plan)
+        assert code == 0, f"Expected exit 0; findings: {payload['findings']}"
+
+    def test_all_14_items_zero_missing(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
+        _, payload = _run(plan)
+        assert payload["missing_count"] == 0
+
+
+class TestStructuralWarningsItem10:
+    """Item 10: ## Spec Object (JSON) section must exist."""
+
+    def test_no_json_spec_section_raises_warning(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_plan_no_json_spec_section(), encoding="utf-8")
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_10_json_spec_object" in warn_ids, (
+            f"Expected item_10 warning; got: {warn_ids}"
+        )
+
+    def test_json_spec_section_present_no_warning(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_10_json_spec_object" not in warn_ids
+
+
+class TestStructuralWarningsItem11:
+    """Item 11: Open Questions entries must carry blocking-test annotation."""
+
+    def test_open_questions_without_annotation_warns(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_plan_open_questions_without_annotation(), encoding="utf-8")
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_11_blocking_and_novel_question_gate" in warn_ids
+
+    def test_annotated_open_questions_no_warning(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_plan_with_annotated_open_questions(), encoding="utf-8")
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_11_blocking_and_novel_question_gate" not in warn_ids
+
+
+class TestStructuralWarningsItem13:
+    """Item 13: Analytical lens line must appear in the plan."""
+
+    def test_missing_lens_line_warns(self, tmp_path: Path) -> None:
+        # The checklist block has "Item 13 — Analytical lens: JTBD" but the body
+        # has no standalone "Analytical lens:" line. The checker strips the checklist
+        # block before searching the body, so it should fire the warning.
+        content = """\
+# Plan: No Lens
+
+<!-- checklist
+Item 1 — Auth guard: N/A
+Item 2 — External APIs: N/A
+Item 3 — Rate-limit criterion: N/A
+Item 4 — Discoverability: N/A
+Item 5 — Server/client boundary: N/A
+Item 6 — Concurrency: N/A
+Item 7 — Observability: N/A
+Item 8 — Input validation: N/A
+Item 9 — Stable ID traceability: N/A
+Item 10 — JSON spec object: N/A
+Item 11 — Blocking-and-novel question gate: N/A
+Item 12 — Low-reversibility ADRs: N/A
+Item 13 — Analytical lens: JTBD for fuzzy user scope
+Item 14 — Handoff document: N/A
+-->
+
+## Goal
+
+No lens line in body.
+
+## Locked Decisions
+
+Method: JTBD. (no 'Analytical lens:' label here — intentionally missing)
+"""
+
+    def test_lens_line_present_no_warning(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_13_analytical_lens" not in warn_ids
+
+
+class TestStructuralWarningsItem14:
+    """Item 14: Sibling .handoff.md must exist."""
+
+    def test_missing_handoff_file_warns(self, tmp_path: Path) -> None:
+        plan = tmp_path / "my-feature.md"
+        plan.write_text(_plan_with_annotated_open_questions(), encoding="utf-8")
+        # Do NOT write my-feature.handoff.md
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_14_handoff_document" in warn_ids
+
+    def test_handoff_file_present_no_warning(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        # _all_14_items_answered writes plan.handoff.md to tmp_path
+        plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
+        _, payload = _run(plan)
+        warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
+        assert "item_14_handoff_document" not in warn_ids
