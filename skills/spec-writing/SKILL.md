@@ -226,7 +226,7 @@ After writing the plan, run both verifiers before returning. Attempt up to 3 fix
 ### Step A — Deterministic verifier
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_checklist.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/spec-writing/scripts/check_checklist.py \
   --plan docs/plans/<feature-slug>.md --json
 ```
 
