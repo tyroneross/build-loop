@@ -316,8 +316,9 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
    - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
    - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
 9. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 8 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
+10. **Dispatch `scope-auditor` agent** (NEW 2026-05-07 — Plan→Execute boundary): pass the plan + extracted commit table (with `modifies_api` per commit). The auditor is Opus + read-only; it traces every caller-site of every modified-API symbol via project-wide grep, classifies callers as in-scope / out-of-scope, and emits a `## Caller Audit (Scope Auditor)` JSON section appended to the plan. Verdict `scope_gap_found` requires plan revision (absorb missing callers into the right commit's owned-files) before Phase 3, OR explicit acceptance in `state.json.scopeGapAccepted[]` with rationale. Skip ONLY when the plan has zero `modifies_api` entries (doc-only commits). Prevents the fan-out scope-blindness defect class — see `agents/scope-auditor.md`.
 
-**Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, and plan-critic findings.
+**Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, plan-critic findings, and scope-auditor caller audit.
 
 ## Phase 3: Execute — Build With Agents
 

@@ -24,21 +24,61 @@ Governs model selection across all build-loop phases. When `model:` appears in a
 | Pricing: Sonnet $3/$15 per MTok input/output | Anthropic pricing page | ⚠️ verify before billing |
 | Pricing: Opus $15/$75 per MTok input/output (5x gap) | Anthropic pricing page | ⚠️ verify before billing |
 
+## MECE primitive: cognitive type of the task
+
+Before consulting the role table, classify the task by reasoning shape. The MECE cut is the kind of thinking the task requires; lifecycle stage (plan/execute/review) is a second-order cut that often mixes types.
+
+| Reasoning shape | Model | What it means | Example tasks |
+|---|---|---|---|
+| **Synthesis** — combine N inputs into a novel decision; cross-file/cross-system reasoning; ambiguity resolution; severity ranking | **Opus** | The "what" and "why" calls. No single rule produces the answer. | Frame goal, draft spec/ADRs, trace call-paths across files, rank finding severity, escalate stuck iteration with causal-tree, write audit/learnings |
+| **Application** — apply a known rule, spec, or pattern to bounded input; produce an artifact that matches a contract | **Sonnet** | The "how" call when "what" is decided. Single-correct-answer derivable from a rule. | Implement a commit's owned files per spec, write tests for given F-criteria, adversarial critic vs rubric, mechanical simplify, fact-check with named source |
+| **Recognition** — pure regex/syntactic match; classify into known buckets; no judgment | **Haiku** | No gradient — matches or doesn't. | Mock-data scan, log pattern detection, file inventory, cross-run pattern detection, deterministic checklist verification |
+
+**Decision tree:** "Does this task have a single-correct answer derivable from a rule applied to bounded input?" → Yes = Application/Sonnet. Else "Is the answer pure pattern-match?" → Yes = Recognition/Haiku. Else = Synthesis/Opus.
+
 ## Default assignments
 
-| Task | Model | effort | Why |
-|------|-------|--------|-----|
-| Planning (Phase 2–3) | Opus | medium | Ambiguity resolution; wrong plan compounds across all subagents |
-| Code execution — bounded chunk, spec clear | Sonnet | medium | Default. High accuracy, 5x cheaper |
-| Code execution — ambiguous spec | Opus | medium | Interpretation cost cheaper than rework |
-| Code review (final, pre-report) | Opus | medium | Judgment on correctness + tone; catches what Sonnet misses |
-| Adversarial critic pass (separate read-only agent) | Sonnet | high | Separation drives quality, not model; Sonnet catches most issues |
-| Mock data scanning (Phase 7B) | Haiku | low | Pattern matching only; no judgment needed |
-| Fact-checking (Phase 7A) | Sonnet | medium | Trace values to sources; bounded reasoning |
-| Debugging — first pass | Sonnet | high | effort=high before escalating; captures most regressions |
-| Debugging — after 2 consecutive failures | Opus | high | Escalation trigger; Sonnet has exhausted straightforward paths |
-| Novel architecture decision | Opus | medium | Cross-file impact; wrong call is expensive |
-| Writing user-facing prose (copy, microcopy, errors) | Opus | medium | Tone, restraint, and nuance matter |
+| Task | Reasoning shape | Model | effort | Why |
+|------|------|-------|--------|-----|
+| Frame & plan: goal, ADRs, scope, F-criteria, MECE partition | Synthesis | Opus | medium | Ambiguity resolution; wrong plan compounds |
+| Plan-verify deterministic checklist | Recognition | (script) | — | No model; runs `plan_verify.py` |
+| Plan-critic adversarial review against rubric+checklist | Application | Sonnet | high | Bounded — rubric is the rule. Separation drives quality |
+| **Scope auditor (NEW — Plan→Execute boundary)**: trace callers of every modified-API symbol; annotate `caller_audit:` per commit | Synthesis | Opus | medium | Cross-file call-path tracing that fanned-out implementers can't do (round-2 lesson) |
+| Code execution — bounded chunk, spec clear | Application | Sonnet | medium | Default. High accuracy, 5× cheaper |
+| Code execution — ambiguous spec | Synthesis | Opus | medium | Interpretation cost cheaper than rework |
+| Adversarial critic pass (read-only diff vs rubric) | Application | Sonnet | high | Bounded — rubric vs diff is rule-application; separation effect |
+| Code review — severity ranking + recommendation order (given findings) | Synthesis | Opus | medium | Cross-finding judgment about what matters most |
+| Mock data scanning | Recognition | Haiku | low | Regex only |
+| Fact-checking — trace metric → source, judge accuracy | Synthesis | Opus | medium | Cross-system; "is this number real?" requires cross-context judgment |
+| Fact-checking — trace metric → named-source pattern (rule-bound) | Application | Sonnet | medium | When the source-pattern rule is explicit |
+| Simplify — apply known simplifications | Application | Sonnet | medium | Inline single-use helper, delete dead branch — bounded |
+| Debugging — symptom-to-known-pattern match | Application | Sonnet | high | Memory-first gate's "Application until the rule runs out" |
+| Debugging — causal-tree after 2 consecutive failures | Synthesis | Opus | high | Synthesis takes over when rule-match exhausts |
+| Novel architecture decision | Synthesis | Opus | medium | Cross-file impact; wrong call is expensive |
+| Writing user-facing prose (copy, microcopy, errors) | Synthesis | Opus | medium | Tone, restraint, and nuance matter |
+| Audit / learnings / Phase 6 promotion-decision | Synthesis | Opus | medium | Cross-run synthesis |
+| Recurring-pattern detection across runs[] | Recognition | Haiku | low | Pattern-match across structured logs |
+
+## Round 2 evidence (2026-05-07, atomize-ai news-podcast iteration 2)
+
+n=2 dispatch-pattern A/B comparison on a 6-commit feature reversed the round-1 belief that Skill-path (Sonnet fan-out) is materially cheaper across the board:
+
+| Dimension | A — Skill-path / Sonnet fan-out | B — Agent-tool / inline-Opus |
+|---|---|---|
+| Wall-clock | ~70-80 min | ~30 min |
+| Token mix | ~50% Opus orchestrator + ~50% Sonnet implementer | ~100% Opus single-context |
+| News-podcast jest | 52/0 | 59/0 |
+| Iterations needed | 1 (cross-file prop wiring missed by Sonnet) | 0 |
+| LLM judge speaker-flow | not run live (proxy from B) | 4/4 × 3 samples |
+
+Findings that updated the model tiering:
+
+1. **Sonnet implementers are scoped to `files_owned`** and miss cross-file integration gaps (the AIBriefPage→PodcastGenerator props case). This motivates the new Scope Auditor role above.
+2. **Orchestrator overhead (research dispatches, plan-critic, iterate coordination, audit) burns ~50% of total tokens at Opus rate** on small/medium features. Sonnet's lower per-token rate doesn't dominate at 6-commit scale.
+3. **Inline-Opus is faster wall-clock** when there's no real parallelism to exploit. Fan-out parallelism is only a win when ≥3 chunks are truly independent.
+4. **Plan-critic on Sonnet caught 17 substantive findings** on a written spec — confirms "rubric-application = Sonnet" is robust.
+
+These findings inform the role assignments, especially the rubric-application=Sonnet vs severity-assessment=Opus split for code review.
 
 ## Escalation triggers (stay on Sonnet UNLESS)
 
