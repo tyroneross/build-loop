@@ -96,6 +96,25 @@ When ambiguous, default to BUILD.
 - At coordination checkpoints, verify outputs align before continuing.
 - Consult `model-router` per dispatch — see `references/capability-routing.md` §"Phase 3 routing".
 
+#### Phase 3 commit step (NEW 2026-05-07 — single-writer git contract)
+
+Implementers no longer call `git add` or `git commit` (per `agents/implementer.md` Hard rule 4 — round-3 evidence showed the parallel-commit race lost 3 of 4 commits). The orchestrator owns `.git/` as a single-writer resource. After **each parallel batch returns**, run this step before dispatching the next wave or proceeding to Phase 4.
+
+For each implementer return envelope with `status: fixed | partial`:
+
+1. **Verify scope**: `git status --porcelain` — every modified/untracked file must appear in some implementer's `files_changed`. Files not claimed by any implementer = orchestrator-side scope-leak; investigate before committing.
+2. **Stage exactly that implementer's files**: `git add -- <files_changed_list>`. Use absolute paths to avoid relative-path ambiguity when multiple worktrees coexist.
+3. **Commit with the implementer's metadata**: `git commit -m "<commit_subject>" -m "<commit_body>"`. The pre-commit hook runs HERE (full-project tsc, lint-staged, betterer-strict — whatever the project has). If the hook fails, do NOT pass `--no-verify`; instead, capture the failure and route the implementer's plan back to Iterate with `additional_context: "<hook output>"`.
+4. **Verify commit landed**: `git log -1 --oneline` confirms the SHA. If `git status` after the commit still shows the implementer's files as modified, the commit didn't land — investigate.
+5. **Repeat sequentially** for each remaining implementer in this batch. Sequential by design — the pre-commit hook is the only serializer; implementers' parallel work landed on a clean working tree, but the commits themselves serialize through the hook.
+
+**Concurrency contract:**
+- Implementer side: writes to working tree, never to `.git/`. Returns `commit_subject` + `commit_body` + `files_changed` in envelope.
+- Orchestrator side: reads `.git/` (status, log, diff) freely; writes to `.git/` (add, commit) only here, sequentially.
+- Single writer = no race. Round-3's lost-commits issue is structurally prevented.
+
+**Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-F so we can refine the implementer prompt for next run.
+
 ### Phase 4: Review (sub-steps A–F)
 
 Routing checklist in `references/phase-gate-checklist.md`. Six ordered sub-steps:

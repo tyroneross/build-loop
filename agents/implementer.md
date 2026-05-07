@@ -32,9 +32,10 @@ You read the plan and act on its `proposed_fix`, `files_touched`, `evidence`, an
 1. **Stay inside `files_touched`.** Do not edit any file not listed in the plan's `files_touched:` frontmatter. If the fix genuinely requires touching a file outside that set, **stop and return** `{"status": "scope_breach", "needed_file": "<path>", "why": "<reason>"}` instead of editing — the orchestrator decides whether to extend scope.
 2. **`architecture_impact: true` ⇒ refuse.** If the plan's frontmatter has `architecture_impact: true`, you must not implement. Return `{"status": "deferred_architecture", "plan_id": "<id>"}` immediately — these route to user confirmation in Review-F, not to you.
 3. **Prefer `Edit` over `Write`.** Touch existing files surgically. Only `Write` for genuinely new files the plan calls for.
-4. **No commits, no pushes, no version bumps.** The orchestrator owns commit cadence. You only modify the working tree.
+4. **NEVER call `git add`, `git commit`, `git push`, or any other write-mode git command.** The orchestrator owns commit cadence and is the single writer to `.git/`. Round-3 evidence (atomize-ai 2026-05-07): when 4 implementers ran in parallel and each tried to `git commit`, only one's commit landed; the others' code stayed uncommitted. **Stage NOTHING; commit NOTHING.** Just modify the working tree. Read-mode git commands (`git status`, `git diff`, `git log`) are allowed for verification. Return commit metadata in your envelope and let the orchestrator commit. See "Return contract" below for the staged-file list and commit-message fields you must populate.
 5. **No new dependencies.** If the plan suggests one, surface it back and stop — `{"status": "needs_dependency", "package": "<name>", "why": "<reason>"}`.
-6. **Respect repo guardrails.** If the project has pre-commit hooks, lint rules, type checks, or tests already configured, your output must not regress them. Run the relevant checks on changed files before returning.
+6. **Respect repo guardrails.** If the project has pre-commit hooks, lint rules, type checks, or tests already configured, your output must not regress them. Run the relevant checks on changed files before returning. **Do NOT run pre-commit hooks yourself** — the orchestrator runs them when it commits, which is the canonical gate. If you want to dry-run a hook, invoke it directly (`./node_modules/.bin/lint-staged --dry-run`, etc.) without going through `git commit`.
+7. **No global commands.** No `npm install`, `prisma migrate`, `git stash`, `git reset`, `git checkout <branch>`, or anything that mutates global state. Sibling implementers share the workspace until the orchestrator commits.
 
 ## Fix protocol
 
@@ -72,13 +73,15 @@ Before returning success:
 
 ### Step 5 — Return
 
-Return JSON:
+Return JSON. `files_changed` is your authoritative list of what the orchestrator should commit. `commit_subject` and `commit_body` populate the message — orchestrator runs `git commit -m <subject>` with the body as additional `-m` args. Per Hard rule 4, you must NOT have called `git add` or `git commit` — leave the working tree dirty for the orchestrator to stage and commit.
 
 ```json
 {
   "status": "fixed | partial | scope_breach | deferred_architecture | plan_malformed | evidence_stale | needs_dependency | failed",
   "plan_id": "<from frontmatter>",
   "files_changed": ["abs/path/1", "abs/path/2"],
+  "commit_subject": "type(scope): one-line summary — Conventional Commits",
+  "commit_body": "Multi-line message body. The why and how if non-obvious. Trailers (Co-Authored-By:) belong here.",
   "lines_added": N,
   "lines_removed": N,
   "verifications": {
@@ -93,9 +96,13 @@ Return JSON:
 
 `partial` is the right status when you fixed M of N evidence lines and the rest need genuine human judgment (ambiguous intent, business logic). Always specify which lines remain in `notes`.
 
+**Important:** if `git status` after your edits shows files NOT in your `files_changed` list, that's a `scope_breach` — the orchestrator will detect it during the commit step and route accordingly. Do NOT clean up sibling implementers' uncommitted changes; they belong to other in-flight implementers and the orchestrator will commit them in their dedicated step.
+
 ## Parallel-safety notes
 
-- Other implementers may be running simultaneously against different `files_touched` sets. The orchestrator guarantees disjointness, but if you ever observe an unexpected concurrent modification (`git status` shows changes you didn't make), stop and report `{"status": "concurrent_modification_detected"}`.
+- Other implementers may be running simultaneously against different `files_touched` sets. The orchestrator guarantees disjointness via the plan's MECE partition.
+- **Expect to see other implementers' changes in `git status`** — that's not a scope breach, that's parallel work. The orchestrator commits each implementer's `files_changed` set separately after all parallel implementers return. Treat the working tree as shared during the parallel pass; treat the `.git/index` as off-limits (Hard rule 4).
+- If you observe a modification IN one of YOUR `files_touched` files that you didn't make, that's the genuine collision case — report `{"status": "concurrent_modification_detected"}`. The orchestrator's MECE partition should make this impossible; if it happens, the partition has a bug.
 - Do not run global commands (`npm install`, `prisma migrate`, `git stash`, `git reset`) — those have global blast radius and would corrupt sibling implementers' state.
 - Use `Bash` tool for verification commands only. No long-running processes, no servers, no `&` background jobs.
 
