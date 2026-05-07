@@ -32,12 +32,27 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Model Tiering
 
-| Role | Model | Why |
-|---|---|---|
-| Orchestrator / plan / final signoff | Opus 4.7 | Wrong spec is catastrophic |
-| Implementer, sonnet-critic, optimize-runner, overfitting-reviewer, self-improvement-architect | Sonnet 4.6 | Bounded, recoverable, ~4× cheaper |
-| Mock-scanner, recurring-pattern-detector | Haiku 4.5 | Pattern matching only |
-| Fact-checker | inherit | Session-driven |
+Build-loop is **multi-model**. Roles are assigned by **tier** (Thinking / Code / Pattern), not provider-specific identifiers. The Anthropic mapping (Opus 4.7 / Sonnet 4.6 / Haiku 4.5) is the default; equivalents from other providers (GPT-5, Gemini 2.5, qwen2.5-coder) substitute cleanly when their benchmarks meet the tier contract.
+
+| Tier | Anthropic default | Role | Substitution rule |
+|---|---|---|---|
+| **Thinking** | Opus 4.7 | Orchestrator, plan, severity ranking, audit, scope-auditor | SWE-bench Verified ≥78% AND frontier-class on ARC-AGI / GPQA |
+| **Code** | Sonnet 4.6 | Implementer, sonnet-critic, optimize-runner, overfitting-reviewer, self-improvement-architect | SWE-bench Verified ≥75% AND tool-use accuracy ≥85% |
+| **Pattern** | Haiku 4.5 | Mock-scanner, recurring-pattern-detector | Fast/cheap; doesn't hallucinate on bounded structured tasks |
+| (inherit) | session model | Fact-checker | Inherits from caller — context-driven |
+
+Full provider substitution table + swap recipes: `references/model-tier-mapping.md`.
+
+## Dual-mode dispatch (intentional A/B test architecture)
+
+Build-loop supports two dispatch modes, both first-class:
+
+- **Mode A — Top-level / fan-out (default):** invoked via `/build-loop:run` Skill from the user session. Thinking-tier orchestrator dispatches up to 4 Code-tier implementer subagents in parallel. Best for parallel-safe features (≥3 independent chunks) and large features (≥10 commits).
+- **Mode B — Inline / single-context (preserved):** invoked via `Agent(subagent_type="build-loop:build-orchestrator", ...)`. Thinking-tier orchestrator handles all phases inline (no fan-out, no-sub-sub-agents rule). Best for small/medium features (≤6 commits), cross-cutting refactors, and as the comparison baseline for dispatch-mode A/B testing.
+
+Both modes share the same plan, same Phase 1-4 logic, same Phase 6 Learn. The orchestrator auto-detects which mode it's in (`agents/build-orchestrator.md:529-530`). **Mode B is not deprecated** — it's the canonical baseline for tier-mix telemetry and works better for cross-cutting work where single-context visibility beats fan-out parallelism.
+
+See `references/model-tier-mapping.md` §"Dual-mode A/B test design" for the full design.
 
 ## Project Data
 

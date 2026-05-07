@@ -1,18 +1,39 @@
 ---
 name: model-tiering
-description: Use when choosing a model tier for a subagent, deciding sonnet vs opus in frontmatter, or escalating to opus mid-flow.
+description: Use when choosing a model tier for a subagent, deciding code-tier vs thinking-tier in frontmatter, or escalating mid-flow. Covers the multi-model abstraction — Opus/Sonnet/Haiku are Anthropic-default mappings; the tier abstraction is provider-portable.
 ---
 
 # Model Tiering — Authoritative Reference for Build-Loop
 
-Governs model selection across all build-loop phases. When `model:` appears in an agent frontmatter, or the orchestrator is spawning a subagent, consult this skill first.
+Governs model selection across all build-loop phases. Build-loop is **multi-model** — the role assignments below are tier-based (thinking / code / pattern), not provider-specific. Anthropic's Opus/Sonnet/Haiku is the default mapping; equivalents from other providers map to the same tiers.
+
+## Tier abstraction (canonical)
+
+| Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
+|---|---|---|---|
+| **Thinking** | Opus 4.7 | Synthesis, planning, ambiguity resolution, severity ranking, audit/learnings, cross-file judgment | GPT-5 Thinking, Gemini 2.5 Pro, future Claude tier; any model >= Opus 4.6 on SWE-bench Verified + Frontier-class on ARC-AGI / MMLU-Pro |
+| **Code** | Sonnet 4.6 | Application — apply rule to bounded input, scoped implementation, adversarial critic, mechanical refactor | Sonnet 4.7+, GPT-5 Codex, qwen2.5-coder-32B (local); any model with SWE-bench Verified within ~5pt of Sonnet 4.6 (currently ~79.6%) |
+| **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | Haiku 4.6, GPT-5 Mini, llama3.2-3b (local); any small/fast model that handles structured pattern matching |
+
+**Rule of substitution:** tier A's swap target must score within tolerance of the default on the benchmark relevant to its role. For Code tier that's SWE-bench Verified ≥75% AND tool-use accuracy ≥85%; for Thinking tier that's SWE-bench ≥78% AND ARC-AGI / GPQA Diamond competitive; for Pattern tier no benchmark — just "fast and cheap, doesn't hallucinate on bounded structured tasks."
+
+## Provider-swap recipe
+
+Build-loop's agent frontmatter uses Anthropic model aliases (`opus`, `sonnet`, `haiku`) because Claude Code is the primary host. To run on a different provider:
+
+1. **One-time edit per agent:** open each `agents/*.md` and change the `model:` field to your provider's equivalent. The tier (Thinking/Code/Pattern) determines the substitution target.
+2. **Runtime override:** `.build-loop/config.json.modelOverrides` accepts `{ thinking: "<id>", code: "<id>", pattern: "<id>" }`. The orchestrator reads this before dispatching subagents (see `references/model-tier-mapping.md` for full schema).
+3. **Per-dispatch override:** any orchestrator dispatch may pass `model: <id>` in the subagent prompt to force that call.
+
+The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
 
 ## When to use this skill
 
 - Choosing `model:` field in an agent frontmatter
-- Orchestrator deciding which subagent model to spawn for a task
+- Orchestrator deciding which subagent tier to spawn for a task
 - Estimating cost tradeoffs before starting a build
 - Deciding whether to escalate mid-flow after failures
+- Evaluating whether to swap providers (use the Tier abstraction table above as the contract)
 
 ## Evidence base (2026 Q1)
 
