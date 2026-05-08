@@ -3,11 +3,11 @@
 check_checklist.py — deterministic spec-writing checklist verifier.
 
 Reads a plan markdown file, locates the <!-- checklist --> HTML comment block,
-and checks whether each of the 8 required items is answered (not blank, not
+and checks whether each of the 15 required items is answered (not blank, not
 the literal placeholder text, and not omitted entirely).
 
 Exit codes:
-    0 — all 8 items answered
+    0 — all required items answered (Item 15 is conditional on UI files in scope)
     1 — one or more items missing or unanswered
     2 — verifier error (file not found, parse failure)
 
@@ -42,6 +42,7 @@ ITEMS: list[tuple[str, str]] = [
     ("item_12_low_reversibility_adrs", "Item 12 — Low-reversibility ADRs"),
     ("item_13_analytical_lens",        "Item 13 — Analytical lens"),
     ("item_14_handoff_document",       "Item 14 — Handoff document"),
+    ("item_15_synthesis_dimensions",   "Item 15 — Synthesis dimensions"),
 ]
 
 # Values that count as "not answered" — case-insensitive, stripped
@@ -125,6 +126,31 @@ _LOW_REV_RE = re.compile(
     re.IGNORECASE,
 )
 _LENS_LINE_RE = re.compile(r"analytical lens\s*:", re.IGNORECASE)
+
+# Item 15 — Synthesis dimensions (UI commits only)
+_UI_FILE_RE = re.compile(
+    r"(?:^|[\s`(/])(?:components|app|pages|src)/[\w/.\-]+|"
+    r"\b[\w/.\-]+\.(?:tsx|jsx)\b", re.IGNORECASE)
+_SYNTHESIS_BLOCK_RE = re.compile(
+    r"synthesis_dimensions\s*:\s*\n((?:[ \t]+[\w_]+\s*:.*\n?)+)", re.IGNORECASE)
+_REQUIRED_SYNTHESIS_KEYS = ("placement", "cta_tier", "copy_tone",
+                            "visual_weight", "empty_state")
+
+
+def check_item_15_synthesis_dimensions(plan_text: str) -> tuple[str, str | None]:
+    """OK if no UI in scope; else require synthesis_dimensions block w/ all keys."""
+    if not _UI_FILE_RE.search(plan_text):
+        return ("OK", None)
+    m = _SYNTHESIS_BLOCK_RE.search(plan_text)
+    if not m:
+        return ("FAIL", "UI files detected but no `synthesis_dimensions:` block. "
+                "Required keys: " + ", ".join(_REQUIRED_SYNTHESIS_KEYS) + ".")
+    body = m.group(1)
+    missing = [k for k in _REQUIRED_SYNTHESIS_KEYS
+               if not re.search(rf"^\s+{re.escape(k)}\s*:", body, re.MULTILINE)]
+    if missing:
+        return ("FAIL", "synthesis_dimensions missing key(s): " + ", ".join(missing))
+    return ("OK", None)
 
 
 def _structural_findings(text: str, plan_path: Path) -> list[dict]:
@@ -243,6 +269,16 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
             ),
         })
 
+    # Item 15: Synthesis dimensions block required when UI is in scope
+    status_15, msg_15 = check_item_15_synthesis_dimensions(text)
+    if status_15 == "FAIL":
+        findings.append({
+            "item_id": "item_15_synthesis_dimensions",
+            "label": "Item 15 — Synthesis dimensions",
+            "status": "fail",
+            "message": msg_15,
+        })
+
     return findings
 
 
@@ -300,47 +336,45 @@ def verify(plan_path: Path) -> dict:
         }
 
     parsed = parse_checklist_block(block)
+    # Item 15 line is conditional: only required when UI files are in scope.
+    ui_in_scope = bool(_UI_FILE_RE.search(text))
 
     findings = []
     missing = 0
     for item_id, label in ITEMS:
         normalized = _normalize_label(label)
+        is_optional = (item_id == "item_15_synthesis_dimensions" and not ui_in_scope)
         if normalized not in parsed:
-            findings.append({
-                "item_id": item_id,
-                "label": label,
-                "answer": None,
-                "status": "missing",
-                "message": f"Item not found in checklist block. Expected line starting with '{label}:'",
-            })
+            if is_optional:
+                findings.append({"item_id": item_id, "label": label, "answer": None,
+                                 "status": "ok", "message": "N/A: no UI in scope."})
+                continue
+            findings.append({"item_id": item_id, "label": label, "answer": None,
+                             "status": "missing",
+                             "message": f"Item not found. Expected '{label}:'"})
             missing += 1
         elif not is_answered(parsed[normalized]):
-            findings.append({
-                "item_id": item_id,
-                "label": label,
-                "answer": parsed[normalized],
-                "status": "unanswered",
-                "message": "Answer is a placeholder or empty. Provide a real answer or 'N/A: <reason>'.",
-            })
+            if is_optional:
+                findings.append({"item_id": item_id, "label": label,
+                                 "answer": parsed[normalized], "status": "ok",
+                                 "message": "N/A: no UI in scope."})
+                continue
+            findings.append({"item_id": item_id, "label": label,
+                             "answer": parsed[normalized], "status": "unanswered",
+                             "message": "Placeholder or empty. Provide answer or 'N/A: <reason>'."})
             missing += 1
         else:
-            findings.append({
-                "item_id": item_id,
-                "label": label,
-                "answer": parsed[normalized],
-                "status": "ok",
-            })
+            findings.append({"item_id": item_id, "label": label,
+                             "answer": parsed[normalized], "status": "ok"})
 
     structural_warnings = _structural_findings(text, plan_path)
-
+    structural_fail_count = sum(1 for w in structural_warnings if w.get("status") == "fail")
     return {
-        "plan": str(plan_path),
-        "checklist_found": True,
-        "findings": findings,
-        "structural_warnings": structural_warnings,
-        "missing_count": missing,
+        "plan": str(plan_path), "checklist_found": True, "findings": findings,
+        "structural_warnings": structural_warnings, "missing_count": missing,
         "structural_warning_count": len(structural_warnings),
-        "exit_code": 0 if missing == 0 else 1,
+        "structural_fail_count": structural_fail_count,
+        "exit_code": 0 if (missing == 0 and structural_fail_count == 0) else 1,
     }
 
 
@@ -377,7 +411,8 @@ def main() -> int:
             if f["status"] != "ok":
                 print(f"  [{f['status'].upper()}] {f['label']}: {f.get('message', '')}")
         for w in result.get("structural_warnings", []):
-            print(f"  [WARN] {w['label']}: {w.get('message', '')}")
+            tag = w.get("status", "warn").upper()
+            print(f"  [{tag}] {w['label']}: {w.get('message', '')}")
 
     return result["exit_code"]
 

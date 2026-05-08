@@ -8,6 +8,12 @@ in the Plan Evidence Contract shape. Exits 0 on no BLOCKERs, 1 on BLOCKERs,
 
 Stdlib only: re, pathlib, subprocess, json, argparse, sys.
 
+Rules: delete-with-callers, numeric-drift, route-change-evidence,
+package-state, missing-evidence, scope-split, less-invasive-shim,
+tool-without-permission-tier, external-call-without-budget-ceiling,
+risk-surface-change-without-threat-model, schema-migration-full-chain,
+synthesis-dim-vague-value.
+
 Plan Evidence Contract (per finding):
 {
   "claim_text": str,
@@ -718,6 +724,45 @@ def rule_schema_migration_full_chain(plan_path: Path, lines: list[tuple[int, str
     return out
 
 
+# Rule: synthesis-dim-vague-value (2026-05-07) — flag vague values in the
+# `synthesis_dimensions:` block (defeats Opus pre-resolution of synthesis).
+SYNTHESIS_VAGUE_RE = re.compile(
+    r"\b(appropriate|follow\s+existing|match\s+patterns?|as\s+needed|"
+    r"see\s+existing|reasonable)\b", re.IGNORECASE)
+SYNTHESIS_HEADER_RE = re.compile(r"^\s*synthesis_dimensions\s*:\s*$", re.IGNORECASE)
+
+
+def rule_synthesis_dim_vague_value(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """BLOCKER: vague value inside a `synthesis_dimensions:` block.
+    Block ends at first non-indented, non-blank line."""
+    out: list[dict[str, Any]] = []
+    n, i = len(lines), 0
+    while i < n:
+        lineno, line = lines[i]
+        if line and SYNTHESIS_HEADER_RE.match(line):
+            j = i + 1
+            while j < n:
+                lj, lline = lines[j]
+                if lline == "":
+                    j += 1; continue
+                if not re.match(r"^[ \t]+\S", lline):
+                    break
+                colon_idx = lline.find(":")
+                value_part = lline[colon_idx + 1:] if colon_idx >= 0 else lline
+                if SYNTHESIS_VAGUE_RE.search(value_part):
+                    out.append(_finding(
+                        claim_text=lline.strip(), claim_kind="missing_evidence",
+                        subject={"path": None, "symbol": None, "noun": "synthesis_dimension"},
+                        evidence={"file": str(plan_path), "line": lj, "snippet": lline.strip()},
+                        result="no_match", marker="❌", severity="BLOCKER",
+                        confidence="high", rule_id="synthesis-dim-vague-value"))
+                j += 1
+            i = j
+            continue
+        i += 1
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -738,6 +783,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_external_call_without_budget_ceiling(plan_path, lines))
     findings.extend(rule_risk_surface_change_without_threat_model(plan_path, lines))
     findings.extend(rule_schema_migration_full_chain(plan_path, lines))
+    findings.extend(rule_synthesis_dim_vague_value(plan_path, lines))
     return findings
 
 
