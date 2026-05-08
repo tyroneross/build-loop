@@ -732,6 +732,38 @@ _VAGUE_VALUE_RE = re.compile(
 )
 
 
+def count_synthesis_dimensions(lines: list[tuple[int, str]]) -> int:
+    """Count entries in the synthesis_dimensions: block.
+
+    Reusable block-parser extracted from rule_synthesis_dim_vague_value so that
+    both the vague-value rule and the C6 synthesis-density escalation rule share
+    a single canonical parser.  A line is counted as an entry when it is inside
+    the block AND is non-empty AND starts with whitespace (i.e. it is an
+    indented child of the synthesis_dimensions key) AND contains a colon (i.e.
+    it looks like  `  key: value`).
+
+    Block exits on the first non-empty, non-indented line that contains no colon
+    in the first 40 characters — identical to the exit condition in the vague-
+    value rule, so both helpers agree on block boundaries.
+    """
+    count = 0
+    in_block = False
+    for _lineno, line in lines:
+        if not line:
+            continue
+        if re.search(r"synthesis_dimensions\s*:", line, re.IGNORECASE):
+            in_block = True
+            continue
+        if in_block:
+            if line and not line[0].isspace() and ":" not in line[:40]:
+                in_block = False
+                continue
+            # Count indented key-value lines as dimension entries.
+            if line and line[0].isspace() and ":" in line:
+                count += 1
+    return count
+
+
 def rule_synthesis_dim_vague_value(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
     """BLOCKER: vague value inside a synthesis_dimensions: block."""
     out: list[dict[str, Any]] = []

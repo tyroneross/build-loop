@@ -89,6 +89,27 @@ When ambiguous, default to BUILD.
 
 ### Phase 3: Execute (parallel)
 
+#### Synthesis-density escalation (C6 — NEW 2026-05-07)
+
+Before dispatching any implementer, count the entries in the plan's `synthesis_dimensions:` block using `scripts/plan_verify.py`'s `count_synthesis_dimensions()` helper (the canonical block parser — do NOT duplicate it):
+
+```python
+from scripts.plan_verify import count_synthesis_dimensions, strip_fenced_blocks
+from pathlib import Path
+text = Path(plan_file).read_text(encoding="utf-8")
+lines = strip_fenced_blocks(text)
+dim_count = count_synthesis_dimensions(lines)
+```
+
+**Routing rule — synthesis-density escalation: > 5 dims → inline thinking-tier**
+
+| dim_count | Dispatch mode |
+|---|---|
+| ≤ 5 | Normal fan-out (parallel Sonnet implementers) |
+| > 5 (6+) | Inline single-context `tier: thinking` — do NOT fan out |
+
+When `dim_count > 5`, the plan carries more synthesis-class decisions than Sonnet fan-out can safely resolve independently. Dispatch the entire commit set as a single inline `tier: thinking` context (Mode B — same as the blocked-envelope resolution path). Write `state.json.synthesisEscalation = {triggered: true, dim_count: N, reason: "synthesis-density > 5"}` before dispatch. This rule complements (does not override) existing model-tiering — it fires on synthesis density, not on task complexity or file count. The `tier: thinking` abstraction maps to Opus 4.7 on Anthropic default config; see `references/model-tier-mapping.md` for substitution table.
+
 - Identify independent tasks from the plan's dependency graph.
 - Dispatch one subagent per independent task with minimal context + capability-routing instructions per `references/capability-routing.md`.
 - Each agent gets: task description, relevant file paths, integration contract, relevant fallback snippets, an intent packet from `.build-loop/intent.md`, a MECE ownership packet (`owns`, `does not own`, `interface contract`, `integration checkpoint`), an `architecture_context:` block read verbatim from `.build-loop/architecture/scout-cache/chunk-<N>.json`, and an `available_capabilities:` block (Priority 16) carrying `state.json.activeCapabilities["3"][-1].results[:8]` (fall back to `["2"]` when Phase 3 isn't separately scored). Implementers treat the architecture block as authoritative blast-radius information — they MUST flag any change that exits the slice in their return envelope. Do NOT dispatch the scout again in Phase 3 and do NOT re-run `capability_shortlist.py`; the cache from Phase 1/2 is the source of truth for routing context.

@@ -70,10 +70,18 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 |---|---|---|---|
 | 1 | **Assess** | Understand state + define goal & criteria | detect tools, map architecture, load memory, write `intent.md` + `goal.md` |
 | 2 | **Plan** | Break work, identify parallel-safe, optimize | writing-plans skill → dependency graph |
-| 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation |
+| 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation; **synthesis-density escalation: > 5 dims → inline `tier: thinking`** (count via `scripts/plan_verify.py::count_synthesis_dimensions`) |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report | sub-steps A-F; B-D can route to Iterate; F runs only on final pass |
 | 5 | **Iterate** | Fix Review failures, loop back to Review | max 5x; orchestrator stuck-iteration cascade (evidence-gap repair → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) |
 | 6 | **Learn** | Cross-build pattern detection + experimental skill drafting | optional; requires `runs[] >= 3`; auto-promote opt-in |
+
+### Synthesis-density escalation (C6 — Phase 3 routing rule)
+
+When the plan's `synthesis_dimensions:` block has **more than 5 entries** (i.e. 6+), the build is too synthesis-heavy for Sonnet fan-out. The orchestrator counts entries with `count_synthesis_dimensions()` from `scripts/plan_verify.py` (canonical parser — no duplicate parser) and dispatches inline as `tier: thinking` instead of parallel Sonnet subagents.
+
+Threshold rationale: 5 is the C5 bootstrap commit's actual dimension count, demonstrating the threshold is calibrated to the point where a single commit is already at maximum delegatable complexity. 6+ means the entire commit batch is synthesis, and context isolation across fan-out implementers would produce conflicting decisions.
+
+This rule **complements** (does not override) the existing model-tiering table — it adds a new trigger condition (synthesis density) without removing the existing ones (task complexity, SWE-bench tier requirements).
 
 ### Capability routing table
 
