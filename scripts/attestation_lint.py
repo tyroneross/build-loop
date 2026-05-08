@@ -266,12 +266,23 @@ def normalize_attestation(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(raw, dict):
         for name, value in raw.items():
             if isinstance(value, str):
-                out.append({
-                    "name": str(name),
-                    "dimension": infer_dimension(name),
-                    "claim": None,  # bare-string form has no claim detail
-                    "claimed_status": value,
-                })
+                # Disambiguate by content: canonical keywords are statuses
+                # (form 1, bare-string canonical), anything else is a claim
+                # string (form 4, flat-claim shape).
+                if value.lower() in {"applied", "deviated", "n/a"}:
+                    out.append({
+                        "name": str(name),
+                        "dimension": infer_dimension(name),
+                        "claim": None,
+                        "claimed_status": value,
+                    })
+                else:
+                    out.append({
+                        "name": str(name),
+                        "dimension": infer_dimension(name),
+                        "claim": value,
+                        "claimed_status": "applied",
+                    })
             elif isinstance(value, dict):
                 dim_explicit = value.get("dimension") or value.get("kind")
                 dim = infer_dimension(name, dim_explicit)
@@ -750,7 +761,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--diff", help="Path to a unified-diff file OR a git revspec like 'HEAD~1..HEAD'.")
     p.add_argument("--envelope", help="Path to the implementer envelope JSON.")
-    p.add_argument("--quiet", action="store_true", help="Emit JSON only; suppress human summary on stdout.")
+    p.add_argument("--quiet", "--json", dest="quiet", action="store_true", help="Emit JSON only; suppress human summary on stdout.")
     p.add_argument("--self-test", action="store_true", help="Run the inline self-test and exit.")
     args = p.parse_args(argv)
 
