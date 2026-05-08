@@ -17,6 +17,70 @@ Build-loop supports three modes, routed by the orchestrator:
 
 The orchestrator classifies intent automatically. Users can override with the standalone commands.
 
+## Per-Commit Mode (Self-Recursive Builds)
+
+Per-commit mode splits a multi-commit build into one independent orchestrator dispatch per commit, so each commit reviews and lands cleanly before the next one starts. It activates automatically when the working directory IS the runtime — that is, when the user is editing the build-loop plugin itself (or any plugin whose runtime symlink points back to the working tree). It can also be explicitly opted into or out of via skill arguments.
+
+### Detection
+
+Phase 1 Assess writes `selfRecursive.enabled: true|false` to `.build-loop/state.json` (commit 1 wired this via `scripts/detect_self_recursive.py`). The skill body MUST read this field BEFORE deciding which dispatch shape to use. If the field is absent, treat it as `false`.
+
+### Mode Resolution
+
+| Skill arg | `selfRecursive` | Resulting mode |
+|---|---|---|
+| `--per-commit` (explicit) | either | per-commit |
+| `--no-per-commit` (explicit) | either | single-orchestrator |
+| (none) | true | per-commit (default for self-recursive) |
+| (none) | false | single-orchestrator (today's behavior) |
+
+Passing both `--per-commit` and `--no-per-commit` is a user error — fail loud with a one-line message naming the conflict and stop before any dispatch.
+
+### Dispatch Contract (Per-Commit Mode)
+
+1. **Plan first, dispatch many.** The skill body invokes a single planning orchestrator (Phase 1 Assess + Phase 2 Plan only). Its return must include a per-commit work list at `.build-loop/per-commit-plan.json` with this exact JSON shape:
+
+   ```json
+   {
+     "run_id": "run_<UTC>_<hash>",
+     "commits": [
+       {
+         "id": "c1",
+         "subject": "feat(scripts): add foo helper",
+         "scope": "...",
+         "files_planned": ["scripts/foo.py", "tests/test_foo.py"],
+         "spec": "verbatim packet for the implementer orchestrator",
+         "depends_on": []
+       }
+     ],
+     "branch": "feat/...",
+     "from_branch": "main"
+   }
+   ```
+
+2. **Per-commit orchestrator dispatch.** For each commit in the plan (respecting `depends_on`), the skill body dispatches a fresh `Agent(subagent_type="build-loop:build-orchestrator", ...)` carrying ONLY that commit's packet plus a `PER_COMMIT_DISPATCH: { commit_id, run_id, prior_commit_hashes }` prompt prefix. Each dispatched orchestrator runs Phase 3 Execute + Phase 4 Review for ITS commit only, then commits and returns. The dispatched orchestrator's behavior on the prefix is documented in `agents/build-orchestrator.md` §0a.
+
+3. **Aggregate.** The skill body collects each orchestrator's return envelope and writes a final report combining all commits' results. On partial failure (commit N fails), do NOT dispatch downstream commits; retain `.build-loop/per-commit-plan.json` so a subsequent `/build-loop:run --resume` invocation can pick up where it stopped.
+
+### State.json schema
+
+The per-commit dispatcher tracks its own progress under a `perCommit` block alongside the existing `execution` block:
+
+```json
+{
+  "perCommit": {
+    "enabled": true,
+    "mode_source": "self_recursive_default|explicit_flag|opt_out",
+    "plan_path": ".build-loop/per-commit-plan.json",
+    "completed": [{"commit_id": "c1", "hash": "abc123", "completed_at": "..."}],
+    "in_flight": "c2",
+    "queued": ["c3"]
+  }
+}
+```
+
+M2's `execution.iterate_attempt` continues to track per-commit-orchestrator attempt counters (each dispatched orchestrator manages its own iterate counter) — do not duplicate iteration tracking inside `perCommit`.
+
 ## Scope Check
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
@@ -218,6 +282,35 @@ If Phase 1 detects that the task touches plugin components, Phase 3 must map eac
 
 Use the best available tool for each need. If a preferred tool is unavailable, improvise — never block on a missing dependency. The skill is self-sufficient; external tools make it faster but their absence does not stop the loop.
 
+## Resume Protocol (`--resume` argument)
+
+`/build-loop:run` accepts an optional `--resume <run-id-or-latest>` argument that re-enters a previous build mid-flight (after a 529, OOM, or kill -9 left state.json with `phase != "report"`). The skill body parses the argument; the build-orchestrator agent receives a `RESUME_MODE:` prompt prefix that branches into §0 Resume mode. **Frontmatter is not the parsing layer** — the skill body is.
+
+**Parsing rule**: scan the argument string for the literal token `--resume`. The next whitespace-delimited token is the run-id (or `latest`). Anything else is part of the goal text.
+
+**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run:
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py \
+    --workdir "$PWD" \
+    --resume-arg "<run-id-or-latest>" \
+    --staleness-minutes 5
+```
+The resolver returns a JSON envelope with one of: `decision: "resume"` (proceed), `decision: "abort"` (refuse with reason), or `decision: "fresh"` (no resume needed). On `resume`:
+
+1. Read `.build-loop/intent.md` and `.build-loop/plan.md` (Phase 1 + 2 outputs already on disk — DO NOT re-derive).
+2. Dispatch the build-orchestrator subagent with the prompt prefix:
+   ```
+   RESUME_MODE: run_id=<id>; remaining_chunks=<json-array>; iterate_attempt=<n>; concurrent_modifications=<json-array>
+   ```
+3. The agent's §0 branch handles the rest — skip Phase 1 + Phase 2, jump to Phase 3 Execute on `remaining_chunks` only.
+
+**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
+> "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+
+This is the M4 primary signal — heartbeat staleness, no hook dependency, fires every fresh dispatch.
+
+**Concurrent-modification handling**: when `concurrent_modifications` is non-empty in the resolver output, the agent's §0 branch surfaces each flagged chunk as `status: concurrent_modification_detected` and asks the user whether to redo the chunk (default) or keep the hand-edits.
+
 ## Phase 1: Assess — State, Goal, and Criteria
 
 **Goal**: Know what exists AND what success looks like before writing any code. Combines situational awareness with goal definition so the plan phase has everything it needs.
@@ -241,7 +334,7 @@ Use the best available tool for each need. If a preferred tool is unavailable, i
 12. **Assess modular structure**: Use `references/modular-systems-pack.md`. Identify current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror compact fields to `.build-loop/state.json.structure`.
 13. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
 14. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
-15. **Recovery check**: If `.build-loop/state.json` exists with incomplete phases, offer to resume from last completed phase.
+15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).
 16. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
     - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work, especially via squash-rebase, and suggest checking which paths the other session is touching before editing overlapping files.
     - **Branch divergence**: `git rev-list --count HEAD..origin/main` and `origin/main..HEAD`. If local main is ahead of origin AND a feature branch will be cut, recommend branching from `origin/main` directly (`git checkout -b <name> origin/main`) so unpushed local commits don't ride into the eventual squash and bundle under a misleading title.

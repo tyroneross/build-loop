@@ -71,7 +71,17 @@ CATEGORY_KEYWORDS = [
                       "project tag", "project_resolver", "cwd to a project",
                       "model tier", "model_tier", "model-tier", "tier",
                       "transcript", "pattern-miner", "pattern miner",
-                      "slice", "acp")),
+                      "slice", "acp",
+                      # Crash recovery / state.json checkpoint surfaces (M1-M4):
+                      "crash recovery", "crash-recovery", "state_finalize",
+                      "state.json checkpoint", "resume_resolver",
+                      "subagent envelope", "subagent_result", "heartbeat",
+                      "incomplete build", "run_id provenance",
+                      "stop hook annotation",
+                      # Self-recursion / dogfood signals:
+                      "self-recursive", "self_recursive", "dogfood",
+                      "drift", "manifest version", "working-copy branch",
+                      "working copy", "branch echo")),
     ("architecture", ("architect", "navgator", "blast_radius", "blast-radius",
                       "blast radius", "scout", "scan repo", "component", "graph")),
     ("debugging",    ("debug", "debugger", "incident", "root cause", "root-cause",
