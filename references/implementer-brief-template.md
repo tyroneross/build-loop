@@ -81,7 +81,7 @@ This is the single most preventable round-3 bug class — write the schema-grep 
 You're running in parallel with N-1 other implementers against disjoint `files_owned` sets. Do NOT call `git add`, `git commit`, `git push` (Hard rule 4 in implementer.md). Modify the working tree only; return `commit_subject` + `commit_body` + `files_changed` in your envelope; the orchestrator commits sequentially after all parallel implementers return.
 
 ## Return envelope
-Standard JSON shape — `status`, `files_changed`, `commit_subject`, `commit_body`, `tests_run`, `verifications`, `intentional_non_fixes`, `notes`.
+Standard JSON shape — `status`, `files_changed`, `commit_subject`, `commit_body`, `tests_run`, `verifications`, `intentional_non_fixes`, `notes`. See `references/implementer-envelope-schema.md` for the canonical field list and validation contract.
 ```
 
 ## Why each section matters
@@ -121,3 +121,22 @@ If the orchestrator can't populate any of these sections, the brief is too vague
 Each implementer brief is its own input cost — the orchestrator pays Thinking-tier rate to write 80-120 lines × N implementers. For N=4 parallel, that's ~400 lines of brief text at Thinking rate. **This is a real cost** that doesn't show in implementer envelope token estimates. Track it in cost-ledger when TASK_ID instrumentation lands (PR followup).
 
 The cost is worth paying when the work-shape supports parallelism (Mode A wins on time). For sequential or cross-cutting features, prefer Mode B (single Opus context) where the brief overhead disappears.
+
+---
+
+## Required envelope
+
+Every implementer must return an envelope conforming to `references/implementer-envelope-schema.md`. Full field definitions, validation rules, and worked examples are in that file. Minimal checklist:
+
+- [ ] `branch` — string matching the brief's branch
+- [ ] `commit_sha` — SHA or `"pending"` (Mode A, orchestrator commits)
+- [ ] `files_changed` — array of absolute paths
+- [ ] `loc_added` — integer
+- [ ] `loc_removed` — integer
+- [ ] `f_criteria` — object: every F-criterion from the brief → `"pass"` or `"fail"`
+- [ ] `synthesis_attestation` — object: each `synthesis_dimensions` entry → `"applied"` / `"deviated"` / `"n/a"`; `{}` if plan has no `synthesis_dimensions` block
+- [ ] `novel_decisions` — array of `{decision, reasoning}` objects; `[]` if none, but field MUST be present
+- [ ] `notes` — string, ≤200 words
+- [ ] `wall_clock_seconds` — number
+
+Missing any field causes the orchestrator to treat the commit as malformed.

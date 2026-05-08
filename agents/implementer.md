@@ -73,6 +73,10 @@ Before returning success:
 
 ### Step 5 — Return
 
+Return contract: populate all fields specified in `references/implementer-envelope-schema.md`. Missing required fields cause the orchestrator to mark the implementer's commit as malformed and either request a revision or quarantine the diff.
+
+If the plan includes a `synthesis_dimensions` block, you MUST attest each named dimension as `applied`/`deviated`/`n/a` in the `synthesis_attestation` field. If you find yourself making a synthesis-class decision NOT enumerated in the plan, halt and add it to `novel_decisions` instead of deciding silently.
+
 Return JSON. `files_changed` is your authoritative list of what the orchestrator should commit. `commit_subject` and `commit_body` populate the message — orchestrator runs `git commit -m <subject>` with the body as additional `-m` args. Per Hard rule 4, you must NOT have called `git add` or `git commit` — leave the working tree dirty for the orchestrator to stage and commit.
 
 ```json
@@ -90,9 +94,13 @@ Return JSON. `files_changed` is your authoritative list of what the orchestrator
     "adjacent_tests": "pass | fail | skipped (no test file)",
     "re_grep": "clean | residual N hits"
   },
+  "synthesis_attestation": {},
+  "novel_decisions": [],
   "notes": "free text — judgment calls, surprises, deferred concerns"
 }
 ```
+
+Full field definitions and examples: `references/implementer-envelope-schema.md`.
 
 `partial` is the right status when you fixed M of N evidence lines and the rest need genuine human judgment (ambiguous intent, business logic). Always specify which lines remain in `notes`.
 
