@@ -25,7 +25,7 @@ A skill that walks an 8-item completeness checklist before producing a build-loo
 
 ---
 
-## The 8-Item Checklist
+## The 15-Item Checklist
 
 Walk every item before writing a single line of the plan body. For each item, record the answer (or "N/A with reason") inline in a `<!-- checklist -->` HTML comment block at the top of the plan file so the critic can verify it.
 
@@ -243,6 +243,29 @@ The sibling `<slug>.handoff.md` file must exist and contain at least one impleme
 
 ---
 
+### Item 15 — Synthesis dimensions (UI commits only)
+
+**Prompt:** For any commit that adds/modifies a UI surface, enumerate synthesis decisions Opus has pre-resolved. Required dimensions: `placement`, `cta_tier`, `copy_tone`, `visual_weight`, `empty_state`. Values must be specific — reject "appropriate", "follow existing", "match patterns", "as needed".
+
+**How to check:** Plan must contain a `synthesis_dimensions:` block under each UI commit's spec. Each value must be a concrete noun phrase or quoted string referencing a specific anchor (component, class, file).
+
+**Example (good):**
+
+```yaml
+synthesis_dimensions:
+  placement: "render after <AIBriefSections> in components/v3/AIBriefPage.tsx, full-width section"
+  cta_tier: "adjunct"
+  copy_tone: "terse, ≤14 words per CTA"
+  visual_weight: "section heading, border-t divider"
+  empty_state: "first-run hint with localStorage dismissal"
+```
+
+**Example (rejected):** `placement: "follow existing layout"` — vague, will be lint-flagged by `plan_verify.py` rule `synthesis_dim_vague_value`.
+
+If the plan adds no UI surface (API/backend only), write "N/A: no UI surface."
+
+---
+
 ## Plan Output Template
 
 After the checklist is complete, write the plan to `docs/plans/<feature-slug>.md` using this structure:
@@ -265,6 +288,7 @@ Item 11 — Blocking-and-novel question gate: <answer>
 Item 12 — Low-reversibility ADRs: <answer>
 Item 13 — Analytical lens: <answer>
 Item 14 — Handoff document: <answer>
+Item 15 — Synthesis dimensions: <answer>
 -->
 
 ## Goal
