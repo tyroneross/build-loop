@@ -14,6 +14,7 @@ Big changes break things. You forget an edge case. You skip the test pass. The d
 - **Speed where you can, depth where you must.** Mechanical work runs in parallel on a fast model. Work with five or more design decisions auto-routes to the strong model in one pass — the empirical point where the fast model loses cross-decision context.
 - **Real evidence, not vibes.** Every pass or fail has a code-based grader. Every metric on a page traces back to its data source. Tests must run; output must render; placeholders are flagged.
 - **Less rework.** A read-only critic runs before full validation, so cheap checks catch the obvious mistakes before you spend tokens on the long ones.
+- **A way to actually improve a number.** When you want to make something faster or smaller, the optimize mode plans a small batch of test runs that vary two or more things at once, then tells you which one really moved the number — so you don't waste time turning one knob at a time and missing the interactions.
 
 You get fewer regressions, a clean record of what changed and why, and a workflow you can trust on changes that touch many files at once.
 
