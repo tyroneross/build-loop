@@ -128,24 +128,32 @@ def _map_files_to_routes(changed_files: list[str]) -> list[str]:
 
 
 def _wait_for_server(proc: subprocess.Popen, port: int, deadline: float) -> bool:
-    """Poll stdout/stderr for a ready signal or until deadline."""
+    """Poll for a ready signal or until deadline.
+
+    Primary signal: TCP connect to the bound port. This is the authoritative
+    boot signal across all Next.js versions and runtimes. Newer Next versions
+    write the ready line to stderr, so a stdout-readline-only path can hang.
+
+    Secondary signal: stdout line scan (best-effort, non-blocking via
+    os.set_blocking). Useful when TCP connect is delayed by middleware.
+    """
     ready_pattern = re.compile(
         r"(started server on|ready\s*[-–]?\s*started|Local:\s+http://)", re.IGNORECASE
     )
-    # Also try a direct TCP connect as a secondary signal
+    # Best-effort: switch stdout to non-blocking so readline cannot hang.
+    if proc.stdout is not None:
+        try:
+            os.set_blocking(proc.stdout.fileno(), False)
+        except (OSError, ValueError):
+            # Not a real fd or already closed — skip the line scan path.
+            pass
+
     while time.monotonic() < deadline:
-        # Check if process has already died
+        # Process died early (crash, port-in-use, missing dep)
         if proc.poll() is not None:
             return False
 
-        # Read a line from stdout (non-blocking via poll)
-        line = proc.stdout.readline() if proc.stdout else b""
-        if line:
-            decoded = line.decode("utf-8", errors="replace").rstrip()
-            if ready_pattern.search(decoded):
-                return True
-
-        # Secondary: try TCP connect
+        # Primary: TCP connect to the bound port
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                 # Port is open — server likely up; give it 0.5s to finish startup
@@ -153,6 +161,17 @@ def _wait_for_server(proc: subprocess.Popen, port: int, deadline: float) -> bool
                 return True
         except OSError:
             pass
+
+        # Secondary: non-blocking stdout line scan
+        if proc.stdout is not None:
+            try:
+                line = proc.stdout.readline()
+            except (OSError, BlockingIOError, ValueError):
+                line = b""
+            if line:
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                if ready_pattern.search(decoded):
+                    return True
 
         time.sleep(0.2)
     return False

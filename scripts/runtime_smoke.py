@@ -202,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = adapter_module.run(changed_files, workdir)
     except Exception as exc:  # noqa: BLE001
+        # Adapter raised during run() — treat as a failed render, not a runner
+        # error. Exit 1 routes to Iterate (see build-orchestrator.md Review-B).
+        # Reserve exit 2 for runner-level failures (import failure, malformed
+        # input) handled in _load_adapter.
         error_envelope = {
             "status": "fail",
             "adapter": adapter_name,
@@ -210,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             "findings": [],
         }
         _emit(error_envelope, args.as_json)
-        return 2
+        return 1
 
     _emit(result, args.as_json)
 
