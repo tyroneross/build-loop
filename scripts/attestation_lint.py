@@ -156,6 +156,7 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
     post_lineno = 0
     in_hunk = False
 
+    pending_pre_path: str | None = None  # for diffs lacking "diff --git" header
     for line in diff_text.splitlines():
         m = DIFF_GIT_HEADER_RE.match(line)
         if m:
@@ -163,11 +164,36 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
             files[current.path] = current
             in_hunk = False
             current.raw_chunks.append(line)
+            pending_pre_path = None
+            continue
+        # β-style fallback: "--- a/path" / "+++ b/path" without a preceding
+        # "diff --git" header. Open a FileDiff on the +++ line.
+        if line.startswith("--- "):
+            stripped = line[4:].strip()
+            pending_pre_path = stripped[2:] if stripped.startswith("a/") else stripped
+            if current is not None:
+                current.raw_chunks.append(line)
+            continue
+        if line.startswith("+++ "):
+            stripped = line[4:].strip()
+            post_path = stripped[2:] if stripped.startswith("b/") else stripped
+            if current is None or (current and current.path_b != post_path):
+                # Only auto-open if no diff --git header gave us this file.
+                if pending_pre_path is not None and post_path:
+                    current = FileDiff(pending_pre_path, post_path)
+                    files[current.path] = current
+                    in_hunk = False
+                    current.raw_chunks.append(line)
+                    pending_pre_path = None
+                    continue
+            if current is not None:
+                current.raw_chunks.append(line)
+            pending_pre_path = None
             continue
         if current is None:
             continue
-        # Skip metadata lines (index, ---, +++, similarity, etc.) — record raw.
-        if line.startswith(("index ", "--- ", "+++ ", "new file", "deleted file",
+        # Skip metadata lines (index, similarity, etc.) — record raw.
+        if line.startswith(("index ", "new file", "deleted file",
                             "similarity ", "rename ", "copy ", "Binary ")):
             current.raw_chunks.append(line)
             continue
@@ -239,7 +265,15 @@ def infer_dimension(name: str, explicit: str | None = None) -> str:
 def normalize_attestation(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """Return a list of attestation records, one per dimension entry.
 
-    Each record carries: name, dimension, claim (or None), claimed_status."""
+    Each record carries: name, dimension, claim (or None), claimed_status.
+    Accepts envelopes in either flat shape ({"synthesis_attestation": ...})
+    or β-style wrapped shape ({"envelope": {"synthesis_attestation": ...}}).
+    """
+    # β-style wrapper: unwrap if the outer dict only carries "envelope".
+    if "synthesis_attestation" not in envelope and isinstance(envelope.get("envelope"), dict):
+        inner = envelope["envelope"]
+        if "synthesis_attestation" in inner:
+            envelope = inner
     raw = envelope.get("synthesis_attestation")
     if raw is None:
         return []
@@ -312,28 +346,68 @@ def normalize_attestation(envelope: dict[str, Any]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 # Anchor + path extractor — parses claims like:
-#   "after `<NewsCard>` in app/components/Feed.tsx"
+#   "after `<NewsCard>` in app/components/Feed.tsx"     — JSX-component anchor (α-style)
 #   "before <Header /> in src/Header.tsx"
+#   "after import React from 'react' in src/Button.tsx" — arbitrary-text anchor (β-style)
+#   "in path/to/file"                                    — file-only fallback
+#
+# Two regexes tried in order: strict JSX-anchor first (preserves α's specificity
+# when the claim is JSX-shaped), then permissive arbitrary-text fallback (covers
+# β's looser conventions for non-JSX commits like imports, code lines).
 PLACEMENT_RE = re.compile(
     r"\b(?P<rel>after|before|inside|within)\b\s*"
     r"`?<?(?P<anchor>[A-Za-z_][\w.-]*)\s*/?>?`?"
     r"\s+in\s+`?(?P<path>[\w./@-]+)`?",
     re.IGNORECASE,
 )
+# β-style permissive fallback: any non-empty anchor text up to " in <path>".
+# Accepts quoted strings, line numbers, full code lines as anchors.
+PLACEMENT_RE_PERMISSIVE = re.compile(
+    r"(?P<rel>after|before)\s+(?P<anchor>.+?)\s+in\s+(?P<path>\S+)",
+    re.IGNORECASE,
+)
+# File-only form: "in <path>" with no positional anchor — accept the diff
+# touching the file as evidence. No before/after to verify.
+PLACEMENT_RE_FILE_ONLY = re.compile(
+    r"\bin\s+`?(?P<path>[\w./@-]+)`?",
+    re.IGNORECASE,
+)
 
 
 def verify_placement(record: dict[str, Any], files: dict[str, FileDiff]) -> dict[str, Any]:
     claim = record.get("claim") or ""
+    # Try strict JSX-anchor regex first (α-style: `<Component>`).
     m = PLACEMENT_RE.search(claim)
-    if not m:
+    anchor_is_jsx = m is not None
+    if m is None:
+        # Fallback to β-style permissive: arbitrary anchor text up to " in <path>".
+        m = PLACEMENT_RE_PERMISSIVE.search(claim)
+    if m is None:
+        # Last fallback: file-only ("in path/to/file"). No positional check —
+        # passes if the diff touches the file at all.
+        fm = PLACEMENT_RE_FILE_ONLY.search(claim)
+        if fm:
+            path_claim = fm.group("path")
+            for fpath in files:
+                if fpath.endswith(path_claim) or path_claim.endswith(fpath) or fpath == path_claim:
+                    return {
+                        "status": "pass",
+                        "reason": f"file-only claim — diff touches `{path_claim}`",
+                        "evidence": {"file": fpath, "line": None, "snippet": None},
+                    }
+            return {
+                "status": "fail",
+                "reason": f"file-only claim — diff does not touch `{path_claim}`",
+                "evidence": {"file": None, "line": None, "snippet": None},
+            }
         return {
             "status": "unverifiable",
             "reason": "claim text missing recognizable 'after/before <Anchor> in <path>' pattern",
             "evidence": {"file": None, "line": None, "snippet": None},
         }
     rel = m.group("rel").lower()
-    anchor = m.group("anchor")
-    path_claim = m.group("path")
+    anchor = m.group("anchor").strip().strip("`'\"")
+    path_claim = m.group("path").strip("`'\"")
 
     # Match the path loosely — the diff's path may include a repo prefix.
     target: FileDiff | None = None
@@ -349,7 +423,12 @@ def verify_placement(record: dict[str, Any], files: dict[str, FileDiff]) -> dict
         }
 
     # Look for the anchor in the pre-image: context lines + removed lines.
-    anchor_pat = re.compile(rf"<\s*{re.escape(anchor)}\b", re.IGNORECASE)
+    # JSX-style anchors get strict `<X` matching; β-style permissive anchors
+    # get substring matching (the entire anchor text must appear on the line).
+    if anchor_is_jsx:
+        anchor_pat = re.compile(rf"<\s*{re.escape(anchor)}\b", re.IGNORECASE)
+    else:
+        anchor_pat = re.compile(re.escape(anchor), re.IGNORECASE)
     anchor_pre_line: int | None = None
     anchor_pre_snippet: str | None = None
     for pre_ln, _post_ln, txt in target.context_lines:
@@ -444,28 +523,35 @@ def verify_placement(record: dict[str, Any], files: dict[str, FileDiff]) -> dict
 
 
 CTA_TIER_CLASSES = {"primary", "secondary", "tertiary"}
+# β-style aliases — common in shadcn/Radix/Mantine where ghost/link variants
+# function as tertiary buttons. Adding them as aliases keeps the dimension
+# matchable when implementers name what they actually shipped.
+CTA_TIER_ALIASES = {"ghost": "tertiary", "link": "tertiary"}
+CTA_TIER_ALL = CTA_TIER_CLASSES | set(CTA_TIER_ALIASES.keys())
 # Match common ways a CTA tier is encoded:
 #   className="...primary..."  variant="primary"  tier="primary"
 #   class="btn-primary"        data-tier="primary"
+#   variant="ghost"            variant="link"     (β-style aliases)
 CTA_PATTERNS = [
     re.compile(r"""(?:className|class|variant|tier|data-tier)\s*=\s*["']([^"']+)["']""", re.IGNORECASE),
     # Standalone token (e.g. tailwind: bg-primary, btn-primary)
-    re.compile(r"\b(?:btn-|bg-|border-|text-)?(primary|secondary|tertiary)\b", re.IGNORECASE),
+    re.compile(r"\b(?:btn-|bg-|border-|text-)?(primary|secondary|tertiary|ghost|link)\b", re.IGNORECASE),
 ]
 
 
 def verify_cta_tier(record: dict[str, Any], files: dict[str, FileDiff]) -> dict[str, Any]:
     claim = (record.get("claim") or "").strip().lower()
-    # Pull a tier-class token from the claim.
+    # Pull a tier-class token from the claim. Accept canonical names AND
+    # β-style aliases (ghost, link → tertiary).
     tier: str | None = None
-    for cls in CTA_TIER_CLASSES:
+    for cls in CTA_TIER_ALL:
         if cls in claim:
             tier = cls
             break
     if tier is None:
         return {
             "status": "unverifiable",
-            "reason": "claim does not name a known cta_tier class (primary|secondary|tertiary)",
+            "reason": "claim does not name a known cta_tier class (primary|secondary|tertiary|ghost|link)",
             "evidence": {"file": None, "line": None, "snippet": None},
         }
     # Search added lines across all files for the tier token in a className /
@@ -880,12 +966,29 @@ def main(argv: list[str] | None = None) -> int:
         print("attestation-lint: envelope JSON must be an object", file=sys.stderr)
         return 2
 
+    # Detect malformed envelope (missing synthesis_attestation in both flat
+    # and β-wrapped shapes) — exit 2 with warning. β-style behavior surfaces
+    # the gap rather than silently passing.
+    has_attestation = "synthesis_attestation" in envelope or (
+        isinstance(envelope.get("envelope"), dict)
+        and "synthesis_attestation" in envelope["envelope"]
+    )
+    warning: str | None = None
+    if not has_attestation:
+        warning = (
+            "envelope JSON is missing 'synthesis_attestation' field — "
+            "no claims to verify; exit 2 (malformed_envelope_handling=warn)"
+        )
+
     try:
         results, summary, exit_code = run_lint(diff_text, envelope,
                                                ignore_dims=args.ignore_dim)
     except Exception as e:  # noqa: BLE001
         print(f"attestation-lint: error: {e}", file=sys.stderr)
         return 2
+
+    if warning:
+        exit_code = 2
 
     payload = {
         "diff": args.diff,
@@ -895,6 +998,8 @@ def main(argv: list[str] | None = None) -> int:
         "results": results,
         "exit_code": exit_code,
     }
+    if warning:
+        payload["warning"] = warning
     print(json.dumps(payload, indent=2))
 
     if not args.quiet and exit_code != 0:
