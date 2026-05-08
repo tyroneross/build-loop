@@ -88,6 +88,17 @@ When ambiguous, default to BUILD.
 - **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
 - **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
 - **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See SKILL.md §Phase 1 steps 14-17.
+- **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
+  1. **Explicit user override** — if `state.json.config.modelOverrides.thinking` is set OR the plan declares `tier: thinking` in its frontmatter, route to thinking-tier regardless of count.
+  2. **Auto-escalate on density** — if `count > 5` (6+ entries), the commit is synthesis-dense at the COMMIT level; route to `tier: thinking` automatically. Fan-out loses cross-dimension coherence at this density even with each individual dimension well-specified.
+  3. **Default — Sonnet fan-out for speed** — `count` in 1–5 range OR `count == 0` keeps the default fan-out path. Sonnet's velocity advantage (~33% wall-clock, ~28% tokens) is real and the C3 attestation_lint, C4 synthesis-critic, and C5 halt-and-ask backstops fire post-commit to catch the residual recall gap. Use this lane when speed dominates.
+  4. **Per-commit override available** — if a chunk in the plan declares `tier: thinking` at the chunk level, that chunk specifically routes to thinking even if the plan-level decision was fan-out. For mixed-density plans where some chunks are architectural and others are mechanical.
+
+  Write the routing verdict to `state.json.synthesisDensity` as `{count: N, escalated: true|false, reason: "<override|density|default|chunk-override>"}`. **Routing target is `tier: thinking`, never a hardcoded model name** — Phase 3 resolves the identifier through the same tier abstraction used by the C5 halt-and-ask resolver (`state.json.config.modelOverrides.thinking` → orchestrator frontmatter `model:` → fail-loud if neither resolves).
+
+  **Why this shape (vs the round-4 first draft of "any dim escalates"):** the n=6 A/B experiment showed β catches ~40% of α's novels — quality gap is real. But β saves ~33% wall-clock and ~28% tokens, and the C3-C5 backstops catch some of the gap on commits without too much architectural depth. Default-Opus would erase β's velocity entirely; default-Sonnet at low density preserves it. The `> 5` threshold matches the empirical inflection point in the experiment data: C5 (5 dims, the densest commit) is where β's recall collapsed to 0. Below that, β's recall is poor but non-zero, and the backstops materially help.
+
+  Effect on Phase 3: when `synthesisDensity.escalated == true`, the orchestrator does NOT dispatch parallel implementer subagents for that plan; it executes the chunks inline at `tier: thinking`. When `escalated == false`, fan-out proceeds with the C3/C4/C5 backstops watching. The dual-mode dispatch table still applies — escalation overrides the default fan-out path on a per-plan or per-chunk basis. Skip this step cleanly when no plan file exists yet (re-evaluate at the end of Phase 2 if needed).
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
 
 ### Phase 2: Plan
@@ -125,13 +136,25 @@ When ambiguous, default to BUILD.
 
 Implementers no longer call `git add` or `git commit` (per `agents/implementer.md` Hard rule 4 — round-3 evidence showed the parallel-commit race lost 3 of 4 commits). The orchestrator owns `.git/` as a single-writer resource. After **each parallel batch returns**, run this step before dispatching the next wave or proceeding to Phase 4.
 
-For each implementer return envelope with `status: fixed | partial`:
+For each implementer return envelope with `status: fixed | partial | completed`:
+
+(For `status: "blocked"`, see "Phase 3 halt-and-ask branch" below — that branch fires BEFORE the commit step and may iterate up to 3 times before producing a commit-eligible envelope.)
 
 1. **Verify scope**: `git status --porcelain` — every modified/untracked file must appear in some implementer's `files_changed`. Files not claimed by any implementer = orchestrator-side scope-leak; investigate before committing.
 2. **Stage exactly that implementer's files**: `git add -- <files_changed_list>`. Use absolute paths to avoid relative-path ambiguity when multiple worktrees coexist.
 3. **Commit with the implementer's metadata**: `git commit -m "<commit_subject>" -m "<commit_body>"`. The pre-commit hook runs HERE (full-project tsc, lint-staged, betterer-strict — whatever the project has). If the hook fails, do NOT pass `--no-verify`; instead, capture the failure and route the implementer's plan back to Iterate with `additional_context: "<hook output>"`.
 4. **Verify commit landed**: `git log -1 --oneline` confirms the SHA. If `git status` after the commit still shows the implementer's files as modified, the commit didn't land — investigate.
-5. **Repeat sequentially** for each remaining implementer in this batch. Sequential by design — the pre-commit hook is the only serializer; implementers' parallel work landed on a clean working tree, but the commits themselves serialize through the hook.
+5. **Attestation lint** (NEW 2026-05-07 — synthesis-decision drift catcher): immediately after the commit lands, persist the implementer's envelope to a temp path and run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/attestation_lint.py --diff "<sha>~1..<sha>" --envelope <envelope.json>` where `<sha>` is the commit just verified. The lint cross-checks every `synthesis_attestation` entry against the actual diff for the deterministic dimensions (`placement`, `cta_tier`, `visual_weight`); subjective dims (`copy_tone`, `empty_state`) return `unverifiable` and don't grade.
+   - **Exit 0** — every applied claim verified or only-unverifiable-with-some-pass: proceed silently to step 6.
+   - **Exit 1** — at least one entry FAILED: a synthesis claim is contradicted by the diff. Halt this batch's progression; surface the failing `results[]` entries to the user via `AskUserQuestion` BEFORE entering Phase 4 Review. Possible routings: (a) revert the commit and route to Iterate with the lint output as `additional_context`; (b) accept the drift with a one-line rationale appended to `state.json.attestationOverrides[]`; (c) the implementer's envelope is wrong and needs correcting (orchestrator amends `synthesis_attestation` to match reality + re-runs the lint to confirm clean). Do not proceed to Review while `exit_code: 1` is unresolved.
+   - **Exit 2** — only unverifiable results (every dim was subjective or bare-string form): log a one-line warning to terminal output (e.g. `[Attestation] ⚠️  envelope had no graded claims — synthesis drift undetected this commit`), then proceed. This is informational, not blocking; it tells the operator the lint added zero coverage and the envelope should be richer next time.
+6. **Synthesis critic** (NEW 2026-05-07 — model-based grader for the subjective dims `attestation_lint.py` cannot verify): immediately after step 5 settles, decide whether to dispatch `synthesis-critic`.
+   - **UI-file gate (skip-if-no-UI-files)**: inspect the implementer's `files_changed`. If **none** of the paths match `*.tsx`, `*.jsx`, `*.vue`, or `*.svelte`, skip this step entirely and proceed to step 7 — the subjective dims (`copy_tone`, `empty_state`) only meaningfully apply to commits that change user-visible UI. Backend-only, infra-only, methodology-only, and doc-only commits never invoke the critic. Log one line: `[SynthesisCritic] skipped — no UI files in commit`.
+   - **Dispatch when UI files are present**: `Agent(subagent_type="build-loop:synthesis-critic", prompt=...)` with three context blocks in the prompt: (a) the unified diff (`git diff <sha>~1..<sha>`); (b) the plan's `synthesis_dimensions` block verbatim (so the critic has the claimed phrasing); (c) the implementer's `synthesis_attestation` and `notes` from the envelope. The critic returns one JSON object: `{verdict: "pass" | "flag", flagged: [{dimension, claimed, observed, reasoning}], notes: "..."}`.
+   - **`verdict: "pass"`**: log one line: `[SynthesisCritic] ✅ pass — N subjective dim(s) graded`. Proceed to step 7.
+   - **`verdict: "flag"`**: log a WARN line per flagged dimension (e.g. `[SynthesisCritic] ⚠️  copy_tone — claimed "calm-precision, no exclamation points"; observed "Done!" in NewsBanner.tsx`). Append the full JSON to `.build-loop/state.json.synthesisCriticFlags[]` for Phase 6 Learn pattern detection. **Do NOT block.** Do NOT route to Iterate. Do NOT alter the implementer's `f_criteria`. The critic is WARN-only by contract — flagged dims surface for the operator to triage but never gate the build.
+   - **Critic outage** (subagent dispatch fails or returns non-JSON): log `[SynthesisCritic] ⚠️  critic unavailable — subjective dims ungraded this commit` and proceed. Same WARN-only posture.
+7. **Repeat sequentially** for each remaining implementer in this batch. Sequential by design — the pre-commit hook is the only serializer; implementers' parallel work landed on a clean working tree, but the commits themselves serialize through the hook.
 
 **Concurrency contract:**
 - Implementer side: writes to working tree, never to `.git/`. Returns `commit_subject` + `commit_body` + `files_changed` in envelope.
@@ -139,6 +162,65 @@ For each implementer return envelope with `status: fixed | partial`:
 - Single writer = no race. Round-3's lost-commits issue is structurally prevented.
 
 **Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-F so we can refine the implementer prompt for next run.
+
+#### Phase 3 halt-and-ask branch (NEW — C5 architectural-decision backstop)
+
+C3's `attestation_lint.py` and C4's `synthesis-critic` together cover most synthesis-class drift. **Architectural-class decisions** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, hard-fail/retry counters, etc.) fall outside both — the lint has nothing to grep for, and the critic only fires on UI files. C5 catches those via a halt-and-ask backstop: implementers return `status: "blocked"` rather than guess, and the orchestrator dispatches a Thinking-tier resolver before re-dispatching the implementer.
+
+This branch fires at envelope-receive time, **before** the commit step above. If `status: "blocked"`, you do NOT enter the commit step at all on this iteration — there's nothing to commit yet.
+
+**Trigger**: implementer envelope arrives with `status: "blocked"` AND `novel_decisions[]` non-empty.
+
+**Procedure** (per blocked envelope):
+
+1. **Initialize / increment the per-chunk hard-fail counter.** Read `state.json.novelDecisionAttempts[<chunk_id>]` (default 0). If already at **3**, do NOT re-dispatch — surface the chunk as ❓ Unfixed in Review-F with the unresolved decisions logged to `state.json.novelDecisionUnresolved[]`, and proceed to the next chunk. Otherwise increment by 1 and continue. **N=3 chosen to mirror the existing "after 3 attempts surface as ❓ Unfixed" pattern documented in `skills/build-loop/SKILL.md` §Phase 5 (lines 535-542)** — keeps build-loop's escalation cadence consistent across phases.
+
+2. **Validate the blocked envelope.** `status: "blocked"` requires `novel_decisions[]` non-empty (per `references/implementer-envelope-schema.md` parser rule 5). Empty `novel_decisions[]` with `status: "blocked"` is malformed — treat as `failed` and route to Iterate; do NOT enter the resolution loop.
+
+3. **Reset working tree to the parent commit** before resolving. Implementers may have left partial edits on disk. Run `git stash push --keep-index --include-untracked -m "buildloop-c5-block-<chunk_id>-<attempt>"` to preserve the partial work for forensic review without contaminating the re-dispatch. `git status` must be clean after this step.
+
+4. **For each entry in `novel_decisions[]`**, dispatch the configured Thinking-tier resolver:
+   ```
+   Agent({
+     subagent_type: "build-loop:build-orchestrator",   // self-dispatch as resolver — Thinking-tier per frontmatter
+     model: "<resolved via tier abstraction — see below>",
+     prompt: <resolver brief: decision text, implementer's reasoning, plan excerpt, repo intent packet, ask-for-one-line-resolution-plus-rationale>
+   })
+   ```
+   **Routing is `tier: thinking`, never a hardcoded model name.** Resolve the model identifier via the existing tier abstraction in this order: (a) `state.json.config.modelOverrides.thinking` if set (per `references/model-tier-mapping.md` §"Runtime override via .build-loop/config.json"); (b) the orchestrator's frontmatter `model:` value (currently `claude-opus-4-7` — the Thinking-tier default); (c) if neither resolves, log the missing-tier-mapping as a novel decision itself and surface to user. Do NOT inline a literal `claude-opus-4-7` — go through the tier lookup so multi-provider hosts (GPT-5 Thinking, Gemini 2.5 Pro) substitute cleanly.
+
+   The resolver returns one JSON object per decision: `{"resolution": "<one-line directive>", "rationale": "<why>", "alternatives_rejected": ["<a>", "<b>"]}`.
+
+5. **Persist resolutions.** Append each resolution to `state.json.novelDecisionResolutions[]` with shape:
+   ```json
+   {
+     "chunk_id": "<from plan>",
+     "attempt": <1|2|3>,
+     "decision": "<verbatim from novel_decisions[]>",
+     "implementer_reasoning": "<verbatim>",
+     "resolution": "<from resolver>",
+     "rationale": "<from resolver>",
+     "resolved_by": "tier:thinking",
+     "resolved_at": "<iso8601>"
+   }
+   ```
+   This is durable — survives orchestrator restart and is read by Phase 6 Learn for pattern detection on architectural-decision drift across builds.
+
+6. **Re-dispatch the implementer** with the **same brief** plus an appended `resolved_decisions:` block containing every resolution generated in step 4 for this chunk. Include both the prior attempts' resolutions and the latest — implementers don't need to remember context across re-dispatches if the brief carries it. The implementer applies the resolutions as if they had been part of the plan's `synthesis_dimensions` from the start, and attests against them in the next envelope's `synthesis_attestation`.
+
+7. **Loop**. The next envelope can return:
+   - `status: "completed"` / `"fixed"` / `"partial"` → proceed to the commit step (the standard Phase 3 commit step above), then continue to the next implementer in the batch.
+   - `status: "blocked"` again with new `novel_decisions[]` → repeat from step 1. Counter increments. At N=3, surface as ❓ Unfixed.
+   - Any other failure status → route per the standard Phase 3 commit step's failure handling (Iterate, etc.). The N=3 counter is specific to the halt-and-ask loop, not to general implementer failures.
+
+**No new dependencies.** This is a status-branch addition to the existing await-implementer dispatch, not a new runtime. The orchestrator already awaits implementer envelopes; `blocked` is just one more value to switch on. Do NOT introduce LangGraph, a state machine library, or any new event loop. The existing `Agent(...)` dispatch + envelope parsing is the substrate.
+
+**State writes touched by this branch:**
+- `state.json.novelDecisionAttempts[<chunk_id>]` — counter
+- `state.json.novelDecisionResolutions[]` — durable resolution log
+- `state.json.novelDecisionUnresolved[]` — entries that exhausted N=3
+
+**Telemetry**: log one line per resolution in terminal output: `[C5 Resolver] chunk=<id> attempt=<n>/3 decision="<short>" → resolution="<short>"`. On hard-fail: `[C5 Resolver] ❌ chunk=<id> exhausted 3 attempts — routing to ❓ Unfixed`.
 
 ### Phase 4: Review (sub-steps A–F)
 
