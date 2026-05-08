@@ -31,8 +31,10 @@ human inspection. Specifically:
 | `ibr scan`, `ibr audit`, `ibr check`, `ibr start` | `/ibr:ui` (validation dashboard) |
 | `ibr generate-test`, `ibr test-form/login/search/interact` | `ibr session:start` (interactive browser) |
 | `mcp__plugin_ibr_ibr__scan`, `native_scan`, `compare`, `interact_and_verify` | `mcp__plugin_ibr_ibr__list_sessions` (session inventory UI hook) |
-| `mcp__plugin_ibr_ibr__plan_test`, `references`, `validate_tokens`, `design_system` | Any tool that returns a URL the user is expected to open |
-| `mcp__plugin_ibr_ibr__flow_form/login/search`, `flow_form` (programmatic) | Any IBR command that holds a browser open after returning |
+| `mcp__plugin_ibr_ibr__scan_macos`, `native_snapshot`, `native_compare`, `native_devices` | Any tool that returns a URL the user is expected to open |
+| `mcp__plugin_ibr_ibr__session_start`, `session_action`, `session_read`, `session_close` (programmatic AX session) | Any IBR command that holds a browser open after returning |
+| `mcp__plugin_ibr_ibr__plan_test`, `references`, `validate_tokens`, `design_system` |  |
+| `mcp__plugin_ibr_ibr__flow_form/login/search`, `flow_form` (programmatic) |  |
 
 If the user wants the IBR viewer, they invoke IBR directly (`/ibr:ui`,
 `/ibr:scan` standalone). The bridge never auto-opens it.
@@ -62,7 +64,7 @@ Interpret the JSON:
 
 | Status | Action |
 |---|---|
-| `ran`, `pass == ran` | Quick pass green. Proceed to focused `scan`/`native_scan` of changed surface, then Sub-step D. |
+| `ran`, `pass == ran` | Quick pass green. Proceed to focused `scan` (web) or `scan_macos` (native macOS — see §Native macOS (AX) protocol) of changed surface, then Sub-step D. |
 | `ran`, `fail` non-empty | Route each failed test to Iterate as a fix target — the test's assertion is the rubric. Skip generic critic re-run. |
 | `no_tests` | Suite is empty. Coverage-gap protocol below generates initial drafts. Sub-step B falls through to static scanner. |
 | `ibr_unavailable` | CLI gone mid-build. Fall through to `fallbacks.md#web-ui`. |
@@ -92,9 +94,29 @@ fixes to broken behavior.
 
 ## Iterate hook (Phase 5)
 
-When an Iterate iteration touches files matching UI extensions (`.tsx, .jsx, .vue, .svelte, .swift`) and IBR is available, the orchestrator calls `interact_and_verify` against the affected route immediately after the implementer subagent reports back, **before** re-entering Sub-step B Validate. Cheaper than a full Validate cycle and catches "fix introduced a new visual or interaction regression" early.
+When an Iterate iteration touches files matching UI extensions and IBR is available, the orchestrator calls a verifier against the affected surface immediately after the implementer subagent reports back, **before** re-entering Sub-step B Validate. Cheaper than a full Validate cycle and catches "fix introduced a new visual or interaction regression" early.
 
-For stubborn UI bugs (same route fails twice), optionally invoke `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop. Capped to respect build-loop's 5-iteration ceiling — IBR's internal iterations count against build-loop's budget.
+| Changed file extension | Surface kind | Verifier |
+|---|---|---|
+| `.tsx`, `.jsx`, `.vue`, `.svelte`, `.html` | Web route | `interact_and_verify` against the route |
+| `.swift` (macOS target — `*.app`, `Sources/macOS/*`, `Views/*` reachable from a running .app) | Native macOS app | **Native macOS (AX) protocol** below |
+| `.swift` (iOS target — simulator) | iOS simulator | `native_scan` + iOS sim `idb ui tap` per `reference_idb_sim_tap.md` |
+
+For stubborn UI bugs (same surface fails twice), optionally invoke `ibr iterate <url> --headless --json` for web, or repeat the AX session loop with refined element queries for native. Capped to respect build-loop's 5-iteration ceiling — IBR's internal iterations count against build-loop's budget.
+
+## Native macOS (AX) — built-in, not bridged
+
+Build-loop has its own native AX driver — see `skills/native-ax-driver/SKILL.md`. That skill is the canonical path for driving running `.app` bundles via the Accessibility API; it does not require IBR to be installed.
+
+IBR's macOS MCP tools (`scan_macos`, `native_snapshot`, `native_compare`, `session_start/read/action/close`) are still allowed by this bridge as an **optional accelerator** when IBR is present — they add session bookkeeping, baseline diffs, and screenshots that the built-in driver doesn't try to duplicate. Routing rule:
+
+| Available | Use |
+|---|---|
+| Both IBR MCP and built-in driver | IBR MCP (richer features) |
+| Built-in driver only | `python3 .../skills/native-ax-driver/scripts/native_driver.py` |
+| Neither (no `swift` toolchain, no IBR) | Surface as Iterate blocker — build-loop cannot self-verify native macOS UI without one of the two |
+
+Both paths use `AXUIElementPerformAction` under the hood and never inject `CGEvent` mouse/keyboard events; the user's cursor stays still.
 
 ## Sub-step D supplementary checks
 

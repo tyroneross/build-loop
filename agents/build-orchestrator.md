@@ -264,7 +264,10 @@ Full protocol in `references/iterate-protocol.md`. Highlights:
 - **Stuck-iteration escalation cascade** runs at the start of every Iterate attempt: evidence-gap repair → memory-first re-check → architecture impact pre-step (`Agent(subagent_type="build-loop:architecture-scout", prompt='task: iterate-subgraph, failing_files: [<files>]')` for cross-layer failures) → 2-failure parallel domain assessment → 3-failure causal-tree investigation.
 - Build the **prioritized work list** (Validate failures → blocker UX → major UX → optimization → IBR coverage gaps); architecture-impact entries defer to Review-F.
 - **Partition for fan-out**: top-level mode dispatches up to 4 `implementer` subagents in parallel; subagent mode degrades gracefully to inline-implementer.
-- IBR re-validate hook for UI work: `mcp__plugin_ibr_ibr__interact_and_verify` after each implementer reports.
+- Re-validate hook for UI work, pick by `uiTarget.kind`:
+  - **web** → `mcp__plugin_ibr_ibr__interact_and_verify` against the route.
+  - **native macOS** (running `.app`, `.swift` files in macOS target) → built-in `skills/native-ax-driver/` (`python3 .../native_driver.py preflight|scan|action`). Cursor-free — uses `AXUIElementPerformAction`, no `CGEvent`. IBR's `scan_macos` / `session_*` tools are an optional accelerator when IBR is present (`skills/ibr-bridge/SKILL.md` §"Native macOS (AX) — built-in, not bridged").
+  - **iOS simulator** → `native_scan` + `idb ui tap` per `reference_idb_sim_tap.md`.
 - Loop back to Review-B; A usually skipped on re-runs.
 - Hard stop at 5 iterations; overflow to `.build-loop/followup/`.
 
