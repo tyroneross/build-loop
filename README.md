@@ -4,38 +4,38 @@ A plugin for Claude Code that turns big code changes into a checked, repeatable 
 
 ## What it is
 
-Build-loop runs your code change through five phases: plan, execute, review, iterate, and (optional) learn. It splits the work into safe parallel chunks, runs a critic on the diff, runs your tests, traces every number on the page back to a real source, scans for fake data in production paths, and stops if what you shipped does not match what you said you would build. It picks the right model for each task: a strong model to plan and review, a faster model to write code, and a small model for pattern checks.
+Build-loop runs your code change through five phases: plan, execute, review, iterate, and an optional learn step. It splits the work into safe parallel chunks where it can. A critic reads the diff before tests run, so cheap checks catch the obvious mistakes first. Tests must actually pass. Every number on the page traces back to a real source. Fake data in production paths gets flagged. The build stops if what you shipped does not match what you said you would build. The plugin picks the right model for each task: a strong model to plan and review, a faster model to write code, a small model for pattern checks.
 
 ## Why use it
 
-Big changes break things. You forget an edge case. You skip the test pass. The diff drifts from the plan. The implementer makes a quiet design call you never see. Build-loop catches all of that before the change ships:
+Big changes break things. You forget an edge case. You skip the test pass. The diff drifts from the plan. The implementer makes a quiet design call you never see. Build-loop catches all of that before the change ships.
 
-- **One source of truth.** The plan lists every design decision up front. The implementer must say which decisions it made. A lint compares the claim to the actual code change. If the two do not match, the loop stops.
-- **Speed where you can, depth where you must.** Mechanical work runs in parallel on a fast model. Work with five or more design decisions auto-routes to the strong model in one pass — the empirical point where the fast model loses cross-decision context.
-- **Real evidence, not vibes.** Every pass or fail has a code-based grader. Every metric on a page traces back to its data source. Tests must run; output must render; placeholders are flagged.
-- **Less rework.** A read-only critic runs before full validation, so cheap checks catch the obvious mistakes before you spend tokens on the long ones.
-- **A way to actually improve a number.** When you want to make something faster or smaller, the optimize mode plans a small batch of test runs that vary two or more things at once, then tells you which one really moved the number — so you don't waste time turning one knob at a time and missing the interactions.
+- **One source of truth.** The plan lists every design decision up front. The implementer must say which decisions it made. A lint compares the claim to the actual diff. If the two do not match, the loop stops.
+- **Speed where you can, depth where you must.** Mechanical work runs in parallel on a fast model. Work with five or more design decisions auto-routes to the strong model in one pass. Five is the cutoff measured in our testing where the fast model lost cross-decision context.
+- **Real evidence, not vibes.** Every pass or fail has a code-based grader. Every metric on a page traces back to its data source. Tests must run. Output must render. Placeholders get flagged.
+- **Less rework.** A read-only critic runs before full validation. Cheap checks catch the obvious mistakes first.
+- **A way to actually improve a number.** Run multiple tests in a single experiment using Design of Experiments and other statistical methods. You can test six variables at once instead of one. The optimize mode plans the test matrix, runs each combination, and tells you which variable actually moved the number.
 
-You get fewer regressions, a clean record of what changed and why, and a workflow you can trust on changes that touch many files at once.
+You ship fewer regressions. You get a clean record of what changed and why. You can trust the workflow on changes that touch many files at once.
 
 ## Get started
 
-Install the plugin:
+Install the plugin.
 
 ```
 /plugin marketplace add tyroneross/build-loop
 /plugin install build-loop@build-loop
 ```
 
-Run a build:
+Run a build.
 
 ```
 /build-loop:run add user notification system with email and push
 ```
 
-Skip the loop for small fixes (under about 20 lines, single file, no new endpoint). For everything else — features, refactors, migrations, schema changes, anything that crosses a file or system boundary — run it through the loop.
+Skip the loop for small fixes (under about 20 lines, single file, no new endpoint). For everything else, run it through the loop. That includes features, refactors, migrations, schema changes, and anything that crosses a file or system boundary.
 
-Debug a failing system:
+Debug a failing system.
 
 ```
 /build-loop:debug tests pass locally but fail in CI
