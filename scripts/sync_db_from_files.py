@@ -75,10 +75,12 @@ def confidence_to_float(c: str) -> float:
 def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
     """Read MADR, embed body, upsert into semantic_facts.
 
-    Uses (subject = 'decision:NNNN') as the natural key. We DELETE then
-    INSERT to keep the schema simple (no UNIQUE constraint added; a real
-    upsert would use ON CONFLICT but we'd need a unique index on subject
-    which would conflict with future multi-fact-per-decision use).
+    Uses (subject = 'decision:<project>:NNNN') as the natural key — the
+    project tag is included so that decision IDs allocated independently
+    in different projects don't collide on upsert. We DELETE then INSERT
+    to keep the schema simple (no UNIQUE constraint added; a real upsert
+    would use ON CONFLICT but we'd need a unique index on subject which
+    would conflict with future multi-fact-per-decision use).
     """
     text = path.read_text(encoding="utf-8")
     fm = parse_frontmatter(text) or {}
@@ -86,6 +88,7 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
     if not decision_id:
         log(f"skip: no id in frontmatter for {path}")
         return False
+    project = (fm.get("project") or "_unscoped").strip() or "_unscoped"
 
     try:
         embedding = _embed(text)
@@ -93,7 +96,7 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
         log(f"skip: embed failed for {path}: {e}")
         return False
 
-    subject = f"decision:{decision_id}"
+    subject = f"decision:{project}:{decision_id}"
     predicate = fm.get("primary_tag") or "decision"
     obj_summary = fm.get("title") or ""
     metadata = {

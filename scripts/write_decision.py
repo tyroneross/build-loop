@@ -591,7 +591,11 @@ def db_dualwrite(
         # Local import keeps Phase 1 (`--no-db` test runs) from requiring psycopg.
         from db import execute, vector_literal  # type: ignore  # noqa: PLC0415
 
-        subject = f"decision:{decision_id}"
+        # Subject namespaced by project to avoid cross-project ID collisions
+        # (decision IDs are allocated per-project; without namespacing,
+        # build-loop/0001 and atomize-ai/0001 would clobber each other).
+        _project_for_subject = (fm.get("project") or "_unscoped").strip() or "_unscoped"
+        subject = f"decision:{_project_for_subject}:{decision_id}"
         predicate = fm.get("primary_tag") or "decision"
         obj_summary = fm.get("title") or ""
         metadata = {
