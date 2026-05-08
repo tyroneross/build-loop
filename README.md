@@ -1,6 +1,46 @@
 # build-loop
 
-Orchestrated 5-phase development loop (+1 optional Learn) for Claude Code. Brings structure, validation, and fact-checking to significant multi-step code changes.
+A plugin for Claude Code that turns big code changes into a checked, repeatable workflow.
+
+## What it is
+
+Build-loop runs your code change through five phases: plan, execute, review, iterate, and (optional) learn. It splits the work into safe parallel chunks, runs a critic on the diff, runs your tests, traces every number on the page back to a real source, scans for fake data in production paths, and stops if what you shipped does not match what you said you would build. It picks the right model for each task: a strong model to plan and review, a faster model to write code, and a small model for pattern checks.
+
+## Why use it
+
+Big changes break things. You forget an edge case. You skip the test pass. The diff drifts from the plan. The implementer makes a quiet design call you never see. Build-loop catches all of that before the change ships:
+
+- **One source of truth.** The plan lists every design decision up front. The implementer must say which decisions it made. A lint compares the claim to the actual code change. If the two do not match, the loop stops.
+- **Speed where you can, depth where you must.** Mechanical work runs in parallel on a fast model. Work with five or more design decisions auto-routes to the strong model in one pass — the empirical point where the fast model loses cross-decision context.
+- **Real evidence, not vibes.** Every pass or fail has a code-based grader. Every metric on a page traces back to its data source. Tests must run; output must render; placeholders are flagged.
+- **Less rework.** A read-only critic runs before full validation, so cheap checks catch the obvious mistakes before you spend tokens on the long ones.
+
+You get fewer regressions, a clean record of what changed and why, and a workflow you can trust on changes that touch many files at once.
+
+## Get started
+
+Install the plugin:
+
+```
+/plugin marketplace add tyroneross/build-loop
+/plugin install build-loop@build-loop
+```
+
+Run a build:
+
+```
+/build-loop:run add user notification system with email and push
+```
+
+Skip the loop for small fixes (under about 20 lines, single file, no new endpoint). For everything else — features, refactors, migrations, schema changes, anything that crosses a file or system boundary — run it through the loop.
+
+Debug a failing system:
+
+```
+/build-loop:debug tests pass locally but fail in CI
+```
+
+Detail on each phase, the model tier rules, the synthesis-decision lint, the architecture engine, and the debugger is below.
 
 ## Phases
 
