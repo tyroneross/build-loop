@@ -3,11 +3,11 @@
 check_checklist.py — deterministic spec-writing checklist verifier.
 
 Reads a plan markdown file, locates the <!-- checklist --> HTML comment block,
-and checks whether each of the 8 required items is answered (not blank, not
+and checks whether each of the 15 required items is answered (not blank, not
 the literal placeholder text, and not omitted entirely).
 
 Exit codes:
-    0 — all 8 items answered
+    0 — all 15 items answered
     1 — one or more items missing or unanswered
     2 — verifier error (file not found, parse failure)
 
@@ -42,6 +42,7 @@ ITEMS: list[tuple[str, str]] = [
     ("item_12_low_reversibility_adrs", "Item 12 — Low-reversibility ADRs"),
     ("item_13_analytical_lens",        "Item 13 — Analytical lens"),
     ("item_14_handoff_document",       "Item 14 — Handoff document"),
+    ("item_15_synthesis_dimensions",   "Item 15 — Synthesis dimensions"),
 ]
 
 # Values that count as "not answered" — case-insensitive, stripped
@@ -112,6 +113,37 @@ def is_answered(value: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # ID patterns: U-NN, F-NN, D-NN, S-NN, T-NN, A-NN
+_UI_PATH_RE = re.compile(
+    r"(?:components/|app/|pages/|src/|\.(?:tsx|jsx)\b)",
+    re.IGNORECASE,
+)
+_SYNTH_BLOCK_RE = re.compile(r"synthesis_dimensions\s*:", re.IGNORECASE)
+_SYNTH_REQUIRED_KEYS = {"placement", "cta_tier", "copy_tone", "visual_weight", "empty_state"}
+
+
+def check_item_9_synthesis_dimensions(plan_text: str) -> tuple[str, str | None]:
+    """Return ('OK', None) if no UI files detected or synthesis block is present and complete.
+    Return ('FAIL', reason) if UI files are detected but the block is missing or incomplete.
+
+    Named check_item_9_synthesis_dimensions per task spec (the item appears as
+    Item 15 in the 15-item checklist, but the function name is pinned to the
+    task brief for build-loop A/B experiment traceability).
+    """
+    has_ui = bool(_UI_PATH_RE.search(plan_text))
+    if not has_ui:
+        return ("OK", None)
+    if not _SYNTH_BLOCK_RE.search(plan_text):
+        return ("FAIL", "UI files detected but no 'synthesis_dimensions:' block found in plan.")
+    # Check for required keys
+    missing = []
+    for key in sorted(_SYNTH_REQUIRED_KEYS):
+        if not re.search(rf"\b{re.escape(key)}\s*:", plan_text, re.IGNORECASE):
+            missing.append(key)
+    if missing:
+        return ("FAIL", f"synthesis_dimensions block missing required keys: {', '.join(sorted(missing))}")
+    return ("OK", None)
+
+
 _ID_RE = re.compile(r"\b[UFDSTA]-\d+\b")
 _P0_LINE_RE = re.compile(r"\[P0\]", re.IGNORECASE)
 _T_ID_RE = re.compile(r"\bT-\d+\b")
@@ -229,6 +261,16 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
             ),
         })
 
+    # Item 15: Synthesis dimensions (UI commits only)
+    synth_status, synth_reason = check_item_9_synthesis_dimensions(text)
+    if synth_status == "FAIL":
+        findings.append({
+            "item_id": "item_15_synthesis_dimensions",
+            "label": "Item 15 — Synthesis dimensions",
+            "status": "warn",
+            "message": synth_reason,
+        })
+
     # Item 14: Sibling .handoff.md must exist
     slug = plan_path.stem  # e.g. "my-feature" from "my-feature.md"
     handoff_path = plan_path.parent / f"{slug}.handoff.md"
@@ -333,14 +375,20 @@ def verify(plan_path: Path) -> dict:
 
     structural_warnings = _structural_findings(text, plan_path)
 
+    # Synthesis structural failure is a hard failure (affects exit code).
+    synthesis_failures = sum(
+        1 for w in structural_warnings
+        if w["item_id"] == "item_15_synthesis_dimensions"
+    )
+
     return {
         "plan": str(plan_path),
         "checklist_found": True,
         "findings": findings,
         "structural_warnings": structural_warnings,
-        "missing_count": missing,
+        "missing_count": missing + synthesis_failures,
         "structural_warning_count": len(structural_warnings),
-        "exit_code": 0 if missing == 0 else 1,
+        "exit_code": 0 if (missing + synthesis_failures) == 0 else 1,
     }
 
 
