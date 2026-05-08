@@ -12,7 +12,8 @@ Rules: delete-with-callers, numeric-drift, route-change-evidence,
 package-state, missing-evidence, scope-split, less-invasive-shim,
 tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
-synthesis-dim-vague-value.
+synthesis-dim-vague-value, risk-reason-invalid-value,
+scope-audit-required.
 
 Plan Evidence Contract (per finding):
 {
@@ -724,6 +725,111 @@ def rule_schema_migration_full_chain(plan_path: Path, lines: list[tuple[int, str
     return out
 
 
+# ---------------------------------------------------------------------------
+# Rule: risk-reason-invalid-value (2026-05-08) — `risk_reason:` present in
+# frontmatter or plan body with a value outside the canonical 5.
+# ---------------------------------------------------------------------------
+# Matches a `risk_reason:` line followed by a non-empty value.
+RISK_REASON_LINE_RE = re.compile(
+    r"^\s*risk_reason\s*:\s*(.+)$", re.IGNORECASE
+)
+# The five and only five canonical values (exact string match after strip).
+RISK_REASON_CANONICAL: frozenset[str] = frozenset({
+    "security boundary",
+    "persistence contract",
+    "runtime protocol",
+    "deployment",
+    "user trust claim",
+})
+
+
+def rule_risk_reason_invalid_value(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """BLOCKER: `risk_reason:` is present but its value is not in the canonical 5.
+    Absent `risk_reason:` is always valid. Only fires when a value is given."""
+    out: list[dict[str, Any]] = []
+    for lineno, line in lines:
+        if not line:
+            continue
+        m = RISK_REASON_LINE_RE.match(line)
+        if m:
+            value = m.group(1).strip().strip('"').strip("'")
+            if value and value not in RISK_REASON_CANONICAL:
+                out.append(_finding(
+                    claim_text=line.strip(),
+                    claim_kind="risk_reason_invalid_value",
+                    subject={"path": None, "symbol": None, "noun": "risk_reason"},
+                    verification_command=None,
+                    evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                    result="no_match",
+                    marker="❌",
+                    severity="BLOCKER",
+                    confidence="high",
+                    rule_id="risk-reason-invalid-value",
+                ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Rule: scope-audit-required (2026-05-08) — `modifies_api: true` without a
+# companion `scope_auditor_status:` field in the same plan. WARN-only.
+# ---------------------------------------------------------------------------
+MODIFIES_API_TRUE_RE = re.compile(
+    r"^\s*modifies_api\s*:\s*true\s*$", re.IGNORECASE
+)
+SCOPE_AUDITOR_STATUS_RE = re.compile(
+    r"\bscope_auditor_status\s*:", re.IGNORECASE
+)
+# Captures the chunk/plan id from adjacent frontmatter. Look for `id:` within
+# 20 lines of the `modifies_api: true` line. Falls back to "unknown".
+FRONTMATTER_ID_RE = re.compile(r"^\s*id\s*:\s*(.+)$", re.IGNORECASE)
+
+
+def rule_scope_audit_required(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN: `modifies_api: true` is set in plan/chunk frontmatter but no
+    `scope_auditor_status:` field follows in the same plan.
+    Severity is WARN because the gate is enforced by the orchestrator at
+    dispatch time; this rule only surfaces the missing audit trail."""
+    # Scan the whole doc once for scope_auditor_status.
+    has_audit_status = any(
+        SCOPE_AUDITOR_STATUS_RE.search(line) for _, line in lines if line
+    )
+    if has_audit_status:
+        return []
+    # Look for modifies_api: true lines.
+    out: list[dict[str, Any]] = []
+    n = len(lines)
+    for idx, (lineno, line) in enumerate(lines):
+        if not line:
+            continue
+        if MODIFIES_API_TRUE_RE.match(line):
+            # Find nearest id: within 20 lines above/below.
+            lo = max(0, idx - 20)
+            hi = min(n, idx + 21)
+            chunk_id = "unknown"
+            for j in range(lo, hi):
+                mid = FRONTMATTER_ID_RE.match(lines[j][1] or "")
+                if mid:
+                    chunk_id = mid.group(1).strip().strip('"').strip("'")
+                    break
+            claim = (
+                f"modifies_api: true is set on chunk '{chunk_id}' but no "
+                "scope_auditor_status field follows — orchestrator will require "
+                "a scope-auditor pass before Phase 3 dispatch."
+            )
+            out.append(_finding(
+                claim_text=claim,
+                claim_kind="scope_audit_required",
+                subject={"path": None, "symbol": None, "noun": "scope_auditor_status"},
+                verification_command=None,
+                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                result="inconclusive",
+                severity="WARN",
+                confidence="high",
+                rule_id="scope-audit-required",
+            ))
+    return out
+
+
 # Rule: synthesis-dim-vague-value (2026-05-07) — flag vague values in the
 # `synthesis_dimensions:` block (defeats Opus pre-resolution of synthesis).
 SYNTHESIS_VAGUE_RE = re.compile(
@@ -814,6 +920,8 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_risk_surface_change_without_threat_model(plan_path, lines))
     findings.extend(rule_schema_migration_full_chain(plan_path, lines))
     findings.extend(rule_synthesis_dim_vague_value(plan_path, lines))
+    findings.extend(rule_risk_reason_invalid_value(plan_path, lines))
+    findings.extend(rule_scope_audit_required(plan_path, lines))
     return findings
 
 

@@ -43,6 +43,7 @@ ITEMS: list[tuple[str, str]] = [
     ("item_13_analytical_lens",        "Item 13 — Analytical lens"),
     ("item_14_handoff_document",       "Item 14 — Handoff document"),
     ("item_15_synthesis_dimensions",   "Item 15 — Synthesis dimensions"),
+    ("item_16_risk_reason",            "Item 16 — Risk reason"),
 ]
 
 # Values that count as "not answered" — case-insensitive, stripped
@@ -343,7 +344,12 @@ def verify(plan_path: Path) -> dict:
     missing = 0
     for item_id, label in ITEMS:
         normalized = _normalize_label(label)
-        is_optional = (item_id == "item_15_synthesis_dimensions" and not ui_in_scope)
+        # Item 15 optional when no UI in scope; Item 16 always optional (only required
+        # when author has identified a high-consequence boundary — absent is valid).
+        is_optional = (
+            (item_id == "item_15_synthesis_dimensions" and not ui_in_scope)
+            or item_id == "item_16_risk_reason"
+        )
         if normalized not in parsed:
             if is_optional:
                 findings.append({"item_id": item_id, "label": label, "answer": None,

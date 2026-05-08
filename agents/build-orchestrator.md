@@ -135,6 +135,8 @@ One end-of-run report. Surface what changed, what shipped, what was deferred. No
 
 ### Phase 3: Execute (parallel)
 
+**Pre-dispatch scope-audit gate (mandatory for `modifies_api: true`)**: For each chunk in the plan, check `modifies_api`. If true AND `state.json.scopeAuditorStatus.<chunk_id>` is not `"passed"`, halt dispatch for that chunk. Run `Agent(subagent_type="build-loop:scope-auditor", ...)` against the chunk's owned files + the plan's caller-audit table. The auditor either returns `verdict: scope_clean` (write `passed` to state, proceed) or appends missing callers to the plan + returns `verdict: scope_gap_found` (operator must absorb the missing callers into the chunk's owned-files OR record explicit acceptance in `state.json.scopeGapAccepted[]` with rationale before retry). Doc-only commits (no `modifies_api`) skip this gate. See `agents/scope-auditor.md` for full protocol.
+
 - Identify independent tasks from the plan's dependency graph.
 - Dispatch one subagent per independent task with minimal context + capability-routing instructions per `references/capability-routing.md`.
 - Each agent gets: task description, relevant file paths, integration contract, relevant fallback snippets, an intent packet from `.build-loop/intent.md`, a MECE ownership packet (`owns`, `does not own`, `interface contract`, `integration checkpoint`), an `architecture_context:` block read verbatim from `.build-loop/architecture/scout-cache/chunk-<N>.json`, and an `available_capabilities:` block (Priority 16) carrying `state.json.activeCapabilities["3"][-1].results[:8]` (fall back to `["2"]` when Phase 3 isn't separately scored). Implementers treat the architecture block as authoritative blast-radius information — they MUST flag any change that exits the slice in their return envelope. Do NOT dispatch the scout again in Phase 3 and do NOT re-run `capability_shortlist.py`; the cache from Phase 1/2 is the source of truth for routing context.
@@ -293,6 +295,14 @@ Defaults (consult `Skill("build-loop:model-tiering")` for the canonical table):
 - **Planner / final reviewer / experiment signoff**: you (Opus 4.7).
 
 **Escalate to Opus** (respawn the subagent) when any of: 2 consecutive failures on the same chunk after `effort=high`; ambiguous spec; cross-file architectural decision surfaces mid-execution; critic flagged `strong-checkpoint` requiring judgment; novel error pattern; user-visible prose where tone matters. Log escalations in `.build-loop/state.json.escalations`.
+
+### Escalation Triggers
+
+The following signals route a chunk or plan scope to `tier: thinking` unconditionally, superseding the default Sonnet fan-out path:
+
+- **`synthesis_dimensions` count > 5** — 6 or more entries signals synthesis-dense work where fan-out loses cross-dimension coherence. See Phase 1 synthesis-density routing rule for the full decision tree.
+- **Explicit `tier: thinking` override** — plan-level or chunk-level frontmatter declares `tier: thinking` directly.
+- **`risk_reason:` present** — any chunk or plan-level `risk_reason:` value (one of `security boundary | persistence contract | runtime protocol | deployment | user trust claim`) routes that scope to thinking-tier regardless of `synthesis_dimensions` count. Captures consequence, not just density. See `skills/spec-writing/SKILL.md` Item 16 for the field's spec.
 
 ## Memory Systems
 
