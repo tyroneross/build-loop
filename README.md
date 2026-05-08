@@ -296,7 +296,7 @@ Package root for Codex installs:
 
 Primary Codex surface:
 - skills from `./skills` when present
-- MCP config from `(none)` when present
+- MCP config from `./.mcp.json` when present
 
 Codex adapter files:
 - `skills/build-loop/references/codex-subagents.md`
