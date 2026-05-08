@@ -732,10 +732,15 @@ SYNTHESIS_VAGUE_RE = re.compile(
 SYNTHESIS_HEADER_RE = re.compile(r"^\s*synthesis_dimensions\s*:\s*$", re.IGNORECASE)
 
 
-def rule_synthesis_dim_vague_value(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
-    """BLOCKER: vague value inside a `synthesis_dimensions:` block.
-    Block ends at first non-indented, non-blank line."""
-    out: list[dict[str, Any]] = []
+def iter_synthesis_dimension_entries(lines: list[tuple[int, str]]):
+    """Yield (lineno, raw_line) for each entry inside any `synthesis_dimensions:`
+    block in the plan. A block ends at the first non-indented, non-blank line.
+
+    Shared between the deterministic vague-value rule and any caller (e.g.
+    Phase 1 routing) that needs to count synthesis dimensions. Fenced code
+    blocks and HTML comments are already stripped upstream by
+    strip_fenced_blocks(). Multiple synthesis_dimensions blocks in a single
+    plan are concatenated."""
     n, i = len(lines), 0
     while i < n:
         lineno, line = lines[i]
@@ -747,19 +752,44 @@ def rule_synthesis_dim_vague_value(plan_path: Path, lines: list[tuple[int, str]]
                     j += 1; continue
                 if not re.match(r"^[ \t]+\S", lline):
                     break
-                colon_idx = lline.find(":")
-                value_part = lline[colon_idx + 1:] if colon_idx >= 0 else lline
-                if SYNTHESIS_VAGUE_RE.search(value_part):
-                    out.append(_finding(
-                        claim_text=lline.strip(), claim_kind="missing_evidence",
-                        subject={"path": None, "symbol": None, "noun": "synthesis_dimension"},
-                        evidence={"file": str(plan_path), "line": lj, "snippet": lline.strip()},
-                        result="no_match", marker="❌", severity="BLOCKER",
-                        confidence="high", rule_id="synthesis-dim-vague-value"))
+                yield lj, lline
                 j += 1
             i = j
             continue
         i += 1
+
+
+def count_synthesis_dimensions(plan_path: Path) -> int:
+    """Count entries inside the plan's `synthesis_dimensions:` block(s).
+
+    Used by Phase 1 routing in build-loop's orchestrator: a count > 5
+    (i.e. 6 or more entries) signals a synthesis-dense commit that should
+    NOT fan out to Sonnet implementers; Phase 3 instead dispatches inline
+    at `tier: thinking` (single-context, Opus-class). See
+    `agents/build-orchestrator.md` §"Phase 1 routing — synthesis-density
+    escalation" and `skills/build-loop/SKILL.md` Phase 1.
+
+    Reuses the same parser as `rule_synthesis_dim_vague_value`; do NOT
+    introduce a second parser."""
+    text = plan_path.read_text(encoding="utf-8")
+    lines = strip_fenced_blocks(text)
+    return sum(1 for _ in iter_synthesis_dimension_entries(lines))
+
+
+def rule_synthesis_dim_vague_value(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """BLOCKER: vague value inside a `synthesis_dimensions:` block.
+    Block ends at first non-indented, non-blank line."""
+    out: list[dict[str, Any]] = []
+    for lj, lline in iter_synthesis_dimension_entries(lines):
+        colon_idx = lline.find(":")
+        value_part = lline[colon_idx + 1:] if colon_idx >= 0 else lline
+        if SYNTHESIS_VAGUE_RE.search(value_part):
+            out.append(_finding(
+                claim_text=lline.strip(), claim_kind="missing_evidence",
+                subject={"path": None, "symbol": None, "noun": "synthesis_dimension"},
+                evidence={"file": str(plan_path), "line": lj, "snippet": lline.strip()},
+                result="no_match", marker="❌", severity="BLOCKER",
+                confidence="high", rule_id="synthesis-dim-vague-value"))
     return out
 
 
