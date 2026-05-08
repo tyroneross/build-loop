@@ -50,6 +50,17 @@ Combines situational awareness with goal definition so Plan has everything it ne
   - A grading method: code-based (preferred) or LLM-as-judge (for nuance)
 - Write goal to `.build-loop/goal.md`
 
+**Synthesis-density routing (4-priority resolution):** if a plan exists at this point, count its `synthesis_dimensions:` entries (see Phase 2) and resolve the implementer tier in this priority order:
+
+1. **Explicit override** — if the host config sets a `thinking-tier` override OR the plan/chunk frontmatter declares `tier: thinking` → route to thinking-tier.
+2. **Auto-escalate on density** — `count > 5` (6 or more entries) → `tier: thinking` (synthesis-dense at the commit level; fan-out loses cross-dimension coherence here).
+3. **Default — fan-out for speed** — count 0–5 → fan out to code-tier implementers; backstops in Phase 4.5 catch the residual recall gap.
+4. **Per-chunk override** — individual chunks may declare `tier: thinking` even when the plan-level decision was fan-out (mixed-density plans).
+
+Write the verdict to `.build-loop/state.json.synthesisDensity` as `{count, escalated, reason}`. Routing target is `tier: thinking` (provider-agnostic), never a hardcoded model name.
+
+The `> 5` threshold matches the empirical inflection point measured in the synthesis-decision A/B experiment (2026-05-07): below that, code-tier implementer recall is poor but non-zero and the Phase 4.5 backstops materially help; at 6+ dimensions, depth dominates.
+
 **Eval methodology:**
 - Binary pass/fail only. No Likert scales, no partial credit.
 - One evaluator per dimension. No multi-dimension "God Evaluator."
@@ -64,6 +75,15 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - Partition files and agents MECE: every changed file has exactly one owner, every required responsibility has an owner, and each group declares `owns`, `does not own`, `interface contract`, and `integration checkpoint`
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
+- **Enumerate synthesis dimensions** for any commit that involves design judgment (UI placement, copy tone, CTA tier, schema shape, dispatch contracts, etc.). Add a `synthesis_dimensions:` block to the plan listing each named decision with a concrete claimed value:
+  ```yaml
+  synthesis_dimensions:
+    placement_NewsBanner: "after `<NewsCard>` in app/components/Feed.tsx"
+    cta_tier_save_button: "primary"
+    copy_tone_settings: "second person, calm-precision, no exclamation marks"
+    empty_state_feed: "icon + one-line explanation + primary CTA"
+  ```
+  Vague values (`"appropriate"`, `"as needed"`, `"sensible"`) fail the deterministic plan-verify rule — every entry must name a specific choice or write `n/a` with a reason. The block is the contract the implementer attests to applying; Phase 4.5 lints diff-vs-claim.
 - **Mockup-first gate for major UI work**: if the plan introduces a new page/screen or makes a major redesign (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause and use a mockup-drafting tool to produce black-and-white mockups before any UI is written. Wait for user feedback; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to the "actions/functions only, no plugin UI surfaces" bridging policy — mockup drafting IS the action.
 
 **Plan acceptance gate** — required before Phase 3 begins:
@@ -90,11 +110,41 @@ Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrato
 - Surface pre-existing issues separately from new work. If an issue impacts users and is local to the current build, plan and fix it automatically; if too large/risky, log user impact and defer.
 - Checkpoint after major integration points
 
+**Implementer return contract (envelope):** every implementer subagent returns a structured envelope, not freeform prose. Required fields:
+
+```json
+{
+  "status": "completed" | "blocked" | "failed",
+  "files_modified": ["path/to/file.ts", "..."],
+  "synthesis_attestation": {
+    "<dimension_name>": "applied" | "deviated" | "n/a",
+    "<dimension_name>": {"status": "applied", "claim": "<concrete value>"}
+  },
+  "novel_decisions": [
+    {"decision": "<one line>", "reasoning": "<why and what alternative>"}
+  ],
+  "commit_sha": "<sha or null>"
+}
+```
+
+The `synthesis_attestation` map MUST have one entry per dimension named in the plan's `synthesis_dimensions` block. `novel_decisions` is the recall-test field — synthesis-class decisions the implementer faced that weren't enumerated in the plan. Be honest; silent decisions defeat the purpose.
+
+**Halt-and-ask backstop (`status: blocked`):** if an implementer encounters a synthesis-class decision NOT in the plan's `synthesis_dimensions` block, it returns `status: blocked` with the decision in `novel_decisions[]` instead of committing. The orchestrator routes each blocked decision to a thinking-tier resolver, stores resolutions in `state.json.novelDecisionResolutions[]`, and re-dispatches the implementer with resolutions appended to the brief. Hard-fail counter: 3 attempts. No new dependency required — this is a status-branch addition, not a state-machine framework.
+
 ### Phase 4: Review
 
 Six ordered sub-steps; intermediate failures route to Iterate, final pass writes Report artifacts.
 
 **Sub-step A — Critic (adversarial read-only)**: dispatch a read-only reviewer against the diff. Catch scope drift, missed edge cases, rubric violations before spending tokens on full validation. Strong-checkpoint findings route back to Execute (no iteration burn); guidance findings are logged.
+
+**Sub-step A.5 — Synthesis-decision backstops (post-implementer-commit, runs before B):**
+
+Two checkpoints fire automatically after every implementer commit on plans that declared a `synthesis_dimensions` block:
+
+- **Phase 4.5a — `attestation_lint`** (deterministic): compares the implementer's `synthesis_attestation` envelope against the actual git diff for verifiable dimensions (placement, cta_tier, visual_weight). Catches silent drift between claim and code. Exit 1 escalates to user; exit 2 logs warning and proceeds; exit 0 silent. Subjective dimensions (copy_tone, empty_state) return `unverifiable` and route to 4.5b. Reference implementation: `scripts/attestation_lint.py` (Python stdlib, accepts strict α-style and permissive β-style claim shapes; `--strict-mode` reverts to α-only).
+- **Phase 4.5b — `synthesis-critic`** (subjective, read-only critic): a code-tier critic agent reviews the diff against the plan's subjective synthesis dimensions (copy_tone, empty_state). Severity capped at WARN — never blocks. Output: `{verdict: "pass" | "flag", flagged: [{dimension, claimed, observed, reasoning}], notes}`. Skips when the diff touches no UI files (`*.tsx`/`*.jsx`/`*.vue`/`*.svelte`).
+
+Both backstops are first-class on the code-tier (fan-out) implementer path where they catch some of the recall gap, and defense-in-depth on the thinking-tier path where they rarely fire.
 
 **Sub-step B — Validate**: when an IBR-style declarative test runner is installed and the build touches UI, run the project's existing `.ibr-test.json` suite first as a quick pass (`scripts/ibr_quickpass.py --workdir . --scope changed`). A passing existing suite is the strongest possible signal — failing tests route directly to Iterate with the assertion as the rubric. Then code-based graders (test, lint, type, build) and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. Scorecard format:
 
