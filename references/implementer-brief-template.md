@@ -81,8 +81,24 @@ This is the single most preventable round-3 bug class — write the schema-grep 
 You're running in parallel with N-1 other implementers against disjoint `files_owned` sets. Do NOT call `git add`, `git commit`, `git push` (Hard rule 4 in implementer.md). Modify the working tree only; return `commit_subject` + `commit_body` + `files_changed` in your envelope; the orchestrator commits sequentially after all parallel implementers return.
 
 ## Return envelope
-Standard JSON shape — `status`, `files_changed`, `commit_subject`, `commit_body`, `tests_run`, `verifications`, `intentional_non_fixes`, `notes`.
+See **`references/implementer-envelope-schema.md`** for the canonical contract. Populate every required field — missing keys = malformed envelope.
 ```
+
+## Required envelope
+
+The implementer's return MUST conform to `references/implementer-envelope-schema.md`. Minimal checklist (every field below is required; use empty/null sentinels rather than omitting keys):
+
+- [ ] `branch` — string
+- [ ] `commit_sha` — string or `"pending"` (canonical when orchestrator commits)
+- [ ] `files_changed` — array of paths (authoritative for orchestrator commit)
+- [ ] `loc_added`, `loc_removed` — integers (`0` if none)
+- [ ] `f_criteria` — `{F1: pass|fail, F2: ..., ...}` for every F-criterion in the brief
+- [ ] `synthesis_attestation` — `{<dim>: applied|deviated|n/a, ...}` for each plan `synthesis_dimensions` entry; `{}` only when the plan has no such block. Use object form `{status: deviated, deviation_reason: ...}` for deviations.
+- [ ] `novel_decisions` — array of `{decision, reasoning}`; `[]` if none, but field MUST be present. Required whenever a synthesis-class decision was made that the plan didn't enumerate.
+- [ ] `notes` — free text, ≤200 words
+- [ ] `wall_clock_seconds` — number
+
+If the plan includes a `synthesis_dimensions` block and you find yourself making a synthesis-class decision NOT named there, **halt and add it to `novel_decisions`** rather than attesting silently (per `agents/implementer.md` Step 5).
 
 ## Why each section matters
 
