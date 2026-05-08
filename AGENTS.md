@@ -26,6 +26,7 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 - **No false data.** No mock data in production. No hardcoded metrics pretending to be real. No unverified claims.
 - **Diagnose before fixing.** Root-cause analysis before code changes. Many errors sharing a pattern = one system problem.
 - **Converge or escalate.** If iteration isn't improving scores, stop and surface the blocker. Don't burn cycles.
+- **Keep going until done.** Once the user accepts the plan, every phase is authorized scope. Do not ask the user to confirm each phase. Issues found mid-build route to Iterate. Status updates are fine; permission requests are not. The only valid stops are: a destructive action not in the plan, a missing credential, externally-blocked work, an explicit hand-off point in the plan, a genuine scope branch the plan does not resolve, or 8 hours wall-clock without a Review pass / 5 consecutive Iterate failures on the same criterion.
 
 ## Phase Details
 

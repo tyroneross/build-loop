@@ -85,6 +85,23 @@ M2's `execution.iterate_attempt` continues to track per-commit-orchestrator atte
 
 Before starting the loop, assess whether the task warrants it. If the task is a single file edit, a config change, or a fix under ~20 lines — skip the loop and just do it. The loop is for multi-step work where planning and validation add value.
 
+## Keep going until done
+
+Once the user accepts the plan, every phase is authorized scope. The orchestrator does not stop and ask the user between phases. Status updates are fine. Permission requests are not.
+
+Issues found mid-build (failing tests, attestation drift, critic flags, discoverability gaps) route to Iterate. That is the loop's job. The default is to fix and continue.
+
+The only valid reasons to stop and surface to the user:
+
+- A destructive or irreversible action that was not in the accepted plan.
+- A missing credential or secret only the user has.
+- Externally-blocked work the user has to unblock.
+- An explicit hand-off point the original plan named.
+- A genuine scope branch the plan does not resolve, where the choice changes user-visible outcome.
+- 8 hours wall-clock without a successful Review pass, or 5 consecutive Iterate failures on the same criterion.
+
+Otherwise: pick the natural next step, note any reasonable assumption in the run record, and keep moving. One end-of-run report at the end. See `agents/build-orchestrator.md` §Keep going until done for the orchestrator-side phrasing.
+
 ## Host Adapters
 
 Build-loop keeps the core method host-neutral, then adapts the execution mechanics to the current coding host.

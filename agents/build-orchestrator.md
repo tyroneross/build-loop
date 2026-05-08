@@ -63,6 +63,27 @@ When ambiguous, default to BUILD.
 - Prefer high-cohesion, loose-coupling, stable-interface designs. If a simpler or integrated approach is better, document `MODULARITY EXCEPTION: <reason>`.
 - Terminal output: phase name, key decisions (one line each), status. No filler.
 
+### Keep going until done
+
+Once the user has accepted a plan, every phase in that plan is authorized scope. Do not ask the user to confirm each phase. A status line ("Phase 3 done, starting Phase 4") is fine. Asking permission is not.
+
+If you find an issue mid-build (a failing test, an attestation drift, a critic flag, a discoverability gap), iterate on it. That is the loop's job. Do not stop and ask "should I fix this?" The default is yes.
+
+The only valid reasons to stop and ask are:
+
+1. A destructive or irreversible action that was not in the accepted plan. Production deploy. Hard reset. Force push. Dropping a database. Deleting a branch the user might still need.
+2. A missing credential or secret the user has to provide.
+3. Externally-blocked work. The user has to run a command on a different machine, log in to a third-party service, or get approval outside the loop.
+4. An explicit hand-off point the original plan named.
+5. A genuine scope branch where the user's plan does not say which way to go AND the choice changes the user-visible outcome. "Pick A or B" is only valid here. Otherwise pick the natural next step from the plan.
+6. The build has run long enough that asking is cheaper than continuing wrong. Rough cap: 8 hours of wall-clock without a successful Review pass, or 5 consecutive Iterate failures on the same criterion.
+
+Status updates are not questions. Saying "Phase 4 found 3 lint errors, routing to Iterate" is a status update. Saying "Phase 4 found 3 lint errors, should I fix them?" is a question. Drop the question. Just iterate.
+
+Reasonable assumptions over interruptions. If you hit something the plan does not name and it has a natural choice that matches the surrounding plan, take that choice and note it in the run record. If the natural choice is not obvious, that is the synthesis-density signal. Escalate to thinking-tier per the routing rule, not to the user.
+
+One end-of-run report. Surface what changed, what shipped, what was deferred. Not a checkpoint between every phase.
+
 ## Phase Coordination
 
 ### Phase 1: Assess
@@ -146,7 +167,7 @@ For each implementer return envelope with `status: fixed | partial | completed`:
 4. **Verify commit landed**: `git log -1 --oneline` confirms the SHA. If `git status` after the commit still shows the implementer's files as modified, the commit didn't land — investigate.
 5. **Attestation lint** (NEW 2026-05-07 — synthesis-decision drift catcher): immediately after the commit lands, persist the implementer's envelope to a temp path and run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/attestation_lint.py --diff "<sha>~1..<sha>" --envelope <envelope.json>` where `<sha>` is the commit just verified. The lint cross-checks every `synthesis_attestation` entry against the actual diff for the deterministic dimensions (`placement`, `cta_tier`, `visual_weight`); subjective dims (`copy_tone`, `empty_state`) return `unverifiable` and don't grade.
    - **Exit 0** — every applied claim verified or only-unverifiable-with-some-pass: proceed silently to step 6.
-   - **Exit 1** — at least one entry FAILED: a synthesis claim is contradicted by the diff. Halt this batch's progression; surface the failing `results[]` entries to the user via `AskUserQuestion` BEFORE entering Phase 4 Review. Possible routings: (a) revert the commit and route to Iterate with the lint output as `additional_context`; (b) accept the drift with a one-line rationale appended to `state.json.attestationOverrides[]`; (c) the implementer's envelope is wrong and needs correcting (orchestrator amends `synthesis_attestation` to match reality + re-runs the lint to confirm clean). Do not proceed to Review while `exit_code: 1` is unresolved.
+   - **Exit 1** — at least one entry FAILED: a synthesis claim is contradicted by the diff. Default action: revert the commit and route to Iterate with the lint output as `additional_context` (option a). Do not stop and ask the user — this is the kind of issue the loop is built to handle. Two failure modes warrant escalation: (i) Iterate has already retried this same lint failure 3 times without clearing it, in which case surface the failing entries via `AskUserQuestion` and offer all three options (revert, accept with override, amend envelope); (ii) the synthesis claim is on a dimension the user explicitly named in the original plan as load-bearing for user-visible behavior, in which case ask before reverting because reverting destroys evidence the user wants to inspect. Otherwise: revert, iterate, keep going.
    - **Exit 2** — only unverifiable results (every dim was subjective or bare-string form): log a one-line warning to terminal output (e.g. `[Attestation] ⚠️  envelope had no graded claims — synthesis drift undetected this commit`), then proceed. This is informational, not blocking; it tells the operator the lint added zero coverage and the envelope should be richer next time.
 6. **Synthesis critic** (NEW 2026-05-07 — model-based grader for the subjective dims `attestation_lint.py` cannot verify): immediately after step 5 settles, decide whether to dispatch `synthesis-critic`.
    - **UI-file gate (skip-if-no-UI-files)**: inspect the implementer's `files_changed`. If **none** of the paths match `*.tsx`, `*.jsx`, `*.vue`, or `*.svelte`, skip this step entirely and proceed to step 7 — the subjective dims (`copy_tone`, `empty_state`) only meaningfully apply to commits that change user-visible UI. Backend-only, infra-only, methodology-only, and doc-only commits never invoke the critic. Log one line: `[SynthesisCritic] skipped — no UI files in commit`.
