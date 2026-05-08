@@ -250,13 +250,23 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 Routing checklist in `references/phase-gate-checklist.md`. Six ordered sub-steps:
 
 - **A. Critic** — `sonnet-critic` + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel.
-- **B. Validate** — IBR-first when present, code graders, LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
+- **B. Validate** — IBR-first when present, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
 - **F. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate.
 
 Detailed protocols in the checklist file.
+
+#### Review-B: Runtime smoke gate (post-tests, pre-LLM-judges)
+
+After code-based graders pass, if any changed file matches a runtime-smoke trigger pattern (see `references/runtime-smoke-triggers.md`), invoke:
+
+```bash
+python3 scripts/runtime_smoke.py --changed-files <list> --workdir "$PWD" --json
+```
+
+The script auto-detects an adapter from the project's manifest. Status `pass` proceeds; `fail` routes the changed surface to Iterate (treat the smoke envelope's `findings` list as the rubric); `skipped` (no trigger matched OR no adapter for the project's stack) records `runtime_smoke: skipped (<reason>)` in the Review-F report and proceeds. Adapter exit 2 (runner error) is treated like a transient grader outage — log and proceed with a Review-F warning. **Library-only repos with no dev server cleanly skip — never fail.**
 
 ### Phase 5: Iterate (up to 5x)
 

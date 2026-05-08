@@ -531,6 +531,8 @@ For returning-user states (post-onboarding screens, dashboards with data), use t
 - Use `verification-before-completion` for evidence-based claims
 - No criterion marked "pass" without proof
 
+**Runtime smoke gate (post-tests, pre-LLM-judges)**: after code-based graders pass, invoke `python3 scripts/runtime_smoke.py --changed-files <list> --workdir "$PWD" --json` whenever any changed file matches a runtime-smoke trigger. The script auto-detects a dev-server adapter from the project's manifest (Next.js today; FastAPI, Express, and SSE-consumer adapters are documented future slots). `pass` proceeds; `fail` routes to Iterate using the smoke envelope's `findings` as the rubric; `skipped` (no trigger matched or no adapter for this stack) records `runtime_smoke: skipped (<reason>)` in Review-F and proceeds — library-only repos never fail this gate. See `references/runtime-smoke-triggers.md` for the full trigger-pattern table and adapter roadmap, and `agents/build-orchestrator.md` §"Review-B: Runtime smoke gate" for the routing rules.
+
 **Memory-first gate (on any failing criterion)**: before routing failures to Iterate, the orchestrator runs the gate (read_logs → synthesize symptom → invoke `Skill("build-loop:debugging-memory")` → act on verdict). See `agents/build-orchestrator.md` §Phase 4 sub-step B for the orchestrator's exact when-to-fire and gate-recording policy. **Memory is a hypothesis, not a patch — every verdict routes to Iterate as an adapted plan by default**:
 
 - `KNOWN_FIX` → adapt prior incident as the Iterate fix plan. Direct-apply only when all three gates hold: file match + version match + second validation signal (stack frame, error class, or log entry). Otherwise behave as LIKELY_MATCH.
