@@ -101,7 +101,64 @@ When ambiguous, default to BUILD.
 
 Implementers no longer call `git add` or `git commit` (per `agents/implementer.md` Hard rule 4 — round-3 evidence showed the parallel-commit race lost 3 of 4 commits). The orchestrator owns `.git/` as a single-writer resource. After **each parallel batch returns**, run this step before dispatching the next wave or proceeding to Phase 4.
 
-For each implementer return envelope with `status: fixed | partial`:
+For each implementer return envelope, first check `status`:
+
+#### Blocked-envelope branch (C5 — halt-and-ask backstop, NEW 2026-05-07)
+
+If `envelope.status == "blocked"` AND `envelope.novel_decisions` is non-empty:
+
+**Do NOT commit.** The implementer has surfaced one or more synthesis-class decisions that were not enumerated in the plan's `synthesis_dimensions` block. These must be resolved before the implementer re-runs.
+
+Resolution loop (max **N=3** total attempts per implementer; hard-fail on the 4th blocked return):
+
+```
+attempt = state.json.novelDecisionAttempts[implementer_id] ?? 0
+if attempt >= 3:
+    hard-fail: surface to user with all accumulated novel_decisions; do NOT re-dispatch
+else:
+    for nd in envelope.novel_decisions:
+        resolution = dispatch(
+            tier: thinking,           # NOT a hardcoded model name — tier abstraction only
+            prompt: format_decision(nd, plan_context)
+        )
+        append to state.json.novelDecisionResolutions[]:
+            {decision: nd.decision, reasoning: nd.reasoning, resolution: resolution}
+    increment state.json.novelDecisionAttempts[implementer_id]
+    re-dispatch implementer with original brief + appended resolution section (see format below)
+```
+
+**tier: thinking** resolves to the model currently filling the Thinking tier (Anthropic default: Opus 4.7; see `references/model-tier-mapping.md` for the full substitution table). Never write `claude-opus-4-7` here — the tier abstraction keeps this provider-agnostic.
+
+**Resolution format for re-dispatch brief** — append a `## Novel Decision Resolutions` section at the bottom of the implementer's re-dispatch brief:
+
+```markdown
+## Novel Decision Resolutions
+
+The following decisions were unresolved in the original brief. Treat these as authoritative. Do NOT add them to novel_decisions again.
+
+1. **[decision summary]**
+   Resolution: [tier:thinking answer, plain text]
+
+2. ...
+```
+
+**Hard-fail template** (when attempt >= 3):
+
+```
+[Phase 3: Novel Decision Hard-Fail] ❌ Implementer <id> returned status:blocked 3 times.
+Accumulated novel_decisions: <list>
+Action required: review the plan's synthesis_dimensions block and add explicit guidance, or resolve manually.
+```
+
+**State.json fields** (write on every resolution loop iteration):
+- `novelDecisionResolutions[]` — array of `{decision, reasoning, resolution}` objects, one per resolved novel decision, across all iterations.
+- `novelDecisionAttempts{}` — map of `implementer_id → attempt_count`. Persisted so a session restart doesn't reset the hard-fail counter.
+
+**Trigger threshold**: ANY non-enumerated synthesis-class decision triggers `status: blocked`. Implementers do not filter by "material design impact" — threshold is permissive. The orchestrator and user review resolutions in `novelDecisionResolutions[]` after the build.
+
+After the resolution loop completes and the implementer returns `status: fixed | partial`, proceed to the normal commit flow below.
+
+#### Normal commit flow (status: fixed | partial)
 
 1. **Verify scope**: `git status --porcelain` — every modified/untracked file must appear in some implementer's `files_changed`. Files not claimed by any implementer = orchestrator-side scope-leak; investigate before committing.
 2. **Stage exactly that implementer's files**: `git add -- <files_changed_list>`. Use absolute paths to avoid relative-path ambiguity when multiple worktrees coexist.

@@ -1,6 +1,6 @@
 # Implementer Envelope Schema — Canonical Reference
 
-Version: 1.0 (C2, exp/synth-decisions-mixed)
+Version: 1.1 (C5, exp/synth-decisions-mixed — adds status:blocked + novel_decisions halt-and-ask)
 
 All build-loop implementers MUST return a response conforming to this schema. The orchestrator and scope-auditor parse against this contract. Missing required fields cause the orchestrator to mark the commit as malformed and either request a revision or quarantine the diff.
 
@@ -22,6 +22,38 @@ All build-loop implementers MUST return a response conforming to this schema. Th
 | `wall_clock_seconds` | number | Elapsed real time from receiving the brief to returning the envelope. |
 
 **Rule**: every top-level field above must appear in every envelope. Use empty values (`{}`, `[]`, `""`, `0`) for absent data. Do NOT omit keys.
+
+---
+
+## `status` field — valid values
+
+| Value | Meaning | Commit? |
+|---|---|---|
+| `completed` | All enumerated synthesis dimensions attested; `novel_decisions` is empty. Proceed to Phase 4.5a attestation lint. | Yes |
+| `blocked` | Implementer encountered at least one synthesis-class decision NOT enumerated in the plan's `synthesis_dimensions` block. `novel_decisions` MUST be non-empty when status is `blocked`. | No — orchestrator routes to resolution loop |
+
+**When to use `blocked`**: any time the implementer faces a synthesis-class decision that was not listed in the plan's `synthesis_dimensions` block. The threshold is permissive: any such decision triggers `blocked`, not only ones judged "material." This permissive threshold is intentional — it enables the experiment to measure the silent-decision rate without implementer-side filtering.
+
+**Resolution-resume flow (from implementer perspective)**:
+
+1. Implementer returns `status: blocked` with `novel_decisions` populated.
+2. Orchestrator dispatches each novel decision to `tier: thinking` for resolution.
+3. Orchestrator re-dispatches implementer with original brief PLUS a `## Novel Decision Resolutions` appended section.
+4. Implementer treats resolved decisions as authoritative; does NOT re-add them to `novel_decisions`.
+5. Loop repeats until `status: completed` OR hard-fail counter reaches N=3. On hard-fail, orchestrator escalates to user.
+
+**Extended-object form for `synthesis_attestation`** (accepted by C3 lint): each dimension may be expressed as a string shorthand (`"applied"` / `"deviated"` / `"n/a"`) OR as an object with `status` and `claim_text` fields:
+
+```json
+"synthesis_attestation": {
+  "thinking_tier_resolution_format": {
+    "status": "applied",
+    "claim_text": "tier:thinking responses are plain-text answers stored in novelDecisionResolutions[].resolution"
+  }
+}
+```
+
+Both forms are accepted. Object form is preferred when `claim_text` provides verifiable evidence for lint.
 
 ---
 
@@ -48,7 +80,10 @@ synthesis_attestation:
 If the implementer encountered a synthesis-class decision that was NOT listed in the plan's `synthesis_dimensions` block, they MUST:
 
 1. Add an entry to `novel_decisions` describing what was decided and why.
-2. NOT decide silently — the orchestrator cannot audit what it cannot see.
+2. Set `status: blocked` — do NOT commit, do NOT proceed. Return early.
+3. NOT decide silently — the orchestrator cannot audit what it cannot see.
+
+When `status: blocked` and `novel_decisions` is non-empty, the orchestrator halts the commit pipeline and routes each decision to `tier: thinking` for resolution. The implementer is then re-dispatched with resolutions appended. Hard-fail counter is N=3 (see `agents/build-orchestrator.md` Phase 3 blocked-envelope branch). Resolved decisions are stored in `state.json.novelDecisionResolutions[]`.
 
 ```json
 "novel_decisions": [
@@ -120,3 +155,6 @@ The orchestrator and scope-auditor MUST:
 - Treat `f_criteria` entries with value `"fail"` as blocking the commit if the criterion is marked required-for-ship in the brief.
 - Treat `synthesis_attestation` entries with value `"deviated"` as requiring orchestrator review before marking the phase complete.
 - Surface all `novel_decisions` entries in the phase report for the user.
+- When `status == "blocked"` AND `novel_decisions` is non-empty: halt the commit pipeline and enter the C5 resolution loop (see `agents/build-orchestrator.md` Phase 3 blocked-envelope branch). Do NOT commit. Do NOT proceed to Phase 4.5a.
+- When `status == "blocked"` AND `novel_decisions` is empty: treat as malformed (contradictory state). Request a revision from the implementer.
+- After resolution loop resolves all novel decisions and implementer returns `status: completed`, proceed normally to Phase 4.5a attestation lint.

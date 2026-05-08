@@ -75,13 +75,17 @@ Before returning success:
 
 Return contract: populate all fields specified in `references/implementer-envelope-schema.md`. Missing required fields cause the orchestrator to mark the implementer's commit as malformed and either request a revision or quarantine the diff.
 
-If the plan includes a `synthesis_dimensions` block, you MUST attest each named dimension as `applied`/`deviated`/`n/a` in the `synthesis_attestation` field. If you find yourself making a synthesis-class decision NOT enumerated in the plan, halt and add it to `novel_decisions` instead of deciding silently.
+If the plan includes a `synthesis_dimensions` block, you MUST attest each named dimension as `applied`/`deviated`/`n/a` in the `synthesis_attestation` field. If you find yourself making a synthesis-class decision NOT enumerated in the plan:
+
+1. Add it to `novel_decisions`.
+2. Set `status: blocked`.
+3. Do NOT commit. Return immediately — the orchestrator will route each decision to `tier: thinking` for resolution, then re-dispatch you with a `## Novel Decision Resolutions` section appended to your brief. Treat those resolutions as authoritative; do NOT re-add them to `novel_decisions` on the next pass.
 
 Return JSON. `files_changed` is your authoritative list of what the orchestrator should commit. `commit_subject` and `commit_body` populate the message — orchestrator runs `git commit -m <subject>` with the body as additional `-m` args. Per Hard rule 4, you must NOT have called `git add` or `git commit` — leave the working tree dirty for the orchestrator to stage and commit.
 
 ```json
 {
-  "status": "fixed | partial | scope_breach | deferred_architecture | plan_malformed | evidence_stale | needs_dependency | failed",
+  "status": "fixed | partial | blocked | scope_breach | deferred_architecture | plan_malformed | evidence_stale | needs_dependency | failed",
   "plan_id": "<from frontmatter>",
   "files_changed": ["abs/path/1", "abs/path/2"],
   "commit_subject": "type(scope): one-line summary — Conventional Commits",
