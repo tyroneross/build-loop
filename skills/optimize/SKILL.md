@@ -1,11 +1,18 @@
 ---
 name: optimize
-description: Metric-driven optimization with DOE by default. Triggers on "run optimization", "optimize this", "make this faster", "improve my app", "speed up X", "reduce <metric>". Defaults to multi-factor Design of Experiments (full / fractional factorial / Plackett-Burman) when ≥2 factors are involved; falls back to single-variable autoresearch for 1-factor cases. If user doesn't specify factors, scans the codebase, proposes candidates, and asks for confirmation before running anything.
+description: Improve a number you can measure — build time, lines of code, response time, token cost, test coverage. Triggers on "run optimization", "optimize this", "make this faster", "improve my app", "speed up X", "reduce <metric>". When the change has two or more knobs to turn at once, the skill plans a small batch of test runs that covers every combination, runs them all, and tells you which knob actually moved the number — so you don't have to guess one variable at a time. When there's only one knob, it falls back to a simpler one-at-a-time loop. If you don't say which knobs to try, the skill reads your code, proposes some, and asks before running anything.
 ---
 
-# Optimize — DOE-First with Autoresearch Fallback
+# Optimize — plan a small batch of test runs, keep what works
 
-Combines Design of Experiments (multi-factor, statistically rigorous) with Karpathy-style autoresearch (single-factor, hypothesis-driven). DOE is the default; autoresearch is the single-variable special case. Both keep what improves and revert regressions, but DOE plans the full experiment matrix up front and recovers main effects + interactions; autoresearch is a sequential greedy local search.
+This skill helps you improve a number you can measure. Build time. Lines of code. Response time. Token cost. Anything where you can write a one-line command that returns a number.
+
+Two modes:
+
+- **Multi-knob mode (default).** When you have two or more things you want to try changing at once, the skill plans a small batch of test runs that hits every important combination. It then runs the batch, measures the metric on each, and tells you which knob really moved the number — and which knobs only seemed to matter because they happened to vary alongside the real cause. Two to three knobs needs four to eight runs. Four to seven knobs needs eight runs. Eight or more uses a screening pass that handles up to eleven in twelve runs. This is faster and more honest than turning one knob at a time, because it catches when two knobs only work together.
+- **One-knob mode (fallback).** When you only have one thing to try, the skill loops one change at a time: try a tweak, measure, keep it if the number improves, revert if it doesn't. Cheaper to set up; can't see interactions.
+
+Both modes keep what works and revert what doesn't. The metric is the only judge — no vibes-based "this looks better."
 
 ## When to Use
 
