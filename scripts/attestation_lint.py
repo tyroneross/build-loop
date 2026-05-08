@@ -23,6 +23,36 @@ Exit codes:
     Note: `--ignore-dim NAME` suppresses entries from the summary counts and
     never affects the exit code. If every entry is ignored, exit is 0.
 
+Strict mode (--strict-mode):
+    Reverts the lint to α-style strict matching, disabling the permissive
+    fallbacks grafted in commit 9dba912 for β/Sonnet-path support. When
+    --strict-mode is active:
+
+      • Anchor regex accepts ONLY JSX-style anchors (`<Component>`); the
+        permissive arbitrary-text fallback (`PLACEMENT_RE_PERMISSIVE`) and
+        the file-only fallback (`PLACEMENT_RE_FILE_ONLY`) are disabled.
+        Non-JSX anchor claims return status=fail with reason naming
+        "strict-mode: permissive anchor fallback disabled".
+
+      • CTA tier accepts ONLY canonical class names {primary, secondary,
+        tertiary}; the β-style aliases {ghost, link} are rejected as
+        unverifiable with reason naming "strict-mode: alias rejected".
+
+      • Diff parser requires a `diff --git` header; β-format diffs that lead
+        with bare `--- a/path` / `+++ b/path` (no `diff --git` line) are
+        skipped — files in such hunks never appear in the parsed `files`
+        dict, so claims targeting them fail with "claimed file ... not
+        present in diff".
+
+      • Envelope wrapper handling is disabled — `{envelope: {...}}` is no
+        longer auto-unwrapped. Only flat `{synthesis_attestation: ...}` is
+        accepted. Wrapped envelopes surface as malformed (exit 2).
+
+    Default is OFF (permissive). Strict is opt-in via `--strict-mode`.
+    `--self-test` runs in permissive mode unless `--strict-mode` is also
+    passed; both inline self-test (9 cases) and the separate test file
+    (17 cases) keep passing under default-off.
+
 Verifiable dimensions:
     - placement     — "after `<Anchor>` in <path>" — anchor must exist in pre-image,
                       new lines must appear after anchor's line position in post-image
@@ -148,8 +178,13 @@ class FileDiff:
         return "\n".join(c for _, c in self.removed_lines)
 
 
-def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
-    """Parse a unified-diff blob into {post-image-path: FileDiff}."""
+def parse_unified_diff(diff_text: str, strict: bool = False) -> dict[str, FileDiff]:
+    """Parse a unified-diff blob into {post-image-path: FileDiff}.
+
+    When `strict` is True, the β-style fallback (open a FileDiff on bare
+    `--- a/path` / `+++ b/path` pairs lacking a `diff --git` header) is
+    disabled — files in such hunks are skipped entirely.
+    """
     files: dict[str, FileDiff] = {}
     current: FileDiff | None = None
     pre_lineno = 0
@@ -168,6 +203,7 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
             continue
         # β-style fallback: "--- a/path" / "+++ b/path" without a preceding
         # "diff --git" header. Open a FileDiff on the +++ line.
+        # Disabled in strict mode — α convention requires the diff --git header.
         if line.startswith("--- "):
             stripped = line[4:].strip()
             pending_pre_path = stripped[2:] if stripped.startswith("a/") else stripped
@@ -179,12 +215,19 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
             post_path = stripped[2:] if stripped.startswith("b/") else stripped
             if current is None or (current and current.path_b != post_path):
                 # Only auto-open if no diff --git header gave us this file.
-                if pending_pre_path is not None and post_path:
+                if not strict and pending_pre_path is not None and post_path:
                     current = FileDiff(pending_pre_path, post_path)
                     files[current.path] = current
                     in_hunk = False
                     current.raw_chunks.append(line)
                     pending_pre_path = None
+                    continue
+                if strict and pending_pre_path is not None and post_path and current is None:
+                    # Strict: skip this file entirely. Reset the hunk state so
+                    # subsequent @@ hunks don't accidentally attach to a stale
+                    # `current` from an earlier `diff --git` block.
+                    pending_pre_path = None
+                    in_hunk = False
                     continue
             if current is not None:
                 current.raw_chunks.append(line)
@@ -262,15 +305,20 @@ def infer_dimension(name: str, explicit: str | None = None) -> str:
     return "unknown"
 
 
-def normalize_attestation(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+def normalize_attestation(envelope: dict[str, Any], strict: bool = False) -> list[dict[str, Any]]:
     """Return a list of attestation records, one per dimension entry.
 
     Each record carries: name, dimension, claim (or None), claimed_status.
     Accepts envelopes in either flat shape ({"synthesis_attestation": ...})
     or β-style wrapped shape ({"envelope": {"synthesis_attestation": ...}}).
+
+    When `strict` is True, the wrapped shape is rejected — only flat envelopes
+    are accepted. Wrapped envelopes return [] and surface as malformed at
+    the CLI layer.
     """
     # β-style wrapper: unwrap if the outer dict only carries "envelope".
-    if "synthesis_attestation" not in envelope and isinstance(envelope.get("envelope"), dict):
+    # Disabled in strict mode.
+    if not strict and "synthesis_attestation" not in envelope and isinstance(envelope.get("envelope"), dict):
         inner = envelope["envelope"]
         if "synthesis_attestation" in inner:
             envelope = inner
@@ -374,15 +422,25 @@ PLACEMENT_RE_FILE_ONLY = re.compile(
 )
 
 
-def verify_placement(record: dict[str, Any], files: dict[str, FileDiff]) -> dict[str, Any]:
+def verify_placement(record: dict[str, Any], files: dict[str, FileDiff],
+                     strict: bool = False) -> dict[str, Any]:
     claim = record.get("claim") or ""
     # Try strict JSX-anchor regex first (α-style: `<Component>`).
     m = PLACEMENT_RE.search(claim)
     anchor_is_jsx = m is not None
-    if m is None:
+    if m is None and not strict:
         # Fallback to β-style permissive: arbitrary anchor text up to " in <path>".
         m = PLACEMENT_RE_PERMISSIVE.search(claim)
     if m is None:
+        if strict:
+            # Strict mode: no permissive or file-only fallback. JSX-only.
+            return {
+                "status": "fail",
+                "reason": ("strict-mode: permissive anchor fallback disabled — "
+                           "claim must use JSX-style `<Component>` anchor "
+                           "(e.g. \"after `<NewsCard>` in path/to/file\")"),
+                "evidence": {"file": None, "line": None, "snippet": None},
+            }
         # Last fallback: file-only ("in path/to/file"). No positional check —
         # passes if the diff touches the file at all.
         fm = PLACEMENT_RE_FILE_ONLY.search(claim)
@@ -539,19 +597,32 @@ CTA_PATTERNS = [
 ]
 
 
-def verify_cta_tier(record: dict[str, Any], files: dict[str, FileDiff]) -> dict[str, Any]:
+def verify_cta_tier(record: dict[str, Any], files: dict[str, FileDiff],
+                    strict: bool = False) -> dict[str, Any]:
     claim = (record.get("claim") or "").strip().lower()
     # Pull a tier-class token from the claim. Accept canonical names AND
-    # β-style aliases (ghost, link → tertiary).
+    # β-style aliases (ghost, link → tertiary). Strict mode rejects aliases.
+    candidate_classes = CTA_TIER_CLASSES if strict else CTA_TIER_ALL
     tier: str | None = None
-    for cls in CTA_TIER_ALL:
+    for cls in candidate_classes:
         if cls in claim:
             tier = cls
             break
     if tier is None:
+        # In strict mode, surface that aliases were rejected (if the claim
+        # does name a ghost/link alias). Otherwise generic unverifiable.
+        if strict and any(alias in claim for alias in CTA_TIER_ALIASES):
+            return {
+                "status": "unverifiable",
+                "reason": ("strict-mode: alias rejected — only canonical "
+                           "{primary, secondary, tertiary} accepted "
+                           "(ghost/link aliases disabled)"),
+                "evidence": {"file": None, "line": None, "snippet": None},
+            }
+        accepted = "primary|secondary|tertiary" if strict else "primary|secondary|tertiary|ghost|link"
         return {
             "status": "unverifiable",
-            "reason": "claim does not name a known cta_tier class (primary|secondary|tertiary|ghost|link)",
+            "reason": f"claim does not name a known cta_tier class ({accepted})",
             "evidence": {"file": None, "line": None, "snippet": None},
         }
     # Search added lines across all files for the tier token in a className /
@@ -661,7 +732,8 @@ def is_ignored(record: dict[str, Any], ignore_set: set[str]) -> bool:
 
 
 def lint_one(record: dict[str, Any], files: dict[str, FileDiff],
-             ignore_set: set[str] | None = None) -> dict[str, Any]:
+             ignore_set: set[str] | None = None,
+             strict: bool = False) -> dict[str, Any]:
     base = {
         "name": record["name"],
         "dimension": record["dimension"],
@@ -702,9 +774,9 @@ def lint_one(record: dict[str, Any], files: dict[str, FileDiff],
                 "evidence": {"file": None, "line": None, "snippet": None}}
 
     if dim == "placement":
-        result = verify_placement(record, files)
+        result = verify_placement(record, files, strict=strict)
     elif dim == "cta_tier":
-        result = verify_cta_tier(record, files)
+        result = verify_cta_tier(record, files, strict=strict)
     elif dim == "visual_weight":
         result = verify_visual_weight(record, files)
     else:  # defensive — should be unreachable given dim checks above
@@ -733,11 +805,12 @@ def determine_exit(summary: dict[str, int]) -> int:
 
 
 def run_lint(diff_text: str, envelope: dict[str, Any],
-             ignore_dims: list[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, int], int]:
-    files = parse_unified_diff(diff_text)
-    records = normalize_attestation(envelope)
+             ignore_dims: list[str] | None = None,
+             strict: bool = False) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+    files = parse_unified_diff(diff_text, strict=strict)
+    records = normalize_attestation(envelope, strict=strict)
     ignore_set = {_normalize_ignore_token(t) for t in (ignore_dims or []) if t}
-    results = [lint_one(r, files, ignore_set) for r in records]
+    results = [lint_one(r, files, ignore_set, strict=strict) for r in records]
     summary = summarize(results)
     return results, summary, determine_exit(summary)
 
@@ -802,12 +875,17 @@ SELF_TEST_ENVELOPE_FAIL = {
 }
 
 
-def run_self_test() -> int:
-    """Inline self-test. Returns 0 on success, 1 on any failure."""
+def run_self_test(strict: bool = False) -> int:
+    """Inline self-test. Returns 0 on success, 1 on any failure.
+
+    When `strict` is True, all 9 cases are run with strict=True. The 9
+    canned cases use JSX-style anchors and canonical tier names, so they
+    pass cleanly under strict — the flag is forward-compat / smoke check.
+    """
     failures: list[str] = []
 
     # Pass case
-    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_PASS)
+    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_PASS, strict=strict)
     placement = next(r for r in results if r["dimension"] == "placement")
     cta = next(r for r in results if r["dimension"] == "cta_tier")
     weight = next(r for r in results if r["dimension"] == "visual_weight")
@@ -824,7 +902,7 @@ def run_self_test() -> int:
         failures.append(f"pass-case exit code should be 0, got {code} (summary={summary})")
 
     # Fail case
-    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL)
+    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL, strict=strict)
     placement = next(r for r in results if r["dimension"] == "placement")
     cta = next(r for r in results if r["dimension"] == "cta_tier")
     if placement["status"] != "fail":
@@ -840,14 +918,14 @@ def run_self_test() -> int:
             "copy_tone_x": "applied",
             "empty_state_x": "applied",
         }
-    })
+    }, strict=strict)
     if summary["fail"] != 0 or summary["pass"] != 0 or summary["unverifiable"] != 2:
         failures.append(f"unverifiable-only: bad summary {summary}")
     if code != 2:
         failures.append(f"unverifiable-only exit code should be 2, got {code}")
 
     # Empty envelope
-    results, summary, code = run_lint(SELF_TEST_DIFF, {"synthesis_attestation": {}})
+    results, summary, code = run_lint(SELF_TEST_DIFF, {"synthesis_attestation": {}}, strict=strict)
     if summary["total"] != 0 or code != 0:
         failures.append(f"empty envelope: total should be 0 with exit 0, got total={summary['total']} code={code}")
 
@@ -858,7 +936,7 @@ def run_self_test() -> int:
              "dimension": "placement",
              "applied": "after `<NewsCard>` in app/components/Feed.tsx"},
         ]
-    })
+    }, strict=strict)
     if summary["pass"] != 1 or code != 0:
         failures.append(f"array form: should pass once, got summary={summary} code={code}")
 
@@ -866,7 +944,7 @@ def run_self_test() -> int:
     # Uses the FAIL envelope which has a placement+cta_tier; ignoring placement
     # leaves only the cta_tier fail → exit 1.
     results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL,
-                                      ignore_dims=["placement"])
+                                      ignore_dims=["placement"], strict=strict)
     placement = next(r for r in results if r["dimension"] == "placement")
     if placement["status"] != "ignored":
         failures.append(f"ignore by dim 'placement' should mark ignored, got {placement['status']}")
@@ -880,7 +958,8 @@ def run_self_test() -> int:
     # --ignore-dim by entry name: suppress every entry, exit 0.
     results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL,
                                       ignore_dims=["placement_NewsBanner",
-                                                   "cta_tier_read_more"])
+                                                   "cta_tier_read_more"],
+                                      strict=strict)
     if summary.get("ignored") != 2 or summary["fail"] != 0:
         failures.append(f"ignore-all by name: bad summary {summary}")
     if code != 0:
@@ -888,7 +967,7 @@ def run_self_test() -> int:
 
     # --ignore-dim with unknown token: silent no-op (case sensitivity normalized).
     results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_PASS,
-                                      ignore_dims=["does-not-exist"])
+                                      ignore_dims=["does-not-exist"], strict=strict)
     if summary.get("ignored") != 0:
         failures.append(f"ignore unknown: should be silent no-op, got summary={summary}")
     if code != 0:
@@ -896,17 +975,19 @@ def run_self_test() -> int:
 
     # --ignore-dim case + hyphen normalization: 'CTA-Tier' should match dim cta_tier.
     results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL,
-                                      ignore_dims=["CTA-Tier"])
+                                      ignore_dims=["CTA-Tier"], strict=strict)
     cta = next(r for r in results if r["dimension"] == "cta_tier")
     if cta["status"] != "ignored":
         failures.append(f"ignore normalization: 'CTA-Tier' should match cta_tier, got {cta['status']}")
 
     if failures:
-        print("attestation_lint self-test FAILED:", file=sys.stderr)
+        mode_label = " [strict]" if strict else ""
+        print(f"attestation_lint self-test FAILED{mode_label}:", file=sys.stderr)
         for f in failures:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    print("attestation_lint self-test PASS (9 cases)")
+    mode_label = " [strict-mode]" if strict else ""
+    print(f"attestation_lint self-test PASS (9 cases){mode_label}")
     return 0
 
 
@@ -940,12 +1021,33 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     p.add_argument("--self-test", action="store_true", help="Run the inline self-test and exit.")
+    p.add_argument(
+        "--strict-mode",
+        dest="strict_mode",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable permissive fallbacks added in 9dba912 — revert to "
+            "α-style strict matching. Specifically: "
+            "(1) anchor regex accepts only JSX-style `<Component>` (no "
+            "permissive arbitrary-text or file-only fallback); "
+            "(2) cta_tier accepts only canonical {primary,secondary,tertiary} "
+            "(ghost/link aliases rejected as unverifiable); "
+            "(3) diff parser requires a `diff --git` header (β-format diffs "
+            "with bare `--- a/path`/`+++ b/path` are skipped); "
+            "(4) envelope wrapper `{envelope: {...}}` is no longer auto-unwrapped "
+            "(only flat `{synthesis_attestation: ...}` accepted). "
+            "Default OFF — opt in for α-conformance gating. "
+            "Combine with --self-test to run the inline 9-case suite under strict."
+        ),
+    )
     args = p.parse_args(argv)
 
     if args.self_test:
         # --self-test runs against canned envelopes; --ignore-dim is intentionally
         # NOT applied so the deterministic self-test stays deterministic.
-        return run_self_test()
+        # --strict-mode IS propagated when both flags are passed.
+        return run_self_test(strict=args.strict_mode)
 
     if not args.diff or not args.envelope:
         p.error("--diff and --envelope are required (or use --self-test)")
@@ -969,20 +1071,37 @@ def main(argv: list[str] | None = None) -> int:
     # Detect malformed envelope (missing synthesis_attestation in both flat
     # and β-wrapped shapes) — exit 2 with warning. β-style behavior surfaces
     # the gap rather than silently passing.
-    has_attestation = "synthesis_attestation" in envelope or (
+    # In strict mode, the wrapped form is also rejected as malformed — only
+    # flat `{synthesis_attestation: ...}` is accepted.
+    has_flat = "synthesis_attestation" in envelope
+    has_wrapped = (
         isinstance(envelope.get("envelope"), dict)
         and "synthesis_attestation" in envelope["envelope"]
     )
     warning: str | None = None
-    if not has_attestation:
-        warning = (
-            "envelope JSON is missing 'synthesis_attestation' field — "
-            "no claims to verify; exit 2 (malformed_envelope_handling=warn)"
-        )
+    if args.strict_mode:
+        if not has_flat:
+            if has_wrapped:
+                warning = (
+                    "strict-mode: envelope wrapper `{envelope: {...}}` rejected — "
+                    "only flat `{synthesis_attestation: ...}` accepted; exit 2"
+                )
+            else:
+                warning = (
+                    "envelope JSON is missing 'synthesis_attestation' field — "
+                    "no claims to verify; exit 2 (malformed_envelope_handling=warn)"
+                )
+    else:
+        if not (has_flat or has_wrapped):
+            warning = (
+                "envelope JSON is missing 'synthesis_attestation' field — "
+                "no claims to verify; exit 2 (malformed_envelope_handling=warn)"
+            )
 
     try:
         results, summary, exit_code = run_lint(diff_text, envelope,
-                                               ignore_dims=args.ignore_dim)
+                                               ignore_dims=args.ignore_dim,
+                                               strict=args.strict_mode)
     except Exception as e:  # noqa: BLE001
         print(f"attestation-lint: error: {e}", file=sys.stderr)
         return 2
@@ -994,6 +1113,7 @@ def main(argv: list[str] | None = None) -> int:
         "diff": args.diff,
         "envelope": args.envelope,
         "ignore_dim": args.ignore_dim,
+        "strict_mode": args.strict_mode,
         "summary": summary,
         "results": results,
         "exit_code": exit_code,
