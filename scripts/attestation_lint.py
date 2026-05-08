@@ -1041,16 +1041,89 @@ def main(argv: list[str] | None = None) -> int:
             "Combine with --self-test to run the inline 9-case suite under strict."
         ),
     )
+    p.add_argument(
+        "--check-ledger",
+        dest="check_ledger",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the decision_ledger coverage check against the envelope. "
+            "Requires --envelope. --plan is optional: when provided, the check "
+            "reads the plan to detect whether synthesis_dimensions are present "
+            "and enforces that ledger is non-absent; when omitted, only the "
+            "shape of any present ledger entries is validated. "
+            "Exit codes: 0 = pass, 1 = any error finding, 2 = runner error. "
+            "Warnings (e.g. null evidence_file with owner=plan) do not change "
+            "exit code. May be combined with --diff/--envelope for a combined run."
+        ),
+    )
+    p.add_argument(
+        "--plan",
+        dest="plan",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to the originating plan markdown file. Used by --check-ledger "
+            "to detect whether the plan has a synthesis_dimensions block. When "
+            "absent, ledger-presence enforcement is skipped (shape-only check)."
+        ),
+    )
     args = p.parse_args(argv)
 
     if args.self_test:
         # --self-test runs against canned envelopes; --ignore-dim is intentionally
         # NOT applied so the deterministic self-test stays deterministic.
         # --strict-mode IS propagated when both flags are passed.
-        return run_self_test(strict=args.strict_mode)
+        synth_code = run_self_test(strict=args.strict_mode)
+        ledger_code = _run_ledger_self_test()
+        return max(synth_code, ledger_code)
+
+    # --check-ledger mode: envelope-only ledger validation.
+    if args.check_ledger:
+        if not args.envelope:
+            p.error("--check-ledger requires --envelope")
+            return 2
+        try:
+            envelope = json.loads(Path(args.envelope).expanduser().read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"attestation-lint: failed to load envelope: {e}", file=sys.stderr)
+            return 2
+        if not isinstance(envelope, dict):
+            print("attestation-lint: envelope JSON must be an object", file=sys.stderr)
+            return 2
+
+        plan_path: Path | None = Path(args.plan).expanduser() if args.plan else None
+        findings, ledger_exit = run_ledger_check(envelope, plan_path=plan_path)
+
+        payload: dict[str, Any] = {
+            "envelope": args.envelope,
+            "plan": args.plan,
+            "ledger_findings": [
+                {"level": f.level, "message": f.message} for f in findings
+            ],
+            "exit_code": ledger_exit,
+        }
+        print(json.dumps(payload, indent=2))
+
+        if not args.quiet:
+            errors = [f for f in findings if f.level == "error"]
+            warnings = [f for f in findings if f.level == "warning"]
+            if errors:
+                print(
+                    f"attestation-lint(ledger): {len(errors)} error(s), "
+                    f"{len(warnings)} warning(s)",
+                    file=sys.stderr,
+                )
+                for f in errors:
+                    print(f"  ERROR: {f.message}", file=sys.stderr)
+            if warnings and not errors:
+                for f in warnings:
+                    print(f"  WARN: {f.message}", file=sys.stderr)
+
+        return ledger_exit
 
     if not args.diff or not args.envelope:
-        p.error("--diff and --envelope are required (or use --self-test)")
+        p.error("--diff and --envelope are required (or use --self-test / --check-ledger)")
         return 2  # unreachable; argparse exits
 
     try:
@@ -1133,6 +1206,339 @@ def main(argv: list[str] | None = None) -> int:
                   f"no graded assertions in this envelope", file=sys.stderr)
 
     return exit_code
+
+
+# ---------------------------------------------------------------------------
+# Ledger coverage check
+# ---------------------------------------------------------------------------
+
+VALID_ON_NEW_DECISION = {"block", "flag", "absorb"}
+REQUIRED_LEDGER_FIELDS = {"dimension", "owner", "locked_value", "alternatives_rejected",
+                           "evidence_file", "on_new_decision"}
+
+
+class Finding:
+    """A single lint finding from check_ledger_coverage."""
+
+    def __init__(self, level: str, message: str) -> None:
+        # level: "error" | "warning"
+        self.level = level
+        self.message = message
+
+    def __repr__(self) -> str:
+        return f"Finding({self.level!r}, {self.message!r})"
+
+
+def _has_synthesis_dimensions(plan_path: "Path") -> bool:
+    """Return True if the plan file contains a synthesis_dimensions: block.
+
+    Tries to import count_synthesis_dimensions from plan_verify.py.
+    Falls back to a tiny inline YAML-ish parser when the import fails (e.g.
+    when running in an isolated environment).
+    """
+    try:
+        import sys as _sys
+        _scripts_dir = str(plan_path.parent.parent / "scripts")
+        if _scripts_dir not in _sys.path:
+            _sys.path.insert(0, _scripts_dir)
+        # Also try the scripts dir relative to this file's location.
+        _own_scripts = str(Path(__file__).parent)
+        if _own_scripts not in _sys.path:
+            _sys.path.insert(0, _own_scripts)
+        from plan_verify import count_synthesis_dimensions  # type: ignore[import]
+        return count_synthesis_dimensions(plan_path) > 0
+    except (ImportError, Exception):
+        # Inline fallback: scan for a `synthesis_dimensions:` header.
+        _SYNTH_HDR = re.compile(r"^\s*synthesis_dimensions\s*:\s*$", re.IGNORECASE)
+        try:
+            text = plan_path.read_text(encoding="utf-8", errors="replace")
+            for line in text.splitlines():
+                if _SYNTH_HDR.match(line):
+                    return True
+        except OSError:
+            pass
+        return False
+
+
+def check_ledger_coverage(
+    envelope: "dict[str, Any]",
+    plan_path: "Path | None" = None,
+) -> "list[Finding]":
+    """Check that the envelope's decision_ledger is present and well-formed.
+
+    Rules:
+      1. If plan_path is provided and the plan has a synthesis_dimensions block:
+         - decision_ledger MUST be present and non-null (empty [] is OK only
+           when synthesis_attestation is also empty).
+         - Every key in synthesis_attestation must have a matching ledger entry
+           (matched by the `dimension` field).
+      2. If no synthesis_dimensions block (or plan_path is None and no ledger
+         present): absence of ledger is fine — no findings.
+      3. If decision_ledger IS present (regardless of plan): validate each
+         entry's shape: all six fields present, on_new_decision is a valid enum,
+         non-null/non-empty values (except evidence_file which may be null).
+
+    Returns a list of Finding objects. Empty list = PASS.
+    """
+    # Unwrap β-style wrapper for consistency with normalize_attestation.
+    if "synthesis_attestation" not in envelope and isinstance(envelope.get("envelope"), dict):
+        inner = envelope["envelope"]
+        if "synthesis_attestation" in inner:
+            envelope = inner
+
+    findings: list[Finding] = []
+    ledger = envelope.get("decision_ledger")
+    has_ledger_field = "decision_ledger" in envelope
+
+    # Determine whether the plan has synthesis_dimensions.
+    plan_has_synth = False
+    if plan_path is not None and plan_path.exists():
+        plan_has_synth = _has_synthesis_dimensions(plan_path)
+
+    # Collect dimension keys from synthesis_attestation.
+    synth_raw = envelope.get("synthesis_attestation")
+    synth_keys: list[str] = []
+    if isinstance(synth_raw, dict):
+        synth_keys = list(synth_raw.keys())
+    elif isinstance(synth_raw, list):
+        for entry in synth_raw:
+            if isinstance(entry, dict):
+                key = entry.get("name") or entry.get("dimension_name") or entry.get("id") or ""
+                if key:
+                    synth_keys.append(str(key))
+
+    # Rule 1: if plan has synthesis_dimensions OR the envelope itself has
+    # synthesis_attestation entries, ledger must be present.
+    # When plan_path is provided, we use the plan's synthesis_dimensions block
+    # as the authoritative signal. When plan_path is absent, we fall back to
+    # checking whether synthesis_attestation has any entries (envelope-only mode).
+    requires_ledger = plan_has_synth or (plan_path is None and len(synth_keys) > 0)
+    if requires_ledger and not has_ledger_field:
+        source_hint = (
+            "the plan has a synthesis_dimensions block"
+            if plan_has_synth
+            else "synthesis_attestation has entries"
+        )
+        findings.append(Finding(
+            "error",
+            f"decision_ledger field is absent but {source_hint} — "
+            "every synthesis dimension must have a ledger entry",
+        ))
+        return findings  # no point checking shape if field is missing
+
+    # Rule 2: if no synth dims and no ledger, all good.
+    if not requires_ledger and not has_ledger_field:
+        return findings
+
+    # Rule 3: ledger is present — validate shape.
+    if ledger is None:
+        # null is treated the same as missing when synth dims exist.
+        if plan_has_synth and synth_keys:
+            findings.append(Finding(
+                "error",
+                "decision_ledger is null but synthesis_attestation has dimensions — "
+                "provide an array (empty [] only when no synthesis_dimensions in plan)",
+            ))
+        return findings
+
+    if not isinstance(ledger, list):
+        findings.append(Finding("error", "decision_ledger must be an array"))
+        return findings
+
+    # Cross-check: every synthesis_attestation key must have a matching ledger entry.
+    if plan_has_synth or synth_keys:
+        ledger_dims = {
+            str(entry.get("dimension", "")) for entry in ledger if isinstance(entry, dict)
+        }
+        for key in synth_keys:
+            if key not in ledger_dims:
+                findings.append(Finding(
+                    "error",
+                    f"synthesis_attestation dimension '{key}' has no matching entry in "
+                    "decision_ledger (match by 'dimension' field)",
+                ))
+
+    # Per-entry field validation.
+    for idx, entry in enumerate(ledger):
+        if not isinstance(entry, dict):
+            findings.append(Finding("error", f"decision_ledger[{idx}] is not an object"))
+            continue
+        # Check all six required fields are present.
+        missing_fields = REQUIRED_LEDGER_FIELDS - entry.keys()
+        if missing_fields:
+            findings.append(Finding(
+                "error",
+                f"decision_ledger[{idx}] (dimension='{entry.get('dimension', '?')}') "
+                f"is missing required fields: {sorted(missing_fields)}",
+            ))
+            continue
+        # Non-empty checks (except evidence_file which may be null).
+        for field in ("dimension", "owner", "locked_value", "on_new_decision"):
+            val = entry.get(field)
+            if not val or not str(val).strip():
+                findings.append(Finding(
+                    "error",
+                    f"decision_ledger[{idx}].{field} must be a non-empty string",
+                ))
+        # alternatives_rejected must be a non-empty array.
+        alts = entry.get("alternatives_rejected")
+        if not isinstance(alts, list) or len(alts) == 0:
+            findings.append(Finding(
+                "error",
+                f"decision_ledger[{idx}].alternatives_rejected must be a non-empty array "
+                "(use [\"none considered\"] if truly no alternative existed)",
+            ))
+        # on_new_decision enum check.
+        ond = entry.get("on_new_decision", "")
+        if ond not in VALID_ON_NEW_DECISION:
+            findings.append(Finding(
+                "error",
+                f"decision_ledger[{idx}].on_new_decision='{ond}' is not a valid enum value; "
+                f"must be one of: {sorted(VALID_ON_NEW_DECISION)}",
+            ))
+        # evidence_file: null OK only when owner == "implementer"; warn otherwise.
+        ef = entry.get("evidence_file")
+        owner = entry.get("owner", "")
+        if ef is None and owner == "plan":
+            findings.append(Finding(
+                "warning",
+                f"decision_ledger[{idx}].evidence_file is null but owner='plan' — "
+                "plan-owned decisions should reference the file where they manifest",
+            ))
+
+    return findings
+
+
+def run_ledger_check(
+    envelope: "dict[str, Any]",
+    plan_path: "Path | None" = None,
+) -> "tuple[list[Finding], int]":
+    """Run the ledger coverage check and return (findings, exit_code).
+
+    exit_code: 0 = pass (no errors, warnings OK), 1 = any error finding.
+    Warnings alone do not change exit code.
+    """
+    findings = check_ledger_coverage(envelope, plan_path)
+    has_error = any(f.level == "error" for f in findings)
+    return findings, (1 if has_error else 0)
+
+
+# ---------------------------------------------------------------------------
+# Ledger self-test helpers
+# ---------------------------------------------------------------------------
+
+def _run_ledger_self_test() -> int:
+    """Minimal inline self-test for the ledger check. Returns 0 on success."""
+    failures: list[str] = []
+
+    _GOOD_ENTRY_1 = {
+        "dimension": "placement_MetricCard",
+        "owner": "plan",
+        "locked_value": "after `<SummaryRow>` in components/dashboard/MetricCard.tsx",
+        "alternatives_rejected": ["before `<SummaryRow>`"],
+        "evidence_file": "components/dashboard/MetricCard.tsx",
+        "on_new_decision": "flag",
+    }
+    _GOOD_ENTRY_2 = {
+        "dimension": "cta_tier_export_button",
+        "owner": "plan",
+        "locked_value": "secondary",
+        "alternatives_rejected": ["primary — too visually dominant"],
+        "evidence_file": "components/dashboard/MetricCard.tsx",
+        "on_new_decision": "flag",
+    }
+
+    # Case A: envelope with ledger, no plan_path — shape valid → pass.
+    env_good = {
+        "synthesis_attestation": {
+            "placement_MetricCard": "applied",
+            "cta_tier_export_button": "applied",
+        },
+        "decision_ledger": [_GOOD_ENTRY_1, _GOOD_ENTRY_2],
+    }
+    findings, code = run_ledger_check(env_good, plan_path=None)
+    if code != 0:
+        failures.append(f"Case A (good envelope, no plan): expected exit 0, got {code}; findings={findings}")
+
+    # Case B: envelope with empty synthesis_attestation and no ledger — absence is fine → pass.
+    # (When synthesis_attestation has no entries, ledger is not required.)
+    env_no_ledger = {
+        "synthesis_attestation": {},
+        "novel_decisions": [],
+    }
+    findings, code = run_ledger_check(env_no_ledger, plan_path=None)
+    if code != 0:
+        failures.append(f"Case B (empty synth_attestation, no ledger): expected exit 0, got {code}; findings={findings}")
+
+    # Case C: envelope with ledger but missing a required field → error.
+    env_missing_field = {
+        "synthesis_attestation": {"placement_x": "applied"},
+        "decision_ledger": [
+            {
+                "dimension": "placement_x",
+                "owner": "plan",
+                # locked_value intentionally omitted
+                "alternatives_rejected": ["none considered"],
+                "evidence_file": "foo.tsx",
+                "on_new_decision": "flag",
+            }
+        ],
+    }
+    findings, code = run_ledger_check(env_missing_field, plan_path=None)
+    if code != 1:
+        failures.append(f"Case C (missing required field): expected exit 1, got {code}; findings={findings}")
+
+    # Case D: bad on_new_decision enum → error.
+    env_bad_enum = {
+        "synthesis_attestation": {"cta_tier_x": "applied"},
+        "decision_ledger": [
+            {
+                "dimension": "cta_tier_x",
+                "owner": "plan",
+                "locked_value": "primary",
+                "alternatives_rejected": ["secondary"],
+                "evidence_file": "foo.tsx",
+                "on_new_decision": "INVALID_VALUE",
+            }
+        ],
+    }
+    findings, code = run_ledger_check(env_bad_enum, plan_path=None)
+    if code != 1:
+        failures.append(f"Case D (bad on_new_decision): expected exit 1, got {code}; findings={findings}")
+
+    # Case E: envelope with no synthesis_attestation and no ledger → pass.
+    env_empty = {"synthesis_attestation": {}, "novel_decisions": []}
+    findings, code = run_ledger_check(env_empty, plan_path=None)
+    if code != 0:
+        failures.append(f"Case E (empty envelope, no ledger): expected exit 0, got {code}; findings={findings}")
+
+    # Case F: ledger entry has null evidence_file with owner=plan → warning but exit 0.
+    env_null_ef = {
+        "synthesis_attestation": {"copy_tone_x": "applied"},
+        "decision_ledger": [
+            {
+                "dimension": "copy_tone_x",
+                "owner": "plan",
+                "locked_value": "professional",
+                "alternatives_rejected": ["casual"],
+                "evidence_file": None,  # null + owner=plan → warning
+                "on_new_decision": "flag",
+            }
+        ],
+    }
+    findings, code = run_ledger_check(env_null_ef, plan_path=None)
+    if code != 0:
+        failures.append(f"Case F (null evidence_file, owner=plan): expected exit 0 (warning only), got {code}; findings={findings}")
+    if not any(f.level == "warning" for f in findings):
+        failures.append(f"Case F: expected a warning for null evidence_file with owner=plan, got {findings}")
+
+    if failures:
+        print("attestation_lint ledger-self-test FAILED:", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+    print("attestation_lint ledger-self-test PASS (6 cases)")
+    return 0
 
 
 if __name__ == "__main__":

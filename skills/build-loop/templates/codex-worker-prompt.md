@@ -57,3 +57,32 @@ Integration notes:
 Unresolved risks:
 - <risk or "none known">
 
+## decision_ledger (REQUIRED when plan has synthesis_dimensions)
+
+When the originating plan includes a `synthesis_dimensions:` block, your return envelope MUST include a `decision_ledger` array with one entry per dimension. Each entry documents *why* the chosen value was selected — not just *what* was applied. Empty array `[]` is only valid when the plan has no `synthesis_dimensions` block.
+
+Example (two entries for placement and cta_tier dimensions):
+
+```json
+"decision_ledger": [
+  {
+    "dimension": "placement_MyComponent",
+    "owner": "plan",
+    "locked_value": "after `<ParentRow>` in path/to/Component.tsx",
+    "alternatives_rejected": ["before `<ParentRow>` — plan specified after"],
+    "evidence_file": "path/to/Component.tsx",
+    "on_new_decision": "flag"
+  },
+  {
+    "dimension": "cta_tier_save_button",
+    "owner": "plan",
+    "locked_value": "primary",
+    "alternatives_rejected": ["secondary — insufficient weight for primary conversion action"],
+    "evidence_file": "path/to/Component.tsx",
+    "on_new_decision": "flag"
+  }
+]
+```
+
+Full schema: `references/implementer-envelope-schema.md` §"decision_ledger in detail".
+

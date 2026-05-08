@@ -16,6 +16,7 @@ Per-brief envelope shapes (round-1 through round-3) are deprecated. New briefs r
 | `f_criteria` | object | Map of F-criterion ID → `"pass"` or `"fail"`. Every F-criterion named in the brief MUST appear. |
 | `synthesis_attestation` | object | For each dimension named in the plan's `synthesis_dimensions` block, value is `"applied"`, `"deviated"`, or `"n/a"`. If `"deviated"`, the value MUST be an object `{"status": "deviated", "deviation_reason": "<why>"}`. **Empty object `{}` is allowed when the plan has no `synthesis_dimensions` block** (e.g. methodology commits, infra-only commits). |
 | `novel_decisions` | array | Array of `{"decision": "<one-sentence>", "reasoning": "<why>"}` objects. Empty array `[]` is OK, **but the field MUST be present**. Implementers add an entry whenever they make a synthesis-class decision NOT enumerated in the plan's `synthesis_dimensions`. When the novel decision is **architectural-class** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, etc.), the implementer MUST halt and set `status: "blocked"` (see below) rather than guess. |
+| `decision_ledger` | array | **Required when the plan has a `synthesis_dimensions` block.** Empty array `[]` is permitted only when the plan has no `synthesis_dimensions` block. Each entry MUST contain all six fields: `dimension` (string — matches a key in `synthesis_attestation`), `owner` (`"plan"` or `"implementer"`), `locked_value` (string — concrete value chosen), `alternatives_rejected` (array of strings, or `["none considered"]`), `evidence_file` (repo-relative path, or `null` when `owner == "implementer"` AND the decision is non-code), `on_new_decision` (enum: `"block" \| "flag" \| "absorb"`; default `"block"` for `risk_reason`-tagged chunks, `"flag"` otherwise). See `## decision_ledger in detail` below. |
 | `notes` | string | Free-text. ≤200 words. Judgment calls, surprises, deferred concerns. |
 | `wall_clock_seconds` | number | End-to-end implementer wall-clock duration. Orchestrator uses this for tier-mix telemetry. |
 | `status` | string | Optional for routine Phase 3 Execute commits (legacy). REQUIRED when the implementer halts on an architectural-class novel decision: set `status: "blocked"` and return early without committing. See "status enum" below. |
@@ -71,11 +72,32 @@ The `synthesis_dimensions` block was added in C1 (`feat(spec-writing): synthesis
 
 If the implementer finds itself making a synthesis-class decision that the plan didn't name, the implementer MUST halt that decision path and add the decision to `novel_decisions` instead of attesting silently. The orchestrator and `scope-auditor` then decide whether to extend the plan's `synthesis_dimensions` (route to plan-revise) or accept the novel decision (route to commit).
 
+## decision_ledger in detail
+
+The `decision_ledger` array was added in C5 (`feat(envelope): require decision_ledger when synthesis_dimensions present`). While `synthesis_attestation` records *what the implementer claimed* about each dimension, `decision_ledger` records *why each value was chosen* — creating an audit trail that survives the commit log.
+
+**Required when:** the originating plan contains a `synthesis_dimensions:` block. Every dimension listed in `synthesis_attestation` must have a corresponding `decision_ledger` entry (matched by the `dimension` field).
+
+**Permitted absent:** when the plan has no `synthesis_dimensions:` block. In that case, omit the field entirely OR provide an empty array `[]`. Both are valid.
+
+**Per-entry fields (all six required):**
+
+| Field | Type | Rule |
+|---|---|---|
+| `dimension` | string | Must match a key in `synthesis_attestation` for this envelope. |
+| `owner` | `"plan"` or `"implementer"` | `"plan"` = the value was prescribed by the plan's `synthesis_dimensions` block. `"implementer"` = discovered or chosen during execution. |
+| `locked_value` | string | The concrete value chosen (e.g. `"secondary"`, `"after '<SummaryRow>' in path/to/file"`). Never a status word like `"applied"`. |
+| `alternatives_rejected` | array of strings | At least one alternative considered. Use `["none considered"]` only when there was genuinely a single viable option and documenting that is itself informative. |
+| `evidence_file` | string or `null` | Repo-relative path to the file where the decision manifests in code. `null` is allowed only when `owner == "implementer"` AND the decision is non-code (e.g. a copy-tone choice with no diff file). For `owner == "plan"` decisions, `null` triggers a WARN from the attestation lint. |
+| `on_new_decision` | enum string | One of `"block" \| "flag" \| "absorb"`. Controls what happens if a *new* undeclared decision of the same class is encountered during a future re-dispatch. Default: `"block"` for chunks tagged `risk_reason`; `"flag"` otherwise. |
+
+**Lint behavior (`--check-ledger`):** the attestation lint enforces that (a) every `synthesis_attestation` dimension has a ledger entry, (b) all six fields are present and non-empty (except `evidence_file` per the `null` rule above), and (c) `on_new_decision` is one of the three enum values. See `scripts/attestation_lint.py` `--check-ledger` flag.
+
 ## Examples
 
-### Example 1 — Minimal (non-UI commit, all-applied)
+### Example 1 — Minimal (non-UI commit, no synthesis_dimensions)
 
-A C2 methodology commit with no UI surface. The plan named two synthesis dimensions: `attestation_field_naming` and `schema_doc_location`. Both applied as written. No novel decisions.
+A C2 methodology commit with no UI surface and no `synthesis_dimensions` block in the plan. No ledger required; `decision_ledger` is omitted (equivalent to `[]`).
 
 ```yaml
 envelope:
@@ -93,9 +115,8 @@ envelope:
     F3: pass
     F4: pass
     F5: pass
-  synthesis_attestation:
-    attestation_field_naming: applied
-    schema_doc_location: applied
+  synthesis_attestation: {}
+  decision_ledger: []
   novel_decisions: []
   notes: "All three files updated in one commit. Schema doc landed under references/ alongside implementer-brief-template.md per existing convention."
   wall_clock_seconds: 184
@@ -133,6 +154,47 @@ envelope:
       reasoning: "Toggling 5+ topic checkboxes triggered 5 sequential POSTs in tests; debounce coalesces. Plan didn't address rate-of-change."
   notes: "F4 fails because the optimistic-UI test is flaky against the local API mock; tracking as known-flake. Real backend confirms shape is correct."
   wall_clock_seconds: 612
+```
+
+### Example 3 — Populated ledger (UI commit with placement + cta_tier dimensions)
+
+A UI commit adding a MetricCard to the dashboard. The plan named two synthesis dimensions; both are attested and each has a full ledger entry.
+
+```yaml
+envelope:
+  branch: "feat/dashboard-metric-card"
+  commit_sha: "pending"
+  files_changed:
+    - "components/dashboard/MetricCard.tsx"
+    - "components/dashboard/MetricCard.test.tsx"
+  loc_added: 84
+  loc_removed: 12
+  f_criteria:
+    F1: pass
+    F2: pass
+  synthesis_attestation:
+    placement_MetricCard: applied
+    cta_tier_export_button: applied
+  decision_ledger:
+    - dimension: "placement_MetricCard"
+      owner: "plan"
+      locked_value: "after `<SummaryRow>` in components/dashboard/MetricCard.tsx"
+      alternatives_rejected:
+        - "before `<SummaryRow>` — plan specified after; reversing would change visual grouping"
+        - "inside `<DashboardGrid>` — would require grid-slot refactor outside this chunk's scope"
+      evidence_file: "components/dashboard/MetricCard.tsx"
+      on_new_decision: "flag"
+    - dimension: "cta_tier_export_button"
+      owner: "plan"
+      locked_value: "secondary"
+      alternatives_rejected:
+        - "primary — too visually dominant for a utility data-export action"
+        - "tertiary — insufficient affordance for a trigger users must discover"
+      evidence_file: "components/dashboard/MetricCard.tsx"
+      on_new_decision: "flag"
+  novel_decisions: []
+  notes: "Both dimensions applied as specified. Ledger entries document why alternatives were rejected."
+  wall_clock_seconds: 142
 ```
 
 ## Parser behavior

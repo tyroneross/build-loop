@@ -1,0 +1,42 @@
+{
+  "branch": "feat/ui-placement-cta",
+  "commit_sha": "pending",
+  "files_changed": [
+    "components/dashboard/MetricCard.tsx",
+    "components/dashboard/MetricCard.test.tsx"
+  ],
+  "loc_added": 84,
+  "loc_removed": 12,
+  "f_criteria": {
+    "F1": "pass",
+    "F2": "pass"
+  },
+  "synthesis_attestation": {
+    "placement_MetricCard": "applied",
+    "cta_tier_export_button": "applied"
+  },
+  "decision_ledger": [
+    {
+      "dimension": "placement_MetricCard",
+      "owner": "plan",
+      "locked_value": "after `<SummaryRow>` in components/dashboard/MetricCard.tsx",
+      "alternatives_rejected": ["before `<SummaryRow>`", "inside `<DashboardGrid>`"],
+      "evidence_file": "components/dashboard/MetricCard.tsx",
+      "on_new_decision": "flag"
+    },
+    {
+      "dimension": "cta_tier_export_button",
+      "owner": "plan",
+      "locked_value": "secondary",
+      "alternatives_rejected": ["primary — too visually dominant for a utility action", "tertiary — insufficient affordance for a data-export trigger"],
+      "evidence_file": "components/dashboard/MetricCard.tsx",
+      "on_new_decision": "flag"
+    }
+  ],
+  "novel_decisions": [],
+  "notes": "Both synthesis dimensions applied as specified. MetricCard placed after SummaryRow per plan; export button uses secondary tier as directed.",
+  "wall_clock_seconds": 142,
+  "status": "completed",
+  "commit_subject": "feat(dashboard): add MetricCard with secondary export CTA",
+  "commit_body": "Adds MetricCard component after SummaryRow in the dashboard layout. Export button uses secondary CTA tier per design spec."
+}
