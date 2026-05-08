@@ -77,11 +77,21 @@ Return contract: populate all fields specified in `references/implementer-envelo
 
 If the plan includes a `synthesis_dimensions` block, you MUST attest each named dimension as `applied`/`deviated`/`n/a` in the envelope's `synthesis_attestation` field. If you find yourself making a synthesis-class decision NOT enumerated in the plan, halt and add it to `novel_decisions` instead of deciding silently — the orchestrator and `scope-auditor` then decide whether to extend the plan's `synthesis_dimensions` or accept the novel decision.
 
+**Halt-and-ask backstop (NEW — C5).** When the novel decision is **architectural-class** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, hard-fail/retry counter, etc. — see `references/implementer-envelope-schema.md` §"When `blocked` is the right call"), do NOT just log and proceed. Instead:
+
+1. Add the decision to `novel_decisions[]` with one-sentence `decision` and a `reasoning` field that names the alternatives you considered.
+2. Set envelope `status: "blocked"`.
+3. Set `commit_sha: ""`, `files_changed: []` (or the partial set you wrote before hitting the block — the orchestrator will reset the working tree to the parent commit before re-dispatch).
+4. Do NOT call `git add` or `git commit` (Hard rule 4 still applies).
+5. Return early. Don't guess.
+
+The orchestrator routes each `novel_decisions[]` entry to a Thinking-tier resolver, stores the resolution in `state.json.novelDecisionResolutions[]`, and re-dispatches you with the resolutions appended to your brief under a `resolved_decisions:` block. Re-dispatch budget is N=3 per chunk; after that the chunk surfaces as ❓ Unfixed. The lint (C3) and synthesis-critic (C4) cover synthesis dims they can grade — `blocked` is for what falls outside both.
+
 `files_changed` is your authoritative list of what the orchestrator should commit. `commit_subject` and `commit_body` populate the message — orchestrator runs `git commit -m <subject>` with the body as additional `-m` args. Per Hard rule 4, you must NOT have called `git add` or `git commit` — leave the working tree dirty for the orchestrator to stage and commit.
 
 ```json
 {
-  "status": "fixed | partial | scope_breach | deferred_architecture | plan_malformed | evidence_stale | needs_dependency | failed",
+  "status": "fixed | partial | blocked | scope_breach | deferred_architecture | plan_malformed | evidence_stale | needs_dependency | failed",
   "plan_id": "<from frontmatter>",
   "files_changed": ["abs/path/1", "abs/path/2"],
   "commit_subject": "type(scope): one-line summary — Conventional Commits",
@@ -120,6 +130,7 @@ If the plan includes a `synthesis_dimensions` block, you MUST attest each named 
 | You attempted the fix but typecheck or lint regressed | `failed` with `verifications.{typecheck,lint}: "fail"` |
 | You're not sure which of two reasonable interpretations the plan intended | `partial` with `notes` describing both options |
 | You touched everything but `re_grep` still finds residual hits | `partial` with the residual count |
+| You hit an architectural-class synthesis decision the plan didn't enumerate | `blocked` with the decision in `novel_decisions[]`. No commit. See `references/implementer-envelope-schema.md` §"When `blocked` is the right call". |
 
 Returning `failed` is fine. The orchestrator will route you to retry or escalate. Don't pretend a fix worked when it didn't.
 
