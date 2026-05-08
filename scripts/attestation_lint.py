@@ -20,6 +20,9 @@ Exit codes:
     1  any entry fails (claim disproved by diff)
     2  lint produced ONLY unverifiable results (subjective dims) OR runner error
 
+    Note: `--ignore-dim NAME` suppresses entries from the summary counts and
+    never affects the exit code. If every entry is ignored, exit is 0.
+
 Verifiable dimensions:
     - placement     — "after `<Anchor>` in <path>" — anchor must exist in pre-image,
                       new lines must appear after anchor's line position in post-image
@@ -66,7 +69,7 @@ Result record (per attestation entry):
       "dimension": str,
       "claim": str | null,
       "claimed_status": "applied" | "deviated" | "n/a" | str,
-      "status": "pass" | "fail" | "unverifiable",
+      "status": "pass" | "fail" | "unverifiable" | "ignored",
       "reason": str,
       "evidence": {"file": str | null, "line": int | null, "snippet": str | null}
     }
@@ -553,13 +556,40 @@ def verify_visual_weight(record: dict[str, Any], files: dict[str, FileDiff]) -> 
 # ---------------------------------------------------------------------------
 
 
-def lint_one(record: dict[str, Any], files: dict[str, FileDiff]) -> dict[str, Any]:
+def _normalize_ignore_token(token: str) -> str:
+    """Lower-case + collapse hyphens/spaces to underscores for ignore-list match."""
+    return token.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def is_ignored(record: dict[str, Any], ignore_set: set[str]) -> bool:
+    """A record is ignored if any of these match a token in `ignore_set`
+    (case-insensitive, hyphen/space → underscore):
+      - the entry name (envelope key)
+      - the inferred canonical dimension (placement / cta_tier / ...)
+    Tokens that don't match anything are silently no-ops — see help text."""
+    if not ignore_set:
+        return False
+    name_norm = _normalize_ignore_token(str(record.get("name", "")))
+    dim_norm = _normalize_ignore_token(str(record.get("dimension", "")))
+    return name_norm in ignore_set or dim_norm in ignore_set
+
+
+def lint_one(record: dict[str, Any], files: dict[str, FileDiff],
+             ignore_set: set[str] | None = None) -> dict[str, Any]:
     base = {
         "name": record["name"],
         "dimension": record["dimension"],
         "claim": record.get("claim"),
         "claimed_status": record.get("claimed_status"),
     }
+    # Ignore filter runs first — envelope is still parsed (so the entry appears
+    # in `results` with status=ignored), but the verifier never runs and the
+    # summary excludes it from pass/fail/unverifiable.
+    if ignore_set and is_ignored(record, ignore_set):
+        return {**base,
+                "status": "ignored",
+                "reason": "suppressed by --ignore-dim",
+                "evidence": {"file": None, "line": None, "snippet": None}}
     # n/a and deviated entries are not graded — they're an explicit non-claim.
     if record.get("claimed_status") in ("n/a", "deviated"):
         return {**base,
@@ -599,24 +629,29 @@ def lint_one(record: dict[str, Any], files: dict[str, FileDiff]) -> dict[str, An
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, int]:
-    summary = {"pass": 0, "fail": 0, "unverifiable": 0, "total": len(results)}
+    summary = {"pass": 0, "fail": 0, "unverifiable": 0, "ignored": 0,
+               "total": len(results)}
     for r in results:
         summary[r["status"]] = summary.get(r["status"], 0) + 1
     return summary
 
 
 def determine_exit(summary: dict[str, int]) -> int:
+    # Ignored entries never affect exit code (they were explicitly suppressed).
     if summary["fail"] > 0:
         return 1
     if summary["pass"] == 0 and summary["unverifiable"] > 0:
         return 2
+    # If everything was ignored (or envelope was empty), exit 0.
     return 0
 
 
-def run_lint(diff_text: str, envelope: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int], int]:
+def run_lint(diff_text: str, envelope: dict[str, Any],
+             ignore_dims: list[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, int], int]:
     files = parse_unified_diff(diff_text)
     records = normalize_attestation(envelope)
-    results = [lint_one(r, files) for r in records]
+    ignore_set = {_normalize_ignore_token(t) for t in (ignore_dims or []) if t}
+    results = [lint_one(r, files, ignore_set) for r in records]
     summary = summarize(results)
     return results, summary, determine_exit(summary)
 
@@ -741,12 +776,51 @@ def run_self_test() -> int:
     if summary["pass"] != 1 or code != 0:
         failures.append(f"array form: should pass once, got summary={summary} code={code}")
 
+    # --ignore-dim by canonical dimension: ignore all `placement` entries.
+    # Uses the FAIL envelope which has a placement+cta_tier; ignoring placement
+    # leaves only the cta_tier fail → exit 1.
+    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL,
+                                      ignore_dims=["placement"])
+    placement = next(r for r in results if r["dimension"] == "placement")
+    if placement["status"] != "ignored":
+        failures.append(f"ignore by dim 'placement' should mark ignored, got {placement['status']}")
+    if summary.get("ignored") != 1:
+        failures.append(f"ignore by dim: summary.ignored should be 1, got {summary}")
+    if summary["fail"] != 1:
+        failures.append(f"ignore by dim: cta_tier fail should remain, got summary={summary}")
+    if code != 1:
+        failures.append(f"ignore by dim: exit should still be 1 (cta_tier fails), got {code}")
+
+    # --ignore-dim by entry name: suppress every entry, exit 0.
+    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL,
+                                      ignore_dims=["placement_NewsBanner",
+                                                   "cta_tier_read_more"])
+    if summary.get("ignored") != 2 or summary["fail"] != 0:
+        failures.append(f"ignore-all by name: bad summary {summary}")
+    if code != 0:
+        failures.append(f"ignore-all by name: exit should be 0, got {code}")
+
+    # --ignore-dim with unknown token: silent no-op (case sensitivity normalized).
+    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_PASS,
+                                      ignore_dims=["does-not-exist"])
+    if summary.get("ignored") != 0:
+        failures.append(f"ignore unknown: should be silent no-op, got summary={summary}")
+    if code != 0:
+        failures.append(f"ignore unknown: pass envelope should still exit 0, got {code}")
+
+    # --ignore-dim case + hyphen normalization: 'CTA-Tier' should match dim cta_tier.
+    results, summary, code = run_lint(SELF_TEST_DIFF, SELF_TEST_ENVELOPE_FAIL,
+                                      ignore_dims=["CTA-Tier"])
+    cta = next(r for r in results if r["dimension"] == "cta_tier")
+    if cta["status"] != "ignored":
+        failures.append(f"ignore normalization: 'CTA-Tier' should match cta_tier, got {cta['status']}")
+
     if failures:
         print("attestation_lint self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    print("attestation_lint self-test PASS (5 cases)")
+    print("attestation_lint self-test PASS (9 cases)")
     return 0
 
 
@@ -762,10 +836,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--diff", help="Path to a unified-diff file OR a git revspec like 'HEAD~1..HEAD'.")
     p.add_argument("--envelope", help="Path to the implementer envelope JSON.")
     p.add_argument("--quiet", "--json", dest="quiet", action="store_true", help="Emit JSON only; suppress human summary on stdout.")
+    p.add_argument(
+        "--ignore-dim",
+        dest="ignore_dim",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help=(
+            "Suppress lint results for a dimension. Repeatable. NAME matches "
+            "either an envelope entry name (e.g. `placement_NewsBanner`) OR a "
+            "canonical dimension (`placement`, `cta_tier`, `visual_weight`, "
+            "`copy_tone`, `empty_state`); case + hyphens normalized. "
+            "Unknown tokens are silent no-ops. Ignored entries appear in the "
+            "results JSON with status=ignored but are excluded from "
+            "pass/fail/unverifiable counts and never affect the exit code. "
+            "Has no effect when --self-test is used."
+        ),
+    )
     p.add_argument("--self-test", action="store_true", help="Run the inline self-test and exit.")
     args = p.parse_args(argv)
 
     if args.self_test:
+        # --self-test runs against canned envelopes; --ignore-dim is intentionally
+        # NOT applied so the deterministic self-test stays deterministic.
         return run_self_test()
 
     if not args.diff or not args.envelope:
@@ -788,7 +881,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        results, summary, exit_code = run_lint(diff_text, envelope)
+        results, summary, exit_code = run_lint(diff_text, envelope,
+                                               ignore_dims=args.ignore_dim)
     except Exception as e:  # noqa: BLE001
         print(f"attestation-lint: error: {e}", file=sys.stderr)
         return 2
@@ -796,6 +890,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "diff": args.diff,
         "envelope": args.envelope,
+        "ignore_dim": args.ignore_dim,
         "summary": summary,
         "results": results,
         "exit_code": exit_code,
