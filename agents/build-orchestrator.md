@@ -174,6 +174,80 @@ Action required: review implementer envelope and diff before proceeding to Phase
 - Implementer envelope has no `synthesis_attestation` key → lint still runs, exits 2, logs warning, proceeds.
 - Commit is orchestrator-only metadata (no implementer envelope) → skip, log `"skipped": "no-envelope"`.
 
+### Phase 4.5b: Synthesis Critic (subjective drift backstop)
+
+Run the `synthesis-critic` agent immediately after Phase 4.5a (attestation_lint) completes, and before Phase 4 Review begins. This covers the subjective synthesis dimensions (`copy_tone`, `empty_state`) that attestation_lint cannot deterministically grade.
+
+**Skip condition — UI-touching check (required before dispatch):**
+
+```bash
+git diff HEAD~1..HEAD --name-only | grep -qE '\.(tsx|jsx|vue|svelte)$'
+```
+
+- Exit 0 (match found): UI-touching commit — proceed with dispatch.
+- Exit 1 (no match): no UI-touching files in the diff — skip Phase 4.5b entirely. Log `"skipped": "no-ui-files"` to `.build-loop/state.json.synthesisLint[]` and proceed to Phase 4.
+
+The extension match is the authoritative skip condition. Path globs and content patterns are NOT used — extension match is deterministic, repo-agnostic, and auditable.
+
+**Dispatch** (when UI files are present):
+
+```
+Agent(
+  subagent_type="build-loop:synthesis-critic",
+  prompt="""
+unified_diff: |
+  <output of: git diff HEAD~1..HEAD>
+
+synthesis_dimensions: |
+  <plan's synthesis_dimensions block — copy verbatim from the plan file>
+
+implementer_envelope_synthesis_attestation: |
+  <implementer's synthesis_attestation object from their return envelope>
+"""
+)
+```
+
+**Result handling:**
+
+| Verdict | Action |
+|---|---|
+| `pass` | Proceed to Phase 4 silently. Log result to state.json. |
+| `flag` | Log WARN to terminal. Surface `flagged[]` dimensions to user (do NOT block). Proceed to Phase 4. |
+
+**Severity cap**: synthesis-critic findings are WARN only. They do not block the commit or Phase 4. The user sees the flags; the build continues.
+
+**Logging** (always, after dispatch or skip): append to `.build-loop/state.json.synthesisLint[]`:
+
+```json
+{
+  "commit_sha": "<sha>",
+  "skipped": false,
+  "verdict": "pass | flag",
+  "flagged_count": 0,
+  "flagged_dimensions": ["copy_tone", "empty_state"],
+  "notes": "<critic's notes field>"
+}
+```
+
+When skipped:
+
+```json
+{
+  "commit_sha": "<sha>",
+  "skipped": true,
+  "skip_reason": "no-ui-files"
+}
+```
+
+**Warning template** (verdict: flag):
+
+```
+[Phase 4.5b: Synthesis Critic] ⚠️ Subjective drift detected
+Flagged dimensions: <list>
+<per-dimension: claimed vs observed vs reasoning>
+Action: review before Phase 4. Does NOT block.
+```
+
 ### Phase 4: Review (sub-steps A–F)
 
 Routing checklist in `references/phase-gate-checklist.md`. Six ordered sub-steps:
