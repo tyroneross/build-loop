@@ -73,7 +73,11 @@ Before returning success:
 
 ### Step 5 — Return
 
-Return JSON. `files_changed` is your authoritative list of what the orchestrator should commit. `commit_subject` and `commit_body` populate the message — orchestrator runs `git commit -m <subject>` with the body as additional `-m` args. Per Hard rule 4, you must NOT have called `git add` or `git commit` — leave the working tree dirty for the orchestrator to stage and commit.
+Return contract: populate all fields specified in `references/implementer-envelope-schema.md`. Missing required fields cause the orchestrator to mark the implementer's commit as malformed and either request a revision or quarantine the diff.
+
+If the plan includes a `synthesis_dimensions` block, you MUST attest each named dimension as `applied`/`deviated`/`n/a` in the envelope's `synthesis_attestation` field. If you find yourself making a synthesis-class decision NOT enumerated in the plan, halt and add it to `novel_decisions` instead of deciding silently — the orchestrator and `scope-auditor` then decide whether to extend the plan's `synthesis_dimensions` or accept the novel decision.
+
+`files_changed` is your authoritative list of what the orchestrator should commit. `commit_subject` and `commit_body` populate the message — orchestrator runs `git commit -m <subject>` with the body as additional `-m` args. Per Hard rule 4, you must NOT have called `git add` or `git commit` — leave the working tree dirty for the orchestrator to stage and commit.
 
 ```json
 {
