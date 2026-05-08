@@ -52,6 +52,7 @@ If any of the three is missing from your prompt, return `verdict: "flag"` with a
 4. For each in-scope dimension, judge:
    - **`copy_tone`**: do the added/changed strings match the claimed register? Look at concrete signals: punctuation (exclamation marks, ALL CAPS, emoji), pronoun choice (second-person vs third-person), verb form (imperative vs declarative), length (terse vs verbose), marketing-vs-utility voice. Cite **at least one concrete example string** from the diff in your `observed` field.
    - **`empty_state`**: does the diff include the structural pieces the claimed pattern names (icon + headline + body + CTA, or skeleton + retry, etc.)? An `if (items.length === 0) return null` is **not** an empty state — flag it. A generic "No data" string when the plan asked for "icon + one-line explanation + primary CTA" is a flag. Cite the specific JSX/markup in `observed`.
+     - **n/a when not in scope:** if the diff has no empty-state render paths whatsoever (no `length === 0` branches, no skeleton components, no list-fallback JSX), record `dimension: empty_state, status: n/a` in `flagged[]` with a note rather than failing the component for something it doesn't touch. Distinct from "implementer claimed it but didn't ship it" (flag) — only fires when there's nothing to grade against.
 5. If observed evidence matches the claim → not flagged. If observed evidence contradicts or fails to demonstrate the claim → flag with a one-sentence `reasoning` and a concrete `observed` citation.
 6. Emit JSON. Nothing else.
 
