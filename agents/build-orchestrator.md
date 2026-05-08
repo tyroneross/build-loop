@@ -116,6 +116,64 @@ For each implementer return envelope with `status: fixed | partial`:
 
 **Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-F so we can refine the implementer prompt for next run.
 
+### Phase 4.5: Attestation Lint (drift backstop)
+
+Run `attestation_lint.py` after **every implementer commit** (i.e., after the Phase 3 commit step for each batch) and before Phase 4 Review begins. This is the deterministic backstop for F8 (Self-Correction Blind Spot / silent synthesis-decision drift).
+
+**Invocation** (per implementer commit):
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/attestation_lint.py \
+  --diff HEAD~1..HEAD \
+  --envelope <path-to-implementer-envelope.json> \
+  --json
+```
+
+If the implementer returned their envelope as inline text rather than a file, write it to a temp file first:
+
+```bash
+cat > /tmp/envelope-<sha>.json << 'EOF'
+<envelope JSON>
+EOF
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/attestation_lint.py \
+  --diff HEAD~1..HEAD \
+  --envelope /tmp/envelope-<sha>.json \
+  --json
+```
+
+**Exit code handling:**
+
+| Exit code | Meaning | Action |
+|---|---|---|
+| `0` | All checked dimensions pass | Proceed to Phase 4 silently |
+| `1` | At least one dimension FAIL (drift detected) | Escalate to user before Phase 4; surface the `results[]` JSON; do NOT auto-proceed |
+| `2` | All unverifiable OR malformed envelope | Log warning to `.build-loop/state.json.attestationLint[]`; proceed to Phase 4 |
+
+**Logging** (always, regardless of exit code): append to `.build-loop/state.json.attestationLint[]`:
+
+```json
+{
+  "commit_sha": "<sha>",
+  "implementer": "<agent-id or 'inline'>",
+  "exit_code": <0|1|2>,
+  "summary": {"pass": N, "fail": N, "unverifiable": N},
+  "warning": "<warn message if any>"
+}
+```
+
+**Failure escalation template** (exit 1):
+
+```
+[Phase 4.5: Attestation Lint] ❌ Drift detected — implementer attested X but diff shows Y
+Dimensions failed: <list>
+Evidence: <per-dimension evidence strings>
+Action required: review implementer envelope and diff before proceeding to Phase 4 Review.
+```
+
+**Skip conditions** (document in state.json when skipped):
+- Implementer envelope has no `synthesis_attestation` key → lint still runs, exits 2, logs warning, proceeds.
+- Commit is orchestrator-only metadata (no implementer envelope) → skip, log `"skipped": "no-envelope"`.
+
 ### Phase 4: Review (sub-steps A–F)
 
 Routing checklist in `references/phase-gate-checklist.md`. Six ordered sub-steps:
