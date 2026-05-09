@@ -617,6 +617,7 @@ For each item:
 2. Invoke `python3 scripts/autonomy_gate.py --workdir "$PWD" --action "<label>" --command "<command>" --json` (single source of truth — see `references/autonomy-config.md`).
 3. Route on the verdict:
    - `auto` (exit 0) → execute the action via the appropriate implementer/script and record the result in `## Done` for Report.
+   - `warn` (exit 0) → execute the action (does not block), record in `## Done` with `[warn] <reason>` prefix, and emit a one-line entry to `state.json.runs[].autonomyEvents[]` for match-rate tracking. See `references/autonomy-config.md` §"Warn-before-block workflow" for the autonomyEvents shape.
    - `confirm` (exit 1) → record in `## Held` with the `reason` field from the gate's envelope verbatim. Do NOT prompt the operator inline.
    - `block` (exit 2) → record in `## Blocked` with the same reason field.
 

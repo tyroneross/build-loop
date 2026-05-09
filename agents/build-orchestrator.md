@@ -71,7 +71,7 @@ If you find an issue mid-build (a failing test, an attestation drift, a critic f
 
 The only valid reasons to stop and ask are:
 
-- **Any action whose autonomy verdict is `confirm` or `block`** (per `python3 scripts/autonomy_gate.py`). The gate is the single source of truth for what counts as "destructive or irreversible action not in the accepted plan." Do not introduce ad-hoc asks outside the gate.
+- **Any action whose autonomy verdict is `confirm` or `block`** (per `python3 scripts/autonomy_gate.py`). The gate is the single source of truth for what counts as "destructive or irreversible action not in the accepted plan." Do not introduce ad-hoc asks outside the gate. `warn` verdicts are NOT stop signals — they execute with a `[warn]` Done prefix and emit an autonomyEvents entry; no operator input required.
 
 1. A destructive or irreversible action that was not in the accepted plan. Production deploy. Hard reset. Force push. Dropping a database. Deleting a branch the user might still need.
 2. A missing credential or secret the user has to provide.
@@ -252,12 +252,12 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 
 Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-steps:
 
-- **A. Critic** — `sonnet-critic` + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. **Guidance routing (NEW with autonomy gate)**: Guidance findings with a `recommendation:` field populated AND a single named `file:line` evidence path are appended to the Sub-step F Auto-Resolve queue. Action label `"critic guidance fix: <rule_id>"`, command `"edit <file>"`. The autonomy gate routes them — `auto` executes the fix, `confirm` records in `## Held`, `block` records in `## Blocked`. Pure-judgment guidance (style, naming, documentation tone — findings without a single-file `recommendation:`) bypasses Auto-Resolve and goes straight to Sub-step G Report's `## Held` with reason `judgment-call`. **Strong-checkpoint findings continue to route to Execute (no iteration counter burn) — never to Auto-Resolve.** Note: `recommendation:` is the canonical output field per `agents/sonnet-critic.md` line 70; `scope-auditor` and `synthesis-critic` use the same field name.
+- **A. Critic** — `sonnet-critic` + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. **Guidance routing (NEW with autonomy gate)**: Guidance findings with a `recommendation:` field populated AND a single named `file:line` evidence path are appended to the Sub-step F Auto-Resolve queue. Action label `"critic guidance fix: <rule_id>"`, command `"edit <file>"`. The autonomy gate routes them — `auto` executes the fix, `warn` executes with `[warn]` Done prefix, `confirm` records in `## Held`, `block` records in `## Blocked`. Pure-judgment guidance (style, naming, documentation tone — findings without a single-file `recommendation:`) bypasses Auto-Resolve and goes straight to Sub-step G Report's `## Held` with reason `judgment-call`. **Strong-checkpoint findings continue to route to Execute (no iteration counter burn) — never to Auto-Resolve.** Note: `recommendation:` is the canonical output field per `agents/sonnet-critic.md` line 70; `scope-auditor` and `synthesis-critic` use the same field name.
 - **B. Validate** — IBR-first when present, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
-- **F. Auto-Resolve** (drain non-destructive open items) — run `python3 scripts/autonomy_gate.py` against each candidate item from Sub-steps A and D; execute `auto` verdicts, record `confirm` in `## Held`, record `block` in `## Blocked`. Strong-checkpoint findings never enter this queue.
+- **F. Auto-Resolve** (drain non-destructive open items) — run `python3 scripts/autonomy_gate.py` against each candidate item from Sub-steps A and D; execute `auto` verdicts, record `confirm` in `## Held`, record `block` in `## Blocked`. For `warn` verdicts (exit 0): execute the action, record in `## Done` with `[warn] <reason>` prefix, and append one entry to `state.json.runs[].autonomyEvents[]` for match-rate tracking. Strong-checkpoint findings never enter this queue.
 - **G. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate.
 
 Detailed protocols in the checklist file.
@@ -280,7 +280,7 @@ Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes fin
 
 The report markdown sections, in this order:
 
-- `## Done` — every F-criterion verified pass + every Auto-Resolve `auto` item, with one-line evidence each.
+- `## Done` — every F-criterion verified pass + every Auto-Resolve `auto` item, with one-line evidence each. `warn` items also appear here, prefixed with `[warn] <reason>`.
 - `## Held` — items the autonomy gate verdicted as `confirm`. Body: action label + the gate envelope's `reason` field verbatim. The user runs held commands manually if they want. Build-loop does NOT prompt or auto-execute these.
 - `## Blocked` — items the autonomy gate verdicted as `block`, same shape as Held.
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; preserve).
