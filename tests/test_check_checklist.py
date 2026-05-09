@@ -64,11 +64,24 @@ Item 11 — Blocking-and-novel question gate: no open questions; all non-blockin
 Item 12 — Low-reversibility ADRs: N/A: all decisions are reversible
 Item 13 — Analytical lens: N/A: trivial patch, no analytical lens required
 Item 14 — Handoff document: N/A: no implementation tasks
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
 
 Add podcast feature with LLM summarisation.
+
+## Synthesis Dimensions
+
+```yaml
+synthesis_dimensions:
+  placement: dashboard sidebar
+  cta_tier: secondary
+  copy_tone: concise neutral
+  visual_weight: low
+  empty_state: "Get started"
+```
 
 ## Locked Decisions
 
@@ -141,6 +154,8 @@ def _partial_checklist(answered_count: int) -> str:
         "Item 12 — Low-reversibility ADRs: N/A: all reversible",
         "Item 13 — Analytical lens: JTBD — fuzzy user problem space",
         "Item 14 — Handoff document: N/A: no implementation tasks",
+        "Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler",
+        "Item 16 — Risk reason: N/A",
     ]
     lines = "\n".join(all_items[:answered_count])
     return f"""\
@@ -179,6 +194,8 @@ Item 11 — Blocking-and-novel question gate: N/A: no open questions
 Item 12 — Low-reversibility ADRs: N/A: all reversible
 Item 13 — Analytical lens: N/A: trivial change
 Item 14 — Handoff document: N/A: no implementation tasks
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
@@ -232,10 +249,14 @@ class TestNoChecklistBlock:
         assert payload["checklist_found"] is False
 
     def test_all_14_flagged(self, tmp_path: Path) -> None:
+        # Despite the legacy name, the checklist is now 16 items (Item 15
+        # synthesis_dimensions + Item 16 risk_reason added 2026-05). When no
+        # checklist block is present the verifier returns len(ITEMS) without
+        # filtering optionals, so the count tracks the full ITEMS list.
         plan = tmp_path / "plan.md"
         plan.write_text(_no_checklist_block(), encoding="utf-8")
         _, payload = _run(plan)
-        assert payload["missing_count"] == 14
+        assert payload["missing_count"] == 16
 
 
 class TestPartialChecklist:
@@ -296,6 +317,8 @@ Item 11 — Blocking-and-novel question gate: N/A: no open questions
 Item 12 — Low-reversibility ADRs: N/A: all decisions are reversible
 Item 13 — Analytical lens: N/A: trivial widget patch
 Item 14 — Handoff document: N/A: no implementation tasks
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
@@ -332,10 +355,12 @@ class TestJsonOutputShape:
                 assert key in f, f"Finding missing key '{key}': {f}"
 
     def test_exactly_14_findings(self, tmp_path: Path) -> None:
+        # Findings list always has one entry per ITEM, regardless of optional
+        # filtering. Now 16 items (Item 15 + Item 16 added 2026-05).
         plan = tmp_path / "plan.md"
         plan.write_text(_all_8_items_answered(), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 14
+        assert len(payload["findings"]) == 16
 
     def test_structural_warnings_key_present(self, tmp_path: Path) -> None:
         """structural_warnings must always be present in output (may be empty list)."""
@@ -346,12 +371,13 @@ class TestJsonOutputShape:
         assert "structural_warning_count" in payload
 
     def test_exactly_14_findings_with_items_9_to_14(self, tmp_path: Path) -> None:
-        """When all 14 items are answered, findings list has 14 entries."""
+        """When all required items are answered, findings list has 16 entries
+        (one per ITEM, including the always-optional Item 16)."""
         plan = tmp_path / "plan.md"
         plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 14, (
-            f"Expected 14 findings; got {len(payload['findings'])}"
+        assert len(payload["findings"]) == 16, (
+            f"Expected 16 findings; got {len(payload['findings'])}"
         )
 
 
@@ -389,11 +415,24 @@ Item 11 — Blocking-and-novel question gate: all open questions carry blocking-
 Item 12 — Low-reversibility ADRs: ADR-001 covers DB choice (Postgres); ADR-002 covers auth provider (Better Auth)
 Item 13 — Analytical lens: QFD — need-to-feature mapping for requirements; DSM for cross-component deps
 Item 14 — Handoff document: plan.handoff.md generated alongside this plan
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in POST handler
+Item 16 — Risk reason: N/A: no high-consequence boundary in scope
 -->
 
 ## Goal
 
 Add podcast feature with LLM summarisation.
+
+## Synthesis Dimensions
+
+```yaml
+synthesis_dimensions:
+  placement: dashboard sidebar
+  cta_tier: secondary
+  copy_tone: concise neutral
+  visual_weight: low
+  empty_state: "Get started"
+```
 
 ## Locked Decisions
 
@@ -508,6 +547,8 @@ Item 11 — Blocking-and-novel question gate: no open questions; all non-blockin
 Item 12 — Low-reversibility ADRs: N/A: all decisions are reversible
 Item 13 — Analytical lens: JTBD — fuzzy user problem space
 Item 14 — Handoff document: N/A: no implementation tasks
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
@@ -540,6 +581,8 @@ Item 11 — Blocking-and-novel question gate: open questions annotated
 Item 12 — Low-reversibility ADRs: N/A
 Item 13 — Analytical lens: QFD
 Item 14 — Handoff document: N/A
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
@@ -581,6 +624,8 @@ Item 11 — Blocking-and-novel question gate: all questions carry blocking-test 
 Item 12 — Low-reversibility ADRs: N/A
 Item 13 — Analytical lens: QFD
 Item 14 — Handoff document: N/A
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
@@ -700,6 +745,8 @@ Item 11 — Blocking-and-novel question gate: N/A
 Item 12 — Low-reversibility ADRs: N/A
 Item 13 — Analytical lens: JTBD for fuzzy user scope
 Item 14 — Handoff document: N/A
+Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
+Item 16 — Risk reason: N/A
 -->
 
 ## Goal
