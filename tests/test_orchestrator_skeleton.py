@@ -69,6 +69,8 @@ REQUIRED_REFERENCES = [
     "memory-systems.md",
     "iterate-protocol.md",
     "learn-protocol.md",
+    "halt-and-ask-protocol.md",
+    "single-writer-commit-protocol.md",
 ]
 
 
