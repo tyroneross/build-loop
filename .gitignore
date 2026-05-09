@@ -43,3 +43,6 @@ __pycache__/
 .navgator/architecture/SUMMARY.md
 .navgator/architecture/SUMMARY_FULL.md
 # <<< NavGator safety guard
+
+# Build-loop runtime artifacts
+.in_use/
