@@ -77,6 +77,8 @@ Return contract: populate all fields specified in `references/implementer-envelo
 
 If the plan includes a `synthesis_dimensions` block, you MUST attest each named dimension as `applied`/`deviated`/`n/a` in the envelope's `synthesis_attestation` field. If you find yourself making a synthesis-class decision NOT enumerated in the plan, halt and add it to `novel_decisions` instead of deciding silently — the orchestrator and `scope-auditor` then decide whether to extend the plan's `synthesis_dimensions` or accept the novel decision.
 
+**Decision ledger (REQUIRED when plan has `synthesis_dimensions`).** When the plan declares a `synthesis_dimensions` block, you MUST populate `decision_ledger` with one entry per dimension — one per key in `synthesis_attestation`. Empty ledger (`[]`) is permitted only when the plan has no `synthesis_dimensions` block (e.g. methodology commits, infra-only commits). The ledger records *why* each synthesis value was chosen: the concrete value selected, alternatives considered, and where in the codebase the decision manifests. Full field spec: `references/implementer-envelope-schema.md` §"decision_ledger in detail".
+
 **Halt-and-ask backstop (NEW — C5).** When the novel decision is **architectural-class** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, hard-fail/retry counter, etc. — see `references/implementer-envelope-schema.md` §"When `blocked` is the right call"), do NOT just log and proceed. Instead:
 
 1. Add the decision to `novel_decisions[]` with one-sentence `decision` and a `reasoning` field that names the alternatives you considered.

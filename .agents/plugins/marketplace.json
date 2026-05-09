@@ -1,0 +1,10 @@
+{
+  "name": "build-loop",
+  "version": "0.10.0",
+  "plugins": [
+    {
+      "name": "build-loop",
+      "source": "."
+    }
+  ]
+}

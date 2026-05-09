@@ -266,6 +266,43 @@ If the plan adds no UI surface (API/backend only), write "N/A: no UI surface."
 
 ---
 
+### Item 16 — Risk reason (consequence-based thinking-tier override)
+
+**Prompt:** Assign `risk_reason:` in the plan or chunk frontmatter when the commit touches a high-consequence boundary — regardless of how few `synthesis_dimensions` it has. A 1-dimension commit that crosses a security or persistence boundary is higher risk than a 6-dimension UI layout commit.
+
+**Canonical values (the only five accepted strings — exact match required):**
+
+1. `security boundary` — the commit changes auth logic, permission checks, credential handling, or access-control enforcement.
+2. `persistence contract` — the commit alters a database schema, serialization format, migration script, or storage key that cannot be changed without data migration.
+3. `runtime protocol` — the commit changes an inter-service message shape, event bus schema, queue message format, or RPC contract that other services depend on at runtime.
+4. `deployment` — the commit changes infrastructure config, build pipeline, deploy scripts, environment variable contracts, or platform-level routing.
+5. `user trust claim` — the commit changes copy, UI state, or behavior that users rely on to understand system guarantees (privacy policy, billing notice, data-retention display, security badge).
+
+**Effect:** any `risk_reason:` present in plan or chunk frontmatter routes that scope to `tier: thinking` regardless of `synthesis_dimensions` count. Captures *consequence*, not just *density*. See `agents/build-orchestrator.md` §"Model Tiering & Escalation" — Escalation Triggers for the runtime routing rule.
+
+**How to check:**
+
+```bash
+grep -n "risk_reason:" docs/plans/<feature-slug>.md
+```
+
+If `risk_reason:` is present, its value must be exactly one of the five canonical strings above. Any other value causes a BLOCKER in `plan_verify.py` (rule `risk-reason-invalid-value`). If none of the five applies, omit `risk_reason:` entirely — absent is fine; only invalid values are rejected.
+
+If the plan has no high-consequence boundary crossing, write "N/A: no risk-reason boundary applies."
+
+---
+
+## Frontmatter fields used by routing
+
+These fields appear in plan or chunk frontmatter and affect orchestrator routing decisions. They are validated by `scripts/plan_verify.py`.
+
+| Field | Type | Effect |
+|-------|------|--------|
+| `risk_reason:` | one of 5 canonical strings | Routes chunk to `tier: thinking` regardless of `synthesis_dimensions` count (see Item 16). |
+| `modifies_api: true\|false` | boolean | When `true`, the orchestrator runs a mandatory scope-auditor gate before Phase 3 dispatch. Any public function, component, type, route, or CLI-flag signature change qualifies. When set without a companion `scope_auditor_status:` field in the plan body, `plan_verify.py` emits a WARN (`scope-audit-required`) to surface the missing audit trail. |
+
+---
+
 ## Plan Output Template
 
 After the checklist is complete, write the plan to `docs/plans/<feature-slug>.md` using this structure:
@@ -289,6 +326,7 @@ Item 12 — Low-reversibility ADRs: <answer>
 Item 13 — Analytical lens: <answer>
 Item 14 — Handoff document: <answer>
 Item 15 — Synthesis dimensions: <answer>
+Item 16 — Risk reason: <answer>
 -->
 
 ## Goal

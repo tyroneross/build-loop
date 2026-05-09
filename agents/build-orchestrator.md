@@ -71,6 +71,8 @@ If you find an issue mid-build (a failing test, an attestation drift, a critic f
 
 The only valid reasons to stop and ask are:
 
+- **Any action whose autonomy verdict is `confirm` or `block`** (per `python3 scripts/autonomy_gate.py`). The gate is the single source of truth for what counts as "destructive or irreversible action not in the accepted plan." Do not introduce ad-hoc asks outside the gate.
+
 1. A destructive or irreversible action that was not in the accepted plan. Production deploy. Hard reset. Force push. Dropping a database. Deleting a branch the user might still need.
 2. A missing credential or secret the user has to provide.
 3. Externally-blocked work. The user has to run a command on a different machine, log in to a third-party service, or get approval outside the loop.
@@ -80,7 +82,7 @@ The only valid reasons to stop and ask are:
 
 Status updates are not questions. Saying "Phase 4 found 3 lint errors, routing to Iterate" is a status update. Saying "Phase 4 found 3 lint errors, should I fix them?" is a question. Drop the question. Just iterate.
 
-Reasonable assumptions over interruptions. If you hit something the plan does not name and it has a natural choice that matches the surrounding plan, take that choice and note it in the run record. If the natural choice is not obvious, that is the synthesis-density signal. Escalate to thinking-tier per the routing rule, not to the user.
+Reasonable assumptions over interruptions. If you hit something the plan does not name and it has a natural choice that matches the surrounding plan, take that choice and note it in the run record. If the natural choice is not obvious, that is the synthesis-density signal. Escalate to thinking-tier per the routing rule, not to the user. Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report.
 
 One end-of-run report. Surface what changed, what shipped, what was deferred. Not a checkpoint between every phase.
 
@@ -104,6 +106,7 @@ One end-of-run report. Surface what changed, what shipped, what was deferred. No
   See `references/memory-systems.md` §"Read protocol — Phase 1 Assess" for return-shape contracts and graceful-degradation behavior.
 - **Architecture baseline + blast-radius** (architecture-scout subagent, fires unconditionally): dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: baseline')`. The scout decides native vs NavGator per task, runs the scan + impact + ACP build, persists a baseline decision, and returns a ≤500-word envelope. Before dispatch, check `state.json.architecture.stale`; if true and ACP older than 5 min, the scout will await scan completion (default) — pass `task: baseline; no_arch_await: true` to override. If `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, also invoke `mcp__plugin_navgator__llm_map`. Cache the envelope to `.build-loop/architecture/scout-cache/baseline.json`.
 - **Observability baseline**: detect the project stack and run a passive observability scan (no code changes at Assess). Language-aware grep for `console.{log|error|warn}` (web), `print()` / `pprint()` (Python), and structured loggers (winston/pino/structlog/loguru/zap/log/slog) in `package.json` / `pyproject.toml` / `requirements.txt` / `go.mod`. Classify into `well-instrumented` / `print-only` / `silent`. Write to `.build-loop/state.json.observability.level`. Informational; do NOT load `Skill("build-loop:logging-tracer")` here — the skill is reactive only.
+- **Runtime-server detection** (informational, no changes — implements decision `_unscoped/0003`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_runtime_server.py --workdir "$PWD" --json` and write the result to `.build-loop/state.json.triggers.runtimeServer` (boolean) plus `.build-loop/state.json.runtimeServerInfo` (envelope: `server_module`, `sse_route`, `default_port`, `embedded_ui_module`, `event_handler_locations[]`, `evidence[]`). Phase 4 sub-step B Validate consults these for the live HTTP/SSE smoke gate. Helper failure → treat as `runtimeServer: false` and log a one-line warning; never blocks. Silent default for CLIs, libraries, plugins, and static-render web apps. Closes the pytest-with-mocks blind spot that let local-smartz ship 27 commits with two real bugs.
 - **Pre-commit baseline detection** (NEW 2026-05-07, prevents intermediate-state contract-change blockers): check for baseline-tracking pre-commit tools that reject any worsening tsc/lint count. Test: `test -f .betterer.results || grep -q 'betterer\|lint-staged.*--baseline' package.json 2>/dev/null`. If a baseline tool is detected, write `.build-loop/state.json.preCommit.hasBaseline = true` so Phase 2 plan-writing flags sole-consumer contract changes for bundling (or `--update` baseline reset). See `~/.claude/projects/-Users-tyroneross/memory/feedback_buildloop_pre_commit_baseline.md` for the pattern.
 - **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
 - **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
@@ -135,6 +138,8 @@ One end-of-run report. Surface what changed, what shipped, what was deferred. No
 
 ### Phase 3: Execute (parallel)
 
+**Pre-dispatch scope-audit gate (mandatory for `modifies_api: true`)**: For each chunk in the plan, check `modifies_api`. If true AND `state.json.scopeAuditorStatus.<chunk_id>` is not `"passed"`, halt dispatch for that chunk. Run `Agent(subagent_type="build-loop:scope-auditor", ...)` against the chunk's owned files + the plan's caller-audit table. The auditor either returns `verdict: scope_clean` (write `passed` to state, proceed) or appends missing callers to the plan + returns `verdict: scope_gap_found` (operator must absorb the missing callers into the chunk's owned-files OR record explicit acceptance in `state.json.scopeGapAccepted[]` with rationale before retry). Doc-only commits (no `modifies_api`) skip this gate. See `agents/scope-auditor.md` for full protocol.
+
 - Identify independent tasks from the plan's dependency graph.
 - Dispatch one subagent per independent task with minimal context + capability-routing instructions per `references/capability-routing.md`.
 - Each agent gets: task description, relevant file paths, integration contract, relevant fallback snippets, an intent packet from `.build-loop/intent.md`, a MECE ownership packet (`owns`, `does not own`, `interface contract`, `integration checkpoint`), an `architecture_context:` block read verbatim from `.build-loop/architecture/scout-cache/chunk-<N>.json`, and an `available_capabilities:` block (Priority 16) carrying `state.json.activeCapabilities["3"][-1].results[:8]` (fall back to `["2"]` when Phase 3 isn't separately scored). Implementers treat the architecture block as authoritative blast-radius information — they MUST flag any change that exits the slice in their return envelope. Do NOT dispatch the scout again in Phase 3 and do NOT re-run `capability_shortlist.py`; the cache from Phase 1/2 is the source of truth for routing context.
@@ -149,7 +154,7 @@ One end-of-run report. Surface what changed, what shipped, what was deferred. No
   3. **After receiving each implementer return** (Phase 3 Execute, immediately AFTER the M1 envelope write above): `update_execution_state(state_path, 'return_chunk', chunk_id=<id>, status=<one-of-9-statuses>)` — moves chunk_id from `in_flight_chunks` → `completed_chunks` with status; refreshes `last_heartbeat_at`.
   4. **On phase transition** (Execute→Review, Review→Iterate, Iterate→Review, Review→Report): `update_execution_state(state_path, 'phase_transition', phase=<one-of-execute|review|iterate|report>)`.
   5. **On Iterate attempt start** (Phase 5 Iterate, BEFORE the cascade fires): `update_execution_state(state_path, 'iterate_attempt')` — increments the counter; this preserves the 5x iteration cap across resume.
-  6. **On clean completion** (Phase 4 Review-F success): `update_execution_state(state_path, 'complete')` — sets `phase: "report"`. This is the "no resume needed" sentinel; `--resume` refuses to run against a state where `phase == "report"`.
+  6. **On clean completion** (Phase 4 Review-G success): `update_execution_state(state_path, 'complete')` — sets `phase: "report"`. This is the "no resume needed" sentinel; `--resume` refuses to run against a state where `phase == "report"`.
 
   Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
 
@@ -182,7 +187,7 @@ For each implementer return envelope with `status: fixed | partial | completed`:
 - Orchestrator side: reads `.git/` (status, log, diff) freely; writes to `.git/` (add, commit) only here, sequentially.
 - Single writer = no race. Round-3's lost-commits issue is structurally prevented.
 
-**Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-F so we can refine the implementer prompt for next run.
+**Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-G so we can refine the implementer prompt for next run.
 
 #### Phase 3 halt-and-ask branch (NEW — C5 architectural-decision backstop)
 
@@ -194,7 +199,7 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 
 **Procedure** (per blocked envelope):
 
-1. **Initialize / increment the per-chunk hard-fail counter.** Read `state.json.novelDecisionAttempts[<chunk_id>]` (default 0). If already at **3**, do NOT re-dispatch — surface the chunk as ❓ Unfixed in Review-F with the unresolved decisions logged to `state.json.novelDecisionUnresolved[]`, and proceed to the next chunk. Otherwise increment by 1 and continue. **N=3 chosen to mirror the existing "after 3 attempts surface as ❓ Unfixed" pattern documented in `skills/build-loop/SKILL.md` §Phase 5 (lines 535-542)** — keeps build-loop's escalation cadence consistent across phases.
+1. **Initialize / increment the per-chunk hard-fail counter.** Read `state.json.novelDecisionAttempts[<chunk_id>]` (default 0). If already at **3**, do NOT re-dispatch — surface the chunk as ❓ Unfixed in Review-G with the unresolved decisions logged to `state.json.novelDecisionUnresolved[]`, and proceed to the next chunk. Otherwise increment by 1 and continue. **N=3 chosen to mirror the existing "after 3 attempts surface as ❓ Unfixed" pattern documented in `skills/build-loop/SKILL.md` §Phase 5 (lines 535-542)** — keeps build-loop's escalation cadence consistent across phases.
 
 2. **Validate the blocked envelope.** `status: "blocked"` requires `novel_decisions[]` non-empty (per `references/implementer-envelope-schema.md` parser rule 5). Empty `novel_decisions[]` with `status: "blocked"` is malformed — treat as `failed` and route to Iterate; do NOT enter the resolution loop.
 
@@ -243,18 +248,53 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 
 **Telemetry**: log one line per resolution in terminal output: `[C5 Resolver] chunk=<id> attempt=<n>/3 decision="<short>" → resolution="<short>"`. On hard-fail: `[C5 Resolver] ❌ chunk=<id> exhausted 3 attempts — routing to ❓ Unfixed`.
 
-### Phase 4: Review (sub-steps A–F)
+### Phase 4: Review (sub-steps A–G)
 
-Routing checklist in `references/phase-gate-checklist.md`. Six ordered sub-steps:
+Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-steps:
 
-- **A. Critic** — `sonnet-critic` + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel.
-- **B. Validate** — IBR-first when present, code graders, LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
+- **A. Critic** — `sonnet-critic` + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. **Guidance routing (NEW with autonomy gate)**: Guidance findings with a `recommendation:` field populated AND a single named `file:line` evidence path are appended to the Sub-step F Auto-Resolve queue. Action label `"critic guidance fix: <rule_id>"`, command `"edit <file>"`. The autonomy gate routes them — `auto` executes the fix, `confirm` records in `## Held`, `block` records in `## Blocked`. Pure-judgment guidance (style, naming, documentation tone — findings without a single-file `recommendation:`) bypasses Auto-Resolve and goes straight to Sub-step G Report's `## Held` with reason `judgment-call`. **Strong-checkpoint findings continue to route to Execute (no iteration counter burn) — never to Auto-Resolve.** Note: `recommendation:` is the canonical output field per `agents/sonnet-critic.md` line 70; `scope-auditor` and `synthesis-critic` use the same field name.
+- **B. Validate** — IBR-first when present, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
-- **F. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate.
+- **F. Auto-Resolve** (drain non-destructive open items) — run `python3 scripts/autonomy_gate.py` against each candidate item from Sub-steps A and D; execute `auto` verdicts, record `confirm` in `## Held`, record `block` in `## Blocked`. Strong-checkpoint findings never enter this queue.
+- **G. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate.
 
 Detailed protocols in the checklist file.
+
+#### Review-B: Runtime smoke gate (post-tests, pre-LLM-judges)
+
+After code-based graders pass, if any changed file matches a runtime-smoke trigger pattern (see `references/runtime-smoke-triggers.md`), invoke:
+
+```bash
+python3 scripts/runtime_smoke.py --changed-files <list> --workdir "$PWD" --json
+```
+
+The script auto-detects an adapter from the project's manifest. Status `pass` proceeds; `fail` routes the changed surface to Iterate (treat the smoke envelope's `findings` list as the rubric); `skipped` (no trigger matched OR no adapter for the project's stack) records `runtime_smoke: skipped (<reason>)` in the Review-G report and proceeds. Adapter exit 2 (runner error) is treated like a transient grader outage — log and proceed with a Review-G warning. **Library-only repos with no dev server cleanly skip — never fail.**
+
+**SSE-specific contract gate** (when `triggers.runtimeServer == true` AND the diff touches `runtimeServerInfo.server_module` OR `runtimeServerInfo.embedded_ui_module`): in addition to the adapter-driven smoke above, run the live HTTP/SSE contract check documented in `skills/build-loop/SKILL.md` §Sub-step B Validate (5-step procedure: restart server → wait for HTTP 200 → curl POST against `<sse_route>` for 5s → parse handlers in the embedded UI → fail when any observed event type lacks a handler arm). Implements decision `_unscoped/0003`; closes the silent-server / ignored-client class of bug. Skip step 4 (handler parsing) when `embedded_ui_module: null` — API-only services have no embedded UI to compare. Infrastructure failures (server won't start, curl errors) log to `.build-loop/issues/live-smoke-<date>.md` and surface as `⚠️ untested live-flow` in Review-G; only the contract violation itself fails the build.
+
+#### Review-G: Report (final pass only)
+
+Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes final artifacts and closes the build.
+
+The report markdown sections, in this order:
+
+- `## Done` — every F-criterion verified pass + every Auto-Resolve `auto` item, with one-line evidence each.
+- `## Held` — items the autonomy gate verdicted as `confirm`. Body: action label + the gate envelope's `reason` field verbatim. The user runs held commands manually if they want. Build-loop does NOT prompt or auto-execute these.
+- `## Blocked` — items the autonomy gate verdicted as `block`, same shape as Held.
+- `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; preserve).
+
+**Forbidden in the report**:
+
+- "Open Recommendations" headers
+- "Next Action" sentences phrased as questions
+- Bullets phrased as `Want me to X?` / `Should I Y?`
+- Lists that invite operator selection of which items to execute
+
+Empty categories get the header followed by `_(none)_`. Do not omit empty sections. The autonomy gate (`scripts/autonomy_gate.py`) is the authority — see `references/autonomy-config.md` for precedence.
+
+Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. **Debugger store + outcome**, **orphan scan**, **deployment policy gate**, and **run entry append** all apply here — see `skills/build-loop/SKILL.md` §Sub-step G: Report for the full step-by-step protocol.
 
 ### Phase 5: Iterate (up to 5x)
 
@@ -262,7 +302,7 @@ Full protocol in `references/iterate-protocol.md`. Highlights:
 
 - Diagnose root cause before fixing — don't blind retry.
 - **Stuck-iteration escalation cascade** runs at the start of every Iterate attempt: evidence-gap repair → memory-first re-check → architecture impact pre-step (`Agent(subagent_type="build-loop:architecture-scout", prompt='task: iterate-subgraph, failing_files: [<files>]')` for cross-layer failures) → 2-failure parallel domain assessment → 3-failure causal-tree investigation.
-- Build the **prioritized work list** (Validate failures → blocker UX → major UX → optimization → IBR coverage gaps); architecture-impact entries defer to Review-F.
+- Build the **prioritized work list** (Validate failures → blocker UX → major UX → optimization → IBR coverage gaps); architecture-impact entries defer to Review-G.
 - **Partition for fan-out**: top-level mode dispatches up to 4 `implementer` subagents in parallel; subagent mode degrades gracefully to inline-implementer.
 - Re-validate hook for UI work, pick by `uiTarget.kind`:
   - **web** → `mcp__plugin_ibr_ibr__interact_and_verify` against the route.
@@ -273,7 +313,7 @@ Full protocol in `references/iterate-protocol.md`. Highlights:
 
 ### Phase 6: Learn (optional)
 
-Full protocol in `references/learn-protocol.md`. Runs after Review-F unless `autoSelfImprove: false` or runs[] < 3. Dispatches `recurring-pattern-detector` (Haiku) and `architecture-scout (learn-sync)` in parallel; filters patterns; drafts experimental artifacts via `self-improvement-architect` (Sonnet); requires Opus 4.7 signoff before promotion. Episodic memory consolidation runs unconditionally at the end (`consolidate_memory.py` + `procedural_governance.py --mode detect-patterns`).
+Full protocol in `references/learn-protocol.md`. Runs after Review-G unless `autoSelfImprove: false` or runs[] < 3. Dispatches `recurring-pattern-detector` (Haiku) and `architecture-scout (learn-sync)` in parallel; filters patterns; drafts experimental artifacts via `self-improvement-architect` (Sonnet); requires Opus 4.7 signoff before promotion. Episodic memory consolidation runs unconditionally at the end (`consolidate_memory.py` + `procedural_governance.py --mode detect-patterns`).
 
 ## Capability Routing
 
@@ -294,9 +334,17 @@ Defaults (consult `Skill("build-loop:model-tiering")` for the canonical table):
 
 **Escalate to Opus** (respawn the subagent) when any of: 2 consecutive failures on the same chunk after `effort=high`; ambiguous spec; cross-file architectural decision surfaces mid-execution; critic flagged `strong-checkpoint` requiring judgment; novel error pattern; user-visible prose where tone matters. Log escalations in `.build-loop/state.json.escalations`.
 
+### Escalation Triggers
+
+The following signals route a chunk or plan scope to `tier: thinking` unconditionally, superseding the default Sonnet fan-out path:
+
+- **`synthesis_dimensions` count > 5** — 6 or more entries signals synthesis-dense work where fan-out loses cross-dimension coherence. See Phase 1 synthesis-density routing rule for the full decision tree.
+- **Explicit `tier: thinking` override** — plan-level or chunk-level frontmatter declares `tier: thinking` directly.
+- **`risk_reason:` present** — any chunk or plan-level `risk_reason:` value (one of `security boundary | persistence contract | runtime protocol | deployment | user trust claim`) routes that scope to thinking-tier regardless of `synthesis_dimensions` count. Captures consequence, not just density. See `skills/spec-writing/SKILL.md` Item 16 for the field's spec.
+
 ## Memory Systems
 
-Reads at Phase 1 Assess; writes at Phase 4 Review-F. Full protocol in `references/memory-systems.md`. The four stores are: state.json `runs[]`, `.episodic/decisions/` (legacy) + `~/dev/git-folder/build-loop-memory/decisions/<project>/` (canonical), Postgres `agent_memory.<schema>.semantic_facts`, debugger MCP. Use `scripts/memory_facade.py recall()` for unified reads with graceful degradation.
+Reads at Phase 1 Assess; writes at Phase 4 Review-G. Full protocol in `references/memory-systems.md`. The four stores are: state.json `runs[]`, `.episodic/decisions/` (legacy) + `~/dev/git-folder/build-loop-memory/decisions/<project>/` (canonical), Postgres `agent_memory.<schema>.semantic_facts`, debugger MCP. Use `scripts/memory_facade.py recall()` for unified reads with graceful degradation.
 
 ## Deployment Policy
 
