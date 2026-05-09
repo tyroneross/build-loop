@@ -72,17 +72,6 @@ except Exception:
     print('auto')
 " 2>/dev/null) || ACTION="auto"
 
-REASON=$(printf '%s' "$RESULT" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    # Sanitize: replace double-quotes to avoid JSON injection
-    r = d.get('reason', '')
-    print(r.replace('\"', \"'\"))
-except Exception:
-    print('')
-" 2>/dev/null) || REASON=""
-
 # Map gate verdict to PreToolUse permissionDecision
 # auto  -> allow  (no pattern matched, safe)
 # warn  -> allow  (warn does not block; just flagged for tracking)
@@ -95,18 +84,27 @@ case "$ACTION" in
     *)         DECISION="ask" ;;
 esac
 
-python3 -c "
-import json, sys
-decision = '$DECISION'
-reason   = '$REASON'
-output = {
+# Pass values to Python via env vars (NOT shell string interpolation) — single
+# quotes in REASON would otherwise terminate Python literals and could allow
+# code injection. JSON encoding is done inside Python on the env-var values.
+export _BL_DECISION="$DECISION"
+export _BL_GATE_RESULT="$RESULT"
+
+python3 <<'PY'
+import json, os, sys
+decision = os.environ.get('_BL_DECISION', 'ask')
+gate_result = os.environ.get('_BL_GATE_RESULT', '{}')
+try:
+    reason = json.loads(gate_result).get('reason', '')
+except Exception:
+    reason = ''
+print(json.dumps({
     'hookSpecificOutput': {
         'hookEventName': 'PreToolUse',
         'permissionDecision': decision,
         'permissionDecisionReason': reason,
     }
-}
-print(json.dumps(output))
-"
+}))
+PY
 
 exit 0

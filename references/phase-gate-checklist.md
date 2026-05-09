@@ -66,7 +66,7 @@ Only when a mechanical metric exists AND user hasn't opted out. Load `build-loop
 
 Dispatch `fact-checker` + `mock-scanner` in parallel. **Plus** when code changed in this build, dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: review-rules')` in parallel — the scout runs the rules check, diffs against `.episodic/architecture/known_violations.json`, writes decisions for new violations via `scripts/capture_arch_violation.py`, and returns a `route:` recommendation in `follow_up`. If `route: "iterate"`, route the scout's findings into Iterate's prioritized work list. For cross-layer changes, escalate to `Skill("build-loop:architecture-review")` for the full 5-phase integrity review.
 
-**Plus the new gates from SKILL.md §Sub-step D**:
+**Plus the new gates from `skills/build-loop/references/phase-4-review.md` §Sub-step D**:
 
 - **Gate 6 — Version-Bump Advisor** (when `pluginWork: true`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. State `hold` (default) → one-line note in Review-F. State `suggest` (marker `.build-loop/release-pending.md` exists) → propose semver and ask user before any plugin.json edit. Never auto-bump.
 - **Gate 7 — UX Triage** (when `uiTarget != null`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Each `blocker`/`major` finding becomes a queue entry in `.build-loop/ux-queue/`. Then dispatch `performance-assessor` (full-app sweep) and `fact-checker` (broader file glob, full rendered surface) in parallel for the agent-augmentation portion; merge their findings into the same queue.

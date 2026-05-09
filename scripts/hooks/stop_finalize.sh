@@ -14,60 +14,63 @@
 #
 # Always exits 0 (hook contract: non-zero = hook failure, not a build block).
 # Blocking Claude from stopping is done via JSON {"decision":"block",...}.
+#
+# Security: all values from the stdin event JSON or filesystem are passed
+# to embedded Python via environment variables, never via shell string
+# interpolation into Python source. Shell injection class is not possible.
 
 set -euo pipefail
 
 INPUT=$(cat)
+export _BL_INPUT="$INPUT"
 
-# Step 1: skip subagent stops
-AGENT_ID=$(printf '%s' "$INPUT" | python3 -c "
-import sys, json
+# Step 1: skip subagent stops + extract session_id, cwd
+read -r AGENT_ID SESSION_ID CWD <<EOF_VARS
+$(python3 <<'PY'
+import json, os, sys
 try:
-    d = json.load(sys.stdin)
-    print(d.get('agent_id', ''))
+    d = json.loads(os.environ.get('_BL_INPUT', '{}'))
 except Exception:
-    print('')
-" 2>/dev/null) || AGENT_ID=""
+    d = {}
+agent_id = d.get('agent_id', '') or ''
+session_id = d.get('session_id', '') or ''
+cwd = d.get('cwd', '') or ''
+# Tab-separated, no special chars in JSON-derived values would survive python's print()
+# But guard against newlines / tabs anyway by replacing them with spaces.
+def safe(v): return str(v).replace('\t', ' ').replace('\n', ' ')
+print(f"{safe(agent_id) or '-'}\t{safe(session_id) or '-'}\t{safe(cwd) or '-'}")
+PY
+)
+EOF_VARS
+
+# Convert "-" sentinels back to empty strings
+[ "$AGENT_ID" = "-" ] && AGENT_ID=""
+[ "$SESSION_ID" = "-" ] && SESSION_ID=""
+[ "$CWD" = "-" ] && CWD=""
 
 if [ -n "$AGENT_ID" ]; then
     exit 0
 fi
 
-# Extract session_id and cwd from the Stop event
-SESSION_ID=$(printf '%s' "$INPUT" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get('session_id', ''))
-except Exception:
-    print('')
-" 2>/dev/null) || SESSION_ID=""
-
-CWD=$(printf '%s' "$INPUT" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get('cwd', ''))
-except Exception:
-    print('')
-" 2>/dev/null) || CWD=""
-
 WORKDIR="${CWD:-.}"
 STATE_FILE="${WORKDIR}/.build-loop/state.json"
+export _BL_STATE_FILE="$STATE_FILE"
+export _BL_SESSION_ID="$SESSION_ID"
 
 # Step 2: check state.json exists and phase == "report"
 if [ ! -f "$STATE_FILE" ]; then
     exit 0
 fi
 
-PHASE=$(python3 -c "
-import json, sys
+PHASE=$(python3 <<'PY'
+import json, os
 try:
-    d = json.load(open('$STATE_FILE'))
-    print(d.get('phase', ''))
+    with open(os.environ['_BL_STATE_FILE']) as f:
+        print(json.load(f).get('phase', ''))
 except Exception:
     print('')
-" 2>/dev/null) || PHASE=""
+PY
+) || PHASE=""
 
 if [ "$PHASE" != "report" ]; then
     exit 0
@@ -75,17 +78,19 @@ fi
 
 # Step 3: idempotency — skip if session already recorded
 if [ -n "$SESSION_ID" ]; then
-    ALREADY=$(python3 -c "
-import json, sys
+    ALREADY=$(python3 <<'PY'
+import json, os
 try:
-    d = json.load(open('$STATE_FILE'))
+    with open(os.environ['_BL_STATE_FILE']) as f:
+        d = json.load(f)
+    target = os.environ.get('_BL_SESSION_ID', '')
     runs = d.get('runs', [])
-    target = '$SESSION_ID'
     found = any(r.get('session_id') == target for r in runs if isinstance(r, dict))
     print('yes' if found else 'no')
 except Exception:
     print('no')
-" 2>/dev/null) || ALREADY="no"
+PY
+) || ALREADY="no"
 
     if [ "$ALREADY" = "yes" ]; then
         exit 0
@@ -113,12 +118,12 @@ if [ -f "$WRITE_ENTRY" ]; then
     fi
 else
     # Minimal inline fallback: append {run_id, date, session_id} to runs[]
-    RUN_ENTRY_STATUS=$(python3 -c "
-import json, fcntl, os, sys, tempfile, time
+    RUN_ENTRY_STATUS=$(python3 <<'PY' 2>/dev/null
+import json, fcntl, os, tempfile, time
 from datetime import datetime, timezone
 
-state_path = '$STATE_FILE'
-session_id = '$SESSION_ID'
+state_path = os.environ['_BL_STATE_FILE']
+session_id = os.environ.get('_BL_SESSION_ID', '')
 now = datetime.now(timezone.utc).isoformat()
 run_id = 'run-' + now[:10] + '-' + session_id[:8] if session_id else 'run-' + now[:10]
 
@@ -134,14 +139,12 @@ try:
             time.sleep(0.1)
     else:
         print('lock_timeout', end='')
-        sys.exit(0)
+        raise SystemExit(0)
 
     with open(state_path) as f:
         data = json.load(f)
-
     if 'runs' not in data or not isinstance(data['runs'], list):
         data['runs'] = []
-
     data['runs'].append({'run_id': run_id, 'date': now, 'session_id': session_id})
 
     tmp = tempfile.NamedTemporaryFile(
@@ -159,7 +162,8 @@ finally:
     except OSError:
         pass
     lock_fd.close()
-" 2>/dev/null) || RUN_ENTRY_STATUS="inline_fallback_error"
+PY
+) || RUN_ENTRY_STATUS="inline_fallback_error"
     RUN_ENTRY_STATUS="${RUN_ENTRY_STATUS} (write_run_entry.py absent; full schema requires it)"
 fi
 
@@ -171,22 +175,18 @@ if [ -d "$EVALS_DIR" ]; then
     LATEST_SCORECARD=$(ls -t "${EVALS_DIR}"/*-scorecard.md 2>/dev/null | head -1) || LATEST_SCORECARD=""
 
     if [ -n "$LATEST_SCORECARD" ] && [ -f "$LATEST_SCORECARD" ]; then
-        FCRIT_BLOCK=$(python3 -c "
-import sys, re
-
+        export _BL_SCORECARD="$LATEST_SCORECARD"
+        FCRIT_BLOCK=$(python3 <<'PY' 2>/dev/null
+import os, re
 try:
-    text = open('$LATEST_SCORECARD').read()
+    text = open(os.environ['_BL_SCORECARD']).read()
 except Exception:
-    sys.exit(0)
-
-# Extract the Held section IDs (these are excused from blocking)
+    raise SystemExit(0)
 held_ids = set()
 held_match = re.search(r'##\s+Held\s*\n(.*?)(?:\n##|\Z)', text, re.DOTALL)
 if held_match:
     for m in re.findall(r'\b(F_\w+|Q_\w+)\b', held_match.group(1)):
         held_ids.add(m)
-
-# Find failed criteria in Done/Blocked sections
 failed = []
 for m in re.finditer(r'\b(F_\w+|Q_\w+)\b.*?verdict[:\s]+fail', text, re.IGNORECASE):
     crit_id = re.search(r'\b(F_\w+|Q_\w+)\b', m.group(0))
@@ -194,33 +194,33 @@ for m in re.finditer(r'\b(F_\w+|Q_\w+)\b.*?verdict[:\s]+fail', text, re.IGNORECA
         cid = crit_id.group(1)
         if cid not in held_ids:
             failed.append(cid)
-
 if failed:
     print(failed[0])
-" 2>/dev/null) || FCRIT_BLOCK=""
+PY
+) || FCRIT_BLOCK=""
     fi
 fi
 
 # Emit the response JSON
-if [ -n "$FCRIT_BLOCK" ]; then
-    python3 -c "
-import json
-print(json.dumps({
-    'decision': 'block',
-    'reason': 'F-criterion $FCRIT_BLOCK failed; build cannot finalize'
-}))
-"
-else
-    python3 -c "
-import json
-status = '$RUN_ENTRY_STATUS'
-print(json.dumps({
-    'hookSpecificOutput': {
-        'hookEventName': 'Stop',
-        'additionalContext': 'build-loop run entry ' + status + '; all F-criteria passed'
-    }
-}))
-"
-fi
+export _BL_FCRIT_BLOCK="$FCRIT_BLOCK"
+export _BL_RUN_ENTRY_STATUS="$RUN_ENTRY_STATUS"
+
+python3 <<'PY'
+import json, os
+fcrit = os.environ.get('_BL_FCRIT_BLOCK', '')
+status = os.environ.get('_BL_RUN_ENTRY_STATUS', 'unknown')
+if fcrit:
+    print(json.dumps({
+        'decision': 'block',
+        'reason': f'F-criterion {fcrit} failed; build cannot finalize'
+    }))
+else:
+    print(json.dumps({
+        'hookSpecificOutput': {
+            'hookEventName': 'Stop',
+            'additionalContext': f'build-loop run entry {status}; all F-criteria passed'
+        }
+    }))
+PY
 
 exit 0
