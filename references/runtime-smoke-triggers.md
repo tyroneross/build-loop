@@ -23,10 +23,10 @@ A runtime smoke test fires when a build changes a file that is directly responsi
 
 | Adapter | Status | Triggered by | Maintainer notes |
 |---|---|---|---|
-| `nextjs` | shipped | App/Pages Router files, root layout, root middleware | This commit — see `scripts/runtime_smoke_adapters/nextjs.py` |
+| `nextjs` | shipped | App/Pages Router files, root layout, root middleware | `scripts/runtime_smoke_adapters/nextjs.py` |
+| `sse_consumer` | **shipped 2026-05-09** | `state.json.triggers.runtimeServer == true` AND `runtimeServerInfo.sse_route` non-null AND diff touches `server_module` / `embedded_ui_module` | `scripts/runtime_smoke_adapters/sse_consumer.py`. Implements the 5-step procedure (restart → wait → curl 5s → parse handlers → fail on missing arm). Closes silent-server / ignored-client bug class observed in local-smartz 2026-05-08. Stack-agnostic — uses `runtimeServerInfo.start_command` if present, else `uv run <package> --serve --port` from pyproject, else `python3 -m <module>`. |
 | `fastapi` | TODO | `app/main.py` with `FastAPI()` import; route decorators (`@app.get`, etc.) | Skip cleanly when uvicorn unavailable; return `status: skipped, reason: uvicorn_not_installed` |
 | `express` | TODO | `package.json` has `express`; `**/server.{ts,js}` pattern | Detect port from server source or default to 3000; verify `/` returns non-5xx |
-| `sse-consumer` | TODO | Files matching SSE pattern above | Validate event-name closure between producer and consumer; ensure no `undefined` event types cross the wire |
 
 ## When to add an adapter
 
