@@ -129,165 +129,84 @@ This is a default, not dogma. If a simpler or more integrated approach better se
 
 ## Capability Routing
 
-Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** (the specialized plugin) → **secondary** (another installed plugin that can partially cover) → **inline fallback** (guidance text from `fallbacks.md`, injected verbatim into subagent prompts).
+Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** → **secondary** → **inline fallback** (from `fallbacks.md`). Phase 1 runs `detect-plugins.mjs` and writes the result to `state.json.availablePlugins`. All routing consults that object.
 
-Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` and writes the result to `.build-loop/state.json` under `availablePlugins`. All routing consults that object.
+**Load `skills/build-loop/references/capability-routing.md`** for the full routing table, trigger conditions (pyramid-principle, prompt-builder, deepagents), plugin/hook/skill/agent mandatory routing, external-knowledge sources, and sub-routers.
 
-### Core loop skills/assets (always check)
+## Phase 1: Assess — State, Goal, and Criteria
 
-| Skill | Used In | Fallback |
-|-------|---------|----------|
-| `writing-plans` | Phase 2 (Plan) | Write a structured plan directly: goal, tasks with exact file paths, dependency order, test commands |
-| `subagent-driven-development` | Phase 3 (Execute) | Dispatch parallel agents manually using the host's available delegation tool for independent file groups |
-| `verification-before-completion` | Phase 4 sub-step G (Report) | Run all test/build/lint commands and confirm output before claiming completion |
-| `simplify` (slash: `/simplify`) | Phase 4 sub-step E (Simplify) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
-| `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
-| Intent capability pack | Phases 1-4 | Read `references/intent-capability-pack.md`; write `.build-loop/intent.md`; pass the intent packet to every subagent |
-| Modular systems pack | Phases 1-4 | Read `references/modular-systems-pack.md`; partition files/tasks MECE; prefer modular scalable boundaries unless an exception is documented |
-| Codex subagent adapter | Phase 3 (Execute, Codex only) | Read `references/codex-subagents.md`; use `templates/codex-worker-prompt.md` for authorized Codex workers |
+Understand current state, load memory, detect tools, map architecture, capture north star + update intent, define goal and criteria. Writes `.build-loop/intent.md` + `.build-loop/goal.md`.
 
-### Phase quick reference
+Key steps: detect plugins → set sub-routers → map architecture → load PRD if present → capture intent → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
-| # | Phase | Purpose | Sub-steps / key actions |
-|---|---|---|---|
-| 1 | **Assess** | Understand state + define goal & criteria | detect tools, map architecture, load memory, write `intent.md` + `goal.md` |
-| 2 | **Plan** | Break work, identify parallel-safe, optimize | writing-plans skill → dependency graph |
-| 3 | **Execute** | Build per plan | parallel subagents, Sonnet default, Opus escalation |
-| 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report | sub-steps A-G; B-D can route to Iterate; F drains non-destructive items via autonomy_gate; G runs only on final pass |
-| 5 | **Iterate** | Fix Review failures, loop back to Review | max 5x; orchestrator stuck-iteration cascade (evidence-gap repair → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) |
-| 6 | **Learn** | Cross-build pattern detection + experimental skill drafting | optional; requires `runs[] >= 3`; auto-promote opt-in |
+**Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 
-### Capability routing table
+## Phase 2: Plan — Steps & Optimization
 
-| Capability | Preferred | Secondary | Inline fallback section |
-|---|---|---|---|
-| Web UI build | `ibr:scan-while-building`, `ibr:component-patterns`, `ibr:design-guidance`, `calm-precision` | `frontend-design:frontend-design` | `fallbacks.md#web-ui` |
-| Web UI validation | `ibr:design-validation`, `ibr:scan`, `compare` MCP tool | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
-| Orchestrated UI build | `/ibr:build --from=build-loop` | existing ibr skills in sequence | `fallbacks.md#web-ui` |
-| Mobile UI build | `ibr:component-patterns` (mobile-ui), `apple-dev` (if Apple), `calm-precision` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
-| Mobile UI validation | `ibr:native-testing`, `ibr:native-scan` | `showcase:capture` | `fallbacks.md#mobile-ui` |
-| Design system tokens | `ibr:design-guidance` (§Configuration), `validate_tokens` MCP tool | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
-| Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `screenshot` MCP tool | `fallbacks.md#screenshot` |
-| Web content fetching (low LLM) | `scraper-app:web-scraper` SDK | — | `fallbacks.md#web-fetch` (flags LLM cost in report) |
-| Deep debugging | `build-loop:debug-loop` + `debugger` MCP `search`/`store` | — | `fallbacks.md#debug` |
-| Bug-pattern memory | `build-loop:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
-| Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
-| DeepAgents / local-LLM agent work | `build-loop:building-with-deepagents` (SubAgent API, middleware stack, per-agent tool scoping, anti-patterns) | — | Read installed `deepagents` source: `python3 -c 'import deepagents, os; print(os.path.dirname(deepagents.__file__))'` then `graph.py` + `middleware/subagents.py` |
-| Structured reports / handoffs | `pyramid-principle:pyramid-short-form` (Review-F reports), `pyramid-long-form` (design docs) | — | `fallbacks.md#structured-writing` (SCQA + MECE skeleton) |
-| Hosted-IDE migration (Replit / Lovable / Bolt / v0) | `replit-migrate:migration-scan`, `migrate-web`, `migrate-ios`; MCP tools `migrate_scan`, `migrate_plan_web`, `migrate_plan_native`, `migrate_map_apis`, `migrate_map_models`, `migrate_check_progress` | — | `fallbacks.md#migration` (manual inventory + stack-translation) |
-| Prompt authoring / review / audit (system prompts, agent prompts, eval judges) | `prompt-builder:prompt-builder` skill; slash commands `/prompt-builder:optimize`, `/score`, `/compare`, `/save`, `/list`. Calibrates to model tier (T1/T2/T3) and deployment (interactive, backend, rag_pipeline, agent, plugin, eval_judge, personal_mobile). Returns 6-Part-Stack prompt + 5-dim score + diagnosis + `[ASSUMED:]` tags + `TEMPERATURE_HINT` | `prompt-builder` (personal skill, same name, loaded via Skill tool) | `fallbacks.md#prompt` |
-| iOS / watchOS / macOS dev + deploy | `apple-dev` personal skill (via `Skill("apple-dev")`) | `replit-migrate:migrate-ios` (when migrating *to* native) | `fallbacks.md#apple-dev` |
-| Strategic frame / PRD grounding (Assess + Review) | `build-loop:prd-bridge` — reads `docs/prd-*.md` frontmatter (`core_principles`, `load_when`) + Navigation Map + Section Index in Phase 1; verifies diff doesn't violate principles in Phase 5 Fact-Check; recommends `prd-builder` skill if no PRD exists. Falls back to grep on principle keywords if frontmatter parser unavailable. | `prd-builder` skill direct invocation | Phase 1 captures north-star + intent fresh into `intent.md` (existing fallback) |
-| Architecture scan / impact trace (Assess + Review) | `build-loop:architecture-scan` (Assess refresh), `build-loop:architecture-impact` (blast-radius), `build-loop:architecture-rules` (Review violation check), `build-loop:architecture-dead` (orphan scan) — read `.navgator/architecture/` JSON; native skills sourced from NavGator with provenance and drift-detection via `build-loop:sync-skills` | `gator:*` commands if installed | Read component → edit → re-read downstream |
-| Debugger memory-first gate (Review + Iterate) | `build-loop:debugging-memory` — verdict gate (`KNOWN_FIX` / `LIKELY_MATCH` / `WEAK_SIGNAL` / `NO_MATCH`) with strict direct-apply triple-gate (file + version + secondary signal) and Review-F outcome feedback. Orchestrator owns the when-to-fire policy (Review-B + every Iterate attempt) and routes to this skill. | `build-loop:debug-loop` direct (when memory says enter the loop or 3 same-criterion failures) | `fallbacks.md#debug` |
-| Runtime visibility / observability (Assess + reactive Review/Iterate) | `build-loop:logging-tracer` — generates stack-appropriate structured logging / OTel with ephemeral-by-default policy (Mechanism A: `DEBUG_TRACE=1` runtime gate; Mechanism B: `git-stash` throwaway). Invoked reactively when an Iterate attempt flags `evidence_gap: true`. Orchestrator runs the passive Assess scan inline (no skill call needed) and only loads this skill when instrumentation is actually being added. | — | `fallbacks.md#logging-fallback` (inline Tier-1 zero-dep JSON logger per stack) |
-| Self-improvement / recurring pattern detection (Phase 6 Learn) | `build-loop:self-improve` — runs after every build; detects recurring failures and manual interventions; drafts experimental skills/agents to `.build-loop/skills/experimental/`. Auto-promote to `.build-loop/skills/active/` requires opt-in (`autoPromote: true`) plus effective non-confounded sample ≥ 8; regressions and inconclusive results write proposals to `.build-loop/proposals/` for user confirmation — never auto-remove. Cross-project promotion via `/build-loop:promote-experiment <name>` | — | Manual review of `.build-loop/state.json.runs[]` |
-| Context recovery after compaction | `bookmark:*` commands | — | Re-read last plan file in `.build-loop/` |
-| Claude Code plugin authoring / review | `plugin-builder` (personal skill), `plugin-dev:*` family | `build-loop:plugin-hygiene-lessons.md` enforces manifest/hook/marketplace rules in Review-D | Read `plugin-hygiene-lessons.md` verbatim |
+Break work into executable steps, build dependency graph, MECE-partition file ownership, run plan acceptance gates.
 
-### Sub-routers (set during Phase 1)
+Key steps: writing-plans skill → parallel-safe identification → intent mapping → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
 
-**UI target**: if consumer project has `ios/`, `*.swift`, `Package.swift`, or `*.xcodeproj` → `uiTarget: "mobile"`, `platform: "apple"`. Else if `app.json` (Expo) or `App.tsx` with `react-native` → `uiTarget: "mobile"`, `platform: "react-native"`. Else → `uiTarget: "web"`, `platform: "web"`.
+**Load `skills/build-loop/references/phase-2-plan.md`** for the full protocol including spec-writing gate, mockup-first gate, Codex delegation, and plan acceptance steps.
 
-**Migration source**: if `.replit` / `replit.nix` present → `migrationSource: "replit"`. Lovable / Bolt / v0 export markers (e.g. `lovable.config`, `bolt.config`, `v0.dev` in comments) → corresponding source. `replit-migrate` skills generalize — load `migration-scan` for any of the above, override hints as needed.
+## Phase 3: Execute — Build With Agents
 
-**Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds per `~/.claude/projects/-Users-tyroneross/memory/reference_asc_credentials.md`. Apply deployment policy first: TestFlight/App Store Connect upload/export defaults to `auto`; App Store production release/submission defaults to `confirm`.
+Implement the plan using parallel subagents where possible, following the single-writer git contract.
 
-### Trigger Conditions
+Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → single-writer git contract (implementers never commit) → C5 halt-and-ask backstop for architectural-class novel decisions.
 
-Some capabilities should fire proactively based on goal phrasing or files touched. Phase 1 ASSESS sets these flags in `.build-loop/state.json.triggers`, and Phase 4 EXECUTE consults them before dispatching each subagent.
+**Load `skills/build-loop/references/phase-3-execute.md`** for the full protocol including Codex adapter, UI subagent prompt template, and coordination checkpoint policy.
 
-**pyramid-principle** (structured writing)
+## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Auto-Resolve, Report
 
-Fires whenever the build produces user-visible prose or professional writing. Even small text should follow pyramid structure, and the logical ordering principle applies to design flow too.
+Seven sub-steps run in order: A Critic → B Validate → C Optimize (opt-in) → D Fact-Check → E Simplify → F Auto-Resolve → G Report. F drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G is final-pass-only.
 
-Trigger if any of:
+Key steps: sonnet-critic adversarial read → IBR-first validation → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry.
 
-- Task touches user-visible text inside the app: copy, microcopy, empty-state messages, error messages, onboarding flow, help content, tooltips, toasts, form labels, email templates, notification text.
-- Task creates or edits: `README.md`, `CHANGELOG.md`, `docs/**/*.md`, PR descriptions, release notes, design docs, status updates, exec summaries, handoff documents.
-- Goal contains: "write", "draft", "summarize", "document", "one-pager", "brief", "memo", "deck", "slides", "presentation", "status update".
-- Designing information architecture or section ordering: use the pyramid logic for top-down flow (governing thought, then MECE key lines, then support).
+**Load `skills/build-loop/references/phase-4-review.md`** for sub-step details, gate matrices, routing rules, and the full Sub-step F Auto-Resolve protocol (all 4 verdict arms including `warn` exit-0 behavior).
 
-Action: load `pyramid-principle:pyramid-principle-core` first for ground rules, then the specific skill matching length and format. If absent, use `fallbacks.md#structured-writing`.
+## Phase 5: Iterate — Fix Review Failures + UX Queue (up to 5x)
 
-**prompt-builder** (prompt authoring or audit)
+Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
 
-Fires when prompts are a core part of the product, not when prompts appear incidentally in code comments or test fixtures.
+Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → IBR gaps) → fan-out up to 4 implementers → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) → IBR re-validate hook → overflow to followup/.
 
-Trigger if any of:
+**Load `skills/build-loop/references/phase-5-iterate.md`** for the full prioritized work list, status routing for all 9 implementer return values, convergence detection, and followup overflow protocol.
 
-- Building or editing prompts that the app sends to an LLM at runtime: document-generation prompts (ProductPilot style), chat-with-user system prompts, voice-interaction prompts (SpeakSavvy style), reranker prompts, eval-judge prompts.
-- Robust agent or prompt pipeline present in the product: multi-step prompts, RAG, tool-use flows.
-- Semantic search over user queries: use `prompt-builder` to revise the query before embedding or retrieval.
-- Authoring a new agent's instructions (the body of an `agents/*.md` file serving as LLM guidance).
-- File signals: `prompts/`, `system-prompt.*`, strings passed to `messages[{role:"system"}]`, `anthropic.messages.create`, `openai.chat.completions.create`, prompt templates in `.prompt` or `.txt` held as product assets.
-- Goal contains: "system prompt", "agent prompt", "prompt engineering", "rewrite this prompt", "improve this prompt", "audit prompts", "eval judge".
+## Phase 6: Learn — Cross-Build Pattern Detection (optional)
 
-Existing prompt guardrail: if the task touches an **existing** in-product prompt (not a new one), pause and ask the user before running `prompt-builder`. Prompts are often tuned against real evals; silent rewrites can regress quality. Offer the option, do not auto-apply.
+Detect recurring patterns across recent runs, auto-draft experimental skills/agents. Runs after Review-G unless disabled. Requires `runs[] >= 3`.
 
-Action: load `prompt-builder:prompt-builder` (plugin) if installed, else the personal `prompt-builder` skill, else `fallbacks.md#prompt`. For existing-prompt edits, capture before-and-after in `.build-loop/prompts/` with version suffixes so regressions are detectable.
+Key steps: recurring-pattern-detector (Haiku) → filter (confidence: high OR count >= 4) → draft via self-improvement-architect (Sonnet) → Opus signoff → sample review sweep → notify.
 
-**building-with-deepagents** (DeepAgents / local-LLM agent work)
+**Load `skills/build-loop/references/phase-6-learn.md`** for the full detect-filter-draft-signoff flow, auto-promote rules, and user control commands.
 
-Fires whenever the project uses the open-source `deepagents` package. DeepAgents has subtle API shape (SubAgent dict, middleware stack, per-agent tool scoping) that makes hand-rolled focus modes and flat-tool-list designs silently wrong — small local models exhibit tool-call hallucinations in ways that scoping fixes and prompt injection doesn't.
+## Memory — Global and Project-Scoped
 
-Trigger if any of:
+Two stores: `~/.build-loop/memory/` (global, cross-project) and `<project>/.build-loop/memory/` (project-local). Every build reads both at Phase 1 Assess; writes go to exactly one based on scope.
 
-- Repo grep: `from deepagents` or `import deepagents` in any Python source file
-- `deepagents` in `pyproject.toml`, `requirements*.txt`, `uv.lock`, or `poetry.lock`
-- Goal mentions: "agent", "sub-agent", "subagent", "planner/researcher/writer", "focus mode", "tool-call hallucination", "LangGraph agent", "ChatOllama", "local LLM agent"
-- File signals: `create_deep_agent`, `SubAgent`, `AGENT_ROLES`, `agent_focus_prompt`
-- Pain symptoms in the conversation: "`<namespace>.<tool>` is not a valid tool", "silent thinking", "model loaded forever", "threads vanish on restart"
+Routing rule: "Would this apply to a different project?" Yes → global. No → project. Ambiguous → ask the user once.
 
-Existing-agent guardrail: treat agent definitions like existing prompts — pause before rewriting, capture before-and-after in `.build-loop/agents/` with version suffixes. Tool scoping changes downstream behavior for every query; regressions are expensive to spot.
+**Load `skills/build-loop/references/memory.md`** for the full routing rule, write timing, read timing, and memory type taxonomy.
 
-Action: load `build-loop:building-with-deepagents` before any code edit involving agent construction, tool binding, or streaming. The skill's `references/anti-patterns.md` lists 12 concrete bugs we've hit — verify none of your planned changes reintroduce them.
+## Resume Protocol (`--resume` argument)
 
-**Judgment: prompt-builder vs inline prompt**
+`/build-loop:run` accepts an optional `--resume <run-id-or-latest>` argument that re-enters a previous build mid-flight (after a 529, OOM, or kill -9 left state.json with `phase != "report"`). The skill body parses the argument; the build-orchestrator agent receives a `RESUME_MODE:` prompt prefix that branches into §0 Resume mode. **Frontmatter is not the parsing layer** — the skill body is.
 
-Not every prompt needs the full engine. Use `prompt-builder` when the prompt is load-bearing. Craft a simple inline prompt when it is throwaway.
+**Parsing rule**: scan the argument string for the literal token `--resume`. The next whitespace-delimited token is the run-id (or `latest`). Anything else is part of the goal text.
 
-Use `prompt-builder` when any of these are true:
+**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh"`. On `resume`:
 
-- The prompt ships in the product and runs at scale.
-- The prompt is sent to end users or generates user-visible output.
-- The prompt is part of an agent, eval judge, RAG pipeline, or semantic-search query rewriter.
-- Output correctness is measured (evals exist or are planned).
-- The prompt will be reused across features, or maintained over time.
-- Token cost matters because it runs millions of times.
+1. Read `.build-loop/intent.md` and `.build-loop/plan.md` (already on disk — DO NOT re-derive).
+2. Dispatch build-orchestrator with prefix: `RESUME_MODE: run_id=<id>; remaining_chunks=<json>; iterate_attempt=<n>; concurrent_modifications=<json>`
+3. Agent §0 handles the rest — skips Phase 1+2, jumps to Phase 3 on `remaining_chunks` only.
 
-Roll your own inline prompt when all of these are true:
+**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
+> "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
 
-- One-shot usage inside the current build loop (dispatching a subagent, asking Claude to transform a file, generating a migration script).
-- Not persisted to the product codebase.
-- Output is checked once by the orchestrator, not by an eval.
-- A short direct instruction is clearer than a 6-Part Stack.
+This is the M4 primary signal — heartbeat staleness, no hook dependency, fires every fresh dispatch.
 
-Default when uncertain: if the prompt text will exist in the repo after the build, use `prompt-builder`. If it only exists as a line in an orchestrator message during this build, inline is fine.
-
-### Plugin / hook / skill / agent work — mandatory
-
-If Phase 1 detects that the task touches plugin components, Phase 3 must map each task to the authoritative skill below and Phase 4 must load that skill. **Do not infer plugin formats from memory or by reading another plugin's config.**
-
-| Task surface | Skill (authoritative) | Fallback |
-|---|---|---|
-| `.claude-plugin/plugin.json` | `plugin-dev:plugin-structure` | Read `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` — paths must start with `./` |
-| `hooks/hooks.json` or hook scripts | `plugin-dev:hook-development` + run `plugin-dev/scripts/hook-linter.sh` | Command hooks default; silent-exit pattern; NO prompt hooks on PostToolUse/Stop/SessionStart |
-| Slash commands (`commands/*.md`) | `plugin-dev:command-development` | — |
-| Subagents (`agents/*.md`) | `plugin-dev:agent-development` + `RossLabs-AI-Toolkit/agents/` | `fallbacks.md#agent-authoring` |
-| MCP servers (`.mcp.json`) | `plugin-dev:mcp-integration` | `.mcp.json` must NOT wrap with `mcpServers` key (Method 1) |
-| `~/.claude/settings.json` | `plugin-dev:plugin-settings` | — |
-| New skill (SKILL.md) | `plugin-dev:skill-development` + `skill-builder` (personal) | Official skill format; SKILL.md ≤200 lines |
-| New plugin end-to-end | `plugin-builder` (personal) → delegates into `plugin-dev:*` | — |
-
-### External knowledge — check before coding
-
-| Source | When | How |
-|---|---|---|
-| `/cookbook` | Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, thinking, structured output, batch, caching | Invoke `/cookbook` or read `~/.claude/projects/-Users-tyroneross/memory/reference_claude_cookbook.md` |
-| `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` | Any plugin work | Read during Phase 1 ASSESS |
-| `context7` MCP | Any library/framework use | `query-docs` / `resolve-library-id` — do NOT code from training data |
-| `research` skill | Factual claims, pricing, versions | T1 official docs → T4 forums; 2-source minimum |
+**Concurrent-modification handling**: when `concurrent_modifications` is non-empty in the resolver output, the agent's §0 branch surfaces each flagged chunk as `status: concurrent_modification_detected` and asks the user whether to redo the chunk (default) or keep the hand-edits.
 
 ## Efficiency
 
@@ -299,523 +218,6 @@ If Phase 1 detects that the task touches plugin components, Phase 3 must map eac
 ## Tool Selection
 
 Use the best available tool for each need. If a preferred tool is unavailable, improvise — never block on a missing dependency. The skill is self-sufficient; external tools make it faster but their absence does not stop the loop.
-
-## Resume Protocol (`--resume` argument)
-
-`/build-loop:run` accepts an optional `--resume <run-id-or-latest>` argument that re-enters a previous build mid-flight (after a 529, OOM, or kill -9 left state.json with `phase != "report"`). The skill body parses the argument; the build-orchestrator agent receives a `RESUME_MODE:` prompt prefix that branches into §0 Resume mode. **Frontmatter is not the parsing layer** — the skill body is.
-
-**Parsing rule**: scan the argument string for the literal token `--resume`. The next whitespace-delimited token is the run-id (or `latest`). Anything else is part of the goal text.
-
-**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run:
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py \
-    --workdir "$PWD" \
-    --resume-arg "<run-id-or-latest>" \
-    --staleness-minutes 5
-```
-The resolver returns a JSON envelope with one of: `decision: "resume"` (proceed), `decision: "abort"` (refuse with reason), or `decision: "fresh"` (no resume needed). On `resume`:
-
-1. Read `.build-loop/intent.md` and `.build-loop/plan.md` (Phase 1 + 2 outputs already on disk — DO NOT re-derive).
-2. Dispatch the build-orchestrator subagent with the prompt prefix:
-   ```
-   RESUME_MODE: run_id=<id>; remaining_chunks=<json-array>; iterate_attempt=<n>; concurrent_modifications=<json-array>
-   ```
-3. The agent's §0 branch handles the rest — skip Phase 1 + Phase 2, jump to Phase 3 Execute on `remaining_chunks` only.
-
-**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
-> "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
-
-This is the M4 primary signal — heartbeat staleness, no hook dependency, fires every fresh dispatch.
-
-**Concurrent-modification handling**: when `concurrent_modifications` is non-empty in the resolver output, the agent's §0 branch surfaces each flagged chunk as `status: concurrent_modification_detected` and asks the user whether to redo the chunk (default) or keep the hand-edits.
-
-## Phase 1: Assess — State, Goal, and Criteria
-
-**Goal**: Know what exists AND what success looks like before writing any code. Combines situational awareness with goal definition so the plan phase has everything it needs.
-
-### Understand current state
-1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
-2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
-3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
-4. **Detect available tools**: test runners (`package.json` scripts, `pytest.ini`, etc.), linters, deploy targets.
-   - **Deployment policy**: read `.build-loop/config.json.deploymentPolicy` if present. Defaults are `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Use `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py --workdir "$PWD" --command "<candidate push/deploy command>"` before any push/deploy. Treat helper errors as `confirm`.
-5. **Map architecture** using best available approach:
-   - If `.navgator/architecture/index.json` exists → invoke `Skill("build-loop:architecture-scan")` to refresh data, then `Skill("build-loop:architecture-impact")` on up to 5 highest-risk components for blast-radius. Output goes to `.build-loop/state.json.architecture.{scan,impact}`. Phase 2 Plan consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
-   - Else if `gator:*` is available → use those commands.
-   - Else → Explore agents → file reading.
-6. **Observability baseline** (informational, no changes): run a stack-appropriate grep to classify the project's logging level (well-instrumented / print-only / silent) and write to `.build-loop/state.json.observability.level`. The orchestrator handles this inline — `Skill("build-loop:logging-tracer")` is reactive only and is loaded later if Review-B / Iterate hits a silent failure.
-6a. **Runtime-server detection** (informational, no changes): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_runtime_server.py --workdir "$PWD" --json` and write the result to `.build-loop/state.json.triggers.runtimeServer` (boolean) plus `.build-loop/state.json.runtimeServerInfo` (full envelope: `server_module`, `sse_route`, `default_port`, `embedded_ui_module`, `event_handler_locations[]`, `evidence[]`). Phase 4 sub-step B Validate consults these for the live HTTP/SSE smoke gate. Helper failure → treat as `runtimeServer: false` and log a one-line warning; never blocks. Silent default for CLIs, libraries, plugins, and static-render web apps. Implements decision `_unscoped/0003` (live smoke required when build-loop touches a runtime server) — closes the pytest-with-mocks blind spot that let local-smartz ship 27 commits with two real bugs.
-7. **Debugger context priming** (always; debugger is bundled with build-loop): call the debugger `list` MCP tool with `{ filter: { project: "<current>" }, limit: 10 }` to summarize recent incidents in this project. One-line output; no action. If MCP unavailable, fall through to `fallbacks.md#bug-memory`.
-8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
-9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See §Memory.
-10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Sub-step G Report's `## Held` section, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
-11. **Capture north star + update intent**: When `state.json.prd.core_principles` is non-empty (a PRD was loaded by step 10), use it as the strategic frame; `intent.md` cites the PRD path + revision rather than re-deriving. Otherwise use `references/intent-capability-pack.md` to identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals fresh. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
-12. **Assess modular structure**: Use `references/modular-systems-pack.md`. Identify current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror compact fields to `.build-loop/state.json.structure`.
-13. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
-14. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
-15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).
-16. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
-    - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work, especially via squash-rebase, and suggest checking which paths the other session is touching before editing overlapping files.
-    - **Branch divergence**: `git rev-list --count HEAD..origin/main` and `origin/main..HEAD`. If local main is ahead of origin AND a feature branch will be cut, recommend branching from `origin/main` directly (`git checkout -b <name> origin/main`) so unpushed local commits don't ride into the eventual squash and bundle under a misleading title.
-    - **Recovery if symptoms appear during build** (file writes vanish, system reminders flag "intentional" reverts, `git status` clean): pause edits, run `ps aux | grep claude` + `git log --oneline -- <affected paths>` to identify the colliding session/squash, then re-apply dropped work on a fresh branch from `origin/main`.
-
-### UI scope and mockup pre-flight (when uiTarget != null)
-**UI pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
-   ```
-   node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<mockups_dir> --platform=html --json
-   ```
-   Log conflicts to `.build-loop/issues/mockup-rule-conflicts.md`. Don't block — agents need to know upfront which rules trump the mockup. Mockups are intent, rules are law. See `phases/ui-validation.md` for full guidance.
-
-### Define goal and scoring criteria
-14. **State the goal** in concrete, measurable terms.
-15. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Include intent fidelity/user value when the change affects user experience or product behavior. Include modularity/MECE/scalability when the change spans modules, agents, domains, repo areas, data boundaries, or long-lived interfaces. Show for confirmation.
-
-   **When `uiTarget != null`, the following criteria are REQUIRED and added automatically (not optional)**:
-   - **UI-1 Design-rule compliance**: scanner exits 0 on changed files (must-fix=0). Grader: code (`audit-design-rules.mjs`).
-   - **UI-2 Reduce Motion compliance**: every animation gated on platform's reduce-motion API. Grader: code (scanner rule `animation-without-reducemotion`).
-   - **UI-3 Theme token usage**: no raw color literals or hardcoded radii outside theme files. Grader: code (scanner rules `uicolor-rgb-outside-theme`, `literal-corner-radius`, `hex-color-outside-theme`).
-   - **UI-4 Accessibility labels**: icon-only graphics have explicit labels. Grader: code (scanner rule `sf-symbol-without-label` or web equivalent).
-
-   These exist because mockup-parity ≠ design-rule compliance. Code that matches the mockup but violates the rules is not production-ready. See `phases/ui-validation.md`.
-
-16. **Design eval graders per criterion** using the grading hierarchy:
-    - **Prefer code-based graders** (fast, deterministic, cheap): test suite pass/fail, lint/type check, build succeeds, schema validation, accessibility audit
-    - **Use LLM-as-judge graders** when code can't check the criterion:
-      - Binary pass/fail only — no Likert scales
-      - One evaluator per dimension — no multi-dimension God Evaluator
-      - Judge reasons in thinking tags, outputs only pass/fail
-      - Use the running host model/session as judge
-    - Each criterion gets: `description | grading method | pass condition | evidence required`
-    - Load `eval-guide.md` in this skill directory for judge prompt template and scorecard format if needed.
-17. **Write goal file**: Save to `.build-loop/goal.md` in the project directory.
-18. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing with explicit speed/quality lanes): if a plan file already exists, count its `synthesis_dimensions:` entries via `count_synthesis_dimensions()` in `scripts/plan_verify.py` (shared parser; do NOT write a second). Resolve tier in this priority order:
-    1. **Explicit override** — `state.json.config.modelOverrides.thinking` set OR plan/chunk frontmatter declares `tier: thinking` → route to thinking-tier.
-    2. **Auto-escalate on density** — `count > 5` (6+ entries) → `tier: thinking` (synthesis-dense at commit level; fan-out loses cross-dimension coherence).
-    3. **Default — Sonnet fan-out for speed** — `count` 1–5 OR `count == 0` → fan-out. Sonnet's ~33% wall-clock and ~28% token savings are real; C3-C5 backstops catch the residual recall gap.
-    4. **Per-chunk override** — individual chunks may declare `tier: thinking` even when plan-level was fan-out.
-
-    Write to `state.json.synthesisDensity` as `{count, escalated, reason}`. Routing target is `tier: thinking`, **never a hardcoded model name** (config override → orchestrator frontmatter → fail-loud). When `escalated == true`, do NOT fan out; execute inline at thinking-tier.
-
-    **Why this shape:** n=6 A/B experiment (2026-05-07, `~/dev/research/topics/synthesis-decision-delegation/experiment-2026-05-07/`) showed β catches ~40% of α's novels — real quality gap — but also showed β saves ~33% wall-clock and ~28% tokens, and the C3-C5 backstops catch some leaks. Defaulting Opus universally would erase β's velocity; the `> 5` threshold matches the empirical inflection point where β's recall collapses (C5 at 5 dims surfaced 0 novels vs α's 5). Below that, fan-out is the right speed choice; above it, depth dominates. Plan/chunk-level overrides let the operator pick quality > speed when needed without changing the default. See `agents/build-orchestrator.md` Phase 1 for full procedure.
-
-**Output**: Structured state summary + `.build-loop/intent.md` + `.build-loop/goal.md` with criteria. Brief.
-
-## Phase 2: Plan — Steps & Optimization
-
-**Goal**: Break work into executable steps, then optimize the plan before execution.
-
-0. **If no plan exists yet**: check whether `.build-loop/plan.md` is absent or empty. If so, invoke `Skill("build-loop:spec-writing")` to draft a build-loop-compatible plan markdown before proceeding. The spec-writing skill walks the 8-item completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation) and runs `check_checklist.py` + `plan-critic` on the output. It writes the plan to `docs/plans/<feature-slug>.md` and commits it before any implementation branches are cut. Only continue to step 1 once the spec-writing skill returns a plan path. Skip this step when a valid plan already exists and passed `plan-verify` on the previous run.
-
-1. **Invoke `writing-plans` skill** for detailed task breakdown
-2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
-3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
-4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
-5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
-6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
-7. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
-8. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
-
-**Optimization checklist** (review the plan for these before proceeding):
-- Can more tasks run in parallel? Unnecessary sequential bottlenecks?
-- Can subagent context be smaller? Shared reads that should be done once?
-- Missing dependencies, interface mismatches, env assumptions?
-- Changes that could conflict with each other (oscillation risk)?
-- Define coordination checkpoints where subagents must sync
-- UI/API/data choices that add options, mocks, or complexity without user value?
-- MECE gaps or overlaps: unowned responsibilities, shared file ownership, or mixed grouping dimensions?
-- Boundaries that are too tight, too broad, or missing a stable interface?
-- If the plan chooses a simpler/integrated path over modularity, is there a documented `MODULARITY EXCEPTION`?
-
-**Plan acceptance gate** — required before "Output: Plan file":
-
-8. **Run `plan-verify`** (deterministic, grep-checkable rules):
-   ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json
-   ```
-   - Exit 0 → proceed to step 8.
-   - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
-   - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
-   - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
-9. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 8 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
-10. **Dispatch `scope-auditor` agent** (NEW 2026-05-07 — Plan→Execute boundary): pass the plan + extracted commit table (with `modifies_api` per commit). The auditor is Opus + read-only; it traces every caller-site of every modified-API symbol via project-wide grep, classifies callers as in-scope / out-of-scope, and emits a `## Caller Audit (Scope Auditor)` JSON section appended to the plan. Verdict `scope_gap_found` requires plan revision (absorb missing callers into the right commit's owned-files) before Phase 3, OR explicit acceptance in `state.json.scopeGapAccepted[]` with rationale. Skip ONLY when the plan has zero `modifies_api` entries (doc-only commits). Prevents the fan-out scope-blindness defect class — see `agents/scope-auditor.md`.
-
-**Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, plan-critic findings, and scope-auditor caller audit.
-
-## Phase 3: Execute — Build With Agents
-
-**Goal**: Implement the plan using parallel subagents where possible.
-
-1. **Use `subagent-driven-development`** — dispatch subagents per task
-2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
-3. **Parallel agents** where dependency graph allows
-4. **Each agent gets**: minimal context + clear integration contract + relevant doc context for external APIs + the intent packet from `.build-loop/intent.md` + the MECE ownership packet from the plan (`owns`, `does not own`, `interface contract`, `integration checkpoint`)
-4a. **Implementers do NOT commit** (NEW 2026-05-07 — single-writer git contract). Implementers modify the working tree and return `files_changed` + `commit_subject` + `commit_body` in their envelope. The orchestrator commits sequentially after each parallel batch returns: `git add -- <files>` + `git commit -m <subject> -m <body>`, one implementer at a time through the pre-commit hook. This prevents the parallel-commit race that lost 3 of 4 commits in atomize-ai round 3 (2026-05-07). See `agents/build-orchestrator.md` §"Phase 3 commit step" for the full procedure.
-4b. **Halt-and-ask backstop for architectural-class decisions** (NEW — C5). When an implementer encounters a synthesis-class decision NOT in the plan's `synthesis_dimensions` AND it's architectural-class (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, hard-fail counters), the implementer returns `status: "blocked"` with the decision in `novel_decisions[]` and does NOT commit. The orchestrator dispatches each blocked decision to the configured Thinking-tier resolver (per `references/model-tier-mapping.md` — never a hardcoded model name), persists resolutions to `state.json.novelDecisionResolutions[]`, and re-dispatches the implementer with resolutions appended to its brief. Hard-fail counter N=3 per chunk; exhausted chunks surface as ❓ Unfixed in Review-F. C3's attestation lint and C4's synthesis-critic still cover what they can grade — C5 catches what falls outside both. Full procedure: `agents/build-orchestrator.md` §"Phase 3 halt-and-ask branch".
-5. **Codex execution adapter**: If running in Codex, load `references/codex-subagents.md` before any spawn decision. Spawn `explorer` or `worker` subagents only when the Codex permission gate passed; otherwise execute locally. When spawning a worker, use `templates/codex-worker-prompt.md`, prefer explicit prompt packets over full context forks, and require the worker return changed files, validation, unresolved risks, and integration notes.
-6. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
-   - Mandate to load `calm-precision` and per-platform skills (`ibr:ios-design`/`ibr:apple-platform` for Apple, `frontend-design`/`ibr:mobile-web-ui` for web)
-   - Mockup-vs-rule conflict policy: rule wins; subagent must report `RULE BEATS MOCKUP:` decisions
-   - Inline anti-pattern checklist (status pills, ungated animations, theme-token bypass, Dynamic Type, accessibility labels, touch targets, VoiceOver consistency, no fake buttons)
-   - Required env hooks (e.g. `@Environment(\.accessibilityReduceMotion)` on SwiftUI animations)
-   - Self-verification: run scanner before returning, zero must-fix on changed files
-
-   Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, and accurate data.
-7. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
-8. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
-
-## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Auto-Resolve, Report
-
-**Goal**: evaluate the built output against the rubric and decide pass / fail / iterate. Everything that used to live in phases 4.5, 4.7, 5, 7, 8, and 8.5 happens here as ordered sub-steps. One phase heading, seven sub-steps, single exit point.
-
-Review runs every time we need an evaluation (initial post-Execute, and again after each Iterate pass). The report sub-step (G) writes final artifacts only on the LAST pass — intermediate Reviews skip it.
-
-### Sub-step A: Critic (adversarial read-only)
-
-Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before spending tokens on full validation. Uses a separate read-only agent with no incentive to sandbag.
-
-1. **Dispatch `sonnet-critic`** per chunk (or per batch of chunks if they share a rubric). The critic has tools=[Read, Grep, Glob] only — no Edit, no Write.
-2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (`git diff HEAD~1` or the changed-file set).
-3. **Output**: JSON with `findings`, `strong_checkpoint_count`, `guidance_count`, `pass` boolean.
-4. **Routing**:
-   - `pass: true` → proceed to sub-step B (Validate)
-   - `pass: false` with `strong-checkpoint` findings → route back to Execute for fixes (not Iterate — no iteration counter burn yet on critic-only failures)
-   - Findings marked `guidance` → record in `.build-loop/issues/` and proceed
-5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers.
-6. **Skip** on re-reviews after Iterate (critic already saw the diff at first pass) unless Iterate touched different files. Skip entirely for trivial chunks (single-file typo, config value).
-
-### Sub-step B: Validate (graders + memory-first gate)
-
-Test every criterion from Assess with evidence.
-
-**UI validation — IBR-first when present** (`uiTarget != null`): load `Skill("build-loop:ibr-bridge")` and run the quick-pass protocol BEFORE static scanners or LLM judges:
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ibr_quickpass.py --workdir "$PWD" --scope changed
-```
-
-If the suite passes, the changed surface is green-lit and Sub-step D continues. If any test fails, route the failing test directly to Iterate — its assertion is the rubric, no extra critic burn. If the script reports `no_tests`, the Coverage-gap gate (Sub-step D) generates initial drafts; Sub-step B falls through to static scanners in the meantime. Per the bridge skill, only headless/programmatic IBR surfaces are used — the IBR viewer is never opened.
-
-**UI validation when IBR is absent**: paste `fallbacks.md#web-ui` into the validation subagent prompt. The fallback contains 10 specific grep checks (Gestalt violations, touch targets, missing handlers, missing aria-labels, status-pill anti-patterns, off-token colors, non-8pt spacing, console leftovers, mock data) plus a file-check matrix for landmarks, focus styles, and viewport tags. Findings get `⚠️ static-analysis only — install IBR for computed-CSS verification` flag in the Review-F report. This is the standalone UI validation path — degraded vs IBR, but not silent.
-
-**Code-based graders first** (fast, deterministic):
-```
-test suite           → pass/fail
-lint / type check    → pass/fail
-build                → pass/fail
-accessibility        → threshold pass/fail (if web)
-schema validation    → pass/fail
-custom assertions    → pass/fail
-design-rule scan     → must-fix=0 pass/fail (uiTarget != null only)
-```
-
-**Design-rule scan** (when `uiTarget != null`):
-```
-node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<project> --platform=<swiftui|react|web> --json
-```
-Exit 0 = clean. Exit 1 = warnings only (continue, log). Exit 2 = must-fix found (fail; route to Iterate).
-
-This is the static-analysis gate that catches what mockup-parity misses — colored status pills, ungated `.repeatForever`, raw `UIColor` outside Theme, literal `cornerRadius`, body-copy `.font(.system(size:))`, icon-only `Image(systemName:)` without accessibility labels. Maintained in `scanners/audit-design-rules.mjs`, dependency-free Node 18+, per-platform packs.
-
-**Visual validation** (REQUIRED when `uiTarget != null`): the static scanner cannot catch rendering bugs — an upside-down arc, an invisible track stroke, a row clipped behind a floating tab bar, a chip that wraps. After the scanner passes, render the actual screen via the platform's preferred tool:
-- iOS / macOS / watchOS: `mcp__plugin_ibr_ibr__native_scan` against booted simulator (install + launch the build first)
-- Web: `mcp__plugin_ibr_ibr__scan` against the dev server URL
-- Fallback: `xcrun simctl io booted screenshot` or browser-driven `playwright` if IBR is unavailable
-
-For returning-user states (post-onboarding screens, dashboards with data), use the DebugSeeder pattern (see `templates/ui-subagent-prompt.md` §DebugSeeder) so visual states can be verified in seconds without manual data entry. Build 55 of a real shipped app passed scanner exit 0 but rendered an upside-down semicircle gauge with stray tick marks because no one rendered the actual screen — visual validation is non-negotiable for UI work.
-
-**Live HTTP/SSE smoke** (REQUIRED when `triggers.runtimeServer == true` AND the diff touches `runtimeServerInfo.server_module` OR `runtimeServerInfo.embedded_ui_module`): pytest with mocked SDKs is necessary but not sufficient for projects that ship a live server — it does not iterate real DOM trees, does not open SSE connections, and does not render embedded HTML. Implements decision `_unscoped/0003`. The 5-step procedure:
-
-1. Restart the server in background. Read `state.json.runtimeServerInfo.start_command` if present, else fall back to `uv run <package> --serve --port <default_port>` derived from `pyproject.toml`'s package name and `runtimeServerInfo.default_port`. Redirect stdout/stderr to `/tmp/buildloop-serve.log` for forensic surface in Review-F.
-2. Wait up to 15s for `/api/status` (or `/`) to return HTTP 200 — poll once per second.
-3. Run a 5-second curl POST against the SSE route:
-   ```
-   curl -sN -X POST http://localhost:<port><sse_route> \
-       -H 'Content-Type: application/json' -d '<minimal-prompt>' --max-time 5 \
-       | grep -oE '"type":\s*"[^"]+"' | sort -u
-   ```
-4. Read the UI's event-handler switch at the locations from `runtimeServerInfo.event_handler_locations[]` and extract every handled event type (regex on `d\.type === '([^']+)'` and `d\.type == "([^"]+)"`). Skip this step when `embedded_ui_module: null` (API-only services have no embedded UI to compare).
-5. **Fail the build** when an observed event type from step 3 has no matching handler arm from step 4 — this is the silent-server, ignored-client class of bug. Surface as a Validate failure → routes to Iterate.
-
-If any infrastructure step fails (server won't start, curl errors, can't parse handler) → log evidence to `.build-loop/issues/live-smoke-<date>.md` and surface as `⚠️ untested live-flow` in Review-F. Do NOT fail the build on infrastructure issues — only on the specific server/client contract violation. Heavier integration tests (Playwright/Selenium) are still the right answer for full correctness; this gate is the cheapest check that catches what pytest-with-mocks cannot.
-
-**LLM-as-judge graders second** (for nuanced criteria):
-- Each criterion → its own focused judge prompt
-- Binary pass/fail output only
-- No multi-dimension scoring in a single prompt
-
-**Evidence collection**:
-- Every pass/fail must have evidence: command output, screenshot, or judge reasoning
-- Use `verification-before-completion` for evidence-based claims
-- No criterion marked "pass" without proof
-
-**Runtime smoke gate (post-tests, pre-LLM-judges)**: after code-based graders pass, invoke `python3 scripts/runtime_smoke.py --changed-files <list> --workdir "$PWD" --json` whenever any changed file matches a runtime-smoke trigger. The script auto-detects a dev-server adapter from the project's manifest (Next.js today; FastAPI, Express, and SSE-consumer adapters are documented future slots). `pass` proceeds; `fail` routes to Iterate using the smoke envelope's `findings` as the rubric; `skipped` (no trigger matched or no adapter for this stack) records `runtime_smoke: skipped (<reason>)` in Review-F and proceeds — library-only repos never fail this gate. See `references/runtime-smoke-triggers.md` for the full trigger-pattern table and adapter roadmap, and `agents/build-orchestrator.md` §"Review-B: Runtime smoke gate" for the routing rules.
-
-**Memory-first gate (on any failing criterion)**: before routing failures to Iterate, the orchestrator runs the gate (read_logs → synthesize symptom → invoke `Skill("build-loop:debugging-memory")` → act on verdict). See `agents/build-orchestrator.md` §Phase 4 sub-step B for the orchestrator's exact when-to-fire and gate-recording policy. **Memory is a hypothesis, not a patch — every verdict routes to Iterate as an adapted plan by default**:
-
-- `KNOWN_FIX` → adapt prior incident as the Iterate fix plan. Direct-apply only when all three gates hold: file match + version match + second validation signal (stack frame, error class, or log entry). Otherwise behave as LIKELY_MATCH.
-- `LIKELY_MATCH` → adapt prior incident as the Iterate fix plan
-- `WEAK_SIGNAL` → note reference in the Iterate plan, investigate normally
-- `NO_MATCH` → standard Iterate fallthrough; store at sub-step G Report for future learning
-
-The memory gate is always on — the debugger (skills + MCP) is bundled with build-loop as of 0.6.0. If the MCP server fails to start, the orchestrator falls through to a local-grep fallback. The strict direct-apply triple-gate spec lives in `skills/debugging-memory/SKILL.md` §"Direct-apply gate (strict)".
-
-**Output**: per-criterion pass/fail with evidence. Any `fail` → Iterate. All `pass` → sub-step C.
-
-### Sub-step C: Optimize (opt-in, only with a mechanical metric)
-
-Metric-driven autonomous optimization using Karpathy's autoresearch pattern. Opt-in — runs only when a mechanical metric exists AND the user hasn't disabled it.
-
-**Load the `build-loop:optimize` skill for the full protocol.**
-
-1. **Discover targets**: Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/optimize_loop.py --detect --workdir "$PWD"`.
-2. **`simplify` is always available** when code changed: reduces line count in files changed by Execute. Metric = total lines, direction = lower, guard = build passes.
-3. **Other targets** appear when the repo has the right tooling (build script → optimize-build, test runner → optimize-tests, bundler → optimize-bundle).
-4. **Budget**: 3-5 iterations (polish, not deep optimization).
-5. **Post-loop**: dispatch `overfitting-reviewer`. Archive to `.build-loop/optimize/experiments/`.
-
-**Skip** when: no mechanical metric, build was trivial (<20 lines), or user opts out. Optimization results feed back into Validate as additional evidence.
-
-### Sub-step D: Fact-Check & Mock Scan
-
-Nothing false, fabricated, or placeholder reaches the user. Three gates, run in parallel. Load `phases/fact-check.md` for detailed guidance.
-
-- **Gate 1 — Fact Checker**: Trace every rendered %, $, score, count, or assessment to its data source. Flag "always", "never", "100%", "guaranteed" — replace with accurate language unless genuinely absolute. Every rendered metric needs a traceable path: source → transformation → display.
-- **Gate 2 — Mock Data Scanner**: Lightweight scan of production code paths for residual mock/placeholder data — hardcoded fake data, placeholder text, faker/random in display paths, stubs replacing real implementations. Exclude test files and dev-only code.
-- **Gate 3 — Architectural Violation Check**: invoke `Skill("build-loop:architecture-rules")` (no plugin gate — the native skill no-ops cleanly when `.navgator/architecture/index.json` is absent). Executes `navgator rules --json` and classifies blocking (`circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` at error) vs warning (`hotspot`, `high-fan-out`, `orphan`). Flags recurrences against `.navgator/lessons/lessons.json`. For cross-layer changes, escalate to `Skill("build-loop:architecture-review")` for the full integrity review.
-- **Gate 4 — Plugin Cache Sync Check** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host claude --source <plugin-source-repo>` for Claude runtime surfaces. If the build changes Codex-visible surfaces (`.codex-plugin/`, `AGENTS.md`, `README.md`, `skills/`, or `commands/`), also run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/check_cache_sync.py --host codex --source <plugin-source-repo>`. `[DIVERGED]`, `[MISSING IN CACHE]`, or stale installed Codex versions are **blocking** when they affect the host being used — runtime invocations will hit stale or missing files. Fix: resync/reinstall the local cache. Defer version bumps until the feature batch is declared complete (see Gate 6). Missing cache with no installed version skips silently (user has not installed the plugin, nothing to break).
-- **Gate 5 — Design-Rule Scanner** (only when `uiTarget != null`): run `audit-design-rules.mjs` across full project (broader than Sub-step B's changed-files scope). Surfaces any pre-existing must-fix violations newly observable due to scanner rule additions. Pre-existing findings on first run are logged to `.build-loop/issues/` with break-what-if analysis (user decides scope). New-content findings are blocking. See `phases/ui-validation.md` for tuning.
-- **Gate 6 — Version-Bump Advisor** (only when `pluginWork: true`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. Default state is `hold` — emits a one-line note in Review-F: `"N commits accumulated since vX.Y.Z. Holding version. Create .build-loop/release-pending.md when the batch is ready."` Switches to `suggest` only when `.build-loop/release-pending.md` exists; in `suggest` mode, Review-F proposes `vA.B.C` (semver inferred from Conventional Commits) and asks for explicit user confirmation before any plugin.json edit. Never auto-bumps. Never blocks. The marker file is the user's release signal; build-loop only ever advises.
-- **Gate 7 — UX Triage** (only when `uiTarget != null`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Static-scans for four dimensions — interactability, performance, data-accuracy beyond current scope, usability — across the full project (not just changed files). Each `blocker` or `major` finding becomes a queue entry in `.build-loop/ux-queue/<id>.md` with a complete fix plan, evidence, files-touched, and an `architecture_impact` flag. Minor findings stay in the Review-F report only. The agent layer augments static findings with `performance-assessor` and `fact-checker` agent dispatches against the same surface for dimensions the static scanner can't fully cover. Queue entries feed into Phase 5 Iterate (see "Iterate input contract" below). Never block the current build — UX rot fixes ride along, they don't gate.
-- **Gate 8 — IBR Coverage-Gap** (only when `uiTarget != null` AND IBR available): read `.build-loop/ibr-quickpass.json.untested_surfaces` (written by Sub-step B). For each uncovered surface, generate a draft `.ibr-test.json` via `mcp__plugin_ibr_ibr__plan_test` (or `ibr generate-test --headless`), write to `.ibr-tests/_draft/<id>.ibr-test.json`, and add a queue entry to `.build-loop/ux-queue/` with `dimension: test-coverage`. Drafts are suggestions — the user accepts by `mv` out of `_draft/`, rejects by deleting. Never auto-promotes. See `Skill("build-loop:ibr-bridge")` Coverage-gap protocol for full detail.
-
-Blocking issues (Gates 1-4) → route to Iterate. Queue entries (Gates 7-8) → flow into Phase 5's prioritized work list. Warnings → include in Report (sub-step G). Auto-bumping is forbidden.
-
-### Sub-step E: Simplify (trim the diff)
-
-Remove incidental complexity added during Execute/Iterate without changing behavior.
-
-Run `/simplify` (or load the `simplify` skill directly) against the changed files. Focus:
-- Inline single-use helpers extracted "just in case"
-- Delete dead branches, commented-out code, unused imports
-- Collapse try/except that catches a thing that can't happen
-- Remove validation for invariants the type system or upstream already guarantees
-- Reduce abstractions that have exactly one call site
-
-Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION: <reason>`. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
-
-### Sub-step F: Auto-Resolve (drain non-destructive open items)
-
-Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
-
-- **Sub-step A Critic** — guidance findings with a `recommendation:` field (canonical critic-output field per `agents/sonnet-critic.md`) and a single named file path
-- **Sub-step D Fact-Check & Mock Scan** — non-blocking gate findings (e.g. `Plugin Cache Sync` divergence, `Version-Bump Advisor` notes when `release-pending.md` is absent, single-file documentation drift)
-- **Operator queue** — items previously deferred via the `## Held` section of a prior build's report
-
-For each item:
-
-1. Build a short `<label>` and the corresponding shell `<command>` describing the action.
-2. Invoke `python3 scripts/autonomy_gate.py --workdir "$PWD" --action "<label>" --command "<command>" --json` (single source of truth — see `references/autonomy-config.md`).
-3. Route on the verdict:
-   - `auto` (exit 0) → execute the action via the appropriate implementer/script and record the result in `## Done` for Report.
-   - `warn` (exit 0) → execute the action (does not block), record in `## Done` with `[warn] <reason>` prefix, and emit a one-line entry to `state.json.runs[].autonomyEvents[]` for match-rate tracking. See `references/autonomy-config.md` §"Warn-before-block workflow" for the autonomyEvents shape.
-   - `confirm` (exit 1) → record in `## Held` with the `reason` field from the gate's envelope verbatim. Do NOT prompt the operator inline.
-   - `block` (exit 2) → record in `## Blocked` with the same reason field.
-
-Cap auto-execute attempts per item at the existing Iterate ceiling (5x). After the cap, demote to `## Held` with reason `"auto-resolve cap reached after N attempts"`.
-
-**What does NOT belong in Auto-Resolve:**
-- Strong-checkpoint findings from Sub-step A — those continue routing back to Execute (no iteration counter burn).
-- Sub-step B Validate failures — those route to Phase 5 Iterate.
-- Anything matching deployment_policy.py heuristics — autonomy_gate delegates to deployment_policy automatically; the verdict still flows through `auto | confirm | block`, but the source-of-truth is deployment_policy for those items.
-
-The auto-resolve queue is rebuilt from scratch per Phase 4 invocation. Items not drained on a given pass don't carry forward unless explicitly re-surfaced by Sub-steps A/D on the next pass.
-
-### Sub-step G: Report (only on final Review pass)
-
-Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes final artifacts and closes the build.
-
-Final report sections, in this order:
-
-- `## Done` — every verified pass + every Auto-Resolve `auto` item, with one-line evidence each.
-- `## Held` — items Auto-Resolve verdicted as `confirm`, with the `reason` field from `autonomy_gate.py` quoted verbatim. The user may run any held command manually if they want to. Build-loop does NOT prompt or auto-execute these.
-- `## Blocked` — items Auto-Resolve verdicted as `block`, same shape as Held.
-- `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; keep this section).
-
-**Forbidden in the report**:
-- Recommendation-list headers (e.g. headers that invite operator selection of which items to execute)
-- "Next Action" sentences that read like questions
-- Any bullet phrased as `Want me to X?` or `Should I Y?`
-- Any list that presents items as choices for the operator to pick from
-
-If a category is empty (no Held items, no Blocked items), write the header followed by `_(none)_`. Do not omit empty sections.
-
-Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
-
-**Debugger store + outcome** (if `availablePlugins.claudeCodeDebugger`): for each resolved Review-B/Iterate failure, invoke `store` MCP with `{symptom, root_cause, fix, tags, files}`. For each Review-B memory-gate entry where a prior `KNOWN_FIX`/`LIKELY_MATCH` was applied, invoke `outcome` with `worked`/`failed`/`modified`. Both sides of the memory feedback loop — skipping either breaks learning.
-
-**Orphan scan**: invoke `Skill("build-loop:architecture-dead")` — runs `navgator dead`, diffs against the Phase 1 Assess baseline, surfaces ONLY new orphans introduced this build. No-ops cleanly when `.navgator/architecture/index.json` is absent.
-
-**Deployment policy gate** (before any push/deploy): run:
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" \
-  --workdir "$PWD" \
-  --command "$CANDIDATE_DEPLOY_COMMAND"
-```
-
-Follow the returned `action`: `auto` may proceed after Review passes; `confirm` requires an explicit user confirmation in chat before running the command; `block` must not run and should be reported as a configured repo policy. Defaults favor speed for preview/TestFlight and safety for production/unknown.
-
-**Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. Delegate to `scripts/write_run_entry.py` — do not hand-write JSON; the script owns the schema, atomic writes, legacy-state migration, and per-experiment confound fan-out. Invocation example in `agents/build-orchestrator.md` §Report & Memory Write. Schema (as the script emits):
-
-```json
-{
-  "run_id": "run_<ISO-basic>_<sha256(goal)[:8]>",
-  "date": "<ISO-8601 UTC>",
-  "goal": "<short goal text>",
-  "outcome": "pass | fail | partial",
-  "phases": { "assess": { "status": "pass|fail", "duration_s": N, "root_cause": "?" }, "plan": {...}, "execute": {...}, "review": {...}, "iterate": {...} },
-  "diagnosticCommands": ["shell commands run during build"],
-  "filesTouched": ["absolute paths edited"],
-  "manualInterventions": [{ "phase": "review", "note": "short description" }],
-  "active_experimental_artifacts": []
-}
-```
-
-Capture `filesTouched` from `git diff --name-only` relative to the pre-build HEAD. `diagnosticCommands` and `manualInterventions` come from orchestrator state tracking. `active_experimental_artifacts` lists experimental skills that triggered this run (for Learn's confound tracking).
-
-## Phase 5: Iterate — Fix Review Failures + UX Queue (up to 5x)
-
-**Goal**: Fix failures surfaced by Review *plus* drain the UX queue accumulated by Sub-step D Gates 7-8, systematically not blindly. Loops back to Review after each pass.
-
-Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux-queue/` is non-empty. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn.
-
-**Iterate input contract (prioritized work list)**:
-
-| Priority | Source | Notes |
-|---|---|---|
-| 1 | Blocking Validate failures (Sub-step B) | Test/lint/build/IBR test-suite fails |
-| 2 | Blocker UX queue entries with `architecture_impact: false` | `.build-loop/ux-queue/*.md` filtered |
-| 3 | Major UX queue entries with `architecture_impact: false` | Same source, lower severity |
-| 4 | Optimization findings (Sub-step C) | Opt-in |
-| 5 | IBR coverage-gap drafts (`dimension: test-coverage`) | Lowest — additions, not fixes |
-| **deferred** | Any UX entry with `architecture_impact: true` | Surfaces in Review-F for explicit user confirmation; Iterate does not pick up |
-
-The "code is cheap, AI agents build fast" framing: the orchestrator does NOT defer based on patch size. It defers only when `architecture_impact: true` (new component, new data flow, navigation graph change, schema migration, auth provider swap). Everything else is fair game for the current loop.
-
-**Fan-out** (mode-dependent): After dequeue, partition entries by `files_touched` into independent groups (no overlapping files).
-
-- **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 4.6, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
-- **Subagent mode** (orchestrator was itself spawned via `Agent(...)` so the no-sub-sub-agents rule applies): degrade to **inline-implementer mode** — iterate the queue serially, apply each fix following the implementer's protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed). No parallelism, same quality bar. The orchestrator surfaces the degradation in Review-F.
-
-In both modes, each pass returns the same structured outcome (status + files_changed + verifications). Status routing covers all 9 implementer return values:
-- `fixed` → mark done (delete the .md)
-- `partial` → keep entry, re-pass next iteration
-- `scope_breach` → ask user before extending scope
-- `deferred_architecture` → Review-F surfaces for explicit user confirmation
-- `evidence_stale` → regenerate via `ux_triage.py --clear`, then re-pass
-- `plan_malformed` → same as `evidence_stale` (regenerate); log id to `.build-loop/state.json.malformedPlans[]`
-- `needs_dependency` → ask user; never auto-add deps
-- `failed` → re-pass with implementer's `notes` as `additional_context`; after 2 attempts escalate to Opus per `model-tiering`; after 3 surface as ❓ Unfixed
-- `concurrent_modification_detected` → abort current parallel batch (orchestrator partition bug; never transient)
-
-Results re-enter Sub-step B for re-validation. For Validate failures (no queue entry), construct an inline plan in the same shape and treat identically.
-
-**IBR re-validate hook (when uiTarget != null AND IBR available)**: After each implementer subagent reports back AND before re-entering Sub-step B Validate, the orchestrator calls `mcp__plugin_ibr_ibr__interact_and_verify` against the affected route(s) headlessly. Catches "fix introduced a new visual or interaction regression" cheaply, without burning a full Validate cycle. For routes that fail this check twice, optionally invoke `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop — internal iterations count against build-loop's 5-iteration ceiling.
-
-Per attempt:
-1. **Diagnose root cause** — don't just retry. Reads Review's evidence.
-2. **Stuck-iteration cascade (always on)**: at the START of EACH attempt, the orchestrator runs the cascade in order — see `agents/build-orchestrator.md` §Phase 5 for the full ladder. Summary:
-   - **Evidence-gap repair (highest priority)**: if the prior gate flagged `evidence_gap: true`, invoke `Skill("build-loop:logging-tracer")` with intent `repair`. Ephemeral-by-default — Mechanism A (`DEBUG_TRACE=1` runtime gate) or Mechanism B (`git-stash` throwaway). Re-run the failed criterion; if output is now informative, proceed with new context.
-   - **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (it may have shifted shape after the prior fix attempt).
-   - **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `claude-code-debugger:assess`. Pass `model: sonnet` to domain assessors explicitly (override `inherit` default to prevent 4× Opus fan-out from the Opus 4.7 orchestrator). The full procedure is documented in `skills/debug-loop/SKILL.md` §"If stuck — parallel multi-domain assessment".
-   - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
-3. **Build the prioritized work list** from the table above (Validate failures + UX queue).
-4. **Partition for parallel fan-out**: group by disjoint `files_touched`; dispatch ≤4 subagents in parallel.
-5. **Execute fixes**; for UI files, run the IBR re-validate hook before continuing.
-6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
-7. **Followup overflow**: when the iteration cap (5) is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips its own Plan phase for these entries.
-8. **Track**: attempt count, what failed, what was attempted, what changed, queue depth before/after each pass.
-
-**Convergence detection**:
-- Same criterion fails 2x with same root cause → escalate to user
-- Fix A breaks criterion B (oscillation) → flag and ask user
-- 3+ criteria fail simultaneously after a fix → systemic issue, stop and reassess
-
-**Hard stop at 5 iterations**. Proceed to Review sub-step G Report with remaining failures marked ❓ Unfixed. Log each iteration to `.build-loop/state.json`.
-
-## Phase 6: Learn — Cross-Build Pattern Detection (optional)
-
-**Goal**: detect recurring patterns across recent runs, auto-draft experimental skills/agents to address them, surface them for keep/remove decisions. Closes the loop between "build N times" and "build N+1 is faster because we learned."
-
-**Load the `build-loop:self-improve` skill for the full protocol.** (Skill keeps its existing name for backward compatibility; this phase was named "Self-Improvement Review" in v0.2.0 — renamed here to avoid collision with Phase 4 Review.)
-
-Runs automatically after Review sub-step G on every build unless disabled. Also user-invokable via `/build-loop:self-improve` to run a scan without a build.
-
-Quick flow:
-
-1. **Detect** — dispatch `recurring-pattern-detector` (Haiku). Reads `.build-loop/state.json.runs[]`, returns JSON list of patterns crossing confidence threshold. Only emits `phase_failure` and `manual_intervention` types (real pain signals); `diagnostic_repeat` and `file_churn` were removed to prevent skill sprawl.
-2. **Filter** — keep only `confidence: high` or `count >= 4`; manual interventions at lower threshold. Dedupe against existing active/experimental skill names. Cap 2 artifacts per scan.
-3. **Draft** — for each kept pattern, dispatch `self-improvement-architect` (Sonnet). Writes to `.build-loop/skills/experimental/<name>/SKILL.md` with an A/B Experiment section including `run_id` and `co_applied_experimental_artifacts[]` schema.
-4. **Signoff** — orchestrator (Opus 4.7) reviews each draft: APPROVE / REVISE (1 retry) / DISCARD.
-5. **Sample review sweep** — for artifacts in `.build-loop/skills/experimental/` from prior runs: if `.build-loop/config.json.autoPromote` is true AND effective (non-confounded) sample ≥ 8 AND target met → auto-promote to `active/`. Regressions and inconclusive-at-2N write proposals to `.build-loop/proposals/` for user confirmation — never auto-delete.
-6. **Notify** — concise synthesis appended to Review sub-step G report, including removal command for each artifact moved or proposed.
-
-**Skip** when:
-- `.build-loop/state.json.runs[]` has fewer than 3 entries
-- Detector returns no patterns crossing threshold
-- User has set `.build-loop/config.json.autoSelfImprove: false`
-
-**User control**:
-- Remove any artifact: `rm -rf .build-loop/skills/experimental/<name>/` or `active/<name>/`
-- Block re-promotion of a name: add it to `.build-loop/skills/.demoted`
-- Inspect tracking: `cat .build-loop/experiments/<name>.jsonl`
-- Disable Learn entirely: `.build-loop/config.json` → `{"autoSelfImprove": false}`
-- Auto-promote defaults to OFF — set `"autoPromote": true` to enable (requires effective sample ≥ 8)
-
-**What this phase will NOT do**:
-- Modify the build-loop plugin repo
-- Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`
-- Run more than once per build
-
-## Memory — Global and Project-Scoped
-
-Build-loop maintains two memory stores. Every build reads both; writes go to exactly one based on scope.
-
-**Global memory**: `~/.build-loop/memory/`
-
-- Applies across every project this user builds.
-- Examples: "Deployment to Vercel uses `vercel deploy --prebuilt` when `ENABLE_AUTH=true`"; "Neon is the default Postgres for Next.js 16 projects"; "TestFlight upload uses ASC API key from `~/.appstoreconnect/private_keys/`"; "User prefers zero-dep scripts over package additions".
-- Structure: one file per fact/lesson/tool-discovery. Index in `~/.build-loop/memory/MEMORY.md` (line-per-entry: `- [Title](file.md) — hook`).
-- Types: `tool`, `deployment`, `library-choice`, `user-preference`, `pattern`.
-
-**Project memory**: `<project>/.build-loop/memory/`
-
-- Applies only to the current project.
-- Examples: "This app's design system lives in `src/styles/tokens.css`, not Tailwind"; "Routes under `/admin/` require `requireAdmin()` guard"; "The `custom_themes` table has a user_id VarChar bug from 2026-04-13 — see migration note".
-- Same structure as global; index in `.build-loop/memory/MEMORY.md`.
-- Types: `design`, `convention`, `gotcha`, `decision`, `contract`.
-
-### Routing rule (always ask this question)
-
-**"Would this apply to a different project?"**
-
-- **Yes** → global (`~/.build-loop/memory/`). Deployment tools, library choices, general user preferences, reusable patterns.
-- **No** → project (`.build-loop/memory/`). Design tokens, internal APIs, project-specific gotchas, per-repo conventions.
-- **Ambiguous** → ask the user once, then save. Don't guess.
-
-### When to write memory
-
-- User states a preference or convention: save immediately.
-- A build surfaces a new tool/library/deployment pattern worth reusing: save after Review-F.
-- A project-specific gotcha or decision emerges: save during Review-F Report.
-- Do NOT save: ephemeral task details, things already derivable from code or git log, state that changes per build.
-
-### When to read memory
-
-- Always during Phase 1 ASSESS.
-- Before deploying: check global deployment memory.
-- Before UI work: check project design memory.
-- Before adopting a new library: check global library-choice memory.
 
 ## Skill-on-Demand — Build, Use, Keep or Drop
 
@@ -873,7 +275,15 @@ Review sub-step A (CRITIC) is the adversarial read-only pass; strong-checkpoint 
 
 Contextual material loaded on demand (not at skill invocation):
 
-- `references/refactor-history/` — Internal assessment of the 2026-04 refactor that consolidated the prior 9-phase model into the current 5+Learn model. `ASSESSMENT.md` explains the rationale, `trace-comparison.md` shows before/after execution flow, `STANDALONE_TEST_RUN.md` validates the new model, `scenarios/01..06` contain 6 test scenarios (bugfix, UI build, multi-fail, IBR-absent, NavGator-absent, debugger-absent). Load when evaluating proposed phase-model changes or onboarding contributors.
+- `references/phase-1-assess.md` — Full Phase 1 Assess protocol
+- `references/phase-2-plan.md` — Full Phase 2 Plan protocol
+- `references/phase-3-execute.md` — Full Phase 3 Execute protocol
+- `references/phase-4-review.md` — Full Phase 4 Review protocol (sub-steps A–G, including Sub-step F Auto-Resolve with all 4 verdict arms)
+- `references/phase-5-iterate.md` — Full Phase 5 Iterate protocol
+- `references/phase-6-learn.md` — Full Phase 6 Learn protocol
+- `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
+- `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
+- `references/refactor-history/` — Internal assessment of the 2026-04 refactor. `ASSESSMENT.md` explains rationale, `trace-comparison.md` shows before/after flow, `STANDALONE_TEST_RUN.md` validates the model, `scenarios/01..06` contain 6 test scenarios.
 - `eval-guide.md` — How to interpret build-loop scorecards.
 - `fallbacks.md` — Degraded-but-useful behavior when bridge plugins (NavGator, claude-code-debugger, IBR) are absent.
 - `phases/fact-check.md` — Detailed fact-check sub-step specification.
