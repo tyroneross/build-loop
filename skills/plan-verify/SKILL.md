@@ -1,17 +1,6 @@
 ---
 name: plan-verify
-description: |
-  Deterministic plan verifier for build-loop Phase 2. Runs grep-checkable rules
-  (delete-with-callers, numeric-drift, route-change-evidence, package-state,
-  missing-evidence, scope-split, less-invasive-shim) over a plan markdown file
-  and emits findings in the Plan Evidence Contract shape. Exit 0 = no BLOCKERs,
-  exit 1 = BLOCKERs present, exit 2 = verifier error.
-
-  Use this BEFORE accepting a Phase 2 plan. Pair with `agents/plan-critic.md`
-  for non-deterministic checks (alternatives considered, MECE scope, marker
-  adequacy across long passages).
-
-  Stdlib-only Python; no new dependencies.
+description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:plan-verify`, asks to "verify the plan" or "lint the plan", or any plan markdown change touches the synthesis-density / risk_reason / modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.
 ---
 
 # plan-verify

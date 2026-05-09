@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-trace
-description: Trace data flow through the architecture — follow a component's connections from input to output. Build-loop's native trace, copied from NavGator's CLI command (no canonical SKILL.md exists upstream).
+description: Use when the user asks to "trace data flow", "follow this request end-to-end", or "show how X reaches Y". Follows a component's connections from input to output across the architecture; build-loop's native trace copied from NavGator's CLI.
 version: 0.1.0
 user-invocable: false
 source: NavGator/commands/trace.md

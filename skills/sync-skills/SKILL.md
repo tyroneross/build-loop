@@ -1,6 +1,6 @@
 ---
 name: build-loop:sync-skills
-description: Drift-detection for build-loop's native skills copied from canonical upstream repos (NavGator, claude-code-debugger). Walks skills/architecture/ and skills/debugging/, recomputes source_hash, reports drift. Read-only — never auto-updates.
+description: Use when the user asks to "check skill drift", "sync skills", or "update architecture skills", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/ and skills/debugging/, recomputes source_hash, reports drift. Read-only.
 version: 0.1.0
 user-invocable: true
 ---

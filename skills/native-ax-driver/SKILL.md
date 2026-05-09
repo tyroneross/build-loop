@@ -1,6 +1,6 @@
 ---
 name: build-loop:native-ax-driver
-description: Built-in cursor-free macOS automation. Drives a running .app through the Accessibility API (AXUIElementPerformAction, AXSetValue) without touching the user's hardware mouse or keyboard. Self-contained — vendors its own Swift binary and Python launcher; no IBR, Playwright, or Appium dependency.
+description: Use when the build needs to automate a macOS .app without touching the hardware cursor, or the user asks to "click through the app" or "test the UI headlessly". Drives running apps via Accessibility API; self-contained Swift binary — no IBR, Playwright, or Appium required.
 version: 1.0.0
 user-invocable: false
 ---

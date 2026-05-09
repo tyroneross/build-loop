@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-review
-description: Full architectural integrity review — system flow, component connections, documentation drift, and lessons. Build-loop's native review, copied from NavGator's code-review skill. Heavy weight; use for Phase 4 Review when a build crosses 2+ layers.
+description: Use when Phase 4 Review covers a build that crosses 2+ layers, or the user asks for an "architectural review" or "full integrity check". Covers system flow, component connections, documentation drift, and lessons; heavy-weight, native copy from NavGator.
 version: 0.1.0
 user-invocable: false
 source: NavGator/skills/code-review/SKILL.md

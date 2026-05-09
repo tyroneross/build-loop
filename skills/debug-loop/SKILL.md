@@ -1,6 +1,6 @@
 ---
 name: debug-loop
-description: Use for deep iterative debugging when memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, a fix didn't hold, or the user asks for root cause analysis. Not for known fixes or trivial issues.
+description: Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for "root cause", memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative 7-phase loop — not for known fixes or trivial issues.
 version: 1.1.0
 user-invocable: false
 ---

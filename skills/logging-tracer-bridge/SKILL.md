@@ -1,6 +1,6 @@
 ---
 name: build-loop:logging-tracer-bridge
-description: Optional escalation from build-loop's bundled logging-tracer skill to the standalone claude-code-debugger plugin for extended observability tooling — additional tracer backends, cross-build log correlation, advanced placement intelligence. Called BY logging-tracer when bundled tier-selection / codegen is insufficient, NOT by the orchestrator.
+description: Use when the bundled logging-tracer skill signals insufficient tier-selection or codegen, or the user asks for "extended observability" or "cross-build log correlation". Escalates to standalone claude-code-debugger for additional tracer backends and advanced placement intelligence.
 version: 0.3.0
 user-invocable: false
 ---

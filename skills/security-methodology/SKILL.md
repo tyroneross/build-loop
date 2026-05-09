@@ -1,7 +1,6 @@
 ---
 name: build-loop:security-methodology
-description: |
-  Build-time security rubric for agentic systems. Loads OWASP LLM Top 10 (v1.1), OWASP Agentic Top 10 (2026), the relevant subset of OWASP Web Top 10 (2025), a starter slice of MITRE ATLAS, and the engineering-relevant subset of NIST AI 600-1 — plus a single cross-source matrix. Loadable standalone when the user asks "what are the security concerns for this design", and auto-loaded by the `security-reviewer` agent in Phase 4.
+description: Use when a build crosses a security boundary (auth, authz, secrets handling, network exposure, persistence of sensitive data) or when Phase 1 Assess flags `triggers.riskSurfaceChange: true`. Provides the threat-modeling + scoped-permission methodology for build-loop's security-reviewer agent.
 version: 0.1.0
 user-invocable: true
 ---

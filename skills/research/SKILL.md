@@ -1,6 +1,6 @@
 ---
 name: research
-description: Generate a repo-grounded research packet before deciding whether/how to build. Pre-decision analysis with risks, best path, confidence, next action.
+description: Use when the user asks to "research", "investigate", "evaluate options", or "find out about" a topic. Generate a repo-grounded research packet before deciding whether/how to build — pre-decision analysis with risks, best path, confidence, next action.
 ---
 
 # Research — Pre-Decision Analysis

@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-impact
-description: Blast-radius analysis for a component or file before refactor. Build-loop's native impact analysis, copied from NavGator. Use in Phase 1 Assess for top-risk components and Phase 5 Iterate before any cross-layer fix.
+description: Use when Phase 1 Assess evaluates top-risk components, Phase 5 Iterate precedes a cross-layer fix, or the user asks "what does changing X break". Blast-radius analysis tracing upstream/downstream dependencies for a component or file before refactor.
 version: 0.1.0
 user-invocable: false
 source: NavGator/skills/impact-analysis/SKILL.md

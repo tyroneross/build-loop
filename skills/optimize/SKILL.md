@@ -1,6 +1,6 @@
 ---
 name: optimize
-description: Run multiple tests in a single experiment using Design of Experiments and other statistical methods. You can test six variables at once instead of one. The skill plans the test matrix, runs each combination, measures the metric, and tells you which variable actually moved the number. Triggers on "run optimization", "optimize this", "make this faster", "improve my app", "speed up X", "reduce <metric>". When you have only one variable, the skill falls back to a simpler one-at-a-time loop. If you do not name the variables, the skill reads your code, proposes some, and asks before running anything.
+description: Use when the user says "optimize this", "make X faster", "reduce <metric>", or "speed up my app". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables.
 ---
 
 # Optimize
