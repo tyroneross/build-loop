@@ -46,3 +46,6 @@ __pycache__/
 
 # Build-loop runtime artifacts
 .in_use/
+
+# Bookmark snapshot data
+.bookmark/
