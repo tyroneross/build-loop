@@ -1,7 +1,6 @@
 ---
 name: build-loop:defenseclaw-bridge
-description: |
-  Generates a DefenseClaw config skeleton from a project's agent-builder-style artifacts (`tool-contract.md`, `agent-manifest.md`, `guardrail.md`, `system-boundary.md`, `flow-topology.md`, `role-card.md`). Spec-only — does not run DefenseClaw, does not install dependencies, does not produce a working enforcement layer. Auto-invoked after Phase 3 Execute when the build produced any of those artifacts; user-invocable for ad-hoc spec generation.
+description: Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific files (CLAUDE.md indicates the bridge target). Bridges build-loop's orchestrator to defenseclaw's eval/test conventions; otherwise no-op.
 version: 0.1.0
 user-invocable: true
 ---

@@ -1,6 +1,6 @@
 ---
 name: authentication
-description: Use for auth wiring — Better Auth (Drizzle/Neon, magic links, social), Supabase Auth (SSR getAll/setAll), Google OAuth + Cloud Console + Maps/Places/Calendar, Resend (transactional, magic-link/OTP, webhooks). Debug redirect_uri_mismatch, invalid_grant, refresh_token, session callback, IDOR, magic-link expiry.
+description: Use when wiring auth to a new project, debugging login errors (redirect_uri_mismatch, invalid_grant, session callback), or adding social/magic-link flows. Covers Better Auth (Drizzle/Neon), Supabase Auth (SSR), Google OAuth, and Resend transactional email.
 ---
 
 # Authentication

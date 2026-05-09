@@ -71,12 +71,59 @@ def _filter_trigger_files(changed_files: list[str]) -> list[str]:
     return [f for f in changed_files if _matches_trigger(f)]
 
 
+def _runtime_server_trigger_files(workdir: Path, changed_files: list[str]) -> list[str]:
+    """Return changed_files that match runtimeServerInfo.server_module / embedded_ui_module
+    / event_handler_locations from .build-loop/state.json. This is the Python/SSE entry path
+    — Phase 1 Assess detects the runtime server via detect_runtime_server.py and writes the
+    paths to state.json; we honor those even when the path patterns above don't match
+    (e.g. Python `server.py` doesn't match `**/server.{ts,js}`).
+    """
+    state_path = workdir / ".build-loop" / "state.json"
+    if not state_path.exists():
+        return []
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not state.get("triggers", {}).get("runtimeServer"):
+        return []
+    info = state.get("runtimeServerInfo") or {}
+    relevant = set()
+    if info.get("server_module"):
+        relevant.add(info["server_module"])
+    if info.get("embedded_ui_module"):
+        relevant.add(info["embedded_ui_module"])
+    for loc in info.get("event_handler_locations") or []:
+        relevant.add(loc)
+    return [f for f in changed_files if f.replace("\\", "/") in relevant]
+
+
 # ---------------------------------------------------------------------------
 # Adapter detection
 # ---------------------------------------------------------------------------
 
 def _detect_adapter(workdir: Path) -> str | None:
-    """Return the adapter name for the project, or None if no adapter matched."""
+    """Return the adapter name for the project, or None if no adapter matched.
+
+    Resolution order:
+      1. SSE-consumer (Python or Node) when state.json declares triggers.runtimeServer + sse_route
+      2. Next.js (package.json has `next` dependency)
+      3. Future: express, fastapi, vite
+    """
+    # Highest priority: explicit runtime-server detection from Phase 1 Assess.
+    # Reads .build-loop/state.json to see if the project has an SSE surface
+    # the orchestrator already tagged.
+    state_path = workdir / ".build-loop" / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if state.get("triggers", {}).get("runtimeServer") and \
+               state.get("runtimeServerInfo", {}).get("sse_route"):
+                return "sse_consumer"
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Web/Next.js fallback
     pkg_path = workdir / "package.json"
     if pkg_path.exists():
         try:
@@ -163,8 +210,14 @@ def main(argv: list[str] | None = None) -> int:
     workdir = Path(args.workdir).resolve() if args.workdir else Path.cwd()
     changed_files: list[str] = args.changed_files
 
-    # Step 1: check for trigger files
+    # Step 1: check for trigger files. Two entry paths:
+    #   (a) path-pattern match against the static _TRIGGER_PATTERNS table (Next.js etc.)
+    #   (b) runtime-server detection from Phase 1 Assess (state.json) — covers Python servers,
+    #       SSE consumers, and any stack that detect_runtime_server.py recognized
     trigger_files = _filter_trigger_files(changed_files)
+    if not trigger_files:
+        # Try the runtime-server path before declaring no triggers.
+        trigger_files = _runtime_server_trigger_files(workdir, changed_files)
     if not trigger_files:
         envelope = {
             "status": "skipped",
@@ -199,8 +252,24 @@ def main(argv: list[str] | None = None) -> int:
 
     # Step 4: load and run the adapter
     adapter_module = _load_adapter(adapter_name)
+    # SSE-consumer adapter accepts `info` (runtimeServerInfo from state.json) as a
+    # third arg; nextjs and others ignore it. Pass best-effort.
+    info: dict = {}
+    state_path = workdir / ".build-loop" / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            info = state.get("runtimeServerInfo") or {}
+        except (json.JSONDecodeError, OSError):
+            info = {}
     try:
-        result = adapter_module.run(changed_files, workdir)
+        # Adapters with arity-2 signatures (nextjs) ignore the third argument
+        # via *args; sse_consumer uses it.
+        try:
+            result = adapter_module.run(changed_files, workdir, info)
+        except TypeError:
+            # Older adapter signature — fall back to two-arg
+            result = adapter_module.run(changed_files, workdir)
     except Exception as exc:  # noqa: BLE001
         # Adapter raised during run() — treat as a failed render, not a runner
         # error. Exit 1 routes to Iterate (see build-orchestrator.md Review-B).

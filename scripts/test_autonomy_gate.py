@@ -241,6 +241,51 @@ class AutonomyGateMalformedConfigTests(unittest.TestCase):
         self.assertEqual(data["action"], "auto", msg=str(data))
 
 
+class AutonomyGateWarnTests(unittest.TestCase):
+    """Case 8: repo warnFor patterns exit 0 with action=warn."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write_config(self, autonomy: dict) -> None:
+        config_path = self.workdir / ".build-loop" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps({"autonomy": autonomy}))
+
+    def test_warn_pattern_exits_zero(self) -> None:
+        """warnFor pattern exits 0 with action=warn."""
+        self._write_config({"warnFor": ["touch-prod-config*"]})
+        result = run(self.workdir, "ops", "touch-prod-config /etc/foo")
+        data = envelope(result)
+        self.assertEqual(data["action"], "warn", msg=str(data))
+        self.assertEqual(result.returncode, 0, msg=f"Expected exit 0, got {result.returncode}")
+
+    def test_warn_appears_in_envelope(self) -> None:
+        """warnFor match surfaces action=warn, list_source=config, and matched_rule in envelope."""
+        self._write_config({"warnFor": ["touch-prod-config*"]})
+        result = run(self.workdir, "ops", "touch-prod-config /etc/foo")
+        data = envelope(result)
+        self.assertEqual(data["action"], "warn", msg=str(data))
+        self.assertEqual(data["list_source"], "config", msg=str(data))
+        self.assertEqual(data["matched_rule"], "touch-prod-config*", msg=str(data))
+
+    def test_confirm_for_wins_over_warn_for_on_tie(self) -> None:
+        """When a command matches both confirmFor and warnFor, confirmFor wins (stricter verdict)."""
+        self._write_config({"confirmFor": ["foo*"], "warnFor": ["foo*"]})
+        result = run(self.workdir, "ops", "foo bar")
+        data = envelope(result)
+        self.assertEqual(
+            data["action"],
+            "confirm",
+            msg=f"Expected confirm (stricter wins on tie), got {data['action']!r}. Full: {data}",
+        )
+        self.assertEqual(result.returncode, 1, msg=f"Expected exit 1, got {result.returncode}")
+
+
 class AutonomyGateSelfTestTests(unittest.TestCase):
     """Verify --self-test exits 0."""
 

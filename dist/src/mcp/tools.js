@@ -37,7 +37,7 @@ function errorResponse(text) {
 exports.TOOLS = [
     {
         name: 'search',
-        description: 'Check debugging memory for similar past issues. Returns a verdict (KNOWN_FIX, LIKELY_MATCH, WEAK_SIGNAL, NO_MATCH) with matching incidents and patterns. Use before investigating any bug.',
+        description: 'Check debugging memory for similar past issues. Returns a verdict (KNOWN_FIX, LIKELY_MATCH, WEAK_SIGNAL, NO_MATCH) with matching incidents and patterns. Use before investigating any bug. Do NOT use to record outcomes (use `outcome`). Do NOT use to enumerate all incidents (use `list`).',
         inputSchema: {
             type: 'object',
             properties: {
@@ -322,6 +322,8 @@ async function handleSearch(args) {
         }
     }
     lines.push(`\nTokens used: ${result.tokens_used}`);
+    lines.push('');
+    lines.push('Next: after landing the fix, call `outcome` with worked|failed|modified to improve future verdicts.');
     return textResponse(lines.join('\n'));
 }
 async function handleStore(args) {
@@ -386,7 +388,7 @@ async function handleStore(args) {
         },
     };
     const result = await (0, storage_1.storeIncident)(incident);
-    return textResponse(`Incident stored: ${result.incident_id}\nFile: ${result.file_path}`);
+    return textResponse(`Incident stored: ${result.incident_id}\nFile: ${result.file_path}\n\nNext: use this incident_id when calling \`outcome\` after verifying the fix.`);
 }
 async function handleDetail(args) {
     const id = String(args.id || '');
@@ -409,6 +411,8 @@ async function handleDetail(args) {
         if (pattern.caveats?.length) {
             lines.push(`\nCaveats:\n${pattern.caveats.map((c) => `- ${c}`).join('\n')}`);
         }
+        lines.push('');
+        lines.push(`Next: detection signatures shown above can be matched against your current symptom; if a match, apply the solution_template.`);
         return textResponse(lines.join('\n'));
     }
     if (id.startsWith('INC_')) {
@@ -438,6 +442,8 @@ async function handleDetail(args) {
         lines.push(`Files changed: ${incident.files_changed.join(', ')}`);
         const quality = incident.completeness?.quality_score ?? incident.quality_score ?? 0;
         lines.push(`Quality: ${(quality * 100).toFixed(0)}%`);
+        lines.push('');
+        lines.push(`Next: see related incidents via \`list\` (filter by category=${incident.root_cause.category}); record fix outcome via \`outcome\`.`);
         return textResponse(lines.join('\n'));
     }
     return errorResponse(`Invalid ID format. Expected INC_* or PTN_*, got: ${id}`);
@@ -529,6 +535,8 @@ async function handleList(args) {
         const sym = incident.symptom.substring(0, 60);
         lines.push(`- ${id} [${date}] ${cat}: ${sym}`);
     }
+    lines.push('');
+    lines.push('Next: call `detail` with an incident_id (INC_*) to see full root cause + fix steps.');
     return textResponse(lines.join('\n'));
 }
 async function handlePatterns(args) {
@@ -548,6 +556,8 @@ async function handlePatterns(args) {
             lines.push(`  Signatures: ${p.detection_signature.slice(0, 3).join(', ')}`);
         }
     }
+    lines.push('');
+    lines.push('Next: use detection signatures to recognize matches in your current symptom.');
     return textResponse(lines.join('\n'));
 }
 async function handleOutcome(args) {
@@ -605,6 +615,8 @@ async function handleReadLogs(args) {
     if (result.truncated) {
         lines.push(`\n... ${result.total_matched - result.entries.length} more entries (use limit to see more)`);
     }
+    lines.push('');
+    lines.push('Next: call `search` with the most distinctive symptom keyword from these logs to check memory before debugging.');
     return textResponse(lines.join('\n'));
 }
 //# sourceMappingURL=tools.js.map

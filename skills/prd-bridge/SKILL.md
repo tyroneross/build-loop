@@ -1,6 +1,6 @@
 ---
 name: build-loop:prd-bridge
-description: Check for a project-level PRD in Phase 1 Assess; surface its always-true principles and Navigation Map so subsequent phases reason from strategic frame. Recommend the prd-builder skill if no PRD exists.
+description: Use when Phase 1 Assess runs, the user mentions a PRD, or asks to "ground the build in product strategy". Surfaces always-true principles and Navigation Map from the project PRD so subsequent phases reason from strategic frame; recommends prd-builder if none exists.
 version: 0.1.0
 user-invocable: false
 ---

@@ -1,7 +1,7 @@
 {
-    "name": "@tyroneross/claude-code-debugger",
-    "version": "1.8.0",
-    "description": "Debugging memory system with tiered storage, verdict-first responses, context compression, and parallel assessment - never solve the same bug twice",
+    "name": "@tyroneross/build-loop",
+    "version": "0.10.0",
+    "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate.",
     "main": "dist/src/index.js",
     "types": "dist/src/index.d.ts",
     "exports": {
@@ -21,8 +21,11 @@
         "hooks",
         "agents",
         ".claude-plugin",
+        ".codex-plugin",
+        ".agents",
         ".mcp.json",
         "README.md",
+        "AGENTS.md",
         "LICENSE"
     ],
     "scripts": {
@@ -36,28 +39,25 @@
         "clean": "rm -rf dist"
     },
     "keywords": [
-        "debugging",
-        "memory",
+        "build-loop",
+        "orchestration",
+        "codex",
         "claude-code",
-        "incident-tracking",
-        "pattern-recognition",
-        "developer-tools",
-        "opentelemetry",
-        "traces",
-        "parallel-assessment",
-        "sentry",
-        "langchain"
+        "plugin",
+        "agentic-development",
+        "spec-writing",
+        "evaluation"
     ],
     "author": "Tyrone Ross",
     "license": "FSL-1.1-MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/tyroneross/claude-code-debugger"
+        "url": "https://github.com/tyroneross/build-loop"
     },
     "bugs": {
-        "url": "https://github.com/tyroneross/claude-code-debugger/issues"
+        "url": "https://github.com/tyroneross/build-loop/issues"
     },
-    "homepage": "https://github.com/tyroneross/claude-code-debugger#readme",
+    "homepage": "https://github.com/tyroneross/build-loop#readme",
     "dependencies": {
         "commander": "^14.0.3",
         "natural": "^8.1.0",

@@ -1,7 +1,6 @@
 ---
 name: build-loop:capabilities
-description: |
-  Returns a ≤8-entry shortlist of build-loop capabilities (agents, skills, commands, hooks, MCP tools, scripts) relevant to a given phase + intent. Reads the unified registry at `.build-loop/capability-registry.json` produced by `scripts/build_capability_registry.py`. Used by the orchestrator at Phase 1 Assess to narrow the decision space from ~113 surfaces to ≤8 per phase. Read-only.
+description: Invoked by Phase 1 Assess to populate `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion. Keeps the orchestrator below the empirical tool-selection ceiling. Not user-callable; orchestrator-internal.
 model: sonnet
 tools: ["Read", "Bash"]
 ---

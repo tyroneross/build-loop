@@ -1,6 +1,6 @@
 ---
 name: build-loop:architecture-dead
-description: Orphaned-component / dead-code scan. Build-loop's native dead-code scan, copied from NavGator's CLI command (no canonical SKILL.md exists upstream).
+description: Use when the user asks to "find dead code", "scan for orphaned components", or "clean up unused files", or during Phase 4 Review before a release. Scans for unreachable components and dead code; build-loop's native scan from NavGator's CLI.
 version: 0.1.0
 user-invocable: false
 source: NavGator/commands/dead.md

@@ -5,12 +5,15 @@ Precedence (highest to lowest):
   1. deployment_policy.py  — push/deploy/release commands route there first
   2. Repo blockFor         — hard-block patterns from .build-loop/config.json
   3. Repo confirmFor       — require-confirm patterns from .build-loop/config.json
-  4. Default confirmFor    — 7 built-in confirm patterns (see DEFAULT_CONFIRM_FOR)
-  5. Default blockFor      — empty by default
-  6. auto                  — no pattern matched; safe to execute
+  4. Repo warnFor          — warn-only patterns from .build-loop/config.json (NEW)
+  5. Default confirmFor    — 7 built-in confirm patterns (see DEFAULT_CONFIRM_FOR)
+  6. Default warnFor       — empty by default (NEW)
+  7. Default blockFor      — empty by default
+  8. auto                  — no pattern matched; safe to execute
 
 Exit codes (mirror deployment_policy.py exit semantics via --require-auto):
-  0 — auto   (safe to execute)
+  0 — auto    (safe to execute)
+  0 — warn    (safe to execute, but flagged for match-rate tracking) [NEW]
   1 — confirm (operator must approve)
   2 — block   (do not execute under any circumstance)
 
@@ -20,12 +23,15 @@ Repo override schema (.build-loop/config.json):
       "autoFixGuidance": true,
       "autoExecuteOpenRecs": true,
       "confirmFor": ["<glob>", ...],
+      "warnFor": ["<glob>", ...],
       "blockFor": ["<glob>", ...]
     }
   }
 
-  confirmFor and blockFor REPLACE defaults, not extend.
+  confirmFor, warnFor, and blockFor REPLACE defaults, not extend.
   Copy the 7 defaults into your config if you want to extend.
+  When a command matches both confirmFor and warnFor, confirmFor wins (stricter
+  verdict on tie).
 """
 from __future__ import annotations
 
@@ -50,6 +56,8 @@ DEFAULT_CONFIRM_FOR: list[str] = [
     "DROP TABLE*",
     "rm -rf /*",
 ]
+
+DEFAULT_WARN_FOR: list[str] = []  # empty by default; operators add patterns to observe match-rate before promoting to confirmFor
 
 DEFAULT_BLOCK_FOR: list[str] = []
 
@@ -234,12 +242,13 @@ def classify(
             env["flags"] = _extract_flags(autonomy)
             return env
 
-    # Step 2-5: pattern matching
+    # Steps 2-7: pattern matching
     autonomy, config_source = load_autonomy_config(workdir)
     flags = _extract_flags(autonomy)
 
     repo_block = _get_pattern_list(autonomy, "blockFor")
     repo_confirm = _get_pattern_list(autonomy, "confirmFor")
+    repo_warn = _get_pattern_list(autonomy, "warnFor")
 
     effective_block = repo_block if repo_block is not None else DEFAULT_BLOCK_FOR
     effective_confirm = repo_confirm if repo_confirm is not None else DEFAULT_CONFIRM_FOR
@@ -250,24 +259,37 @@ def classify(
         return _envelope("block", matched, "config", "matched repo blockFor pattern", action_label, command, flags)
 
     # Step 3: repo confirmFor (only when config exists and has confirmFor)
+    # confirmFor wins over warnFor on a tie — check confirmFor first.
     if repo_confirm is not None:
         matched = _matches_any(command, repo_confirm)
         if matched:
             return _envelope("confirm", matched, "config", "matched repo confirmFor pattern", action_label, command, flags)
 
-    # Step 4: default confirmFor (only when repo has NOT overridden confirmFor)
+    # Step 4: repo warnFor (only when config exists and has warnFor)
+    if repo_warn is not None:
+        matched = _matches_any(command, repo_warn)
+        if matched:
+            return _envelope("warn", matched, "config", "matched repo warnFor pattern", action_label, command, flags)
+
+    # Step 5: default confirmFor (only when repo has NOT overridden confirmFor)
     if repo_confirm is None:
         matched = _matches_any(command, DEFAULT_CONFIRM_FOR)
         if matched:
             return _envelope("confirm", matched, "default", "matched default confirmFor pattern", action_label, command, flags)
 
-    # Step 5: default blockFor (only when repo has NOT overridden blockFor)
+    # Step 6: default warnFor (only when repo has NOT overridden warnFor; empty by default — no-op)
+    if repo_warn is None:
+        matched = _matches_any(command, DEFAULT_WARN_FOR)
+        if matched:
+            return _envelope("warn", matched, "default", "matched default warnFor pattern", action_label, command, flags)
+
+    # Step 7: default blockFor (only when repo has NOT overridden blockFor)
     if repo_block is None:
         matched = _matches_any(command, DEFAULT_BLOCK_FOR)
         if matched:
             return _envelope("block", matched, "default", "matched default blockFor pattern", action_label, command, flags)
 
-    # Step 6: auto
+    # Step 8: auto
     source = config_source if config_source == "config" else "default"
     return _envelope("auto", None, source, "no pattern matched; safe to execute", action_label, command, flags)
 
@@ -305,6 +327,7 @@ def _extract_flags(autonomy: dict[str, Any]) -> dict[str, Any]:
 
 ACTION_EXIT_CODES = {
     "auto": 0,
+    "warn": 0,      # does not block; flags the action for match-rate tracking
     "confirm": 1,
     "block": 2,
 }
@@ -365,6 +388,11 @@ def _run_self_tests() -> bool:
     # so it won't be routed to deployment_policy.
     env = classify(tmp, "db", "DROP TABLE users")
     check("defaults disabled by repo override", env["action"] == "auto", f"got {env['action']}")
+
+    # --- Repo warnFor ---
+    config_path.write_text(json.dumps({"autonomy": {"warnFor": ["touch-prod-config*"]}}))
+    env = classify(tmp, "ops", "touch-prod-config /etc/foo")
+    check("repo warnFor exits 0", env["action"] == "warn", f"got {env['action']}")
 
     # --- Repo blockFor ---
     config_path.write_text(json.dumps({"autonomy": {"blockFor": ["rm -rf *"]}}))
