@@ -55,32 +55,42 @@ def check_mcp_server_path(source: Path) -> tuple[bool, str]:
     if not servers:
         return False, ".mcp.json has no mcpServers entries"
 
+    resolved_paths: list[str] = []
     for server_name, server_cfg in servers.items():
         # Check args list first, then command
         args = server_cfg.get("args", [])
         command = server_cfg.get("command", "")
 
-        # Find the first path-like argument (ends with .js, .py, .sh, .ts, etc.)
+        # Find every path-like argument (ends with .js, .py, .sh, .ts, etc.)
         candidates: list[str] = []
         for arg in args:
             expanded = expand_plugin_root(arg, source)
-            # Treat as a file path if it looks like one
             if "/" in expanded or expanded.endswith((".js", ".py", ".sh", ".ts", ".mjs")):
                 candidates.append(expanded)
         if not candidates and command:
             candidates.append(expand_plugin_root(command, source))
 
+        # Validate every candidate. Fail fast on the first missing path; only
+        # advance to the next server when ALL candidates of this server resolve.
         for candidate in candidates:
             p = Path(candidate)
             if p.is_absolute() or p.parts[0] not in (".", ".."):
                 if not p.exists():
                     return False, f"server '{server_name}' path does not exist: {candidate}"
+                resolved_paths.append(f"{server_name} -> {candidate}")
             else:
                 resolved = (source / candidate).resolve()
                 if not resolved.exists():
                     return False, f"server '{server_name}' path does not exist: {resolved}"
-            return True, f"server '{server_name}' path resolves: {candidate}"
+                resolved_paths.append(f"{server_name} -> {resolved}")
 
+    if resolved_paths:
+        # First entry is the most informative for human-readable output;
+        # multi-server installs see the full list collapsed onto one line.
+        head = resolved_paths[0]
+        if len(resolved_paths) > 1:
+            return True, f"{len(resolved_paths)} paths resolve (first: {head})"
+        return True, f"server '{head}' resolves"
     return True, "no path-bearing args found in .mcp.json (skipped path check)"
 
 

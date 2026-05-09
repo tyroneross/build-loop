@@ -784,6 +784,28 @@ SCOPE_AUDITOR_STATUS_RE = re.compile(
 FRONTMATTER_ID_RE = re.compile(r"^\s*id\s*:\s*(.+)$", re.IGNORECASE)
 
 
+_YAML_KEY_RE = re.compile(r"^\s*[a-z_][a-z0-9_]*\s*:\s*\S")
+
+
+def _line_has_frontmatter_neighbors(lines: list[tuple[int, str]], idx: int, window: int = 5) -> bool:
+    """True when at least two other YAML-shape `key: value` lines appear
+    within `window` lines of `idx`. Cheap heuristic that distinguishes a
+    genuine frontmatter block from a one-off prose mention."""
+    n = len(lines)
+    lo = max(0, idx - window)
+    hi = min(n, idx + window + 1)
+    neighbors = 0
+    for j in range(lo, hi):
+        if j == idx:
+            continue
+        text = lines[j][1] or ""
+        if _YAML_KEY_RE.match(text):
+            neighbors += 1
+            if neighbors >= 2:
+                return True
+    return False
+
+
 def rule_scope_audit_required(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
     """WARN: `modifies_api: true` is set in plan/chunk frontmatter but no
     `scope_auditor_status:` field follows in the same plan.
@@ -802,6 +824,11 @@ def rule_scope_audit_required(plan_path: Path, lines: list[tuple[int, str]]) -> 
         if not line:
             continue
         if MODIFIES_API_TRUE_RE.match(line):
+            # Suppress prose false-positives: only fire when the line is
+            # surrounded by other YAML-shape keys (i.e. inside a frontmatter
+            # block), not when it appears as a one-off mention in prose.
+            if not _line_has_frontmatter_neighbors(lines, idx):
+                continue
             # Find nearest id: within 20 lines above/below.
             lo = max(0, idx - 20)
             hi = min(n, idx + 21)

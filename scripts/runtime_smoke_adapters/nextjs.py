@@ -268,34 +268,55 @@ def run(changed_files: list[str], workdir: Path) -> dict:
             "findings": [],
         }
 
-    # 3. Find a free port
-    port = _find_free_port()
-    base_url = f"http://127.0.0.1:{port}"
-
-    # Determine the dev command
+    # 3. Find a free port and spawn the dev server. The bind/release/Popen
+    #    sequence has a small TOCTOU window; on busy hosts another process
+    #    can claim the port between _find_free_port() and Popen. Retry up
+    #    to 3 times with a fresh port if the dev server dies before boot.
     scripts = pkg.get("scripts", {})
-    if "dev" in scripts:
-        cmd = ["npm", "run", "dev", "--", "--port", str(port)]
-    else:
-        cmd = ["npx", "next", "dev", "--port", str(port)]
 
     proc: subprocess.Popen | None = None
     findings: list[dict] = []
+    port = -1
+    base_url = ""
 
     try:
-        # 4a. Spawn the dev server
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(workdir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
         boot_deadline = time.monotonic() + BOOT_TIMEOUT_SECONDS
         total_deadline = start_time + TOTAL_TIMEOUT_SECONDS
 
-        # 4b. Wait for ready signal or timeout
-        ready = _wait_for_server(proc, port, min(boot_deadline, total_deadline))
+        ready = False
+        for attempt in range(3):
+            port = _find_free_port()
+            base_url = f"http://127.0.0.1:{port}"
+            cmd = (
+                ["npm", "run", "dev", "--", "--port", str(port)]
+                if "dev" in scripts
+                else ["npx", "next", "dev", "--port", str(port)]
+            )
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(workdir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            ready = _wait_for_server(proc, port, min(boot_deadline, total_deadline))
+            if ready:
+                break
+            # Boot failed — kill cleanly and decide whether to retry. Retry
+            # is meaningful only when we still have boot-deadline budget AND
+            # the process exited (vs. hung). A hung process means something
+            # other than port-in-use, so don't retry.
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                proc = None
+                break  # hang, not port race
+            proc = None
+            if time.monotonic() >= boot_deadline:
+                break
+
         if not ready:
             return {
                 "status": "fail",
@@ -328,7 +349,10 @@ def run(changed_files: list[str], workdir: Path) -> dict:
                         if finding["render_status"] != "fail":
                             finding["render_status"] = "fail"
                             finding["finding"] = "Hydration mismatch detected in server stderr"
-                except OSError:
+                except (OSError, ValueError, AttributeError):
+                    # ValueError on closed pipe; AttributeError if read1 vanishes
+                    # between the hasattr check and the call (rare but possible
+                    # when the subprocess dies mid-read).
                     pass
 
             findings.append(finding)
