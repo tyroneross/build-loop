@@ -607,7 +607,7 @@ Preserve: public API surface, test coverage, observability (logging/tracing), do
 
 Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
 
-- **Sub-step A Critic** — guidance findings with a `suggested_fix:` field and a single named file path
+- **Sub-step A Critic** — guidance findings with a `recommendation:` field (canonical critic-output field per `agents/sonnet-critic.md`) and a single named file path
 - **Sub-step D Fact-Check & Mock Scan** — non-blocking gate findings (e.g. `Plugin Cache Sync` divergence, `Version-Bump Advisor` notes when `release-pending.md` is absent, single-file documentation drift)
 - **Operator queue** — items previously deferred via the `## Held` section of a prior build's report
 
