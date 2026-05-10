@@ -100,6 +100,16 @@ The implementer's return MUST conform to `references/implementer-envelope-schema
 
 If the plan includes a `synthesis_dimensions` block and you find yourself making a synthesis-class decision NOT named there, **halt and add it to `novel_decisions`** rather than attesting silently (per `agents/implementer.md` Step 5).
 
+## Attestation claim formulation
+
+Two rules surfaced from the 2026-05-09 podcast-validation retest. Both are honest discipline that prevents `attestation_lint` revision cycles.
+
+**Rule 1 — Anchor-visibility.** Placement claims must reference anchors visible in the *diff context window*, not anchors anywhere in the pre-image. `attestation_lint` only sees the diff hunks plus their context; it cannot verify a claim like "render after `<h1>AI Brief</h1>`" if the `<h1>` line isn't part of the changed hunk's context. Use the nearest diff-visible anchor (e.g. "render before `<AIBriefSections />` at line N") even when the underlying physical placement is the same.
+
+**Rule 2 — `n/a` is correct when no signal added.** For dimensions that require positive evidence in the added lines (`cta_tier` needs a tier className; `visual_weight` needs a heading or divider), attest `n/a` when the commit adds no such signal. Do NOT claim `applied` because the dimension is "implicitly satisfied" by surrounding code. Claiming `applied` without matching diff evidence is exactly the silent-claim pattern the lint exists to catch — and the lint will reject it.
+
+Worked example from the validation: a one-file edit added `<PodcastGenerator />` between `<h1>` and `<AIBriefSections />`. The implementer initially claimed `cta_tier: applied (primary)` and `visual_weight: applied (no <h2>)`. Lint rejected both — no `primary` className token in the added lines, and `no <h2>` is a negative claim a regex reads as positive. Honest re-attestation: both `n/a` because the commit's contribution carries placement intent without adding new tier/weight tokens. Placement remained `applied` with the anchor reformulated using the diff-visible `<AIBriefSections />` reference.
+
 ## Why each section matters
 
 | Section | Round-3 evidence |
@@ -131,6 +141,8 @@ If the orchestrator can't populate any of these sections, the brief is too vague
 - ❌ Pseudocode for an SDK call. Round-2 C2 (TTS upgrade) had pseudocode; implementer wrote correct call shape but spent time confirming. Round-3 C5 (color mapping) had full code; implementer's first edit was complete.
 - ❌ Skipping schema-field-uncertainty for Prisma touches. Round-3 C1 evidence: silent runtime bug masked by test mocks.
 - ❌ Brief that fits on one screen for non-trivial work. Round-3 implementer briefs averaged ~80-120 lines each; round-2 averaged ~50-80. The longer briefs produced cleaner output.
+- ❌ Attesting `applied` on a dimension when the commit added no positive signal for it (no tier className for `cta_tier`, no heading/divider for `visual_weight`). 2026-05-09 podcast-validation evidence: lint rejects the claim; `n/a` is the honest answer when the commit's contribution doesn't carry that dimension. See "Attestation claim formulation" above.
+- ❌ Placement claims using anchors outside the diff context window. 2026-05-09 evidence: claim-text needs to reference an anchor the lint can see in the hunk's context; otherwise the claim is unverifiable even when the placement itself is correct.
 
 ## Note on brief size budget
 
