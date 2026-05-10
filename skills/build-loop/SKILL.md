@@ -121,6 +121,12 @@ Every build uses `references/intent-capability-pack.md`. Phase 1 captures the ap
 
 Core rule: build decisions should create user value and a delightful, trustworthy experience. Mock data, dead controls, unused navigation, decorative options, and excessive choices violate the pack when they reach user-facing or user-decision paths.
 
+## UI Input/Output Contract
+
+Every UI build uses `references/ui-io-contract.md`. Before component choices are locked, build-loop must name every affected user input and system output, classify its data shape, map the operation and domain verb, choose the matching input/output component, document states and modality fallbacks, and trace validation/security to the right layer.
+
+For UI work, Phase 2 plans must include a `## UI Input/Output Contract` section. Phase 3 UI implementer prompts must carry that contract, and Phase 4 validation must check that changed UI surfaces still match it. This applies to forms, tables, charts, voice/audio, file workflows, generated AI output, and streaming responses.
+
 ## Modular Systems Pack
 
 Every non-trivial build uses `references/modular-systems-pack.md`. Build-loop should default to modular, scalable, MECE structure with pyramid-structured plans and reports: high cohesion, loose coupling, stable interfaces, one clear file owner per changed file, and no unowned responsibilities.
@@ -137,7 +143,7 @@ Build-loop prefers installed plugins and skills over reinventing patterns. Each 
 
 Understand current state, load memory, detect tools, map architecture, capture north star + update intent, define goal and criteria. Writes `.build-loop/intent.md` + `.build-loop/goal.md`.
 
-Key steps: detect plugins → set sub-routers → map architecture → load PRD if present → capture intent → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
+Key steps: detect plugins → set sub-routers → map architecture → load PRD if present → capture intent → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 
@@ -145,7 +151,7 @@ Key steps: detect plugins → set sub-routers → map architecture → load PRD 
 
 Break work into executable steps, build dependency graph, MECE-partition file ownership, run plan acceptance gates.
 
-Key steps: writing-plans skill → parallel-safe identification → intent mapping → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
+Key steps: writing-plans skill → parallel-safe identification → intent mapping → UI input/output contract section when UI is in scope → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
 
 **Load `skills/build-loop/references/phase-2-plan.md`** for the full protocol including spec-writing gate, mockup-first gate, Codex delegation, and plan acceptance steps.
 
@@ -153,7 +159,7 @@ Key steps: writing-plans skill → parallel-safe identification → intent mappi
 
 Implement the plan using parallel subagents where possible, following the single-writer git contract.
 
-Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → single-writer git contract (implementers never commit) → C5 halt-and-ask backstop for architectural-class novel decisions.
+Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → pass the UI input/output contract to UI implementers → single-writer git contract (implementers never commit) → C5 halt-and-ask backstop for architectural-class novel decisions.
 
 **Load `skills/build-loop/references/phase-3-execute.md`** for the full protocol including Codex adapter, UI subagent prompt template, and coordination checkpoint policy.
 

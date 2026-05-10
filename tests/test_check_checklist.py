@@ -2,13 +2,13 @@
 Tests for skills/spec-writing/scripts/check_checklist.py.
 
 Covers:
-  - clean plan with all 8 items answered → exit 0
-  - plan with missing checklist block → exit 1, all 8 flagged
+  - clean plan with all required items answered → exit 0
+  - plan with missing checklist block → exit 1, all items flagged
   - plan with some items missing → exit 1, correct count
   - plan with placeholder answers → exit 1
   - plan with N/A answers → treated as answered (valid)
   - json output structure
-  - standalone CLI: deliberately incomplete fixture → flags 8 items
+  - standalone CLI: deliberately incomplete fixture → flags missing items
 
 Stdlib only + pytest.
 """
@@ -41,9 +41,9 @@ def _run(plan_path: Path, *, quiet: bool = True) -> tuple[int, dict]:
 
 def _all_8_items_answered() -> str:
     """
-    Return a plan markdown with all 14 checklist items properly answered.
+    Return a plan markdown with all required checklist items properly answered.
     Named _all_8_items_answered for backward compat with existing tests;
-    now includes items 9-14 as the verifier requires all 14.
+    now includes later checklist items as the verifier requires more than 8.
     Does not write a sibling handoff file — item 14 is answered N/A.
     """
     return """\
@@ -66,6 +66,7 @@ Item 13 — Analytical lens: N/A: trivial patch, no analytical lens required
 Item 14 — Handoff document: N/A: no implementation tasks
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 17 — UI input/output contract: N/A: no UI surface
 -->
 
 ## Goal
@@ -138,7 +139,7 @@ Some scope.
 
 
 def _partial_checklist(answered_count: int) -> str:
-    """Answer only the first `answered_count` items (out of 14)."""
+    """Answer only the first `answered_count` items from the checklist."""
     all_items = [
         "Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts",
         "Item 2 — External APIs: N/A: no external APIs",
@@ -156,6 +157,7 @@ def _partial_checklist(answered_count: int) -> str:
         "Item 14 — Handoff document: N/A: no implementation tasks",
         "Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler",
         "Item 16 — Risk reason: N/A",
+        "Item 17 — UI input/output contract: N/A: no UI surface",
     ]
     lines = "\n".join(all_items[:answered_count])
     return f"""\
@@ -196,6 +198,7 @@ Item 13 — Analytical lens: N/A: trivial change
 Item 14 — Handoff document: N/A: no implementation tasks
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 17 — UI input/output contract: N/A: no UI surface
 -->
 
 ## Goal
@@ -249,14 +252,14 @@ class TestNoChecklistBlock:
         assert payload["checklist_found"] is False
 
     def test_all_14_flagged(self, tmp_path: Path) -> None:
-        # Despite the legacy name, the checklist is now 16 items (Item 15
-        # synthesis_dimensions + Item 16 risk_reason added 2026-05). When no
+        # Despite the legacy name, the checklist is now 17 items (Item 15
+        # synthesis_dimensions, Item 16 risk_reason, and Item 17 UI I/O contract). When no
         # checklist block is present the verifier returns len(ITEMS) without
         # filtering optionals, so the count tracks the full ITEMS list.
         plan = tmp_path / "plan.md"
         plan.write_text(_no_checklist_block(), encoding="utf-8")
         _, payload = _run(plan)
-        assert payload["missing_count"] == 16
+        assert payload["missing_count"] == 17
 
 
 class TestPartialChecklist:
@@ -356,11 +359,11 @@ class TestJsonOutputShape:
 
     def test_exactly_14_findings(self, tmp_path: Path) -> None:
         # Findings list always has one entry per ITEM, regardless of optional
-        # filtering. Now 16 items (Item 15 + Item 16 added 2026-05).
+        # filtering. Now 17 items (Item 15 + Item 16 + Item 17).
         plan = tmp_path / "plan.md"
         plan.write_text(_all_8_items_answered(), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 16
+        assert len(payload["findings"]) == 17
 
     def test_structural_warnings_key_present(self, tmp_path: Path) -> None:
         """structural_warnings must always be present in output (may be empty list)."""
@@ -371,13 +374,13 @@ class TestJsonOutputShape:
         assert "structural_warning_count" in payload
 
     def test_exactly_14_findings_with_items_9_to_14(self, tmp_path: Path) -> None:
-        """When all required items are answered, findings list has 16 entries
-        (one per ITEM, including the always-optional Item 16)."""
+        """When all required items are answered, findings list has 17 entries
+        (one per ITEM, including optional items)."""
         plan = tmp_path / "plan.md"
         plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 16, (
-            f"Expected 16 findings; got {len(payload['findings'])}"
+        assert len(payload["findings"]) == 17, (
+            f"Expected 17 findings; got {len(payload['findings'])}"
         )
 
 
@@ -387,7 +390,7 @@ class TestJsonOutputShape:
 
 def _all_14_items_answered(tmp_path: Path) -> str:
     """
-    Full plan with all 14 checklist items answered plus structural elements
+    Full plan with required checklist items answered plus structural elements
     required by items 9-14: ID chains, JSON spec section, ADR heading,
     analytical lens, and a sibling .handoff.md (written by the fixture helper).
     """
@@ -417,6 +420,7 @@ Item 13 — Analytical lens: QFD — need-to-feature mapping for requirements; D
 Item 14 — Handoff document: plan.handoff.md generated alongside this plan
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in POST handler
 Item 16 — Risk reason: N/A: no high-consequence boundary in scope
+Item 17 — UI input/output contract: N/A: no UI surface
 -->
 
 ## Goal
@@ -528,7 +532,7 @@ Missing items 9-14 from checklist.
 
 
 def _plan_no_json_spec_section() -> str:
-    """Plan with all 14 checklist items answered but no ## Spec Object (JSON) section."""
+    """Plan with required checklist items answered but no ## Spec Object (JSON) section."""
     return """\
 # Plan: No JSON Spec
 
@@ -644,6 +648,107 @@ Analytical lens: QFD
 ## Risks
 
 None.
+"""
+
+
+def _ui_plan_without_io_contract() -> str:
+    """UI plan with synthesis dimensions but no UI Input/Output Contract section."""
+    return """\
+# Plan: Missing UI IO Contract
+
+<!-- checklist
+Item 1 — Auth guard: N/A
+Item 2 — External APIs: N/A
+Item 3 — Rate-limit criterion: N/A
+Item 4 — Discoverability: Search page → results panel
+Item 5 — Server/client boundary: N/A
+Item 6 — Concurrency: N/A
+Item 7 — Observability: structuredLog on search submit
+Item 8 — Input validation: query length checked before submit
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only
+Item 11 — Blocking-and-novel question gate: N/A
+Item 12 — Low-reversibility ADRs: N/A
+Item 13 — Analytical lens: QFD
+Item 14 — Handoff document: N/A
+Item 15 — Synthesis dimensions: required keys present below
+Item 16 — Risk reason: N/A
+Item 17 — UI input/output contract: claimed present
+-->
+
+## Goal
+
+Update `components/search/SearchResults.tsx`.
+
+## Synthesis Dimensions
+
+```yaml
+synthesis_dimensions:
+  placement: "inside components/search/SearchResults.tsx after result header"
+  cta_tier: "secondary"
+  copy_tone: "concise neutral"
+  visual_weight: "medium"
+  empty_state: "one-line empty result with retry CTA"
+```
+
+## Locked Decisions
+
+Analytical lens: QFD
+"""
+
+
+def _ui_plan_with_io_contract(*, include_checklist_item: bool = True) -> str:
+    """UI plan with a valid UI Input/Output Contract section."""
+    item_17 = (
+        "Item 17 — UI input/output contract: SearchResults row covers inputs, outputs, data taxonomy, operation, mapping, states, modality, validation/security, traceability\n"
+        if include_checklist_item else ""
+    )
+    return f"""\
+# Plan: Valid UI IO Contract
+
+<!-- checklist
+Item 1 — Auth guard: N/A
+Item 2 — External APIs: N/A
+Item 3 — Rate-limit criterion: N/A
+Item 4 — Discoverability: Search page → results panel
+Item 5 — Server/client boundary: N/A
+Item 6 — Concurrency: N/A
+Item 7 — Observability: structuredLog on search submit
+Item 8 — Input validation: query length checked before submit
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only
+Item 11 — Blocking-and-novel question gate: N/A
+Item 12 — Low-reversibility ADRs: N/A
+Item 13 — Analytical lens: QFD
+Item 14 — Handoff document: N/A
+Item 15 — Synthesis dimensions: required keys present below
+Item 16 — Risk reason: N/A
+{item_17}-->
+
+## Goal
+
+Update `components/search/SearchResults.tsx`.
+
+## Synthesis Dimensions
+
+```yaml
+synthesis_dimensions:
+  placement: "inside components/search/SearchResults.tsx after result header"
+  cta_tier: "secondary"
+  copy_tone: "concise neutral"
+  visual_weight: "medium"
+  empty_state: "one-line empty result with retry CTA"
+```
+
+## Locked Decisions
+
+Analytical lens: QFD
+
+## UI Input/Output Contract
+
+| Surface | Inputs | Outputs | Data taxonomy | Operation | Component mapping | States | Modality | Validation/security | Traceability |
+|---|---|---|---|---|---|---|---|---|---|
+| SearchResults (`components/search/SearchResults.tsx`) | query string | markdown summary and table rows | scalar text input, markdown/table output, computed | Read/query | search input and table renderer | empty, loading, populated, error | text with table fallback | length validation and markdown sanitization | `/api/search` POST and SearchResponse schema |
 """
 
 
@@ -784,3 +889,39 @@ class TestStructuralWarningsItem14:
         _, payload = _run(plan)
         warn_ids = [w["item_id"] for w in payload.get("structural_warnings", [])]
         assert "item_14_handoff_document" not in warn_ids
+
+
+class TestStructuralFailuresItem17:
+    """Item 17: UI plans must include a UI Input/Output Contract."""
+
+    def test_ui_plan_without_io_contract_fails(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_ui_plan_without_io_contract(), encoding="utf-8")
+        code, payload = _run(plan)
+        assert code == 1
+        failures = [
+            w for w in payload.get("structural_warnings", [])
+            if w["item_id"] == "item_17_ui_io_contract"
+        ]
+        assert failures and failures[0]["status"] == "fail"
+
+    def test_ui_plan_with_io_contract_no_item17_failure(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_ui_plan_with_io_contract(), encoding="utf-8")
+        _, payload = _run(plan)
+        failures = [
+            w for w in payload.get("structural_warnings", [])
+            if w["item_id"] == "item_17_ui_io_contract"
+        ]
+        assert failures == []
+
+    def test_ui_plan_missing_item17_checklist_line_counts_missing(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(_ui_plan_with_io_contract(include_checklist_item=False), encoding="utf-8")
+        code, payload = _run(plan)
+        assert code == 1
+        item_17 = [
+            f for f in payload["findings"]
+            if f["item_id"] == "item_17_ui_io_contract"
+        ][0]
+        assert item_17["status"] == "missing"

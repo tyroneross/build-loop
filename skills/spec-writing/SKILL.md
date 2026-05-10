@@ -1,13 +1,13 @@
 ---
 name: spec-writing
-description: Write a build-loop-compatible plan/spec. Walks an 8-item checklist before drafting; runs plan-critic on output. Triggers when build-loop Phase 2 starts OR when the user says "write a plan", "write a spec", "draft a plan for X", "spec out a feature".
+description: Write a build-loop-compatible plan/spec. Walks the completeness checklist before drafting; runs plan-critic on output. Triggers when build-loop Phase 2 starts OR when the user says "write a plan", "write a spec", "draft a plan for X", "spec out a feature".
 version: 0.1.0
 user-invocable: true
 ---
 
 # spec-writing
 
-A skill that walks an 8-item completeness checklist before producing a build-loop-compatible plan markdown, then verifies the output with both a deterministic checker and an adversarial critic before returning.
+A skill that walks a completeness checklist before producing a build-loop-compatible plan markdown, then verifies the output with both a deterministic checker and an adversarial critic before returning.
 
 ## When to use
 
@@ -25,7 +25,7 @@ A skill that walks an 8-item completeness checklist before producing a build-loo
 
 ---
 
-## The 15-Item Checklist
+## The 17-Item Checklist
 
 Walk every item before writing a single line of the plan body. For each item, record the answer (or "N/A with reason") inline in a `<!-- checklist -->` HTML comment block at the top of the plan file so the critic can verify it.
 
@@ -292,6 +292,26 @@ If the plan has no high-consequence boundary crossing, write "N/A: no risk-reaso
 
 ---
 
+### Item 17 — UI input/output contract (UI commits only)
+
+**Prompt:** For any commit that adds or modifies a UI surface, write a `## UI Input/Output Contract` section before implementation. The contract must name every user input and system output and map each to data taxonomy, CRUD/domain operation, component choice, interaction states, modality fallback, validation/security, and traceability.
+
+**How to check:** Plan must contain a `## UI Input/Output Contract` section when UI files are in scope. The section must include these labels or equivalent rows: `Surface`, `Inputs`, `Outputs`, `Data taxonomy`, `Operation`, `Component mapping`, `States`, `Modality`, `Validation/security`, and `Traceability`.
+
+**Example (good):**
+
+```markdown
+## UI Input/Output Contract
+
+| Surface | Inputs | Outputs | Data taxonomy | Operation | Component mapping | States | Modality | Validation/security | Traceability |
+|---|---|---|---|---|---|---|---|---|---|
+| SearchResults (`components/search/SearchResults.tsx`) | Query string, format filter | Markdown summary, result table, chart data | input: scalar/plain/persisted in URL; outputs: markdown/table/chart/computed | Read/query + export | Search input, result table, chart renderer, download button | empty, loading, populated, error, streaming abort | text + chart; table fallback for chart | query length at presentation, API schema validation, sanitize markdown | `/api/search` POST, `SearchResponse` schema, design-system table/chart |
+```
+
+If no UI surface is in scope, write "N/A: no UI surface."
+
+---
+
 ## Frontmatter fields used by routing
 
 These fields appear in plan or chunk frontmatter and affect orchestrator routing decisions. They are validated by `scripts/plan_verify.py`.
@@ -327,6 +347,7 @@ Item 13 — Analytical lens: <answer>
 Item 14 — Handoff document: <answer>
 Item 15 — Synthesis dimensions: <answer>
 Item 16 — Risk reason: <answer>
+Item 17 — UI input/output contract: <answer>
 -->
 
 ## Goal
@@ -374,6 +395,10 @@ Item 16 — Risk reason: <answer>
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
 | ...  | ...        | ...        |
+
+## UI Input/Output Contract
+
+<Required when UI files are in scope. Omit or write N/A only for non-UI plans.>
 
 ## Out of Scope
 

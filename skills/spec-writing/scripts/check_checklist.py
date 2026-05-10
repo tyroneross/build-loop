@@ -3,11 +3,11 @@
 check_checklist.py — deterministic spec-writing checklist verifier.
 
 Reads a plan markdown file, locates the <!-- checklist --> HTML comment block,
-and checks whether each of the 15 required items is answered (not blank, not
+and checks whether each required item is answered (not blank, not
 the literal placeholder text, and not omitted entirely).
 
 Exit codes:
-    0 — all required items answered (Item 15 is conditional on UI files in scope)
+    0 — all required items answered (Items 15 and 17 are conditional on UI files in scope)
     1 — one or more items missing or unanswered
     2 — verifier error (file not found, parse failure)
 
@@ -44,6 +44,7 @@ ITEMS: list[tuple[str, str]] = [
     ("item_14_handoff_document",       "Item 14 — Handoff document"),
     ("item_15_synthesis_dimensions",   "Item 15 — Synthesis dimensions"),
     ("item_16_risk_reason",            "Item 16 — Risk reason"),
+    ("item_17_ui_io_contract",         "Item 17 — UI input/output contract"),
 ]
 
 # Values that count as "not answered" — case-insensitive, stripped
@@ -128,14 +129,29 @@ _LOW_REV_RE = re.compile(
 )
 _LENS_LINE_RE = re.compile(r"analytical lens\s*:", re.IGNORECASE)
 
-# Item 15 — Synthesis dimensions (UI commits only)
+# Items 15 and 17 — UI-only checks.
 _UI_FILE_RE = re.compile(
-    r"(?:^|[\s`(/])(?:components|app|pages|src)/[\w/.\-]+|"
-    r"\b[\w/.\-]+\.(?:tsx|jsx)\b", re.IGNORECASE)
+    r"""
+    (
+      \b[\w/.\-]+\.(?:tsx|jsx|vue|svelte)\b
+      |(?:^|[\s`(/])components/[\w/.\-]+
+      |(?:^|[\s`(/])(?:app|pages)/(?!(?:api|_app|_document)\b)[\w/.\-]*(?:page|layout)\.(?:ts|tsx|js|jsx)\b
+      |(?:^|[\s`(/])Views/[\w/.\-]+\.swift\b
+      |\b[\w/.\-]*(?:View|Screen|Page)\.swift\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 _SYNTHESIS_BLOCK_RE = re.compile(
     r"synthesis_dimensions\s*:\s*\n((?:[ \t]+[\w_]+\s*:.*\n?)+)", re.IGNORECASE)
 _REQUIRED_SYNTHESIS_KEYS = ("placement", "cta_tier", "copy_tone",
                             "visual_weight", "empty_state")
+_UI_IO_SECTION_RE = re.compile(
+    r"^##\s+UI\s+Input/Output\s+Contract\b", re.IGNORECASE | re.MULTILINE)
+_UI_IO_REQUIRED_TERMS = (
+    "surface", "input", "output", "taxonomy", "operation", "component",
+    "state", "modality", "validation", "traceability",
+)
 
 
 def check_item_15_synthesis_dimensions(plan_text: str) -> tuple[str, str | None]:
@@ -154,11 +170,33 @@ def check_item_15_synthesis_dimensions(plan_text: str) -> tuple[str, str | None]
     return ("OK", None)
 
 
+def check_item_17_ui_io_contract(plan_text: str) -> tuple[str, str | None]:
+    """OK if no UI in scope; else require a UI Input/Output Contract section."""
+    if not _UI_FILE_RE.search(plan_text):
+        return ("OK", None)
+
+    m = _UI_IO_SECTION_RE.search(plan_text)
+    if not m:
+        return ("FAIL", "UI files detected but no `## UI Input/Output Contract` section found.")
+
+    section_start = m.end()
+    next_heading = re.search(r"^##\s+", plan_text[section_start:], re.MULTILINE)
+    section = (
+        plan_text[section_start: section_start + next_heading.start()]
+        if next_heading else plan_text[section_start:]
+    )
+    lower = section.lower()
+    missing = [term for term in _UI_IO_REQUIRED_TERMS if term not in lower]
+    if missing:
+        return ("FAIL", "UI Input/Output Contract missing term(s): " + ", ".join(missing))
+    return ("OK", None)
+
+
 def _structural_findings(text: str, plan_path: Path) -> list[dict]:
     """
-    Run structural checks for items 9-14 against the full plan text.
+    Run structural checks for higher-order checklist items against the full plan text.
     Returns a list of finding dicts (same shape as checklist findings).
-    Each finding has item_id, label, status ('ok'|'warn'), and message.
+    Each finding has item_id, label, status ('ok'|'warn'|'fail'), and message.
     These supplement — they do not replace — the checklist block checks.
     """
     findings = []
@@ -280,6 +318,16 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
             "message": msg_15,
         })
 
+    # Item 17: UI Input/Output Contract required when UI is in scope
+    status_17, msg_17 = check_item_17_ui_io_contract(text)
+    if status_17 == "FAIL":
+        findings.append({
+            "item_id": "item_17_ui_io_contract",
+            "label": "Item 17 — UI input/output contract",
+            "status": "fail",
+            "message": msg_17,
+        })
+
     return findings
 
 
@@ -337,18 +385,19 @@ def verify(plan_path: Path) -> dict:
         }
 
     parsed = parse_checklist_block(block)
-    # Item 15 line is conditional: only required when UI files are in scope.
+    # Items 15 and 17 are conditional: only required when UI files are in scope.
     ui_in_scope = bool(_UI_FILE_RE.search(text))
 
     findings = []
     missing = 0
     for item_id, label in ITEMS:
         normalized = _normalize_label(label)
-        # Item 15 optional when no UI in scope; Item 16 always optional (only required
+        # Item 15/17 optional when no UI in scope; Item 16 always optional (only required
         # when author has identified a high-consequence boundary — absent is valid).
         is_optional = (
             (item_id == "item_15_synthesis_dimensions" and not ui_in_scope)
             or item_id == "item_16_risk_reason"
+            or (item_id == "item_17_ui_io_contract" and not ui_in_scope)
         )
         if normalized not in parsed:
             if is_optional:
@@ -406,7 +455,7 @@ def main() -> int:
         print(json.dumps(result, indent=2))
 
     if not args.quiet:
-        status = "CLEAN" if result["missing_count"] == 0 else "INCOMPLETE"
+        status = "CLEAN" if result["exit_code"] == 0 else "INCOMPLETE"
         warn_count = result.get("structural_warning_count", 0)
         print(
             f"check_checklist — {status} "

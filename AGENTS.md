@@ -24,6 +24,7 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 - **MECE work ownership.** Partition files, agents, and task groups so ownership is mutually exclusive and collectively exhaustive: no overlapping file owners, no unowned responsibilities, and one clear grouping dimension per level.
 - **Guidelines for creation, guardrails for output.** Be flexible during building. Be strict about what reaches users.
 - **No false data.** No mock data in production. No hardcoded metrics pretending to be real. No unverified claims.
+- **Name every UI input and output.** For UI work, every affected surface must have an input/output contract before component choices are locked: data taxonomy, CRUD/domain operation, component mapping, states, modality fallback, validation/security, and traceability.
 - **Diagnose before fixing.** Root-cause analysis before code changes. Many errors sharing a pattern = one system problem.
 - **Converge or escalate.** If iteration isn't improving scores, stop and surface the blocker. Don't burn cycles.
 - **Keep going until done.** Once the user accepts the plan, every phase is authorized scope. Do not ask the user to confirm each phase. Issues found mid-build route to Iterate. Status updates are fine; permission requests are not. The only valid stops are: a destructive action not in the plan, a missing credential, externally-blocked work, an explicit hand-off point in the plan, a genuine scope branch the plan does not resolve, or 8 hours wall-clock without a Review pass / 5 consecutive Iterate failures on the same criterion.
@@ -42,7 +43,7 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - Map relevant architecture (only what the goal touches)
 - Check for prior state (`.build-loop/state.json` from interrupted builds)
 - If goal involves external frameworks or APIs: research current docs before planning
-- If web/mobile UI: capture current visual state for before/after comparison
+- If web/mobile UI: capture current visual state for before/after comparison, then load `skills/build-loop/references/ui-io-contract.md` and inventory the affected user inputs and system outputs before planning
 
 **Define goal + criteria:**
 - State the goal in one concrete sentence — what will be true when this succeeds?
@@ -76,6 +77,7 @@ The `> 5` threshold matches the empirical inflection point measured in the synth
 - Partition files and agents MECE: every changed file has exactly one owner, every required responsibility has an owner, and each group declares `owns`, `does not own`, `interface contract`, and `integration checkpoint`
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
+- **UI input/output contract gate**: if `uiTarget != null`, add a `## UI Input/Output Contract` section before mockups or implementation. It must name every changed surface's inputs, outputs, data taxonomy, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and schema/API/design-system traceability.
 - **Enumerate synthesis dimensions** for any commit that involves design judgment (UI placement, copy tone, CTA tier, schema shape, dispatch contracts, etc.). Add a `synthesis_dimensions:` block to the plan listing each named decision with a concrete claimed value:
   ```yaml
   synthesis_dimensions:
@@ -107,7 +109,7 @@ Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrato
 - Each worker gets minimal context + integration contract (what interfaces to implement) + an intent packet explaining how the subtask fits the north star + a MECE ownership packet defining owned files, non-owned files, interface contracts, and integration checkpoints
 - If the host supports typed subagents, map read-only codebase questions to explorer-style agents and disjoint implementation slices to worker-style agents. If the host requires explicit user authorization for subagents, identify parallel-safe groups but execute locally unless the user asked for delegation, parallelization, workers, or a `--parallel` mode.
 - Do not delegate ambiguous product decisions, final integration, destructive git operations, push/deploy confirmation, or tasks whose result blocks the immediate next lead-session step.
-- For UI work: follow established design system or sensible defaults (44px touch targets, 4.5:1 contrast). Every visible element must have meaning, working behavior, and a clear user purpose.
+- For UI work: follow established design system or sensible defaults (44px touch targets, 4.5:1 contrast). Every visible element must have meaning, working behavior, a clear user purpose, and a matching entry in the UI input/output contract.
 - Surface pre-existing issues separately from new work. If an issue impacts users and is local to the current build, plan and fix it automatically; if too large/risky, log user impact and defer.
 - Checkpoint after major integration points
 
@@ -147,7 +149,7 @@ Two checkpoints fire automatically after every implementer commit on plans that 
 
 Both backstops are first-class on the code-tier (fan-out) implementer path where they catch some of the recall gap, and defense-in-depth on the thinking-tier path where they rarely fire.
 
-**Sub-step B — Validate**: when an IBR-style declarative test runner is installed and the build touches UI, run the project's existing `.ibr-test.json` suite first as a quick pass (`scripts/ibr_quickpass.py --workdir . --scope changed`). A passing existing suite is the strongest possible signal — failing tests route directly to Iterate with the assertion as the rubric. Then code-based graders (test, lint, type, build) and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. Scorecard format:
+**Sub-step B — Validate**: when an IBR-style declarative test runner is installed and the build touches UI, run the project's existing `.ibr-test.json` suite first as a quick pass (`scripts/ibr_quickpass.py --workdir . --scope changed`). A passing existing suite is the strongest possible signal — failing tests route directly to Iterate with the assertion as the rubric. Then check the UI input/output contract for changed surfaces, code-based graders (test, lint, type, build), and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. Scorecard format:
 
 | # | Criterion | Method | Result | Evidence |
 |---|-----------|--------|--------|----------|
@@ -159,6 +161,7 @@ Both backstops are first-class on the code-tier (fan-out) implementer path where
 **Sub-step D — Fact-Check, Mock Scan, UX Triage, Coverage**: gates run in parallel.
 
 - *Fact Check*: trace every rendered metric (%, $, score, count) to source. For UI work, walk the full rendered surface, not just changed files. Flag "always", "never", "100%", "guaranteed" — replace unless genuinely absolute.
+- *UI Input/Output Contract Scan*: for UI work, trace every changed user input and system output to the plan contract. New gaps in component mapping, states, modality fallback, validation/security, or source traceability are blocking.
 - *Mock Data Scan*: production paths only. Detect lorem ipsum, faker, hardcoded fake values, `Math.random()` in display, placeholder text. Classify blocking (renders to user) vs warning.
 - *Architectural Violations* (if available): `navgator rules --json`. Blocking: circular-dependency, layer-violation, database-isolation, frontend-direct-db. Warning: hotspot, high-fan-out, orphan.
 - *Plugin Cache Sync* (plugin work): resync the local cache when diverged. Defer version bumps until the feature batch is declared complete (see Version Advisor).

@@ -30,6 +30,25 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 - **Primary action**: one core hero/primary action by default. Add multiple primary actions only when users genuinely need parallel choices.
 - **Beauty in the basics**: loading, empty, error, disabled, success, and permission states must be useful and polished.
 
+### UI input/output contract fallback
+
+When no specialized UI planning tool is available, require a `## UI Input/Output Contract` section before implementation. For each changed screen/component, fill:
+
+| Field | Required answer |
+|---|---|
+| Surface | Screen/component + file path |
+| Inputs | Every user-provided value |
+| Outputs | Every system-returned value users see or decide from |
+| Data taxonomy | Scalar/object/binary/stream; plain text/Markdown/rich text/JSON/chart/audio/etc.; persisted/transient/streaming/computed |
+| Operation | CRUD method and any domain verb such as submit, approve, publish, reorder, export |
+| Component mapping | Exact input control and output renderer |
+| States | Empty, populated, focused, disabled, loading, success, error, empty result, streaming/abort when relevant |
+| Modality | Text, voice, file, image, chart, map, AI/generated, streaming, plus fallback |
+| Validation/security | Presentation, application, domain validation; sanitization; auth/authz denied-state behavior |
+| Traceability | Schema/source, API endpoint/method, design-system component, rationale |
+
+Fail Review-B if a changed UI surface lacks this contract, unless the change is copy-only and explicitly states no data surface changed.
+
 ### Static grep checks (run these at Review-D Fact-Check when IBR absent)
 
 Each check returns matches = potential violation. Not all matches are real violations — some are false positives. Review output manually; flag when confidence is high.
