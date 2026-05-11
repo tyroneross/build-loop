@@ -158,6 +158,49 @@ One end-of-run report. Surface what changed, what shipped, what was deferred. No
 
   Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
 
+- **M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)**: complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one ledger row at dispatch time and one at return time per subagent invocation. Both rows carry the same `task_id` so wall-clock and status can be correlated post-hoc by Round 4 dispatch-pattern analysis (and any later cost study).
+
+  Procedure per dispatch:
+
+  1. **Generate `TASK_ID`** before the `Agent(...)` call: `TASK_ID="t-$(uuidgen | tr A-F a-f | cut -c1-8)"`. Record `started_at` (ISO 8601 UTC).
+  2. **Prepend `[TASK_ID: <id>]` to the implementer brief** as the first line of the prompt body. The implementer echoes it in `task_id` per `references/implementer-envelope-schema.md`.
+  3. **Write the dispatch row** (status=`dispatched`):
+     ```bash
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_cost_ledger_row.py \
+       --agent implementer \
+       --task-id "$TASK_ID" \
+       --model "<resolved-tier-model>" \
+       --status dispatched \
+       --dispatch-mode "<fan-out|inline|self-recursive>" \
+       --started-at "<iso8601>" \
+       --run-id "$RUN_ID" \
+       --chunk-id "<chunk_id>"
+     ```
+  4. **Dispatch** the subagent.
+  5. **After return** (at the same point as M1 envelope-persist + M2 `return_chunk` heartbeat), write the return row:
+     ```bash
+     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_cost_ledger_row.py \
+       --agent implementer \
+       --task-id "$TASK_ID" \
+       --model "<resolved-tier-model>" \
+       --status "<envelope.status>" \
+       --dispatch-mode "<same-as-dispatch>" \
+       --files-changed-count <N> \
+       --wall-clock-seconds <envelope.wall_clock_seconds> \
+       --tokens-estimate <envelope.tokens_estimate || omit> \
+       --tokens-source envelope \
+       --started-at "<dispatch-iso8601>" \
+       --completed-at "<return-iso8601>" \
+       --run-id "$RUN_ID" \
+       --chunk-id "<chunk_id>"
+     ```
+
+  **Scope**: M3 applies to every `Agent(subagent_type="build-loop:<x>")` call the orchestrator makes — implementer (Phase 3), scope-auditor (Phase 2/3), sonnet-critic (Phase 4-A), synthesis-critic (Phase 3 step 6), fact-checker (Phase 4-D), architecture-scout (Phase 1 + chunk-impact), optimize-runner (Phase 4-C), overfitting-reviewer (Phase 4-C). Set `--agent` to the subagent's frontmatter name; set `--dispatch-mode` from the active dispatch context.
+
+  **Failure mode**: helper exit-0 is success; exit-1 is a validation error (fix the args and retry once); exit-2 is a filesystem error (log once, do NOT block the build — telemetry is best-effort). Never let a ledger-write failure halt a Phase 3 commit.
+
+  **Why this is independent of M1/M2**: M1 and M2 protect resume correctness. M3 produces an external measurement record so dispatch-pattern claims like "Mode A burns 4× tokens" can be evidenced rather than estimated. The three writes are sequential at the same orchestrator step; one helper call each, ≤20ms.
+
 #### Phase 3 commit step (NEW 2026-05-07 — single-writer git contract)
 
 Implementers no longer call `git add` or `git commit` (per `agents/implementer.md` Hard rule 4 — round-3 evidence showed the parallel-commit race lost 3 of 4 commits). The orchestrator owns `.git/` as a single-writer resource. After **each parallel batch returns**, run this step before dispatching the next wave or proceeding to Phase 4.
