@@ -63,7 +63,8 @@ from typing import Any
 ADAPTER_NAME = "sse_consumer"
 BOOT_TIMEOUT_SECONDS = 20
 HEALTH_TIMEOUT_SECONDS = 8
-SSE_CURL_DURATION_SECONDS = 5
+SSE_CURL_DURATION_SECONDS = 5  # Default; override per-project via info.smoke_duration_seconds.
+SSE_CURL_DURATION_MAX_SECONDS = 30  # Hard cap so a misconfigured probe can't run the full TOTAL_TIMEOUT.
 TOTAL_TIMEOUT_SECONDS = 45
 
 _EVENT_TYPE_PATTERN = re.compile(r'"type"\s*:\s*"([^"]+)"')
@@ -160,6 +161,25 @@ def _curl_sse(port: int, route: str, duration: int, payload: str) -> tuple[set[s
         return types, body
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return set(), ""
+
+
+def _resolve_probe_duration(info: dict) -> int:
+    """Read ``info.smoke_duration_seconds`` if present, else fall back to the
+    5-second default. Clamps to [1, SSE_CURL_DURATION_MAX_SECONDS] so a stray
+    string or zero doesn't pin the probe at no-data or eat the whole timeout
+    budget. Non-numeric values are silently rejected (use default)."""
+    raw = info.get("smoke_duration_seconds")
+    if raw is None:
+        return SSE_CURL_DURATION_SECONDS
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return SSE_CURL_DURATION_SECONDS
+    if n < 1:
+        return SSE_CURL_DURATION_SECONDS
+    if n > SSE_CURL_DURATION_MAX_SECONDS:
+        return SSE_CURL_DURATION_MAX_SECONDS
+    return n
 
 
 def _normalize_handler_locations(value) -> list[str]:
@@ -272,9 +292,14 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
             }
 
         # Step 3: Curl the SSE endpoint
-        # Use a minimal probe payload — projects can override via info.smoke_payload
+        # Use a minimal probe payload — projects can override via info.smoke_payload.
+        # Probe duration is also overridable via info.smoke_duration_seconds; useful
+        # for servers whose interesting events (heartbeat, pipeline-phase stage) fire
+        # outside the 5s default window. Capped at SSE_CURL_DURATION_MAX_SECONDS so a
+        # misconfigured probe can't burn the full TOTAL_TIMEOUT_SECONDS.
         payload = info.get("smoke_payload") or '{"prompt":"smoke test"}'
-        observed, _body = _curl_sse(port, sse_route, SSE_CURL_DURATION_SECONDS, payload)
+        probe_duration = _resolve_probe_duration(info)
+        observed, _body = _curl_sse(port, sse_route, probe_duration, payload)
 
         if not observed:
             return {

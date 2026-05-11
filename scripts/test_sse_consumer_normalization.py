@@ -16,7 +16,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "runtime_smoke_adapters"))
 
-from sse_consumer import _normalize_handler_locations  # noqa: E402
+from sse_consumer import (  # noqa: E402
+    SSE_CURL_DURATION_MAX_SECONDS,
+    SSE_CURL_DURATION_SECONDS,
+    _normalize_handler_locations,
+    _resolve_probe_duration,
+)
 
 
 class TestNormalizeHandlerLocations(unittest.TestCase):
@@ -81,6 +86,51 @@ class TestNormalizeHandlerLocations(unittest.TestCase):
             _normalize_handler_locations(weird),
             ["src/a.py", "src/b.py"],
         )
+
+
+class TestResolveProbeDuration(unittest.TestCase):
+    def test_missing_returns_default(self):
+        self.assertEqual(_resolve_probe_duration({}), SSE_CURL_DURATION_SECONDS)
+
+    def test_none_returns_default(self):
+        self.assertEqual(
+            _resolve_probe_duration({"smoke_duration_seconds": None}),
+            SSE_CURL_DURATION_SECONDS,
+        )
+
+    def test_in_range_passes_through(self):
+        self.assertEqual(_resolve_probe_duration({"smoke_duration_seconds": 15}), 15)
+
+    def test_string_numeric_coerced(self):
+        self.assertEqual(_resolve_probe_duration({"smoke_duration_seconds": "10"}), 10)
+
+    def test_zero_falls_back_to_default(self):
+        self.assertEqual(
+            _resolve_probe_duration({"smoke_duration_seconds": 0}),
+            SSE_CURL_DURATION_SECONDS,
+        )
+
+    def test_negative_falls_back_to_default(self):
+        self.assertEqual(
+            _resolve_probe_duration({"smoke_duration_seconds": -5}),
+            SSE_CURL_DURATION_SECONDS,
+        )
+
+    def test_over_max_clamped(self):
+        self.assertEqual(
+            _resolve_probe_duration({"smoke_duration_seconds": 999}),
+            SSE_CURL_DURATION_MAX_SECONDS,
+        )
+
+    def test_non_numeric_falls_back(self):
+        self.assertEqual(
+            _resolve_probe_duration({"smoke_duration_seconds": "soon"}),
+            SSE_CURL_DURATION_SECONDS,
+        )
+
+    def test_float_truncated_via_int(self):
+        # int("3.9") raises, so 3.9 → 3 via int(3.9)
+        self.assertEqual(_resolve_probe_duration({"smoke_duration_seconds": 3.9}), 3)
 
 
 if __name__ == "__main__":
