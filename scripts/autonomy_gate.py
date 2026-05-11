@@ -165,9 +165,21 @@ _DEPLOYMENT_KEYWORDS = (
 )
 
 
+_HTTP_CLIENTS = frozenset({"curl", "wget", "http", "httpie", "xh"})
+
+
 def _looks_like_deployment_command(command: str) -> bool:
     """Quick heuristic: does this command smell like push/deploy/release?"""
-    lower = command.lower()
+    cmd = command.strip()
+    if not cmd:
+        return False
+    # HTTP test clients can never deploy regardless of URL contents.
+    # Without this guard, "curl https://app.vercel.app/..." substring-matches
+    # "vercel" and gets routed to deployment_policy → unknown → confirm.
+    first = cmd.split(None, 1)[0].lstrip("(").rstrip(";")
+    if first in _HTTP_CLIENTS:
+        return False
+    lower = cmd.lower()
     return any(kw in lower for kw in _DEPLOYMENT_KEYWORDS)
 
 
