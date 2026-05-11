@@ -90,6 +90,65 @@ Multiple build-loop sessions can run concurrently against the same project acros
 Both scripts are stdlib-only Python 3.11+ with `fcntl.flock` on append, atomic writes, and exit-code-as-verdict semantics. They work identically in Claude Code and Codex; the only difference is which `--host` value the session passes.
 
 
+**Multi-session presence registration + collision check (cross-host: Claude Code, Codex, Gemini CLI, others):**
+
+Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. To prevent two sessions from racing to commit to the same files, every session participates in a shared registry at `~/.build-loop/sessions/` and a memory-write log at `~/.build-loop/memory/INDEX.jsonl`. The scripts are host-neutral JSON CLIs invoked from any host:
+
+1. **Surface SAFE-STOP sentinels first.** Before any other Phase 1 work, list `<workdir>/.build-loop/SAFE-STOP-collision-*.md`. If any exist, surface to the user and require explicit deletion before proceeding — they indicate a prior session detected a CRITICAL collision here and stopped.
+2. **Register this session** (immediately after `run_id` is known):
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register \
+     --run-id "$RUN_ID" --host codex --workdir "$PWD" \
+     --pid $$ --phase assess
+   ```
+   `--host` values: `claude_code | codex | gemini | other`. The script writes `~/.build-loop/sessions/<run_id>.json` with workdir, host, pid, phase, files_owned, started_at, last_heartbeat_at.
+3. **Check for peer collisions**:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check \
+     --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json
+   ```
+   Exit codes: 0=LOW, 1=MEDIUM, 2=HIGH, 3=CRITICAL.
+4. **Headless tier routing** (Codex / cron — no AskUserQuestion available):
+   - LOW (different workdir) → log + proceed.
+   - MEDIUM (same workdir, different phases) → log + proceed.
+   - HIGH (same workdir + both in execute/iterate) → log + enter `high_frequency_mode` (heartbeat every 30s vs default 5min) + proceed; recheck collision before each Phase 3 chunk dispatch.
+   - CRITICAL (same workdir + overlapping `files_owned`) → call `session_registry.write_safe_stop_sentinel(workdir, peer_run_id, reason)` and exit non-zero. The first sentinel wins; the surviving peer continues.
+5. **Heartbeat refresh** at every M2 trigger point (dispatch_chunk, return_chunk, phase_transition, iterate_attempt). Append `--phase $CURRENT_PHASE` whenever phase changes; in Phase 3, also `--files-owned "$FILES_OWNED_CSV"`.
+6. **Unregister on clean completion**:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
+   ```
+   Moves presence file to `sessions/dead/`. Stale-sweep (default 5 min) handles forgotten unregisters.
+7. **Memory writes** — use `scripts/memory_writer.py write` instead of writing memory files directly. The writer adds provenance frontmatter (source_repo, source_workdir, source_run_id, source_host, cross_repo_validated, applied_in_repos, created_at, last_updated_at), then atomically appends a row to `INDEX.jsonl` for sibling discovery:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
+     --file "<rel-path>" --name "<slug>" --description "<one-line>" \
+     --type feedback --run-id "$RUN_ID" --workdir "$PWD" --host codex \
+     --body-file /tmp/memory-body.md
+   ```
+8. **Memory reads (cross-session discovery)** — between phases, tail the index for new peer learnings:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
+     --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
+   ```
+   For each returned row, read the memory file. Tag with `[CROSS-REPO — requires scrutiny]` when `source_workdir` ≠ current `$PWD` AND `source_repo` ≠ this repo's git remote. Tag with `[VALIDATED — applied in N repos]` when `cross_repo_validated: true` AND `len(applied_in_repos) >= 2`.
+9. **Memory mark-applied** — when a cross-repo memory is successfully applied here, record the application:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py mark-applied \
+     --file "<rel-path>" --applying-repo "$THIS_REPO_REMOTE" \
+     --applying-workdir "$PWD" --applying-run-id "$RUN_ID"
+   ```
+   Flips `cross_repo_validated: true` once a different repo confirms the lesson.
+10. **One-time migration** — on the first build after installing this version, run:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py migrate \
+     --run-id "$RUN_ID" --workdir "$PWD" --host codex
+   ```
+   Idempotent backfill of provenance frontmatter onto pre-existing memory files. Safe to re-run.
+
+All three scripts are stdlib-only Python 3.11+ with atomic writes (`tmpfile + os.replace`) and `fcntl.flock` on append. They work identically in Claude Code and Codex; the only difference is which `--host` value the session passes.
+
+
 **Define goal + criteria:**
 - State the goal in one concrete sentence — what will be true when this succeeds?
 - Design 3-5 scoring criteria. Each criterion must have:

@@ -88,10 +88,11 @@ One end-of-run report. Surface what changed, what shipped, what was deferred. No
 
 ## Multi-session concurrency (cross-terminal / cross-host)
 
-Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. Two scripts own this concern:
+Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. Three scripts own this concern:
 
 - `scripts/session_registry.py` — presence + collision detection (`~/.build-loop/sessions/<run_id>.json`)
-- `scripts/memory_index.py` — append-only log of memory writes for cross-session learning (`~/.build-loop/memory/INDEX.jsonl`)
+- `scripts/memory_writer.py` — canonical writer for memory files (provenance frontmatter + atomic INDEX append in one operation)
+- `scripts/memory_index.py` — append-only discovery log at `~/.build-loop/memory/INDEX.jsonl`
 
 ### Required orchestrator integration points
 
@@ -141,15 +142,39 @@ Moves presence to `sessions/dead/` so it doesn't clutter the active scan for fut
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
 ```
 
-Read any new rows. If a row's `file` matches a memory category relevant to the current build (e.g. `feedback_buildloop_*` during a build-loop work session), Read the underlying memory file and surface its `description` field in the next phase brief as `[INDEX] new peer memory: <file> — <description>`. Mark it `[CROSS-REPO]` when `source_workdir` ≠ this workdir AND `source_repo` ≠ this repo's git remote.
+Read any new rows. If a row's `file` matches a memory category relevant to the current build (e.g. `feedback_buildloop_*` during a build-loop work session), Read the underlying memory file and surface its `description` field in the next phase brief. Tag based on the file's provenance frontmatter:
 
-**On every memory write under `~/.build-loop/memory/` (Phase 4 Review-F or anywhere memory_writer extends the global store):**
+- `[CROSS-REPO — requires scrutiny]` when `source_workdir` ≠ this workdir AND `source_repo` ≠ this repo's git remote.
+- `[VALIDATED — applied in N repos]` when `cross_repo_validated: true` AND `len(applied_in_repos) >= 2`.
+- Otherwise — surface as a normal peer signal.
+
+When a cross-repo memory is successfully applied in the current build, record it so the trust gradient updates:
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py append --run-id "$RUN_ID" --action write --file "<rel-path>" --source-host claude_code --source-workdir "$PWD"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py mark-applied \
+  --file "<rel-path>" \
+  --applying-repo "$THIS_REPO_REMOTE" \
+  --applying-workdir "$PWD" \
+  --applying-run-id "$RUN_ID"
 ```
 
-Sibling sessions see the write on their next tail.
+**On every memory write under `~/.build-loop/memory/` (Phase 4 Review-F, Phase 6 Learn, or any save-memory action): ALWAYS use `memory_writer.py write`. Never write memory files directly.**
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
+  --file "<rel-path>" \
+  --name "<slug>" \
+  --description "<one-line>" \
+  --type feedback \
+  --run-id "$RUN_ID" \
+  --workdir "$PWD" \
+  --host claude_code \
+  --body-file <tmp-body-path>
+```
+
+The writer adds provenance frontmatter (source_repo auto-detected, source_workdir, source_run_id, source_host, cross_repo_validated=false, applied_in_repos=[], created_at, last_updated_at) and atomically appends the INDEX row. On update, preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits. Sibling sessions see the write on their next tail.
+
+**One-time migration**: on the first build after this version is installed, run `memory_writer.py migrate --dry-run` to preview, then re-run without `--dry-run` to backfill provenance frontmatter onto existing memory files. Idempotent; safe to re-run.
 
 ### Headless host (Codex, cron) deterministic defaults
 

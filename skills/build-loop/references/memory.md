@@ -42,23 +42,50 @@ Build-loop maintains two memory stores. Every build reads both; writes go to exa
 - Before UI work: check project design memory.
 - Before adopting a new library: check global library-choice memory.
 
-## Cross-session memory propagation (multi-process / multi-host)
+## Cross-session memory propagation + provenance schema (multi-process / multi-host)
 
-Multiple build-loop sessions can run concurrently. Each global memory write appends one row to `~/.build-loop/memory/INDEX.jsonl` via `scripts/memory_index.py`. Sibling sessions can `tail` this log between phases to see new peer learnings as they land — not just at session start.
+Multiple build-loop sessions can run concurrently. Two scripts own the cross-session model end-to-end:
 
-**Writer side** — whenever you write/update/delete a file under `~/.build-loop/memory/`, immediately append a row:
+- `scripts/memory_writer.py` — canonical WRITER. Adds provenance frontmatter and appends to the index in one atomic operation.
+- `scripts/memory_index.py` — append-only discovery log at `~/.build-loop/memory/INDEX.jsonl`.
+
+### Provenance frontmatter (every memory file)
+
+```yaml
+---
+name: <slug>
+description: <one-line summary>
+type: tool | deployment | library-choice | user-preference | pattern | feedback | reference | design | convention | gotcha | decision | contract
+source_repo: "<git remote url or null>"
+source_workdir: "<abs path>"
+source_run_id: "run_<UTC>_<hash>"
+source_host: "claude_code | codex | gemini | other"
+cross_repo_validated: false          # flips to true once a DIFFERENT repo applies it
+applied_in_repos: []                  # appended entries: {repo, workdir, run_id, applied_at}
+created_at: "ISO8601 UTC"
+last_updated_at: "ISO8601 UTC"
+---
+```
+
+### Writer side — use memory_writer.py, never write memory files directly
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py append \
-  --run-id "$RUN_ID" --action write \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
   --file "<rel-path>" \
-  --source-host claude_code \
-  --source-workdir "$PWD"
+  --name "<slug>" \
+  --description "<one-line>" \
+  --type feedback \
+  --run-id "$RUN_ID" \
+  --workdir "$PWD" \
+  --host claude_code \
+  --body-file /tmp/memory-body.md
 ```
 
-`source-repo` and `source-workdir` are optional but recommended — they let downstream readers in a DIFFERENT repo tag the memory as `[CROSS-REPO — requires scrutiny]` before applying.
+The writer auto-detects `source_repo` from the workdir's git remote, appends a row to `INDEX.jsonl`, and (on update) preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits.
 
-**Reader side** — between phases (or at every M2 heartbeat), tail since your last check:
+### Reader side — surface peer writes via INDEX.jsonl
+
+Between phases (or at every M2 heartbeat), tail since your last check:
 
 ```
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
@@ -69,9 +96,38 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
 
 For each row:
 1. Read the underlying memory file.
-2. If the memory's `source_workdir` ≠ this `$PWD` AND `source_repo` ≠ this repo's git remote — tag the surfaced snippet `[CROSS-REPO — requires scrutiny]` in the phase brief.
-3. Otherwise — surface as a normal peer signal.
+2. If `source_workdir` ≠ this `$PWD` AND `source_repo` ≠ this repo's git remote — tag `[CROSS-REPO — requires scrutiny]` in the phase brief.
+3. Surface to the user with the memory's `description` field as the hook.
 
-The full cross-repo trust gradient (validation tracking via `cross_repo_validated` + `applied_in_repos[]` frontmatter) lands in PR-β (memory provenance schema). This commit only ships the discovery log.
+### Trust gradient — mark-applied flow
 
-Concurrency: append uses `fcntl.flock(LOCK_EX)` on a sidecar `.lock` file — multi-writer safe.
+When a memory written elsewhere is successfully applied in the current repo, record it:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py mark-applied \
+  --file "<rel-path>" \
+  --applying-repo "$THIS_REPO_REMOTE" \
+  --applying-workdir "$PWD" \
+  --applying-run-id "$RUN_ID"
+```
+
+Appends to `applied_in_repos[]` (deduped by `(repo, workdir)`) and flips `cross_repo_validated` to `true` once at least one applying repo differs from the source. Memories with `cross_repo_validated: true` AND `len(applied_in_repos) >= 2` have earned higher trust — independently verified to hold across distinct repos. Surface that distinction in Phase 1 Assess briefs as `[VALIDATED — applied in N repos]`.
+
+### Migration — existing memory files
+
+`memory_writer.py migrate` is an idempotent backfill that adds provenance frontmatter to existing memory files. Safe to re-run; skips any file that already has all required provenance keys.
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py migrate \
+  --run-id "$RUN_ID" \
+  --workdir "$PWD" \
+  --host claude_code \
+  --dry-run    # inspect first; remove the flag to apply
+```
+
+Run once after this version of build-loop is installed; the migration completes immediately for memory dirs of ordinary size (the user's global memory at ~80 files migrates in well under a second).
+
+### Concurrency
+
+- `memory_writer.py write` — atomic tmpfile + os.replace; the memory file IS the lock.
+- `memory_index.py append` — `fcntl.flock(LOCK_EX)` on `INDEX.jsonl.lock`; multi-writer safe across hosts.
