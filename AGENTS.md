@@ -119,20 +119,34 @@ Multiple build-loop sessions can run concurrently against the same project acros
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
    ```
    Moves presence file to `sessions/dead/`. Stale-sweep (default 5 min) handles forgotten unregisters.
-7. **Memory index** — append one row to `~/.build-loop/memory/INDEX.jsonl` on every write to `~/.build-loop/memory/`:
+7. **Memory writes** — use `scripts/memory_writer.py write` instead of writing memory files directly. The writer adds provenance frontmatter (source_repo, source_workdir, source_run_id, source_host, cross_repo_validated, applied_in_repos, created_at, last_updated_at), then atomically appends a row to `INDEX.jsonl` for sibling discovery:
    ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py append \
-     --run-id "$RUN_ID" --action write --file "<rel-path>" \
-     --source-host codex --source-workdir "$PWD"
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
+     --file "<rel-path>" --name "<slug>" --description "<one-line>" \
+     --type feedback --run-id "$RUN_ID" --workdir "$PWD" --host codex \
+     --body-file /tmp/memory-body.md
    ```
-   Between phases, tail the index for new peer learnings:
+8. **Memory reads (cross-session discovery)** — between phases, tail the index for new peer learnings:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
      --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
    ```
-   Tag any returned row whose `source_workdir` ≠ current `$PWD` as `[CROSS-REPO — requires scrutiny]` in the next phase brief.
+   For each returned row, read the memory file. Tag with `[CROSS-REPO — requires scrutiny]` when `source_workdir` ≠ current `$PWD` AND `source_repo` ≠ this repo's git remote. Tag with `[VALIDATED — applied in N repos]` when `cross_repo_validated: true` AND `len(applied_in_repos) >= 2`.
+9. **Memory mark-applied** — when a cross-repo memory is successfully applied here, record the application:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py mark-applied \
+     --file "<rel-path>" --applying-repo "$THIS_REPO_REMOTE" \
+     --applying-workdir "$PWD" --applying-run-id "$RUN_ID"
+   ```
+   Flips `cross_repo_validated: true` once a different repo confirms the lesson.
+10. **One-time migration** — on the first build after installing this version, run:
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py migrate \
+     --run-id "$RUN_ID" --workdir "$PWD" --host codex
+   ```
+   Idempotent backfill of provenance frontmatter onto pre-existing memory files. Safe to re-run.
 
-Both scripts are stdlib-only Python 3.11+ with `fcntl.flock` on append, atomic writes, and exit-code-as-verdict semantics. They work identically in Claude Code and Codex; the only difference is which `--host` value the session passes.
+All three scripts are stdlib-only Python 3.11+ with atomic writes (`tmpfile + os.replace`) and `fcntl.flock` on append. They work identically in Claude Code and Codex; the only difference is which `--host` value the session passes.
 
 
 **Define goal + criteria:**
