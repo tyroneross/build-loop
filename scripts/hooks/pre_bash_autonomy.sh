@@ -27,6 +27,32 @@ if [ -z "$CMD" ]; then
     exit 0
 fi
 
+# Scope guard: only police Bash in projects that have opted in to build-loop.
+# A build-loop project is identified by .build-loop/state.json (active run) or
+# .build-loop/config.json (configured policy). Without either, this gate must
+# not fire — it would false-positive on every curl/grep/git command across the
+# user's entire filesystem (e.g. "curl https://app.vercel.app/..." in an
+# unrelated repo would substring-match "vercel" and trigger an approval prompt).
+#
+# Additional belt-and-braces: never enforce when CWD is empty, root, or HOME
+# itself. HOME hosts ~/.build-loop/ (global memory + audit state), and a literal
+# existence check would otherwise activate the gate for every shell command run
+# from the user's home directory.
+if [ -z "$CWD" ] || [ "$CWD" = "/" ] || [ "$CWD" = "$HOME" ]; then
+    echo '{}'
+    exit 0
+fi
+if [ ! -f "$CWD/.build-loop/state.json" ] && [ ! -f "$CWD/.build-loop/config.json" ]; then
+    echo '{}'
+    exit 0
+fi
+
+# Honor an explicit kill switch for emergencies.
+if [ "${BUILD_LOOP_HOOKS:-}" = "off" ]; then
+    echo '{}'
+    exit 0
+fi
+
 # Resolve CLAUDE_PLUGIN_ROOT for finding autonomy_gate.py
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$PLUGIN_ROOT" ]; then
