@@ -22,6 +22,20 @@
 7. **Debugger context priming** (always; debugger is bundled with build-loop): call the debugger `list` MCP tool with `{ filter: { project: "<current>" }, limit: 10 }` to summarize recent incidents in this project. One-line output; no action. If MCP unavailable, fall through to `fallbacks.md#bug-memory`.
 8. **Capture UI state** (if web/mobile): IBR scan if available → showcase capture → manual screenshot.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See `skills/build-loop/references/memory.md`.
+
+9a. **Multi-session presence registration + collision check** (always; runs after `run_id` is generated):
+   1. Surface any pre-existing `<workdir>/.build-loop/SAFE-STOP-collision-*.md` sentinels left by an aborted prior session — the user must acknowledge and delete each one before this session proceeds.
+   2. Register this session: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register --run-id "$RUN_ID" --host claude_code --workdir "$PWD" --pid $$ --phase assess`. Codex / Gemini / other hosts substitute their `--host` value.
+   3. Check for peer collisions: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json`. Parse `tier` (LOW/MEDIUM/HIGH/CRITICAL).
+   4. Route by tier per `agents/build-orchestrator.md` §Multi-session concurrency:
+      - LOW → log peer count line; continue.
+      - MEDIUM → log peer phase + start time; continue.
+      - HIGH → interactive: `AskUserQuestion` (proceed/abort/queue); headless: enable `high_frequency_mode` and continue.
+      - CRITICAL → interactive: hard-stop; headless: SAFE-STOP sentinel + non-zero exit.
+   5. Initialize the memory-index cursor: capture the current top-of-log timestamp from `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --limit 1 --json` (used by `--since` in subsequent phases to surface new peer learnings).
+
+   **Supersedes** the legacy `ps aux | grep -c "[c]laude$"` advisory below — session_registry is the canonical signal. Keep the legacy line as a fallback when `session_registry.py` is unavailable (older plugin cache).
+
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Sub-step G Report's `## Held` section, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
 11. **Capture north star + update intent**: When `state.json.prd.core_principles` is non-empty (a PRD was loaded by step 10), use it as the strategic frame; `intent.md` cites the PRD path + revision rather than re-deriving. Otherwise use `references/intent-capability-pack.md` to identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals fresh. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
 12. **Assess modular structure**: Use `references/modular-systems-pack.md`. Identify current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror compact fields to `.build-loop/state.json.structure`.
