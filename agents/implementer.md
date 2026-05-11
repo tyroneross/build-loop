@@ -24,6 +24,7 @@ The orchestrator hands you:
 1. **`plan_path`** — absolute path to a markdown file matching the `templates/ux-fix-plan.md` schema (`.build-loop/ux-queue/<id>.md`) OR an inline plan for a Validate-failure fix.
 2. **`workdir`** — absolute path to the project root.
 3. Optional: `additional_context` — a short string from the orchestrator if the plan needs framing (e.g. "this is the second pass; entry X already partially fixed").
+4. **Brief prefix `[TASK_ID: <id>]`** — a per-dispatch unique identifier the orchestrator wrote to the cost ledger at dispatch time. Copy it verbatim into your return envelope's `task_id` field. If the prefix is absent (legacy brief), return `task_id: "unknown"`.
 
 You read the plan and act on its `proposed_fix`, `files_touched`, `evidence`, and `architecture_impact` fields.
 
