@@ -34,7 +34,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre_bash_autonomy.sh",
-            "timeout": 10
+            "timeout": 2000
           }
         ]
       }
@@ -54,11 +54,6 @@
       {
         "matcher": "",
         "hooks": [
-          {
-            "type": "command",
-            "command": "npx @tyroneross/claude-code-debugger mine --days 1 --store 2>/dev/null || true",
-            "timeout": 30000
-          },
           {
             "type": "command",
             "command": "test -d \"$CLAUDE_PROJECT_DIR/.episodic\" && nohup python3 \"$CLAUDE_PROJECT_DIR/scripts/scan_transcript_for_decisions.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log\" </dev/null >/dev/null 2>&1 & exit 0",

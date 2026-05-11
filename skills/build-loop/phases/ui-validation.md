@@ -8,7 +8,7 @@ A retrospective on a real shipped build (SpeakSavvy build 50) found that mockup-
 
 Root cause: design rules in `CLAUDE.md` were loaded as session context but didn't enter individual subagent prompts. Knowledge that doesn't enter the prompt doesn't reach the code.
 
-This phase guidance treats design rules as gates, not advisories.
+This phase guidance treats design rules and UI input/output contracts as gates, not advisories.
 
 ## When triggered
 
@@ -17,10 +17,10 @@ Phase 1 ASSESS sets `uiTarget` to one of `web`, `mobile`, or `null` based on pro
 When `uiTarget != null`, the UI gates wire in automatically:
 
 1. **Phase 1 (Assess)** — mockup pre-flight scan + required UI scoring criteria
-2. **Phase 2 (Plan)** — mockup-gallery hook for major UI work (new page or ≥40% redesign): draft B&W mockups via `mockup-gallery:mockup-session-new` before any UI is written. The exception to build-loop's "actions/functions only, no plugin UI" policy — mockup drafting is itself the action.
-3. **Phase 3 (Execute)** — verbatim subagent-prompt template injection on every UI dispatch
-4. **Phase 4 sub-step B (Validate)** — IBR-first quick pass via `ibr_quickpass.py` (runs project's existing `.ibr-test.json` suite); falls back to design-rule scanner on changed files when IBR unavailable
-5. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project; Gate 7 UX triage scanner (interactability, performance, data-accuracy, usability) writing queue entries to `.build-loop/ux-queue/`; Gate 8 IBR coverage-gap detector drafting new tests for uncovered surfaces
+2. **Phase 2 (Plan)** — UI input/output contract section from `references/ui-io-contract.md`, then mockup-gallery hook for major UI work (new page or ≥40% redesign): draft B&W mockups via `mockup-gallery:mockup-session-new` before any UI is written. The exception to build-loop's "actions/functions only, no plugin UI" policy — mockup drafting is itself the action.
+3. **Phase 3 (Execute)** — verbatim subagent-prompt template injection on every UI dispatch, including the plan's UI input/output contract
+4. **Phase 4 sub-step B (Validate)** — IBR-first quick pass via `ibr_quickpass.py` (runs project's existing `.ibr-test.json` suite); falls back to design-rule scanner on changed files when IBR unavailable; checks contract coverage before visual validation
+5. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project; Gate 5a UI input/output contract scan; Gate 7 UX triage scanner (interactability, performance, data-accuracy, usability) writing queue entries to `.build-loop/ux-queue/`; Gate 8 IBR coverage-gap detector drafting new tests for uncovered surfaces
 6. **Phase 5 (Iterate)** — drains the UX queue alongside Validate failures; parallel fan-out (≤4) for independent fixes; IBR `interact_and_verify` after each UI fix before re-validating
 
 ## UX scan dimensions (Gate 7)
@@ -78,8 +78,20 @@ When `uiTarget != null`, append these to the standard scoring criteria (do not a
 | UI-2 | Reduce Motion compliance | code: scanner `animation-without-reducemotion` rule | zero must-fix |
 | UI-3 | Theme token usage | code: scanner rules `uicolor-rgb-outside-theme`, `literal-corner-radius`, `hex-color-outside-theme` | zero must-fix |
 | UI-4 | Accessibility labels on icon-only graphics | code: scanner `sf-symbol-without-label` rule (or web equivalent) | zero must-fix on changed files |
+| UI-5 | Input/output contract coverage | document/read check: `## UI Input/Output Contract` + Review-B trace | every changed UI surface has inputs, outputs, data taxonomy, operation/domain verb, component mapping, states, modality fallback, validation/security, and traceability |
 
 These scope to changed files only — pre-existing violations elsewhere are logged to `.build-loop/issues/` and tracked separately, not blocking the current build.
+
+## Phase 2 (Plan) — UI input/output contract
+
+Before mockups or implementation, the plan must include `## UI Input/Output Contract` using `references/ui-io-contract.md`. The contract is the binding source for component choice. A good row names the surface, every user-provided value, every system-returned value, data taxonomy, operation/domain verb, exact component mapping, all states, modalities and fallbacks, validation/security layers, and schema/API/design-system traceability.
+
+Common failures:
+- A chart is planned without naming chart type, data schema, axis labels, and table fallback.
+- An AI response is planned without declaring markdown vs JSON vs generated UI, streaming vs complete rendering, abort/retry behavior, and sanitization.
+- A rich text or Markdown field is planned as a plain textarea without storage/rendering/sanitization rules.
+- A domain operation such as approve, publish, refund, or reorder is collapsed into generic "update" language.
+- Delete/update actions lack permission behavior for hidden, disabled, or 403 states.
 
 ## Phase 3 (Execute) — Subagent prompt template
 
@@ -92,7 +104,7 @@ const fullPrompt = uiPreamble + '\n\n---\n\n' + taskSpecificContract
 dispatchSubagent({ prompt: fullPrompt, ... })
 ```
 
-The template covers: skill loading mandate, mockup-vs-rule conflict policy (rule wins), 8-item anti-pattern checklist, required env hooks, self-verification requirement.
+The template covers: skill loading mandate, UI input/output contract application, mockup-vs-rule conflict policy (rule wins), anti-pattern checklist, required env hooks, self-verification requirement.
 
 ## Phase 4 sub-step B (Validate)
 
@@ -111,6 +123,22 @@ Exit code routing:
 - 0 → pass (clean)
 - 1 → pass with warnings (log, continue)
 - 2 → fail (route to Phase 5 Iterate; fix must-fix items before continuing)
+
+### UI input/output contract
+
+Read the plan's `## UI Input/Output Contract` section and compare it to the changed UI files. Pass only when every changed surface maps:
+
+- User inputs and system outputs.
+- Structural type, content format, and persistence intent.
+- CRUD operation and domain verb.
+- Exact input and output component choice.
+- Default, populated, focused, disabled, loading, success, error, empty, and streaming states as applicable.
+- Text/voice/file/vision/chart/map/AI modality and fallback.
+- Presentation, application, and domain validation plus sanitization.
+- Auth/authz display behavior for gated actions.
+- Data schema/API/design-system traceability.
+
+Missing coverage is a Validate failure unless the diff is copy-only and the contract explicitly says no data surface changed.
 
 ### Visual validation (lesson from build 53–55)
 
@@ -190,6 +218,7 @@ A UI build is considered production-ready when ALL of these pass on the first bu
 - ✅ Build succeeds
 - ✅ Tests pass (or pre-existing failures are documented)
 - ✅ Design-rule scanner exits 0 on changed files
+- ✅ UI input/output contract covers every changed surface
 - ✅ Mockup-vs-rule conflicts documented in subagent output
 - ✅ **Visual validation: every changed screen rendered and inspected against mockup**
   - Geometry correct (arcs, charts, custom paths)

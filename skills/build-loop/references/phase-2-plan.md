@@ -6,7 +6,7 @@
 
 **Goal**: Break work into executable steps, then optimize the plan before execution.
 
-0. **If no plan exists yet**: check whether `.build-loop/plan.md` is absent or empty. If so, invoke `Skill("build-loop:spec-writing")` to draft a build-loop-compatible plan markdown before proceeding. The spec-writing skill walks the 8-item completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation) and runs `check_checklist.py` + `plan-critic` on the output. It writes the plan to `docs/plans/<feature-slug>.md` and commits it before any implementation branches are cut. Only continue to step 1 once the spec-writing skill returns a plan path. Skip this step when a valid plan already exists and passed `plan-verify` on the previous run.
+0. **If no plan exists yet**: check whether `.build-loop/plan.md` is absent or empty. If so, invoke `Skill("build-loop:spec-writing")` to draft a build-loop-compatible plan markdown before proceeding. The spec-writing skill walks the completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation, UI input/output contract when UI is in scope, and routing-risk fields) and runs `check_checklist.py` + `plan-critic` on the output. It writes the plan to `docs/plans/<feature-slug>.md` and commits it before any implementation branches are cut. Only continue to step 1 once the spec-writing skill returns a plan path. Skip this step when a valid plan already exists and passed `plan-verify` on the previous run.
 
 1. **Invoke `writing-plans` skill** for detailed task breakdown
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
@@ -15,7 +15,8 @@
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
 6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
 7. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
-8. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
+8. **UI input/output contract gate**: If `uiTarget != null`, load `references/ui-io-contract.md` and add a `## UI Input/Output Contract` section to the plan before mockups or implementation. The section must cover every affected screen/component and name: user inputs, system outputs, data taxonomy, CRUD/domain operation, component mapping, state matrix, modality fallback, validation/security, and traceability. If a planned UI component has no named input/output, remove it or mark it decorative with rationale; decorative controls are usually a scope error.
+9. **Mockup-first gate for major UI work**: If the plan introduces a *new page/screen* or makes a *major redesign* (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause Plan and invoke `mockup-gallery:mockup-session-new` to draft black-and-white mockups before any UI is written. Wait for user feedback via `mockup-gallery:mockup-feedback`; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to build-loop's "actions/functions only, no UI surfaces" plugin-bridging policy — mockup drafting is itself the action.
 
 **Optimization checklist** (review the plan for these before proceeding):
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
@@ -24,6 +25,7 @@
 - Changes that could conflict with each other (oscillation risk)?
 - Define coordination checkpoints where subagents must sync
 - UI/API/data choices that add options, mocks, or complexity without user value?
+- UI plans missing input/output coverage, state coverage, modality fallbacks, validation/security layers, or schema/API traceability?
 - MECE gaps or overlaps: unowned responsibilities, shared file ownership, or mixed grouping dimensions?
 - Boundaries that are too tight, too broad, or missing a stable interface?
 - If the plan chooses a simpler/integrated path over modularity, is there a documented `MODULARITY EXCEPTION`?

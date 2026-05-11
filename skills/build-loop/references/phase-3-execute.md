@@ -15,11 +15,12 @@
 5. **Codex execution adapter**: If running in Codex, load `references/codex-subagents.md` before any spawn decision. Spawn `explorer` or `worker` subagents only when the Codex permission gate passed; otherwise execute locally. When spawning a worker, use `templates/codex-worker-prompt.md`, prefer explicit prompt packets over full context forks, and require the worker return changed files, validation, unresolved risks, and integration notes.
 6. **UI work (when `uiTarget != null`)**: Every UI subagent prompt MUST be prepended with the verbatim contents of `templates/ui-subagent-prompt.md` (loaded as raw text, not as a link). The template injects:
    - Mandate to load `calm-precision` and per-platform skills (`ibr:ios-design`/`ibr:apple-platform` for Apple, `frontend-design`/`ibr:mobile-web-ui` for web)
+   - Mandate to apply the plan's `## UI Input/Output Contract` from `references/ui-io-contract.md`
    - Mockup-vs-rule conflict policy: rule wins; subagent must report `RULE BEATS MOCKUP:` decisions
    - Inline anti-pattern checklist (status pills, ungated animations, theme-token bypass, Dynamic Type, accessibility labels, touch targets, VoiceOver consistency, no fake buttons)
    - Required env hooks (e.g. `@Environment(\.accessibilityReduceMotion)` on SwiftUI animations)
    - Self-verification: run scanner before returning, zero must-fix on changed files
 
-   Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, and accurate data.
+   Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, accurate data, and an explicit input/output contract.
 7. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
 8. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing

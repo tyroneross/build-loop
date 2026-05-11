@@ -14,6 +14,21 @@ Load these skills and follow them. Not optional.
 
 If a skill is unavailable, proceed but note it in your output.
 
+## UI input/output contract
+
+Before editing, read the task's `## UI Input/Output Contract` section. If it is missing and the task is not copy-only, return `status: blocked` and name the missing contract.
+
+For every changed screen/component, apply the contract exactly:
+
+1. Every user input has a named structural type, content format, persistence intent, validation rule, and input control.
+2. Every system output has a named source, content format, renderer, loading/error/empty state, and overflow/copy/fallback behavior.
+3. Domain actions are named as verbs (submit, approve, publish, reorder, export), not hidden inside generic update language.
+4. Voice, file, image, chart, map, AI-generated, and streaming surfaces include a modality-specific fallback.
+5. Rich text, Markdown, HTML, JSON, and AI output include sanitization/rendering rules.
+6. Create/update/delete/domain actions include auth/authz behavior for denied users: hidden, disabled, or 403/empty view.
+
+If you need to deviate from the contract, report `CONTRACT DEVIATION: <surface> — <reason> — <replacement>`.
+
 ## Mockup-vs-rule conflict policy
 
 Mockups are **intent**. Design rules are **law**. When they conflict, the rule wins. No exceptions, no judgment calls — replicate the rule, not the pixel.
@@ -79,7 +94,9 @@ Mandatory pre-return steps:
 
 1. **Build.** Platform default — SwiftUI: `xcodegen generate && xcodebuild build`. Web: `pnpm build` or project equivalent.
 
-2. **Design-rule scan.** If `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs` exists, run:
+2. **UI input/output contract check.** Verify the changed files still satisfy the task's contract. Confirm all inputs, outputs, states, modality fallbacks, validation/security rules, and traceability entries are implemented or explicitly marked not applicable.
+
+3. **Design-rule scan.** If `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs` exists, run:
    ```
    node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/audit-design-rules.mjs" --root=<project> --platform=<swiftui|react|web>
    ```
@@ -87,7 +104,7 @@ Mandatory pre-return steps:
 
    **No "out of scope" framing for warnings.** Drift from a rule in any user-facing file is drift, regardless of whether this commit "owns" that file. If your task changes one screen and the scanner shows warnings on adjacent screens, fix the warnings too — the user lives in the app, they don't see commit boundaries. The only acceptable warning is one you explicitly justify in your output (e.g. "fixed font size on numeric chip — Dynamic Type would break tabular alignment"). "Pre-existing" is not a reason; it's a backlog.
 
-3. **Visual validation (REQUIRED for UI work).** The scanner catches static anti-patterns. It cannot catch rendering bugs — an upside-down arc, an invisible track, a clipped row, a chip that wraps. **If you touched a Views/ file, you must render the actual screen and look at it.**
+4. **Visual validation (REQUIRED for UI work).** The scanner catches static anti-patterns. It cannot catch rendering bugs — an upside-down arc, an invisible track, a clipped row, a chip that wraps. **If you touched a Views/ file, you must render the actual screen and look at it.**
 
    - **iOS / macOS / watchOS**: install on simulator, launch, capture via `mcp__plugin_ibr_ibr__native_scan` or `xcrun simctl io booted screenshot`. If your change is in a returning-user code path, seed test data first (see "DebugSeeder pattern" below).
    - **Web**: open in headless Chromium via `mcp__plugin_ibr_ibr__scan` against the dev server URL.
@@ -96,7 +113,7 @@ Mandatory pre-return steps:
 
    If IBR / simulator unavailable, document this in your output as a known gap rather than skipping the step silently.
 
-4. If the scanner doesn't exist (older build-loop install), you still must self-audit against the checklist above before returning.
+5. If the scanner doesn't exist (older build-loop install), you still must self-audit against the checklist above before returning.
 
 ## DebugSeeder pattern (testability for returning-user views)
 
@@ -145,8 +162,10 @@ Your output to the orchestrator must include:
 
 - Files created / modified
 - Build result (✅ / ❌)
+- UI input/output contract result: covered surfaces, deviations, and any N/A entries
 - Scanner result on changed files: must-fix count (must be 0), warn count
 - Every `RULE BEATS MOCKUP:` decision (one line each)
+- Every `CONTRACT DEVIATION:` decision (one line each)
 - Any anti-pattern you intentionally left in place + why (must be explicitly justified, not silently shipped)
 
 Returning without these sections forces the orchestrator to re-prompt you. Don't skip.
