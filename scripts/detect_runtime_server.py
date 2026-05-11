@@ -135,7 +135,16 @@ MAX_FILE_BYTES = 200 * 1024  # 200 KB cap; servers larger than this still
 
 
 def _walk_candidate_files(root: Path) -> Iterable[Path]:
-    """Yield candidate source files under ``root`` honoring SKIP_DIRS."""
+    """Yield candidate source files under ``root`` honoring SKIP_DIRS.
+
+    Non-tests/ paths yield BEFORE tests/ paths so that when multiple files
+    match the substrate+emit signature, a real server module wins over a
+    test fixture that imports ``BaseHTTPRequestHandler`` for mock-server
+    purposes. local-smartz 2026-05-11 evidence: without this priority,
+    ``tests/test_sse_cancellation.py`` was picked over
+    ``src/localsmartz/serve.py`` and the inline-UI was invisible.
+    """
+    test_paths: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         # In-place prune; os.walk respects this.
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -143,7 +152,39 @@ def _walk_candidate_files(root: Path) -> Iterable[Path]:
             suffix = Path(fn).suffix.lower()
             if suffix not in ALLOWED_SUFFIXES:
                 continue
-            yield Path(dirpath) / fn
+            candidate = Path(dirpath) / fn
+            if _is_test_path(candidate, root):
+                test_paths.append(candidate)
+            else:
+                yield candidate
+    # Tests last — they're the fallback when no real server module exists.
+    for p in test_paths:
+        yield p
+
+
+def _is_test_path(path: Path, root: Path) -> bool:
+    """Return True if ``path`` lives inside a tests/ directory or is named
+    ``test_*.py`` / ``*_test.py`` / ``*.test.{js,ts,mjs,cjs}``.
+
+    Walks the rel-path's parts so ``tests/`` at any depth qualifies (not
+    just root-level). Filename heuristic mirrors pytest + jest defaults.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    parts = {p.lower() for p in rel.parts[:-1]}
+    if "tests" in parts or "test" in parts or "__tests__" in parts:
+        return True
+    name = path.name.lower()
+    if name.startswith("test_") and name.endswith(".py"):
+        return True
+    if name.endswith("_test.py"):
+        return True
+    for suf in (".test.js", ".test.ts", ".test.mjs", ".test.cjs"):
+        if name.endswith(suf):
+            return True
+    return False
 
 
 def _read_capped(path: Path) -> str | None:

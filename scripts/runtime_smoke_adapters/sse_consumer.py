@@ -21,7 +21,15 @@ to `state.json.runtimeServerInfo`. Required keys:
     - sse_route: str | None (e.g. "/api/stream")
     - default_port: int | None
     - embedded_ui_module: str | None (relative path; None for API-only services)
-    - event_handler_locations: list[str] (relative paths, defaults to [embedded_ui_module])
+    - event_handler_locations: list — accepts BOTH shapes:
+        * list[str] — bare relative paths (legacy form, hand-built envelopes)
+        * list[dict] — {"file": str, "line": int, "function": str} per detector
+          contract (`detect_runtime_server.py` emits this shape).
+        The adapter coerces both into the underlying list[str] internally so
+        callers don't have to pre-normalize. Falls back to [embedded_ui_module]
+        when omitted.
+    - smoke_duration_seconds: int | None (optional override; defaults to 5)
+    - smoke_payload: str | None (optional override of the SSE POST body)
     - start_command: str | None (overrides the default uv-run shape)
 
 Return envelope shape:
@@ -55,7 +63,8 @@ from typing import Any
 ADAPTER_NAME = "sse_consumer"
 BOOT_TIMEOUT_SECONDS = 20
 HEALTH_TIMEOUT_SECONDS = 8
-SSE_CURL_DURATION_SECONDS = 5
+SSE_CURL_DURATION_SECONDS = 5  # Default; override per-project via info.smoke_duration_seconds.
+SSE_CURL_DURATION_MAX_SECONDS = 30  # Hard cap so a misconfigured probe can't run the full TOTAL_TIMEOUT.
 TOTAL_TIMEOUT_SECONDS = 45
 
 _EVENT_TYPE_PATTERN = re.compile(r'"type"\s*:\s*"([^"]+)"')
@@ -154,6 +163,57 @@ def _curl_sse(port: int, route: str, duration: int, payload: str) -> tuple[set[s
         return set(), ""
 
 
+def _resolve_probe_duration(info: dict) -> int:
+    """Read ``info.smoke_duration_seconds`` if present, else fall back to the
+    5-second default. Clamps to [1, SSE_CURL_DURATION_MAX_SECONDS] so a stray
+    string or zero doesn't pin the probe at no-data or eat the whole timeout
+    budget. Non-numeric values are silently rejected (use default)."""
+    raw = info.get("smoke_duration_seconds")
+    if raw is None:
+        return SSE_CURL_DURATION_SECONDS
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return SSE_CURL_DURATION_SECONDS
+    if n < 1:
+        return SSE_CURL_DURATION_SECONDS
+    if n > SSE_CURL_DURATION_MAX_SECONDS:
+        return SSE_CURL_DURATION_MAX_SECONDS
+    return n
+
+
+def _normalize_handler_locations(value) -> list[str]:
+    """Coerce ``event_handler_locations`` to a list of relative-path strings.
+
+    Accepts:
+      - list[str]  — pass-through, deduped order-preserving.
+      - list[dict] — extract ``.file`` from each entry, dedup.
+      - mixed     — handle each entry per its type.
+      - None / empty — return [].
+
+    Anything else is dropped silently; the helper is defensive so a malformed
+    envelope from the detector (or a hand-built one) never crashes the smoke
+    gate. Order preserved so the first-occurrence file leads — useful when
+    the handler-module list is intentionally ordered (e.g. dispatch table
+    files before fallback files).
+    """
+    if not value:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in value:
+        if isinstance(entry, str):
+            path = entry
+        elif isinstance(entry, dict):
+            path = entry.get("file") or ""
+        else:
+            continue
+        if path and path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
 def _diff_touches_relevant_files(changed_files: list[str], info: dict) -> bool:
     """Return True if any changed file is the server module, embedded UI module,
     or one of the handler-location modules."""
@@ -162,7 +222,7 @@ def _diff_touches_relevant_files(changed_files: list[str], info: dict) -> bool:
         relevant.add(info["server_module"])
     if info.get("embedded_ui_module"):
         relevant.add(info["embedded_ui_module"])
-    for loc in info.get("event_handler_locations") or []:
+    for loc in _normalize_handler_locations(info.get("event_handler_locations")):
         relevant.add(loc)
     for f in changed_files:
         f_norm = f.replace("\\", "/")
@@ -232,9 +292,14 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
             }
 
         # Step 3: Curl the SSE endpoint
-        # Use a minimal probe payload — projects can override via info.smoke_payload
+        # Use a minimal probe payload — projects can override via info.smoke_payload.
+        # Probe duration is also overridable via info.smoke_duration_seconds; useful
+        # for servers whose interesting events (heartbeat, pipeline-phase stage) fire
+        # outside the 5s default window. Capped at SSE_CURL_DURATION_MAX_SECONDS so a
+        # misconfigured probe can't burn the full TOTAL_TIMEOUT_SECONDS.
         payload = info.get("smoke_payload") or '{"prompt":"smoke test"}'
-        observed, _body = _curl_sse(port, sse_route, SSE_CURL_DURATION_SECONDS, payload)
+        probe_duration = _resolve_probe_duration(info)
+        observed, _body = _curl_sse(port, sse_route, probe_duration, payload)
 
         if not observed:
             return {
@@ -248,8 +313,10 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
                 "findings": [],
             }
 
-        # Step 4: Parse the embedded UI's event-handler switch(es)
-        ui_modules = list(info.get("event_handler_locations") or [])
+        # Step 4: Parse the embedded UI's event-handler switch(es).
+        # Accepts dict-shape (detector contract) OR list[str] (legacy hand-built
+        # envelopes) via _normalize_handler_locations.
+        ui_modules = _normalize_handler_locations(info.get("event_handler_locations"))
         if info.get("embedded_ui_module") and info["embedded_ui_module"] not in ui_modules:
             ui_modules.append(info["embedded_ui_module"])
 
