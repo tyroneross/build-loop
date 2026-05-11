@@ -21,7 +21,15 @@ to `state.json.runtimeServerInfo`. Required keys:
     - sse_route: str | None (e.g. "/api/stream")
     - default_port: int | None
     - embedded_ui_module: str | None (relative path; None for API-only services)
-    - event_handler_locations: list[str] (relative paths, defaults to [embedded_ui_module])
+    - event_handler_locations: list — accepts BOTH shapes:
+        * list[str] — bare relative paths (legacy form, hand-built envelopes)
+        * list[dict] — {"file": str, "line": int, "function": str} per detector
+          contract (`detect_runtime_server.py` emits this shape).
+        The adapter coerces both into the underlying list[str] internally so
+        callers don't have to pre-normalize. Falls back to [embedded_ui_module]
+        when omitted.
+    - smoke_duration_seconds: int | None (optional override; defaults to 5)
+    - smoke_payload: str | None (optional override of the SSE POST body)
     - start_command: str | None (overrides the default uv-run shape)
 
 Return envelope shape:
@@ -154,6 +162,38 @@ def _curl_sse(port: int, route: str, duration: int, payload: str) -> tuple[set[s
         return set(), ""
 
 
+def _normalize_handler_locations(value) -> list[str]:
+    """Coerce ``event_handler_locations`` to a list of relative-path strings.
+
+    Accepts:
+      - list[str]  — pass-through, deduped order-preserving.
+      - list[dict] — extract ``.file`` from each entry, dedup.
+      - mixed     — handle each entry per its type.
+      - None / empty — return [].
+
+    Anything else is dropped silently; the helper is defensive so a malformed
+    envelope from the detector (or a hand-built one) never crashes the smoke
+    gate. Order preserved so the first-occurrence file leads — useful when
+    the handler-module list is intentionally ordered (e.g. dispatch table
+    files before fallback files).
+    """
+    if not value:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in value:
+        if isinstance(entry, str):
+            path = entry
+        elif isinstance(entry, dict):
+            path = entry.get("file") or ""
+        else:
+            continue
+        if path and path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
 def _diff_touches_relevant_files(changed_files: list[str], info: dict) -> bool:
     """Return True if any changed file is the server module, embedded UI module,
     or one of the handler-location modules."""
@@ -162,7 +202,7 @@ def _diff_touches_relevant_files(changed_files: list[str], info: dict) -> bool:
         relevant.add(info["server_module"])
     if info.get("embedded_ui_module"):
         relevant.add(info["embedded_ui_module"])
-    for loc in info.get("event_handler_locations") or []:
+    for loc in _normalize_handler_locations(info.get("event_handler_locations")):
         relevant.add(loc)
     for f in changed_files:
         f_norm = f.replace("\\", "/")
@@ -248,8 +288,10 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
                 "findings": [],
             }
 
-        # Step 4: Parse the embedded UI's event-handler switch(es)
-        ui_modules = list(info.get("event_handler_locations") or [])
+        # Step 4: Parse the embedded UI's event-handler switch(es).
+        # Accepts dict-shape (detector contract) OR list[str] (legacy hand-built
+        # envelopes) via _normalize_handler_locations.
+        ui_modules = _normalize_handler_locations(info.get("event_handler_locations"))
         if info.get("embedded_ui_module") and info["embedded_ui_module"] not in ui_modules:
             ui_modules.append(info["embedded_ui_module"])
 
