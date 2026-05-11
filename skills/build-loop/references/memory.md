@@ -41,3 +41,37 @@ Build-loop maintains two memory stores. Every build reads both; writes go to exa
 - Before deploying: check global deployment memory.
 - Before UI work: check project design memory.
 - Before adopting a new library: check global library-choice memory.
+
+## Cross-session memory propagation (multi-process / multi-host)
+
+Multiple build-loop sessions can run concurrently. Each global memory write appends one row to `~/.build-loop/memory/INDEX.jsonl` via `scripts/memory_index.py`. Sibling sessions can `tail` this log between phases to see new peer learnings as they land — not just at session start.
+
+**Writer side** — whenever you write/update/delete a file under `~/.build-loop/memory/`, immediately append a row:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py append \
+  --run-id "$RUN_ID" --action write \
+  --file "<rel-path>" \
+  --source-host claude_code \
+  --source-workdir "$PWD"
+```
+
+`source-repo` and `source-workdir` are optional but recommended — they let downstream readers in a DIFFERENT repo tag the memory as `[CROSS-REPO — requires scrutiny]` before applying.
+
+**Reader side** — between phases (or at every M2 heartbeat), tail since your last check:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
+  --since "$LAST_INDEX_CHECK_TS" \
+  --exclude-run-id "$RUN_ID" \
+  --json
+```
+
+For each row:
+1. Read the underlying memory file.
+2. If the memory's `source_workdir` ≠ this `$PWD` AND `source_repo` ≠ this repo's git remote — tag the surfaced snippet `[CROSS-REPO — requires scrutiny]` in the phase brief.
+3. Otherwise — surface as a normal peer signal.
+
+The full cross-repo trust gradient (validation tracking via `cross_repo_validated` + `applied_in_repos[]` frontmatter) lands in PR-β (memory provenance schema). This commit only ships the discovery log.
+
+Concurrency: append uses `fcntl.flock(LOCK_EX)` on a sidecar `.lock` file — multi-writer safe.

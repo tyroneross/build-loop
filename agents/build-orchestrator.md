@@ -86,6 +86,81 @@ Reasonable assumptions over interruptions. If you hit something the plan does no
 
 One end-of-run report. Surface what changed, what shipped, what was deferred. Not a checkpoint between every phase.
 
+## Multi-session concurrency (cross-terminal / cross-host)
+
+Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. Two scripts own this concern:
+
+- `scripts/session_registry.py` — presence + collision detection (`~/.build-loop/sessions/<run_id>.json`)
+- `scripts/memory_index.py` — append-only log of memory writes for cross-session learning (`~/.build-loop/memory/INDEX.jsonl`)
+
+### Required orchestrator integration points
+
+**On Phase 1 Assess start (after `run_id` is generated, BEFORE any planning):**
+
+1. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register --run-id "$RUN_ID" --host claude_code --workdir "$PWD" --pid $$ --phase assess`
+2. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json` → parse `tier`
+3. **Tier handling**:
+   - `LOW` (exit 0) — log peer count to terminal: "N other build-loop sessions active (different workdirs)"; continue.
+   - `MEDIUM` (exit 1) — log: "Peer session at same workdir, phase=`<peer.phase>`, started=`<peer.started_at>`"; continue.
+   - `HIGH` (exit 2) — interactive (Claude Code): `AskUserQuestion`("Peer session at this workdir is in `<execute|iterate>` — proceed / abort / queue?"). Headless (Codex): log + set `high_frequency_mode: true` (heartbeat cadence → every 30s vs 5min default); continue.
+   - `CRITICAL` (exit 3) — interactive: hard-stop with message naming overlapping files. Headless: `python3 .../session_registry.py` writes `SAFE-STOP-collision-<peer-run-id>.md` sentinel to `<workdir>/.build-loop/` and the orchestrator exits non-zero.
+4. Surface any `<workdir>/.build-loop/SAFE-STOP-collision-*.md` files left by prior aborted sessions BEFORE doing anything else. The user must acknowledge and delete each sentinel before this session proceeds.
+
+**On every M2 heartbeat trigger point (dispatch_chunk, return_chunk, phase_transition, iterate_attempt):**
+
+Refresh the session_registry heartbeat. Append `--phase <current>` whenever the phase changes:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py heartbeat --run-id "$RUN_ID" --phase "$CURRENT_PHASE"
+```
+
+If the M2 helper update fails, the session_registry heartbeat is still best-effort — never block the build.
+
+**On Phase 3 pre-dispatch (after MECE file ownership is decided):**
+
+Update `files_owned` on the presence file so concurrent peers can see exactly which files this session will touch. Re-run `check` immediately afterward to catch new CRITICAL overlaps that materialized while planning:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py heartbeat --run-id "$RUN_ID" --phase execute --files-owned "$FILES_OWNED_CSV"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check --run-id "$RUN_ID" --workdir "$PWD" --phase execute --files-owned "$FILES_OWNED_CSV" --json
+```
+
+CRITICAL handling at this point is identical to Phase 1 — interactive surfaces immediately, headless writes the sentinel and exits.
+
+**On clean completion (Review-G final, AFTER the run-entry is written):**
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
+```
+
+Moves presence to `sessions/dead/` so it doesn't clutter the active scan for future sessions. Failure to unregister is benign — the stale-sweep (5-min default) will absorb it.
+
+**Between phases, scan for new sibling learnings:**
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
+```
+
+Read any new rows. If a row's `file` matches a memory category relevant to the current build (e.g. `feedback_buildloop_*` during a build-loop work session), Read the underlying memory file and surface its `description` field in the next phase brief as `[INDEX] new peer memory: <file> — <description>`. Mark it `[CROSS-REPO]` when `source_workdir` ≠ this workdir AND `source_repo` ≠ this repo's git remote.
+
+**On every memory write under `~/.build-loop/memory/` (Phase 4 Review-F or anywhere memory_writer extends the global store):**
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py append --run-id "$RUN_ID" --action write --file "<rel-path>" --source-host claude_code --source-workdir "$PWD"
+```
+
+Sibling sessions see the write on their next tail.
+
+### Headless host (Codex, cron) deterministic defaults
+
+When `AskUserQuestion` is unavailable, the orchestrator MUST NOT block on collision detection. The deterministic defaults per `feedback_no_permission_asks.md` posture:
+
+- LOW/MEDIUM: log + proceed at normal cadence.
+- HIGH: enter `high_frequency_mode` (heartbeat every 30s, recheck collisions before every chunk dispatch); proceed.
+- CRITICAL: write SAFE-STOP sentinel + exit non-zero. The first sentinel always wins; the survivor takes the work.
+
+The interactive→headless distinction lives in this prompt, not in the scripts — the scripts return tiers + exit codes deterministically.
+
 ## Phase Coordination
 
 ### Phase 1: Assess
