@@ -142,6 +142,7 @@ Reuse the matrix from `build-loop:debugging-memory/references/ios-notification-a
 | Single-target Swift file in multi-target project | `cannot find 'Foo' in scope` in watchOS only | Add to project.yml watchOS sources, or use `#if !os(watchOS)` |
 | `UNNotificationSetting.badgeSetting` on watchOS | Compile error | `#if os(watchOS)` guard |
 | `UIImpactFeedbackGenerator` on macOS | Compile error | `#if !os(macOS)` guard |
+| Shared iOS/macOS SwiftUI sheet uses `.confirmationAction` for dismissal | iOS shows a top Done button, but macOS can render it in a bottom action area or detach it from scroll content | Split chrome by platform: keep iOS toolbar actions; on macOS use an in-content top header with reserved space for Done/Close and put scrollable content below it |
 | Notification scheduled with stale `timeInterval` after recovery | Alarm fires immediately or never | Recompute `endDate - now`, re-arm, cancel if `<= 0` |
 | Live Activity stale endDate | Lock-screen countdown jumps | Update with authoritative `endDate = phaseStartDate + totalTime + pauseAccumulatedDuration` |
 | TestFlight build with new entitlement but no Apple-approved Critical Alerts | Crash on launch on TestFlight | Apply for entitlement before shipping |
@@ -160,6 +161,7 @@ Phase 2 Plan output for an Apple-native goal should include, in order:
 8. **Test matrix subset**: which rows are sim-verified vs device-deferred
 9. **Diagnostic logging**: what subsystem/category, what events
 10. **Anti-pattern guard**: explicit "do NOT add UIBackgroundModes audio" if relevant
+11. **Shared SwiftUI modal chrome**: for iOS + macOS sheets, state which controls stay in iOS toolbars and which macOS controls move into persistent top content headers. Verify Done/Close remains visible when content scrolls.
 
 ## When to escalate
 
