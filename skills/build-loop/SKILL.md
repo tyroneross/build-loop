@@ -133,6 +133,16 @@ Every non-trivial build uses `references/modular-systems-pack.md`. Build-loop sh
 
 This is a default, not dogma. If a simpler or more integrated approach better serves the use case, document `MODULARITY EXCEPTION: <reason>` in the plan or report and explain why that choice improves user value, performance, clarity, or delivery risk.
 
+## Pay-it-Forward Architectural Posture
+
+Every build that touches a typed protocol, interface boundary, schema, or multi-surface-capable behavior uses `skills/build-loop/references/pay-it-forward-arch.md`. The rule:
+
+> *"I'd rather do a slightly harder thing now to avoid a more painful change in the future if not prohibited by costs or other concerns."*
+
+When a chunk has two viable paths — **Path A** (minimum-viable, easy to ship) vs **Path B** (same user-visible behavior, but extends the typed contract for future surfaces) — **default to Path B** unless one of four gates blocks (time-budget >2×, missing dep/infra, missing design decision, empty foreclosed-future-capability list).
+
+Phase 2 Plan MUST include a `Path A vs Path B` section for every chunk that fires the signal. Phase 4 Review-A Critic checks that the comparison was performed when applicable. Path B with flexibility-for-its-own-sake (plugin systems, abstract factories, hook architectures not tied to a named future capability) is the explicit anti-pattern — Path B must cite a named roadmap/PRD/intent.md capability that the typed contract unlocks.
+
 ## Capability Routing
 
 Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** → **secondary** → **inline fallback** (from `fallbacks.md`). Phase 1 runs `detect-plugins.mjs` and writes the result to `state.json.availablePlugins`. All routing consults that object.
