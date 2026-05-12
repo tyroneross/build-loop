@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/tyroneross/build-loop#readme",
   "repository": "https://github.com/tyroneross/build-loop",
-  "license": "FSL-1.1-MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "development",
     "orchestration",

@@ -7,7 +7,7 @@
     "url": "https://github.com/tyroneross"
   },
   "repository": "https://github.com/tyroneross/build-loop",
-  "license": "FSL-1.1-MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/tyroneross/build-loop#readme",
   "keywords": [
     "development",
