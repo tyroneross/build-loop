@@ -240,8 +240,9 @@ def write(
     path = memory_dir / file_rel
     workdir_abs = str(Path(workdir).resolve())
 
+    existed_before = path.exists()
     existing_fm: dict[str, Any] = {}
-    if path.exists():
+    if existed_before:
         existing_fm, _ = _split_frontmatter(path.read_text(encoding="utf-8"))
 
     # Merge: existing values win for created_at + applied_in_repos +
@@ -262,16 +263,25 @@ def write(
         "last_updated_at": now,
     }
     if extra_frontmatter:
-        # Forbid overwriting provenance fields via extra.
+        # Copy the caller's dict before mutating — otherwise our .pop() drains the
+        # caller's dict as a side effect, which surprised a code reviewer 2026-05-11.
+        extra = dict(extra_frontmatter)
         for k in REQUIRED_PROVENANCE_FIELDS | {"name", "description", "type"}:
-            extra_frontmatter.pop(k, None)
-        fm.update(extra_frontmatter)
+            extra.pop(k, None)
+        fm.update(extra)
 
     content = _emit_frontmatter(fm) + "\n" + body.lstrip("\n")
     _atomic_write_text(path, content)
 
     # Append to memory index for sibling discovery.
-    action = "update" if existing_fm else "write"
+    # Use path.exists() rather than existing_fm truthiness — a file that existed
+    # but had unparseable/empty frontmatter would otherwise log as a fresh "write"
+    # even though it's being overwritten. The on-disk state is the ground truth;
+    # this branch checks file presence BEFORE the atomic write above so the
+    # post-write state doesn't confuse the comparison.
+    # NOTE: by this point _atomic_write_text has already replaced the file, so we
+    # must use the pre-write existence signal — captured as `existed_before` below.
+    action = "update" if existed_before else "write"
     try:
         mi.append_row(
             memory_dir,

@@ -51,9 +51,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -82,12 +84,22 @@ def _find_free_port() -> int:
 
 
 def _wait_for_http_ready(port: int, deadline: float, path: str = "/") -> bool:
-    """Poll http://127.0.0.1:port{path} until it returns any HTTP response."""
+    """Poll http://127.0.0.1:port{path} until it returns any HTTP response.
+
+    Treats ANY HTTP response (including 4xx/5xx) as "server is up." urllib's
+    HTTPError is a URLError subclass — without this branch, a server that
+    correctly returns 404 on `/` would keep retrying until the boot deadline
+    and falsely report `server_did_not_become_ready`. Catching HTTPError
+    separately fixes the inline-API-server case where there's no `/` route.
+    """
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=2) as resp:
                 if resp.status:
                     return True
+        except urllib.error.HTTPError:
+            # 4xx/5xx = server is up and responding, just doesn't serve this route. Ready.
+            return True
         except (urllib.error.URLError, OSError):
             pass
         time.sleep(0.3)
@@ -140,8 +152,18 @@ def _resolve_start_command(info: dict, workdir: Path, port: int) -> list[str]:
     return []
 
 
+class _CurlMissing(Exception):
+    """Raised when curl binary is not installed on the system. Distinguishes
+    'no events observed because curl is absent' from 'server emitted nothing'."""
+
+
 def _curl_sse(port: int, route: str, duration: int, payload: str) -> tuple[set[str], str]:
-    """Curl the SSE endpoint for `duration` seconds; return (observed event types, raw body)."""
+    """Curl the SSE endpoint for `duration` seconds; return (observed event types, raw body).
+
+    Raises _CurlMissing when the curl binary is not installed — the caller
+    converts that into a `skipped/adapter_unavailable` envelope so it's
+    distinguishable from a legitimate 'no events emitted' failure.
+    """
     cmd = [
         "curl", "-sN", "-X", "POST",
         f"http://127.0.0.1:{port}{route}",
@@ -159,7 +181,9 @@ def _curl_sse(port: int, route: str, duration: int, payload: str) -> tuple[set[s
         body = result.stdout
         types = set(_EVENT_TYPE_PATTERN.findall(body))
         return types, body
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except FileNotFoundError as exc:
+        raise _CurlMissing("curl binary not found on PATH") from exc
+    except (subprocess.TimeoutExpired, OSError):
         return set(), ""
 
 
@@ -228,11 +252,6 @@ def _diff_touches_relevant_files(changed_files: list[str], info: dict) -> bool:
         f_norm = f.replace("\\", "/")
         if f_norm in relevant:
             return True
-        # Also match if the changed file is inside a directory of a tracked module
-        for r in relevant:
-            if r and f_norm.startswith(r.split("/")[0] + "/"):
-                # Same top-level dir — likely related (e.g. tools/web.py touches the server runtime)
-                pass  # too permissive; rely on exact match for now
     return False
 
 
@@ -265,12 +284,19 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
             "reason": "could_not_resolve_start_command",
         }
 
-    log_path = Path("/tmp/buildloop-sse-smoke.log")
+    # Per-run log path so concurrent Mode-A fan-out runs don't clobber each other.
+    # Path returned in the envelope so the operator can locate it post-mortem.
+    log_fd, log_path_str = tempfile.mkstemp(prefix="buildloop-sse-smoke-", suffix=".log")
+    os.close(log_fd)
+    log_path = Path(log_path_str)
     proc: subprocess.Popen | None = None
     total_deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS
 
     try:
-        # Step 1: Restart the server in background
+        # Step 1: Restart the server in background.
+        # start_new_session=True puts the child into its own process group so we can
+        # tear down the whole tree (uv → python → server) on teardown via killpg.
+        # Without this, only the top-level Popen dies and grandchildren keep the port.
         with log_path.open("w", encoding="utf-8") as logf:
             proc = subprocess.Popen(
                 cmd,
@@ -278,6 +304,7 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
                 stdout=logf,
                 stderr=subprocess.STDOUT,
                 env={**os.environ, "PORT": str(port)},
+                start_new_session=True,
             )
 
         # Step 2: Wait for ready
@@ -299,7 +326,17 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
         # misconfigured probe can't burn the full TOTAL_TIMEOUT_SECONDS.
         payload = info.get("smoke_payload") or '{"prompt":"smoke test"}'
         probe_duration = _resolve_probe_duration(info)
-        observed, _body = _curl_sse(port, sse_route, probe_duration, payload)
+        try:
+            observed, _body = _curl_sse(port, sse_route, probe_duration, payload)
+        except _CurlMissing as exc:
+            return {
+                "status": "skipped",
+                "adapter": ADAPTER_NAME,
+                "reason": "adapter_unavailable: curl binary not installed",
+                "checked_route": sse_route,
+                "log": str(log_path),
+                "detail": str(exc),
+            }
 
         if not observed:
             return {
@@ -370,12 +407,20 @@ def run(changed_files: list[str], workdir: Path, info: dict | None = None) -> di
         }
     finally:
         if proc is not None and proc.poll() is None:
+            # Tear down the entire process group (uv → python → server), not just
+            # the top-level Popen. Without this, the grandchild server retains the
+            # port and leaks across smoke runs.
             try:
-                proc.terminate()
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
                 proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                try:
+                    pgid = os.getpgid(proc.pid)
+                    os.killpg(pgid, signal.SIGKILL)
+                    proc.wait()
+                except (ProcessLookupError, OSError):
+                    pass
 
 
 # ---------------------------------------------------------------------------

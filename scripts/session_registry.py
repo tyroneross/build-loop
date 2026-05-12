@@ -332,11 +332,18 @@ def check_collision(
         }
       }
     """
-    workdir_abs = str(Path(workdir).resolve())
+    # Normalize for cross-host workdir comparison. macOS /var ↔ /private/var
+    # symlink and case-insensitive HFS-on-APFS volumes can otherwise produce
+    # false-LOW verdicts when one peer registered with the symlinked path and
+    # another with the real path.
+    my_workdir_norm = os.path.normcase(os.path.realpath(workdir))
     my_files = set(files_owned or [])
     peers = scan_active(sessions_dir, staleness_minutes, exclude_run_id=run_id)
 
-    same_workdir = [p for p in peers if p.get("workdir") == workdir_abs]
+    def _norm(p: str) -> str:
+        return os.path.normcase(os.path.realpath(p)) if p else ""
+
+    same_workdir = [p for p in peers if _norm(p.get("workdir", "")) == my_workdir_norm]
     execute_collisions = [
         p for p in same_workdir
         if p.get("phase") in EXECUTE_PHASES and phase in EXECUTE_PHASES
