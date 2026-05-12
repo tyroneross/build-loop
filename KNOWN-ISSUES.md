@@ -1,5 +1,20 @@
 # Known Issues
 
+## M4 session_registry.py doesn't fire — `~/.build-loop/sessions/` never populated (NEW 2026-05-12)
+
+**Symptom.** During decision-doctor-cc 2026-05-11, two concurrent writers (main Claude session + background build-loop orchestrator) collided on the same worktree. The M4 `scripts/session_registry.py` is supposed to register presence files at `~/.build-loop/sessions/<run_id>.json` and detect this exact collision tier (HIGH or CRITICAL based on overlap). Verified after the session: directory does not exist on the machine, no presence files were ever written. FIX-4 agent's own postmortem confirms: *"the session_registry hooks I'm supposed to fire on M4 weren't fired by the orchestrator."*
+
+**Likely causes (untested).**
+- Registry call is in the agent's prompt template / frontmatter but not in the actual code path executed during dispatch.
+- Registry call is wrapped in a try/except that swallows failure silently.
+- Lazy-create of `~/.build-loop/sessions/` is broken; directory doesn't exist and the registry write fails without surfacing.
+
+**Workaround.** Pass `isolation: "worktree"` to every Agent dispatch (see `CLAUDE.md` §"Concurrent dispatch isolation"). This removes the surface the registry is meant to guard rather than fixing the registry itself.
+
+**Closes when.** Phase 1 Assess creates `~/.build-loop/sessions/<run_id>.json` on every run; `state.json.execution.concurrent_modifications` populates when a peer is detected; SAFE-STOP sentinel writes on CRITICAL tier.
+
+---
+
 ## Skill-runtime collision: `Skill(skill="build-loop:build-loop")` returns slash-command template
 
 **Symptom.** Calling `Skill(skill="build-loop:build-loop", args="...")` from Claude Code's Skill tool returns the unrendered/rendered slash-command body (`commands/build-loop.md`) as a user message instead of loading and executing the skill body at `skills/build-loop/SKILL.md`. The runtime emits `Launching skill: build-loop:build-loop`, then sends the slash-command template through as if a slash command had been invoked.

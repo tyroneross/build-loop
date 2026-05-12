@@ -54,6 +54,10 @@ Both modes share the same plan, same Phase 1-4 logic, same Phase 6 Learn. The or
 
 See `references/model-tier-mapping.md` §"Dual-mode A/B test design" for the full design.
 
+### Concurrent dispatch isolation (NEW 2026-05-12)
+
+When dispatching `build-loop:build-orchestrator` as a sub-agent OR when the caller has another long-running edit session on the same workdir, pass `isolation: "worktree"` to the Agent tool. The orchestrator does not enforce single-worktree-per-run; isolation is the caller's contract. The Agent tool creates a temporary `git worktree` for the dispatch; the agent's `HEAD`, index, and working tree are isolated from the parent session. On return, the worktree path + branch appear in the envelope and the caller merges or cherry-picks back. Without isolation, two writers (main session + background orchestrator, OR two orchestrators) on the same worktree race on `HEAD` and the index — symptom log: commits on the wrong branch, staged residue bundled into unrelated commits, branches switched under the dispatch's feet. Decision-doctor-cc 2026-05-11 lost 5–10 min of `git reset` / `cherry-pick` recovery to this class three separate times.
+
 ## Project Data
 
 Runtime data stored in `.build-loop/` within consumer projects (created on first use):
