@@ -20,9 +20,14 @@ You ship fewer regressions. You get a clean record of what changed and why. You 
 
 ## Get started
 
-Install the plugin.
+Install the plugin via the RossLabs AI Toolkit marketplace (recommended) or directly from the build-loop repo.
 
 ```
+# Recommended — via the RossLabs AI Toolkit marketplace (includes companion plugins):
+/plugin marketplace add tyroneross/RossLabs-AI-Toolkit
+/plugin install build-loop@rosslabs-ai-toolkit
+
+# Or direct — install from the build-loop source repo alone:
 /plugin marketplace add tyroneross/build-loop
 /plugin install build-loop@build-loop
 ```
@@ -57,6 +62,15 @@ Detail on each phase, the model tier rules, the synthesis-decision lint, the arc
 ## Installation
 
 ### From GitHub (recommended)
+
+Via the RossLabs AI Toolkit marketplace (includes companion plugins — bookmark, claude-code-debugger, research, etc.):
+
+```
+/plugin marketplace add tyroneross/RossLabs-AI-Toolkit
+/plugin install build-loop@rosslabs-ai-toolkit
+```
+
+Or direct from the build-loop source repo alone (build-loop only, no companions):
 
 ```
 /plugin marketplace add tyroneross/build-loop
