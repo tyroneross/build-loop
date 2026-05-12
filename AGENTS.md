@@ -74,51 +74,6 @@ Multiple build-loop sessions can run concurrently against the same project acros
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
    ```
    Moves presence file to `sessions/dead/`. Stale-sweep (default 5 min) handles forgotten unregisters.
-7. **Memory index** — append one row to `~/.build-loop/memory/INDEX.jsonl` on every write to `~/.build-loop/memory/`:
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py append \
-     --run-id "$RUN_ID" --action write --file "<rel-path>" \
-     --source-host codex --source-workdir "$PWD"
-   ```
-   Between phases, tail the index for new peer learnings:
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
-     --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
-   ```
-   Tag any returned row whose `source_workdir` ≠ current `$PWD` as `[CROSS-REPO — requires scrutiny]` in the next phase brief.
-
-Both scripts are stdlib-only Python 3.11+ with `fcntl.flock` on append, atomic writes, and exit-code-as-verdict semantics. They work identically in Claude Code and Codex; the only difference is which `--host` value the session passes.
-
-
-**Multi-session presence registration + collision check (cross-host: Claude Code, Codex, Gemini CLI, others):**
-
-Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. To prevent two sessions from racing to commit to the same files, every session participates in a shared registry at `~/.build-loop/sessions/` and a memory-write log at `~/.build-loop/memory/INDEX.jsonl`. The scripts are host-neutral JSON CLIs invoked from any host:
-
-1. **Surface SAFE-STOP sentinels first.** Before any other Phase 1 work, list `<workdir>/.build-loop/SAFE-STOP-collision-*.md`. If any exist, surface to the user and require explicit deletion before proceeding — they indicate a prior session detected a CRITICAL collision here and stopped.
-2. **Register this session** (immediately after `run_id` is known):
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register \
-     --run-id "$RUN_ID" --host codex --workdir "$PWD" \
-     --pid $$ --phase assess
-   ```
-   `--host` values: `claude_code | codex | gemini | other`. The script writes `~/.build-loop/sessions/<run_id>.json` with workdir, host, pid, phase, files_owned, started_at, last_heartbeat_at.
-3. **Check for peer collisions**:
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check \
-     --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json
-   ```
-   Exit codes: 0=LOW, 1=MEDIUM, 2=HIGH, 3=CRITICAL.
-4. **Headless tier routing** (Codex / cron — no AskUserQuestion available):
-   - LOW (different workdir) → log + proceed.
-   - MEDIUM (same workdir, different phases) → log + proceed.
-   - HIGH (same workdir + both in execute/iterate) → log + enter `high_frequency_mode` (heartbeat every 30s vs default 5min) + proceed; recheck collision before each Phase 3 chunk dispatch.
-   - CRITICAL (same workdir + overlapping `files_owned`) → call `session_registry.write_safe_stop_sentinel(workdir, peer_run_id, reason)` and exit non-zero. The first sentinel wins; the surviving peer continues.
-5. **Heartbeat refresh** at every M2 trigger point (dispatch_chunk, return_chunk, phase_transition, iterate_attempt). Append `--phase $CURRENT_PHASE` whenever phase changes; in Phase 3, also `--files-owned "$FILES_OWNED_CSV"`.
-6. **Unregister on clean completion**:
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
-   ```
-   Moves presence file to `sessions/dead/`. Stale-sweep (default 5 min) handles forgotten unregisters.
 7. **Memory writes** — use `scripts/memory_writer.py write` instead of writing memory files directly. The writer adds provenance frontmatter (source_repo, source_workdir, source_run_id, source_host, cross_repo_validated, applied_in_repos, created_at, last_updated_at), then atomically appends a row to `INDEX.jsonl` for sibling discovery:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
@@ -192,6 +147,14 @@ The `> 5` threshold matches the empirical inflection point measured in the synth
   ```
   Vague values (`"appropriate"`, `"as needed"`, `"sensible"`) fail the deterministic plan-verify rule — every entry must name a specific choice or write `n/a` with a reason. The block is the contract the implementer attests to applying; Phase 4.5 lints diff-vs-claim.
 - **Mockup-first gate for major UI work**: if the plan introduces a new page/screen or makes a major redesign (changes navigation graph, primary user flow, or replaces ≥40% of an existing screen), pause and use a mockup-drafting tool to produce black-and-white mockups before any UI is written. Wait for user feedback; carry the selected mockup into Execute as a reference. Skip for cosmetic tweaks, copy edits, or single-component swaps. This is the documented exception to the "actions/functions only, no plugin UI surfaces" bridging policy — mockup drafting IS the action.
+- **Pay-it-forward architectural gate**: when a chunk touches a typed protocol / interface boundary / schema / multi-surface-capable behavior, the plan MUST include a `Path A vs Path B` comparison per `skills/build-loop/references/pay-it-forward-arch.md`. Default recommendation is **Path B** (typed-contract extension). Gates that justify Path A: time-budget >2×, missing dep/infra, missing design decision, or empty foreclosed-future-capability list. Named-future-capability list must cite the roadmap / PRD / `intent.md` — flexibility-for-its-own-sake (plugin systems, abstract factories with no current second consumer) is the explicit anti-pattern. Skip when the chunk fires none of the signals. Path A/B section template:
+  ```markdown
+  ### Path A vs Path B — <chunk name>
+  **Path A (minimum-viable):** <what / where / time / foreclosed>
+  **Path B (typed-contract extension):** <what / where / time delta / NAMED capabilities unlocked>
+  **Gates check:** time-budget? missing dep? missing decision? empty foreclosed-future-list?
+  **Recommendation:** Path B (default) / Path A (because <named gate>)
+  ```
 
 **Plan acceptance gate** — required before Phase 3 begins:
 
