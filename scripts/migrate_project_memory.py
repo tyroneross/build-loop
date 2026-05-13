@@ -79,10 +79,10 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from _paths import (  # type: ignore  # noqa: E402
+    SUBCOMPONENT_PATTERNS,
     derive_slug_from_cwd,
     project_memory_dir_for_project,
     build_loop_memory_root,
-    legacy_project_memory_dir,
 )
 
 DEFAULT_SOURCE_ROOT = "~/dev/git-folder"
@@ -179,8 +179,9 @@ def discover_source_dirs(source_root: Path) -> list[Path]:
 def discover_subcomponent_dirs(source_root: Path) -> list[Path]:
     """Find sub-component memory dirs like ``<repo>/<sub>/.build-loop/memory/``.
 
-    Today: only ``<repo>/workers/.build-loop/memory/`` is recognized.
-    Mirrors ``derive_slug_from_cwd``'s sub-component logic.
+    Iterates ``_paths.SUBCOMPONENT_PATTERNS`` (currently just ``workers``).
+    Single source of truth — extends automatically when new sub-component
+    patterns are added to ``_paths.py``.
     """
     out: list[Path] = []
     if not source_root.is_dir():
@@ -188,7 +189,7 @@ def discover_subcomponent_dirs(source_root: Path) -> list[Path]:
     for repo in sorted(source_root.iterdir()):
         if not repo.is_dir():
             continue
-        for sub in ("workers",):  # extend in lockstep with _paths.SUBCOMPONENT_PATTERNS
+        for sub in SUBCOMPONENT_PATTERNS:
             sub_mem = repo / sub / LEGACY_MEMORY_REL
             if sub_mem.is_dir():
                 out.append(sub_mem)
@@ -412,11 +413,31 @@ def apply_migration(
     if canonical_migrate is not None:
         provenance_run_id = f"migrate_project_memory-{int(time.time())}"
         host = socket.gethostname()
-        target_dirs_touched: set[Path] = set()
+        # Group migrated files by target dir, capturing a representative
+        # source-repo workdir per group. The `source_workdir` provenance
+        # field MUST point at the originating repo (where the lesson was
+        # learned), NOT the consolidated target tree — otherwise the audit
+        # trail this migration exists to create gets silently corrupted.
+        target_to_source_repo: dict[Path, Path] = {}
         for m in moved:
-            target_dirs_touched.add(Path(m["target"]).parent)
-        for td in target_dirs_touched:
-            workdir = workdir_for_provenance or td
+            target_dir = Path(m["target"]).parent
+            if target_dir in target_to_source_repo:
+                continue
+            # Source path shape: <repo>/.build-loop/memory/<file>
+            # or for subcomponents: <repo>/<sub>/.build-loop/memory/<file>
+            # Walk up until we leave the .build-loop tree to find the repo root.
+            src = Path(m["source"])
+            cursor = src.parent
+            # Skip .build-loop/memory
+            while cursor.name in {"memory", ".build-loop"} or cursor.parent.name == ".build-loop":
+                cursor = cursor.parent
+            # If a subcomponent (e.g. workers/), one more parent up reaches the repo
+            if cursor.name in SUBCOMPONENT_PATTERNS:
+                cursor = cursor.parent
+            target_to_source_repo[target_dir] = cursor
+
+        for td, source_repo in target_to_source_repo.items():
+            workdir = workdir_for_provenance or source_repo
             try:
                 res = canonical_migrate(
                     td,
@@ -426,6 +447,7 @@ def apply_migration(
                     dry_run=False,
                 )
                 provenance_summary[str(td)] = {
+                    "source_repo": str(source_repo),
                     "migrated_count": len(res.get("migrated", [])),
                     "skipped_count": len(res.get("skipped", [])),
                     "errors": res.get("errors", []),
@@ -556,7 +578,10 @@ def _reconcile_postgres_slugs(plan: dict[str, Any]) -> dict[str, Any]:
     """Best-effort: compare DB ``semantic_facts.project`` with filesystem slugs.
 
     Returns ``{available: bool, reason: str, db_projects, fs_slugs, db_only, fs_only}``.
-    Never raises; ``available: False`` when Postgres is unreachable.
+    Never raises; ``available: False`` when Postgres is unreachable, the schema
+    doesn't have a ``semantic_facts.project`` column, or the query times out.
+    Failure mode is distinguished in the ``reason`` field so the operator can
+    tell network-down from schema-mismatch.
     """
     fs_slugs = {t["slug"] for t in plan.get("targets", [])}
     try:
@@ -566,10 +591,17 @@ def _reconcile_postgres_slugs(plan: dict[str, Any]) -> dict[str, Any]:
     url = os.environ.get("BUILD_LOOP_DATABASE_URL")
     if not url:
         return {"available": False, "reason": "BUILD_LOOP_DATABASE_URL unset", "fs_slugs": fs_slugs}
+    schema = os.environ.get("AGENT_MEMORY_SCHEMA") or "personal_memory"
+    # Step 1: connect — labeled distinctly from query failure
     try:
-        with psycopg.connect(url, connect_timeout=3) as conn:  # type: ignore
+        conn = psycopg.connect(url, connect_timeout=3)  # type: ignore
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "reason": f"db connect failed: {type(e).__name__}: {e}", "fs_slugs": fs_slugs}
+    # Step 2: query with statement_timeout to bound slow-DB cases
+    try:
+        with conn:
             with conn.cursor() as cur:
-                schema = os.environ.get("AGENT_MEMORY_SCHEMA") or "personal_memory"
+                cur.execute("SET LOCAL statement_timeout = 10000")
                 cur.execute(
                     f"SELECT DISTINCT project FROM {schema}.semantic_facts "
                     f"WHERE project IS NOT NULL"
@@ -577,7 +609,16 @@ def _reconcile_postgres_slugs(plan: dict[str, Any]) -> dict[str, Any]:
                 rows = cur.fetchall()
                 db_projects = {r[0] for r in rows if r[0]}
     except Exception as e:  # noqa: BLE001
-        return {"available": False, "reason": f"db connect failed: {e}", "fs_slugs": fs_slugs}
+        return {
+            "available": False,
+            "reason": f"db query failed (likely schema/timeout): {type(e).__name__}: {e}",
+            "fs_slugs": fs_slugs,
+        }
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "available": True,
         "schema": schema,
@@ -653,13 +694,31 @@ def rollback(manifest_path: Path) -> dict[str, Any]:
             stubs.append(line[3:-1])
 
     # Step 1: extract the tarball over the original source paths
+    # Python 3.12+ provides `filter="data"` which mitigates CVE-2007-4559
+    # (path-traversal in extractall). On older Python we hand-roll the
+    # safety check: refuse to extract any member whose resolved path
+    # escapes the original source root tree.
     try:
         with tarfile.open(backup_path, "r:gz") as tf:
-            # data_filter is a Python 3.12+ safety filter that rejects path traversal.
             try:
                 tf.extractall("/", filter="data")  # type: ignore[arg-type]
             except TypeError:
-                tf.extractall("/")
+                # Pre-3.12 fallback: validate each member's path before extract.
+                safe_members = []
+                for member in tf.getmembers():
+                    # Reject absolute paths after the leading slash, and any
+                    # ".." segments. The tarball was generated by us with
+                    # arcname=str(src).lstrip("/"), so members should look like
+                    # "Users/tyroneross/dev/git-folder/<repo>/.build-loop/memory/...".
+                    norm = os.path.normpath(member.name)
+                    if norm.startswith("..") or "/.." in norm or norm.startswith("/"):
+                        errors.append({
+                            "step": "extract_tarball_safety",
+                            "error": f"refused unsafe member: {member.name!r}",
+                        })
+                        continue
+                    safe_members.append(member)
+                tf.extractall("/", members=safe_members)
         for source, _ in moved_pairs:
             if Path(source).is_file():
                 restored.append(source)
@@ -770,17 +829,24 @@ def main(argv: list[str] | None = None) -> int:
         print("migrate: nothing to migrate")
         return 0
 
-    # Tarball backup BEFORE any write
+    # Tarball backup BEFORE any write.
+    # Suffix includes microseconds + random nibble so back-to-back runs in
+    # the same second can't collide on the tarball path.
     ts = int(time.time())
-    backup_path = Path.home() / f"build-loop-memory-pre-migration-{ts}.tgz"
+    rand_suffix = os.urandom(2).hex()
+    backup_path = Path.home() / f"build-loop-memory-pre-migration-{ts}-{rand_suffix}.tgz"
     print(f"migrate: writing backup → {backup_path}")
     try:
         backup_sources = [Path(d) for d in plan["discovered_source_dirs"]] + [
             Path(d) for d in plan["discovered_subcomponent_dirs"]
         ]
         write_tarball_backup(backup_sources, backup_path)
+    except FileExistsError as e:
+        print(f"migrate: backup tarball already exists at {backup_path}: {e}", file=sys.stderr)
+        print("migrate: re-run to generate a fresh suffix", file=sys.stderr)
+        return 1
     except Exception as e:  # noqa: BLE001
-        print(f"migrate: backup failed: {e}", file=sys.stderr)
+        print(f"migrate: backup failed ({type(e).__name__}): {e}", file=sys.stderr)
         return 1
 
     # Manifest path

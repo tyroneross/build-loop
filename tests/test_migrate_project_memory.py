@@ -186,6 +186,62 @@ def test_f12_provenance_backfill_applied(fixture_env):
         assert key in content, f"missing provenance key {key} in {target}"
 
 
+def test_f12b_cli_path_source_workdir_points_at_origin_repo(fixture_env):
+    """F12b — CLI path (no workdir_for_provenance arg) derives source_workdir
+    from the ORIGINATING repo, not the target tree.
+
+    Catches the Phase 4 Review-A v6 finding: when `apply_migration` is called
+    without `workdir_for_provenance` (the CLI default), the canonical-writer
+    backfill was using the target dir, silently corrupting the audit trail.
+    """
+    source_root, memory_root = fixture_env
+    repo = _seed_source_repo(source_root, "gamma", {
+        "feedback_x.md": "original body\n",
+    })
+    sub_dir = _seed_subcomponent_memory(repo, {
+        "pattern_w.md": "workers body\n",
+    })
+    import migrate_project_memory as mpm  # type: ignore  # noqa: PLC0415
+
+    plan = mpm.plan_migration(source_root)
+    backup = memory_root / "backup.tgz"
+    mpm.write_tarball_backup(
+        [Path(d) for d in plan["discovered_source_dirs"]]
+        + [Path(d) for d in plan["discovered_subcomponent_dirs"]],
+        backup,
+    )
+    # NO workdir_for_provenance — simulates CLI path
+    result = mpm.apply_migration(plan, backup_path=backup)
+    assert len(result["moved"]) == 2
+
+    # Top-level project file: source_workdir should be the repo root
+    target_main = memory_root / "projects" / "gamma" / "feedback_x.md"
+    assert target_main.is_file()
+    content_main = target_main.read_text(encoding="utf-8")
+    # The repo's resolved path appears in source_workdir
+    repo_resolved = str(repo.resolve())
+    assert f"source_workdir: {repo_resolved}" in content_main, (
+        f"expected source_workdir={repo_resolved!r} for top-level project file, "
+        f"got content head: {content_main[:300]!r}"
+    )
+    # And NOT the target tree
+    target_resolved = str((memory_root / "projects" / "gamma").resolve())
+    assert f"source_workdir: {target_resolved}" not in content_main, (
+        f"source_workdir wrongly points at target tree {target_resolved!r}"
+    )
+
+    # Subcomponent file: source_workdir should also be the parent REPO,
+    # not the workers/ subdir (provenance points at the repo, the subdir
+    # name lives in the slug).
+    target_sub = memory_root / "projects" / "gamma" / "workers" / "pattern_w.md"
+    assert target_sub.is_file()
+    content_sub = target_sub.read_text(encoding="utf-8")
+    assert f"source_workdir: {repo_resolved}" in content_sub, (
+        f"expected source_workdir={repo_resolved!r} for workers file, "
+        f"got content head: {content_sub[:300]!r}"
+    )
+
+
 # ---------- F13 manifest written --------------------------------------------
 
 
