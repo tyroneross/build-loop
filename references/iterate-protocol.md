@@ -1,6 +1,12 @@
 # Phase 5 Iterate Protocol — orchestrator reference
 
-Up to 5 iterations. Loaded on demand at Phase 5.
+Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on demand at Phase 5.
+
+## Re-validate hook for UI work (by `uiTarget.kind`)
+
+- **web** → `mcp__plugin_ibr_ibr__interact_and_verify` against the route.
+- **native macOS** (running `.app`, `.swift` files in macOS target) → built-in `skills/native-ax-driver/` (`python3 .../native_driver.py preflight|scan|action`). Cursor-free — uses `AXUIElementPerformAction`, no `CGEvent`. IBR's `scan_macos` / `session_*` tools are an optional accelerator when IBR is present (`skills/ibr-bridge/SKILL.md` §"Native macOS (AX) — built-in, not bridged").
+- **iOS simulator** → `native_scan` + `idb ui tap` per `reference_idb_sim_tap.md`.
 
 ## Backend short-circuit (Priority 21)
 
@@ -78,4 +84,64 @@ When iteration cap is reached and queue entries remain, write them to `.build-lo
 - Same failure 2x with same root cause → escalate to user (unless the stuck-iteration cascade above already escalated first).
 - Fix A breaks criterion B → flag oscillation, ask user.
 - 3+ simultaneous failures after a fix → systemic, stop and reassess.
-- Hard stop at 5 iterations; proceed to final Review sub-step F with remaining ❓ Unfixed and queue overflow written to `.build-loop/followup/`.
+- Hard stop at 5 iterations (classic mode) or 25 iterations (autonomous mode); proceed to final Review sub-step F/G with remaining ❓ Unfixed and queue overflow written to `.build-loop/followup/`.
+
+## Phase 5 autonomous iterate loop (plan §14.3 — Phase A)
+
+When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-drain loop. Entry conditions, body, and exits below; all backed by `scripts/budget_check.py` + `Agent(subagent_type="build-loop:alignment-checker", ...)`. The loop body executes after classic Phase 5 Iterate has handled the just-completed plan's own ❓ Unfixed items; then it picks up fresh queue items.
+
+**Pre-entry — autonomous mode detection.** Read these in order; first hit wins:
+
+1. `state.json.autonomous.enabled` (set by the skill body when `--autonomous=true` or default).
+2. `--autonomous=false` on the original invocation forces `false`; loop is skipped entirely.
+3. `state.json.execution.budget` MUST exist (the skill body writes it at start). Missing → log a warning and treat autonomous as disabled for this run.
+
+**On every loop iteration entry — three short calls in order:**
+
+1. **Budget check.** `python3 /Users/tyroneross/.claude/plugins/cache/rosslabs-ai-toolkit/build-loop/<version>/scripts/budget_check.py --workdir "$PWD"`. Parse the envelope.
+   - `action: continue` → proceed.
+   - `action: checkin` → emit a `PushNotification` (`Build-loop progress @ N% — items closed: X, deferred: Y`), atomic-update `state.execution.budget.last_checkin_at = now()`, proceed (non-blocking).
+   - `action: finalize_and_stop` → finish the **current chunk's commit only**, emit the final summary, exit autonomous loop. Do NOT start a new alignment-check or chunk. Plan §14.7 — no mid-commit hard cuts.
+2. **Interrupt check.** Is `.build-loop/halt` present? If yes — same finalize behavior as `finalize_and_stop`. Reason: `user halt sentinel at .build-loop/halt`. (Phase A surface — `/build-loop:halt` command ships in Phase C.)
+3. **Iterate cap.** Read `state.execution.iterate_attempt`. If `>= maxIterateAttemptsAutonomous` (config default 25) — finalize with reason `iterate cap reached`. Hard ceiling protects against runaway loops even when budget remains.
+
+**Body — drain the queue:**
+
+1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`).
+2. **For each item (sequential — alignment-check is per-item):**
+   a. Dispatch `Agent(subagent_type="build-loop:alignment-checker", prompt=<brief>)` with `item_path`, `item_kind`, `workdir`, `current_task_id` (null when §15.2 working-state not yet shipped on this branch — graceful degradation per the agent's own contract), and the last 5 verdicts for consistency cross-checking.
+   b. Parse the JSON verdict (the agent returns exactly one JSON object, no fence). Append to `state.runs[].alignment_verdicts[]` (one row per item, capped at 200 per run).
+   c. **Route by verdict:**
+      - **`aligned`** — schedule the item for Phase 2 → 3 → 4. Treat as a one-item plan: feed alignment-checker's `reason` + `matched_anchors` to plan-critic as part of the brief so plan-critic knows why this item earned alignment.
+      - **`misaligned`** — `mv` the item to `.build-loop/followup/<basename>`. Append a markdown footer to the moved file: `\n\n---\n_Deferred by alignment-checker: <reason>. Violated: <comma-separated violated_non_goals>._\n`.
+      - **`uncertain`** — emit `PushNotification` with item path + `uncertainty_evidence`. `TaskCreate` a follow-up task captioned `Review uncertain queue item: <basename>`. Do NOT block — continue loop with remaining items.
+   d. **Per-item cap — Phase A logs only.** Plan §14.6 — per-item ≤ 3 same-verdict cap enforced in Phase C. Phase A logs a one-line warning when the same item gets the same verdict ≥ 3 times: `[autonomous] item <basename> received <verdict> for 3rd time — Phase C will force misaligned`.
+3. **Commit + advance.** When an `aligned` item finishes Phase 2 → 4, the standard Phase 3 commit step runs. Increment `state.execution.budget.commits_since_push`. **Push behavior in Phase A is unchanged from today** (manual) — `scripts/autonomous_push.py` ships in Phase B. The `budget_check.py` envelope's `should_push_now` field is informational only in Phase A; the orchestrator surfaces it in check-ins but does not push autonomously yet.
+
+**Exit conditions (any one stops the loop):**
+
+| Condition | Action |
+|---|---|
+| Queue empty + classic iterate complete | Normal exit → Phase 6 Learn (if enabled) → Review-G report |
+| `budget_check.action == finalize_and_stop` | Finish current commit only, emit summary, exit |
+| `.build-loop/halt` sentinel present | Same as `finalize_and_stop` |
+| `iterate_attempt >= maxIterateAttemptsAutonomous` | Same as `finalize_and_stop`, reason `iterate cap` |
+| Concurrent-modification trip via existing M4 collision detection | Existing safe-stop behavior |
+
+**Report contribution.** At Review-G, the orchestrator writes a `budget_summary` to the run entry via `write_run_entry.py --budget-summary-json <tmp>`. Shape:
+
+```json
+{
+  "mode": "default | long | custom",
+  "budget_seconds": <int>,
+  "used_seconds": <int>,
+  "items_closed": <int>,
+  "items_deferred": <int>,
+  "commits": <int>,
+  "pushes": <int>
+}
+```
+
+Same mechanism as `--judge-decisions-json` (commit `c80cfc8`). Tracked under `state.runs[].budget_summary` for cross-run pattern mining by Phase 6 Learn.
+
+**Resume on autonomous runs.** `scripts/resume_resolver.py.resolve()` returns `budget_resume.preserve_deadline: true` with the original `deadline_at`. The orchestrator MUST write that block back into `state.execution.budget` verbatim on resume — never recompute. A 2h budget that crashed at 1h59m gets only the remaining 1m on resume.

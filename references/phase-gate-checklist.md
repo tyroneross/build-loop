@@ -1,8 +1,8 @@
 # Phase Gate Checklist — orchestrator routing detail
 
-Loaded on demand by the orchestrator. Covers Phase 1 Assess (18-step protocol) and Phase 4 Review (sub-steps A–G). See `skills/build-loop/SKILL.md` for the full spec; this file is the orchestrator's routing checklist.
+Loaded on demand by the orchestrator. Covers Phase 1 Assess (full protocol) and Phase 4 Review (sub-steps A–G). See `skills/build-loop/SKILL.md` for the full spec; this file is the orchestrator's routing checklist.
 
-## Phase 1 Assess detail (18-step)
+## Phase 1 Assess detail (full protocol)
 
 Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body keeps a high-level bullet list and links here for the full procedure.
 
@@ -18,7 +18,10 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 6. **Set sub-routers + triggers**: set sub-routers (`uiTarget`, `platform`, `migrationSource`) and triggers (`structuredWriting`, `promptAuthoring`, `promptEditingExisting`, `riskSurfaceChange`) per `references/trigger-rules.md` and `skills/build-loop/references/capability-routing.md` §Trigger Conditions. Write under `.build-loop/state.json.triggers`.
 
-7. **Load memory** (executable read protocol — full detail in `references/memory-systems.md` §"Read protocol — Phase 1 Assess"):
+7. **Auto-infer `riskSurfaceChange` from constitution overlap** (NEW 2026-05-12, plan §12.7 P4): immediately after the constitution load (memory step 0 below), run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/infer_risk_surface.py --workdir "$PWD" --json`. Merge `risk_surface_change: true` from the detector into `.build-loop/state.json.triggers.riskSurfaceChange` — never downgrade a manual `true` to `false`. Mirror `matched_rules`, `constitution_evidence`, and `generic_evidence` to `state.json.triggers.riskSurfaceEvidence` so the Phase 1 Assess brief can surface which constitution rules tripped. Closes the §11.4 Sim G gap where auth-touching diffs shipped without security-reviewer firing because the manual flag was missed. Helper failure → preserve existing trigger value and log a one-line warning; never blocks.
+
+8. **Load memory** (executable read protocol — full detail in `references/memory-systems.md` §"Read protocol — Phase 1 Assess"):
+   0. `Read("~/.build-loop/memory/constitution.md")` (global durable invariants) and `Read("<repo>/.build-loop/memory/constitution.md")` (project overrides if present). Constitution loads ahead of MEMORY.md because rules cited as `constitution:<rule_id>` outlive any single build and gate advisory-judge severity. Empty/absent global constitution: skip silently (judges fall back to MEMORY.md feedback entries). Cache touched rule IDs in `.build-loop/state.json.constitution.loadedRuleIds[]` so commit-auditor + promotion-reviewer can cite them at Phase 3 checkpoints without re-reading.
    1. `Read("~/.build-loop/memory/MEMORY.md")` (global) and `Read("<repo>/.build-loop/memory/MEMORY.md")` (project). Project overrides global on key conflict. Empty/absent files: skip silently.
    2. `Read(".build-loop/state.json")` and inspect `runs[-3:]` for prior-build context (goals, outcomes, root_cause). Empty `runs[]`: skip.
    3. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall --query "<goal-keywords>" --limit 10` for unified read across all four backends (runs/decisions/semantic/debugger). Inspect `reasons[]` for backend-unavailable signals; never block on them.
@@ -27,23 +30,27 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
    See `references/memory-systems.md` §"Read protocol — Phase 1 Assess" for return-shape contracts and graceful-degradation behavior.
 
-8. **Architecture baseline + blast-radius** (architecture-scout subagent, fires unconditionally): dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: baseline')`. The scout decides native vs NavGator per task, runs the scan + impact + ACP build, persists a baseline decision, and returns a ≤500-word envelope. Before dispatch, check `state.json.architecture.stale`; if true and ACP older than 5 min, the scout will await scan completion (default) — pass `task: baseline; no_arch_await: true` to override. If `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, also invoke `mcp__plugin_navgator__llm_map`. Cache the envelope to `.build-loop/architecture/scout-cache/baseline.json`.
+9. **Architecture baseline + blast-radius** (architecture-scout subagent, fires unconditionally): dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: baseline')`. The scout decides native vs NavGator per task, runs the scan + impact + ACP build, persists a baseline decision, and returns a ≤500-word envelope. Before dispatch, check `state.json.architecture.stale`; if true and ACP older than 5 min, the scout will await scan completion (default) — pass `task: baseline; no_arch_await: true` to override. If `triggers.promptAuthoring` or `triggers.promptEditingExisting` is true, also invoke `mcp__plugin_navgator__llm_map`. Cache the envelope to `.build-loop/architecture/scout-cache/baseline.json`.
 
-9. **Observability baseline**: detect the project stack and run a passive observability scan (no code changes at Assess). Language-aware grep for `console.{log|error|warn}` (web), `print()` / `pprint()` (Python), and structured loggers (winston/pino/structlog/loguru/zap/log/slog) in `package.json` / `pyproject.toml` / `requirements.txt` / `go.mod`. Classify into `well-instrumented` / `print-only` / `silent`. Write to `.build-loop/state.json.observability.level`. Informational; do NOT load `Skill("build-loop:logging-tracer")` here — the skill is reactive only.
+10. **Observability baseline**: detect the project stack and run a passive observability scan (no code changes at Assess). Language-aware grep for `console.{log|error|warn}` (web), `print()` / `pprint()` (Python), and structured loggers (winston/pino/structlog/loguru/zap/log/slog) in `package.json` / `pyproject.toml` / `requirements.txt` / `go.mod`. Classify into `well-instrumented` / `print-only` / `silent`. Write to `.build-loop/state.json.observability.level`. Informational; do NOT load `Skill("build-loop:logging-tracer")` here — the skill is reactive only.
 
-10. **Runtime-server detection** (informational, no changes — implements decision `_unscoped/0003`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_runtime_server.py --workdir "$PWD" --json` and write the result to `.build-loop/state.json.triggers.runtimeServer` (boolean) plus `.build-loop/state.json.runtimeServerInfo` (envelope: `server_module`, `sse_route`, `default_port`, `embedded_ui_module`, `event_handler_locations[]`, `evidence[]`). Phase 4 sub-step B Validate consults these for the live HTTP/SSE smoke gate. Helper failure → treat as `runtimeServer: false` and log a one-line warning; never blocks. Silent default for CLIs, libraries, plugins, and static-render web apps. Closes the pytest-with-mocks blind spot that let local-smartz ship 27 commits with two real bugs.
+11. **Runtime-server detection** (informational, no changes — implements decision `_unscoped/0003`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_runtime_server.py --workdir "$PWD" --json` and write the result to `.build-loop/state.json.triggers.runtimeServer` (boolean) plus `.build-loop/state.json.runtimeServerInfo` (envelope: `server_module`, `sse_route`, `default_port`, `embedded_ui_module`, `event_handler_locations[]`, `evidence[]`). Phase 4 sub-step B Validate consults these for the live HTTP/SSE smoke gate. Helper failure → treat as `runtimeServer: false` and log a one-line warning; never blocks. Silent default for CLIs, libraries, plugins, and static-render web apps. Closes the pytest-with-mocks blind spot that let local-smartz ship 27 commits with two real bugs.
 
-11. **Pre-commit baseline detection** (NEW 2026-05-07, prevents intermediate-state contract-change blockers): check for baseline-tracking pre-commit tools that reject any worsening tsc/lint count. Test: `test -f .betterer.results || grep -q 'betterer\|lint-staged.*--baseline' package.json 2>/dev/null`. If a baseline tool is detected, write `.build-loop/state.json.preCommit.hasBaseline = true` so Phase 2 plan-writing flags sole-consumer contract changes for bundling (or `--update` baseline reset). See `~/.claude/projects/-Users-tyroneross/memory/feedback_buildloop_pre_commit_baseline.md` for the pattern.
+12. **Pre-commit baseline detection** (NEW 2026-05-07, prevents intermediate-state contract-change blockers): check for baseline-tracking pre-commit tools that reject any worsening tsc/lint count. Test: `test -f .betterer.results || grep -q 'betterer\|lint-staged.*--baseline' package.json 2>/dev/null`. If a baseline tool is detected, write `.build-loop/state.json.preCommit.hasBaseline = true` so Phase 2 plan-writing flags sole-consumer contract changes for bundling (or `--update` baseline reset). See `~/.claude/projects/-Users-tyroneross/memory/feedback_buildloop_pre_commit_baseline.md` for the pattern.
 
-12. **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
+13. **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
 
-13. **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
+14. **UI spot-check policy**: load `.build-loop/config.json.uiSpotcheck` if present and merge into `state.devServer.{baseUrl, signInForm, baselineDir, phase3RouteCap, phase4RouteCap, ssimThreshold}`. Defaults: `enabled` auto-derived from `.tsx` file presence under `app/` or `components/`, `baseUrl` from `detect_runtime_server.py`, `signInForm: null`, `baselineDir: ".build-loop/ui-baselines"`, route caps 8/12, threshold 0.98. Full schema in `references/ui-spotcheck-config.md`. The Phase 3 chunk-close trigger and Phase 4 Review-B `ui-validator` dispatch both read from `state.devServer.*`.
 
-14. **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
+15. **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
 
-15. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
+16. **UI input/output contract** (when `uiTarget != null`): read `skills/build-loop/references/ui-io-contract.md`, inventory affected user inputs and system outputs, and mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical. The full contract is finalized in Phase 2.
 
-16. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
+17. **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
+
+18. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
+
+19. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
     1. **Explicit user override** — if `state.json.config.modelOverrides.thinking` is set OR the plan declares `tier: thinking` in its frontmatter, route to thinking-tier regardless of count.
     2. **Auto-escalate on density** — if `count > 5` (6+ entries), the commit is synthesis-dense at the COMMIT level; route to `tier: thinking` automatically. Fan-out loses cross-dimension coherence at this density even with each individual dimension well-specified.
     3. **Default — Sonnet fan-out for speed** — `count` in 1–5 range OR `count == 0` keeps the default fan-out path. Sonnet's velocity advantage (~33% wall-clock, ~28% tokens) is real and the C3 attestation_lint, C4 synthesis-critic, and C5 halt-and-ask backstops fire post-commit to catch the residual recall gap. Use this lane when speed dominates.
@@ -55,26 +62,31 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
     Effect on Phase 3: when `synthesisDensity.escalated == true`, the orchestrator does NOT dispatch parallel implementer subagents for that plan; it executes the chunks inline at `tier: thinking`. When `escalated == false`, fan-out proceeds with the C3/C4/C5 backstops watching. The dual-mode dispatch table still applies — escalation overrides the default fan-out path on a per-plan or per-chunk basis. Skip this step cleanly when no plan file exists yet (re-evaluate at the end of Phase 2 if needed).
 
-17. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
+20. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
 
-18. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1]), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
+21. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
 
 ## Phase 4 Review (sub-steps A–G)
 
-## Sub-step A — Critic
+### Sub-step A — Critic
 
-- Dispatch `commit-auditor` at `scope: "build"` on Execute's full diff (`<pre_build_sha>..HEAD`). Replaces retired `sonnet-critic` per plan §15.1.
-- On `strong-checkpoint` → back to Execute, no iteration burn.
+- Dispatch `commit-auditor` at `scope: "build"` on Execute's full diff (`<pre_build_sha>..HEAD`) with full `rubric_criteria_ids` and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/commit-auditor.md`. Replaces retired `sonnet-critic` per plan §15.1.
+- **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Major variances + non-auto-fixable + judgment calls go to Sub-step G Report's `## Notes from judges` for user review.
+- **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
 - On `guidance` → log to `.build-loop/issues/` and proceed.
 - Skip A on re-reviews after Iterate unless Iterate touched new files.
 - **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 4.6, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed.
 - After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
 
-## Sub-step B — Validate
+### Sub-step B — Validate
 
-Code graders → LLM-as-judge.
+Order: UI-validator-first (when `uiTarget != null`) → code graders → runtime smoke gate (see below) → LLM-as-judge → plugin-tests advisory check → memory-first gate on every failure.
 
-**IBR-first when present and UI work**: load `Skill("build-loop:ibr-bridge")` and run the quick-pass BEFORE any other validator:
+**UI-validator-first when `uiTarget != null`**: dispatch `ui-validator` with `triggerPoint: "phase4-review-b"`; see `agents/ui-validator.md`; supersedes the legacy `scripts/ibr_quickpass.py` shell-out, which the agent still uses as a fallback when `@tyroneross/ibr-core` is not installed — see RFC #30.
+
+**UI-validator routing**: `pass` proceeds; `fail` routes `failing_assertion` to Iterate (same rubric pattern as Phase 3 chunk-close); `skipped (auth-gap)` records `⚠️ ui-validate skipped — auth fixture missing` in Review-G and falls through to scanners.
+
+**IBR-first when present and UI work** (fallback path): load `Skill("build-loop:ibr-bridge")` and run the quick-pass BEFORE any other validator:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ibr_quickpass.py --workdir "$PWD" --scope changed
@@ -84,7 +96,19 @@ Interpret the JSON: `pass == ran` → green-light, proceed to D; any `fail` → 
 
 If `availablePlugins.ibr` and UI work AND quick-pass green, also invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile for design-rule depth. If IBR is absent and the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt.
 
-### Plugin-tests advisory check (auto-runs when build touches plugin metadata; non-blocking)
+#### Runtime smoke gate (post-tests, pre-LLM-judges)
+
+After code-based graders pass, if any changed file matches a runtime-smoke trigger pattern (see `references/runtime-smoke-triggers.md`), invoke:
+
+```bash
+python3 scripts/runtime_smoke.py --changed-files <list> --workdir "$PWD" --json
+```
+
+The script auto-detects an adapter from the project's manifest. Status `pass` proceeds; `fail` routes the changed surface to Iterate (treat the smoke envelope's `findings` list as the rubric); `skipped` (no trigger matched OR no adapter for the project's stack) records `runtime_smoke: skipped (<reason>)` in the Review-G report and proceeds. Adapter exit 2 (runner error) is treated like a transient grader outage — log and proceed with a Review-G warning. **Library-only repos with no dev server cleanly skip — never fail.**
+
+**SSE-specific contract gate** (when `triggers.runtimeServer == true` AND the diff touches `runtimeServerInfo.server_module` OR `runtimeServerInfo.embedded_ui_module`): in addition to the adapter-driven smoke above, run the live HTTP/SSE contract check documented in `skills/build-loop/references/phase-4-review.md` §Sub-step B Validate (5-step procedure: restart server → wait for HTTP 200 → curl POST against `<sse_route>` for 5s → parse handlers in the embedded UI → fail when any observed event type lacks a handler arm). Implements decision `_unscoped/0003`; closes the silent-server / ignored-client class of bug. Skip step 4 (handler parsing) when `embedded_ui_module: null` — API-only services have no embedded UI to compare. Infrastructure failures (server won't start, curl errors) log to `.build-loop/issues/live-smoke-<date>.md` and surface as `⚠️ untested live-flow` in Review-G; only the contract violation itself fails the build.
+
+#### Plugin-tests advisory check (auto-runs when build touches plugin metadata; non-blocking)
 
 If Phase 3 Execute's diff contains any of these path globs, run `Skill("build-loop:plugin-tests")` as part of Validate:
 
@@ -97,7 +121,7 @@ If Phase 3 Execute's diff contains any of these path globs, run `Skill("build-lo
 
 Concretely run from the repo root: `for t in scripts/test_skill_resolution.py scripts/test_plugin_manifest.py scripts/test_mcp_registration.py scripts/test_trigger_phrases.py scripts/test_bridge_preflight.py; do python3 "$t" || EXIT=1; done; exit ${EXIT:-0}`. **Findings are advisory, not blocking.** Record results to `.build-loop/state.json.pluginTests` as `{exit, failingScripts: [...], details}`. Surface a one-line summary in the Review-F Report. Do NOT route to Iterate on exit 1; do NOT gate the build.
 
-### Memory-first gate (always on)
+#### Memory-first gate (always on)
 
 Runs on every Review-B criterion failure with an error-like signal (exception, test failure, build error). Skip when failure is expected and mapped (TDD "tests must fail until impl complete") or iteration is from user feedback rather than a reproducible bug. Steps:
 
@@ -117,11 +141,11 @@ Runs on every Review-B criterion failure with an error-like signal (exception, t
 5. **Record the gate** in `.build-loop/state.json.debuggerGates.review_b`.
 6. **Fallback when MCP unavailable**: paste `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` into the gate. Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
 
-## Sub-step C — Optimize (opt-in)
+### Sub-step C — Optimize (opt-in)
 
 Only when a mechanical metric exists AND user hasn't opted out. Load `build-loop:optimize`. Archive to `.build-loop/optimize/experiments/`. Feed results back to Review-B as evidence.
 
-## Sub-step D — Fact-Check
+### Sub-step D — Fact-Check
 
 Dispatch `fact-checker` + `mock-scanner` in parallel. **Plus** when code changed in this build, dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: review-rules')` in parallel — the scout runs the rules check, diffs against `.episodic/architecture/known_violations.json`, writes decisions for new violations via `scripts/capture_arch_violation.py`, and returns a `route:` recommendation in `follow_up`. If `route: "iterate"`, route the scout's findings into Iterate's prioritized work list. For cross-layer changes, escalate to `Skill("build-loop:architecture-review")` for the full 5-phase integrity review.
 
@@ -133,13 +157,35 @@ Dispatch `fact-checker` + `mock-scanner` in parallel. **Plus** when code changed
 
 Blocking (Gates 1–4) → Iterate. Queue entries (Gates 7–8) → flow into Phase 5's prioritized work list. Warnings → Report.
 
-## Sub-step E — Simplify
+### Sub-step E — Simplify
 
 Invoke `/simplify` on changed files. Preserve public API, tests, observability, user value, and modular boundaries needed for scalability, accuracy, security, testability, or stable interfaces. Do not simplify by removing necessary states, accuracy, scalability, accessibility, or real data paths. If integrated simplification is better, record `MODULARITY EXCEPTION`.
 
-## Sub-step F — Report (final pass only)
+### Sub-step F — Auto-Resolve
 
-See `references/memory-systems.md` for the run-entry write protocol and `references/learn-protocol.md` for Phase 6 hooks. Quick checklist:
+Drain non-destructive open items. Run `python3 scripts/autonomy_gate.py` against each candidate item from Sub-steps A and D; execute `auto` verdicts, record `confirm` in `## Held`, record `block` in `## Blocked`. For `warn` verdicts (exit 0): execute the action, record in `## Done` with `[warn] <reason>` prefix, and append one entry to `state.json.runs[].autonomyEvents[]` for match-rate tracking. Strong-checkpoint findings never enter this queue.
+
+### Sub-step G — Report (final pass only)
+
+Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes final artifacts and closes the build.
+
+The report markdown sections, in this order:
+
+- `## Done` — every F-criterion verified pass + every Auto-Resolve `auto` item, with one-line evidence each. `warn` items also appear here, prefixed with `[warn] <reason>`.
+- `## Held` — items the autonomy gate verdicted as `confirm`. Body: action label + the gate envelope's `reason` field verbatim. The user runs held commands manually if they want. Build-loop does NOT prompt or auto-execute these.
+- `## Blocked` — items the autonomy gate verdicted as `block`, same shape as Held.
+- `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; preserve).
+
+**Forbidden in the report**:
+
+- "Open Recommendations" headers
+- "Next Action" sentences phrased as questions
+- Bullets phrased as `Want me to X?` / `Should I Y?`
+- Lists that invite operator selection of which items to execute
+
+Empty categories get the header followed by `_(none)_`. Do not omit empty sections. The autonomy gate (`scripts/autonomy_gate.py`) is the authority — see `references/autonomy-config.md` for precedence.
+
+Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. See `references/memory-systems.md` for the run-entry write protocol and `references/learn-protocol.md` for Phase 6 hooks. Quick checklist:
 
 - Write scorecard to `.build-loop/evals/`.
 - Append run entry via `scripts/write_run_entry.py` (NEVER hand-write JSON).
@@ -147,5 +193,7 @@ See `references/memory-systems.md` for the run-entry write protocol and `referen
 - Invoke `Skill("build-loop:architecture-dead")` for the orphan scan.
 - Run the deployment policy gate before any push/deploy.
 - Run the episodic memory capture (transcript scan).
+
+**Debugger store + outcome**, **orphan scan**, **deployment policy gate**, and **run entry append** all apply here — see `skills/build-loop/references/phase-4-review.md` §Sub-step G: Report for the full step-by-step protocol.
 
 Review also checks the intent pack and modular systems pack: does the result advance the north star, satisfy the update intent, avoid fake data in user-decision paths, remove or avoid dead UI, use the simplest durable approach that protects user experience, keep ownership MECE, and preserve modular boundaries that matter?
