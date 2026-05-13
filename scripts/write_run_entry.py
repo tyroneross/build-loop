@@ -47,6 +47,7 @@ VALID_OUTCOMES = {"pass", "fail", "partial"}
 VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 VALID_JUDGE_VERDICTS = {"approve", "rethink", "new_approach"}
 VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned"}
+VALID_BUDGET_MODES = {"default", "long", "custom"}
 
 # M2 — execution-state heartbeat (crash-recovery)
 EXECUTION_SCHEMA_VERSION = 1
@@ -347,6 +348,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "execution. Used by self-improvement-architect for prompt/rubric tuning."
         ),
     )
+    p.add_argument(
+        "--budget-summary-json",
+        default=None,
+        help=(
+            "Path to a JSON file containing the autonomous-mode budget summary (or '-' for stdin). "
+            "Shape: {mode: default|long|custom, budget_seconds: int, used_seconds: int, "
+            "items_closed: int, items_deferred: int, commits: int, pushes: int}. Mirrors the "
+            "--judge-decisions-json pattern. Omit for non-autonomous runs (default-mode 5-phase "
+            "loop). Captured per plan §14.4 + §14.5 for telemetry / Phase 6 Learn pattern mining."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -394,6 +406,54 @@ def load_security_findings(source: str) -> list[dict] | None:
         sev = item.get("severity")
         if not isinstance(sev, str) or sev not in VALID_SEVERITIES:
             raise ValueError(f"security_findings[{i}].severity must be one of {sorted(VALID_SEVERITIES)}, got {sev!r}")
+    return data
+
+
+def load_budget_summary(source: str) -> dict | None:
+    """Read autonomous-mode budget_summary JSON from a path or stdin ('-').
+
+    Shape per plan §14.4 + §14.5: a single object capturing the run's wall-clock
+    + queue-drain summary. All fields required (validate hard) so downstream
+    pattern mining doesn't have to defend against partial shapes.
+
+    Required fields:
+      mode             one of VALID_BUDGET_MODES (default | long | custom)
+      budget_seconds   int >= 0
+      used_seconds     int >= 0
+      items_closed     int >= 0    # queue items routed through Phase 2→3→4 to completion
+      items_deferred   int >= 0    # queue items moved to .build-loop/followup/
+      commits          int >= 0
+      pushes           int >= 0
+
+    Returns None when source path missing/empty (caller skips the key).
+    Raises ValueError on type/shape errors.
+    """
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        path = Path(source)
+        if not path.exists():
+            log(f"note: --budget-summary-json path {source} does not exist; skipping")
+            return None
+        raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--budget-summary-json is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError("--budget-summary-json must decode to an object")
+    mode = data.get("mode")
+    if not isinstance(mode, str) or mode not in VALID_BUDGET_MODES:
+        raise ValueError(f"budget_summary.mode must be one of {sorted(VALID_BUDGET_MODES)}, got {mode!r}")
+    for field in ("budget_seconds", "used_seconds", "items_closed", "items_deferred", "commits", "pushes"):
+        if field not in data:
+            raise ValueError(f"budget_summary missing required field: {field}")
+        if not isinstance(data[field], int) or isinstance(data[field], bool):
+            raise ValueError(f"budget_summary.{field} must be int, got {type(data[field]).__name__}")
+        if data[field] < 0:
+            raise ValueError(f"budget_summary.{field} must be >= 0, got {data[field]}")
     return data
 
 
@@ -468,6 +528,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.judge_decisions_json
             else None
         )
+        budget_summary = (
+            load_budget_summary(args.budget_summary_json)
+            if args.budget_summary_json
+            else None
+        )
     except (json.JSONDecodeError, ValueError) as e:
         log(f"validation error: {e}")
         return 1
@@ -501,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
         entry["security_findings"] = security_findings
     if judge_decisions is not None:
         entry["judge_decisions"] = judge_decisions
+    if budget_summary is not None:
+        entry["budget_summary"] = budget_summary
 
     try:
         validate_entry(entry)

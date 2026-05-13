@@ -31,6 +31,10 @@ Scan the goal text and the set of files the plan will touch, then set:
 
 Set `uiTarget`, `platform`, `migrationSource` per `skills/build-loop/SKILL.md` §Capability Routing.
 
+## Autonomous mode default (plan §14.2 — Phase A)
+
+The autonomous queue-drain loop is **on by default** when `--autonomous=false` is NOT passed. The skill body sets `state.json.autonomous.enabled` at start; the orchestrator's Phase 5 entry checks this flag and generalizes Iterate into queue-drain mode (plan §14.3). See `skills/build-loop/SKILL.md` §Autonomous Mode (Queue-Drain Loop) for the flag surface and budget semantics, and `agents/build-orchestrator.md` §"Phase 5 autonomous iterate loop" for the loop body.
+
 ## Judgment: prompt-builder vs inline prompt
 
 Use prompt-builder when the prompt is **load-bearing** — its quality directly affects user value and a regression would be visible. Inline-prompt when the call is one-shot orchestrator-to-Claude and the prompt is transient (e.g. extract this list, summarize that diff). When in doubt, default to inline; switch to prompt-builder if the same prompt shape is being reused or hand-authored more than once.

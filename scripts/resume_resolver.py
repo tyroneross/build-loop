@@ -303,6 +303,7 @@ def resolve(
     envelopes = _load_envelopes(workdir, resume_arg)
     concurrent_mods = _detect_concurrent_modifications(workdir, execution)
     remaining = _compute_remaining(execution, envelopes, concurrent_mods)
+    budget_resume = _resolve_budget_on_resume(execution)
     return {
         "decision": "resume",
         "reason": f"resuming {resume_arg} at phase={execution.get('phase')} "
@@ -313,6 +314,40 @@ def resolve(
         "concurrent_modifications": concurrent_mods,
         "execution_block": execution,
         "envelopes": envelopes,
+        "budget_resume": budget_resume,
+    }
+
+
+def _resolve_budget_on_resume(execution: dict) -> dict | None:
+    """Return the budget block to reuse on resume (plan §14.4 + §14.5).
+
+    Contract: when an autonomous-mode budget block is present, the resumed
+    orchestrator MUST preserve the original `deadline_at` so a 2h budget that
+    crashed at 1h59m does NOT get a fresh 2h. The caller (orchestrator) writes
+    the budget back into state.execution.budget on resume init using exactly
+    these fields.
+
+    Returns None when no budget block exists (resume happened in a build that
+    pre-dates autonomous mode — orchestrator treats as classic single-pass).
+
+    The decision to preserve vs reset lives HERE, not in the orchestrator,
+    so that the contract is single-sourced and testable.
+    """
+    budget = execution.get("budget")
+    if not isinstance(budget, dict):
+        return None
+    started_at = budget.get("started_at")
+    deadline_at = budget.get("deadline_at")
+    if not (isinstance(started_at, str) and isinstance(deadline_at, str)):
+        return None
+    return {
+        "preserve_deadline": True,
+        "mode": budget.get("mode", "default"),
+        "started_at": started_at,
+        "deadline_at": deadline_at,             # MUST NOT be recomputed on resume
+        "last_checkin_at": budget.get("last_checkin_at"),
+        "commits_since_push": int(budget.get("commits_since_push") or 0),
+        "checkin_interval_pct": int(budget.get("checkin_interval_pct") or 50),
     }
 
 

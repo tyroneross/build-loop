@@ -216,6 +216,7 @@ The interactive→headless distinction lives in this prompt, not in the scripts 
 - **Runtime-server detection** (informational, no changes — implements decision `_unscoped/0003`): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_runtime_server.py --workdir "$PWD" --json` and write the result to `.build-loop/state.json.triggers.runtimeServer` (boolean) plus `.build-loop/state.json.runtimeServerInfo` (envelope: `server_module`, `sse_route`, `default_port`, `embedded_ui_module`, `event_handler_locations[]`, `evidence[]`). Phase 4 sub-step B Validate consults these for the live HTTP/SSE smoke gate. Helper failure → treat as `runtimeServer: false` and log a one-line warning; never blocks. Silent default for CLIs, libraries, plugins, and static-render web apps. Closes the pytest-with-mocks blind spot that let local-smartz ship 27 commits with two real bugs.
 - **Pre-commit baseline detection** (NEW 2026-05-07, prevents intermediate-state contract-change blockers): check for baseline-tracking pre-commit tools that reject any worsening tsc/lint count. Test: `test -f .betterer.results || grep -q 'betterer\|lint-staged.*--baseline' package.json 2>/dev/null`. If a baseline tool is detected, write `.build-loop/state.json.preCommit.hasBaseline = true` so Phase 2 plan-writing flags sole-consumer contract changes for bundling (or `--update` baseline reset). See `~/.claude/projects/-Users-tyroneross/memory/feedback_buildloop_pre_commit_baseline.md` for the pattern.
 - **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
+- **UI spot-check policy**: load `.build-loop/config.json.uiSpotcheck` if present and merge into `state.devServer.{baseUrl, signInForm, baselineDir, phase3RouteCap, phase4RouteCap, ssimThreshold}`. Defaults: `enabled` auto-derived from `.tsx` file presence under `app/` or `components/`, `baseUrl` from `detect_runtime_server.py`, `signInForm: null`, `baselineDir: ".build-loop/ui-baselines"`, route caps 8/12, threshold 0.98. Full schema in `references/ui-spotcheck-config.md`. The Phase 3 chunk-close trigger and Phase 4 Review-B `ui-validator` dispatch both read from `state.devServer.*`.
 - **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
 - **UI input/output contract** (when `uiTarget != null`): read `skills/build-loop/references/ui-io-contract.md`, inventory affected user inputs and system outputs, and mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical. The full contract is finalized in Phase 2.
 - **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
@@ -267,6 +268,18 @@ The interactive→headless distinction lives in this prompt, not in the scripts 
   6. **On clean completion** (Phase 4 Review-G success): `update_execution_state(state_path, 'complete')` — sets `phase: "report"`. This is the "no resume needed" sentinel; `--resume` refuses to run against a state where `phase == "report"`.
 
   Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
+
+  **M2 sidecar — working-state writes (NEW 2026-05-13, plan §15.2)**: at the same M2 trigger points 2 + 3 + 4 + 6, also write `.build-loop/working-state/current.json` + append `.build-loop/working-state/log.jsonl` via:
+
+  ```
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/working_state_writer.py \
+    --workdir "$PWD" --agent "orchestrator" \
+    --run-id "$RUN_ID" --chunk-id "<chunk_id_or_empty>" \
+    --status "<dispatching | awaiting_return | phase_transition | completed>" \
+    --current-task-summary "<phase/chunk one-liner>"
+  ```
+
+  Implementers write their own per-step working-state during the chunk per `agents/implementer.md` §"Working-state writes" — orchestrator writes are bookend events around them. Failure here is fire-and-forget; never blocks. Files are gitignored; do not commit working-state to the repo.
 
 - **M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)**: complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one ledger row at dispatch time and one at return time per subagent invocation. Both rows carry the same `task_id` so wall-clock and status can be correlated post-hoc by Round 4 dispatch-pattern analysis (and any later cost study).
 
@@ -363,6 +376,53 @@ For each implementer return envelope with `status: fixed | partial | completed`:
 
 **Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-G so we can refine the implementer prompt for next run.
 
+#### Phase 3 UI spot-check (between chunks — NEW 2026-05-12, RFC #30)
+
+After the commit step closes for a chunk **and before the next chunk dispatches**, fire `ui-validator` whenever the just-closed chunk's `uiTouched` signal is true. Catches UI regressions inside the chunk that introduced them instead of letting them ride to end-of-Phase-4.
+
+**`uiTouched` signal** (compute at chunk-close from the envelope's `files_changed`):
+
+| Trigger | `uiTouched` |
+|---|---|
+| Any file under `(app|components)/**/*.tsx` | `true` |
+| `tailwind.config.{js,ts}` or theme/global-style files | `true` |
+| Style helpers under `lib/(theme|styles)/**` | `true` |
+| Test files only (`tests/**`, `*.test.*`) | `false` |
+| Schema / API route only (no UI files in the chunk) | `false` |
+
+Cache the verdict on `state.json.execution.completed_chunks[<chunk_id>].uiTouched` so resume picks it up.
+
+**Dispatch** (Sonnet tier; see `agents/ui-validator.md` for the agent contract):
+
+```
+Agent(
+  subagent_type="build-loop:ui-validator",
+  prompt=brief({
+    triggerPoint: "phase3-chunk-close",
+    changedFiles: envelope.files_changed,
+    baseUrl: state.devServer.baseUrl,           # captured by detect_runtime_server
+    priorBaselineDir: ".build-loop/ui-baselines/" + run_id + "/",
+    signInForm: state.devServer.signInForm,     # null if no auth fixture
+  })
+)
+```
+
+Cost ledger (M3) applies — emit `--agent ui-validator` rows at dispatch and return.
+
+**Routing on return**:
+
+| envelope.status | Action |
+|---|---|
+| `pass` | Continue to next chunk dispatch. Persist envelope to `.build-loop/subagent-results/<run_id>/ui-spotcheck-<chunk_id>.json`. |
+| `fail` | Treat `envelope.failing_assertion` as a rubric and route the chunk back to Iterate (same routing as Review-B failure path). Do NOT dispatch downstream chunks in the same batch — drain the queue first by serializing the next batch after the iterate fix. |
+| `skipped` | Continue. Reasons: `(auth-gap)` (mark `⚠️ ui-spotcheck skipped — auth fixture missing` in Review-G), `(no-dev-server)` (mark `⚠️ untested ui — no dev server`), `(no-routes-implicated)` (silent skip — implementer touched no public render path). |
+
+**Iteration budget**: UI-spot-check failures consume the global 5x Iterate cap. They do not get a separate budget.
+
+**Skip when**: `uiTouched: false` (no UI files in chunk) OR `state.devServer.runtimeServer: false` (library-only project, no dev server to scan against) OR the project's `config.json` sets `uiSpotcheck.enabled: false`.
+
+**Backward compat**: if `@tyroneross/ibr-core` is not installed in the project, `ui-validator` falls back to the existing `scripts/ibr_quickpass.py` shell-out path automatically (see `agents/ui-validator.md` §"Path selection"). The orchestrator's behavior is identical — only the underlying scan implementation differs. Track upstream lib availability via `tyroneross/interface-built-right#5`.
+
 #### Phase 3 halt-and-ask branch (NEW — C5 architectural-decision backstop)
 
 C3's `attestation_lint.py` and C4's `synthesis-critic` together cover most synthesis-class drift. **Architectural-class decisions** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, hard-fail/retry counters, etc.) fall outside both — the lint has nothing to grep for, and the critic only fires on UI files. C5 catches those via a halt-and-ask backstop: implementers return `status: "blocked"` rather than guess, and the orchestrator dispatches a Thinking-tier resolver before re-dispatching the implementer.
@@ -427,7 +487,7 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-steps:
 
 - **A. Critic** — `commit-auditor` at build scope (replaces retired `sonnet-critic` per plan §15.1) + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. Dispatch commit-auditor with `scope: "build"`, `diff_sha_range: "<pre_build_sha>..HEAD"`, full `rubric_criteria_ids`, and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/commit-auditor.md`. **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Major variances + non-auto-fixable + judgment calls go to Sub-step G Report's `## Notes from judges` for user review. **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
-- **B. Validate** — IBR-first when present, UI input/output contract check for UI work, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
+- **B. Validate** — UI-validator-first when `uiTarget != null` (dispatch `ui-validator` with `triggerPoint: "phase4-review-b"`; see `agents/ui-validator.md`; supersedes the legacy `scripts/ibr_quickpass.py` shell-out, which the agent still uses as a fallback when `@tyroneross/ibr-core` is not installed — see RFC #30). Then: UI input/output contract check for UI work, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure. **UI-validator routing**: `pass` proceeds; `fail` routes `failing_assertion` to Iterate (same rubric pattern as Phase 3 chunk-close); `skipped (auth-gap)` records `⚠️ ui-validate skipped — auth fixture missing` in Review-G and falls through to scanners.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
@@ -470,7 +530,7 @@ Empty categories get the header followed by `_(none)_`. Do not omit empty sectio
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. **Debugger store + outcome**, **orphan scan**, **deployment policy gate**, and **run entry append** all apply here — see `skills/build-loop/references/phase-4-review.md` §Sub-step G: Report for the full step-by-step protocol.
 
-### Phase 5: Iterate (up to 5x)
+### Phase 5: Iterate (up to 5x classic, up to 25 autonomous)
 
 Full protocol in `references/iterate-protocol.md`. Highlights:
 
@@ -483,7 +543,67 @@ Full protocol in `references/iterate-protocol.md`. Highlights:
   - **native macOS** (running `.app`, `.swift` files in macOS target) → built-in `skills/native-ax-driver/` (`python3 .../native_driver.py preflight|scan|action`). Cursor-free — uses `AXUIElementPerformAction`, no `CGEvent`. IBR's `scan_macos` / `session_*` tools are an optional accelerator when IBR is present (`skills/ibr-bridge/SKILL.md` §"Native macOS (AX) — built-in, not bridged").
   - **iOS simulator** → `native_scan` + `idb ui tap` per `reference_idb_sim_tap.md`.
 - Loop back to Review-B; A usually skipped on re-runs.
-- Hard stop at 5 iterations; overflow to `.build-loop/followup/`.
+- Hard stop at 5 iterations (classic mode) or 25 iterations (autonomous mode); overflow to `.build-loop/followup/`.
+
+#### Phase 5 autonomous iterate loop (plan §14.3 — Phase A)
+
+When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-drain loop. Entry conditions, body, and exits below; all backed by `scripts/budget_check.py` + `Agent(subagent_type="build-loop:alignment-checker", ...)`. The loop body executes after classic Phase 5 Iterate has handled the just-completed plan's own ❓ Unfixed items; then it picks up fresh queue items.
+
+**Pre-entry — autonomous mode detection.** Read these in order; first hit wins:
+
+1. `state.json.autonomous.enabled` (set by the skill body when `--autonomous=true` or default).
+2. `--autonomous=false` on the original invocation forces `false`; loop is skipped entirely.
+3. `state.json.execution.budget` MUST exist (the skill body writes it at start). Missing → log a warning and treat autonomous as disabled for this run.
+
+**On every loop iteration entry — three short calls in order:**
+
+1. **Budget check.** `python3 /Users/tyroneross/.claude/plugins/cache/rosslabs-ai-toolkit/build-loop/<version>/scripts/budget_check.py --workdir "$PWD"`. Parse the envelope.
+   - `action: continue` → proceed.
+   - `action: checkin` → emit a `PushNotification` (`Build-loop progress @ N% — items closed: X, deferred: Y`), atomic-update `state.execution.budget.last_checkin_at = now()`, proceed (non-blocking).
+   - `action: finalize_and_stop` → finish the **current chunk's commit only**, emit the final summary, exit autonomous loop. Do NOT start a new alignment-check or chunk. Plan §14.7 — no mid-commit hard cuts.
+2. **Interrupt check.** Is `.build-loop/halt` present? If yes — same finalize behavior as `finalize_and_stop`. Reason: `user halt sentinel at .build-loop/halt`. (Phase A surface — `/build-loop:halt` command ships in Phase C.)
+3. **Iterate cap.** Read `state.execution.iterate_attempt`. If `>= maxIterateAttemptsAutonomous` (config default 25) — finalize with reason `iterate cap reached`. Hard ceiling protects against runaway loops even when budget remains.
+
+**Body — drain the queue:**
+
+1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`).
+2. **For each item (sequential — alignment-check is per-item):**
+   a. Dispatch `Agent(subagent_type="build-loop:alignment-checker", prompt=<brief>)` with `item_path`, `item_kind`, `workdir`, `current_task_id` (null when §15.2 working-state not yet shipped on this branch — graceful degradation per the agent's own contract), and the last 5 verdicts for consistency cross-checking.
+   b. Parse the JSON verdict (the agent returns exactly one JSON object, no fence). Append to `state.runs[].alignment_verdicts[]` (one row per item, capped at 200 per run).
+   c. **Route by verdict:**
+      - **`aligned`** — schedule the item for Phase 2 → 3 → 4. Treat as a one-item plan: feed alignment-checker's `reason` + `matched_anchors` to plan-critic as part of the brief so plan-critic knows why this item earned alignment.
+      - **`misaligned`** — `mv` the item to `.build-loop/followup/<basename>`. Append a markdown footer to the moved file: `\n\n---\n_Deferred by alignment-checker: <reason>. Violated: <comma-separated violated_non_goals>._\n`.
+      - **`uncertain`** — emit `PushNotification` with item path + `uncertainty_evidence`. `TaskCreate` a follow-up task captioned `Review uncertain queue item: <basename>`. Do NOT block — continue loop with remaining items.
+   d. **Per-item cap — Phase A logs only.** Plan §14.6 — per-item ≤ 3 same-verdict cap enforced in Phase C. Phase A logs a one-line warning when the same item gets the same verdict ≥ 3 times: `[autonomous] item <basename> received <verdict> for 3rd time — Phase C will force misaligned`.
+3. **Commit + advance.** When an `aligned` item finishes Phase 2 → 4, the standard Phase 3 commit step runs. Increment `state.execution.budget.commits_since_push`. **Push behavior in Phase A is unchanged from today** (manual) — `scripts/autonomous_push.py` ships in Phase B. The `budget_check.py` envelope's `should_push_now` field is informational only in Phase A; the orchestrator surfaces it in check-ins but does not push autonomously yet.
+
+**Exit conditions (any one stops the loop):**
+
+| Condition | Action |
+|---|---|
+| Queue empty + classic iterate complete | Normal exit → Phase 6 Learn (if enabled) → Review-G report |
+| `budget_check.action == finalize_and_stop` | Finish current commit only, emit summary, exit |
+| `.build-loop/halt` sentinel present | Same as `finalize_and_stop` |
+| `iterate_attempt >= maxIterateAttemptsAutonomous` | Same as `finalize_and_stop`, reason `iterate cap` |
+| Concurrent-modification trip via existing M4 collision detection | Existing safe-stop behavior |
+
+**Report contribution.** At Review-G, the orchestrator writes a `budget_summary` to the run entry via `write_run_entry.py --budget-summary-json <tmp>`. Shape:
+
+```json
+{
+  "mode": "default | long | custom",
+  "budget_seconds": <int>,
+  "used_seconds": <int>,
+  "items_closed": <int>,
+  "items_deferred": <int>,
+  "commits": <int>,
+  "pushes": <int>
+}
+```
+
+Same mechanism as `--judge-decisions-json` (commit `c80cfc8`). Tracked under `state.runs[].budget_summary` for cross-run pattern mining by Phase 6 Learn.
+
+**Resume on autonomous runs.** `scripts/resume_resolver.py.resolve()` returns `budget_resume.preserve_deadline: true` with the original `deadline_at`. The orchestrator MUST write that block back into `state.execution.budget` verbatim on resume — never recompute. A 2h budget that crashed at 1h59m gets only the remaining 1m on resume.
 
 ### Phase 6: Learn (optional)
 

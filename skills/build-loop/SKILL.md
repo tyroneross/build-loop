@@ -17,6 +17,77 @@ Build-loop supports three modes, routed by the orchestrator:
 
 The orchestrator classifies intent automatically. Users can override with the standalone commands.
 
+## Autonomous Mode (Queue-Drain Loop)
+
+Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains its own `ux-queue/` + `issues/` + `proposals/`, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. Default since this mode shipped (`--autonomous=false` opts back to classic one-pass).
+
+### Flag surface
+
+| Invocation | Effect |
+|---|---|
+| `/build-loop:run "goal text"` | default mode, 2h budget, autonomous=true |
+| `/build-loop:run --long "goal text"` | long mode, 8h budget |
+| `/build-loop:run --budget 4h "goal text"` | custom budget (overrides `--long`) |
+| `/build-loop:run --budget 30m "goal text"` | accepts `30s`, `30m`, `4h`, or bare integer seconds |
+| `/build-loop:run --autonomous=false "goal text"` | classic single-pass; queue items become `followup/` |
+| `/build-loop:run "overnight refactor of auth ..."` | keyword `overnight` → long mode, 8h |
+
+**Flag precedence (strict, top wins):**
+
+1. `--budget <duration>` — explicit duration always wins; mode tagged `custom`.
+2. `--long` — sets mode `long`, budget 8h.
+3. Keyword detection in goal text — only when `--long` not explicitly set.
+4. Default — mode `default`, budget 2h, autonomous=true.
+
+`--autonomous=false` is orthogonal: it can combine with any budget flag but disables the queue-drain loop entirely. With autonomous off, `--budget` still tracks wall-clock but the orchestrator runs classic Phase 1–6 once and reports.
+
+### Keyword fallback
+
+Case-insensitive whole-word match against the goal text (or `intent.update_intent`). Detection runs ONLY when `--long` is not explicit on the command line. The flag always wins over keyword inference.
+
+| Keyword | Example phrasings |
+|---|---|
+| `long` | "long refactor of …" |
+| `long-running` | "long-running migration" |
+| `overnight` | "overnight build" |
+| `large-scale` | "large-scale rewrite" |
+| `multi-day` | "multi-day backfill" |
+
+Keyword list is configurable via `.build-loop/config.json.autonomy.keywordsLong[]`. The default list above is hard-coded in the orchestrator.
+
+### Budget tracking
+
+The orchestrator writes `state.execution.budget` at autonomous-mode start:
+
+```json
+{
+  "mode": "default | long | custom",
+  "started_at": "<iso8601 UTC>",
+  "deadline_at": "<iso8601 UTC>",
+  "last_checkin_at": "<iso8601 UTC> | null",
+  "commits_since_push": 0,
+  "checkin_interval_pct": 50
+}
+```
+
+`scripts/budget_check.py` reads this block at every iterate-loop entry, every commit, and every phase boundary, returning a routing envelope (`continue | checkin | finalize_and_stop`). The script is informational — exit 0 always; sub-5ms compute.
+
+**Resume contract**: when a budget block exists and the run resumes via `--resume <run_id>`, the orchestrator MUST reuse the original `deadline_at`. A 2h budget that crashed at 1h59m does NOT get a fresh 2h. `scripts/resume_resolver.py._resolve_budget_on_resume()` is the single source of truth for this rule and surfaces the preserved budget under `budget_resume.preserve_deadline: true`.
+
+### Iteration caps
+
+| Mode | Per-build cap | Per-item cap |
+|---|---|---|
+| Classic (autonomous=false) | 5 | n/a |
+| Autonomous default | 25 | 3 same-verdict |
+| Autonomous long | 25 | 3 same-verdict |
+
+`maxIterateAttemptsAutonomous` is configurable in `.build-loop/config.json.autonomy.maxIterateAttemptsAutonomous`.
+
+### Per-Phase A constraint
+
+Phase A (current ship) wires queue drain + alignment-check + time budget. **Pushes stay manual** — `scripts/autonomous_push.py` and the K-commit batch-push policy ship in Phase B. The `should_push_now` field returned by `budget_check.py` is informational in Phase A; the orchestrator surfaces it in check-ins but does not push autonomously yet.
+
 ## Per-Commit Mode (Self-Recursive Builds)
 
 Per-commit mode splits a multi-commit build into one independent orchestrator dispatch per commit, so each commit reviews and lands cleanly before the next one starts. It activates automatically when the working directory IS the runtime — that is, when the user is editing the build-loop plugin itself (or any plugin whose runtime symlink points back to the working tree). It can also be explicitly opted into or out of via skill arguments.
