@@ -375,6 +375,53 @@ For each implementer return envelope with `status: fixed | partial | completed`:
 
 **Recovery if you discover legacy implementer behavior** (an implementer that ignored Hard rule 4 and called `git commit`): the working tree may show some files committed, others uncommitted. Run `git log -<N> --oneline | head` to enumerate the unexpected commits, then commit the remaining files with their owning implementer's metadata. Surface the rule-4 violation in Review-G so we can refine the implementer prompt for next run.
 
+#### Phase 3 UI spot-check (between chunks — NEW 2026-05-12, RFC #30)
+
+After the commit step closes for a chunk **and before the next chunk dispatches**, fire `ui-validator` whenever the just-closed chunk's `uiTouched` signal is true. Catches UI regressions inside the chunk that introduced them instead of letting them ride to end-of-Phase-4.
+
+**`uiTouched` signal** (compute at chunk-close from the envelope's `files_changed`):
+
+| Trigger | `uiTouched` |
+|---|---|
+| Any file under `(app|components)/**/*.tsx` | `true` |
+| `tailwind.config.{js,ts}` or theme/global-style files | `true` |
+| Style helpers under `lib/(theme|styles)/**` | `true` |
+| Test files only (`tests/**`, `*.test.*`) | `false` |
+| Schema / API route only (no UI files in the chunk) | `false` |
+
+Cache the verdict on `state.json.execution.completed_chunks[<chunk_id>].uiTouched` so resume picks it up.
+
+**Dispatch** (Sonnet tier; see `agents/ui-validator.md` for the agent contract):
+
+```
+Agent(
+  subagent_type="build-loop:ui-validator",
+  prompt=brief({
+    triggerPoint: "phase3-chunk-close",
+    changedFiles: envelope.files_changed,
+    baseUrl: state.devServer.baseUrl,           # captured by detect_runtime_server
+    priorBaselineDir: ".build-loop/ui-baselines/" + run_id + "/",
+    signInForm: state.devServer.signInForm,     # null if no auth fixture
+  })
+)
+```
+
+Cost ledger (M3) applies — emit `--agent ui-validator` rows at dispatch and return.
+
+**Routing on return**:
+
+| envelope.status | Action |
+|---|---|
+| `pass` | Continue to next chunk dispatch. Persist envelope to `.build-loop/subagent-results/<run_id>/ui-spotcheck-<chunk_id>.json`. |
+| `fail` | Treat `envelope.failing_assertion` as a rubric and route the chunk back to Iterate (same routing as Review-B failure path). Do NOT dispatch downstream chunks in the same batch — drain the queue first by serializing the next batch after the iterate fix. |
+| `skipped` | Continue. Reasons: `(auth-gap)` (mark `⚠️ ui-spotcheck skipped — auth fixture missing` in Review-G), `(no-dev-server)` (mark `⚠️ untested ui — no dev server`), `(no-routes-implicated)` (silent skip — implementer touched no public render path). |
+
+**Iteration budget**: UI-spot-check failures consume the global 5x Iterate cap. They do not get a separate budget.
+
+**Skip when**: `uiTouched: false` (no UI files in chunk) OR `state.devServer.runtimeServer: false` (library-only project, no dev server to scan against) OR the project's `config.json` sets `uiSpotcheck.enabled: false`.
+
+**Backward compat**: if `@tyroneross/ibr-core` is not installed in the project, `ui-validator` falls back to the existing `scripts/ibr_quickpass.py` shell-out path automatically (see `agents/ui-validator.md` §"Path selection"). The orchestrator's behavior is identical — only the underlying scan implementation differs. Track upstream lib availability via `tyroneross/interface-built-right#5`.
+
 #### Phase 3 halt-and-ask branch (NEW — C5 architectural-decision backstop)
 
 C3's `attestation_lint.py` and C4's `synthesis-critic` together cover most synthesis-class drift. **Architectural-class decisions** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, hard-fail/retry counters, etc.) fall outside both — the lint has nothing to grep for, and the critic only fires on UI files. C5 catches those via a halt-and-ask backstop: implementers return `status: "blocked"` rather than guess, and the orchestrator dispatches a Thinking-tier resolver before re-dispatching the implementer.
@@ -439,7 +486,7 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-steps:
 
 - **A. Critic** — `commit-auditor` at build scope (replaces retired `sonnet-critic` per plan §15.1) + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. Dispatch commit-auditor with `scope: "build"`, `diff_sha_range: "<pre_build_sha>..HEAD"`, full `rubric_criteria_ids`, and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/commit-auditor.md`. **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Major variances + non-auto-fixable + judgment calls go to Sub-step G Report's `## Notes from judges` for user review. **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
-- **B. Validate** — IBR-first when present, UI input/output contract check for UI work, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
+- **B. Validate** — UI-validator-first when `uiTarget != null` (dispatch `ui-validator` with `triggerPoint: "phase4-review-b"`; see `agents/ui-validator.md`; supersedes the legacy `scripts/ibr_quickpass.py` shell-out, which the agent still uses as a fallback when `@tyroneross/ibr-core` is not installed — see RFC #30). Then: UI input/output contract check for UI work, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure. **UI-validator routing**: `pass` proceeds; `fail` routes `failing_assertion` to Iterate (same rubric pattern as Phase 3 chunk-close); `skipped (auth-gap)` records `⚠️ ui-validate skipped — auth fixture missing` in Review-G and falls through to scanners.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
