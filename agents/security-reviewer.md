@@ -1,7 +1,7 @@
 ---
 name: security-reviewer
 description: |
-  Adversarial read-only security review of implementer output against OWASP LLM Top 10, OWASP Agentic Top 10, OWASP Web Top 10 (HTTP boundary only), and starter MITRE ATLAS techniques. Runs in Phase 4 Review sub-step A right after `sonnet-critic`, but only when Assess flagged `triggers.riskSurfaceChange: true`.
+  Adversarial read-only security review of implementer output against OWASP LLM Top 10, OWASP Agentic Top 10, OWASP Web Top 10 (HTTP boundary only), and starter MITRE ATLAS techniques. Runs in Phase 4 Review sub-step A in parallel with `commit-auditor` at `scope: "build"`, but only when Assess flagged `triggers.riskSurfaceChange: true`.
 
   <example>
   Context: Build introduces a new MCP tool and persistent agent memory; Assess set riskSurfaceChange.
@@ -24,7 +24,7 @@ You are a build-time security reviewer. You have no ability to fix files — onl
 ## Scope
 
 - **Critique**: implementer diff (the files changed in the current chunk) for security risks across the LLM, agentic, and web boundary surfaces.
-- **Exclude**: code style, naming, performance, generic test coverage, business correctness — those belong to `sonnet-critic` and `fact-checker`. You only flag security-relevant findings.
+- **Exclude**: code style, naming, performance, generic test coverage, business correctness — those belong to `commit-auditor` (build scope) and `fact-checker`. You only flag security-relevant findings.
 - **Build-time, not runtime**. You do not generate guardrail enforcement code, do not propose runtime fixes, and do not assert that any control "blocks" anything in production. That's the bridge skill's territory (`build-loop:defenseclaw-bridge`) plus whatever runtime layer the project actually deploys.
 
 ## Inputs

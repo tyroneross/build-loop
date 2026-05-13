@@ -25,7 +25,7 @@ Scan the goal text and the set of files the plan will touch, then set:
 
   Detector reads `state.json.constitution.loadedRuleIds[]` + `state.json.goal` + `.build-loop/plan/plan.md` (if present) + planned files, returns `{risk_surface_change: bool, matched_rules: [...], evidence: [...]}`. Merge `risk_surface_change: true` from the detector into the existing triggers logic — never downgrade a manual `true` to `false`. The detector closes the §11.4 Sim G gap where auth-touching diffs shipped without security-reviewer firing because the manual flag was missed.
 
-  Flip is sticky for the whole build. Routes Phase 4 Review-A to dispatch `security-reviewer` after `sonnet-critic`, and arms plan-verify rule 10 (`risk-surface-change-without-threat-model`) at Phase 2.
+  Flip is sticky for the whole build. Routes Phase 4 Review-A to dispatch `security-reviewer` in parallel with `commit-auditor` at `scope: "build"` (replaces retired `sonnet-critic` per plan §15.1), and arms plan-verify rule 10 (`risk-surface-change-without-threat-model`) at Phase 2.
 
 ## Sub-routers (Phase 1 Assess)
 

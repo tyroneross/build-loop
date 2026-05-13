@@ -174,7 +174,7 @@ This is a decision rule, not architecture for its own sake. When a simpler or mo
 | Agent | Role | Model |
 |-------|------|-------|
 | **build-orchestrator** | Drives the 5-phase loop plus optional Learn, dispatches subagents | opus (overridable) |
-| **sonnet-critic** | Adversarial read-only review between execution and final validation | sonnet |
+| **commit-auditor** | Advisory judge — chunk scope (Phase 3) + build scope (Phase 4-A, replaces retired sonnet-critic) | opus |
 | **fact-checker** | Traces rendered metrics to data sources | inherit (sonnet recommended) |
 | **mock-scanner** | Scans for placeholder/fake data in production code | haiku |
 

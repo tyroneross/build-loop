@@ -305,7 +305,7 @@ The interactive→headless distinction lives in this prompt, not in the scripts 
        --chunk-id "<chunk_id>"
      ```
 
-  **Scope**: M3 applies to every `Agent(subagent_type="build-loop:<x>")` call the orchestrator makes — implementer (Phase 3), scope-auditor (Phase 2/3), sonnet-critic (Phase 4-A), synthesis-critic (Phase 3 step 6), fact-checker (Phase 4-D), architecture-scout (Phase 1 + chunk-impact), optimize-runner (Phase 4-C), overfitting-reviewer (Phase 4-C). Set `--agent` to the subagent's frontmatter name; set `--dispatch-mode` from the active dispatch context.
+  **Scope**: M3 applies to every `Agent(subagent_type="build-loop:<x>")` call the orchestrator makes — implementer (Phase 3), scope-auditor (Phase 2/3), commit-auditor (Phase 3 step 7 chunk scope + Phase 4-A build scope; replaces retired sonnet-critic), synthesis-critic (Phase 3 step 6), fact-checker (Phase 4-D), architecture-scout (Phase 1 + chunk-impact), optimize-runner (Phase 4-C), overfitting-reviewer (Phase 4-C). Set `--agent` to the subagent's frontmatter name; set `--dispatch-mode` from the active dispatch context.
 
   **Failure mode**: helper exit-0 is success; exit-1 is a validation error (fix the args and retry once); exit-2 is a filesystem error (log once, do NOT block the build — telemetry is best-effort). Never let a ledger-write failure halt a Phase 3 commit.
 
@@ -426,7 +426,7 @@ This branch fires at envelope-receive time, **before** the commit step above. If
 
 Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-steps:
 
-- **A. Critic** — `sonnet-critic` + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. **Guidance routing (NEW with autonomy gate)**: Guidance findings with a `recommendation:` field populated AND a single named `file:line` evidence path are appended to the Sub-step F Auto-Resolve queue. Action label `"critic guidance fix: <rule_id>"`, command `"edit <file>"`. The autonomy gate routes them — `auto` executes the fix, `warn` executes with `[warn]` Done prefix, `confirm` records in `## Held`, `block` records in `## Blocked`. Pure-judgment guidance (style, naming, documentation tone — findings without a single-file `recommendation:`) bypasses Auto-Resolve and goes straight to Sub-step G Report's `## Held` with reason `judgment-call`. **Strong-checkpoint findings continue to route to Execute (no iteration counter burn) — never to Auto-Resolve.** Note: `recommendation:` is the canonical output field per `agents/sonnet-critic.md` line 70; `scope-auditor` and `synthesis-critic` use the same field name.
+- **A. Critic** — `commit-auditor` at build scope (replaces retired `sonnet-critic` per plan §15.1) + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. Dispatch commit-auditor with `scope: "build"`, `diff_sha_range: "<pre_build_sha>..HEAD"`, full `rubric_criteria_ids`, and `task_ids_in_scope` covering every plan T-N. Verdict envelope shape per `agents/commit-auditor.md`. **Auto-Resolve routing**: variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` go to the Sub-step F Auto-Resolve queue. Action label `"judge fix: <variance.id>"`, command `"edit <file>"`. Autonomy gate routes them — `auto` executes, `warn` executes with `[warn]` Done prefix, `confirm` to `## Held`, `block` to `## Blocked`. Major variances + non-auto-fixable + judgment calls go to Sub-step G Report's `## Notes from judges` for user review. **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
 - **B. Validate** — IBR-first when present, UI input/output contract check for UI work, code graders, runtime smoke gate (see below), LLM-as-judge, plugin-tests advisory check, memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
@@ -499,7 +499,7 @@ Defaults (consult `Skill("build-loop:model-tiering")` for the canonical table):
 
 - **Orchestrator** (you): `claude-opus-4-7`.
 - **Implementer** (Execute): `sonnet`, `effort: medium`.
-- **Adversarial critic** (Review-A): `sonnet-critic` agent.
+- **Adversarial critic** (Review-A): `commit-auditor` agent at `scope: "build"` (replaces retired `sonnet-critic`).
 - **Fact-checker** (Review-D): `inherit`.
 - **Mock-scanner** (Review-D): `haiku`.
 - **Recurring-pattern detector** (Learn): `haiku`.

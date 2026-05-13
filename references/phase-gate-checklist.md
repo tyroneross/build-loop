@@ -63,11 +63,11 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 ## Sub-step A — Critic
 
-- Dispatch `sonnet-critic` on Execute's diff.
+- Dispatch `commit-auditor` at `scope: "build"` on Execute's full diff (`<pre_build_sha>..HEAD`). Replaces retired `sonnet-critic` per plan §15.1.
 - On `strong-checkpoint` → back to Execute, no iteration burn.
 - On `guidance` → log to `.build-loop/issues/` and proceed.
 - Skip A on re-reviews after Iterate unless Iterate touched new files.
-- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 4.6, read-only) in parallel with `sonnet-critic`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed.
+- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 4.6, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed.
 - After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
 
 ## Sub-step B — Validate

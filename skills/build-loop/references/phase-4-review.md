@@ -12,7 +12,7 @@ Review runs every time we need an evaluation (initial post-Execute, and again af
 
 Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before spending tokens on full validation. Uses a separate read-only agent with no incentive to sandbag.
 
-1. **Dispatch `sonnet-critic`** per chunk (or per batch of chunks if they share a rubric). The critic has tools=[Read, Grep, Glob] only — no Edit, no Write.
+1. **Dispatch `commit-auditor`** at `scope: "build"` against the full build diff (`<pre_build_sha>..HEAD`). Replaces the retired `sonnet-critic` per plan §15.1 — one Opus judge across all checkpoints. The auditor has tools=[Read, Grep, Glob, Bash] (Bash for `git diff`), no Edit/Write. For the chunk-scope variant fired at Phase 3 step 7, see `agents/commit-auditor.md`.
 2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (`git diff HEAD~1` or the changed-file set).
 3. **Output**: JSON with `findings`, `strong_checkpoint_count`, `guidance_count`, `pass` boolean.
 4. **Routing**:
@@ -150,7 +150,7 @@ Preserve: public API surface, test coverage, observability (logging/tracing), do
 
 Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
 
-- **Sub-step A Critic** — guidance findings with a `recommendation:` field (canonical critic-output field per `agents/sonnet-critic.md`) and a single named file path
+- **Sub-step A Critic** — variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` (canonical commit-auditor variance fields per `agents/commit-auditor.md`)
 - **Sub-step D Fact-Check & Mock Scan** — non-blocking gate findings (e.g. `Plugin Cache Sync` divergence, `Version-Bump Advisor` notes when `release-pending.md` is absent, single-file documentation drift)
 - **Operator queue** — items previously deferred via the `## Held` section of a prior build's report
 
