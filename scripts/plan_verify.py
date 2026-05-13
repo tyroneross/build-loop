@@ -949,7 +949,104 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_synthesis_dim_vague_value(plan_path, lines))
     findings.extend(rule_risk_reason_invalid_value(plan_path, lines))
     findings.extend(rule_scope_audit_required(plan_path, lines))
+    findings.extend(rule_task_id_convention(plan_path, lines))
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Rule: task-id-convention (2026-05-13, plan §15.2) — opt-in T-N convention
+# for plan tasks. Fires only when at least one T-N appears in the plan.
+# Validates uniqueness + sequential. WARN-level — plans without T-N IDs still
+# pass (graceful degradation downstream); plans WITH T-N IDs must have them
+# correct.
+# ---------------------------------------------------------------------------
+
+TASK_ID_RE = re.compile(r"\bT-(\d+)\b")
+
+
+def rule_task_id_convention(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN: T-N task IDs are used but inconsistently (duplicate or
+    non-sequential). Opt-in convention — silent when no T-N IDs appear."""
+    ids_with_lineno: list[tuple[int, int, str]] = []  # (lineno, n_value, raw)
+    for lineno, line in lines:
+        if not line:
+            continue
+        for m in TASK_ID_RE.finditer(line):
+            ids_with_lineno.append((lineno, int(m.group(1)), m.group(0)))
+
+    if not ids_with_lineno:
+        return []  # convention not in use; silent
+
+    out: list[dict[str, Any]] = []
+    seen_n: dict[int, list[int]] = {}
+    for lineno, n, _raw in ids_with_lineno:
+        seen_n.setdefault(n, []).append(lineno)
+
+    # Duplicate detection — same N referenced multiple times is usually fine
+    # (a table row + a detail heading + a brief mention all use T-3). The
+    # WARN fires only when N appears as a DEFINING reference (heading or table
+    # row) more than once. Simplest heuristic: count headings only.
+    heading_re = re.compile(r"^\s{0,3}#{2,4}\s+T-(\d+)\b")
+    heading_counts: dict[int, list[int]] = {}
+    for lineno, line in lines:
+        if not line:
+            continue
+        m = heading_re.match(line)
+        if m:
+            n = int(m.group(1))
+            heading_counts.setdefault(n, []).append(lineno)
+
+    for n, linenos in heading_counts.items():
+        if len(linenos) > 1:
+            out.append(_finding(
+                claim_text=f"T-{n} appears as a task heading on {len(linenos)} different lines",
+                claim_kind="task_id_duplicate",
+                subject={"path": None, "symbol": f"T-{n}", "noun": "task_id"},
+                verification_command=None,
+                evidence={"file": str(plan_path), "line": linenos[0],
+                          "snippet": f"T-{n} heading at lines {linenos}"},
+                result="no_match",
+                severity="WARN",
+                confidence="high",
+                rule_id="task-id-convention",
+            ))
+
+    # Sequential check — IDs should start at T-1 and have no gaps. Scope to
+    # task-defining contexts (headings) only; prose mentions like "see T-5"
+    # can otherwise mask real gaps or trigger spurious "doesn't start at T-1"
+    # findings when a plan footnotes a task ID from a sibling document.
+    defining_ns = sorted(heading_counts.keys())
+    if defining_ns and defining_ns[0] != 1:
+        out.append(_finding(
+            claim_text=f"T-N task IDs should start at T-1 (lowest defining heading: T-{defining_ns[0]})",
+            claim_kind="task_id_not_starting_at_one",
+            subject={"path": None, "symbol": f"T-{defining_ns[0]}", "noun": "task_id"},
+            verification_command=None,
+            evidence={"file": str(plan_path), "line": heading_counts[defining_ns[0]][0],
+                      "snippet": "first defining T-N is not T-1"},
+            result="no_match",
+            severity="WARN",
+            confidence="high",
+            rule_id="task-id-convention",
+        ))
+    elif defining_ns:
+        expected = list(range(1, max(defining_ns) + 1))
+        missing = [n for n in expected if n not in heading_counts]
+        if missing:
+            out.append(_finding(
+                claim_text=f"T-N task IDs have gaps in defining headings; missing: {', '.join(f'T-{n}' for n in missing)}",
+                claim_kind="task_id_gap",
+                subject={"path": None, "symbol": f"T-{missing[0]}", "noun": "task_id"},
+                verification_command=None,
+                evidence={"file": str(plan_path), "line": ids_with_lineno[0][0],
+                          "snippet": f"defining headings: {defining_ns}"},
+                result="no_match",
+                severity="WARN",
+                confidence="high",
+                rule_id="task-id-convention",
+            ))
+
+    return out
 
 
 def summarize(findings: list[dict[str, Any]]) -> dict[str, Any]:

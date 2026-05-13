@@ -38,11 +38,49 @@ You read the plan and act on its `proposed_fix`, `files_touched`, `evidence`, an
 6. **Respect repo guardrails.** If the project has pre-commit hooks, lint rules, type checks, or tests already configured, your output must not regress them. Run the relevant checks on changed files before returning. **Do NOT run pre-commit hooks yourself** — the orchestrator runs them when it commits, which is the canonical gate. If you want to dry-run a hook, invoke it directly (`./node_modules/.bin/lint-staged --dry-run`, etc.) without going through `git commit`.
 7. **No global commands.** No `npm install`, `prisma migrate`, `git stash`, `git reset`, `git checkout <branch>`, or anything that mutates global state. Sibling implementers share the workspace until the orchestrator commits.
 
+## Working-state writes (NEW 2026-05-13, plan §15.2)
+
+Throughout the fix protocol below, write per-step progress to `.build-loop/working-state/` so the user and downstream agents can see where you are. Use `scripts/working_state_writer.py` — never write the state files directly.
+
+**When to write (4 mandatory points per task):**
+
+1. **End of Step 1** (after reading the plan, before any edits) — initial state:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/working_state_writer.py \
+     --workdir "$PWD" --agent "implementer:<chunk_id>" \
+     --run-id "$RUN_ID" --chunk-id "<chunk_id>" \
+     --current-task-id "<plan T-N if present>" \
+     --current-task-summary "<plan task title, ≤200 chars>" \
+     --status planning
+   ```
+2. **Start of Step 3** (first edit) — flip to editing, set current_file:
+   ```bash
+   python3 ... --status editing --current-file "<path>" --current-task-id "T-N"
+   ```
+   Repeat with `--current-file` updated when you open a meaningfully different file (new module, new layer). NOT every line edit. NOT every Read.
+
+3. **Start of Step 4** — flip to testing:
+   ```bash
+   python3 ... --status testing --current-task-id "T-N"
+   ```
+
+4. **End of Step 5** (just before returning the envelope) — final status:
+   ```bash
+   python3 ... --status committing --current-task-id "T-N" --next-task-id "<from plan or empty>"
+   ```
+   Or if blocking: `--status blocked_external --blocked-reason "<what you're waiting for>"`.
+
+**When plan uses the T-N convention** (`references/plan-template-ids.md`), use those IDs verbatim in `--current-task-id`. Plans without T-N IDs: omit the flag entirely (current.json will not show a task_id).
+
+The writer is fire-and-forget — never blocks your fix. If the command fails for any reason (exit 0 on success, exit 1 on validation/write error), continue with the fix anyway. The non-zero exit codes exist for visibility only; callers should ignore them.
+
 ## Fix protocol
 
 ### Step 1 — Read and verify the plan
 
 Read `plan_path`. Confirm the frontmatter has all required fields (`id`, `dimension`, `severity`, `label`, `architecture_impact`, `files_touched`). If `architecture_impact: true`, refuse per rule 2. If any required field is missing, return `{"status": "plan_malformed", "missing": [...]}`.
+
+**Write working-state checkpoint 1** (per "Working-state writes" above): initial state with `--status planning`.
 
 ### Step 2 — Read every file in `files_touched`
 
