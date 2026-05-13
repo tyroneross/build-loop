@@ -73,7 +73,7 @@ Multiple build-loop sessions can run concurrently in different terminals and acr
 
 ### Phase 1: Assess
 
-Full 21-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess detail". Highlights, in order:
+Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess detail". Highlights, in order:
 
 - **Capability shortlist (mandatory)**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/capability_shortlist.py --phase 1 --intent "<goal-keywords>" --json --cache-into-state` populates `state.json.activeCapabilities["1"]` with ≤8 capabilities. Auto-rebuilds registry if missing; rebuild manually via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/build_capability_registry.py --workdir "$PWD"`.
 - **Detect plugins**: `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` → `state.json.availablePlugins`.
@@ -81,7 +81,7 @@ Full 21-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 - **Sub-routers + triggers**: set `uiTarget`, `platform`, `migrationSource`, `structuredWriting`, `promptAuthoring`, `promptEditingExisting`, `riskSurfaceChange` per `references/trigger-rules.md`. Then `infer_risk_surface.py` to auto-infer `riskSurfaceChange` from constitution overlap (never downgrade a manual `true` to `false`).
 - **Load memory** — executable read protocol (full detail in `references/memory-systems.md` §"Read protocol — Phase 1 Assess"): (0) `Read("~/.build-loop/memory/constitution.md")` + project override; (1) `Read("~/.build-loop/memory/MEMORY.md")` + project override; (2) `Read(".build-loop/state.json")` inspect `runs[-3:]`; (3) `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall --query "<goal-keywords>" --limit 10`; (4) `Skill("build-loop:debugging-memory")` with `intent: "list-recent"`; (5) `backend_health.py` health-check, write to `state.json.architecture.backendHealth`.
 - **Architecture baseline**: `Agent(subagent_type="build-loop:architecture-scout", prompt='task: baseline')`; cache to `.build-loop/architecture/scout-cache/baseline.json`. If `triggers.promptAuthoring` or `promptEditingExisting`, also invoke `mcp__plugin_navgator__llm_map`.
-- **Observability** + **runtime-server detection** (`detect_runtime_server.py`) + **pre-commit baseline detection** (betterer/lint-staged) + **deployment policy** + **UI spot-check policy** (schema `references/ui-spotcheck-config.md`).
+- **Observability** + **runtime-server detection** (`detect_runtime_server.py`) + **pre-commit baseline detection** (betterer/lint-staged) + **deployment policy**.
 - **Intent capability pack** + **UI input/output contract** (when `uiTarget != null`) + **modular systems pack**; write `.build-loop/intent.md`, mirror compact summaries to `state.json`. **Define goal + criteria**: write `.build-loop/goal.md` with 3-5 scoring criteria.
 - **Synthesis-density routing**: count `synthesis_dimensions` via `plan_verify.count_synthesis_dimensions()`. Priority order: explicit user override → auto-escalate on count > 5 → default Sonnet fan-out (1–5 or 0) → per-chunk override. Write to `state.json.synthesisDensity`. Effect: when `escalated == true`, Phase 3 executes inline at `tier: thinking`; otherwise fan-out with C3/C4/C5 backstops. Full rationale in `references/phase-gate-checklist.md` §"Synthesis-density routing".
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
