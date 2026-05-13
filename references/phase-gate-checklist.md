@@ -40,17 +40,15 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 13. **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
 
-14. **UI spot-check policy**: load `.build-loop/config.json.uiSpotcheck` if present and merge into `state.devServer.{baseUrl, signInForm, baselineDir, phase3RouteCap, phase4RouteCap, ssimThreshold}`. Defaults: `enabled` auto-derived from `.tsx` file presence under `app/` or `components/`, `baseUrl` from `detect_runtime_server.py`, `signInForm: null`, `baselineDir: ".build-loop/ui-baselines"`, route caps 8/12, threshold 0.98. Full schema in `references/ui-spotcheck-config.md`. The Phase 3 chunk-close trigger and Phase 4 Review-B `ui-validator` dispatch both read from `state.devServer.*`.
+14. **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
 
-15. **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
+15. **UI input/output contract** (when `uiTarget != null`): read `skills/build-loop/references/ui-io-contract.md`, inventory affected user inputs and system outputs, and mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical. The full contract is finalized in Phase 2.
 
-16. **UI input/output contract** (when `uiTarget != null`): read `skills/build-loop/references/ui-io-contract.md`, inventory affected user inputs and system outputs, and mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical. The full contract is finalized in Phase 2.
+16. **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
 
-17. **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
+17. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
 
-18. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
-
-19. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
+18. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
     1. **Explicit user override** — if `state.json.config.modelOverrides.thinking` is set OR the plan declares `tier: thinking` in its frontmatter, route to thinking-tier regardless of count.
     2. **Auto-escalate on density** — if `count > 5` (6+ entries), the commit is synthesis-dense at the COMMIT level; route to `tier: thinking` automatically. Fan-out loses cross-dimension coherence at this density even with each individual dimension well-specified.
     3. **Default — Sonnet fan-out for speed** — `count` in 1–5 range OR `count == 0` keeps the default fan-out path. Sonnet's velocity advantage (~33% wall-clock, ~28% tokens) is real and the C3 attestation_lint, C4 synthesis-critic, and C5 halt-and-ask backstops fire post-commit to catch the residual recall gap. Use this lane when speed dominates.
@@ -62,9 +60,9 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
     Effect on Phase 3: when `synthesisDensity.escalated == true`, the orchestrator does NOT dispatch parallel implementer subagents for that plan; it executes the chunks inline at `tier: thinking`. When `escalated == false`, fan-out proceeds with the C3/C4/C5 backstops watching. The dual-mode dispatch table still applies — escalation overrides the default fan-out path on a per-plan or per-chunk basis. Skip this step cleanly when no plan file exists yet (re-evaluate at the end of Phase 2 if needed).
 
-20. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
+19. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
 
-21. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
+20. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
 
 ## Phase 4 Review (sub-steps A–G)
 
