@@ -15,7 +15,7 @@ Per-brief envelope shapes (round-1 through round-3) are deprecated. New briefs r
 | `loc_removed` | integer | Lines removed across `files_changed`. `0` when none. |
 | `f_criteria` | object | Map of F-criterion ID → `"pass"` or `"fail"`. Every F-criterion named in the brief MUST appear. |
 | `synthesis_attestation` | object | For each dimension named in the plan's `synthesis_dimensions` block, value is `"applied"`, `"deviated"`, or `"n/a"`. If `"deviated"`, the value MUST be an object `{"status": "deviated", "deviation_reason": "<why>"}`. **Empty object `{}` is allowed when the plan has no `synthesis_dimensions` block** (e.g. methodology commits, infra-only commits). |
-| `novel_decisions` | array | Array of `{"decision": "<one-sentence>", "reasoning": "<why>"}` objects. Empty array `[]` is OK, **but the field MUST be present**. Implementers add an entry whenever they make a synthesis-class decision NOT enumerated in the plan's `synthesis_dimensions`. When the novel decision is **architectural-class** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, etc.), the implementer MUST halt and set `status: "blocked"` (see below) rather than guess. |
+| `novel_decisions` | array | Array of decision objects (schema below). Empty array `[]` is OK, **but the field MUST be present**. Implementers add an entry whenever they make a synthesis-class decision NOT enumerated in the plan's `synthesis_dimensions`. When the novel decision is **architectural-class** (where a phase lives, defensive contract shape, error-propagation policy, persistence boundary, etc.), the implementer MUST halt and set `status: "blocked"` (see below) rather than guess. **Each entry MUST include `recommended_default` and `confidence`** so the orchestrator can auto-pick in long-mode and surface trade-offs to the operator in normal-mode. See "novel_decisions[] entry schema" below. |
 | `decision_ledger` | array | **Required when the plan has a `synthesis_dimensions` block.** Empty array `[]` is permitted only when the plan has no `synthesis_dimensions` block. Each entry MUST contain all six fields: `dimension` (string — matches a key in `synthesis_attestation`), `owner` (`"plan"` or `"implementer"`), `locked_value` (string — concrete value chosen), `alternatives_rejected` (array of strings, or `["none considered"]`), `evidence_file` (repo-relative path, or `null` when `owner == "implementer"` AND the decision is non-code), `on_new_decision` (enum: `"block" \| "flag" \| "absorb"`; default `"block"` for `risk_reason`-tagged chunks, `"flag"` otherwise). See `## decision_ledger in detail` below. |
 | `notes` | string | Free-text. ≤200 words. Judgment calls, surprises, deferred concerns. |
 | `wall_clock_seconds` | number | End-to-end implementer wall-clock duration. Orchestrator uses this for tier-mix telemetry. |
@@ -93,6 +93,72 @@ The `decision_ledger` array was added in C5 (`feat(envelope): require decision_l
 | `on_new_decision` | enum string | One of `"block" \| "flag" \| "absorb"`. Controls what happens if a *new* undeclared decision of the same class is encountered during a future re-dispatch. Default: `"block"` for chunks tagged `risk_reason`; `"flag"` otherwise. |
 
 **Lint behavior (`--check-ledger`):** the attestation lint enforces that (a) every `synthesis_attestation` dimension has a ledger entry, (b) all six fields are present and non-empty (except `evidence_file` per the `null` rule above), and (c) `on_new_decision` is one of the three enum values. See `scripts/attestation_lint.py` `--check-ledger` flag.
+
+## novel_decisions[] entry schema
+
+Each entry in `novel_decisions[]` is a decision the implementer surfaced to the orchestrator. The orchestrator routes the decision per `references/halt-and-ask-protocol.md` (mode-aware: auto-pick in long-mode, surface trade-offs in normal-mode).
+
+**Required fields per entry:**
+
+| Field | Type | Rule |
+|---|---|---|
+| `decision_id` | string | Stable identifier within the chunk (e.g. `"d1"`, `"cache_strategy"`). Used as the dedupe key in `state.json.runs[].autonomousDefaults[]`. |
+| `decision` | string | One-sentence statement of the question. Plain language. |
+| `options` | array of objects | At least one option. Each option has the option-object schema below. |
+| `recommended_default` | string | The `id` of the option the implementer recommends. Must be present and match one of the `options[].id` values. Cannot be omitted — if the implementer cannot recommend, set `confidence: "low"` and pick its best guess; the orchestrator will escalate. |
+| `confidence` | `"high" \| "med" \| "low"` | How sure the implementer is about `recommended_default`. **`low` always escalates**, even in long-mode — the implementer is saying "I cannot pick well." |
+| `reasoning` | string | Why the implementer recommends `recommended_default`. Cite plan rubric IDs or constitution rules where applicable. |
+
+**Option-object schema (each entry in `options[]`):**
+
+| Field | Type | Rule |
+|---|---|---|
+| `id` | string | Short identifier (e.g. `"A"`, `"cache"`, `"fetch"`). Used as the value of `recommended_default` and `state.json.runs[].autonomousDefaults[].chosen`. |
+| `summary` | string | One-line description of what this option does. |
+| `user_impact` | string | What end users see if this option ships. Cannot be `""` or `"n/a"`. If the option has no user-visible impact, write `"none — internal-only change"`. |
+| `performance` | string | Quantitative or qualitative perf delta (e.g. `"p95 60ms vs 220ms"`, `"~2× faster on warm cache"`, `"no measurable change"`). |
+| `speed` | string | Time-to-ship estimate (e.g. `"~30 min"`, `"~half a day if migration succeeds"`, `"unknown — depends on schema migration"`). |
+| `cost` | string | Dollar/quota impact at expected volume (e.g. `"$0"`, `"~$12/mo at 10k req/day"`, `"unknown — depends on caching hit rate"`). |
+
+**Why user-visible-impact fields are required.** The trade-off table is what the operator sees in normal-mode prompts. If the fields are missing or filled with `"n/a"`, the operator can't make an informed choice — they see a list of opaque options. Schema validation rejects entries where `user_impact` is empty or `"n/a"` (use `"none — internal-only change"` for legitimately invisible work).
+
+**Example entry:**
+
+```yaml
+novel_decisions:
+  - decision_id: "classification_provider"
+    decision: "Which LLM provider for article classification?"
+    options:
+      - id: "A"
+        summary: "OpenAI gpt-4o-mini for classification"
+        user_impact: "Higher classification accuracy; users see fewer mis-categorized articles in feed"
+        performance: "p95 ~800ms per classify call"
+        speed: "~20 min to wire — existing OpenAI client"
+        cost: "~$3/mo at 10k articles/day"
+      - id: "B"
+        summary: "Groq llama-3-70b for classification"
+        user_impact: "Comparable accuracy; faster feed refresh — users see new articles ~3× sooner"
+        performance: "p95 ~250ms per classify call"
+        speed: "~45 min to wire — new SDK"
+        cost: "~$0.50/mo at 10k articles/day"
+      - id: "C"
+        summary: "Local classifier rules (no LLM)"
+        user_impact: "Lower accuracy; users see more 'Other' bucketing"
+        performance: "p95 ~5ms"
+        speed: "~3 hours to build + tune"
+        cost: "$0"
+    recommended_default: "B"
+    confidence: "med"
+    reasoning: "Plan rubric r2 prioritizes feed-refresh latency; Groq's 3× speed advantage matters more than accuracy delta. Confidence med because we haven't benchmarked Groq's accuracy on this taxonomy."
+```
+
+**Routing summary** (see `references/halt-and-ask-protocol.md` for full protocol):
+
+| Confidence | Long-mode (budget ≥4h or `--long` or `overnight` keyword) | Normal-mode |
+|---|---|---|
+| `high` | Auto-pick `recommended_default`, log to `autonomousDefaults[]` | Surface trade-off table, wait for operator |
+| `med` | Auto-pick, log, flag `confidence: "med"` for judge review | Surface trade-off table, wait |
+| `low` | **Escalate** — surface trade-off table even in long-mode | Surface trade-off table, wait |
 
 ## Examples
 
@@ -208,3 +274,4 @@ The orchestrator parses envelopes via `scripts/parse_implementer_envelope.py` (T
 4. **`status: "blocked"` + `novel_decisions` non-empty** → orchestrator does NOT commit. Each `novel_decisions[]` entry is dispatched to the configured Thinking-tier resolver (see `agents/build-orchestrator.md` §"Phase 3 halt-and-ask branch"). Resolutions are stored in `state.json.novelDecisionResolutions[]`, then the implementer is re-dispatched with resolutions appended to its brief. Loop until `status: "completed"` (or equivalent success) or the hard-fail counter (N=3) is exhausted.
 5. `status: "blocked"` + `novel_decisions: []` → malformed. The block has no payload to resolve. Orchestrator treats as `failed` and routes to Iterate.
 6. Any `f_criteria` value of `"fail"` → orchestrator routes to Iterate (Phase 5) with the failing F-criterion as the entry point.
+7. **`novel_decisions[i]` schema check** (do/branch/surface policy): each entry must include `decision_id`, `options` (non-empty), `recommended_default` (matching one of `options[].id`), and `confidence` (`high|med|low`). Each option must include non-empty `user_impact`, `performance`, `speed`, `cost` fields. Missing or `"n/a"`-valued trade-off fields → orchestrator routes to Iterate with the implementer asked to fill them in. Once the schema is clean, `classify_action.py` returns `DECISION` and the orchestrator routes per `references/halt-and-ask-protocol.md`.
