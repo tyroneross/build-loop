@@ -14,7 +14,7 @@ Replace the `ibr_quickpass.py` shell-out with a dedicated `ui-validator` agent t
 1. **Phase 3 chunk-close** — after a UI-touching chunk's implementers return, before the orchestrator dispatches the next chunk.
 2. **Phase 4 Review sub-step B** — current location, but with the library path replacing the shell-out.
 
-Failures at either point route directly to Iterate with the failing assertion as the rubric (same pattern `ibr_quickpass.py` uses today).
+Functional failures (console errors, layout collisions, touch-target regressions, hydration timeouts) at either point route directly to Iterate with the failing assertion as the rubric — the same pattern `ibr_quickpass.py` uses today. Visual-only failures (SSIM under threshold without a functional signal) route to the Review-B backlog as a warning rather than to Iterate, since visual changes are usually intentional. See "Failure routing rules" below for the full table.
 
 ## Motivation
 
@@ -33,9 +33,13 @@ description: |
   Run deterministic UI scans against the dev server using @tyroneross/ibr-core.
   Used during Phase 3 chunk-close and Phase 4 Review-B.
 tools:
-  - Bash               # pnpm dev / typecheck if not running
+  # Direct library import — @tyroneross/ibr-core is loaded as a Node module
+  # by the agent's runtime. No MCP server involved. The Bash/Read/Grep/Glob
+  # tools below are the only Claude Code tools the agent needs.
+  - Bash               # spawn the IBR-core driver process; shell-out fallback when ibr-core missing
   - Read               # changed-file inspection
-  - mcp__ui_probe__*   # bound to @tyroneross/ibr-core (or shell-out fallback)
+  - Grep               # route discovery + selector audits
+  - Glob               # changed-files pattern matching
 inputs:
   - changedFiles: string[]
   - baseUrl: string
@@ -55,9 +59,9 @@ outputs:
 
 ### Phase 3 — between chunk dispatches
 
-In `references/phase-3-execute.md`, after the "chunk-close" step:
+In `references/halt-and-ask-protocol.md` §"Phase 3 UI spot-check (between chunks)", after the "chunk-close" step:
 
-> After all parallel implementers in a chunk return, BEFORE the next chunk dispatches, check `state.json.chunks[i].uiTouched` (true when any owned file matches `(app|components)/**/*.tsx` or styles config). If true, dispatch `ui-validator`. On `pass`, continue. On `fail`, route the failing assertion to Iterate (same as Review-B failure routing).
+> After all parallel implementers in a chunk return, BEFORE the next chunk dispatches, compute `uiTouched` for the just-closed chunk from the envelope's `files_changed` (true when any file matches `(app|components)/**/*.tsx`, `tailwind.config.{js,ts}`, theme/global-style files, or style helpers under `lib/(theme|styles)/**` — see the §"`uiTouched` signal" table for full coverage). Cache the verdict on `state.json.execution.completed_chunks[<chunk_id>].uiTouched`. If true, dispatch `ui-validator`. On `pass`, continue. On `fail`, route the failing assertion to Iterate (same as Review-B failure routing). `uiTouched` is the chunk-level boolean; the broader `uiSignal` enum (major / touched / none) below is the Phase 1 input used to pre-compute eligibility and is consulted alongside it.
 
 ### Phase 4 — Review sub-step B replacement
 
@@ -110,22 +114,25 @@ Phase 3 spot-check fires on `major` and `touched`; `none` skips the scan entirel
 
 ## Migration plan
 
-1. (this PR) RFC + agent contract + trigger spec
+1. (this PR) RFC + agent contract + trigger spec + Phase 1 `uiSignal` computation step in the Phase 1 Assess detail (`references/phase-gate-checklist.md` §Phase 1) — read changed-set + `git log -n 5 --name-only`, derive `uiSignal: major | touched | none`, persist to `state.json.uiSignal`.
 2. Wait for `@tyroneross/ibr-core@0.1.0` (cross-ref PR on the IBR repo)
 3. Author the agent definition at `agents/ui-validator.md`
-4. Wire the Phase 3 trigger in `references/phase-3-execute.md`
-5. Replace the Phase 4 sub-step B shell-out in `references/phase-4-review.md`
+4. Wire the Phase 3 trigger in `references/halt-and-ask-protocol.md` §"Phase 3 UI spot-check (between chunks)"
+5. Replace the Phase 4 sub-step B shell-out in `references/phase-gate-checklist.md` §"Sub-step B — Validate"
 6. Migration test — re-run the most recent UI-heavy build-loop run and confirm equivalent findings at lower wall-clock
 
 ## Backward compatibility
 
 While `@tyroneross/ibr-core` is unpublished, the `ibr_quickpass.py` shell-out remains the fallback. Both paths produce the same `ScanResult` JSON shape, so the rest of Phase 4 doesn't care which path was used. The replacement is gated on `core` availability in `state.json.availablePlugins`.
 
+## Resolved questions
+
+- **Iteration budget**: `ui-validator` failures share the global 5x classic / 25 autonomous Iterate cap. No separate budget. Rationale: this RFC adds validation *points*, not new rework — a UI regression that takes 3 iterations to fix should consume 3 of the existing budget, not start a fresh count. Agreed; documented in `agents/ui-validator.md` §"Failure routing assertions".
+- **Trigger granularity**: per-chunk-close. Per-implementer-commit considered and rejected — implementers in a single chunk can land sequentially via the single-writer commit protocol, and scanning between each one inflates the budget linearly with chunk size. Per-chunk-close picks up regressions before the next chunk dispatches, which is the right blame-isolation point.
+
 ## Open questions
 
-- Should the agent persist a `ui-baseline/` dir per project for visual-regression checks across builds, or only intra-build?
-- Trigger granularity — is per-chunk-close right, or per-implementer-commit better for very-large UI chunks?
-- Does `ui-validator` need its own iteration budget separate from the global 5x Iterate cap?
+- Should the agent persist a `ui-baseline/` dir per project for visual-regression checks across builds, or only intra-build? Today's IBR flow is intra-build only; cross-build baselines need a storage decision (repo-tracked vs `.build-loop/ui-baselines/<run_id>/` retention policy).
 
 ## Out of scope
 

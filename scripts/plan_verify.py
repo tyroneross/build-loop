@@ -979,7 +979,7 @@ def rule_task_id_convention(plan_path: Path, lines: list[tuple[int, str]]) -> li
 
     out: list[dict[str, Any]] = []
     seen_n: dict[int, list[int]] = {}
-    for lineno, n, raw in ids_with_lineno:
+    for lineno, n, _raw in ids_with_lineno:
         seen_n.setdefault(n, []).append(lineno)
 
     # Duplicate detection — same N referenced multiple times is usually fine
@@ -1011,32 +1011,35 @@ def rule_task_id_convention(plan_path: Path, lines: list[tuple[int, str]]) -> li
                 rule_id="task-id-convention",
             ))
 
-    # Sequential check — IDs should start at T-1 and have no gaps.
-    all_ns = sorted(seen_n.keys())
-    if all_ns and all_ns[0] != 1:
+    # Sequential check — IDs should start at T-1 and have no gaps. Scope to
+    # task-defining contexts (headings) only; prose mentions like "see T-5"
+    # can otherwise mask real gaps or trigger spurious "doesn't start at T-1"
+    # findings when a plan footnotes a task ID from a sibling document.
+    defining_ns = sorted(heading_counts.keys())
+    if defining_ns and defining_ns[0] != 1:
         out.append(_finding(
-            claim_text=f"T-N task IDs should start at T-1 (lowest found: T-{all_ns[0]})",
+            claim_text=f"T-N task IDs should start at T-1 (lowest defining heading: T-{defining_ns[0]})",
             claim_kind="task_id_not_starting_at_one",
-            subject={"path": None, "symbol": f"T-{all_ns[0]}", "noun": "task_id"},
+            subject={"path": None, "symbol": f"T-{defining_ns[0]}", "noun": "task_id"},
             verification_command=None,
-            evidence={"file": str(plan_path), "line": seen_n[all_ns[0]][0],
-                      "snippet": "first T-N is not T-1"},
+            evidence={"file": str(plan_path), "line": heading_counts[defining_ns[0]][0],
+                      "snippet": "first defining T-N is not T-1"},
             result="no_match",
             severity="WARN",
             confidence="high",
             rule_id="task-id-convention",
         ))
-    elif all_ns:
-        expected = list(range(1, max(all_ns) + 1))
-        missing = [n for n in expected if n not in seen_n]
+    elif defining_ns:
+        expected = list(range(1, max(defining_ns) + 1))
+        missing = [n for n in expected if n not in heading_counts]
         if missing:
             out.append(_finding(
-                claim_text=f"T-N task IDs have gaps; missing: {', '.join(f'T-{n}' for n in missing)}",
+                claim_text=f"T-N task IDs have gaps in defining headings; missing: {', '.join(f'T-{n}' for n in missing)}",
                 claim_kind="task_id_gap",
                 subject={"path": None, "symbol": f"T-{missing[0]}", "noun": "task_id"},
                 verification_command=None,
                 evidence={"file": str(plan_path), "line": ids_with_lineno[0][0],
-                          "snippet": f"present: {sorted(seen_n.keys())}"},
+                          "snippet": f"defining headings: {defining_ns}"},
                 result="no_match",
                 severity="WARN",
                 confidence="high",

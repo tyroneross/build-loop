@@ -45,7 +45,7 @@ Throughout the fix protocol below, write per-step progress to `.build-loop/worki
 **When to write (4 mandatory points per task):**
 
 1. **End of Step 1** (after reading the plan, before any edits) — initial state:
-   ```
+   ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/working_state_writer.py \
      --workdir "$PWD" --agent "implementer:<chunk_id>" \
      --run-id "$RUN_ID" --chunk-id "<chunk_id>" \
@@ -54,25 +54,25 @@ Throughout the fix protocol below, write per-step progress to `.build-loop/worki
      --status planning
    ```
 2. **Start of Step 3** (first edit) — flip to editing, set current_file:
-   ```
+   ```bash
    python3 ... --status editing --current-file "<path>" --current-task-id "T-N"
    ```
    Repeat with `--current-file` updated when you open a meaningfully different file (new module, new layer). NOT every line edit. NOT every Read.
 
 3. **Start of Step 4** — flip to testing:
-   ```
+   ```bash
    python3 ... --status testing --current-task-id "T-N"
    ```
 
 4. **End of Step 5** (just before returning the envelope) — final status:
-   ```
+   ```bash
    python3 ... --status committing --current-task-id "T-N" --next-task-id "<from plan or empty>"
    ```
    Or if blocking: `--status blocked_external --blocked-reason "<what you're waiting for>"`.
 
 **When plan uses the T-N convention** (`references/plan-template-ids.md`), use those IDs verbatim in `--current-task-id`. Plans without T-N IDs: omit the flag entirely (current.json will not show a task_id).
 
-The writer is fire-and-forget — exit 0 always; never blocks your fix. If the command fails for any reason, continue with the fix anyway.
+The writer is fire-and-forget — never blocks your fix. If the command fails for any reason (exit 0 on success, exit 1 on validation/write error), continue with the fix anyway. The non-zero exit codes exist for visibility only; callers should ignore them.
 
 ## Fix protocol
 

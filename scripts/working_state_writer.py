@@ -18,7 +18,14 @@ Trigger events (per `agents/implementer.md` write protocol):
 NOT every line edit — too noisy. Granularity is "new file" or "new task".
 
 Atomic write via tmpfile + os.replace. Stdlib only. Sub-2ms typical.
-Exit codes: 0 always (informational; never blocks).
+
+Exit codes:
+  0 — write succeeded (or current.json wrote and log append failed gracefully)
+  1 — invalid --status value OR current.json write failed (callers may ignore;
+      writes are informational and the build never depends on them)
+
+The writer is fire-and-forget for callers — agents should run it but proceed
+regardless of exit code. The non-zero return exists for visibility only.
 """
 from __future__ import annotations
 
@@ -33,8 +40,11 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 VALID_STATUS = {
+    # implementer-side
     "editing", "reading", "planning", "testing",
     "committing", "blocked_external", "idle",
+    # orchestrator-side (per references/m-series-protocol.md §M2 sidecar)
+    "dispatching", "awaiting_return", "phase_transition", "completed",
 }
 DEFAULT_JSONL_MAX_MB = 10
 
