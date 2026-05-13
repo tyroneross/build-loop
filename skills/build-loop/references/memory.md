@@ -13,7 +13,7 @@ Build-loop maintains two memory stores. Every build reads both; writes go to exa
 - Structure: one file per fact/lesson/tool-discovery. Index in `~/.build-loop/memory/MEMORY.md` (line-per-entry: `- [Title](file.md) — hook`).
 - Types: `tool`, `deployment`, `library-choice`, `user-preference`, `pattern`.
 
-**Project memory**: `<project>/.build-loop/memory/`
+**Project memory**: `~/.build-loop/memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd`; legacy `<repo>/.build-loop/memory/` is read-shimmed during PR 1/2 transition)
 
 - Applies only to the current project.
 - Examples: "This app's design system lives in `src/styles/tokens.css`, not Tailwind"; "Routes under `/admin/` require `requireAdmin()` guard"; "The `custom_themes` table has a user_id VarChar bug from 2026-04-13 — see migration note".

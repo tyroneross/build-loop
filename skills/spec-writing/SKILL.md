@@ -419,7 +419,7 @@ Search each of these locations for keywords related to the unknown. Use `grep -r
 
 1. `~/.claude/projects/-Users-tyroneross/memory/` — user-global feedback, reference, pattern files
 2. `~/.build-loop/memory/` — build-loop global memory (if it exists)
-3. `<project>/.build-loop/memory/` — project-local memory
+3. `~/.build-loop/memory/projects/<slug>/` — project-local memory (slug from `derive_slug_from_cwd`)
 
 **If a feedback, reference, or pattern entry covers the unknown → use it. Mark it `[ASSUMED: from memory/<filename>]`. Done.**
 

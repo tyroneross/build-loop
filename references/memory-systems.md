@@ -23,7 +23,8 @@ Mirrors the write-protocol's executable shape (fenced commands + return-shape ta
 # Global tier (cross-project preferences and learnings)
 Read("~/.build-loop/memory/MEMORY.md")
 # Project tier (overrides global on key conflict)
-Read("<repo>/.build-loop/memory/MEMORY.md")
+# Slug derived via scripts/_paths.derive_slug_from_cwd()
+Read("~/.build-loop/memory/projects/<slug>/MEMORY.md")
 ```
 
 **Return shape**: markdown text (or empty string if absent). Project keys override global. **Degradation**: missing file → empty string, no error.

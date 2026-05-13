@@ -270,7 +270,7 @@ Key steps: recurring-pattern-detector (Haiku) → filter (confidence: high OR co
 
 ## Memory — Global and Project-Scoped
 
-Two stores: `~/.build-loop/memory/` (global, cross-project) and `<project>/.build-loop/memory/` (project-local). Every build reads both at Phase 1 Assess; writes go to exactly one based on scope.
+One consolidated tree: `~/.build-loop/memory/` (global) plus `~/.build-loop/memory/projects/<slug>/` (project-local; slug from `derive_slug_from_cwd`). Every build reads both at Phase 1 Assess; writes go to exactly one based on scope. Legacy `<repo>/.build-loop/memory/` is read-shimmed during the PR 1/2 transition window and removed in PR 3.
 
 Routing rule: "Would this apply to a different project?" Yes → global. No → project. Ambiguous → ask the user once.
 

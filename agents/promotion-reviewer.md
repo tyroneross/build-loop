@@ -36,7 +36,7 @@ The orchestrator brief contains:
 Eager:
 - The candidate artifact file
 - `~/.build-loop/memory/constitution.md` — durable invariants
-- Project constitution if present at `<repo>/.build-loop/memory/constitution.md`
+- Project constitution if present at `~/.build-loop/memory/projects/<slug>/constitution.md` (slug derived via `derive_slug_from_cwd`)
 - The experiment_log JSONL (sample outcomes, confound flags)
 
 Lazy (only when a candidate variance prompts it):
