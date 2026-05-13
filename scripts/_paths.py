@@ -233,15 +233,6 @@ def archive_memory_dir(project: str) -> Path:
     return project_memory_root() / candidate_rel
 
 
-def legacy_project_memory_dir(workdir: Path) -> Path:
-    """Return ``<workdir>/.build-loop/memory`` (the per-repo legacy path).
-
-    Read-only during the PR-series transition. Writers should use
-    ``project_memory_dir_for_project`` once PR 2 cuts over.
-    """
-    return Path(workdir) / ".build-loop" / "memory"
-
-
 def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
     """Derive the project slug from a working directory.
 

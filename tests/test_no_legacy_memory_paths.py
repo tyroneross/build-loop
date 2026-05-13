@@ -24,6 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = {
     # Migration tooling — operates on the legacy paths by definition
     "scripts/migrate_project_memory.py",
+    # Cleanup tooling — operates on legacy `.MOVED.md` stubs
+    "scripts/cleanup_legacy_memory_stubs.py",
     # Tests — exercise the read-path tolerance and migration historically
     "tests/test_memory_consolidation_pr1.py",
     "tests/test_migrate_project_memory.py",

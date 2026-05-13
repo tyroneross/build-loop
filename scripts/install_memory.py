@@ -253,13 +253,13 @@ When the orchestrator loads memory at Phase 1 Assess:
 
 1. Global tier — files at the root of `~/.build-loop/memory/`
 2. Project tier — files at `~/.build-loop/memory/projects/<slug>/`
-3. Legacy project tier (transitional) — files at the per-repo location
-   used before the memory-consolidation migration. Read-shimmed by
-   `memory_facade._resolve_memory_dirs` during the PR 1/2 transition;
-   removed in PR 3.
 
 Later tiers OVERRIDE earlier ones on filename collision (project wins
-over global; legacy_project is read but loses to project entries).
+over global).
+
+Historical: a legacy per-repo tier (`<repo>/.build-loop/memory/`) was
+read during the PR 1/2 transition. PR 3 (2026-05-13) removed that
+read-shim; the consolidated tree is now the only readable location.
 
 ## Privacy
 
