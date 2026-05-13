@@ -299,7 +299,7 @@ Add `.build-loop/` to your project's `.gitignore`.
 
 ## License
 
-[FSL-1.1-MIT](LICENSE) — Functional Source License with MIT future license (becomes MIT after 2 years)
+[Apache License 2.0](LICENSE)
 
 ## Codex
 
