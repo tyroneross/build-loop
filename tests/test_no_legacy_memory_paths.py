@@ -22,13 +22,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Files where legacy-path references are LEGITIMATE.
 # Annotated by whether PR 3 (read-shim removal) will require updates.
 ALLOWLIST = {
-    # === REMOVED IN PR 3 — read shim disappears, these entries also disappear ===
-    "scripts/_paths.py",                  # defines legacy_project_memory_dir (removed in PR 3)
-    "scripts/audit_memory_invocation.py", # probes both paths (probe simplifies in PR 3)
-    "scripts/memory_facade.py",           # reads both tiers (read shim removed in PR 3)
-    # === PERMANENT — these will reference the legacy path forever ===
     # Migration tooling — operates on the legacy paths by definition
     "scripts/migrate_project_memory.py",
+    # Cleanup tooling — operates on legacy `.MOVED.md` stubs
+    "scripts/cleanup_legacy_memory_stubs.py",
     # Tests — exercise the read-path tolerance and migration historically
     "tests/test_memory_consolidation_pr1.py",
     "tests/test_migrate_project_memory.py",

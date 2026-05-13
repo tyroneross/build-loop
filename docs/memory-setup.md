@@ -7,7 +7,7 @@ Build-loop's advisory judges (`commit-auditor`, `promotion-reviewer`, `alignment
 | Global | `~/.build-loop/memory/` (root: `constitution.md`, `MEMORY.md`, free-form lessons) | This user | **Should be in a private git repo** (your lessons live here) |
 | Project | `~/.build-loop/memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd` — basename of the git repo root, lowercased + normalized; `workers/` sub-component becomes `<slug>/workers`) | This user | Same private repo as global |
 
-> **Transitional read shim** — until PR 3 of the memory-consolidation series lands, the legacy per-repo location is also read by `memory_facade._resolve_memory_dirs` so content not yet migrated still surfaces in recall. Project tier overrides legacy_project on filename collision. The migration script (`scripts/migrate_project_memory.py`) handles the move; .MOVED.md stubs are left at the legacy paths during the transition window.
+> **History** — until PR 3 of the memory-consolidation series (merged 2026-05-13), the legacy per-repo location was also read by `memory_facade._resolve_memory_dirs` as a transitional shim. As of PR 3, only the consolidated tree is read; any pre-migration content still at the legacy path is invisible. Operators with such content should run `scripts/migrate_project_memory.py --apply` (idempotent), then `scripts/cleanup_legacy_memory_stubs.py --apply` to remove the now-inert `.MOVED.md` stubs.
 
 The build-loop public repo ships only the **scaffolding** — templates and the setup script. Your actual lessons, constitution rules, and patterns belong in a private repo because they contain references to specific projects, decisions, and operator preferences that aren't appropriate for public distribution.
 
@@ -120,7 +120,7 @@ The global `~/.build-loop/memory/` is for **cross-project lessons** — patterns
 ~/.build-loop/memory/projects/<slug>/workers/        # sub-component memory (when present)
 ~/.build-loop/memory/projects/_archive/<slug>/       # retired projects, still queryable
 ~/dev/git-folder/build-loop-memory/                  # canonical project-tagged decisions (separate repo)
-<repo>/.build-loop/memory/                           # legacy project location — read-shimmed during PR 1/2 transition, removed in PR 3
+<repo>/.build-loop/memory/                           # legacy project location — no longer read (PR 3 removed the shim); migrate via scripts/migrate_project_memory.py
 <repo>/.build-loop/.episodic/decisions/              # legacy local decision store (deprecated)
 ```
 

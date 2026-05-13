@@ -189,32 +189,29 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
 
     Returns (in this exact order — order matters):
       1. ``(global_dir, "global")`` — ``~/.build-loop/memory`` (always probed)
-      2. ``(legacy_dir, "legacy_project")`` — ``<workdir>/.build-loop/memory``
-         (read-only during PR 1/2 transition; removed in PR 3)
-      3. ``(project_dir, "project")`` — ``~/.build-loop/memory/projects/<slug>``
+      2. ``(project_dir, "project")`` — ``~/.build-loop/memory/projects/<slug>``
          (only when the resolved project tag is not ``_unscoped``)
 
     Callers dedup by filename with **later entries OVERRIDING earlier ones**,
     so the precedence is:
 
-        project > legacy_project > global
-
-    This matches the documented contract: project tier wins over global,
-    project also wins over legacy_project (PR 1 transition: any content the
-    migration moved into ``projects/<slug>/`` MUST override the pre-migration
-    legacy copy if both exist). Legacy entries win over global because a
-    project-specific lesson is more relevant than a global default even
-    during the read-shim window.
+        project > global
 
     Only existing directories are returned; missing ones are silently
-    dropped. Reordered 2026-05-13 per Phase 4 Review-A v4 finding.
+    dropped.
+
+    PR 3 (2026-05-13): the transitional ``legacy_project`` tier that read
+    from the per-repo location has been REMOVED. Any content still at the
+    legacy path is now invisible to recall — operators holding
+    pre-migration content should run ``scripts/migrate_project_memory.py
+    --apply`` or merge it manually. The ``.MOVED.md`` stubs left by the
+    migration script are inert post-PR-3 and can be deleted.
     """
     out: List[Tuple[Path, str]] = []
     try:
         from _paths import (  # type: ignore  # noqa: PLC0415
             build_loop_memory_root,
             project_memory_dir_for_project,
-            legacy_project_memory_dir,
         )
         from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
     except Exception:  # noqa: BLE001 — best-effort
@@ -223,10 +220,6 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
     global_dir = build_loop_memory_root()
     if global_dir.is_dir():
         out.append((global_dir, "global"))
-
-    legacy_dir = legacy_project_memory_dir(workdir)
-    if legacy_dir.is_dir():
-        out.append((legacy_dir, "legacy_project"))
 
     proj = resolve_project(workdir)
     if proj and proj != "_unscoped":
@@ -247,12 +240,12 @@ _LESSON_FRONTMATTER_RE = DECISION_FRONTMATTER_RE
 def read_lessons(
     workdir: Path, query: str, limit: int
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read free-form lessons across global + project + legacy-project tiers.
+    """Read free-form lessons across global + project tiers.
 
     Dedup rule: same filename across tiers — later-listed tier wins
-    (project > legacy_project > global per ``_resolve_memory_dirs`` order).
-    The result entry carries ``_scope`` ("global" | "project" | "legacy_project")
-    so callers can see which tier won.
+    (project > global per ``_resolve_memory_dirs`` order). The result
+    entry carries ``_scope`` ("global" | "project") so callers can see
+    which tier won.
 
     Filename convention: ``feedback_*.md``, ``pattern_*.md``, ``reference_*.md``,
     ``decision_*.md`` (the free-form variant), plus operator-named files like
@@ -312,7 +305,7 @@ def read_lessons(
                 "metadata_type": mtype,
                 "path": str(p),
             }
-            # Later tier wins (project > legacy_project > global).
+            # Later tier wins (project > global).
             by_name[name] = entry
 
     out = list(by_name.values())

@@ -173,8 +173,14 @@ def test_f8_probe_project_memory_graceful_degradation_both_missing(patched_env, 
     assert "error" in result  # diagnostic string present
 
 
-def test_f8_probe_project_memory_legacy_only(patched_env, tmp_path):
-    """F8b — legacy path populated, new path missing → ok with scope=legacy_project."""
+def test_f8_probe_project_memory_legacy_path_ignored_post_pr3(patched_env, tmp_path):
+    """F8b (post-PR-3) — legacy path content is IGNORED.
+
+    PR 3 removed the read shim. The probe no longer checks legacy paths;
+    a project with content only at the legacy location returns
+    graceful_degradation. Operators with such content should run the
+    migration script.
+    """
     from audit_memory_invocation import probe_project_memory  # type: ignore
 
     repo = tmp_path / "legacy-only"
@@ -184,8 +190,9 @@ def test_f8_probe_project_memory_legacy_only(patched_env, tmp_path):
     legacy.mkdir(parents=True)
     (legacy / "MEMORY.md").write_text("# Legacy memory\n", encoding="utf-8")
     result = probe_project_memory(repo)
-    assert result["verdict"] == "ok"
-    assert result["result_sample"]["scope"] == "legacy_project"
+    # Legacy content is invisible post-PR-3
+    assert result["verdict"] == "graceful_degradation"
+    assert "no project MEMORY.md" in result.get("error", "")
 
 
 def test_f8_probe_project_memory_new_path_only(patched_env, tmp_path):
@@ -237,12 +244,15 @@ def test_f10_audit_memory_no_error_verdicts(patched_env, tmp_path):
 # ---------- F17 --------------------------------------------------------------
 
 
-def test_f17_recall_merges_global_project_legacy(patched_env, tmp_path):
-    """F17 — recall() reads global + project + legacy_project, project wins on collision."""
+def test_f17_recall_merges_global_and_project(patched_env, tmp_path):
+    """F17 — recall() reads global + project; project wins on collision.
+
+    PR 3 (2026-05-13): legacy_project tier is REMOVED. recall() merges only
+    global + project. Files at the legacy per-repo location are invisible.
+    """
     from _paths import project_memory_dir_for_project  # type: ignore
     from memory_facade import recall  # type: ignore
 
-    # Set up a fake repo at tmp_path
     repo = tmp_path / "myapp"
     repo.mkdir()
     _init_git_repo(repo)
@@ -272,11 +282,11 @@ def test_f17_recall_merges_global_project_legacy(patched_env, tmp_path):
         encoding="utf-8",
     )
 
-    # Legacy project tier: a unique file (will not collide)
+    # Legacy path with a unique file — should be IGNORED post-PR-3
     legacy = repo / ".build-loop" / "memory"
     legacy.mkdir(parents=True)
     (legacy / "feedback_legacy.md").write_text(
-        "---\nname: feedback-legacy\ndescription: only at legacy_project\n---\nlegacy body\n",
+        "---\nname: feedback-legacy\ndescription: invisible post-PR-3\n---\nlegacy body\n",
         encoding="utf-8",
     )
 
@@ -285,11 +295,13 @@ def test_f17_recall_merges_global_project_legacy(patched_env, tmp_path):
 
     by_name = {entry["name"]: entry for entry in lessons}
 
-    # All four unique names present
+    # Three names — legacy file is invisible
     assert "feedback_global.md" in by_name, f"missing global; got {list(by_name)}"
     assert "feedback_project.md" in by_name
-    assert "feedback_legacy.md" in by_name
     assert "feedback_shared.md" in by_name
+    assert "feedback_legacy.md" not in by_name, (
+        f"legacy_project tier should be unread post-PR-3; got {list(by_name)}"
+    )
 
     # Override: project version of feedback_shared.md WINS over global
     shared = by_name["feedback_shared.md"]
@@ -300,44 +312,34 @@ def test_f17_recall_merges_global_project_legacy(patched_env, tmp_path):
     # Scopes on the others
     assert by_name["feedback_global.md"]["_scope"] == "global"
     assert by_name["feedback_project.md"]["_scope"] == "project"
-    assert by_name["feedback_legacy.md"]["_scope"] == "legacy_project"
 
 
-def test_f17b_recall_project_overrides_legacy(patched_env, tmp_path):
-    """F17b — same filename in legacy_project and project; project MUST win.
+def test_f17b_legacy_path_invisible_post_pr3(patched_env, tmp_path):
+    """F17b (post-PR-3) — content at the legacy per-repo path is invisible.
 
-    Catches the Phase 4 Review-A v4 finding: if ``_resolve_memory_dirs``
-    orders dirs as ``[global, project, legacy_project]`` and the dedup
-    rule is later-overrides-earlier, then legacy silently wins — which
-    contradicts the contract (project tier should always beat legacy).
+    Previously (PR 1/2 transition): legacy_project tier was read but
+    project-tier entries won on filename collision. PR 3 removed the
+    legacy read shim entirely. Re-purposed test now asserts that a
+    file present ONLY at the legacy location does NOT appear in recall.
+    Operators with such content must migrate it via
+    scripts/migrate_project_memory.py.
     """
-    from _paths import project_memory_dir_for_project  # type: ignore
     from memory_facade import recall  # type: ignore
 
     repo = tmp_path / "myapp"
     repo.mkdir()
     _init_git_repo(repo)
 
-    # Same filename in BOTH legacy and project tiers; different bodies.
     legacy = repo / ".build-loop" / "memory"
     legacy.mkdir(parents=True)
-    (legacy / "feedback_overlap.md").write_text(
-        "---\nname: feedback-overlap\ndescription: LEGACY VERSION\n---\nlegacy body\n",
-        encoding="utf-8",
-    )
-
-    project_dir = project_memory_dir_for_project("myapp")
-    project_dir.mkdir(parents=True)
-    (project_dir / "feedback_overlap.md").write_text(
-        "---\nname: feedback-overlap\ndescription: PROJECT VERSION\n---\nproject body\n",
+    (legacy / "feedback_orphan.md").write_text(
+        "---\nname: feedback-orphan\ndescription: should be invisible\n---\norphan body\n",
         encoding="utf-8",
     )
 
     env = recall(query="", kind="lessons", workdir=repo, limit=50)
     lessons = env["results_by_kind"]["lessons"]
-    matches = [l for l in lessons if l["name"] == "feedback_overlap.md"]
-    assert len(matches) == 1, f"expected exactly one entry, got {len(matches)}"
-    assert matches[0]["_scope"] == "project", (
-        f"project tier must win over legacy_project on same filename; got "
-        f"_scope={matches[0]['_scope']!r}"
+    names = {l["name"] for l in lessons}
+    assert "feedback_orphan.md" not in names, (
+        f"legacy-only file should be invisible post-PR-3; got names={names}"
     )

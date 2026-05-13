@@ -154,10 +154,11 @@ def cutover_lock_active() -> bool:
 #   - ~/.build-loop/memory/projects/<slug>/   project-scoped lessons (NEW)
 #   - ~/.build-loop/memory/projects/_archive/<slug>/   retired projects
 #
-# PR 1 (read-path tolerance) reads BOTH the new path AND the legacy
-# <repo>/.build-loop/memory/ path. PR 2 cuts writes over to the new path.
-# PR 3 removes the legacy read shim. Slug derivation reuses _safe_project_tag
-# so the same normalization applies to filesystem dirs AND the Postgres
+# PR 1 (read-path tolerance, 2026-05-13) added the projects/<slug>/ tier
+# while still reading the legacy per-repo location. PR 2 cut writes over.
+# PR 3 (2026-05-13) removed the legacy read shim — the consolidated tree
+# is now the only path read. Slug derivation reuses _safe_project_tag so
+# the same normalization applies to filesystem dirs AND the Postgres
 # semantic_facts.project column (no split-brain by construction).
 # ---------------------------------------------------------------------------
 
@@ -230,15 +231,6 @@ def archive_memory_dir(project: str) -> Path:
             f"archive project tag {project!r} resolves outside project_memory_root()"
         )
     return project_memory_root() / candidate_rel
-
-
-def legacy_project_memory_dir(workdir: Path) -> Path:
-    """Return ``<workdir>/.build-loop/memory`` (the per-repo legacy path).
-
-    Read-only during the PR-series transition. Writers should use
-    ``project_memory_dir_for_project`` once PR 2 cuts over.
-    """
-    return Path(workdir) / ".build-loop" / "memory"
 
 
 def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
