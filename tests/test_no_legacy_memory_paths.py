@@ -19,23 +19,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Files where legacy-path references are LEGITIMATE — read shim, migration
-# tool, audit probes, historical docs. Listed by repo-relative path.
+# Files where legacy-path references are LEGITIMATE.
+# Annotated by whether PR 3 (read-shim removal) will require updates.
 ALLOWLIST = {
-    # Read-shim code paths
-    "scripts/_paths.py",                  # defines legacy_project_memory_dir
-    "scripts/audit_memory_invocation.py", # probes both paths
-    "scripts/memory_facade.py",           # reads both tiers
+    # === REMOVED IN PR 3 — read shim disappears, these entries also disappear ===
+    "scripts/_paths.py",                  # defines legacy_project_memory_dir (removed in PR 3)
+    "scripts/audit_memory_invocation.py", # probes both paths (probe simplifies in PR 3)
+    "scripts/memory_facade.py",           # reads both tiers (read shim removed in PR 3)
+    # === PERMANENT — these will reference the legacy path forever ===
     # Migration tooling — operates on the legacy paths by definition
     "scripts/migrate_project_memory.py",
-    # Tests — exercise the read-path tolerance and migration
+    # Tests — exercise the read-path tolerance and migration historically
     "tests/test_memory_consolidation_pr1.py",
     "tests/test_migrate_project_memory.py",
     "tests/test_no_legacy_memory_paths.py",  # this file
     # Historical plan docs — frozen snapshots, don't rewrite
     "docs/plans/2026-05-09-capture-tuning-plus-live-smoke-gate.md",
-    # Setup guide — documents the transition explicitly
-    "docs/memory-setup.md",
     # CHANGELOG — historical reference
     "CHANGELOG.md",
 }
@@ -49,11 +48,23 @@ LEGACY_PATTERNS = [
 
 # Narrative-context allowance: a line mentioning the legacy path is fine when
 # it's clearly *explaining* the transition (uses words like "legacy",
-# "transition", "deprecated", "removed in PR 3") rather than directing
-# callers to read/write that path.
+# "transition", "deprecated", "removed in PR 3") AND the line is NOT
+# directing a write or read against the legacy path. The directive_form
+# regex below catches imperative constructions; if either of those fires,
+# the narrative carve-out is denied even when transition keywords appear.
 NARRATIVE_CONTEXT = re.compile(
     r"\b(legacy|transition|deprecated|read-shimmed?|removed in PR 3|"
     r"PR 1/2 transition|pre-migration|before the memory-consolidation)\b",
+    re.IGNORECASE,
+)
+
+# If a line uses any of these imperative forms in the same line as the
+# legacy path, the narrative carve-out does NOT apply. The line is still
+# directing a read/write against the legacy path even if it also
+# mentions the transition.
+DIRECTIVE_FORM = re.compile(
+    r"\b(Read\(|Write\(|write[s]? to|writes go to|points at|read from|"
+    r"load[s]? from|append to|create[s]? in|stored in|located at)\b",
     re.IGNORECASE,
 )
 
@@ -87,8 +98,10 @@ def test_no_legacy_memory_path_references_outside_allowlist():
                 if pat.search(line):
                     # Allow narrative-context lines (those explaining the
                     # transition rather than directing callers to use the
-                    # legacy path).
-                    if NARRATIVE_CONTEXT.search(line):
+                    # legacy path) — UNLESS the line also uses an
+                    # imperative directive form that would direct a read
+                    # or write against the legacy path.
+                    if NARRATIVE_CONTEXT.search(line) and not DIRECTIVE_FORM.search(line):
                         break
                     offenders.append((relpath, lineno, line.strip()[:160]))
                     break

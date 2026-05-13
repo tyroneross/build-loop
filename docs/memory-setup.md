@@ -1,11 +1,13 @@
 # Memory Setup
 
-Build-loop's advisory judges (`commit-auditor`, `promotion-reviewer`, `alignment-checker`) and the Phase 1 Assess memory-load step read from two stores:
+Build-loop's advisory judges (`commit-auditor`, `promotion-reviewer`, `alignment-checker`) and the Phase 1 Assess memory-load step read from one consolidated tree under `~/.build-loop/memory/`:
 
-| Store | Location | Owner | Versioning |
+| Tier | Location | Owner | Versioning |
 |---|---|---|---|
-| Global memory | `~/.build-loop/memory/` | This user | **Should be in a private git repo** (your lessons live here) |
-| Project memory | `<repo>/.build-loop/memory/` | This project's contributors | Project repo (gitignored or committed per project policy) |
+| Global | `~/.build-loop/memory/` (root: `constitution.md`, `MEMORY.md`, free-form lessons) | This user | **Should be in a private git repo** (your lessons live here) |
+| Project | `~/.build-loop/memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd` — basename of the git repo root, lowercased + normalized; `workers/` sub-component becomes `<slug>/workers`) | This user | Same private repo as global |
+
+> **Transitional read shim** — until PR 3 of the memory-consolidation series lands, the legacy per-repo location is also read by `memory_facade._resolve_memory_dirs` so content not yet migrated still surfaces in recall. Project tier overrides legacy_project on filename collision. The migration script (`scripts/migrate_project_memory.py`) handles the move; .MOVED.md stubs are left at the legacy paths during the transition window.
 
 The build-loop public repo ships only the **scaffolding** — templates and the setup script. Your actual lessons, constitution rules, and patterns belong in a private repo because they contain references to specific projects, decisions, and operator preferences that aren't appropriate for public distribution.
 
@@ -113,10 +115,13 @@ There's a separate **canonical decision store** at `~/dev/git-folder/build-loop-
 The global `~/.build-loop/memory/` is for **cross-project lessons** — patterns and feedback that apply broadly, not project-specific decisions.
 
 ```
-~/.build-loop/memory/                      # cross-project lessons (this guide)
-~/dev/git-folder/build-loop-memory/        # canonical project-tagged decisions (separate repo)
-<repo>/.build-loop/memory/                 # project-local overrides
-<repo>/.build-loop/.episodic/decisions/    # legacy local decision store (deprecated)
+~/.build-loop/memory/                                # cross-project lessons (this guide; global tier)
+~/.build-loop/memory/projects/<slug>/                # project-local overrides
+~/.build-loop/memory/projects/<slug>/workers/        # sub-component memory (when present)
+~/.build-loop/memory/projects/_archive/<slug>/       # retired projects, still queryable
+~/dev/git-folder/build-loop-memory/                  # canonical project-tagged decisions (separate repo)
+<repo>/.build-loop/memory/                           # legacy project location — read-shimmed during PR 1/2 transition, removed in PR 3
+<repo>/.build-loop/.episodic/decisions/              # legacy local decision store (deprecated)
 ```
 
 ## Constitution rules
