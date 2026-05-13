@@ -78,16 +78,17 @@ def probe_global_memory(workdir: Path) -> dict[str, Any]:
 
 
 def probe_project_memory(workdir: Path) -> dict[str, Any]:
-    """Probe project memory across legacy and new locations.
+    """Probe project memory at the consolidated location.
 
-    Post memory-consolidation PR 1: project memory lives at
-    ``~/.build-loop/memory/projects/<slug>/MEMORY.md`` (NEW) AND/OR at the
-    legacy ``<workdir>/.build-loop/memory/MEMORY.md`` (read during PR 1/2
-    transition). Returns ``ok`` when either is populated. Returns
-    ``graceful_degradation`` when neither is populated (expected for new
-    projects). Never returns ``error`` — that's reserved for parse failures.
+    Project memory lives at ``~/.build-loop/memory/projects/<slug>/MEMORY.md``.
+    Returns ``ok`` when populated, ``graceful_degradation`` when absent
+    (expected for new projects). Never returns ``error`` — that's reserved
+    for parse failures.
+
+    PR 3 (2026-05-13): the transitional legacy-path probe has been
+    REMOVED. Operators with pre-migration content at the legacy per-repo
+    location should run ``scripts/migrate_project_memory.py --apply``.
     """
-    legacy = workdir / ".build-loop" / "memory" / "MEMORY.md"
     new_path: Path | None = None
     slug = "_unscoped"
     try:
@@ -97,49 +98,38 @@ def probe_project_memory(workdir: Path) -> dict[str, Any]:
         if slug and slug != "_unscoped":
             new_path = project_memory_dir_for_project(slug) / "MEMORY.md"
     except Exception as e:  # noqa: BLE001 — best-effort path resolution
-        # Resolver imports failed; new_path stays None. Surface for diagnostics.
         return {
             "invoked": True,
             "result_count": 0,
-            "result_sample": {"resolver_error": str(e), "legacy_exists": legacy.is_file()},
+            "result_sample": {"resolver_error": str(e)},
             "verdict": "graceful_degradation",
-            "error": "project resolver unavailable; falling back to legacy probe only",
+            "error": "project resolver unavailable",
         }
 
-    found: list[Path] = []
-    if new_path is not None and new_path.is_file():
-        found.append(new_path)
-    if legacy.is_file():
-        found.append(legacy)
-
-    if not found:
+    if new_path is None or not new_path.is_file():
         return {
             "invoked": True,
             "result_count": 0,
             "result_sample": {
-                "checked_new": str(new_path) if new_path else None,
-                "checked_legacy": str(legacy),
+                "checked": str(new_path) if new_path else None,
                 "slug": slug,
             },
             "verdict": "graceful_degradation",
-            "error": "no project MEMORY.md at new or legacy path",
+            "error": "no project MEMORY.md at consolidated path",
         }
 
-    # Use the first hit (new wins by ordering). Read for line stats.
-    primary = found[0]
-    text = primary.read_text(encoding="utf-8")
+    text = new_path.read_text(encoding="utf-8")
     lines = text.splitlines()
     non_empty = [ln for ln in lines if ln.strip()]
     return {
         "invoked": True,
         "result_count": len(lines),
         "result_sample": {
-            "path": str(primary),
-            "scope": "project" if primary == new_path else "legacy_project",
+            "path": str(new_path),
+            "scope": "project",
             "line_count": len(lines),
             "non_empty": len(non_empty),
             "first_heading": next((ln for ln in lines if ln.startswith("#")), None),
-            "also_found_legacy": (legacy.is_file() and primary != legacy),
             "slug": slug,
         },
         "verdict": "ok",
@@ -302,7 +292,7 @@ PROBES: list[tuple[str, str, str, Callable[[Path], dict[str, Any]]]] = [
     # (call_site, phase, expected verdict tier, callable)
     ("SessionStart hook → architecture freshness", "session-start", "wired", probe_session_start_hook),
     ("Phase 1 Assess → read ~/.build-loop/memory/MEMORY.md (global)", "phase-1", "wired", probe_global_memory),
-    ("Phase 1 Assess → read <repo>/.build-loop/memory/MEMORY.md (project)", "phase-1", "wired", probe_project_memory),
+    ("Phase 1 Assess → read ~/.build-loop/memory/projects/<slug>/MEMORY.md (project)", "phase-1", "wired", probe_project_memory),
     ("Phase 1 Assess → state.json.runs[-3:] tail", "phase-1", "wired", probe_runs_tail),
     ("Phase 1 Assess → architecture-scout baseline (decision artifact)", "phase-1", "wired", probe_decision_canonical),
     ("Phase 1 Assess → debugger MCP list/search", "phase-1", "best-effort", probe_debugger_mcp),
