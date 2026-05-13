@@ -268,6 +268,18 @@ The interactive→headless distinction lives in this prompt, not in the scripts 
 
   Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
 
+  **M2 sidecar — working-state writes (NEW 2026-05-13, plan §15.2)**: at the same M2 trigger points 2 + 3 + 4 + 6, also write `.build-loop/working-state/current.json` + append `.build-loop/working-state/log.jsonl` via:
+
+  ```
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/working_state_writer.py \
+    --workdir "$PWD" --agent "orchestrator" \
+    --run-id "$RUN_ID" --chunk-id "<chunk_id_or_empty>" \
+    --status "<dispatching | awaiting_return | phase_transition | completed>" \
+    --current-task-summary "<phase/chunk one-liner>"
+  ```
+
+  Implementers write their own per-step working-state during the chunk per `agents/implementer.md` §"Working-state writes" — orchestrator writes are bookend events around them. Failure here is fire-and-forget; never blocks. Files are gitignored; do not commit working-state to the repo.
+
 - **M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)**: complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one ledger row at dispatch time and one at return time per subagent invocation. Both rows carry the same `task_id` so wall-clock and status can be correlated post-hoc by Round 4 dispatch-pattern analysis (and any later cost study).
 
   Procedure per dispatch:
