@@ -103,6 +103,21 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
+### Memory setup (one-time, per machine)
+
+Build-loop's advisory judges read from `~/.build-loop/memory/`. Bootstrap with templates:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
+```
+
+This seeds `constitution.md` + `MEMORY.md`. The build-loop public repo ships only the templates — your actual lessons, constitution rules, and patterns belong in a private repo because they reference specific projects and decisions. See [`docs/memory-setup.md`](docs/memory-setup.md) for the full guide including how to link a private git repo for versioned memory content.
+
+```bash
+# Status check anytime
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --check
+```
+
 ## Usage
 
 ```
