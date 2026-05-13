@@ -1,0 +1,55 @@
+# Global Memory — build-loop
+
+Cross-project learnings. Project-level `<repo>/.build-loop/memory/MEMORY.md` overrides global on conflict.
+
+This is a template — replace `(empty)` sections as you accumulate lessons.
+
+## Constitution
+
+- [Build-Loop Constitution](constitution.md) — Durable invariants cited by advisory judges. Stable rule IDs (`C-SEC`, `C-AUTH`, `C-DATA`, `C-CLAIMS`, `C-AGENT`, `C-MEMORY`). Loaded eagerly at every Phase 1 Assess and at every Phase 3 checkpoint.
+
+## User Preferences
+
+_(empty — add user-preference entries as `feedback_<slug>.md` and link here)_
+
+## Reference
+
+_(empty — add `reference_<slug>.md` for durable facts: project structure decisions, deployment topology, etc.)_
+
+## Feedback
+
+_(empty — add `feedback_<slug>.md` after each user correction OR validated success worth remembering)_
+
+## Patterns
+
+_(empty — add `pattern_<slug>.md` for recurring solutions worth naming)_
+
+## Decisions
+
+_(empty — link `decision_<slug>.md` for one-shot architectural decisions)_
+
+---
+
+## File format
+
+Each linked entry is its own markdown file with this frontmatter:
+
+```markdown
+---
+name: <short-kebab-case-slug>
+description: <one-sentence summary for relevance scoring>
+metadata:
+  type: feedback | pattern | reference | decision | user
+---
+
+# <Title>
+
+Body — for feedback/pattern entries, structure as:
+- Rule / fact
+- **Why:** the rationale
+- **How to apply:** when/where the rule fires
+
+Link related entries with `[[other-slug]]`.
+```
+
+See `~/dev/git-folder/build-loop/docs/memory-setup.md` for the full setup guide and how to link this directory to a private repo for versioning.

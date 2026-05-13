@@ -1,0 +1,51 @@
+# Build-Loop Constitution — User Invariants
+
+Durable rules that outlive any single build. Cited by advisory judges
+(`commit-auditor`, `promotion-reviewer`, `alignment-checker`) via stable rule
+IDs. Loaded eagerly at every Phase 1 Assess and at every Phase 3 checkpoint.
+
+This is a template. Replace each rule's body with your actual invariants. Keep
+rule IDs stable across edits — judge envelopes cite them by ID.
+
+## C-SEC — Security boundary invariants
+
+- **C-SEC/no_secret_in_repo**: No credentials, API keys, or secrets in version-controlled files. Use `.env`, secrets vault, or platform-provided env injection. Reverts required if a secret lands.
+- **C-SEC/auth_in_authoritative_module**: Auth checks must live in the canonical auth middleware/decorator, not duplicated across handlers.
+
+## C-AUTH — Authentication / authorization
+
+- **C-AUTH/owner_only_writes**: Writes to a user's data require the user's authenticated session OR explicit admin role check.
+- **C-AUTH/session_validation_at_boundary**: Every API entry point validates session before business logic.
+
+## C-DATA — Data invariants
+
+- **C-DATA/no_destructive_migration_without_backup**: Schema migrations that drop tables/columns require a pre-migration backup + a documented rollback path.
+- **C-DATA/no_silent_data_loss**: Code that processes user input must surface validation failures, never silently drop fields.
+
+## C-CLAIMS — Output / reporting integrity
+
+- **C-CLAIMS/no_unverified_claims**: Reports must distinguish ✅ verified / ⚠️ untested / ❓ uncertain. Never claim "100% resolved" without evidence.
+- **C-CLAIMS/cite_when_factual**: Factual claims (versions, pricing, behavior) cite a source or carry a `[INFERRED]` / `[UNVERIFIED]` tag.
+
+## C-AGENT — Agent behavior
+
+- **C-AGENT/no_silent_self_modification**: Build-loop modifying its own plugin code emits a user-visible report. Self-recursive builds surface to operator.
+- **C-AGENT/no_silent_failure**: Errors propagate or are explicitly logged. No swallowed exceptions in production paths.
+- **C-AGENT/single_writer_git**: Only the orchestrator writes to `.git/` during Phase 3. Implementers modify working tree only.
+
+## C-MEMORY — Memory store invariants
+
+- **C-MEMORY/canonical_writer**: All memory writes go through `scripts/memory_writer.py` for provenance. No direct file appends to `decisions/` or `~/.build-loop/memory/`.
+- **C-MEMORY/no_global_pollution**: Project-specific facts go in `<repo>/.build-loop/memory/`. Cross-project lessons go in `~/.build-loop/memory/`. Don't conflate.
+
+## How judges use this
+
+Variances in judge envelopes cite constitution rules as `constitution:C-SEC/no_secret_in_repo` (etc.). The orchestrator's Phase 1 Assess caches touched rule IDs in `state.json.constitution.loadedRuleIds[]` so downstream judges can reference them without re-reading.
+
+Empty / minimal constitution is fine — judges fall back to `MEMORY.md` feedback entries when no rules apply.
+
+## Editing
+
+- **Stable IDs**: never renumber. Rules added at the end keep existing citations valid.
+- **Concise bodies**: one sentence per rule. Detail goes in linked `[[name]]` memory entries.
+- **Versioned**: this file is read at every Phase 1; expect frequent reads. Keep it small (< 200 lines) for cache efficiency.
