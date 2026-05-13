@@ -1,7 +1,7 @@
 ---
 name: database-assessor
 description: Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, or data integrity. Examples - "slow query", "migration failed", "constraint error", "Prisma error", "connection timeout".
-model: inherit
+model: sonnet
 color: cyan
 tools: ["Read", "Grep", "Bash"]
 ---

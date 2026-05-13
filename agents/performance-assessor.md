@@ -1,7 +1,7 @@
 ---
 name: performance-assessor
 description: Use this agent when the debugging symptom involves slowness, latency, timeouts, memory leaks, CPU usage, bottlenecks, or optimization needs. Examples - "app is slow", "memory keeps increasing", "timeout errors", "high CPU usage".
-model: inherit
+model: sonnet
 color: red
 tools: ["Read", "Grep", "Bash"]
 ---
