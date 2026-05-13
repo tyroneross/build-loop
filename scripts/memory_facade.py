@@ -187,17 +187,27 @@ def _resolve_decision_dirs(workdir: Path) -> List[Path]:
 def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
     """Return ``[(dir, scope), ...]`` for the build-loop memory tree.
 
-    Returns:
-      * ``(global_dir, "global")`` — ``~/.build-loop/memory`` (always probed)
-      * ``(project_dir, "project")`` — ``~/.build-loop/memory/projects/<slug>``
-        (only when the resolved project tag is not ``_unscoped``)
-      * ``(legacy_dir, "legacy_project")`` — ``<workdir>/.build-loop/memory``
-        (read-only during PR 1/2 transition; removed in PR 3)
+    Returns (in this exact order — order matters):
+      1. ``(global_dir, "global")`` — ``~/.build-loop/memory`` (always probed)
+      2. ``(legacy_dir, "legacy_project")`` — ``<workdir>/.build-loop/memory``
+         (read-only during PR 1/2 transition; removed in PR 3)
+      3. ``(project_dir, "project")`` — ``~/.build-loop/memory/projects/<slug>``
+         (only when the resolved project tag is not ``_unscoped``)
 
-    Order matters: callers dedup by filename with later entries OVERRIDING
-    earlier ones, so project tier wins over global, and legacy is read but
-    its entries lose to non-legacy entries of the same name. Only existing
-    directories are returned; missing ones are silently dropped.
+    Callers dedup by filename with **later entries OVERRIDING earlier ones**,
+    so the precedence is:
+
+        project > legacy_project > global
+
+    This matches the documented contract: project tier wins over global,
+    project also wins over legacy_project (PR 1 transition: any content the
+    migration moved into ``projects/<slug>/`` MUST override the pre-migration
+    legacy copy if both exist). Legacy entries win over global because a
+    project-specific lesson is more relevant than a global default even
+    during the read-shim window.
+
+    Only existing directories are returned; missing ones are silently
+    dropped. Reordered 2026-05-13 per Phase 4 Review-A v4 finding.
     """
     out: List[Tuple[Path, str]] = []
     try:
@@ -214,6 +224,10 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
     if global_dir.is_dir():
         out.append((global_dir, "global"))
 
+    legacy_dir = legacy_project_memory_dir(workdir)
+    if legacy_dir.is_dir():
+        out.append((legacy_dir, "legacy_project"))
+
     proj = resolve_project(workdir)
     if proj and proj != "_unscoped":
         try:
@@ -222,10 +236,6 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
             project_dir = None  # type: ignore[assignment]
         if project_dir is not None and project_dir.is_dir():
             out.append((project_dir, "project"))
-
-    legacy_dir = legacy_project_memory_dir(workdir)
-    if legacy_dir.is_dir():
-        out.append((legacy_dir, "legacy_project"))
 
     return out
 

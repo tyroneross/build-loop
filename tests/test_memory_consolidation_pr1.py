@@ -105,18 +105,15 @@ def test_f4_slug_resolves_symlink(patched_env, tmp_path):
 
 
 def test_f4_slug_no_git_returns_unscoped(patched_env, tmp_path):
-    """F4c — no .git ancestor anywhere → _unscoped (does NOT raise)."""
+    """F4c — no .git ancestor anywhere → _unscoped (strict; does NOT raise)."""
     from _paths import derive_slug_from_cwd  # type: ignore
 
+    # tmp_path on macOS resolves to /private/var/folders/... which is outside
+    # any git repo. Strict assertion: the no-.git fallback returns exactly
+    # the _unscoped sentinel, never a stray slug from a parent walk.
     nowhere = tmp_path / "no-git-here"
     nowhere.mkdir()
-    # If pytest tmp_path lives inside a git repo, that ancestor still wins.
-    # We assert the contract: when NO ancestor has .git the result is _unscoped.
-    # Practically: tmp_path may resolve to /private/var/... outside any repo
-    # on macOS, so this test verifies the no-.git fallback rather than the
-    # specific value for all systems.
-    result = derive_slug_from_cwd(nowhere)
-    assert result in ("_unscoped",) or result is not None  # must not raise
+    assert derive_slug_from_cwd(nowhere) == "_unscoped"
 
 
 def test_f4_slug_workers_subcomponent(patched_env, tmp_path):
@@ -304,3 +301,43 @@ def test_f17_recall_merges_global_project_legacy(patched_env, tmp_path):
     assert by_name["feedback_global.md"]["_scope"] == "global"
     assert by_name["feedback_project.md"]["_scope"] == "project"
     assert by_name["feedback_legacy.md"]["_scope"] == "legacy_project"
+
+
+def test_f17b_recall_project_overrides_legacy(patched_env, tmp_path):
+    """F17b — same filename in legacy_project and project; project MUST win.
+
+    Catches the Phase 4 Review-A v4 finding: if ``_resolve_memory_dirs``
+    orders dirs as ``[global, project, legacy_project]`` and the dedup
+    rule is later-overrides-earlier, then legacy silently wins — which
+    contradicts the contract (project tier should always beat legacy).
+    """
+    from _paths import project_memory_dir_for_project  # type: ignore
+    from memory_facade import recall  # type: ignore
+
+    repo = tmp_path / "myapp"
+    repo.mkdir()
+    _init_git_repo(repo)
+
+    # Same filename in BOTH legacy and project tiers; different bodies.
+    legacy = repo / ".build-loop" / "memory"
+    legacy.mkdir(parents=True)
+    (legacy / "feedback_overlap.md").write_text(
+        "---\nname: feedback-overlap\ndescription: LEGACY VERSION\n---\nlegacy body\n",
+        encoding="utf-8",
+    )
+
+    project_dir = project_memory_dir_for_project("myapp")
+    project_dir.mkdir(parents=True)
+    (project_dir / "feedback_overlap.md").write_text(
+        "---\nname: feedback-overlap\ndescription: PROJECT VERSION\n---\nproject body\n",
+        encoding="utf-8",
+    )
+
+    env = recall(query="", kind="lessons", workdir=repo, limit=50)
+    lessons = env["results_by_kind"]["lessons"]
+    matches = [l for l in lessons if l["name"] == "feedback_overlap.md"]
+    assert len(matches) == 1, f"expected exactly one entry, got {len(matches)}"
+    assert matches[0]["_scope"] == "project", (
+        f"project tier must win over legacy_project on same filename; got "
+        f"_scope={matches[0]['_scope']!r}"
+    )
