@@ -39,6 +39,7 @@ The orchestrator brief contains:
 - `constitution_loaded_rule_ids` — from `state.json.constitution.loadedRuleIds[]`
 - `triggers` — `state.json.triggers` snapshot (includes `riskSurfaceChange`)
 - `recent_judge_decisions` — last 10 entries from this run's `judge_decisions[]`
+- `autonomous_defaults` — list of `state.json.runs[N].autonomousDefaults[]` entries written since the last commit in this run (added under the do/branch/surface policy — see `agents/build-orchestrator.md` §Mechanism B). Each entry has `{decision_id, phase, chosen, options, confidence, rationale, ts}`. Empty list when no auto-picks happened on this chunk.
 - `bypass_reason` — present if orchestrator already decided to skip you; you should not have been dispatched
 
 ## Reading order (anti-bias)
@@ -60,6 +61,30 @@ Against each variance you find:
 - **scope coherence** — does the diff stay within `files_owned`? Out-of-scope edits are `rethink`-tier unless they're justified pivots (then `new_approach`).
 - **memory citations** — does the diff reflect any feedback or pattern memory that recall should have surfaced? Use `policy_refs` to cite by slug.
 - **observable behavior** — for UI / endpoint changes, does the diff produce the user-visible behavior the rubric specified, not just the code shape?
+- **auto-pick drift** — for each entry in `autonomous_defaults[]`, verify the chosen option's claims hold up against the diff. The implementer pre-committed to specific `user_impact` / `performance` / `speed` / `cost` per option; check the actual diff for evidence the chosen option's claim is honest. Cite drift as `auto_pick:<decision_id>` with `severity: minor` (claim partially supported) or `major` (claim contradicted by the diff or by a plan non-goal). Output as a regular `variances[]` entry with a `variance_type: "auto_pick_drift"` field for routing.
+
+## auto_pick_drift variance (new)
+
+When `autonomous_defaults[]` is non-empty, run this additional check for each entry:
+
+1. Read the entry's `chosen` option from `options[]`.
+2. The orchestrator brief gave you `task_ids_in_scope` and `files_owned`; check whether the diff in those files supports the chosen option's claims:
+   - `user_impact`: does the diff produce the user-visible behavior the chosen option promised? Or did it silently fall back to a different option's user-impact?
+   - `performance`: are there obvious red flags (synchronous calls where the option claimed async, missing cache where caching was claimed, additional DB queries where the option claimed read-once)?
+   - `cost`: does the diff hit a paid endpoint not mentioned in the chosen option (e.g., chose "free tier" option but diff uses paid model)?
+3. Cross-check the chosen option against the plan's non-goals — auto-picking an option that violates an explicit non-goal is a `new_approach`-tier variance.
+4. Cite as `auto_pick:<decision_id>`. Severity calibration:
+   - `info`: chosen option's claims are mostly accurate; minor gaps not worth a rethink.
+   - `minor`: one claim is partially unsupported by the diff (e.g., performance claim is plausible but unverified).
+   - `major`: chosen option contradicts diff behavior OR violates plan non-goals.
+5. Set `auto_fixable: true` ONLY when the suggestion is to redirect to a different option that's already in `options[]` and the redirect is a simple file:line edit. Otherwise `auto_fixable: false` and let the orchestrator route.
+
+**Orchestrator routing for `auto_pick_drift` variances** (the orchestrator owns this; the judge only emits the variance):
+- `approve` overall → keep autonomousDefaults entry intact.
+- `rethink` + `auto_fixable: true` + `suggestion` present → Auto-Resolve applies the suggestion. The judge_redirect path appends `judge_redirect: {original: <chosen>, redirect_to: <new>, reason: <text>}` to the autonomousDefaults entry.
+- `rethink` + `auto_fixable: false` AND long-mode → dispatch Thinking-tier resolver with the variance attached. Resolver may reverse the auto-pick.
+- `rethink` + `auto_fixable: false` AND normal-mode → surface the variance + trade-off table to the operator.
+- `new_approach` → orchestrator considers branching the work to `riskyBranches[]` rather than continuing on main (the auto-pick was load-bearing wrong).
 
 For each variance, also decide **`auto_fixable`** — `true` when the suggestion is a concrete edit to a single named `file:line` with severity ≤ `minor` and no dependencies on other variances. Orchestrator's Auto-Resolve queue picks these up automatically. `auto_fixable: false` for major variances, judgment calls, or anything spanning multiple files.
 

@@ -5,7 +5,7 @@ Default policy:
   preview -> auto
   testflight -> auto
   production -> confirm
-  unknown -> confirm
+  unknown -> auto  (do-unless-clearly-risky philosophy)
 
 Repo override:
   .build-loop/config.json
@@ -32,7 +32,7 @@ DEFAULT_POLICY = {
     "preview": "auto",
     "testflight": "auto",
     "production": "confirm",
-    "unknown": "confirm",
+    "unknown": "auto",  # "do unless clearly risky" — unrecognized commands are not risky by default
 }
 
 VALID_ACTIONS = {"auto", "confirm", "block"}

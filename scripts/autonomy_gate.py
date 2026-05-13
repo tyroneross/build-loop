@@ -244,10 +244,37 @@ def classify(
     Does NOT invoke deployment_policy for commands that don't look like
     deploy/push operations (avoids the subprocess overhead for the common case).
     """
+    # Step 0: read-only short-circuit.
+    # Most user-pain comes from `sed -n ... deployment_policy.py`, `vercel curl`,
+    # `vercel logs`, `git status`, etc. being routed to deployment_policy → unknown
+    # → confirm. Read-only inspection cannot mutate prod by definition; skip the
+    # whole routing chain. classify_action.py owns the read-only matcher.
+    try:
+        import classify_action  # local import to avoid circular imports at module load
+        if classify_action._is_read_only(command):
+            autonomy, _ = load_autonomy_config(workdir)
+            return _envelope(
+                "auto",
+                "read_only",
+                "default",
+                "read-only command; safe to execute",
+                action_label,
+                command,
+                _extract_flags(autonomy),
+            )
+    except Exception:
+        # classify_action not yet installed in older deployments — fall through.
+        pass
+
     # Step 1: deployment_policy delegation
+    # When deployment_policy returns an "unknown" target, fall through to
+    # autonomy_gate's own pattern matching — DEFAULT_CONFIRM_FOR still catches
+    # `production deploy*`, `npm publish*`, etc. via glob, so we don't lose
+    # coverage by deferring. Only return early for recognized targets
+    # (preview/testflight/production).
     if _looks_like_deployment_command(command):
         dp_data = _invoke_deployment_policy(workdir, command)
-        if dp_data is not None:
+        if dp_data is not None and dp_data.get("target") != "unknown":
             env = _deployment_policy_envelope(dp_data, action_label, command)
             # Merge flags from autonomy config even when routed through DP
             autonomy, _ = load_autonomy_config(workdir)

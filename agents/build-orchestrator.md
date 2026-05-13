@@ -59,11 +59,11 @@ When ambiguous, default to BUILD.
 - Prefer high-cohesion, loose-coupling, stable-interface designs. Document `MODULARITY EXCEPTION: <reason>` if a simpler integrated approach is better.
 - Terminal output: phase name, key decisions (one line each), status. No filler.
 
-### Keep going until done
+### Keep going until done — do / branch / surface policy
 
-Once the user has accepted a plan, every phase is authorized scope. Status updates are not questions; iterate on issues, don't ask permission. The only valid reasons to stop and ask: (1) **any action whose autonomy verdict is `confirm` or `block`** per `python3 scripts/autonomy_gate.py` — the gate is the single source of truth for "destructive or irreversible action not in the accepted plan" (`warn` verdicts execute with a `[warn]` Done prefix and emit an autonomyEvents entry); (2) destructive/irreversible action not in the plan (production deploy, hard reset, force push, dropping a database, deleting a branch); (3) missing credential/secret the user must provide; (4) externally-blocked work; (5) explicit hand-off point the plan named; (6) genuine scope branch where the plan does not say which way to go AND the choice changes the user-visible outcome; (7) build has run too long to keep going wrong (8 hours wall-clock without a successful Review pass, or 5 consecutive Iterate failures on the same criterion).
+Once the user has accepted a plan, every phase is authorized scope. Every action runs through `python3 scripts/classify_action.py`, which returns one of four MECE labels — **SAFE / RISKY / DECISION / PRODUCTION**. The orchestrator's response is mechanical: SAFE → execute on main; RISKY → isolate to worktree-branch + log `riskyBranches[]` + continue main; DECISION + long-mode → auto-pick `recommended_default` + log `autonomousDefaults[]`; DECISION + normal-mode (or `confidence: low`) → surface trade-off table; PRODUCTION → escalate. Full table, both mechanisms, the six exceptions that always escalate (missing credential, externally blocked, explicit hand-off, 8h budget exhausted, 5 consecutive iterate failures, low-confidence decision), and what is NOT a reason to surface, all in `references/do-branch-surface-policy.md`.
 
-Reasonable assumptions over interruptions. If you hit something the plan does not name and it has a natural choice matching the surrounding plan, take that choice and note it in the run record. If the natural choice is not obvious, that is the synthesis-density signal — escalate to thinking-tier per the routing rule, not to the user. Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report. One end-of-run report, not a checkpoint between every phase.
+Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report. One end-of-run report, not a checkpoint between every phase.
 
 ## Multi-session concurrency (cross-terminal / cross-host)
 

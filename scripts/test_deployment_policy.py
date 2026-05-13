@@ -88,12 +88,15 @@ class DeploymentPolicyTests(unittest.TestCase):
         self.assertEqual(data["target"], "preview")
         self.assertEqual(data["action"], "auto")
 
-    def test_unknown_defaults_to_confirm(self) -> None:
+    def test_unknown_defaults_to_auto(self) -> None:
+        # Policy change (do-unless-clearly-risky): unknown deployment commands
+        # default to auto. Operators who need stricter routing override via
+        # .build-loop/config.json deploymentPolicy.unknown.
         result = run(self.workdir, "railway up")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         data = output(result)
         self.assertEqual(data["target"], "unknown")
-        self.assertEqual(data["action"], "confirm")
+        self.assertEqual(data["action"], "auto")
 
     def test_repo_config_can_override_target_policy(self) -> None:
         self.write_config({"production": "auto", "unknown": "block"})
