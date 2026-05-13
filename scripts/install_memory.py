@@ -61,13 +61,39 @@ def report(dest: Path) -> dict:
             "exists": target.exists(),
             "size_bytes": target.stat().st_size if target.exists() else 0,
         }
-    # Count user content
+    # Count user content (root level, excluding templates and the projects/ tree)
     if dest.exists():
+        template_names = {t[1] for t in TEMPLATES}
         user_files = [
             p for p in dest.glob("*.md")
-            if p.name not in {t[1] for t in TEMPLATES}
+            if p.name not in template_names and p.name != "README.md"
         ]
         status["user_md_files"] = len(user_files)
+    # Project segmentation (NEW PR 1)
+    projects_dir = dest / "projects"
+    status["projects_dir_exists"] = projects_dir.is_dir()
+    if projects_dir.is_dir():
+        per_project: list[dict] = []
+        for sub in sorted(projects_dir.iterdir()):
+            if not sub.is_dir():
+                continue
+            # Count .md files at top level of the project subdir (sub-component
+            # dirs like workers/ contribute their own row).
+            md_count = sum(1 for _ in sub.glob("*.md"))
+            per_project.append({
+                "slug": sub.name,
+                "md_files": md_count,
+            })
+            # Sub-components (e.g. workers/) — surface as <slug>/<sub>
+            for nested in sorted(sub.iterdir()):
+                if nested.is_dir() and not nested.name.startswith("_"):
+                    nested_count = sum(1 for _ in nested.glob("*.md"))
+                    if nested_count:
+                        per_project.append({
+                            "slug": f"{sub.name}/{nested.name}",
+                            "md_files": nested_count,
+                        })
+        status["projects"] = per_project
     return status
 
 
@@ -127,7 +153,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             present = "✓" if info["exists"] else "✗"
             print(f"  {present} {name} ({info['size_bytes']}B)")
         if "user_md_files" in status:
-            print(f"  user content: {status['user_md_files']} .md files beyond templates")
+            print(f"  global content: {status['user_md_files']} .md files beyond templates")
+        projects_present = "✓" if status.get("projects_dir_exists") else "✗"
+        print(f"  {projects_present} projects/ subtree")
+        if status.get("projects"):
+            for entry in status["projects"]:
+                print(f"    - {entry['slug']}: {entry['md_files']} file(s)")
+        elif status.get("projects_dir_exists"):
+            print("    (no project subdirs yet — populated by migration script in PR 1.5)")
         return 0
 
     # Link-repo path: clone instead of seeding
@@ -158,14 +191,79 @@ def main(argv: Optional[list[str]] = None) -> int:
         status = "✓ seeded" if wrote else f"– skipped ({reason})"
         print(f"  {status}: {target_name}")
 
+    # Bootstrap the project-segmentation subtree (PR 1).
+    projects_dir = dest / "projects"
+    projects_readme = projects_dir / "README.md"
+    if not projects_dir.exists():
+        projects_dir.mkdir(parents=True, exist_ok=True)
+        print("  ✓ created: projects/")
+    else:
+        print("  – skipped: projects/ (already exists)")
+    if not projects_readme.exists():
+        projects_readme.write_text(_PROJECTS_README_BODY, encoding="utf-8")
+        print("  ✓ seeded: projects/README.md")
+    else:
+        print("  – skipped: projects/README.md (already exists)")
+
     print()
     print("Done. Next steps:")
     print(f"  - Edit {dest / 'constitution.md'} with your invariants")
     print(f"  - Add lessons over time as feedback_*.md / pattern_*.md / reference_*.md")
     print("  - Optionally version this directory in a private git repo:")
     print(f"      cd {dest} && git init && git remote add origin <your-private-repo-url>")
+    print("  - Project-scoped lessons: ~/.build-loop/memory/projects/<slug>/ (filled by migration in PR 1.5)")
     print("  - See docs/memory-setup.md for full setup guide")
     return 0
+
+
+_PROJECTS_README_BODY = """# projects/ — project-scoped lessons
+
+Per-project memory entries live in subdirectories of this folder:
+
+```
+projects/
+├── build-loop/
+│   ├── MEMORY.md             # project-specific index (optional)
+│   ├── constitution.md       # project-specific overrides (optional)
+│   └── feedback_*.md / pattern_*.md / reference_*.md
+├── decision-doctor-cc/
+│   └── workers/              # sub-component memory (deliberate hierarchy)
+└── _archive/
+    └── <retired-project>/    # historical memory, still queryable
+```
+
+## Slug derivation
+
+The slug for the current working directory is derived by
+`scripts/derive_slug_from_cwd` in build-loop:
+
+1. Resolve symlinks (`Path.resolve()`)
+2. Walk up looking for a `.git` directory
+3. Slug = `basename(repo_root)` normalized (lowercase, non-safe chars → `-`)
+4. If `cwd` is under `<repo_root>/workers/...`, append `/workers` to the slug
+5. No `.git` ancestor → `_unscoped`
+
+This is filesystem-driven; no hand-maintained registry. The legacy
+`projects.yaml` (in build-loop-memory repo) remains as a fallback for
+explicit aliases only.
+
+## Precedence
+
+When the orchestrator loads memory at Phase 1 Assess:
+
+1. Global tier — files at the root of `~/.build-loop/memory/`
+2. Project tier — files at `~/.build-loop/memory/projects/<slug>/`
+3. Legacy project tier (transitional) — files at `<repo>/.build-loop/memory/`
+
+Later tiers OVERRIDE earlier ones on filename collision (project wins
+over global; legacy_project is read but loses to project entries).
+
+## Privacy
+
+Same as the root: this directory should be in a private git repo. The
+build-loop public repo ships templates + the projects/ scaffolding only,
+not the user-specific content.
+"""
 
 
 if __name__ == "__main__":

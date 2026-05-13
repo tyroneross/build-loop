@@ -78,16 +78,70 @@ def probe_global_memory(workdir: Path) -> dict[str, Any]:
 
 
 def probe_project_memory(workdir: Path) -> dict[str, Any]:
-    p = workdir / ".build-loop" / "memory" / "MEMORY.md"
-    if not p.is_file():
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "project MEMORY.md not present"}
-    text = p.read_text(encoding="utf-8")
+    """Probe project memory across legacy and new locations.
+
+    Post memory-consolidation PR 1: project memory lives at
+    ``~/.build-loop/memory/projects/<slug>/MEMORY.md`` (NEW) AND/OR at the
+    legacy ``<workdir>/.build-loop/memory/MEMORY.md`` (read during PR 1/2
+    transition). Returns ``ok`` when either is populated. Returns
+    ``graceful_degradation`` when neither is populated (expected for new
+    projects). Never returns ``error`` — that's reserved for parse failures.
+    """
+    legacy = workdir / ".build-loop" / "memory" / "MEMORY.md"
+    new_path: Path | None = None
+    slug = "_unscoped"
+    try:
+        from _paths import project_memory_dir_for_project  # type: ignore  # noqa: PLC0415
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+        slug = resolve_project(workdir)
+        if slug and slug != "_unscoped":
+            new_path = project_memory_dir_for_project(slug) / "MEMORY.md"
+    except Exception as e:  # noqa: BLE001 — best-effort path resolution
+        # Resolver imports failed; new_path stays None. Surface for diagnostics.
+        return {
+            "invoked": True,
+            "result_count": 0,
+            "result_sample": {"resolver_error": str(e), "legacy_exists": legacy.is_file()},
+            "verdict": "graceful_degradation",
+            "error": "project resolver unavailable; falling back to legacy probe only",
+        }
+
+    found: list[Path] = []
+    if new_path is not None and new_path.is_file():
+        found.append(new_path)
+    if legacy.is_file():
+        found.append(legacy)
+
+    if not found:
+        return {
+            "invoked": True,
+            "result_count": 0,
+            "result_sample": {
+                "checked_new": str(new_path) if new_path else None,
+                "checked_legacy": str(legacy),
+                "slug": slug,
+            },
+            "verdict": "graceful_degradation",
+            "error": "no project MEMORY.md at new or legacy path",
+        }
+
+    # Use the first hit (new wins by ordering). Read for line stats.
+    primary = found[0]
+    text = primary.read_text(encoding="utf-8")
     lines = text.splitlines()
     non_empty = [ln for ln in lines if ln.strip()]
     return {
         "invoked": True,
         "result_count": len(lines),
-        "result_sample": {"path": str(p), "line_count": len(lines), "non_empty": len(non_empty), "first_heading": next((ln for ln in lines if ln.startswith("#")), None)},
+        "result_sample": {
+            "path": str(primary),
+            "scope": "project" if primary == new_path else "legacy_project",
+            "line_count": len(lines),
+            "non_empty": len(non_empty),
+            "first_heading": next((ln for ln in lines if ln.startswith("#")), None),
+            "also_found_legacy": (legacy.is_file() and primary != legacy),
+            "slug": slug,
+        },
         "verdict": "ok",
     }
 
@@ -123,7 +177,7 @@ def probe_recall_facade(workdir: Path) -> dict[str, Any]:
     expected_keys = {"query", "kind_filter", "project", "results_by_kind", "merged", "reasons"}
     missing_keys = sorted(expected_keys - set(env.keys()))
     rbk = env.get("results_by_kind", {})
-    expected_kinds = {"runs", "decisions", "semantic", "debugger"}
+    expected_kinds = {"runs", "decisions", "lessons", "semantic", "debugger"}
     missing_kinds = sorted(expected_kinds - set(rbk.keys()))
     return {
         "invoked": True,

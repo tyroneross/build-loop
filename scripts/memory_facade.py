@@ -63,7 +63,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
 DEFAULT_LIMIT = 10
-KINDS = ("runs", "decisions", "semantic", "debugger")
+KINDS = ("runs", "decisions", "lessons", "semantic", "debugger")
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +168,156 @@ def _resolve_decision_dirs(workdir: Path) -> List[Path]:
     except Exception:  # noqa: BLE001 — best-effort path resolution
         pass
     return dirs
+
+
+# ---------------------------------------------------------------------------
+# Backend 2.5: lessons — free-form feedback/pattern/reference/decision_* files
+# in ~/.build-loop/memory/ (global) + ~/.build-loop/memory/projects/<slug>/
+# (project, NEW PR 1) + <workdir>/.build-loop/memory/ (legacy project path,
+# read-only during PR 1/2 transition).
+#
+# Distinct from `decisions` (Backend 2) — decisions are the project-tagged
+# sequence-numbered store written by write_decision.py. Lessons are the
+# free-form taxonomized markdown files written by hand or by memory_writer.py.
+# Both backends read the same physical filesystem in some cases but apply
+# different filename / frontmatter conventions.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
+    """Return ``[(dir, scope), ...]`` for the build-loop memory tree.
+
+    Returns (in this exact order — order matters):
+      1. ``(global_dir, "global")`` — ``~/.build-loop/memory`` (always probed)
+      2. ``(legacy_dir, "legacy_project")`` — ``<workdir>/.build-loop/memory``
+         (read-only during PR 1/2 transition; removed in PR 3)
+      3. ``(project_dir, "project")`` — ``~/.build-loop/memory/projects/<slug>``
+         (only when the resolved project tag is not ``_unscoped``)
+
+    Callers dedup by filename with **later entries OVERRIDING earlier ones**,
+    so the precedence is:
+
+        project > legacy_project > global
+
+    This matches the documented contract: project tier wins over global,
+    project also wins over legacy_project (PR 1 transition: any content the
+    migration moved into ``projects/<slug>/`` MUST override the pre-migration
+    legacy copy if both exist). Legacy entries win over global because a
+    project-specific lesson is more relevant than a global default even
+    during the read-shim window.
+
+    Only existing directories are returned; missing ones are silently
+    dropped. Reordered 2026-05-13 per Phase 4 Review-A v4 finding.
+    """
+    out: List[Tuple[Path, str]] = []
+    try:
+        from _paths import (  # type: ignore  # noqa: PLC0415
+            build_loop_memory_root,
+            project_memory_dir_for_project,
+            legacy_project_memory_dir,
+        )
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — best-effort
+        return out
+
+    global_dir = build_loop_memory_root()
+    if global_dir.is_dir():
+        out.append((global_dir, "global"))
+
+    legacy_dir = legacy_project_memory_dir(workdir)
+    if legacy_dir.is_dir():
+        out.append((legacy_dir, "legacy_project"))
+
+    proj = resolve_project(workdir)
+    if proj and proj != "_unscoped":
+        try:
+            project_dir = project_memory_dir_for_project(proj)
+        except ValueError:
+            project_dir = None  # type: ignore[assignment]
+        if project_dir is not None and project_dir.is_dir():
+            out.append((project_dir, "project"))
+
+    return out
+
+
+# Lessons frontmatter pattern — same shape as decisions.
+_LESSON_FRONTMATTER_RE = DECISION_FRONTMATTER_RE
+
+
+def read_lessons(
+    workdir: Path, query: str, limit: int
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read free-form lessons across global + project + legacy-project tiers.
+
+    Dedup rule: same filename across tiers — later-listed tier wins
+    (project > legacy_project > global per ``_resolve_memory_dirs`` order).
+    The result entry carries ``_scope`` ("global" | "project" | "legacy_project")
+    so callers can see which tier won.
+
+    Filename convention: ``feedback_*.md``, ``pattern_*.md``, ``reference_*.md``,
+    ``decision_*.md`` (the free-form variant), plus operator-named files like
+    ``gotcha_*.md`` or ``lesson_*.md``. ``MEMORY.md``, ``constitution.md``, and
+    ``INDEX.jsonl`` are skipped (they're indexes, not lessons).
+    """
+    reasons: List[str] = []
+    dirs = _resolve_memory_dirs(workdir)
+    if not dirs:
+        return [], reasons
+
+    # Walk in order; later overrides earlier on filename collision.
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for mem_dir, scope in dirs:
+        for p in sorted(mem_dir.glob("*.md")):
+            name = p.name
+            # Skip indexes / scaffolding files
+            if name in {"MEMORY.md", "constitution.md", "README.md"}:
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError as e:
+                reasons.append(f"lesson_read_error: {p.name} {e}")
+                continue
+            title = ""
+            ts_raw: Optional[str] = None
+            mtype = ""
+            m = _LESSON_FRONTMATTER_RE.match(text)
+            if m:
+                for line in m.group(1).splitlines():
+                    s = line.strip()
+                    if s.startswith("name:"):
+                        title = s.split(":", 1)[1].strip().strip('"').strip("'")
+                    elif s.startswith("description:"):
+                        # description is the relevance hook
+                        if not title:
+                            title = s.split(":", 1)[1].strip().strip('"').strip("'")
+                    elif s.startswith("type:") or s.startswith("metadata:"):
+                        # type lives inside metadata block; capture if present
+                        pass
+                    elif s.startswith("- type:") or (s.startswith("type:") and "metadata" not in s):
+                        mtype = s.split(":", 1)[1].strip().strip('"').strip("'")
+            if not _q_match(text + " " + title + " " + name, query):
+                continue
+            # Best-effort recency from mtime (no created_at field yet on legacy entries).
+            try:
+                ts = p.stat().st_mtime
+            except OSError:
+                ts = None
+            entry = {
+                "_kind": "lessons",
+                "_scope": scope,
+                "_recency_ts": ts,
+                "id": p.stem,
+                "name": name,
+                "title": title or p.stem,
+                "metadata_type": mtype,
+                "path": str(p),
+            }
+            # Later tier wins (project > legacy_project > global).
+            by_name[name] = entry
+
+    out = list(by_name.values())
+    out.sort(key=lambda x: x.get("_recency_ts") or 0, reverse=True)
+    return out[:limit], reasons
 
 
 def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -417,6 +567,9 @@ def recall(
         reasons.extend(r)
     if kind in (None, "decisions"):
         results["decisions"], r = read_decisions(workdir, query, limit)
+        reasons.extend(r)
+    if kind in (None, "lessons"):
+        results["lessons"], r = read_lessons(workdir, query, limit)
         reasons.extend(r)
     if kind in (None, "semantic"):
         results["semantic"], r = read_semantic(

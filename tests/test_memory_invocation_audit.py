@@ -32,11 +32,11 @@ def test_recall_envelope_shape_on_empty_workdir(tmp_path: Path) -> None:
     assert set(env.keys()) >= {"query", "kind_filter", "project", "results_by_kind", "merged", "reasons"}
     # Per-kind buckets must all be present, even if empty.
     rbk = env["results_by_kind"]
-    assert set(rbk.keys()) == {"runs", "decisions", "semantic", "debugger"}
+    assert set(rbk.keys()) == {"runs", "decisions", "lessons", "semantic", "debugger"}
     for k, v in rbk.items():
         assert isinstance(v, list), f"results_by_kind[{k}] must be a list"
     # Merged is bounded by limit * #kinds.
-    assert len(env["merged"]) <= 5 * 4
+    assert len(env["merged"]) <= 5 * len(rbk)
     # Reasons must include backend-unavailable signals (Postgres + MCP both expected down in CI).
     reasons_text = " ".join(env["reasons"])
     assert "db_unavailable" in reasons_text or "psycopg" in reasons_text or env["reasons"] == [] or any(

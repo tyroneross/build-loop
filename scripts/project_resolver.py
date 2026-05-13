@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 import sys
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-from _paths import agent_memory_root  # type: ignore  # noqa: E402
+from _paths import agent_memory_root, derive_slug_from_cwd  # type: ignore  # noqa: E402
 
 DEFAULT_PROJECT_TAG = "_unscoped"
 
@@ -119,20 +119,35 @@ def _normalize(p: str | Path) -> str:
 def resolve_project(cwd: Path | str) -> str:
     """Return the project tag for ``cwd``.
 
-    Resolution order (per design §projects.yaml):
-      1. Exact path match (longest wins among ties — only one can be exact).
-      2. Path prefix match (longest wins).
-      3. ``default:`` from the YAML, else ``_unscoped``.
+    Resolution order (post memory-consolidation PR 1):
+      1. ``derive_slug_from_cwd(cwd)`` — filesystem-driven slug from git
+         toplevel + ``_safe_project_tag`` normalization. The PRIMARY path.
+         Returns ``_unscoped`` when ``cwd`` is outside any git repo.
+      2. ``projects.yaml`` lookup (exact then longest-prefix) — used ONLY
+         when (a) the filesystem rule returned ``_unscoped`` AND (b) the
+         operator has registered an explicit alias for this cwd. This
+         covers the rare case where the working directory isn't a git
+         repo but should still map to a known project tag.
+      3. ``projects.yaml`` ``default:`` key, else ``_unscoped``.
+
+    Aligns by construction with Postgres ``semantic_facts.project`` —
+    ``derive_slug_from_cwd`` routes through ``_safe_project_tag``, which
+    is the same validator used by ``decisions_dir_for_project``.
     """
+    # Step 1 — filesystem-driven derivation (the new primary path).
+    slug = derive_slug_from_cwd(cwd)
+    if slug != DEFAULT_PROJECT_TAG:
+        return slug
+
+    # Step 2 — fall back to projects.yaml only when filesystem returned
+    # _unscoped. This preserves backward-compat for explicit aliases.
     data = load_projects_yaml()
     cwd_norm = _normalize(cwd)
-    best_match: tuple[int, str] | None = None  # (path_length, project_tag)
+    best_match: tuple[int, str] | None = None
     for entry in data["projects"]:
         path_norm = _normalize(entry["path"])
-        # Exact match wins outright.
         if path_norm == cwd_norm:
             return entry["project"]
-        # Prefix match: cwd must be path_norm OR start with path_norm + os.sep
         if cwd_norm.startswith(path_norm + os.sep):
             length = len(path_norm)
             if best_match is None or length > best_match[0]:
