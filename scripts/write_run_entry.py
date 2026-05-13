@@ -45,6 +45,8 @@ REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
 }
 VALID_OUTCOMES = {"pass", "fail", "partial"}
 VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+VALID_JUDGE_VERDICTS = {"approve", "rethink", "new_approach"}
+VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned"}
 
 # M2 — execution-state heartbeat (crash-recovery)
 EXECUTION_SCHEMA_VERSION = 1
@@ -334,6 +336,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "recommendation) pass through. When omitted, no 'security_findings' key is written."
         ),
     )
+    p.add_argument(
+        "--judge-decisions-json",
+        default=None,
+        help=(
+            "Path to a JSON file containing a list of advisory judge_decisions (or '-' for stdin). "
+            "Each element must have 'judge_id' (str) and 'verdict' (approve|rethink|new_approach). "
+            "Optional fields: checkpoint_id, confidence, spec_alignment, variances, meta_guidance, "
+            "policy_refs, implementer_response, outcome. Judges are advisory — verdicts never block "
+            "execution. Used by self-improvement-architect for prompt/rubric tuning."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -384,6 +397,49 @@ def load_security_findings(source: str) -> list[dict] | None:
     return data
 
 
+def load_judge_decisions(source: str) -> list[dict] | None:
+    """Read advisory judge_decisions JSON from a path or stdin ('-').
+
+    Shape per plan §12.5: advisory verdicts that never block execution. Each entry must have
+    `judge_id` (str) and `verdict` (one of VALID_JUDGE_VERDICTS). Optional pass-through fields:
+    checkpoint_id, confidence, spec_alignment, variances, meta_guidance, policy_refs,
+    implementer_response, outcome.
+
+    Returns None when missing/empty (caller skips the key). Returns a list otherwise.
+    """
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        path = Path(source)
+        if not path.exists():
+            log(f"note: --judge-decisions-json path {source} does not exist; skipping")
+            return None
+        raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--judge-decisions-json is not valid JSON: {e}") from e
+    if isinstance(data, dict) and "decisions" in data:
+        data = data["decisions"]
+    if not isinstance(data, list):
+        raise ValueError("--judge-decisions-json must decode to a list (or an object with a 'decisions' list)")
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"judge_decisions[{i}] must be an object, got {type(item).__name__}")
+        if not isinstance(item.get("judge_id"), str):
+            raise ValueError(f"judge_decisions[{i}].judge_id must be a string")
+        verdict = item.get("verdict")
+        if not isinstance(verdict, str) or verdict not in VALID_JUDGE_VERDICTS:
+            raise ValueError(f"judge_decisions[{i}].verdict must be one of {sorted(VALID_JUDGE_VERDICTS)}, got {verdict!r}")
+        if "spec_alignment" in item:
+            sa = item["spec_alignment"]
+            if not isinstance(sa, str) or sa not in VALID_JUDGE_SPEC_ALIGNMENT:
+                raise ValueError(f"judge_decisions[{i}].spec_alignment must be one of {sorted(VALID_JUDGE_SPEC_ALIGNMENT)}, got {sa!r}")
+    return data
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
@@ -405,6 +461,11 @@ def main(argv: list[str] | None = None) -> int:
         security_findings = (
             load_security_findings(args.security_findings_json)
             if args.security_findings_json
+            else None
+        )
+        judge_decisions = (
+            load_judge_decisions(args.judge_decisions_json)
+            if args.judge_decisions_json
             else None
         )
     except (json.JSONDecodeError, ValueError) as e:
@@ -438,6 +499,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     if security_findings is not None:
         entry["security_findings"] = security_findings
+    if judge_decisions is not None:
+        entry["judge_decisions"] = judge_decisions
 
     try:
         validate_entry(entry)
