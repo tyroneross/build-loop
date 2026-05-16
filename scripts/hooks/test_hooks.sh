@@ -219,6 +219,62 @@ else
 fi
 rm -rf "$DC_DIR" "$NONBL"
 
+# --- npm with ACTIVE native min-release-age (allowlist_mechanism=hook) ------
+# These require a real npm >= 11.10 (machine has 11.14.1). The injector's
+# --check runs `npm config get min-release-age` to confirm enforcement.
+DC2=$(mktemp -d)
+mkdir -p "${DC2}/.build-loop"
+echo '{"name":"t"}' > "${DC2}/package.json"
+echo '{}' > "${DC2}/.build-loop/config.json"
+printf 'min-release-age=7\n' > "${DC2}/.npmrc"
+
+# Confirm the injector reports enforced (skip these cases on old npm).
+DC2_ENF=$(python3 "${REPO_ROOT}/scripts/inject_dependency_cooldown.py" \
+    --workdir "$DC2" --check --json 2>/dev/null \
+    | python3 -c "import sys,json;print('1' if json.load(sys.stdin).get('enforced') else '0')" 2>/dev/null || echo 0)
+
+if [ "$DC2_ENF" = "1" ]; then
+    # Case 12: npm native active + all allowlisted -> --min-release-age=0 rewrite
+    R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm install @tyroneross/foo\"},\"cwd\":\"${DC2}\"}" \
+        | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+    if [ "$(dc_decision "$R")" = "allow" ] \
+        && printf '%s' "$R" | grep -q -- "--min-release-age=0" \
+        && ! printf '%s' "$R" | grep -q -- "--before"; then
+        pass "Case 12: npm native + all-allowlisted -> --min-release-age=0 rewrite, no --before"
+    else
+        fail "Case 12: npm native + all-allowlisted -> --min-release-age=0" "got: ${R}"
+    fi
+
+    # Case 13: npm native active + third-party -> silent {} (native gates it; no --before)
+    R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm install lodash\"},\"cwd\":\"${DC2}\"}" \
+        | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+    if [ "$R" = "{}" ]; then
+        pass "Case 13: npm native + third-party -> silent {} (no --before)"
+    else
+        fail "Case 13: npm native + third-party -> silent {}" "got: ${R}"
+    fi
+else
+    pass "Case 12-13: SKIPPED (npm < 11.10 — native min-release-age unavailable)"
+fi
+rm -rf "$DC2"
+
+# Case 14: written-but-unrecognized key -> injector --check reports enforced:false
+# (false-positive fix). Simulate via the old buggy camelCase npm key.
+DC3=$(mktemp -d)
+mkdir -p "${DC3}/.build-loop"
+echo '{"name":"t"}' > "${DC3}/package.json"
+echo '{}' > "${DC3}/.build-loop/config.json"
+printf 'minimumReleaseAge=7\n' > "${DC3}/.npmrc"
+ENF=$(python3 "${REPO_ROOT}/scripts/inject_dependency_cooldown.py" \
+    --workdir "$DC3" --check --json 2>/dev/null \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('enforced'))" 2>/dev/null || echo "err")
+if [ "$ENF" = "False" ]; then
+    pass "Case 14: written-but-unrecognized npm key -> --check enforced:false (false-positive fix)"
+else
+    fail "Case 14: written-but-unrecognized key -> enforced:false" "got enforced=${ENF}"
+fi
+rm -rf "$DC3"
+
 # ---------------------------------------------------------------------------
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

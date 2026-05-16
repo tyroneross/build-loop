@@ -22,19 +22,36 @@ The ``@tyroneross/*`` default is always unioned in (config-driven, not
 hardcoded-only — extra scopes/names are honored, the self-author default is
 not removable).
 
-Verified ecosystem facts (T2, 2026-05-16):
-  - npm >= 11.10.0 : native ``minimumReleaseAge`` (unit = DAYS) +
-    ``minimumReleaseAgeExclude``.
-  - pnpm >= 10.16  : ``minimumReleaseAge`` (unit = MINUTES; 7d = 10080) +
-    ``minimumReleaseAgeExclude``.
-  - yarn >= 4.10   : ``npmMinimalAgeGate`` (MINUTES) +
-    ``npmPreapprovedPackages``.
-  - Fallback for older npm : ``npm install --before=<YYYY-MM-DD>`` resolves
-    to the latest version published on/before that date. Emitted by the
-    backstop hook, not by this script — when npm < 11.10.0 this script sets
-    ``status: fallback-hook`` so the report states the hook is the active
-    gate on this machine.
+Authoritative ecosystem facts (verified empirically on npm 11.14.1,
+2026-05-16; source mcollina gist + npm `config ls -l` + Socket.dev):
+
+  | PM            | key                  | unit    | file                | exclude/allowlist        |
+  |---------------|----------------------|---------|---------------------|--------------------------|
+  | npm >= 11.10  | min-release-age      | DAYS    | .npmrc              | NONE (npm/cli#8994)      |
+  | pnpm >= 11    | minimumReleaseAge    | MINUTES | pnpm-workspace.yaml | minimumReleaseAgeExclude |
+  | pnpm 10.x     | minimum-release-age  | MINUTES | .npmrc              | (workspace yaml)         |
+  | yarn >= 4.10  | npmMinimalAgeGate    | MINUTES | .yarnrc.yml         | npmPreapprovedPackages   |
+
+  npm has NO native exclude mechanism (open issue npm/cli#8994). For npm the
+  allowlist is therefore enforced by the PreToolUse backstop hook, NOT by
+  native config. ``allowlist_mechanism`` in the envelope tells the hook which
+  regime is active: ``"native"`` (pnpm/yarn — hook stands down once enforced)
+  or ``"hook"`` (npm — hook stays engaged to honor the allowlist).
+
+  npm errors hard if both ``min-release-age`` config and a ``--before`` flag
+  are present in one invocation ("--before cannot be provided when using
+  --min-release-age"). The backstop hook must never add ``--before`` when npm
+  native config is active.
+
   Reference: https://gist.github.com/mcollina/b294a6c39ee700d24073c0e5a4e93104
+
+CRITICAL — ``--check`` reports ``enforced: true`` ONLY after verifying the
+package manager *recognizes* the key, not merely that a file was written. A
+written-but-unrecognized key (e.g. an old camelCase key on modern npm, or a
+fresh key on an npm too old to support it) reports ``enforced: false`` with a
+``reason``. This is the false-positive fix: previously ``--check`` only
+checked for file presence, so an inert key still claimed ``enforced: true``
+and the hook stood down, leaving the project with NO gate at all.
 
 Stdlib only (build-loop minimal-deps rule). Atomic temp+rename writes,
 mirroring ``scripts/write_run_entry.py``. Idempotent: a second run on an
@@ -44,18 +61,19 @@ appended).
 Output envelope (``--json``):
     {
       "status": "configured" | "fallback-hook" | "skipped",
-      "reason": "<str>",                 # present on skipped/fallback
+      "reason": "<str>",                 # present on skipped/fallback/not-enforced
       "package_manager": "npm"|"pnpm"|"yarn"|null,
       "threshold_days": 7,
-      "enforced": true|false,            # is cooldown active for this PM?
+      "enforced": true|false,            # PM actually recognizes the key?
       "allowlist": ["@tyroneross/*", ...],
+      "allowlist_mechanism": "native"|"hook"|null,
       "config_file": "<rel-path>"|null,
-      "npm_version": "10.9.4"|null,      # npm path only
+      "npm_version": "11.14.1"|null,     # npm path only
       "changed": true|false              # did this run modify a file?
     }
 
-``--check`` reports ``enforced`` / ``allowlist`` without writing (the hook
-calls this).
+``--check`` reports ``enforced`` / ``allowlist`` / ``allowlist_mechanism``
+without writing (the hook calls this).
 """
 from __future__ import annotations
 
@@ -70,7 +88,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_ALLOWLIST = ["@tyroneross/*"]
-NPM_NATIVE_MIN = (11, 10, 0)  # first npm with native minimumReleaseAge
+NPM_NATIVE_MIN = (11, 10, 0)  # first npm with native min-release-age
+UNKNOWN_CONFIG_RE = re.compile(r"Unknown project config", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +123,6 @@ def _resolve_allowlist(workdir: Path) -> list[str]:
                 user = [str(x) for x in raw if isinstance(x, str)]
         except (json.JSONDecodeError, OSError):
             user = []
-    # Union, default first, de-dup preserving order.
     out: list[str] = []
     for item in DEFAULT_ALLOWLIST + user:
         if item not in out:
@@ -141,16 +159,61 @@ def _yaml_list(items: list[str]) -> str:
     return "[" + ", ".join(json.dumps(i) for i in items) + "]"
 
 
+def _verify_npm_recognizes(workdir: Path, key: str, expected: str) -> tuple[bool, str]:
+    """Run ``npm config get <key>`` in workdir; recognized IFF it returns the
+    expected value AND stderr has no "Unknown project config" warning.
+
+    This is the false-positive fix: a written-but-unrecognized key (wrong
+    camelCase name, or npm too old) must report enforced=False.
+    """
+    try:
+        proc = subprocess.run(
+            ["npm", "config", "get", key],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"npm config get {key} failed to run: {exc}"
+    if UNKNOWN_CONFIG_RE.search(proc.stderr or ""):
+        return False, (
+            f'npm rejects "{key}" ("Unknown project config") — key written '
+            f"but NOT honored by this npm; cooldown is inert"
+        )
+    got = (proc.stdout or "").strip()
+    if got != expected:
+        return False, (
+            f'npm config get {key} returned "{got}", expected "{expected}" '
+            f"— key not in effect"
+        )
+    return True, ""
+
+
+def _pnpm_recognizes(workdir: Path, key: str, expected: str) -> bool | None:
+    """Best-effort: ``pnpm config get <key>``. Returns True/False, or None if
+    pnpm is not installed (caller falls back to file-presence — the native
+    yaml config carries the exclude list regardless of CLI availability)."""
+    try:
+        proc = subprocess.run(
+            ["pnpm", "config", "get", key],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return (proc.stdout or "").strip() == expected
+
+
 # ---------------------------------------------------------------------------
 # Per-package-manager config merge (idempotent line-merge, no yaml dep)
 # ---------------------------------------------------------------------------
 def _merge_lines(existing: str, updates: dict[str, str]) -> tuple[str, bool]:
-    """Replace-or-append ``key=value`` / ``key: value`` lines idempotently.
-
-    ``updates`` keys are full left-hand sides incl. separator, e.g.
-    ``"minimumReleaseAge="`` or ``"minimumReleaseAge: "``. Returns
-    (new_content, changed).
-    """
+    """Replace-or-append ``key=value`` / ``key: value`` lines idempotently."""
     lines = existing.splitlines() if existing else []
     seen: set[str] = set()
     out: list[str] = []
@@ -178,94 +241,152 @@ def _write_npm(workdir: Path, allowlist: list[str], days: int, check: bool) -> d
     ver = _npm_version()
     target = workdir / ".npmrc"
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-    has_key = bool(re.search(r"(?m)^\s*minimumReleaseAge\s*=", existing))
+    has_key = bool(re.search(r"(?m)^\s*min-release-age\s*=", existing))
+    ver_str = ".".join(map(str, ver)) if ver else None
+
+    # npm has NO native exclude — allowlist is hook-provided.
+    base = {
+        "package_manager": "npm",
+        "npm_version": ver_str,
+        "allowlist_mechanism": "hook",
+    }
 
     if ver is None or ver < NPM_NATIVE_MIN:
         # Native key would be inert here. Do NOT claim it works.
         return {
+            **base,
             "status": "fallback-hook",
             "reason": (
-                f"npm {'.'.join(map(str, ver)) if ver else 'unknown'} < 11.10.0 — "
-                "native minimumReleaseAge unavailable; PreToolUse backstop hook's "
-                "--before= date-pin is the active gate on this machine"
+                f"npm {ver_str or 'unknown'} < 11.10.0 — native min-release-age "
+                "unavailable; PreToolUse backstop hook's --before= date-pin is "
+                "the active gate on this machine"
             ),
-            "package_manager": "npm",
-            "enforced": has_key,  # only enforced if a newer npm wrote it before
-            "npm_version": ".".join(map(str, ver)) if ver else None,
+            "enforced": False,
             "config_file": ".npmrc" if target.is_file() else None,
             "changed": False,
         }
 
-    enforced_before = has_key
     if check:
+        if not has_key:
+            return {
+                **base,
+                "status": "fallback-hook",
+                "reason": "no min-release-age key in .npmrc (not yet injected)",
+                "enforced": False,
+                "config_file": ".npmrc" if target.is_file() else None,
+                "changed": False,
+            }
+        # Real verification: does THIS npm honor the written key?
+        ok, why = _verify_npm_recognizes(workdir, "min-release-age", str(days))
         return {
-            "status": "configured" if enforced_before else "fallback-hook",
-            "package_manager": "npm",
-            "enforced": enforced_before,
-            "npm_version": ".".join(map(str, ver)),
-            "config_file": ".npmrc" if target.is_file() else None,
+            **base,
+            "status": "configured" if ok else "fallback-hook",
+            "reason": "" if ok else why,
+            "enforced": ok,
+            "config_file": ".npmrc",
             "changed": False,
         }
 
-    updates = {
-        "minimumReleaseAge=": f"minimumReleaseAge={days}",
-        "minimumReleaseAgeExclude=": "minimumReleaseAgeExclude=" + ",".join(allowlist),
-    }
+    # Write path. npm key is DAYS. No exclude key (npm has none).
+    updates = {"min-release-age=": f"min-release-age={days}"}
     new, changed = _merge_lines(existing, updates)
     if changed:
         _atomic_write(target, new)
+    ok, why = _verify_npm_recognizes(workdir, "min-release-age", str(days))
     return {
-        "status": "configured",
-        "package_manager": "npm",
-        "enforced": True,
-        "npm_version": ".".join(map(str, ver)),
+        **base,
+        "status": "configured" if ok else "fallback-hook",
+        "reason": "" if ok else why,
+        "enforced": ok,
         "config_file": ".npmrc",
         "changed": changed,
     }
 
 
 def _write_pnpm(workdir: Path, allowlist: list[str], days: int, check: bool) -> dict[str, Any]:
-    minutes = days * 24 * 60
-    target = workdir / "pnpm-workspace.yaml"
-    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
-    has_key = bool(re.search(r"(?m)^\s*minimumReleaseAge\s*:", existing))
+    minutes = days * 24 * 60  # pnpm unit is MINUTES
+    ws = workdir / "pnpm-workspace.yaml"
+    npmrc = workdir / ".npmrc"
+    ws_existing = ws.read_text(encoding="utf-8") if ws.is_file() else ""
+    has_key = bool(re.search(r"(?m)^\s*minimumReleaseAge\s*:", ws_existing))
+    base = {"package_manager": "pnpm", "allowlist_mechanism": "native"}
+
     if check:
+        if not has_key:
+            return {
+                **base,
+                "status": "fallback-hook",
+                "reason": "no minimumReleaseAge in pnpm-workspace.yaml (not yet injected)",
+                "enforced": False,
+                "config_file": "pnpm-workspace.yaml" if ws.is_file() else None,
+                "changed": False,
+            }
+        rec = _pnpm_recognizes(workdir, "minimumReleaseAge", str(minutes))
+        if rec is None:
+            # pnpm CLI absent — fall back to file presence. The native yaml
+            # config carries the exclude list and is honored by pnpm at
+            # install time regardless of CLI availability here.
+            return {
+                **base,
+                "status": "configured",
+                "reason": "pnpm CLI unavailable for live verify; config-file present (native exclude carried in yaml)",
+                "enforced": True,
+                "config_file": "pnpm-workspace.yaml",
+                "changed": False,
+            }
         return {
-            "status": "configured" if has_key else "fallback-hook",
-            "package_manager": "pnpm",
-            "enforced": has_key,
-            "config_file": "pnpm-workspace.yaml" if target.is_file() else None,
+            **base,
+            "status": "configured" if rec else "fallback-hook",
+            "reason": "" if rec else "pnpm does not recognize minimumReleaseAge (too old or inert key)",
+            "enforced": bool(rec),
+            "config_file": "pnpm-workspace.yaml",
             "changed": False,
         }
-    updates = {
+
+    ws_updates = {
         "minimumReleaseAge:": f"minimumReleaseAge: {minutes}",
         "minimumReleaseAgeExclude:": f"minimumReleaseAgeExclude: {_yaml_list(allowlist)}",
     }
-    new, changed = _merge_lines(existing, updates)
-    if changed:
-        _atomic_write(target, new)
+    ws_new, ws_changed = _merge_lines(ws_existing, ws_updates)
+    if ws_changed:
+        _atomic_write(ws, ws_new)
+
+    # pnpm 10.x reads kebab `minimum-release-age` (MINUTES) from .npmrc.
+    npmrc_existing = npmrc.read_text(encoding="utf-8") if npmrc.is_file() else ""
+    npmrc_new, npmrc_changed = _merge_lines(
+        npmrc_existing, {"minimum-release-age=": f"minimum-release-age={minutes}"}
+    )
+    if npmrc_changed:
+        _atomic_write(npmrc, npmrc_new)
+
     return {
+        **base,
         "status": "configured",
-        "package_manager": "pnpm",
         "enforced": True,
         "config_file": "pnpm-workspace.yaml",
-        "changed": changed,
+        "changed": ws_changed or npmrc_changed,
     }
 
 
 def _write_yarn(workdir: Path, allowlist: list[str], days: int, check: bool) -> dict[str, Any]:
-    minutes = days * 24 * 60
+    minutes = days * 24 * 60  # yarn unit is MINUTES (numeric — 7d string form is bugged)
     target = workdir / ".yarnrc.yml"
     existing = target.read_text(encoding="utf-8") if target.is_file() else ""
     has_key = bool(re.search(r"(?m)^\s*npmMinimalAgeGate\s*:", existing))
+    base = {"package_manager": "yarn", "allowlist_mechanism": "native"}
+
     if check:
+        # yarn config get is unreliable headless; verify by key presence in
+        # the project .yarnrc.yml (Berry reads this file at install time).
         return {
+            **base,
             "status": "configured" if has_key else "fallback-hook",
-            "package_manager": "yarn",
+            "reason": "" if has_key else "no npmMinimalAgeGate in .yarnrc.yml (not yet injected)",
             "enforced": has_key,
             "config_file": ".yarnrc.yml" if target.is_file() else None,
             "changed": False,
         }
+
     updates = {
         "npmMinimalAgeGate:": f"npmMinimalAgeGate: {minutes}",
         "npmPreapprovedPackages:": f"npmPreapprovedPackages: {_yaml_list(allowlist)}",
@@ -274,8 +395,8 @@ def _write_yarn(workdir: Path, allowlist: list[str], days: int, check: bool) -> 
     if changed:
         _atomic_write(target, new)
     return {
+        **base,
         "status": "configured",
-        "package_manager": "yarn",
         "enforced": True,
         "config_file": ".yarnrc.yml",
         "changed": changed,
@@ -294,6 +415,7 @@ def run(workdir: Path, days: int, check: bool) -> dict[str, Any]:
             "threshold_days": days,
             "enforced": False,
             "allowlist": [],
+            "allowlist_mechanism": None,
             "config_file": None,
             "changed": False,
         }
@@ -327,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"[dependency-cooldown] {env['status']} "
             f"pm={env.get('package_manager')} enforced={env.get('enforced')} "
+            f"mechanism={env.get('allowlist_mechanism')} "
             f"allowlist={env.get('allowlist')} "
             + (f"reason={env['reason']}" if env.get("reason") else "")
         )

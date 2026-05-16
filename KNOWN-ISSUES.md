@@ -1,10 +1,25 @@
 # Known Issues
 
-## Dependency cooldown: native `minimumReleaseAge` requires recent toolchains (NEW 2026-05-16)
+## Dependency cooldown: per-PM native config keys + npm has no native exclude (REVISED 2026-05-16, v0.11.1)
 
-The supply-chain dependency cooldown (`scripts/inject_dependency_cooldown.py`) is most effective with **npm ≥ 11.10.0** / **pnpm ≥ 10.16** / **yarn ≥ 4.10**, which ship native per-package publish-age gating. On older toolchains the injector reports `status: fallback-hook` and does **not** write an inert config key (it would not be honored). The active gate then becomes the PreToolUse backstop hook's `--before=<7d ago>` date-pin, which is **coarser**: it resolves to the newest version published on/before a date rather than per-package age, so a package whose only release is brand-new is excluded entirely until 7 days pass (acceptable, but blunter than `minimumReleaseAge`). The hook **cannot** rewrite lockfile-driven installs (`npm ci`) or pnpm (no `--before` equivalent) — those are **denied** with an actionable message telling the operator to run the injector to add native config. pip/cargo have no native cooldown primitive and are **not covered in v1** (`[FOLLOW-UP] pip/cargo cooldown`).
+The supply-chain dependency cooldown (`scripts/inject_dependency_cooldown.py`) writes a different native key per package manager (verified empirically on npm 11.14.1, 2026-05-16; source: mcollina gist + npm `config ls -l` + Socket.dev):
 
-Separately: `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pre_bash_autonomy.sh`, unrelated to the cooldown feature) fail on `main` as of 5d425ba — a stale `/tmp`-cwd expectation that the scope-guard hardening invalidated. Pre-existing; not introduced by the cooldown feature. Cooldown's own cases (7–11) pass.
+| PM | key | unit | file | exclude/allowlist |
+|---|---|---|---|---|
+| **npm ≥ 11.10** | `min-release-age` | **DAYS** (`min-release-age=7`) | `.npmrc` | **NONE** — npm has no native exclude (open issue [npm/cli#8994](https://github.com/npm/cli/issues/8994)) |
+| **pnpm ≥ 11** | `minimumReleaseAge` | **MINUTES** (`10080`) | `pnpm-workspace.yaml` | `minimumReleaseAgeExclude:` (YAML list) |
+| **pnpm 10.x** | `minimum-release-age` | **MINUTES** | `.npmrc` | (exclude carried in workspace yaml) |
+| **yarn ≥ 4.10** | `npmMinimalAgeGate` | **MINUTES** (numeric — the `7d` string form is bugged, [yarnpkg/berry#6991](https://github.com/yarnpkg/berry/issues/6991)) | `.yarnrc.yml` | `npmPreapprovedPackages:` |
+
+**The v0.11.0 bug (fixed in 0.11.1):** the injector wrote npm's `.npmrc` with pnpm's camelCase `minimumReleaseAge`. npm 11.14.1 rejects it (`npm warn Unknown project config "minimumReleaseAge"`) and installs ungated packages anyway, while `--check` still reported `enforced:true` (a false positive — it only verified a file was written, never that npm honored the key). On npm that false `enforced:true` also made the PreToolUse hook stand down, leaving **no gate at all**. `--check` now runs `npm config get min-release-age` and reports `enforced:true` **only** when npm recognizes the key (no "Unknown project config" stderr AND the value matches); a written-but-unrecognized key reports `enforced:false` with a reason.
+
+**npm has no native exclude mechanism.** Native `min-release-age` covers transitive dependencies (the gap the native layer closes) but cannot exempt user-authored packages. So on npm the allowlist is enforced by the **PreToolUse backstop hook, which stays engaged even when native config is active** (`allowlist_mechanism: "hook"` in the injector envelope). Hook behavior on npm with native config: if every explicit package in the install command is allowlisted → rewrite to append `--min-release-age=0` (cooldown bypassed for that command only); otherwise silent no-op (native `min-release-age` already gates the third-party packages). The hook **never** adds `--before` when npm native config is active — npm hard-errors when both are present (`--before cannot be provided when using --min-release-age`). On pnpm/yarn the native config carries the exclude list (`allowlist_mechanism: "native"`) so the hook stands down entirely once enforced.
+
+On genuinely old npm (< 11.10.0) the injector reports `status: fallback-hook` and does **not** write an inert key; the hook's `--before=<7d ago>` date-pin is the active (coarser) gate. The hook cannot rewrite lockfile-driven `npm ci` or pnpm — those are **denied** with an actionable message. pip/cargo have no native cooldown primitive and are **not covered in v1** (`[FOLLOW-UP] pip/cargo cooldown`).
+
+Operator note: `npm view <pkg> --before <date>` **ignores** `--before` for the metadata read (it only constrains the install resolver). To inspect what a cooldown would resolve, use `npm install <pkg> --dry-run` with the `.npmrc` in place, not `npm view`.
+
+Separately: `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pre_bash_autonomy.sh`, unrelated to the cooldown feature) fail on `main` — a stale `/tmp`-cwd expectation that the scope-guard hardening invalidated. Pre-existing; not introduced by the cooldown feature. Cooldown's own cases (7–14) pass.
 
 ## M4 session_registry.py doesn't fire — `~/.build-loop/sessions/` never populated (NEW 2026-05-12)
 

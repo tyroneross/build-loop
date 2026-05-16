@@ -63,8 +63,8 @@ Detail on each phase, the model tier rules, the synthesis-decision lint, the arc
 
 Build-loop refuses to install third-party JS packages (or version bumps) until the resolved version has been published for at least **7 days**, mitigating smash-and-grab npm compromises (a malicious version published then yanked within hours-to-days never reaches your lifecycle scripts). Defense-in-depth, three layers:
 
-1. **Native config injection** (primary gate) — Phase 1 Assess runs `scripts/inject_dependency_cooldown.py`, idempotently writing `minimumReleaseAge` (`.npmrc` for npm ≥ 11.10.0 / `pnpm-workspace.yaml` / `.yarnrc.yml`).
-2. **PreToolUse backstop hook** — catches ad-hoc installs in ungated projects: rewrites `npm`/`yarn add` with `--before=<7d ago>`, denies `npm ci`/`pnpm add` with an actionable message.
+1. **Native config injection** (primary gate) — Phase 1 Assess runs `scripts/inject_dependency_cooldown.py`, idempotently writing the package manager's native publish-age key: npm ≥ 11.10.0 → `.npmrc` `min-release-age` (days); pnpm → `pnpm-workspace.yaml` `minimumReleaseAge` (minutes) + `.npmrc` `minimum-release-age` for pnpm 10.x; yarn ≥ 4.10 → `.yarnrc.yml` `npmMinimalAgeGate` (numeric minutes). npm has **no** native exclude ([npm/cli#8994](https://github.com/npm/cli/issues/8994)) so the user-authored allowlist is enforced by layer 2 on npm; pnpm/yarn carry it natively.
+2. **PreToolUse backstop hook** — for ungated projects, rewrites `npm`/`yarn add` with `--before=<7d ago>` and denies `npm ci`/`pnpm add` with an actionable message. On npm **with** native config it stays engaged for the allowlist: all-allowlisted installs get a command-scoped `--min-release-age=0`; third-party installs are left to the native gate (never `--before` — npm rejects it alongside native config).
 3. **Constitution + commit-auditor** — `C-SUPPLY/dependency_cooldown` rule; advisory flag on `<7d`-old deps in lockfile diffs.
 
 User-authored scopes are exempt via a config-driven allowlist (`.build-loop/config.json` → `dependencyCooldown.allowlist`, default `["@tyroneross/*"]`). See KNOWN-ISSUES for the older-toolchain fallback caveat. pip/cargo not covered in v1.

@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate.",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
