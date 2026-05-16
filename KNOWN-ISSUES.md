@@ -1,5 +1,11 @@
 # Known Issues
 
+## Web deploy verification (Vercel) added (NEW 2026-05-16, v0.12.0)
+
+Additive feature, no behavior change to existing flows. `scripts/verify_deploy.py` (+ `scripts/test_verify_deploy.py`) is a sibling of `runtime_smoke.py`: a Phase 4 Review-B gate that fires after a deploy actually ran and the consumer project is Vercel-linked (`.vercel/project.json` or `vercel.json`). It resolves the latest production deployment, polls `vercel inspect` to a terminal state, then probes the prod root + each `--changed-route`. Classification: `Ready` + root `200` + every changed route in `{200, 3xx, 401, 403}` → `pass`; `Error`/`Canceled`/build-failure or any changed route `5xx` → `fail` (routes to Iterate on `findings`); missing/unauthed CLI or any transient infra → `skipped` (never hard-fails the build). Key encoded heuristic: an auth-gated `401`/`403` on a protected route is **healthy** (function deployed and running), not a failure. MCP is documented only as an optional preferred-tier upgrade (`mcp.vercel.com`, user-added to `.mcp.json`); no MCP server is bundled. Wired into `capability-routing.md`, `fallbacks.md#web-deploy-verify`, `phase-4-review.md`, and `agents/build-orchestrator.md`.
+
+Version sync side effect: `.codex-plugin/plugin.json` and `.claude-plugin/marketplace.json` (metadata + plugin entry) were stale at `0.10.0` against `.claude-plugin/plugin.json` `0.11.1` on `main` (`scripts/test_plugin_manifest.py` was failing on `main` for this reason). The 0.12.0 bump realigns all four version fields; the manifest test now passes.
+
 ## Dependency cooldown: per-PM native config keys + npm has no native exclude (REVISED 2026-05-16, v0.11.1)
 
 The supply-chain dependency cooldown (`scripts/inject_dependency_cooldown.py`) writes a different native key per package manager (verified empirically on npm 11.14.1, 2026-05-16; source: mcollina gist + npm `config ls -l` + Socket.dev):

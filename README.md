@@ -285,6 +285,9 @@ Phase 1 sub-step probes each memory backend with per-backend 5 s timeout. Output
 **Plan-verify rules** (`scripts/plan_verify.py`)
 Now includes `schema-migration-full-chain` — flags any commit touching writer/storage/schema files without matching test fixture or reader-path co-change. Catches the recurring drift pattern where writer keys diverge from reader expectations.
 
+**Web deploy verification** (`scripts/verify_deploy.py`)
+Phase 4 Review-B gate that runs after a deploy actually executed. Detects a Vercel link (`.vercel/project.json` or `vercel.json`), resolves the latest production deployment, polls `vercel inspect` to a terminal state, then probes the prod root + each changed route. An auth-gated `401`/`403` on a protected route is treated as **healthy** (the function deployed and is running) — only a `5xx`/build-error fails. Infra trouble (CLI missing, not authed) returns `skipped` and never blocks the build. Optional preferred-tier upgrade: the remote Vercel MCP, only if the user adds it to `.mcp.json` (build-loop does not add it). Inline degraded path: `fallbacks.md#web-deploy-verify`.
+
 **Decision capture loop**
 Every architecture violation surfaced by `rules` becomes a deduplicated decision in the canonical episodic store via `scripts/capture_arch_violation.py`. Recurring violations (≥3× across runs) get promoted to project-local lessons by `scripts/promote_violation_to_lesson.py` and one-way-synced into Postgres `semantic_facts` for cross-project recall by `scripts/sync_navgator_lessons.py`.
 
