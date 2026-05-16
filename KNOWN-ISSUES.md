@@ -25,7 +25,7 @@ On genuinely old npm (< 11.10.0) the injector reports `status: fallback-hook` an
 
 Operator note: `npm view <pkg> --before <date>` **ignores** `--before` for the metadata read (it only constrains the install resolver). To inspect what a cooldown would resolve, use `npm install <pkg> --dry-run` with the `.npmrc` in place, not `npm view`.
 
-Separately: `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pre_bash_autonomy.sh`, unrelated to the cooldown feature) fail on `main` — a stale `/tmp`-cwd expectation that the scope-guard hardening invalidated. Pre-existing; not introduced by the cooldown feature. Cooldown's own cases (7–14) pass.
+Resolved (2026-05-16): `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pre_bash_autonomy.sh`, unrelated to the cooldown feature) previously failed on `main` because they sent `cwd:/tmp` and expected `permissionDecision=allow`. That expectation predated the autonomy hook's scope-guard hardening (the hook intentionally returns silent `{}` for any cwd lacking a `.build-loop/` marker — deliberate false-positive prevention, mirroring the cooldown hook). The hook was correct; the tests were stale. Cases 1 & 3 now run the benign command in a build-loop-marked temp cwd and still assert `allow` (coverage preserved), and a new Case 3b asserts the scope-guard contract directly (benign command with `cwd:/tmp`, no marker → silent `{}`). All `test_hooks.sh` cases pass; test+docs only, no behavior change.
 
 ## M4 session_registry.py doesn't fire — `~/.build-loop/sessions/` never populated (NEW 2026-05-12)
 
