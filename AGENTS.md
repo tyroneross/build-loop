@@ -44,6 +44,7 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - Check for prior state (`.build-loop/state.json` from interrupted builds)
 - If goal involves external frameworks or APIs: research current docs before planning
 - If web/mobile UI: capture current visual state for before/after comparison, then load `skills/build-loop/references/ui-io-contract.md` and inventory the affected user inputs and system outputs before planning
+- **Supply-chain dependency cooldown**: if a JS project (`package.json`), run `scripts/inject_dependency_cooldown.py --workdir <repo>` to idempotently write a 7-day `minimumReleaseAge` config (npm ≥ 11.10.0 `.npmrc` / `pnpm-workspace.yaml` / `.yarnrc.yml`). User-authored scopes are exempt via `.build-loop/config.json` → `dependencyCooldown.allowlist` (default `["@tyroneross/*"]`). A PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`) backstops ad-hoc installs in ungated projects. Constitution rule: `C-SUPPLY/dependency_cooldown`. Older npm (< 11.10.0) falls back to the hook's `--before=<7d ago>` date-pin. pip/cargo not covered in v1.
 
 **Multi-session presence registration + collision check (cross-host: Claude Code, Codex, Gemini CLI, others):**
 

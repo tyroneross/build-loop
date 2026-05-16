@@ -63,7 +63,7 @@ When dispatching `build-loop:build-orchestrator` as a sub-agent OR when the call
 Runtime data stored in `.build-loop/` within consumer projects (created on first use):
 - `goal.md` — current build goal
 - `intent.md` — north star, update intent, user value, and non-goals
-- `config.json` — optional repo flags, including deploymentPolicy
+- `config.json` — optional repo flags, including deploymentPolicy and `dependencyCooldown.allowlist` (supply-chain: scopes/names exempt from the 7-day publish-age gate; default `["@tyroneross/*"]`). Phase 1 Assess runs `scripts/inject_dependency_cooldown.py` on JS projects; a PreToolUse hook backstops ad-hoc installs. Rule: `C-SUPPLY/dependency_cooldown`.
 - `state.json` — iteration state, phase progress, compact intent/structure summaries, **`runs[]`** for self-improvement scanning
 - `feedback.md` — post-build lessons
 - `evals/` — scorecard archives

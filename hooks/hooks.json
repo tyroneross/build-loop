@@ -35,6 +35,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre_bash_autonomy.sh",
             "timeout": 2000
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre_bash_dependency_cooldown.sh",
+            "timeout": 2000
           }
         ]
       }

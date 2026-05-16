@@ -74,6 +74,7 @@ CATEGORY_KEYWORDS = [
                       "slice", "acp",
                       # Crash recovery / state.json checkpoint surfaces (M1-M4):
                       "crash recovery", "crash-recovery", "state_finalize",
+                      "stop_finalize", "finalize",
                       "state.json checkpoint", "resume_resolver",
                       "subagent envelope", "subagent_result", "heartbeat",
                       "incomplete build", "run_id provenance",
@@ -91,7 +92,14 @@ CATEGORY_KEYWORDS = [
     ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic",
                       "review", "rubric", "lint", "cache sync", "cache-sync",
                       "collision", "namesake", "api dependency", "api-registry",
-                      "api config", "api-config")),
+                      "api config", "api-config",
+                      # Supply-chain + autonomy gating hooks (PreToolUse Bash
+                      # gates). Matches the hook command strings so they
+                      # classify as validation infrastructure rather than
+                      # falling through to the 'unknown' keyword fallback.
+                      "supply-chain", "dependency_cooldown",
+                      "dependency-cooldown", "pre_bash_autonomy",
+                      "pre_bash_dependency", "autonomy_gate", "cooldown")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",

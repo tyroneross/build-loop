@@ -38,6 +38,10 @@ rule IDs stable across edits — judge envelopes cite them by ID.
 - **C-MEMORY/canonical_writer**: All memory writes go through `scripts/memory_writer.py` for provenance. No direct file appends to `decisions/` or `~/.build-loop/memory/`.
 - **C-MEMORY/no_global_pollution**: Project-specific facts go in `<repo>/.build-loop/memory/`. Cross-project lessons go in `~/.build-loop/memory/`. Don't conflate.
 
+## C-SUPPLY — Supply-chain invariants
+
+- **C-SUPPLY/dependency_cooldown**: Third-party JS package installs and version bumps must wait until the resolved version has been published ≥ 7 days (smash-and-grab npm-compromise mitigation: a malicious version published then yanked within hours-to-days is filtered before lifecycle scripts run). Enforced primarily by native package-manager config (`minimumReleaseAge` / `npmMinimalAgeGate` via `scripts/inject_dependency_cooldown.py`); a PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`) backstops ad-hoc installs. User-authored scopes are exempt via a config-driven allowlist (`<repo>/.build-loop/config.json` key `dependencyCooldown.allowlist`, default `["@tyroneross/*"]`).
+
 ## How judges use this
 
 Variances in judge envelopes cite constitution rules as `constitution:C-SEC/no_secret_in_repo` (etc.). The orchestrator's Phase 1 Assess caches touched rule IDs in `state.json.constitution.loadedRuleIds[]` so downstream judges can reference them without re-reading.
@@ -49,3 +53,7 @@ Empty / minimal constitution is fine — judges fall back to `MEMORY.md` feedbac
 - **Stable IDs**: never renumber. Rules added at the end keep existing citations valid.
 - **Concise bodies**: one sentence per rule. Detail goes in linked `[[name]]` memory entries.
 - **Versioned**: this file is read at every Phase 1; expect frequent reads. Keep it small (< 200 lines) for cache efficiency.
+
+## Adopting new rule families into an existing constitution
+
+If you already have a `~/.build-loop/memory/constitution.md` (global) or `<repo>/.build-loop/memory/constitution.md` (project) and a build-loop release adds a new rule family, append the new `## C-<FAMILY>` section verbatim from this template. IDs are stable, so existing `constitution:<rule_id>` citations stay valid. Example: to adopt the supply-chain gate, copy the `## C-SUPPLY` section in. Phase 1 Assess re-reads the file each run and re-caches `state.json.constitution.loadedRuleIds[]`, so `commit-auditor` picks up the new rule on the next build with no further wiring.
