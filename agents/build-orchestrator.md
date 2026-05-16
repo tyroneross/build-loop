@@ -129,9 +129,19 @@ Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-ste
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
 - **F. Auto-Resolve** — `python3 scripts/autonomy_gate.py` against each candidate from A/D; `auto` executes, `warn` executes with `[warn]` prefix + autonomyEvents entry, `confirm` → `## Held`, `block` → `## Blocked`. Strong-checkpoint findings never enter this queue.
-- **G. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate. Report sections in order: `## Done` (verified + Auto-Resolve auto + `[warn]` items), `## Held` (confirm verdicts), `## Blocked` (block verdicts), `## Status markers` (✅/⚠️/❓). Forbidden: "Open Recommendations" headers, "Want me to X?" / "Should I Y?" phrasing, lists inviting operator selection. Empty categories: `_(none)_`.
+- **G. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate (see §"Review: Post-deploy verification gate"). Report sections in order: `## Done` (verified + Auto-Resolve auto + `[warn]` items), `## Held` (confirm verdicts), `## Blocked` (block verdicts), `## Status markers` (✅/⚠️/❓). Forbidden: "Open Recommendations" headers, "Want me to X?" / "Should I Y?" phrasing, lists inviting operator selection. Empty categories: `_(none)_`.
 
 Detailed protocols (including SSE-specific contract gate, plugin-tests path globs, memory-first gate steps, Gate 6/7/8 specifics) in the checklist file.
+
+#### Review: Post-deploy verification gate
+
+Analogous to the Review-B runtime smoke gate, but for production web deploys instead of the local dev server. **When to fire**: a deploy actually ran this build — the deployment policy gate returned `auto` and the deploy/push command executed, OR the pushed branch auto-deploys via Vercel — AND the consumer project is Vercel-linked (`.vercel/project.json` or `vercel.json` present). Skip entirely otherwise (no deploy ⇒ nothing to verify).
+
+**Invoke**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify_deploy.py --workdir "$PWD" --changed-route <route> [--changed-route <route> ...] --json`. Pass the routes this build changed (API handlers, pages). The script resolves the latest production deployment, polls `vercel inspect` to a terminal state, then probes the prod root + each changed route.
+
+**Route on the envelope `status`**: `pass` → proceed. `fail` → Phase 5 Iterate, using the envelope's `findings` as the rubric (deployment `ERROR`/`CANCELED`, non-200 prod root, or a changed route `5xx`/unreachable). `skipped` → record `deploy_verify: skipped (<reason>)` in Review-G and proceed; infra state (no Vercel link, CLI missing, not authed, network) **never** hard-fails the build.
+
+**Key heuristic**: an auth-gated `401`/`403` on a protected changed route is **healthy** — the function deployed and is running, it just refused the unauthenticated probe. Only `5xx`/build-error is a real failure. Preferred-tier upgrade: if the user has added the Vercel MCP (`mcp.vercel.com`) to `.mcp.json`, use it instead of the CLI; do not add the MCP server automatically. Inline degraded procedure: `fallbacks.md#web-deploy-verify`.
 
 ### Phase 5: Iterate (up to 5x classic, up to 25 autonomous)
 
