@@ -153,6 +153,73 @@ fi
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+# Dependency-cooldown backstop hook (pre_bash_dependency_cooldown.sh)
+# ---------------------------------------------------------------------------
+DEP_HOOK="${SCRIPT_DIR}/pre_bash_dependency_cooldown.sh"
+DC_DIR=$(mktemp -d)
+mkdir -p "${DC_DIR}/.build-loop"
+echo '{"name":"t"}' > "${DC_DIR}/package.json"
+echo '{}' > "${DC_DIR}/.build-loop/config.json"
+
+dc_decision() {
+    printf '%s' "$1" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('hookSpecificOutput',{}).get('permissionDecision',''))
+except Exception:
+    print('')
+" 2>/dev/null
+}
+
+# Case 7: npm install of a third-party pkg, no native config -> allow + --before
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm install lodash\"},\"cwd\":\"${DC_DIR}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$(dc_decision "$R")" = "allow" ] && printf '%s' "$R" | grep -q -- "--before="; then
+    pass "Case 7: npm install third-party -> allow + --before"
+else
+    fail "Case 7: npm install third-party -> allow + --before" "got: ${R}"
+fi
+
+# Case 8: allowlisted scope -> {} (no delay)
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm install @tyroneross/build-loop\"},\"cwd\":\"${DC_DIR}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$R" = "{}" ]; then
+    pass "Case 8: allowlisted scope -> no delay"
+else
+    fail "Case 8: allowlisted scope -> no delay" "got: ${R}"
+fi
+
+# Case 9: non-install Bash -> {} silent no-op
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"ls -la && git status\"},\"cwd\":\"${DC_DIR}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$R" = "{}" ]; then
+    pass "Case 9: non-install Bash -> silent no-op"
+else
+    fail "Case 9: non-install Bash -> silent no-op" "got: ${R}"
+fi
+
+# Case 10: npm ci (lockfile-driven, cannot date-pin) -> deny
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm ci\"},\"cwd\":\"${DC_DIR}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$(dc_decision "$R")" = "deny" ]; then
+    pass "Case 10: npm ci -> deny with actionable reason"
+else
+    fail "Case 10: npm ci -> deny" "got: ${R}"
+fi
+
+# Case 11: not a build-loop project -> {} (scope guard)
+NONBL=$(mktemp -d)
+R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm install lodash\"},\"cwd\":\"${NONBL}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$DEP_HOOK")
+if [ "$R" = "{}" ]; then
+    pass "Case 11: non-build-loop project -> scope-guarded no-op"
+else
+    fail "Case 11: non-build-loop project -> no-op" "got: ${R}"
+fi
+rm -rf "$DC_DIR" "$NONBL"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 
