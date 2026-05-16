@@ -1,5 +1,11 @@
 # Known Issues
 
+## Dependency cooldown: native `minimumReleaseAge` requires recent toolchains (NEW 2026-05-16)
+
+The supply-chain dependency cooldown (`scripts/inject_dependency_cooldown.py`) is most effective with **npm ≥ 11.10.0** / **pnpm ≥ 10.16** / **yarn ≥ 4.10**, which ship native per-package publish-age gating. On older toolchains the injector reports `status: fallback-hook` and does **not** write an inert config key (it would not be honored). The active gate then becomes the PreToolUse backstop hook's `--before=<7d ago>` date-pin, which is **coarser**: it resolves to the newest version published on/before a date rather than per-package age, so a package whose only release is brand-new is excluded entirely until 7 days pass (acceptable, but blunter than `minimumReleaseAge`). The hook **cannot** rewrite lockfile-driven installs (`npm ci`) or pnpm (no `--before` equivalent) — those are **denied** with an actionable message telling the operator to run the injector to add native config. pip/cargo have no native cooldown primitive and are **not covered in v1** (`[FOLLOW-UP] pip/cargo cooldown`).
+
+Separately: `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pre_bash_autonomy.sh`, unrelated to the cooldown feature) fail on `main` as of 5d425ba — a stale `/tmp`-cwd expectation that the scope-guard hardening invalidated. Pre-existing; not introduced by the cooldown feature. Cooldown's own cases (7–11) pass.
+
 ## M4 session_registry.py doesn't fire — `~/.build-loop/sessions/` never populated (NEW 2026-05-12)
 
 **Symptom.** During decision-doctor-cc 2026-05-11, two concurrent writers (main Claude session + background build-loop orchestrator) collided on the same worktree. The M4 `scripts/session_registry.py` is supposed to register presence files at `~/.build-loop/sessions/<run_id>.json` and detect this exact collision tier (HIGH or CRITICAL based on overlap). Verified after the session: directory does not exist on the machine, no presence files were ever written. FIX-4 agent's own postmortem confirms: *"the session_registry hooks I'm supposed to fire on M4 weren't fired by the orchestrator."*
