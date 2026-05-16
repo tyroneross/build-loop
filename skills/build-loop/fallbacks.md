@@ -498,3 +498,48 @@ Notes:
 - 44pt tap targets (HIG). Dynamic Type at every font size. VoiceOver labels on every tappable view.
 - Watch connectivity: use `WCSession` with `transferUserInfo` for background sync, `sendMessage` only when reachable.
 - Do not copy Apple Developer Program credentials into the repo. Read from Keychain or environment.
+
+## web-deploy-verify — Vercel post-deploy verification
+
+When `scripts/verify_deploy.py` is unavailable (older plugin checkout) AND the
+Vercel MCP is not configured in `.mcp.json`, run this degraded procedure by hand
+after a deploy/push that triggered a Vercel build.
+
+Preconditions: the consumer project is Vercel-linked (`.vercel/project.json` or
+`vercel.json` present) and the `vercel` CLI is authed. If either is missing,
+record `deploy_verify: skipped (<reason>)` and proceed — never block the build
+on infra.
+
+Procedure:
+
+1. Resolve the latest production deployment URL:
+
+   ```sh
+   vercel ls --environment production --format json --yes
+   ```
+
+   Take the newest entry's `url` (prefix `https://` if bare).
+
+2. Poll the deployment to a terminal state — `vercel inspect <url> --format json`
+   every ~20s, capped at ~10min. Read `readyState` (or `state`/`status`):
+   - `READY` → continue to step 3.
+   - `ERROR` or `CANCELED` → **Iterate**. Build/function error. Pull logs with
+     `vercel inspect <url> --logs`.
+
+3. Probe the production root and each changed endpoint:
+   - Prod root (`GET /`) must return **200**. A `READY` deployment whose root is
+     not 200 is a render/runtime failure → Iterate.
+   - Each changed route is **healthy** when it returns `200`, a `3xx`
+     redirect, or **`401` / `403`**.
+
+   **`401`/`403` on a protected route is a HEALTHY auth gate, NOT a failure.**
+   It proves the serverless function deployed and is running; it simply (and
+   correctly) refused an unauthenticated probe. Treating it as a failure would
+   make every authenticated app fail its own deploy gate.
+
+   Only a `5xx` (function crash) or an unreachable changed route is a real
+   failure → Iterate, using the offending route + status as the rubric.
+
+4. Outcome: deployment `READY` + root `200` + every changed endpoint in
+   `{200, 3xx, 401, 403}` ⇒ healthy, proceed. Otherwise Iterate. Infra trouble
+   (CLI missing, auth, network) ⇒ `skipped`, proceed.
