@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fixture-driven tests for pre_bash_autonomy.sh and stop_finalize.sh
-# All 6 cases must pass; any failure exits non-zero.
+# (plus the dependency-cooldown backstop hook). Any failure exits non-zero.
 
 set -euo pipefail
 
@@ -16,10 +16,19 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1 — $2"; FAIL=$((FAIL + 1)); }
 
 # ---------------------------------------------------------------------------
-# Case 1: PreToolUse benign command -> permissionDecision=allow
+# Case 1: PreToolUse benign command in a build-loop-marked cwd -> allow
+# The autonomy hook scope-guards to projects with a .build-loop/ marker
+# (state.json or config.json). A benign command inside such a project must
+# evaluate to permissionDecision=allow (auto verdict). cwd must therefore be a
+# marked project dir, not a bare /tmp (the scope-guard correctly returns {} for
+# unmarked dirs — that contract is asserted separately below).
 # ---------------------------------------------------------------------------
+BL_DIR_1=$(mktemp -d)
+mkdir -p "${BL_DIR_1}/.build-loop"
+echo '{}' > "${BL_DIR_1}/.build-loop/config.json"
+
 RESULT=$(printf '%s' \
-    '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"/tmp"}' \
+    "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"},\"cwd\":\"${BL_DIR_1}\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$PRE_BASH")
 
 DECISION=$(printf '%s' "$RESULT" | python3 -c "
@@ -32,10 +41,11 @@ except Exception:
 " 2>/dev/null)
 
 if [ "$DECISION" = "allow" ]; then
-    pass "Case 1: benign command -> allow"
+    pass "Case 1: benign command (build-loop cwd) -> allow"
 else
-    fail "Case 1: benign command -> allow" "got permissionDecision='${DECISION}' from: ${RESULT}"
+    fail "Case 1: benign command (build-loop cwd) -> allow" "got permissionDecision='${DECISION}' from: ${RESULT}"
 fi
+rm -rf "$BL_DIR_1"
 
 # ---------------------------------------------------------------------------
 # Case 2: PreToolUse deployment command -> permissionDecision=ask (confirm)
@@ -64,10 +74,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 3: PreToolUse with subagent agent_id present -> still works (no special handling)
+# Case 3: PreToolUse with subagent agent_id present -> still works (no special
+# handling). The hook does not filter by agent_id; a benign command in a
+# build-loop-marked cwd must still evaluate to allow regardless of agent_id.
 # ---------------------------------------------------------------------------
+BL_DIR_3=$(mktemp -d)
+mkdir -p "${BL_DIR_3}/.build-loop"
+echo '{}' > "${BL_DIR_3}/.build-loop/config.json"
+
 RESULT=$(printf '%s' \
-    '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hello"},"cwd":"/tmp","agent_id":"sub-123"}' \
+    "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo hello\"},\"cwd\":\"${BL_DIR_3}\",\"agent_id\":\"sub-123\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$PRE_BASH")
 
 DECISION=$(printf '%s' "$RESULT" | python3 -c "
@@ -81,9 +97,26 @@ except Exception:
 
 # Pre-bash hook doesn't filter by agent_id — it just evaluates the command
 if [ "$DECISION" = "allow" ]; then
-    pass "Case 3: PreToolUse with agent_id -> allow (no special handling)"
+    pass "Case 3: agent_id present (build-loop cwd) -> allow (no special handling)"
 else
-    fail "Case 3: PreToolUse with agent_id -> allow" "got permissionDecision='${DECISION}' from: ${RESULT}"
+    fail "Case 3: agent_id present (build-loop cwd) -> allow" "got permissionDecision='${DECISION}' from: ${RESULT}"
+fi
+rm -rf "$BL_DIR_3"
+
+# ---------------------------------------------------------------------------
+# Case 3b: scope-guard — benign command with cwd:/tmp (NO .build-loop/ marker)
+# -> silent {}. Locks in the autonomy hook's scope-guard hardening so the
+# pre-hardening /tmp expectation cannot silently regress. Mirrors the
+# cooldown-hook scope-guard assertion (Case 11 below).
+# ---------------------------------------------------------------------------
+RESULT=$(printf '%s' \
+    '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"/tmp"}' \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$PRE_BASH")
+
+if [ "$RESULT" = "{}" ]; then
+    pass "Case 3b: non-build-loop cwd (/tmp) -> scope-guarded silent {}"
+else
+    fail "Case 3b: non-build-loop cwd (/tmp) -> silent {}" "got: ${RESULT}"
 fi
 
 # ---------------------------------------------------------------------------
