@@ -146,6 +146,16 @@ Run `/simplify` (or load the `simplify` skill directly) against the changed file
 
 Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION: <reason>`. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
 
+**Sub-step E telemetry (mandatory, every Review pass, all builds).** After E completes for this Review pass, the orchestrator MUST append one row to `state.json["reviewE"]` via:
+
+```python
+update_execution_state(state_path, 'review_e_pass',
+                        files_scanned=[<files E actually inspected this pass>],
+                        is_final=<True iff this is the final Review pass>)
+```
+
+This is **measurement infrastructure, not a factor** — it is present and identical on every build regardless of any cadence policy. It records *what E did this pass*; it must NOT change *what E does*. `pass_idx` auto-derives from the existing row count (0-based). When a cadence policy scopes E to only iterate-changed files on Review re-entry, the recorded `files_scanned` naturally shrinks on non-first passes — that difference is the signal a deterministic scorer reads. Telemetry write failure is logged, never blocks the build.
+
 ### Sub-step F: Auto-Resolve (drain non-destructive open items)
 
 Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:

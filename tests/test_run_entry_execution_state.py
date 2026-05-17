@@ -127,9 +127,33 @@ def test_invalid_action_raises(tmp_path):
         update_execution_state(_state(tmp_path), "bogus_action")
 
 
+def test_review_e_pass_appends_rows_without_execution_block(tmp_path):
+    """review_e_pass writes state['reviewE'] and does NOT require 'start' first."""
+    sp = _state(tmp_path)
+    sp.write_text("{}")
+    update_execution_state(sp, "review_e_pass", files_scanned=["src/a.ts", "src/b.ts"], is_final=False)
+    update_execution_state(sp, "review_e_pass", files_scanned=["src/a.ts"], is_final=True)
+    st = json.loads(sp.read_text())
+    assert st["reviewE"] == [
+        {"pass_idx": 0, "files_scanned": ["src/a.ts", "src/b.ts"], "is_final": False},
+        {"pass_idx": 1, "files_scanned": ["src/a.ts"], "is_final": True},
+    ]
+    assert "execution" not in st  # telemetry is independent of the heartbeat block
+
+
+def test_review_e_pass_validates_args(tmp_path):
+    sp = _state(tmp_path)
+    sp.write_text("{}")
+    with pytest.raises(ValueError, match="files_scanned"):
+        update_execution_state(sp, "review_e_pass", is_final=False)
+    with pytest.raises(ValueError, match="is_final"):
+        update_execution_state(sp, "review_e_pass", files_scanned=["x"])
+
+
 def test_action_set_complete():
     """Sanity: every action documented in the plan is in the enum."""
-    expected = {"start", "dispatch_chunk", "return_chunk", "phase_transition", "iterate_attempt", "complete"}
+    expected = {"start", "dispatch_chunk", "return_chunk", "phase_transition",
+                "iterate_attempt", "review_e_pass", "complete"}
     assert EXECUTION_VALID_ACTIONS == expected
 
 

@@ -58,6 +58,7 @@ EXECUTION_VALID_ACTIONS = {
     "return_chunk",     # move chunk_id in_flight → completed with status; refresh heartbeat
     "phase_transition", # update phase field
     "iterate_attempt",  # increment iterate_attempt (preserves 5x cap across resume)
+    "review_e_pass",    # append a Review Sub-step E telemetry row to state["reviewE"]
     "complete",         # phase=report; clean-completion sentinel
 }
 EXECUTION_RETURN_STATUSES = {
@@ -178,6 +179,8 @@ def update_execution_state(
     phase: str | None = None,
     queued_chunks: list[str] | None = None,
     file_ownership: dict[str, list[str]] | None = None,
+    files_scanned: list[str] | None = None,
+    is_final: bool | None = None,
     now: datetime | None = None,
 ) -> dict:
     """M2 — atomic update of state.json.execution heartbeat block.
@@ -191,6 +194,8 @@ def update_execution_state(
         phase: required for phase_transition; one of EXECUTION_VALID_PHASES
         queued_chunks: required for action='start'; the initial work list
         file_ownership: required for action='start'; chunk_id → list[file]
+        files_scanned: required for action='review_e_pass'; files E inspected this pass
+        is_final: required for action='review_e_pass'; True iff this is the last Review pass
         now: injection seam for tests
 
     Returns the new execution block. Raises ValueError on bad input. Atomic via LockedFile.
@@ -228,6 +233,28 @@ def update_execution_state(
                 "last_heartbeat_at": ts,
                 "crashed_at": None,
             }
+        elif action == "review_e_pass":
+            # Telemetry only — records what Sub-step E actually scanned this Review
+            # pass. Independent of the execution heartbeat block (does not require
+            # 'start' first). pass_idx auto-derives from current reviewE length so
+            # callers need not track it. Shape matches score_run.py:25-33 exactly.
+            if files_scanned is None or not isinstance(files_scanned, list):
+                raise ValueError("action='review_e_pass' requires files_scanned: list[str]")
+            if not isinstance(is_final, bool):
+                raise ValueError("action='review_e_pass' requires is_final: bool")
+            review_e = state.get("reviewE")
+            if review_e is None:
+                review_e = []
+            elif not isinstance(review_e, list):
+                raise ValueError(f"{state_path}.reviewE exists but is not a list (got {type(review_e).__name__})")
+            review_e.append({
+                "pass_idx": len(review_e),
+                "files_scanned": list(files_scanned),
+                "is_final": is_final,
+            })
+            state["reviewE"] = review_e
+            atomic_write_bytes(state_path, (json.dumps(state, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+            return {"reviewE": review_e}
         else:
             if not isinstance(execution, dict):
                 raise ValueError(f"action={action!r} requires an existing execution block (run start first)")
