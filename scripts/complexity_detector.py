@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""complexity_detector.py — stdlib-`ast` complexity/inefficiency detector.
+"""complexity_detector.py — stdlib-`ast` detector that finds code to optimize.
 
 Diff-scoped detector for build-loop Phase 4 Review Sub-step E *deep mode*.
 Walks the changed Python files passed via ``--changed-files`` and emits a
