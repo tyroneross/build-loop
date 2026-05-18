@@ -8,6 +8,11 @@
 Two build-loop sessions (one Claude, one Codex/ChatGPT) routinely work the *same app*
 concurrently. Today neither knows what the other just changed; the intended coordinator
 (`session_registry.py` → `~/.build-loop/sessions/`) is dead (never fires — KNOWN-ISSUE).
+> **Update 2026-05-18:** the dead `session_registry.py` mechanism was not merely
+> documented-dead but has now been **removed** — App Pulse presence (this design)
+> is the single concurrent-presence source of truth. See `KNOWN-ISSUES.md` §M4
+> (RESOLVED) and `references/multi-session-coordination.md`. (Historical context
+> above retained as written.)
 Separately, build-loop already maintains a per-app architecture map, but its native
 scanner is import-graph-only and deliberately excludes the things that matter for
 coordination: API/MCP calls, LLM call sites, infra components, and dependency manifests.

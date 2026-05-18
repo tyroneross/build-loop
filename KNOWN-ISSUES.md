@@ -27,18 +27,19 @@ Operator note: `npm view <pkg> --before <date>` **ignores** `--before` for the m
 
 Resolved (2026-05-16): `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pre_bash_autonomy.sh`, unrelated to the cooldown feature) previously failed on `main` because they sent `cwd:/tmp` and expected `permissionDecision=allow`. That expectation predated the autonomy hook's scope-guard hardening (the hook intentionally returns silent `{}` for any cwd lacking a `.build-loop/` marker — deliberate false-positive prevention, mirroring the cooldown hook). The hook was correct; the tests were stale. Cases 1 & 3 now run the benign command in a build-loop-marked temp cwd and still assert `allow` (coverage preserved), and a new Case 3b asserts the scope-guard contract directly (benign command with `cwd:/tmp`, no marker → silent `{}`). All `test_hooks.sh` cases pass; test+docs only, no behavior change.
 
-## M4 session_registry.py doesn't fire — `~/.build-loop/sessions/` never populated (NEW 2026-05-12)
+## M4 session_registry.py doesn't fire — RESOLVED / SUPERSEDED by App Pulse presence (2026-05-18)
 
-**Symptom.** During decision-doctor-cc 2026-05-11, two concurrent writers (main Claude session + background build-loop orchestrator) collided on the same worktree. The M4 `scripts/session_registry.py` is supposed to register presence files at `~/.build-loop/sessions/<run_id>.json` and detect this exact collision tier (HIGH or CRITICAL based on overlap). Verified after the session: directory does not exist on the machine, no presence files were ever written. FIX-4 agent's own postmortem confirms: *"the session_registry hooks I'm supposed to fire on M4 weren't fired by the orchestrator."*
+**Original symptom (2026-05-12).** During decision-doctor-cc 2026-05-11, two concurrent writers (main Claude session + background build-loop orchestrator) collided on the same worktree. The M4 `scripts/session_registry.py` was supposed to register presence files at `~/.build-loop/sessions/<run_id>.json` and detect this exact collision tier, but the directory was never created and no presence file was ever written — the mechanism never fired.
 
-**Likely causes (untested).**
-- Registry call is in the agent's prompt template / frontmatter but not in the actual code path executed during dispatch.
-- Registry call is wrapped in a try/except that swallows failure silently.
-- Lazy-create of `~/.build-loop/sessions/` is broken; directory doesn't exist and the registry write fails without surfacing.
+**Resolved (2026-05-18).** The dead M4 collision mechanism was retired and `scripts/session_registry.py` + `scripts/test_session_registry.py` were deleted. **App Pulse presence is now the single concurrent-presence source of truth**: `scripts/app_pulse/presence.py` (`write_presence` / `read_active_presence` / `reap_stale` + per-session read cursor) writing one file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json`, where `<slug>` is resolved by `scripts/app_pulse/channel_paths.app_slug` (D1: worktree- and clone-independent — the main checkout and every `git worktree` of the same repo share one channel, which is precisely the concurrent scenario that originally collided). It is a checkpoint-poll awareness layer (D3, no daemon); peer file-overlap surfaces as a `soft-claim` **WARNING, never a block** (D4). The orchestrator wires it at the Phase 1 preamble and each phase-start per `references/app-pulse-protocol.md` and `references/multi-session-coordination.md`.
 
-**Workaround.** Pass `isolation: "worktree"` to every Agent dispatch (see `CLAUDE.md` §"Concurrent dispatch isolation"). This removes the surface the registry is meant to guard rather than fixing the registry itself.
+The ambiguity that hid the original collision — two notional presence mechanisms, one of them dead — no longer exists: there is exactly one, and `~/.build-loop/sessions/<run_id>.json` is no longer written or read by any code path.
 
-**Closes when.** Phase 1 Assess creates `~/.build-loop/sessions/<run_id>.json` on every run; `state.json.execution.concurrent_modifications` populates when a peer is detected; SAFE-STOP sentinel writes on CRITICAL tier.
+**Resume protocol unaffected.** The `--resume` crash-recovery path (`scripts/resume_resolver.py`, heartbeat-staleness on `state.json.execution`) shared **zero** code with the deleted collision mechanism (verified: no import, no reference in the resume tests). It was a separate concern reusing an overloaded "M4" label; that label was disambiguated to "crash-resume staleness signal" in `references/resume-protocol.md`. Resume behavior is byte-for-byte unchanged.
+
+**Regression guard.** `tests/test_no_session_registry.py` fails loudly if the dead parallel mechanism (module, test, import, or a live CLI invocation in a tracked file) is ever re-introduced.
+
+**Historical workaround (no longer required as the sole mitigation).** `isolation: "worktree"` on Agent dispatches remains good practice for HEAD/index isolation, but it is no longer compensating for an absent presence mechanism.
 
 ---
 
