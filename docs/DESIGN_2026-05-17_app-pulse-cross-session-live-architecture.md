@@ -43,7 +43,7 @@ build-loop paths and the same Postgres store. App Pulse builds directly on that 
 
 | # | Decision |
 |---|---|
-| D1 | Channel lives at `~/.build-loop/apps/<app-slug>/`, slug via the existing `scripts/_paths.derive_slug_from_cwd` (worktree/clone-independent — proven shared) |
+| D1 | Channel lives at `~/.build-loop/apps/<app-slug>/`, slug from a **worktree-aware resolver**: `git rev-parse --git-common-dir` → canonical-repo basename (worktrees + main checkout share one common dir → identical slug), validated via memory's `_safe_project_tag`, `<slug>/workers` sub-component convention preserved; fall back to `scripts/_paths.derive_slug_from_cwd` only when not in a git repo. **Amended 2026-05-17:** the original wording named `derive_slug_from_cwd` directly, but that helper stops at a worktree's `.git` *file* and slugs to the worktree dir name — splitting the channel under `isolation: "worktree"`, the exact concurrent scenario this design targets. The memory-store "proven shared" result was from canonical/cache paths, not from inside a worktree; it did not cover this case. The common-dir resolver delivers D1's original *intent* (worktree/clone-independent) — verified identical `build-loop` slug from both main checkout and an agent worktree. |
 | D2 | Architecture scan stays project-local in `.build-loop/architecture/`; only a compact `arch/digest.json` (+ pointer) is published to the shared channel |
 | D3 | Delivery = checkpoint poll (no daemon) |
 | D4 | Coordination = awareness + soft-claim warning, never lock |

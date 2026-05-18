@@ -29,7 +29,7 @@ JSON/JSONL, git hooks (sh), build-loop hook surface, Mermaid/DOT text generation
 ## File Structure
 
 **Stage 1 — spine + capture**
-- Create `scripts/app_pulse/_paths.py` — resolve `~/.build-loop/apps/<slug>/`, reuse `scripts/_paths.derive_slug_from_cwd`; lazy-create; path-traversal validation (mirror memory store guard).
+- Create `scripts/app_pulse/_paths.py` — resolve `~/.build-loop/apps/<slug>/` via a **worktree-aware slug resolver** (`git rev-parse --git-common-dir` → canonical-repo basename; fall back to `scripts/_paths.derive_slug_from_cwd` only when not in a git repo — see D1 amendment 2026-05-17); lazy-create; path-traversal validation via memory's `_safe_project_tag`; `<slug>/workers` sub-component convention preserved.
 - Create `scripts/app_pulse/revision.py` — `read_revision()`, `bump_revision()` (fcntl short-timeout lock, skip-on-timeout, monotonic).
 - Create `scripts/app_pulse/changes.py` — `append_change(record)` (O_APPEND atomic), `read_changes_since(offset)`; record schema + validator.
 - Create `scripts/app_pulse/presence.py` — `write_presence()`, `read_active_presence()`, `reap_stale()`, per-session cursor get/set.
@@ -65,7 +65,7 @@ before scanner enrichment.
 
 ### Task 1: Channel path resolver
 **Files:** Create `scripts/app_pulse/_paths.py`; Test `scripts/app_pulse/test_paths.py`
-- [ ] Test: slug derivation reuses `_paths.derive_slug_from_cwd`; `apps/<slug>/` resolves under `~/.build-loop/`; traversal-y slug raises (reuse memory `_safe_project_tag`); `<slug>/workers` sub-component path joins (OQ1).
+- [ ] Test: slug resolver returns the **same canonical slug from a `git worktree` and from the main checkout** (the D1 defect — assert explicitly via a temp worktree); falls back to `derive_slug_from_cwd` only when not in a git repo; `apps/<slug>/` resolves under `~/.build-loop/`; traversal-y slug raises (reuse memory `_safe_project_tag`); `<slug>/workers` sub-component path joins (OQ1).
 - [ ] Test: lazy-create is idempotent; absent HOME path → resolver returns path, never creates outside root.
 - [ ] Implement; run tests; commit.
 
