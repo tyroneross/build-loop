@@ -48,20 +48,21 @@ def test_no_python_imports_session_registry() -> None:
     assert not offenders, "session_registry is imported by:\n" + "\n".join(offenders)
 
 
-def test_no_live_collision_invocation_in_tracked_files() -> None:
-    """No tracked file carries a live session_registry CLI invocation
-    (register|check|heartbeat|unregister) or the write_safe_stop_sentinel
-    function reference. Dated historical/design records are allow-listed:
-    they are provenance, not live callers.
+def test_no_live_session_registry_invocation_in_tracked_files() -> None:
+    """No tracked file carries a LIVE session_registry invocation:
+    a CLI subcommand (`session_registry.py register|check|heartbeat|
+    unregister`) or the `write_safe_stop_sentinel(` function call. A doc
+    that merely STATES the mechanism was removed/dead is the desired end
+    state, not a violation — so this matches the live-invocation pattern,
+    not bare string presence. This is the criterion-1 oracle.
     """
-    allow = {
-        "docs/audit-tests-duplication-2026-05-11.md",
-        "docs/DESIGN_2026-05-17_app-pulse-cross-session-live-architecture.md",
-        "tests/test_no_session_registry.py",  # this guard names the term
-        ".build-loop/plan.md",
-        ".build-loop/intent.md",
-        ".build-loop/goal.md",
-    }
+    # Live-invocation signatures only. Historical prose ("the legacy
+    # session_registry.py was removed") must NOT match.
+    live_re = re.compile(
+        r"session_registry(\.py)?\s+(register|check|heartbeat|unregister)\b"
+        r"|session_registry\.write_safe_stop_sentinel\s*\("
+        r"|import\s+session_registry|from\s+session_registry\s+import"
+    )
     try:
         tracked = subprocess.check_output(
             ["git", "-C", str(REPO), "grep", "-l", "session_registry"],
@@ -69,9 +70,19 @@ def test_no_live_collision_invocation_in_tracked_files() -> None:
         ).splitlines()
     except subprocess.CalledProcessError:
         tracked = []  # no matches at all = pass
-    residue = [f for f in tracked if f and f not in allow]
-    assert not residue, (
-        "Live session_registry references remain (criterion-1 failure):\n"
-        + "\n".join(residue)
+    offenders: list[str] = []
+    for rel in tracked:
+        if not rel or rel == "tests/test_no_session_registry.py":
+            continue  # this guard names the patterns by construction
+        try:
+            text = (REPO / rel).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for ln in text.splitlines():
+            if live_re.search(ln):
+                offenders.append(f"{rel}: {ln.strip()[:100]}")
+    assert not offenders, (
+        "Live session_registry invocation remains (criterion-1 failure):\n"
+        + "\n".join(offenders)
         + "\nThese must point at App Pulse presence instead."
     )
