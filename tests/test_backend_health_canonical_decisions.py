@@ -43,6 +43,8 @@ def env_with_both(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     lands inside our control.
     """
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
     bh.set_debugger_runner(lambda: (False, "stubbed"))
     bh.set_semantic_runner(lambda: (False, "stubbed"))
 
@@ -83,6 +85,8 @@ def env_with_both(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def env_canonical_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Workdir with NO legacy store; canonical present with N entries."""
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
     bh.set_debugger_runner(lambda: (False, "stubbed"))
     bh.set_semantic_runner(lambda: (False, "stubbed"))
 
@@ -112,6 +116,8 @@ def env_canonical_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def env_neither(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Workdir with NEITHER legacy nor canonical decisions present."""
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
     monkeypatch.setenv("AGENT_MEMORY_ROOT", str(tmp_path / "_no_canonical"))
     bh.set_debugger_runner(lambda: (False, "stubbed"))
     bh.set_semantic_runner(lambda: (False, "stubbed"))

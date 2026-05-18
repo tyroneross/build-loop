@@ -117,19 +117,24 @@ def test_debugger_mcp_unreachable_returns_reason(tmp_path: Path) -> None:
         assert "mcp_unavailable" in (result.get("error") or "") or "npx not on PATH" in (result.get("error") or "")
 
 
-def test_recall_facade_records_postgres_unavailable_when_no_db_url(tmp_path: Path) -> None:
-    """No BUILD_LOOP_DATABASE_URL → reasons[] includes db_unavailable, no crash."""
-    import os
+def test_recall_facade_records_postgres_unavailable_when_no_db_url(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    """No DB URL configured → reasons[] includes db_unavailable, no crash.
+
+    The shared resolver also consults $DATABASE_URL and
+    ~/.config/agent-memory/connection.env, so we clear both env vars and
+    isolate HOME — otherwise this passes/fails on the dev machine's real
+    DSN instead of testing the unavailable path.
+    """
     from memory_facade import recall  # type: ignore
 
-    saved = os.environ.pop("BUILD_LOOP_DATABASE_URL", None)
-    try:
-        env = recall(query="x", kind="semantic", project=None, limit=1, workdir=tmp_path)
-        assert env["results_by_kind"]["semantic"] == []
-        assert any("db_unavailable" in r for r in env["reasons"])
-    finally:
-        if saved is not None:
-            os.environ["BUILD_LOOP_DATABASE_URL"] = saved
+    monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
+    env = recall(query="x", kind="semantic", project=None, limit=1, workdir=tmp_path)
+    assert env["results_by_kind"]["semantic"] == []
+    assert any("db_unavailable" in r for r in env["reasons"])
 
 
 # --- 5. Audit script end-to-end -------------------------------------------

@@ -32,7 +32,13 @@ import memory_facade as mf  # type: ignore  # noqa: E402
 @pytest.fixture
 def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Synthetic project root with state.json runs and a couple of decisions."""
+    # Full DB-URL isolation: the shared resolver also reads $DATABASE_URL
+    # and ~/.config/agent-memory/connection.env, so clearing only
+    # BUILD_LOOP_DATABASE_URL would let it fall through to the developer's
+    # real DSN. Clear both env vars and point HOME at an empty tmp dir.
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
     monkeypatch.setattr(mf, "_DEBUGGER_RUNNER_OVERRIDE", None)
     # Isolate from the live agent-memory store during tests — point
     # AGENT_MEMORY_ROOT at an empty subdir under tmp_path so the global

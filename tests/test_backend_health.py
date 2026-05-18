@@ -36,7 +36,11 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     assertions in pre-Priority-20 tests deterministic. Tests that exercise
     the canonical probe override this in their own scope.
     """
+    # Full DB-URL isolation (shared resolver reads $DATABASE_URL +
+    # ~/.config/agent-memory/connection.env too).
     monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
     monkeypatch.setenv("AGENT_MEMORY_ROOT", str(tmp_path / "_no_canonical"))
     bh.set_debugger_runner(None)
     bh.set_semantic_runner(None)
