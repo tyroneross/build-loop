@@ -69,9 +69,13 @@ def test_register_type_is_additive_and_persisted(tmp_path: Path):
     assert T.known_node_types(store_path=store).count("quantum-link") == 1
 
 
-def test_register_type_does_not_bump_schema_version():
+def test_register_type_does_not_bump_schema_version(tmp_path: Path):
     before = SCHEMA_VERSION
-    T.register_type("node", "ephemeral-test-type", layer="service")
+    # Use an isolated store — must NOT mutate the shipped seed file.
+    T.register_type(
+        "node", "ephemeral-test-type", layer="service",
+        store_path=tmp_path / "_taxonomy.json",
+    )
     # D7: adding a type is additive — NO schema-version bump.
     from build_loop.architecture.schemas import SCHEMA_VERSION as after
     assert before == after == "1.0.0"
