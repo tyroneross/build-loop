@@ -4,10 +4,11 @@
 Replaces the prior `psql` subprocess pattern. One persistent connection
 per script invocation; closed on process exit via atexit.
 
-Connection resolution order:
-  1. $DATABASE_URL env var
-  2. ~/.config/agent-memory/connection.env -> DATABASE_URL=...
-  3. RuntimeError
+Connection resolution order (delegated to ``scripts/_db_url.py``):
+  1. $BUILD_LOOP_DATABASE_URL env var
+  2. $DATABASE_URL env var
+  3. ~/.config/agent-memory/connection.env -> DATABASE_URL=...
+  4. RuntimeError
 
 Public API:
   get_connection()             -> psycopg.Connection (cached, reused)
@@ -36,29 +37,38 @@ Exit-code contract for callers:
 from __future__ import annotations
 
 import atexit
-import os
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import psycopg
 from psycopg.rows import dict_row
 
+# Make scripts/ importable as a sibling so `_db_url` resolves whether this
+# module is imported as `scripts.db` or run with scripts/ on sys.path.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+from _db_url import resolve_db_url  # noqa: E402
+
 _CONN: psycopg.Connection | None = None
 
 
 def _read_db_url() -> str:
-    url = os.environ.get("DATABASE_URL")
+    """Resolve the DSN via the shared resolver; raise if nothing is set.
+
+    Preserves this module's historical raise-on-missing public contract.
+    Resolution order (BUILD_LOOP_DATABASE_URL → DATABASE_URL →
+    connection.env) is owned by ``scripts/_db_url.py``.
+    """
+    url = resolve_db_url()
     if url:
         return url
-    conn_env = Path.home() / ".config" / "agent-memory" / "connection.env"
-    if conn_env.exists():
-        for line in conn_env.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("DATABASE_URL="):
-                return line.split("=", 1)[1].strip()
     raise RuntimeError(
-        "DATABASE_URL not configured. Set $DATABASE_URL or write "
-        "~/.config/agent-memory/connection.env with DATABASE_URL=..."
+        "DATABASE_URL not configured. Set $BUILD_LOOP_DATABASE_URL or "
+        "$DATABASE_URL, or write ~/.config/agent-memory/connection.env "
+        "with DATABASE_URL=..."
     )
 
 
