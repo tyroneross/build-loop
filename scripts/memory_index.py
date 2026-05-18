@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Append-only log of build-loop memory writes for cross-session discovery.
 
-Companion to session_registry.py. Every memory write/update/delete in
+Companion to memory_writer.py. Every memory write/update/delete in
 ~/.build-loop/memory/ (global store) appends one row to
 ~/.build-loop/memory/INDEX.jsonl. Active sessions can `tail` this log
 between phases to see what siblings have learned and decide whether to
 incorporate it into the current build.
 
-This is the discovery side of the multi-session model. Conflict detection
-(session_registry.py) prevents two sessions from clobbering each other's
+This is the discovery side of the multi-session model. Concurrent-presence
+detection is owned by App Pulse presence (scripts/app_pulse/presence.py)
+so two sessions can see each other and avoid clobbering each other's
 WORK. Memory INDEX lets them propagate each other's LEARNINGS.
 
 Row schema (one JSON object per line):
