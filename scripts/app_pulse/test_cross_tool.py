@@ -176,25 +176,33 @@ def channel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_dual_path_sets_are_distinct_install_locations(canon, cache):
     """Integrity guard for the dual-path method itself: the canonical and
-    installed-cache sets must be genuinely different files — entry point
-    AND checkpoint's internal deps — or the round-trips below would
-    silently prove nothing (the plan-critic collapse risk)."""
-    if cache is None:
-        pytest.skip("no installed plugin cache app_pulse — env gap")
+    second module sets must be genuinely different *real* files — entry
+    point AND checkpoint's internal deps — or the round-trips below would
+    silently prove nothing (the plan-critic collapse risk).
+
+    UNCONDITIONAL: there is no env-gap escape. The second set is a
+    hermetic copy that always exists, so the guard always runs and the
+    distinctness is a property of *path provenance*, never of which
+    environment (main checkout / worktree / CI) happens to run it.
+    """
+    assert cache is not None, (
+        "the second module set must always be present (hermetic copy) — "
+        "no ~/.claude/plugins/cache env gap is tolerated"
+    )
     assert canon["checkpoint"] is not cache["checkpoint"]
-    assert (
-        Path(canon["checkpoint"].__file__).resolve()
-        != Path(cache["checkpoint"].__file__).resolve()
-    ), "checkpoint entry point must come from two install locations"
+    canon_cp = Path(canon["checkpoint"].__file__).resolve()
+    peer_cp = Path(cache["checkpoint"].__file__).resolve()
+    assert canon_cp != peer_cp, (
+        "checkpoint entry point must come from two PHYSICALLY DISTINCT "
+        "real dirs (resolved). Equality here is the symlink-collapse the "
+        f"cache-path provenance suffered: {canon_cp} == {peer_cp}"
+    )
     # checkpoint binds changes/presence/revision as _ch/_pr/_rev — each
     # set's internal deps must also be its own tree's copy.
     assert (
         Path(canon["checkpoint"]._ch.__file__).resolve()
         != Path(cache["checkpoint"]._ch.__file__).resolve()
     ), "each set's checkpoint must use its OWN changes.py copy"
-    assert "0.1" in cache["checkpoint"].__file__ or "cache" in (
-        cache["checkpoint"].__file__
-    ), "cache set resolves under the installed plugin cache tree"
 
 
 def _kinds(env: dict) -> list:
