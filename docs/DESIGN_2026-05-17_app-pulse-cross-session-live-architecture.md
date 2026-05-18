@@ -170,3 +170,63 @@ fallback.
 
 Brainstorming complete → `superpowers:writing-plans` to produce the implementation plan
 (staged: spine + capture first, scanner enrichment second, Codex validation third).
+
+---
+
+## Validated 2026-05-16 (Stage 3)
+
+Scope of this block: only what the Stage 3 automated suite *actually proves*. The
+distinction between the automated cross-tool **path** proof and the still-pending
+real-Codex **binary** leg is deliberate (this project's no-overclaim rule).
+
+### ✅ Automated — cross-tool channel *path* proven (V1–V3)
+
+`scripts/app_pulse/test_cross_tool.py` (6 tests) loads the channel modules twice
+from two distinct install locations — the canonical `scripts/app_pulse/` tree and
+the installed plugin cache (`rosslabs-ai-toolkit/build-loop/0.10.0`) — points both
+at one `$HOME`-keyed channel, and asserts a write through one copy surfaces through
+`checkpoint_read` of the other. A dual-path integrity guard fails the suite if the
+two sets ever collapse to one file (entry point *and* `checkpoint`'s internal
+deps), so a green run means the round-trips proved something. All redirect
+`$BUILD_LOOP_APPS_ROOT` to a pytest tmp dir; the worktree-aware D1 slug
+(`channel_paths.app_slug()`) is exercised.
+
+| V | Claim proven | How |
+|---|---|---|
+| V1 | A `tool=codex` write of `commit` + `dep-change` (+ revision bump) surfaces to a `tool=claude` `checkpoint_read` via **both** the canonical and the installed-cache code path; `reinstall` reaction fires; records carry `tool: codex`. Reverse direction (claude-via-cache write → codex-via-canonical read) holds too. | `test_v1_codex_writes_canonical_claude_reads_dual_path`, `test_v1_reverse_claude_writes_cache_codex_reads_canonical` |
+| V2 | A `tool=codex` Phase-3 presence owning files makes a `tool=claude` phase-start read raise a **soft-claim `severity: warning`** (D4: awareness, never a block); after the heartbeat window the dead Codex presence is reaped — no live peer, file removed. | `test_v2_codex_presence_warns_claude_then_reaped` |
+| V3 | A `tool=codex` enrich pass flipping `arch/digest.json`'s `inventory_hash` (+ an `arch-scan-complete` change) makes a `tool=claude` pre-edit read surface a **`re-baseline`** reaction and the new hash — the compact digest (not the full graph) is sufficient cross-tool. | `test_v3_codex_enrich_changes_digest_claude_sees_rebaseline` |
+
+Acceptance command (green at base `85c3280`, Stage-3 branch
+`feat/app-pulse-stage3-cross-tool`):
+
+```bash
+uv run --with pytest python -m pytest scripts/app_pulse/test_cross_tool.py -q
+```
+
+**What this does NOT prove:** no real Codex (or Claude) process was spawned. The
+suite simulates the *Codex identity* (records tagged `tool=codex`) and a *second
+code path* (a second physically distinct module copy). It demonstrates the channel
+API is install-location / import-path independent — it does not exercise the Codex
+binary against a live channel. A pinned guard test
+(`test_suite_does_not_claim_live_codex_process`) keeps this boundary honest.
+
+### ⚠️ Pending — live real-Codex leg (V4)
+
+V4 (a real Codex session writing the channel, Claude confirming from its own
+plugin cache) has **not** been run — no live Codex session has executed against
+App Pulse. The runbook is shipped at `docs/_inbox/codex-apppulse-validation.md`.
+Exact command for the human-run close:
+
+```bash
+# On the Codex host, after Step 1 cache-sync gate passes:
+uv run --with pytest python -m pytest scripts/app_pulse/test_cross_tool.py -q
+# then Step 3 of docs/_inbox/codex-apppulse-validation.md writes a real
+# tool=codex commit/dep-change/presence to a throwaway $HOME slug; Claude
+# reads that slug back from its own cache to close the loop empirically.
+```
+
+Status: ⚠️ pending a real Codex run. Do not mark V4 closed until a Codex session
+has run the runbook and a Claude-side `checkpoint_read` has confirmed the
+codex-written records — mirrors the deferred-until-empirical close used for the
+Postgres mirror.
