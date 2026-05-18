@@ -1,59 +1,48 @@
-# Multi-Session Coordination (M4 session registry, M5 memory index)
+# Multi-Session Coordination (App Pulse presence, M5 memory index)
 
 _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
 
-Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. Three scripts own this concern:
+Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
 
-- `scripts/session_registry.py` — presence + collision detection (`~/.build-loop/sessions/<run_id>.json`)
+- **App Pulse presence** — `scripts/app_pulse/presence.py` + `scripts/app_pulse/channel_paths.py`: the single concurrent-presence source of truth. One file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
 - `scripts/memory_writer.py` — canonical writer for memory files (provenance frontmatter + atomic INDEX append in one operation)
 - `scripts/memory_index.py` — append-only discovery log at `~/.build-loop/memory/INDEX.jsonl`
 
 ## Required orchestrator integration points
 
-This section defines two M-series trigger families that complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
+This section defines the App Pulse presence integration plus the M5 trigger family. They complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
 
-- **M4 — Session registry presence + collision check.** Fires at Phase 1 start, every M2 trigger point (heartbeat refresh), Phase 3 pre-dispatch (`files_owned` update + recheck), and clean completion (unregister). Telemetry + safety; never blocks a build except on CRITICAL collision in headless mode.
+- **App Pulse presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3).
 - **M5 — Memory index append + canonical writer.** Fires on every memory write to `~/.build-loop/memory/` (via `memory_writer.py write`) and every read between phases (via `memory_index.py tail --since`). Telemetry + cross-session discovery; never blocks.
 
-### M4 — On Phase 1 Assess start (after `run_id` is generated, BEFORE any planning):
+### App Pulse presence — slug resolution (D1, worktree-aware)
 
-1. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register --run-id "$RUN_ID" --host claude_code --workdir "$PWD" --pid $$ --phase assess`
-2. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json` → parse `tier`
-3. **Tier handling**:
-   - `LOW` (exit 0) — log peer count to terminal: "N other build-loop sessions active (different workdirs)"; continue.
-   - `MEDIUM` (exit 1) — log: "Peer session at same workdir, phase=`<peer.phase>`, started=`<peer.started_at>`"; continue.
-   - `HIGH` (exit 2) — interactive (Claude Code): `AskUserQuestion`("Peer session at this workdir is in `<execute|iterate>` — proceed / abort / queue?"). Headless (Codex): log + set `high_frequency_mode: true` (heartbeat cadence → every 30s vs 5min default); continue.
-   - `CRITICAL` (exit 3) — interactive: hard-stop with message naming overlapping files. Headless: `python3 .../session_registry.py` writes `SAFE-STOP-collision-<peer-run-id>.md` sentinel to `<workdir>/.build-loop/` and the orchestrator exits non-zero.
-4. Surface any `<workdir>/.build-loop/SAFE-STOP-collision-*.md` files left by prior aborted sessions BEFORE doing anything else. The user must acknowledge and delete each sentinel before this session proceeds.
+`scripts/app_pulse/channel_paths.app_slug(cwd=<repo>)` resolves the channel slug from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Falls back to memory's `derive_slug_from_cwd` only outside a git repo. Use this resolver; never reimplement slug derivation.
 
-### M4 — On every M2 heartbeat trigger point (dispatch_chunk, return_chunk, phase_transition, iterate_attempt):
+### App Pulse presence — On Phase 1 Assess preamble (after `run_id` is generated, BEFORE any planning):
 
-Refresh the session_registry heartbeat. Append `--phase <current>` whenever the phase changes:
+1. `presence.write_presence(channel_dir, session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=<from channel_paths.app_slug>, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget: never raises, never blocks.
+2. `peers = presence.read_active_presence(channel_dir, exclude_session=<this session_id>)` (this also reaps stale presence whose `heartbeat_ts` is older than the channel's `heartbeat_minutes`, default 15).
+3. **Peer handling** (awareness, never a hard block — D4):
+   - No peers — continue silently.
+   - Peers, no file overlap — log one line per peer: tool, run_id, phase.
+   - Peers WITH `files_in_flight` overlapping this session's planned files — surface a `soft-claim` **WARNING** naming the peer + overlapping files + the peer's phase, then proceed with awareness. Interactive hosts MAY additionally `AskUserQuestion` to coordinate; headless hosts log + proceed (per `feedback_no_permission_asks.md`). There is no SAFE-STOP sentinel and no non-zero exit — App Pulse is awareness, not a lock.
 
-```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py heartbeat --run-id "$RUN_ID" --phase "$CURRENT_PHASE"
-```
+### App Pulse presence — On each phase-start and when files-owned changes:
 
-If the M2 helper update fails, the session_registry heartbeat is still best-effort — never block the build.
-
-### M4 — On Phase 3 pre-dispatch (after MECE file ownership is decided):
-
-Update `files_owned` on the presence file so concurrent peers can see exactly which files this session will touch. Re-run `check` immediately afterward to catch new CRITICAL overlaps that materialized while planning:
+Refresh presence so concurrent peers see the current phase and the files this session will touch:
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py heartbeat --run-id "$RUN_ID" --phase execute --files-owned "$FILES_OWNED_CSV"
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check --run-id "$RUN_ID" --workdir "$PWD" --phase execute --files-owned "$FILES_OWNED_CSV" --json
+presence.write_presence(channel_dir, session_id=..., tool="claude_code", model=...,
+                         run_id="$RUN_ID", app_slug=<slug>, phase="<current>",
+                         files_in_flight=<MECE files for this phase>)
 ```
 
-CRITICAL handling at this point is identical to Phase 1 — interactive surfaces immediately, headless writes the sentinel and exits.
+Then `checkpoint.checkpoint_read(channel_dir, session_id=..., my_files=[...])`; when its envelope reports peers / `dep-change` (→ reinstall) / `arch-scan-complete` (→ re-baseline scout cache) / file-overlap (→ `soft-claim` WARNING), surface the compact reaction block. The `presence.write_presence` call preserves the per-session read cursor across refreshes. All writes are fire-and-forget; the only locked write is the `revision` bump (short-timeout, skip-on-timeout). None can block or fail a host action.
 
-### M4 — On clean completion (Review-G final, AFTER the run-entry is written):
+### App Pulse presence — On clean completion:
 
-```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
-```
-
-Moves presence to `sessions/dead/` so it doesn't clutter the active scan for future sessions. Failure to unregister is benign — the stale-sweep (5-min default) will absorb it.
+No explicit unregister is needed. The last presence write stands; `presence.reap_stale` (run opportunistically at every peer read) removes it once `heartbeat_ts` exceeds the stale window. A forgotten session is therefore self-healing — no `dead/` directory, no cleanup step.
 
 ### M5 — Between phases, scan for new sibling learnings:
 
@@ -97,10 +86,9 @@ The writer adds provenance frontmatter (source_repo auto-detected, source_workdi
 
 ## Headless host (Codex, cron) deterministic defaults
 
-When `AskUserQuestion` is unavailable, the orchestrator MUST NOT block on collision detection. The deterministic defaults per `feedback_no_permission_asks.md` posture:
+App Pulse presence is awareness-only (D4), so headless hosts never block on it. Per the `feedback_no_permission_asks.md` posture:
 
-- LOW/MEDIUM: log + proceed at normal cadence.
-- HIGH: enter `high_frequency_mode` (heartbeat every 30s, recheck collisions before every chunk dispatch); proceed.
-- CRITICAL: write SAFE-STOP sentinel + exit non-zero. The first sentinel always wins; the survivor takes the work.
+- No peers / peers without file overlap: log + proceed at normal cadence.
+- Peers WITH overlapping `files_in_flight`: log the `soft-claim` WARNING (peer, files, phase) and proceed. There is no hard-stop, sentinel, or non-zero exit — coordination is the human's call after the fact, not a gate.
 
-The interactive→headless distinction lives in this prompt, not in the scripts — the scripts return tiers + exit codes deterministically.
+The interactive→headless distinction lives in this prompt, not in the scripts: `read_active_presence` returns the same peer list regardless of host; only the surfacing differs (interactive MAY additionally `AskUserQuestion`).

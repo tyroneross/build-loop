@@ -46,49 +46,44 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - If web/mobile UI: capture current visual state for before/after comparison, then load `skills/build-loop/references/ui-io-contract.md` and inventory the affected user inputs and system outputs before planning
 - **Supply-chain dependency cooldown**: if a JS project (`package.json`), run `scripts/inject_dependency_cooldown.py --workdir <repo>` to idempotently write the 7-day publish-age config using each PM's native key: npm ≥ 11.10.0 → `.npmrc` `min-release-age` (DAYS); pnpm → `pnpm-workspace.yaml` `minimumReleaseAge` (MINUTES) + `.npmrc` `minimum-release-age` for 10.x; yarn ≥ 4.10 → `.yarnrc.yml` `npmMinimalAgeGate` (numeric MINUTES). npm has no native exclude (npm/cli#8994), so on npm the user-authored allowlist (`.build-loop/config.json` → `dependencyCooldown.allowlist`, default `["@tyroneross/*"]`) is enforced by the PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`), which stays engaged even with native config; pnpm/yarn carry the exclude natively so the hook stands down once enforced. `--check` verifies the PM actually recognizes the key (no false `enforced:true`). Constitution rule: `C-SUPPLY/dependency_cooldown`. Older npm (< 11.10.0) falls back to the hook's `--before=<7d ago>` date-pin. pip/cargo not covered in v1.
 
-**Multi-session presence registration + collision check (cross-host: Claude Code, Codex, Gemini CLI, others):**
+**Multi-session presence (App Pulse — cross-host: Claude Code, Codex, Gemini CLI, others):**
 
-Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. To prevent two sessions from racing to commit to the same files, every session participates in a shared registry at `~/.build-loop/sessions/` and a memory-write log at `~/.build-loop/memory/INDEX.jsonl`. The scripts are host-neutral JSON CLIs invoked from any host:
+Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. App Pulse presence is the single concurrent-presence source of truth — an awareness layer (never a lock), host-neutral, invoked from any host. (The legacy `session_registry.py` / `~/.build-loop/sessions/` collision mechanism was documented-dead and removed 2026-05-18 — see `KNOWN-ISSUES.md` §M4.)
 
-1. **Surface SAFE-STOP sentinels first.** Before any other Phase 1 work, list `<workdir>/.build-loop/SAFE-STOP-collision-*.md`. If any exist, surface to the user and require explicit deletion before proceeding — they indicate a prior session detected a CRITICAL collision here and stopped.
-2. **Register this session** (immediately after `run_id` is known):
+1. **Write presence at the Phase 1 preamble** (immediately after `run_id` is known), and refresh it at each phase-start:
+   ```python
+   from app_pulse import channel_paths, presence
+   slug = channel_paths.app_slug(cwd="$PWD")          # D1: worktree/clone-independent
+   channel = channel_paths.channel_dir(slug)
+   presence.write_presence(channel, session_id="<sid>", tool="codex",
+       model="<model>", run_id="$RUN_ID", app_slug=slug,
+       phase="assess", files_in_flight=[])
    ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register \
-     --run-id "$RUN_ID" --host codex --workdir "$PWD" \
-     --pid $$ --phase assess
+   `tool` values: `claude_code | codex | gemini | other`. Writes one file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
+2. **Read active peers** at the preamble and each phase-start:
+   ```python
+   peers = presence.read_active_presence(channel, exclude_session="<sid>")
    ```
-   `--host` values: `claude_code | codex | gemini | other`. The script writes `~/.build-loop/sessions/<run_id>.json` with workdir, host, pid, phase, files_owned, started_at, last_heartbeat_at.
-3. **Check for peer collisions**:
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check \
-     --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json
-   ```
-   Exit codes: 0=LOW, 1=MEDIUM, 2=HIGH, 3=CRITICAL.
-4. **Headless tier routing** (Codex / cron — no AskUserQuestion available):
-   - LOW (different workdir) → log + proceed.
-   - MEDIUM (same workdir, different phases) → log + proceed.
-   - HIGH (same workdir + both in execute/iterate) → log + enter `high_frequency_mode` (heartbeat every 30s vs default 5min) + proceed; recheck collision before each Phase 3 chunk dispatch.
-   - CRITICAL (same workdir + overlapping `files_owned`) → call `session_registry.write_safe_stop_sentinel(workdir, peer_run_id, reason)` and exit non-zero. The first sentinel wins; the surviving peer continues.
-5. **Heartbeat refresh** at every M2 trigger point (dispatch_chunk, return_chunk, phase_transition, iterate_attempt). Append `--phase $CURRENT_PHASE` whenever phase changes; in Phase 3, also `--files-owned "$FILES_OWNED_CSV"`.
-6. **Unregister on clean completion**:
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py unregister --run-id "$RUN_ID"
-   ```
-   Moves presence file to `sessions/dead/`. Stale-sweep (default 5 min) handles forgotten unregisters.
-7. **Memory writes** — use `scripts/memory_writer.py write` instead of writing memory files directly. The writer adds provenance frontmatter (source_repo, source_workdir, source_run_id, source_host, cross_repo_validated, applied_in_repos, created_at, last_updated_at), then atomically appends a row to `INDEX.jsonl` for sibling discovery:
+   This reaps stale presence (heartbeat older than the channel's `heartbeat_minutes`, default 15) as a side effect — no daemon, no cleanup step.
+3. **Peer routing** (awareness only — never a hard block, D4; identical across hosts):
+   - No peers / no `files_in_flight` overlap → log one line per peer (tool, run_id, phase); proceed.
+   - Overlap with a peer's `files_in_flight` → surface a `soft-claim` **WARNING** (peer, overlapping files, peer phase); proceed with awareness. Interactive hosts MAY additionally ask the user to coordinate; headless hosts (Codex / cron) log + proceed. There is no SAFE-STOP sentinel and no non-zero exit.
+4. **Refresh presence** at every phase-start and whenever the phase's owned files change — re-call `write_presence` with the new `phase` + `files_in_flight` (the per-session read cursor is preserved across refreshes).
+5. **No unregister.** The last presence write stands; `reap_stale` (run opportunistically at every peer read) removes it once the heartbeat window elapses. Forgotten sessions self-heal.
+6. **Memory writes (M5 — separate concern)** — use `scripts/memory_writer.py write` instead of writing memory files directly. The writer adds provenance frontmatter (source_repo, source_workdir, source_run_id, source_host, cross_repo_validated, applied_in_repos, created_at, last_updated_at), then atomically appends a row to `INDEX.jsonl` for sibling discovery:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
      --file "<rel-path>" --name "<slug>" --description "<one-line>" \
      --type feedback --run-id "$RUN_ID" --workdir "$PWD" --host codex \
      --body-file /tmp/memory-body.md
    ```
-8. **Memory reads (cross-session discovery)** — between phases, tail the index for new peer learnings:
+7. **Memory reads (cross-session discovery)** — between phases, tail the index for new peer learnings:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \
      --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
    ```
    For each returned row, read the memory file. Tag with `[CROSS-REPO — requires scrutiny]` when `source_workdir` ≠ current `$PWD` AND `source_repo` ≠ this repo's git remote. Tag with `[VALIDATED — applied in N repos]` when `cross_repo_validated: true` AND `len(applied_in_repos) >= 2`.
-9. **Memory mark-applied** — when a cross-repo memory is successfully applied here, record the application:
+8. **Memory mark-applied** — when a cross-repo memory is successfully applied here, record the application:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py mark-applied \
      --file "<rel-path>" --applying-repo "$THIS_REPO_REMOTE" \

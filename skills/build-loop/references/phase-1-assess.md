@@ -24,18 +24,16 @@
 8a. **UI input/output inventory** (if `uiTarget != null`): load `skills/build-loop/references/ui-io-contract.md` and identify every affected user input and system output before component choices are made. Classify each by structural type, content format, persistence intent, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and traceability. Mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical; the full contract is finalized in Phase 2.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See `skills/build-loop/references/memory.md`.
 
-9a. **Multi-session presence registration + collision check** (always; runs after `run_id` is generated):
-   1. Surface any pre-existing `<workdir>/.build-loop/SAFE-STOP-collision-*.md` sentinels left by an aborted prior session — the user must acknowledge and delete each one before this session proceeds.
-   2. Register this session: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py register --run-id "$RUN_ID" --host claude_code --workdir "$PWD" --pid $$ --phase assess`. Codex / Gemini / other hosts substitute their `--host` value.
-   3. Check for peer collisions: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_registry.py check --run-id "$RUN_ID" --workdir "$PWD" --phase assess --json`. Parse `tier` (LOW/MEDIUM/HIGH/CRITICAL).
-   4. Route by tier per `agents/build-orchestrator.md` §Multi-session concurrency:
-      - LOW → log peer count line; continue.
-      - MEDIUM → log peer phase + start time; continue.
-      - HIGH → interactive: `AskUserQuestion` (proceed/abort/queue); headless: enable `high_frequency_mode` and continue.
-      - CRITICAL → interactive: hard-stop; headless: SAFE-STOP sentinel + non-zero exit.
+9a. **Multi-session presence (App Pulse)** (always; runs at the Phase 1 preamble after `run_id` is generated):
+   1. Resolve the channel: `slug = scripts/app_pulse/channel_paths.app_slug(cwd="$PWD")` (D1: worktree/clone-independent — main checkout and every worktree share one channel). Do NOT reimplement slug derivation.
+   2. Write presence: `scripts/app_pulse/presence.write_presence(channel, session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=slug, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget.
+   3. Read active peers: `peers = scripts/app_pulse/presence.read_active_presence(channel, exclude_session=...)` (also reaps stale presence past the heartbeat window — no daemon).
+   4. Route per `agents/build-orchestrator.md` §Multi-session concurrency — **awareness only, never a hard block (D4)**:
+      - No peers / no `files_in_flight` overlap → log one line per peer (tool, run_id, phase); continue.
+      - Overlap with a peer's `files_in_flight` → surface a `soft-claim` WARNING (peer, files, phase); continue with awareness. Interactive MAY additionally `AskUserQuestion` to coordinate; headless logs + proceeds. No SAFE-STOP sentinel, no non-zero exit.
    5. Initialize the memory-index cursor: capture the current top-of-log timestamp from `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --limit 1 --json` (used by `--since` in subsequent phases to surface new peer learnings).
 
-   **Supersedes** the legacy `ps aux | grep -c "[c]laude$"` advisory below — session_registry is the canonical signal. Keep the legacy line as a fallback when `session_registry.py` is unavailable (older plugin cache).
+   **Supersedes** the legacy `ps aux | grep -c "[c]laude$"` advisory below — App Pulse presence is the canonical signal. Keep the legacy line as a fallback only when App Pulse is unavailable (older plugin cache without `scripts/app_pulse/`).
 
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Sub-step G Report's `## Held` section, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
 11. **Capture north star + update intent**: When `state.json.prd.core_principles` is non-empty (a PRD was loaded by step 10), use it as the strategic frame; `intent.md` cites the PRD path + revision rather than re-deriving. Otherwise use `references/intent-capability-pack.md` to identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals fresh. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
