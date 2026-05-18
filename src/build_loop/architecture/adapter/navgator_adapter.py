@@ -310,6 +310,9 @@ class Adapter:
 
         now_ms = int(time.time() * 1000)
         prior = read_manifest(wd) or {}
+        connection_counts_by_type: Dict[str, int] = {}
+        for conn in result.connections:
+            connection_counts_by_type[conn.type] = connection_counts_by_type.get(conn.type, 0) + 1
         timeline = {
             "events": (prior.get("timeline") or [])
             + [
@@ -333,9 +336,13 @@ class Adapter:
                 "generator_version": "0.1.0",
                 "repo_root": str(wd),
                 "component_count": len(result.components),
+                "components_count": len(result.components),
                 "connection_count": len(result.connections),
+                "connections_count": len(result.connections),
+                "connection_counts_by_type": connection_counts_by_type,
                 "files_scanned": result.files_scanned,
                 "generated_at": now_ms,
+                "last_scan": now_ms,
                 "last_full_scan_at": now_ms
                 if not incremental
                 else (prior.get("last_full_scan_at") or 0),
@@ -350,6 +357,7 @@ class Adapter:
             "ok": True,
             "components": len(result.components),
             "connections": len(result.connections),
+            "connection_counts_by_type": connection_counts_by_type,
             "files_scanned": result.files_scanned,
             "elapsed_ms": elapsed_ms,
             "arch_dir": str(arch_dir(wd)),

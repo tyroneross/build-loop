@@ -257,7 +257,7 @@ The script recomputes each `source_hash` against the canonical upstream file and
 Build-loop owns native architecture awareness end-to-end. NavGator is now an optional escalation adapter, not a hard dependency.
 
 **Native engine** (`src/build_loop/architecture/`)
-Python-native scanner: `.gitignore`-aware walk, Python via `ast`, TS/JS via tree-sitter. Pure-function `compute_impact / trace_dataflow / check_rules / find_dead`. Output schema-parity with NavGator (component/connection JSON shapes verbatim) under `.build-loop/architecture/`.
+Python-native scanner: `.gitignore`-aware walk, Python via `ast`, TS/JS via tree-sitter, plus Gator-style runtime edges for manifest package use, Next.js frontend API fetches, path-alias imports, and conservative service/LLM calls. Pure-function `compute_impact / trace_dataflow / check_rules / find_dead`. Output schema-parity with NavGator (component/connection JSON shapes verbatim) under `.build-loop/architecture/`.
 
 ```bash
 uv run python -m build_loop.architecture {scan|impact|trace|rules|dead|connections|acp|acp-slice|llm-map|schema|diagram} \

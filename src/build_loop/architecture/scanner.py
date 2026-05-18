@@ -15,12 +15,17 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import os
+import posixpath
 import re
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+import tomllib
 
 import pathspec
 
@@ -41,6 +46,133 @@ ALWAYS_SKIP_DIRS = {
     ".navgator", ".build-loop", ".bookmark", ".ibr",
     ".next", ".turbo", ".cache", "coverage",
 }
+
+
+@dataclass(frozen=True)
+class ServicePattern:
+    name: str
+    component_type: str
+    layer: str
+    purpose: str
+    patterns: Tuple[re.Pattern[str], ...]
+
+
+SERVICE_PATTERNS: Tuple[ServicePattern, ...] = (
+    ServicePattern(
+        "Ollama",
+        "llm",
+        "external",
+        "Ollama local LLM API",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]ollama['\"]",
+            r"\bimport\s+ollama\b",
+            r"\bnew\s+Ollama\(",
+            r"\bollama\.(chat|generate)\(",
+            r"\bOLLAMA_(BASE_URL|MODEL|HOST)\b",
+            r"\b(?:localhost|127\.0\.0\.1):11434\b",
+            r"\b:11434\b",
+        )),
+    ),
+    ServicePattern(
+        "OpenAI",
+        "llm",
+        "external",
+        "OpenAI API",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]openai['\"]",
+            r"\bimport\s+OpenAI\s+from\s+['\"]openai['\"]",
+            r"\bnew\s+OpenAI\(",
+            r"\bOpenAIApi\(",
+            r"\bopenai\.(chat\.completions|completions|embeddings|images|audio)\.",
+        )),
+    ),
+    ServicePattern(
+        "Claude (Anthropic)",
+        "llm",
+        "external",
+        "Claude AI API",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]@anthropic-ai/sdk['\"]",
+            r"\bfrom\s+anthropic\s+import\b",
+            r"\bnew\s+Anthropic\(",
+            r"\banthropic\.(messages|completions)\.create\b",
+            r"\banthropic\.beta\.",
+        )),
+    ),
+    ServicePattern(
+        "Groq",
+        "llm",
+        "external",
+        "Groq LLM API",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]groq-sdk['\"]",
+            r"\bfrom\s+groq\s+import\b",
+            r"\bnew\s+Groq\(",
+            r"\bgroq(Client)?\.chat\.completions\.create\b",
+        )),
+    ),
+    ServicePattern(
+        "Vercel AI SDK",
+        "llm",
+        "external",
+        "Vercel AI SDK",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]ai['\"]",
+            r"\bfrom\s+['\"]@ai-sdk/",
+            (
+                r"\bimport\s+\{[^}]*(generateText|streamText|generateObject|useChat|useCompletion)"
+                r"[^}]*\}\s+from\s+['\"](?:ai|@ai-sdk/[^'\"]+)['\"]"
+            ),
+        )),
+    ),
+    ServicePattern(
+        "LangChain",
+        "llm",
+        "external",
+        "LangChain framework",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]@langchain/",
+            r"\bfrom\s+langchain",
+            r"\b(ChatOpenAI|ChatAnthropic|ChatGoogleGenerativeAI|ChatGroq)\(",
+            r"\b(ChatPromptTemplate|StructuredOutputParser|RunnableSequence)\.",
+        )),
+    ),
+    ServicePattern(
+        "Stripe",
+        "service",
+        "external",
+        "Stripe payments",
+        tuple(re.compile(p) for p in (
+            r"\bfrom\s+['\"]stripe['\"]",
+            r"\bimport\s+stripe\b",
+            r"\bnew\s+Stripe\(",
+            r"\bstripe\.(customers|paymentIntents|subscriptions|invoices|checkout)\.",
+        )),
+    ),
+    ServicePattern(
+        "Supabase",
+        "database",
+        "database",
+        "Supabase backend",
+        tuple(re.compile(p) for p in (
+            r"\bcreateClient\(\s*process\.env\.SUPABASE",
+            r"\bsupabase\.(from|auth|storage)\.",
+            r"\bfrom\s+['\"]@supabase/",
+        )),
+    ),
+    ServicePattern(
+        "Firebase",
+        "database",
+        "database",
+        "Firebase backend",
+        tuple(re.compile(p) for p in (
+            r"\binitializeApp\(",
+            r"\bgetFirestore\(",
+            r"\bfirebase\.(firestore|auth)\(",
+            r"\bfrom\s+['\"]firebase/",
+        )),
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +230,79 @@ def _load_gitignore(repo_root: Path) -> pathspec.PathSpec:
         return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
 
+def _iter_named_files(
+    repo_root: Path,
+    spec: pathspec.PathSpec,
+    names: Set[str],
+) -> Iterable[Path]:
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        rel_dir = os.path.relpath(dirpath, repo_root)
+        if rel_dir == ".":
+            rel_dir = ""
+        dirnames[:] = [d for d in dirnames if d not in ALWAYS_SKIP_DIRS]
+        keep = []
+        for d in dirnames:
+            rel = os.path.join(rel_dir, d) if rel_dir else d
+            if spec.match_file(rel + "/"):
+                continue
+            keep.append(d)
+        dirnames[:] = keep
+        for fn in filenames:
+            if fn not in names:
+                continue
+            rel = os.path.join(rel_dir, fn) if rel_dir else fn
+            if spec.match_file(rel):
+                continue
+            yield Path(repo_root) / rel
+
+
+def _json_loads_lenient(raw: str) -> Dict[str, object]:
+    stripped = re.sub(r"/\*[\s\S]*?\*/", "", raw)
+    stripped = re.sub(r"(?m)^\s*//.*$", "", stripped)
+    stripped = re.sub(r",\s*([}\]])", r"\1", stripped)
+    data = json.loads(stripped)
+    return data if isinstance(data, dict) else {}
+
+
+def _load_ts_path_aliases(repo_root: Path) -> Dict[str, str]:
+    aliases: Dict[str, str] = {}
+    for fname in ("tsconfig.json", "jsconfig.json"):
+        p = repo_root / fname
+        if not p.exists():
+            continue
+        try:
+            data = _json_loads_lenient(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        compiler = data.get("compilerOptions") if isinstance(data, dict) else {}
+        if not isinstance(compiler, dict):
+            continue
+        base_url = str(compiler.get("baseUrl") or ".").replace("\\", "/")
+        paths = compiler.get("paths") or {}
+        if not isinstance(paths, dict):
+            continue
+        for alias, targets in paths.items():
+            if not isinstance(alias, str) or not isinstance(targets, list) or not targets:
+                continue
+            target = targets[0]
+            if not isinstance(target, str):
+                continue
+            alias_prefix = alias.replace("*", "")
+            target_prefix = target.replace("*", "").replace("\\", "/")
+            resolved = posixpath.normpath(posixpath.join(base_url, target_prefix))
+            aliases[alias_prefix] = "" if resolved == "." else resolved.strip("/")
+        break
+
+    if not aliases:
+        next_configs = (
+            "next.config.js", "next.config.mjs", "next.config.ts",
+            "next.config.cjs",
+        )
+        if any((repo_root / name).exists() for name in next_configs):
+            aliases["@/"] = ""
+    return aliases
+
+
 # ---------------------------------------------------------------------------
 # Component / connection identity helpers
 # ---------------------------------------------------------------------------
@@ -118,13 +323,32 @@ def _component_id(rel_path: str) -> str:
     return f"COMP_component_{base}_{_short_hash(rel_path)}"
 
 
+def _runtime_component_id(kind: str, name: str) -> str:
+    base = _slug(name)[:32] or "unnamed"
+    return f"COMP_{_slug(kind)}_{base}_{_short_hash(f'{kind}:{name}')}"
+
+
 def _stable_id(rel_path: str) -> str:
     return f"STABLE_component_{rel_path.replace('/', '-')}"
 
 
-def _connection_id(from_id: str, to_id: str, line: int) -> str:
-    digest = _short_hash(f"{from_id}->{to_id}@{line}", 6)
-    return f"CONN_imports_{digest}"
+def _runtime_stable_id(kind: str, name: str) -> str:
+    return f"STABLE_{_slug(kind)}_{_slug(name) or 'unnamed'}"
+
+
+def _connection_id(
+    from_id: str,
+    to_id: str,
+    line: int,
+    connection_type: str = "imports",
+    symbol: str = "",
+) -> str:
+    if connection_type == "imports" and not symbol:
+        seed = f"{from_id}->{to_id}@{line}"
+    else:
+        seed = f"{connection_type}:{from_id}->{to_id}@{line}:{symbol}"
+    digest = _short_hash(seed, 6)
+    return f"CONN_{_slug(connection_type)[:24]}_{digest}"
 
 
 def _layer_for_path(rel_path: str) -> str:
@@ -141,6 +365,156 @@ def _layer_for_path(rel_path: str) -> str:
     if p0 in {"docs", "doc"}:
         return "docs"
     return "unknown"
+
+
+def _line_for_offset(source: str, offset: int) -> int:
+    return source[:offset].count("\n") + 1
+
+
+def _read_declared_npm_packages(
+    repo_root: Path,
+    spec: pathspec.PathSpec,
+) -> Dict[str, str]:
+    declared: Dict[str, str] = {}
+    for manifest in _iter_named_files(repo_root, spec, {"package.json"}):
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        rel = str(manifest.relative_to(repo_root)).replace(os.sep, "/")
+        for key in (
+            "dependencies", "devDependencies", "peerDependencies",
+            "optionalDependencies",
+        ):
+            block = data.get(key) or {}
+            if not isinstance(block, dict):
+                continue
+            for pkg in block:
+                if isinstance(pkg, str):
+                    declared.setdefault(pkg, rel)
+    return declared
+
+
+_PIP_REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.\-]+)")
+
+
+def _normalize_pip_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).strip().lower()
+
+
+def _read_declared_pip_packages(
+    repo_root: Path,
+    spec: pathspec.PathSpec,
+) -> Dict[str, Tuple[str, str]]:
+    declared: Dict[str, Tuple[str, str]] = {}
+
+    def add_spec(spec_text: str, manifest_rel: str) -> None:
+        m = _PIP_REQ_NAME_RE.match(spec_text or "")
+        if not m:
+            return
+        canonical = m.group(1)
+        declared.setdefault(_normalize_pip_name(canonical), (canonical, manifest_rel))
+
+    for manifest in _iter_named_files(
+        repo_root,
+        spec,
+        {"pyproject.toml", "requirements.txt", "requirements-dev.txt"},
+    ):
+        rel = str(manifest.relative_to(repo_root)).replace(os.sep, "/")
+        if manifest.name.endswith(".txt"):
+            try:
+                lines = manifest.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith(("#", "-")):
+                    continue
+                add_spec(line, rel)
+            continue
+
+        try:
+            data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        project = data.get("project") or {}
+        for spec_text in project.get("dependencies") or []:
+            if isinstance(spec_text, str):
+                add_spec(spec_text, rel)
+        for group in (project.get("optional-dependencies") or {}).values():
+            for spec_text in group or []:
+                if isinstance(spec_text, str):
+                    add_spec(spec_text, rel)
+        for group in (data.get("dependency-groups") or {}).values():
+            for spec_text in group or []:
+                if isinstance(spec_text, str):
+                    add_spec(spec_text, rel)
+        uv_block = (data.get("tool") or {}).get("uv") or {}
+        for spec_text in uv_block.get("dev-dependencies") or []:
+            if isinstance(spec_text, str):
+                add_spec(spec_text, rel)
+
+    return declared
+
+
+def _toplevel_external_npm(spec: str) -> Optional[str]:
+    if not spec or spec.startswith((".", "/", "node:", "data:", "http:", "https:", "file:")):
+        return None
+    if spec.startswith("@"):
+        parts = spec.split("/", 2)
+        if len(parts) < 2:
+            return None
+        return f"{parts[0]}/{parts[1]}"
+    return spec.split("/", 1)[0]
+
+
+def _toplevel_external_py(module: str) -> Optional[str]:
+    if not module or module.startswith("."):
+        return None
+    return module.split(".", 1)[0]
+
+
+def _is_python_stdlib(name: str) -> bool:
+    return name in getattr(sys, "stdlib_module_names", set())
+
+
+_PIP_IMPORT_ALIASES: Dict[str, Set[str]] = {
+    "pyyaml": {"yaml"},
+    "beautifulsoup4": {"bs4"},
+    "pillow": {"pil"},
+    "scikit-learn": {"sklearn"},
+    "opencv-python": {"cv2"},
+    "google-api-python-client": {"googleapiclient", "google"},
+}
+
+
+def _external_package_for_import(
+    spec: str,
+    ext: str,
+    declared_npm: Dict[str, str],
+    declared_pip: Dict[str, Tuple[str, str]],
+) -> Optional[Tuple[str, str, str]]:
+    if ext in TS_EXTS or ext in JS_EXTS:
+        pkg = _toplevel_external_npm(spec)
+        if pkg and pkg in declared_npm:
+            return ("npm", pkg, declared_npm[pkg])
+        return None
+
+    if ext in PY_EXTS:
+        top = _toplevel_external_py(spec)
+        if not top or _is_python_stdlib(top):
+            return None
+        norm = _normalize_pip_name(top)
+        if norm in declared_pip:
+            canonical, manifest = declared_pip[norm]
+            return ("pip", canonical, manifest)
+        for dist, aliases in _PIP_IMPORT_ALIASES.items():
+            if norm in aliases and dist in declared_pip:
+                canonical, manifest = declared_pip[dist]
+                return ("pip", canonical, manifest)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +569,7 @@ _TS_IMPORT_RE = re.compile(
            import\s+|
            export\s+\*\s+from\s+|
            export\s+\{[^}]*\}\s+from\s+|
+           import\s*\(|
            require\s*\()
         ['"]([^'"\n]+)['"]
     """,
@@ -245,6 +620,11 @@ def _ts_imports(source: str, is_tsx: bool) -> List[Tuple[str, int]]:
             walk(child)
 
     walk(tree.root_node)
+    seen = set(out)
+    for item in _ts_imports_regex(source):
+        if item not in seen:
+            out.append(item)
+            seen.add(item)
     return out
 
 
@@ -291,16 +671,8 @@ def _resolve_py_import(module: str, from_rel: str, repo_files: Set[str]) -> Opti
     return None
 
 
-def _resolve_ts_import(spec: str, from_rel: str, repo_files: Set[str]) -> Optional[str]:
-    """Resolve a TS/JS import specifier to an in-tree file (best effort)."""
-    if not spec or spec.startswith(("@", "node:")):
-        # Bare specifier — likely external package; not in-tree.
-        if not spec.startswith("."):
-            return None
-    if not spec.startswith("."):
-        return None
-    from_dir = os.path.dirname(from_rel)
-    base = os.path.normpath(os.path.join(from_dir, spec))
+def _resolve_ts_path(base: str, repo_files: Set[str]) -> Optional[str]:
+    base = base.replace("\\", "/").lstrip("/")
     candidates = [base]
     for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
         if base.endswith(ext):
@@ -317,10 +689,37 @@ def _resolve_ts_import(spec: str, from_rel: str, repo_files: Set[str]) -> Option
         candidates.append(base[:-3] + ".ts")
         candidates.append(base[:-3] + ".tsx")
     for c in candidates:
-        c_norm = c.lstrip("/")
+        c_norm = c.replace("\\", "/").lstrip("/")
         if c_norm in repo_files:
             return c_norm
     return None
+
+
+def _resolve_ts_import(
+    spec: str,
+    from_rel: str,
+    repo_files: Set[str],
+    path_aliases: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Resolve a TS/JS import specifier to an in-tree file (best effort)."""
+    if not spec or spec.startswith(("node:", "data:", "http:", "https:", "file:")):
+        return None
+
+    if path_aliases:
+        for alias, target in sorted(path_aliases.items(), key=lambda item: len(item[0]), reverse=True):
+            if not alias or not spec.startswith(alias):
+                continue
+            rest = spec[len(alias):]
+            base = posixpath.normpath(posixpath.join(target, rest)) if target else rest
+            resolved = _resolve_ts_path(base, repo_files)
+            if resolved:
+                return resolved
+
+    if not spec.startswith("."):
+        return None
+    from_dir = posixpath.dirname(from_rel.replace("\\", "/"))
+    base = posixpath.normpath(posixpath.join(from_dir, spec))
+    return _resolve_ts_path(base, repo_files)
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +746,16 @@ class ScanResult:
         now_ms = int(time.time() * 1000)
         comp_count = len(self.components)
         conn_count = len(self.connections)
+        connection_counts_by_type: Dict[str, int] = {}
+        for conn in self.connections:
+            connection_counts_by_type[conn.type] = connection_counts_by_type.get(conn.type, 0) + 1
         return {
             "schema_version": SCHEMA_VERSION,
             "component_count": comp_count,
             "components_count": comp_count,
             "connection_count": conn_count,
             "connections_count": conn_count,
+            "connection_counts_by_type": connection_counts_by_type,
             "components": [c.to_dict() for c in self.components],
             "connections": [c.to_dict() for c in self.connections],
             "generated_at": now_ms,
@@ -433,6 +836,377 @@ def _build_component(rel_path: str) -> Component:
     )
 
 
+def _build_package_component(
+    manager: str,
+    package_name: str,
+    manifest_rel: str,
+) -> Component:
+    now = int(time.time() * 1000)
+    return Component(
+        component_id=_runtime_component_id(f"{manager}-package", package_name),
+        name=package_name,
+        type="package",
+        role={
+            "purpose": f"{manager} package {package_name}",
+            "layer": "external",
+            "critical": False,
+        },
+        source={
+            "detection_method": "manifest",
+            "config_files": [manifest_rel],
+            "confidence": 0.9,
+        },
+        connects_to=[],
+        connected_from=[],
+        status="active",
+        tags=["external", "package", manager],
+        metadata={
+            "kind": "package",
+            "package_manager": manager,
+            "package_name": package_name,
+        },
+        timestamp=now,
+        last_updated=now,
+        stable_id=_runtime_stable_id(f"{manager}-package", package_name),
+    )
+
+
+def _build_service_component(pattern: ServicePattern, confidence: float = 0.85) -> Component:
+    now = int(time.time() * 1000)
+    return Component(
+        component_id=_runtime_component_id(pattern.component_type, pattern.name),
+        name=pattern.name,
+        type=pattern.component_type,
+        role={
+            "purpose": pattern.purpose,
+            "layer": pattern.layer,
+            "critical": pattern.component_type in {"llm", "database"},
+        },
+        source={
+            "detection_method": "pattern",
+            "config_files": [],
+            "confidence": confidence,
+        },
+        connects_to=[],
+        connected_from=[],
+        status="active",
+        tags=[pattern.component_type, pattern.layer, "external"],
+        metadata={"kind": "external-service", "service_name": pattern.name},
+        timestamp=now,
+        last_updated=now,
+        stable_id=_runtime_stable_id(pattern.component_type, pattern.name),
+    )
+
+
+def _is_frontend_file(rel_path: str) -> bool:
+    normalized = rel_path.replace("\\", "/")
+    return (
+        normalized.startswith(("app/", "pages/", "components/", "hooks/"))
+        or "/app/" in normalized
+        or "/pages/" in normalized
+        or "/components/" in normalized
+        or "/hooks/" in normalized
+    )
+
+
+_FETCH_API_RE = re.compile(
+    r"(?:fetch|fetchWith\w+|apiFetch|fetchJSON|fetcher)\s*\(\s*['\"`](/api/[^'\"`\s?)]*)",
+)
+
+
+def _api_fetches(source: str, rel_path: str) -> List[Tuple[str, int]]:
+    if not _is_frontend_file(rel_path):
+        return []
+    out: List[Tuple[str, int]] = []
+    seen: Set[str] = set()
+    for match in _FETCH_API_RE.finditer(source):
+        api_path = match.group(1)
+        if "$" in api_path:
+            api_path = api_path.split("$", 1)[0].rstrip("/")
+        if not api_path.startswith("/api/") or len(api_path) <= len("/api/"):
+            continue
+        if api_path in seen:
+            continue
+        seen.add(api_path)
+        out.append((api_path, _line_for_offset(source, match.start())))
+    return out
+
+
+def _resolve_api_route(api_path: str, repo_files: Set[str]) -> Optional[str]:
+    clean = api_path.split("?", 1)[0].strip("/")
+    if not clean.startswith("api/"):
+        return None
+    candidates: List[str] = []
+    for prefix in ("app", "src/app"):
+        for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
+            candidates.append(f"{prefix}/{clean}/route{ext}")
+    for prefix in ("pages", "src/pages"):
+        for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
+            candidates.append(f"{prefix}/{clean}{ext}")
+            candidates.append(f"{prefix}/{clean}/index{ext}")
+    for candidate in candidates:
+        if candidate in repo_files:
+            return candidate
+    return None
+
+
+def _service_matches(source: str) -> List[Tuple[ServicePattern, int, str, str]]:
+    found: Dict[str, Tuple[ServicePattern, int, str, str]] = {}
+    for i, line in enumerate(source.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("//", "#", "*")):
+            continue
+        for pattern in SERVICE_PATTERNS:
+            if pattern.name in found:
+                continue
+            for regex in pattern.patterns:
+                if regex.search(line):
+                    found[pattern.name] = (pattern, i, stripped[:120], regex.pattern)
+                    break
+    return list(found.values())
+
+
+def _classification_for_file(rel_path: str) -> str:
+    lower = rel_path.lower()
+    return "test" if "test" in lower or "__tests__" in lower else "production"
+
+
+def _refresh_component_links(components: List[Component], connections: List[Connection]) -> None:
+    by_id: Dict[str, Component] = {c.component_id: c for c in components}
+    for comp in components:
+        comp.connects_to = []
+        comp.connected_from = []
+    for conn in connections:
+        f = by_id.get(conn.from_id)
+        t = by_id.get(conn.to_id)
+        if f and conn.to_id not in f.connects_to:
+            f.connects_to.append(conn.to_id)
+        if t and conn.from_id not in t.connected_from:
+            t.connected_from.append(conn.from_id)
+
+
+def _prune_unreferenced_runtime_components(
+    components: List[Component],
+    connections: List[Connection],
+) -> List[Component]:
+    referenced = {c.from_id for c in connections} | {c.to_id for c in connections}
+    return [
+        comp for comp in components
+        if comp.metadata.get("kind") == "source-file" or comp.component_id in referenced
+    ]
+
+
+def _seed_runtime_components(
+    components: List[Component],
+) -> Dict[Tuple[str, str], Component]:
+    runtime_components: Dict[Tuple[str, str], Component] = {}
+    for existing in components:
+        kind = existing.metadata.get("kind")
+        if kind == "package":
+            manager = existing.metadata.get("package_manager", "")
+            package_name = existing.metadata.get("package_name", existing.name)
+            runtime_components[(f"{manager}-package", package_name)] = existing
+        elif kind == "external-service":
+            service_name = existing.metadata.get("service_name", existing.name)
+            runtime_components[(existing.type, service_name)] = existing
+    return runtime_components
+
+
+def _ensure_package_component(
+    components: List[Component],
+    by_id: Dict[str, Component],
+    runtime_components: Dict[Tuple[str, str], Component],
+    manager: str,
+    package_name: str,
+    manifest_rel: str,
+) -> Component:
+    key = (f"{manager}-package", package_name)
+    existing = runtime_components.get(key)
+    if existing:
+        return existing
+    package_comp = _build_package_component(manager, package_name, manifest_rel)
+    runtime_components[key] = package_comp
+    components.append(package_comp)
+    by_id[package_comp.component_id] = package_comp
+    return package_comp
+
+
+def _ensure_service_component(
+    components: List[Component],
+    by_id: Dict[str, Component],
+    runtime_components: Dict[Tuple[str, str], Component],
+    pattern: ServicePattern,
+) -> Component:
+    key = (pattern.component_type, pattern.name)
+    existing = runtime_components.get(key)
+    if existing:
+        return existing
+    service_comp = _build_service_component(pattern)
+    runtime_components[key] = service_comp
+    components.append(service_comp)
+    by_id[service_comp.component_id] = service_comp
+    return service_comp
+
+
+def _append_connection(
+    connections: List[Connection],
+    seen_connections: Set[Tuple[str, str, str, int, str]],
+    from_comp: Component,
+    to_comp: Component,
+    connection_type: str,
+    rel: str,
+    line: int,
+    symbol: str,
+    confidence: float,
+    detected_from: str,
+    symbol_type: str = "import",
+    description: str = "",
+) -> None:
+    key = (connection_type, from_comp.component_id, to_comp.component_id, line, symbol)
+    if key in seen_connections:
+        return
+    seen_connections.add(key)
+    connections.append(Connection(
+        connection_id=_connection_id(
+            from_comp.component_id,
+            to_comp.component_id,
+            line,
+            connection_type=connection_type,
+            symbol=symbol,
+        ),
+        from_id=from_comp.component_id,
+        to_id=to_comp.component_id,
+        from_stable=from_comp.stable_id,
+        to_stable=to_comp.stable_id,
+        type=connection_type,
+        file=rel,
+        line=line,
+        symbol=symbol,
+        symbol_type=symbol_type,
+        confidence=confidence,
+        classification=_classification_for_file(rel),
+        detected_from=detected_from,
+        description=description,
+    ))
+
+
+def _emit_file_connections(
+    *,
+    rel: str,
+    comp: Component,
+    source: str,
+    ext: str,
+    rel_files_set: Set[str],
+    file_map: Dict[str, str],
+    by_id: Dict[str, Component],
+    components: List[Component],
+    connections: List[Connection],
+    seen_connections: Set[Tuple[str, str, str, int, str]],
+    runtime_components: Dict[Tuple[str, str], Component],
+    declared_npm: Dict[str, str],
+    declared_pip: Dict[str, Tuple[str, str]],
+    path_aliases: Dict[str, str],
+) -> None:
+    if ext in PY_EXTS:
+        imports = _py_imports(source)
+        resolver = _resolve_py_import
+    elif ext in TS_EXTS or ext in JS_EXTS:
+        imports = _ts_imports(source, ext == ".tsx")
+
+        def resolver(spec_str: str, from_rel: str, files: Set[str]) -> Optional[str]:
+            return _resolve_ts_import(
+                spec_str, from_rel, files, path_aliases=path_aliases
+            )
+    else:
+        return
+
+    for spec_str, line in imports:
+        target_rel = resolver(spec_str, rel, rel_files_set)
+        if target_rel:
+            target_id = file_map.get(target_rel)
+            target_comp = by_id.get(target_id or "")
+            if target_comp and target_id != comp.component_id:
+                _append_connection(
+                    connections,
+                    seen_connections,
+                    comp,
+                    target_comp,
+                    "imports",
+                    rel,
+                    line,
+                    spec_str,
+                    1.0,
+                    "build-loop-native-scanner",
+                )
+            continue
+
+        package = _external_package_for_import(
+            spec_str, ext, declared_npm, declared_pip
+        )
+        if package:
+            manager, package_name, manifest_rel = package
+            package_comp = _ensure_package_component(
+                components, by_id, runtime_components,
+                manager, package_name, manifest_rel,
+            )
+            _append_connection(
+                connections,
+                seen_connections,
+                comp,
+                package_comp,
+                "uses-package",
+                rel,
+                line,
+                package_name,
+                1.0,
+                "build-loop-native-scanner (bare-import)",
+                description=f"{rel} uses {package_name}",
+            )
+
+    if ext in TS_EXTS or ext in JS_EXTS:
+        for api_path, line in _api_fetches(source, rel):
+            route_rel = _resolve_api_route(api_path, rel_files_set)
+            if not route_rel:
+                continue
+            route_id = file_map.get(route_rel)
+            route_comp = by_id.get(route_id or "")
+            if not route_comp or route_id == comp.component_id:
+                continue
+            _append_connection(
+                connections,
+                seen_connections,
+                comp,
+                route_comp,
+                "frontend-calls-api",
+                rel,
+                line,
+                f"fetch({api_path})",
+                0.9,
+                "build-loop-native-scanner (fetch)",
+                symbol_type="function",
+                description=f"{rel} fetches {api_path}",
+            )
+
+    for pattern, line, snippet, detected in _service_matches(source):
+        service_comp = _ensure_service_component(
+            components, by_id, runtime_components, pattern
+        )
+        _append_connection(
+            connections,
+            seen_connections,
+            comp,
+            service_comp,
+            "service-call",
+            rel,
+            line,
+            pattern.name,
+            0.85,
+            f"build-loop-native-scanner pattern: {detected}",
+            symbol_type="function",
+            description=f"Calls {pattern.name}: {snippet}",
+        )
+
+
 def scan_repo(repo_root: Path | str) -> ScanResult:
     """Full scan. Returns a ScanResult; caller persists via storage."""
     repo_root = Path(repo_root).resolve()
@@ -455,9 +1229,18 @@ def scan_repo(repo_root: Path | str) -> ScanResult:
         h, size, mtime = _hash_file(repo_root / rel)
         hashes[rel] = {"hash": h, "size": size, "mtime": mtime}
 
-    # Pass 2: parse imports per file, build connections.
+    path_aliases = _load_ts_path_aliases(repo_root)
+    declared_npm = _read_declared_npm_packages(repo_root, spec)
+    declared_pip = _read_declared_pip_packages(repo_root, spec)
+    runtime_components = _seed_runtime_components(components)
+    by_id: Dict[str, Component] = {c.component_id: c for c in components}
+    seen_connections: Set[Tuple[str, str, str, int, str]] = set()
+
+    # Pass 2: parse imports + runtime calls per file, build connections.
     connections: List[Connection] = []
     for comp in components:
+        if comp.metadata.get("kind") != "source-file":
+            continue
         rel = comp.metadata.get("file", "")
         full = repo_root / rel
         try:
@@ -465,49 +1248,25 @@ def scan_repo(repo_root: Path | str) -> ScanResult:
         except OSError:
             continue
         ext = os.path.splitext(rel)[1].lower()
-
-        if ext in PY_EXTS:
-            imports = _py_imports(source)
-            resolver = _resolve_py_import
-        elif ext in TS_EXTS or ext in JS_EXTS:
-            is_tsx = ext == ".tsx"
-            imports = _ts_imports(source, is_tsx)
-            resolver = _resolve_ts_import
-        else:
-            continue
-
-        for spec_str, line in imports:
-            target_rel = resolver(spec_str, rel, rel_files_set)
-            if not target_rel:
-                continue
-            target_id = file_map.get(target_rel)
-            if not target_id or target_id == comp.component_id:
-                continue
-            cid = _connection_id(comp.component_id, target_id, line)
-            conn = Connection(
-                connection_id=cid,
-                from_id=comp.component_id,
-                to_id=target_id,
-                from_stable=comp.stable_id,
-                to_stable=_stable_id(target_rel),
-                type="imports",
-                file=rel,
-                line=line,
-                symbol=spec_str,
-                confidence=1.0,
-                classification="test" if "test" in rel.lower() else "production",
-            )
-            connections.append(conn)
+        _emit_file_connections(
+            rel=rel,
+            comp=comp,
+            source=source,
+            ext=ext,
+            rel_files_set=rel_files_set,
+            file_map=file_map,
+            by_id=by_id,
+            components=components,
+            connections=connections,
+            seen_connections=seen_connections,
+            runtime_components=runtime_components,
+            declared_npm=declared_npm,
+            declared_pip=declared_pip,
+            path_aliases=path_aliases,
+        )
 
     # Pass 3: backfill connects_to / connected_from on components.
-    by_id: Dict[str, Component] = {c.component_id: c for c in components}
-    for conn in connections:
-        f = by_id.get(conn.from_id)
-        t = by_id.get(conn.to_id)
-        if f and conn.to_id not in f.connects_to:
-            f.connects_to.append(conn.to_id)
-        if t and conn.from_id not in t.connected_from:
-            t.connected_from.append(conn.from_id)
+    _refresh_component_links(components, connections)
 
     return ScanResult(
         components=components,
@@ -543,7 +1302,10 @@ def scan_one_file(
         new_file_map = {k: v for k, v in prior_scan.file_map.items() if k != rel_path}
         new_conns = [c for c in prior_scan.connections if c.file != rel_path]
         new_hashes = {k: v for k, v in prior_scan.hashes.items() if k != rel_path}
-        return ScanResult(new_comps, new_conns, new_file_map, new_hashes, len(new_comps))
+        new_comps = _prune_unreferenced_runtime_components(new_comps, new_conns)
+        _refresh_component_links(new_comps, new_conns)
+        files_scanned = sum(1 for c in new_comps if c.metadata.get("kind") == "source-file")
+        return ScanResult(new_comps, new_conns, new_file_map, new_hashes, files_scanned)
 
     # Re-build component for rel_path.
     comp = _build_component(rel_path)
@@ -563,46 +1325,35 @@ def scan_one_file(
     except OSError:
         source = ""
     ext = os.path.splitext(rel_path)[1].lower()
-    if ext in PY_EXTS:
-        imports = _py_imports(source); resolver = _resolve_py_import
-    elif ext in TS_EXTS or ext in JS_EXTS:
-        imports = _ts_imports(source, ext == ".tsx"); resolver = _resolve_ts_import
-    else:
-        imports, resolver = [], None
-
-    for spec_str, line in imports:
-        target_rel = resolver(spec_str, rel_path, rel_files_set) if resolver else None
-        if not target_rel:
-            continue
-        target_id = new_file_map.get(target_rel)
-        if not target_id or target_id == comp.component_id:
-            continue
-        cid = _connection_id(comp.component_id, target_id, line)
-        new_conns.append(Connection(
-            connection_id=cid,
-            from_id=comp.component_id,
-            to_id=target_id,
-            from_stable=comp.stable_id,
-            to_stable=_stable_id(target_rel),
-            type="imports",
-            file=rel_path,
-            line=line,
-            symbol=spec_str,
-            confidence=1.0,
-            classification="test" if "test" in rel_path.lower() else "production",
-        ))
+    spec = _load_gitignore(repo_root)
+    path_aliases = _load_ts_path_aliases(repo_root)
+    declared_npm = _read_declared_npm_packages(repo_root, spec)
+    declared_pip = _read_declared_pip_packages(repo_root, spec)
+    runtime_components = _seed_runtime_components(new_comps)
+    by_id: Dict[str, Component] = {c.component_id: c for c in new_comps}
+    seen_connections: Set[Tuple[str, str, str, int, str]] = {
+        (c.type, c.from_id, c.to_id, c.line, c.symbol) for c in new_conns
+    }
+    _emit_file_connections(
+        rel=rel_path,
+        comp=comp,
+        source=source,
+        ext=ext,
+        rel_files_set=rel_files_set,
+        file_map=new_file_map,
+        by_id=by_id,
+        components=new_comps,
+        connections=new_conns,
+        seen_connections=seen_connections,
+        runtime_components=runtime_components,
+        declared_npm=declared_npm,
+        declared_pip=declared_pip,
+        path_aliases=path_aliases,
+    )
 
     # Re-derive connects_to / connected_from.
-    by_id = {c.component_id: c for c in new_comps}
-    for c in new_comps:
-        c.connects_to = []
-        c.connected_from = []
-    for conn in new_conns:
-        f = by_id.get(conn.from_id)
-        t = by_id.get(conn.to_id)
-        if f and conn.to_id not in f.connects_to:
-            f.connects_to.append(conn.to_id)
-        if t and conn.from_id not in t.connected_from:
-            t.connected_from.append(conn.from_id)
+    new_comps = _prune_unreferenced_runtime_components(new_comps, new_conns)
+    _refresh_component_links(new_comps, new_conns)
+    files_scanned = sum(1 for c in new_comps if c.metadata.get("kind") == "source-file")
 
-    return ScanResult(new_comps, new_conns, new_file_map, new_hashes, len(new_comps))
+    return ScanResult(new_comps, new_conns, new_file_map, new_hashes, files_scanned)

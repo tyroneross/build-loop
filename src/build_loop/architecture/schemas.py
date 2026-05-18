@@ -194,15 +194,19 @@ class Connection:
     file: str = ""
     line: int = 0
     symbol: str = ""
+    symbol_type: str = "import"
     confidence: float = 1.0
     classification: str = "production"
+    detected_from: str = "build-loop-native-scanner"
+    description: str = ""
     raw: Dict[str, Any] = field(default_factory=dict)
 
     def __init__(self, **data: Any) -> None:
         # Flat constructor (used by scanner.py).
         flat_keys = {
             "connection_id", "from_id", "to_id", "from_stable", "to_stable",
-            "type", "file", "line", "symbol", "confidence", "classification",
+            "type", "file", "line", "symbol", "symbol_type", "confidence",
+            "classification", "detected_from", "description",
         }
         if any(k in data for k in flat_keys) and "from" not in data:
             self.connection_id = data.get("connection_id", "")
@@ -214,8 +218,11 @@ class Connection:
             self.file = data.get("file", "")
             self.line = int(data.get("line") or 0)
             self.symbol = data.get("symbol", "")
+            self.symbol_type = data.get("symbol_type", "import")
             self.confidence = float(data.get("confidence") if data.get("confidence") is not None else 1.0)
             self.classification = data.get("classification", "production")
+            self.detected_from = data.get("detected_from", "build-loop-native-scanner")
+            self.description = data.get("description", "")
             self.raw = data.get("raw", {})
             return
 
@@ -233,9 +240,12 @@ class Connection:
         self.line = int(loc.get("line") or 0)
         code_ref = data.get("code_reference") or {}
         self.symbol = code_ref.get("symbol", "")
+        self.symbol_type = code_ref.get("symbol_type", "import")
         self.confidence = float(data.get("confidence") if data.get("confidence") is not None else 1.0)
         sem = data.get("semantic") or {}
         self.classification = sem.get("classification", "production")
+        self.detected_from = data.get("detected_from", "build-loop-native-scanner")
+        self.description = data.get("description", "")
         self.raw = data
 
     def to_dict(self) -> Dict[str, Any]:
@@ -245,7 +255,7 @@ class Connection:
             out = dict(self.raw)
             out["connection_id"] = self.connection_id
             return out
-        return {
+        out = {
             "connection_id": self.connection_id,
             "from": {
                 "component_id": self.from_id,
@@ -261,15 +271,18 @@ class Connection:
             "code_reference": {
                 "file": self.file,
                 "symbol": self.symbol,
-                "symbol_type": "import",
+                "symbol_type": self.symbol_type,
                 "line_start": self.line,
             },
-            "detected_from": "build-loop-native-scanner",
+            "detected_from": self.detected_from,
             "confidence": self.confidence,
             "timestamp": 0,
             "last_verified": 0,
             "semantic": {"classification": self.classification, "confidence": 0.4},
         }
+        if self.description:
+            out["description"] = self.description
+        return out
 
 
 # ---------------------------------------------------------------------------

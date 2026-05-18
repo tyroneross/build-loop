@@ -142,6 +142,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # they expect. See ScanResult.to_index() for the full contract.
     comp_count = len(result.components)
     conn_count = len(result.connections)
+    connection_counts_by_type: Dict[str, int] = {}
+    for conn in result.connections:
+        connection_counts_by_type[conn.type] = connection_counts_by_type.get(conn.type, 0) + 1
     write_manifest(repo, {
         "schema_version": SCHEMA_VERSION,
         "generator": "build-loop-native",
@@ -151,6 +154,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         "components_count": comp_count,
         "connection_count": conn_count,
         "connections_count": conn_count,
+        "connection_counts_by_type": connection_counts_by_type,
         "files_scanned": result.files_scanned,
         "generated_at": now_ms,
         "last_scan": now_ms,
@@ -163,6 +167,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         "ok": True,
         "components": len(result.components),
         "connections": len(result.connections),
+        "connection_counts_by_type": connection_counts_by_type,
         "files_scanned": result.files_scanned,
         "elapsed_ms": elapsed_ms,
         "arch_dir": str(arch_dir(repo)),

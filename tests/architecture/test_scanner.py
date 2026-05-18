@@ -98,3 +98,128 @@ def test_scan_one_file_replaces_in_place(fixture_repo: Path) -> None:
     assert (by_file["pkg/a.py"], by_file["pkg/c.py"]) in edges
     assert (by_file["pkg/a.py"], by_file["pkg/b.py"]) not in edges
     assert (by_file["pkg/b.py"], by_file["pkg/c.py"]) in edges
+
+
+def test_scan_emits_gator_style_runtime_edges(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "package.json",
+        '{"dependencies": {"react": "^18.0.0"}}',
+    )
+    _write(
+        tmp_path / "tsconfig.json",
+        '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./*"]}}}',
+    )
+    _write(
+        tmp_path / "app" / "page.js",
+        """
+        import React from "react";
+        import { helper } from "@/lib/helper";
+
+        export default async function Page() {
+          await fetch("/api/investments/research");
+          return helper + React.version;
+        }
+        """,
+    )
+    _write(
+        tmp_path / "app" / "api" / "investments" / "research" / "route.js",
+        "export function GET() { return Response.json({ ok: true }); }\n",
+    )
+    _write(tmp_path / "lib" / "helper.js", "export const helper = 1;\n")
+    _write(
+        tmp_path / "lib" / "local-llm.js",
+        """
+        export async function runLocal() {
+          const url = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+          return fetch(url);
+        }
+        """,
+    )
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata.get("file"): c.component_id for c in result.components}
+    by_package = {
+        c.metadata.get("package_name"): c.component_id
+        for c in result.components
+        if c.metadata.get("kind") == "package"
+    }
+    by_service = {
+        c.metadata.get("service_name"): c.component_id
+        for c in result.components
+        if c.metadata.get("kind") == "external-service"
+    }
+
+    typed_edges = {
+        (c.type, c.from_id, c.to_id, c.symbol)
+        for c in result.connections
+    }
+    assert (
+        "imports",
+        by_file["app/page.js"],
+        by_file["lib/helper.js"],
+        "@/lib/helper",
+    ) in typed_edges
+    assert (
+        "uses-package",
+        by_file["app/page.js"],
+        by_package["react"],
+        "react",
+    ) in typed_edges
+    assert (
+        "frontend-calls-api",
+        by_file["app/page.js"],
+        by_file["app/api/investments/research/route.js"],
+        "fetch(/api/investments/research)",
+    ) in typed_edges
+    assert (
+        "service-call",
+        by_file["lib/local-llm.js"],
+        by_service["Ollama"],
+        "Ollama",
+    ) in typed_edges
+
+
+def test_scan_one_file_updates_runtime_edges(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "package.json",
+        '{"dependencies": {"react": "^18.0.0", "vue": "^3.0.0"}}',
+    )
+    _write(
+        tmp_path / "app" / "page.js",
+        """
+        import React from "react";
+        export default async function Page() {
+          await fetch('/api/ping');
+          return React.version;
+        }
+        """,
+    )
+    _write(
+        tmp_path / "app" / "api" / "ping" / "route.js",
+        "export function GET() { return Response.json({ ok: true }); }\n",
+    )
+
+    initial = scan_repo(tmp_path)
+    _write(
+        tmp_path / "app" / "page.js",
+        """
+        import { createApp } from "vue";
+        export default function Page() {
+          return createApp;
+        }
+        """,
+    )
+
+    updated = scan_one_file(tmp_path, "app/page.js", prior_scan=initial)
+    by_file = {c.metadata.get("file"): c.component_id for c in updated.components}
+    packages = {
+        c.metadata.get("package_name"): c.component_id
+        for c in updated.components
+        if c.metadata.get("kind") == "package"
+    }
+    page_edges = [c for c in updated.connections if c.from_id == by_file["app/page.js"]]
+
+    assert "vue" in packages
+    assert "react" not in packages
+    assert any(c.type == "uses-package" and c.to_id == packages["vue"] for c in page_edges)
+    assert not any(c.type == "frontend-calls-api" for c in page_edges)
