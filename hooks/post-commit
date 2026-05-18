@@ -1,0 +1,25 @@
+#!/bin/sh
+# App Pulse post-commit capture (cross-tool).
+#
+# git fires this regardless of which tool (Claude / Codex / plain git)
+# made the commit, so it is the durable cross-tool capture boundary.
+# Fire-and-forget: all real work is backgrounded and the hook returns 0
+# immediately so it can NEVER slow down or fail a commit.
+#
+# Identity comes from the environment when present:
+#   APP_PULSE_TOOL   (default: unknown)
+#   APP_PULSE_RUN_ID (default: unknown)
+#   APP_PULSE_MODEL  (default: unknown)
+#
+# Idempotent installer chains this after any pre-existing post-commit;
+# this body is the App-Pulse segment only.
+
+# --- BEGIN app-pulse post-commit ---
+APP_PULSE_CAPTURE="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.app-pulse-capture.py"
+if [ -f "$APP_PULSE_CAPTURE" ]; then
+  (
+    python3 "$APP_PULSE_CAPTURE" >/dev/null 2>&1
+  ) </dev/null >/dev/null 2>&1 &
+fi
+# --- END app-pulse post-commit ---
+exit 0

@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/_paths.py — channel path resolver (D1).
+"""Tests for scripts/app_pulse/channel_paths.py — channel path resolver (D1).
 
 Coverage:
   - slug parity: identical canonical slug from a temp `git worktree` and
@@ -22,7 +22,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-import _paths as ap  # noqa: E402
+import channel_paths as ap  # noqa: E402
 
 
 def _git(args, cwd):
