@@ -1,25 +1,47 @@
-"""Deterministic, stdlib-only call-site / infra / dependency detectors (D5).
+"""Scanner-adapter + 3 gap detectors (D5 detection half, Stage 2.5).
 
-This is the *detection* half of the detect/label split. It locates sites and
-emits **unlabelled** nodes — type + file:line + a short context slice. It
-NEVER sets ``purpose``/``model_class``/``model_example`` or any data-in/out
-prose; that is the semantic half (T12 enrich → scout/Claude).
+After the Stage 2.5 reconciliation the peer native-scanner (``scanner.py``) is
+the SINGLE structural detection source for the dependency / LLM / service /
+package / internal-API surface. This module no longer re-scans source files for
+anything the scanner already represents. It is now a thin, deterministic,
+stdlib-only *adapter + gap* layer with two public functions:
 
-Stdlib only (project memory: minimal deps): ``ast`` for Python, regex for
-JS/TS, plain text/JSON parse for manifests. No third-party parser, no LLM.
+  * ``map_scan_result(scan_result)`` — pure mapping of the scanner's runtime
+    Components / classified Connections into the existing **unlabelled**
+    site-dict shape ``enrich`` already consumes. NEVER sets
+    ``purpose``/``model_class``/``model_example`` (semantic half = scout, D5).
+
+  * ``detect_gaps(path, rel)`` — emits ONLY the 3 entity classes the scanner
+    structurally cannot represent (justified in ``.build-loop/plan.md``):
+
+      R1  MCP callsites    — scanner ``SERVICE_PATTERNS`` has no MCP pattern;
+                             scanner emits nothing for ``mcp__a__b`` /
+                             ``session.call_tool(...)``.
+      R2  external-URL HTTP — scanner ``frontend-calls-api`` only emits a
+                             *resolved internal route id*; an absolute
+                             ``http(s)://`` target is dropped. Disjoint from
+                             the scanner by construction (absolute URL only).
+      R3  infra_kind        — scanner maps ``import redis``/``bullmq``/
+                             ``psycopg``/``boto3`` to a ``uses-package``
+                             *dependency* edge only, losing the
+                             ``infra-component`` + ``infra_kind`` taxonomy that
+                             digest / diagram / semantic_todo depend on
+                             (test_stage2_acceptance C1 asserts it present).
 
 NON-GOAL: nothing here records usage frequency / call counts. Structure and
-data-flow only (explicit design Non-goal — asserted in tests).
+data-flow only (asserted in tests).
 
 Output records are plain dicts (order-stable, no frequency keys)::
 
     {
-      "node_type": "llm-callsite|mcp-callsite|api-callsite|infra-component|dependency",
-      "raw_ref":   "<literal target / package / url / symbol>",
+      "node_type": "llm-callsite|mcp-callsite|api-callsite|infra-component|"
+                    "external-service|dependency",
+      "raw_ref":   "<literal target / package / url / service / symbol>",
       "file": "<rel path>", "line": <int>,
-      "context": "<source line, stripped>",
-      "provider": "anthropic|openai|...",   # llm only
+      "context": "<source line / scanner description, stripped>",
+      "provider": "<service name>",          # llm only
       "infra_kind": "cache|queue|db|object-store",  # infra only
+      "manifest": "<package manager>",        # dependency only
       "purpose": None, "model_class": None, "model_example": None,
     }
 """
@@ -27,15 +49,15 @@ Output records are plain dicts (order-stable, no frequency keys)::
 from __future__ import annotations
 
 import ast
-import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 # ---------------------------------------------------------------------------
-# Module → classification tables (deterministic, no inference).
+# R3 — infra module → infra_kind classification (deterministic, no inference).
+# Retained because the scanner only emits these as `uses-package` dependency
+# edges; it loses the infra-component taxonomy + infra_kind.
 # ---------------------------------------------------------------------------
-_LLM_MODULES = {"anthropic": "anthropic", "openai": "openai"}
 _INFRA_MODULES: Dict[str, str] = {
     "redis": "cache",
     "aioredis": "cache",
@@ -66,8 +88,11 @@ _INFRA_JS = {
 
 _NULL_LABELS = {"purpose": None, "model_class": None, "model_example": None}
 
-_URL_RE = re.compile(r"""['"](https?://[^'"\s]+)['"]""")
+# R2: ONLY absolute http(s):// URLs (scanner frontend-calls-api never emits an
+# absolute URL — it emits a resolved internal route id). Disjoint by design.
+_ABS_URL_RE = re.compile(r"""['"](https?://[^'"\s]+)['"]""")
 _FETCH_RE = re.compile(r"\bfetch\s*\(")
+# R1: MCP tool-name string literals.
 _MCP_NAME_RE = re.compile(r"""['"](mcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_]+)['"]""")
 _JS_IMPORT_RE = re.compile(
     r"""(?:import[^'"\n]*from\s*|require\s*\(\s*)['"]([^'"\n]+)['"]"""
@@ -93,10 +118,70 @@ def _site(node_type: str, raw_ref: str, rel: str, line: int, ctx: str, **extra) 
 
 
 # ---------------------------------------------------------------------------
-# Python (ast)
+# map_scan_result — scanner Components/Connections → taxonomy sites
 # ---------------------------------------------------------------------------
 
-def _detect_py(text: str, rel: str) -> List[Dict[str, Any]]:
+def map_scan_result(scan_result: Any) -> List[Dict[str, Any]]:
+    """Map a scanner ``ScanResult`` into unlabelled taxonomy sites.
+
+    Single structural source: every dependency / LLM / service / internal-API
+    site comes from the scanner here — detectors never re-scan for these.
+
+    Mapping:
+      * Connection ``uses-package`` (target Component kind=package)
+            → ``dependency`` (raw_ref=package_name, manifest=package_manager)
+      * Connection ``service-call`` (target kind=external-service):
+            target Component.type == "llm"      → ``llm-callsite``
+            target Component.type in {service,database,...} → ``external-service``
+      * Connection ``frontend-calls-api`` (resolved internal route)
+            → ``api-callsite`` (raw_ref = symbol, e.g. ``fetch(/api/x)``)
+
+    Order-stable, never labels (D5), never raises.
+    """
+    by_id: Dict[str, Any] = {
+        c.component_id: c for c in getattr(scan_result, "components", [])
+    }
+    out: List[Dict[str, Any]] = []
+    for conn in getattr(scan_result, "connections", []):
+        ctype = conn.type
+        target = by_id.get(conn.to_id)
+        if ctype == "uses-package" and target is not None:
+            meta = target.metadata or {}
+            out.append(_site(
+                "dependency",
+                meta.get("package_name", target.name),
+                conn.file,
+                conn.line,
+                conn.description or "",
+                manifest=meta.get("package_manager", ""),
+            ))
+        elif ctype == "service-call" and target is not None:
+            svc_kind = getattr(target, "type", "")  # llm|service|database|...
+            svc_name = (target.metadata or {}).get("service_name", target.name)
+            if svc_kind == "llm":
+                out.append(_site(
+                    "llm-callsite", svc_name, conn.file, conn.line,
+                    conn.description or "", provider=svc_name,
+                ))
+            else:
+                out.append(_site(
+                    "external-service", svc_name, conn.file, conn.line,
+                    conn.description or "",
+                ))
+        elif ctype == "frontend-calls-api":
+            out.append(_site(
+                "api-callsite", conn.symbol or "fetch", conn.file, conn.line,
+                conn.description or "",
+            ))
+    out.sort(key=lambda s: (s["file"], s["line"], s["node_type"], s["raw_ref"]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# detect_gaps — ONLY R1 (MCP), R2 (external-URL HTTP), R3 (infra_kind)
+# ---------------------------------------------------------------------------
+
+def _gaps_py(text: str, rel: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     try:
         tree = ast.parse(text)
@@ -104,84 +189,80 @@ def _detect_py(text: str, rel: str) -> List[Dict[str, Any]]:
         return out
     lines = text.splitlines()
 
-    # Imports → llm provider / infra.
+    # R3 — infra imports → infra-component (with infra_kind).
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
                 top = a.name.split(".")[0]
-                if top in _LLM_MODULES:
-                    out.append(_site("llm-callsite", a.name, rel, node.lineno,
-                                     _ctx(lines, node.lineno), provider=_LLM_MODULES[top]))
                 if top in _INFRA_MODULES:
                     out.append(_site("infra-component", top, rel, node.lineno,
-                                     _ctx(lines, node.lineno), infra_kind=_INFRA_MODULES[top]))
+                                     _ctx(lines, node.lineno),
+                                     infra_kind=_INFRA_MODULES[top]))
         elif isinstance(node, ast.ImportFrom):
             top = (node.module or "").split(".")[0]
-            if top in _LLM_MODULES:
-                out.append(_site("llm-callsite", node.module or top, rel, node.lineno,
-                                 _ctx(lines, node.lineno), provider=_LLM_MODULES[top]))
             if top in _INFRA_MODULES:
                 out.append(_site("infra-component", top, rel, node.lineno,
-                                 _ctx(lines, node.lineno), infra_kind=_INFRA_MODULES[top]))
+                                 _ctx(lines, node.lineno),
+                                 infra_kind=_INFRA_MODULES[top]))
 
-    # Calls → MCP tool calls, requests.* HTTP, fetch().
+    # R1 — MCP via session.call_tool(...).
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        # session.call_tool("mcp__...") or call_tool(...)
         attr = func.attr if isinstance(func, ast.Attribute) else (
             func.id if isinstance(func, ast.Name) else "")
         if attr == "call_tool":
             ref = ""
             if node.args and isinstance(node.args[0], ast.Constant):
                 ref = str(node.args[0].value)
-            out.append(_site("mcp-callsite", ref or "call_tool", rel, node.lineno,
-                             _ctx(lines, node.lineno)))
-            continue
-        # requests.get/post/... → api-callsite (url literal if present)
-        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) \
-                and func.value.id == "requests":
-            url = ""
-            if node.args and isinstance(node.args[0], ast.Constant):
-                url = str(node.args[0].value)
-            out.append(_site("api-callsite", url or "requests", rel, node.lineno,
-                             _ctx(lines, node.lineno)))
+            out.append(_site("mcp-callsite", ref or "call_tool", rel,
+                             node.lineno, _ctx(lines, node.lineno)))
 
-    # MCP tool-name string literals not caught via call_tool (defensive, deterministic).
+    # R1 — MCP tool-name string literals (defensive, not double-counted).
     for m in _MCP_NAME_RE.finditer(text):
         line = text[: m.start()].count("\n") + 1
         if not any(s["node_type"] == "mcp-callsite" and s["line"] == line for s in out):
             out.append(_site("mcp-callsite", m.group(1), rel, line, _ctx(lines, line)))
 
+    # R2 — external (absolute http(s)://) HTTP via requests.*.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) \
+                and func.value.id == "requests":
+            if node.args and isinstance(node.args[0], ast.Constant):
+                url = str(node.args[0].value)
+                if url.startswith(("http://", "https://")):
+                    out.append(_site("api-callsite", url, rel, node.lineno,
+                                     _ctx(lines, node.lineno)))
     return out
 
 
-# ---------------------------------------------------------------------------
-# JS / TS (regex — deterministic)
-# ---------------------------------------------------------------------------
-
-def _detect_js(text: str, rel: str) -> List[Dict[str, Any]]:
+def _gaps_js(text: str, rel: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     lines = text.splitlines()
 
+    # R3 — infra imports → infra-component (with infra_kind).
     for m in _JS_IMPORT_RE.finditer(text):
         spec = m.group(1)
         line = text[: m.start()].count("\n") + 1
-        if spec in _LLM_MODULES:
-            out.append(_site("llm-callsite", spec, rel, line, _ctx(lines, line),
-                             provider=_LLM_MODULES[spec]))
         if spec in _INFRA_JS:
             out.append(_site("infra-component", spec, rel, line, _ctx(lines, line),
                              infra_kind=_INFRA_JS[spec]))
 
+    # R2 — fetch() to an absolute http(s):// URL ONLY (relative/internal fetch
+    # is scanner-sourced via frontend-calls-api — single representation).
     for m in _FETCH_RE.finditer(text):
         line = text[: m.start()].count("\n") + 1
         tail = text[m.start(): m.start() + 200]
-        um = _URL_RE.search(tail)
-        out.append(_site("api-callsite", um.group(1) if um else "fetch", rel, line,
-                         _ctx(lines, line)))
+        um = _ABS_URL_RE.search(tail)
+        if um:
+            out.append(_site("api-callsite", um.group(1), rel, line,
+                             _ctx(lines, line)))
 
+    # R1 — MCP tool-name string literals.
     for m in _MCP_NAME_RE.finditer(text):
         line = text[: m.start()].count("\n") + 1
         out.append(_site("mcp-callsite", m.group(1), rel, line, _ctx(lines, line)))
@@ -189,12 +270,12 @@ def _detect_js(text: str, rel: str) -> List[Dict[str, Any]]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+def detect_gaps(path: Path | str, rel: str) -> List[Dict[str, Any]]:
+    """Emit ONLY the 3 scanner-gap classes for one source file.
 
-def detect_file(path: Path | str, rel: str) -> List[Dict[str, Any]]:
-    """Detect call sites / infra in one source file. Order-stable, never raises."""
+    Order-stable, never raises. Returns ``[]`` for unsupported extensions or
+    unreadable / unparseable files.
+    """
     p = Path(path)
     try:
         text = p.read_text(encoding="utf-8", errors="replace")
@@ -202,79 +283,10 @@ def detect_file(path: Path | str, rel: str) -> List[Dict[str, Any]]:
         return []
     ext = p.suffix.lower()
     if ext == ".py":
-        sites = _detect_py(text, rel)
+        sites = _gaps_py(text, rel)
     elif ext in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
-        sites = _detect_js(text, rel)
+        sites = _gaps_js(text, rel)
     else:
         return []
-    # Deterministic order: (line, node_type, raw_ref).
     sites.sort(key=lambda s: (s["line"], s["node_type"], s["raw_ref"]))
     return sites
-
-
-_MANIFEST_PARSERS = {
-    "package.json": "_npm",
-    "package-lock.json": "_npm",
-    "pnpm-lock.yaml": "_pnpm",
-    "requirements.txt": "_reqs",
-    "pyproject.toml": "_pyproject",
-    "uv.lock": "_uvlock",
-    "Cargo.toml": "_cargo",
-    "Cargo.lock": "_cargo",
-    "go.mod": "_gomod",
-    "Gemfile": "_gemfile",
-}
-
-
-def is_manifest(rel: str) -> bool:
-    return Path(rel).name in _MANIFEST_PARSERS
-
-
-def detect_manifest(path: Path | str, rel: str) -> List[Dict[str, Any]]:
-    """Parse a dependency manifest → ``dependency`` nodes. Order-stable."""
-    name = Path(rel).name
-    if name not in _MANIFEST_PARSERS:
-        return []
-    try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    names: List[str] = []
-    try:
-        if name in ("package.json", "package-lock.json"):
-            data = json.loads(text)
-            for key in ("dependencies", "devDependencies", "peerDependencies"):
-                names += list((data.get(key) or {}).keys())
-        elif name == "pnpm-lock.yaml":
-            names += re.findall(r"^\s{2,}([@\w][\w@./-]+):", text, re.M)
-        elif name == "requirements.txt":
-            for ln in text.splitlines():
-                ln = ln.strip()
-                if ln and not ln.startswith("#"):
-                    names.append(re.split(r"[=<>!~ \[]", ln, maxsplit=1)[0])
-        elif name == "pyproject.toml":
-            block = re.search(r"dependencies\s*=\s*\[(.*?)\]", text, re.S)
-            if block:
-                for q in re.findall(r'["\']([A-Za-z0-9_.\-]+)', block.group(1)):
-                    names.append(q)
-        elif name == "uv.lock":
-            names += re.findall(r'name\s*=\s*"([^"]+)"', text)
-        elif name in ("Cargo.toml", "Cargo.lock"):
-            names += re.findall(r'name\s*=\s*"([^"]+)"', text)
-        elif name == "go.mod":
-            names += re.findall(r"^\s*([\w./-]+)\s+v[\d.]", text, re.M)
-        elif name == "Gemfile":
-            names += re.findall(r"^\s*gem\s+['\"]([^'\"]+)", text, re.M)
-    except (ValueError, json.JSONDecodeError):
-        return []
-
-    seen: set[str] = set()
-    out: List[Dict[str, Any]] = []
-    for n in names:
-        if not n or n in seen:
-            continue
-        seen.add(n)
-        out.append(_site("dependency", n, rel, 0, "", manifest=name))
-    out.sort(key=lambda s: s["raw_ref"])
-    return out
