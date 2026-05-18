@@ -15,11 +15,23 @@ This suite simulates the two tools by:
      (the *identity* a real session would carry).
   2. Loading the app_pulse channel modules TWICE under distinct module
      names — once from the canonical ``scripts/app_pulse`` tree and once
-     from the installed plugin cache tree — and asserting a write made
-     through one module set surfaces through ``checkpoint_read`` of the
-     OTHER module set, in BOTH directions. This is the same dual-path
-     proof method used to close the Postgres-mirror question this
-     project.
+     from a hermetic ``tmp_path`` copy of that package (a real,
+     physically separate install location that is NOT a symlink back to
+     the canonical tree) — and asserting a write made through one module
+     set surfaces through ``checkpoint_read`` of the OTHER module set, in
+     BOTH directions. This is the same dual-path proof method used to
+     close the Postgres-mirror question this project.
+
+     The second set was previously discovered from
+     ``~/.claude/plugins/cache/.../scripts/app_pulse``. In a standard
+     local-dev install that cache dir is a symlink back to this repo, so
+     ``Path(...).resolve()`` collapsed both "install locations" onto the
+     SAME real files and the dual-path proof was environment-contingent
+     (it only "passed" when a worktree path happened to differ from the
+     symlink target). The hermetic ``shutil.copytree`` makes the two
+     trees genuinely distinct real dirs in EVERY environment (main
+     checkout, worktree, CI, any user) and the suite no longer touches
+     any ``~/.claude/plugins/cache`` path.
 
 It does NOT spawn a real Codex (or Claude) process. It proves the
 cross-tool channel *path* — that the channel API is import-path /
@@ -36,6 +48,7 @@ never touched.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -45,43 +58,45 @@ import pytest
 _HERE = Path(__file__).resolve().parent  # scripts/app_pulse (canonical)
 _CANON_SCRIPTS = _HERE.parent  # scripts/
 
-# Installed plugin cache app_pulse tree — the "other tool's" code path.
-# Discover the highest available cached version that ships app_pulse.
-_CACHE_GLOB = (
-    Path.home()
-    / ".claude/plugins/cache/rosslabs-ai-toolkit/build-loop"
-)
 
+def _materialize_peer_app_pulse(dest_root: Path) -> Path:
+    """Build a hermetic, physically-distinct copy of the app_pulse
+    package under ``dest_root`` and return its ``app_pulse`` dir.
 
-def _discover_cache_app_pulse() -> Path | None:
-    """Return an installed-cache ``scripts/app_pulse`` dir, or None.
+    This is the "second tool / second install location" code path. It is
+    a real ``shutil.copytree`` of ``scripts/app_pulse/*.py`` plus the
+    sibling ``scripts/_paths.py`` (``channel_paths.py`` loads it via
+    ``__file__.parent.parent / "_paths.py"``), laid out as::
 
-    Picks the newest version dir that actually contains the channel
-    modules. None → the cache-path leg is skipped (env gap, not a
-    regression — mirrors the postgres runbook's cache-sync gate).
+        <dest_root>/scripts/_paths.py
+        <dest_root>/scripts/app_pulse/<modules>.py
+
+    Provenance — NOT the ``~/.claude/plugins/cache`` tree — is the whole
+    point: that cache path is, in a standard local-dev install, a symlink
+    back to this very repo, so ``Path(...).resolve()`` collapsed both
+    "install locations" onto identical real files and the dual-path proof
+    proved nothing on the main checkout (it only "passed" by the accident
+    of a worktree path differing from the symlink target).
+
+    A pytest tmp dir is never a symlink to the repo, so the copy resolves
+    to a genuinely different real location in EVERY environment (main
+    checkout, worktree, CI, any user). Stdlib + ``shutil`` only.
     """
-    if not _CACHE_GLOB.is_dir():
-        return None
-    candidates = []
-    for vdir in _CACHE_GLOB.iterdir():
-        ap = vdir / "scripts" / "app_pulse"
-        if (ap / "checkpoint.py").is_file() and (
-            vdir / "scripts" / "_paths.py"
-        ).is_file():
-            candidates.append((vdir.name, ap))
-    if not candidates:
-        return None
-    # Newest by version-string sort (0.10.0 > 0.6.0; lexical is fine for
-    # the zero-padded forms in use, but sort tuple-of-ints to be safe).
-    def _vkey(name: str):
-        parts = name.split(".")
-        return tuple(int(p) if p.isdigit() else 0 for p in parts)
-
-    candidates.sort(key=lambda c: _vkey(c[0]), reverse=True)
-    return candidates[0][1]
-
-
-_CACHE_APP_PULSE = _discover_cache_app_pulse()
+    scripts_dst = dest_root / "scripts"
+    ap_dst = scripts_dst / "app_pulse"
+    # Copy only the non-test .py module tree (deterministic, no pycache,
+    # no recursive test collection under the tmp dir).
+    shutil.copytree(
+        _HERE,
+        ap_dst,
+        ignore=shutil.ignore_patterns(
+            "test_*", "__pycache__", "*.pyc"
+        ),
+    )
+    # channel_paths.py reaches up to scripts/_paths.py — copy the sibling
+    # so the peer set's slug resolver is also its own tree's code.
+    shutil.copy2(_CANON_SCRIPTS / "_paths.py", scripts_dst / "_paths.py")
+    return ap_dst
 
 
 def _load_module_set(app_pulse_dir: Path, tag: str) -> dict:
@@ -148,12 +163,26 @@ def canon() -> dict:
     return _load_module_set(_HERE, "canon")
 
 
+@pytest.fixture(scope="session")
+def _peer_app_pulse_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Session-scoped hermetic copy of the app_pulse package.
+
+    One physically-distinct ``copytree`` reused across the suite (the
+    copy is read-only for the tests — channel state lives elsewhere under
+    the per-test ``$BUILD_LOOP_APPS_ROOT`` tmp dir).
+    """
+    dest = tmp_path_factory.mktemp("peer_install")
+    return _materialize_peer_app_pulse(dest)
+
+
 @pytest.fixture()
-def cache() -> dict | None:
-    """Installed-plugin-cache module set, or None if no cache present."""
-    if _CACHE_APP_PULSE is None:
-        return None
-    return _load_module_set(_CACHE_APP_PULSE, "cache")
+def cache(_peer_app_pulse_dir: Path) -> dict:
+    """Second ("other tool") module set, loaded from the hermetic
+    ``tmp_path`` copy — a real, physically separate install location that
+    is NOT a symlink back to the canonical tree. Always present (no
+    env-gap None): the dual-path proof is now environment-independent.
+    """
+    return _load_module_set(_peer_app_pulse_dir, "peer")
 
 
 @pytest.fixture()
@@ -249,12 +278,10 @@ def test_v1_codex_writes_canonical_claude_reads_dual_path(
         c["tool"] == "codex" for c in env_canon["new_changes"]
     ), "Claude must see the records were written by the codex identity"
 
-    if cache is None:
-        pytest.skip("no installed plugin cache app_pulse — env gap, "
-                    "not a regression (see codex-apppulse-validation.md)")
-    # A DIFFERENT session id so the cache-path read computes its own
+    # A DIFFERENT session id so the peer-path read computes its own
     # delta from a zero cursor and re-surfaces the same records — proving
-    # the cache code path reads the identical $HOME channel.
+    # the second (hermetic-copy) code path reads the identical $HOME
+    # channel. The second set always exists; no env-gap skip.
     env_cache = cache["checkpoint"].checkpoint_read(
         channel, session_id="claude-B-cachepath")
     assert env_cache["changed"] is True
@@ -266,10 +293,9 @@ def test_v1_codex_writes_canonical_claude_reads_dual_path(
 def test_v1_reverse_claude_writes_cache_codex_reads_canonical(
     canon, cache, channel
 ):
-    """Reverse direction: Claude-identity write via the installed-cache
-    modules surfaces to a Codex-identity read via the canonical path."""
-    if cache is None:
-        pytest.skip("no installed plugin cache app_pulse — env gap")
+    """Reverse direction: Claude-identity write via the second
+    (hermetic-copy) modules surfaces to a Codex-identity read via the
+    canonical path."""
     _write_commit_and_dep(cache, channel, tool="claude")
 
     env = canon["checkpoint"].checkpoint_read(
@@ -305,7 +331,8 @@ def test_v2_codex_presence_warns_claude_then_reaped(
         app_slug="a", payload={"phase": "execute"}, revision=1))
     canon["revision"].bump_revision(channel)
 
-    read_mods = cache if cache is not None else canon
+    # Read via the second (hermetic-copy) set — always present.
+    read_mods = cache
     env = read_mods["checkpoint"].checkpoint_read(
         channel, session_id="claude-phase",
         my_files=["src/b.py", "src/c.py"])
@@ -362,7 +389,8 @@ def test_v3_codex_enrich_changes_digest_claude_sees_rebaseline(
         kind="phase", tool="claude", model="m", run_id="c-run",
         app_slug="a", payload={}, revision=1))
     canon["revision"].bump_revision(channel)
-    read_mods = cache if cache is not None else canon
+    # Read via the second (hermetic-copy) set — always present.
+    read_mods = cache
     first = read_mods["checkpoint"].checkpoint_read(
         channel, session_id="claude-preedit")
     assert first["arch_digest"] == {
