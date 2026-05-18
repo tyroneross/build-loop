@@ -364,6 +364,36 @@ def cmd_diagram(args: argparse.Namespace) -> int:
     return _emit_adapter_result(result)
 
 
+def cmd_enrich(args: argparse.Namespace) -> int:
+    """Native enriched-scan pass (D8 — no NavGator routing).
+
+    Runs the deterministic detectors (T11) → enriched nodes/edges (T12),
+    merges them additively into ``graph.json`` (frozen D2 shape preserved),
+    and emits the ``semantic_todo[]`` for the scout / in-session Claude to
+    label. This command NEVER fabricates ``purpose``/``model_class`` —
+    detection only; semantic labelling is the scout's job (D5).
+    """
+    from .enrich import enrich as _enrich, merge_into_graph
+    from .storage import read_json
+
+    repo = _resolve_repo(args.repo)
+    result = _enrich(repo)
+
+    graph_path = arch_dir(repo) / "graph.json"
+    graph = read_json(graph_path) or {"nodes": [], "edges": []}
+    merged = merge_into_graph(graph, result)
+    write_graph(repo, merged)
+
+    payload = {
+        "ok": True,
+        "enriched_nodes": len(result.nodes),
+        "enriched_edges": len(result.edges),
+        "semantic_todo": result.semantic_todo,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # ACP subcommands (Chunk 3 — aliases over scripts/build_acp.py + slice_acp.py)
 # ---------------------------------------------------------------------------
@@ -502,6 +532,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--focus", default=None, help="Component name to focus on (mode=focus).")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_diagram)
+
+    s = sub.add_parser(
+        "enrich",
+        help="Native enriched scan: detect LLM/MCP/API/infra/dep sites, "
+             "merge into graph.json, emit semantic_todo (D8 native-only).",
+    )
+    s.add_argument("--json", action="store_true", help="(default; kept for symmetry)")
+    s.set_defaults(func=cmd_enrich)
 
     # ACP build + slice (Chunk 3 — thin aliases over ``scripts/build_acp.py``
     # and ``scripts/slice_acp.py`` so callers can use the unified
