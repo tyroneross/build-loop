@@ -1,23 +1,33 @@
-"""Enrich orchestration — deterministic detectors → enriched graph + handoff.
+"""Enrich orchestration — scanner output → enriched taxonomy graph + handoff.
 
-This is the *orchestration* of the detect/label split (D5):
+Stage 2.5 reconciliation: the peer native-scanner (``scanner.py``) is the
+SINGLE structural detection source. ``enrich`` no longer re-scans source files;
+it CONSUMES the scanner's runtime Components / classified Connections and adds
+ONLY its additive value:
 
-  * Run the deterministic detectors over a repo (T11).
-  * Build enriched, **unlabelled** nodes (stable ids, taxonomy layer) and
-    dataflow edges (``invokes``: callsite → external target).
-  * Emit a ``semantic_todo[]`` — the sites that still need Claude/scout
-    labelling. ``enrich`` NEVER fabricates ``purpose``/``model_class``/
-    ``model_example``; they stay ``None`` (D5).
+  * the open-taxonomy mapping (→ ``llm-callsite`` / ``api-callsite`` /
+    ``mcp-callsite`` / ``infra-component`` / ``external-service`` /
+    ``dependency``) via ``detectors.map_scan_result`` + the 3 retained gap
+    detectors ``detectors.detect_gaps`` (MCP / external-URL HTTP / infra_kind),
+  * stable enriched nodes (same id scheme as before so node ids are stable),
+    dataflow ``invokes`` edges (callsite → external target),
+  * the ``semantic_todo[]`` — sites still needing Claude/scout labelling.
+    ``enrich`` NEVER fabricates ``purpose``/``model_class``/``model_example``
+    (D5); LLM nodes are model-class-agnostic (D6).
 
-LLM nodes are model-class-agnostic (D6): the durable field is ``model_class``
-(open vocab, filled by scout); no node key carries a literal model id as a
-behavioural key.
+**Single-representation invariant**: every entity is detected once. The scanner
+owns dependency / known-LLM/service / internal-API; ``detect_gaps`` owns ONLY
+the 3 disjoint gap classes. Dedup ordering contract (plan W1/W2): gap detectors
+run FIRST; package names that were infra-classified (R3) suppress the scanner's
+duplicate ``dependency`` node for that same package (the entity is represented
+once, as ``infra-component``).
 
 ``merge_into_graph`` is additive over the frozen graph.json shape
 ``{nodes:[{id,name,layer,...}], edges:[{from,to,type,...}]}`` (D2 — never
 renames ``id``/``name``/``layer``/``from``/``to``/``type``).
 
-Self-contained — no NavGator import (D8). Stdlib only.
+Self-contained — no NavGator import (D8). Stdlib only (the scanner's own
+pathspec/tree_sitter deps are pre-existing, not introduced here).
 """
 
 from __future__ import annotations
@@ -29,7 +39,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from . import _taxonomy as _tx
-from .detectors import detect_file, detect_manifest, is_manifest
+from .detectors import detect_gaps, detect_manifest, is_manifest, map_scan_result
+from .scanner import scan_repo
 
 _SUPPORTED_CODE = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _SKIP_DIRS = {
@@ -43,6 +54,7 @@ _NEEDS = {
     "mcp-callsite": ["purpose", "data_in", "data_out"],
     "api-callsite": ["purpose", "data_in", "data_out"],
     "infra-component": ["purpose"],
+    "external-service": ["purpose"],
     "dependency": [],
 }
 
@@ -79,82 +91,133 @@ def _iter_source_files(repo_root: Path):
         for fn in sorted(filenames):
             rel = os.path.relpath(os.path.join(dirpath, fn), repo_root).replace(os.sep, "/")
             ext = os.path.splitext(fn)[1].lower()
-            if ext in _SUPPORTED_CODE or is_manifest(rel):
+            if ext in _SUPPORTED_CODE:
                 yield Path(dirpath) / fn, rel
 
 
-def enrich(repo_root: Path | str) -> EnrichResult:
-    """Run detectors over ``repo_root`` and build the enriched graph delta.
+def _iter_manifest_files(repo_root: Path):
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        for fn in sorted(filenames):
+            rel = os.path.relpath(os.path.join(dirpath, fn), repo_root).replace(os.sep, "/")
+            if is_manifest(rel):
+                yield Path(dirpath) / fn, rel
 
-    Deterministic + order-stable. Never raises on a bad file (detectors
-    swallow SyntaxError / OSError). Never fabricates semantics.
+
+def _collect_sites(repo_root: Path) -> List[Dict[str, Any]]:
+    """Single detection: scanner-mapped sites + 3 gap-detector sites.
+
+    Dedup ordering contract: gap detectors run FIRST so infra-classified
+    package names suppress the scanner's duplicate ``dependency`` site for
+    that same package (single representation — infra import → infra-component,
+    not also dependency).
+    """
+    gap_sites: List[Dict[str, Any]] = []
+    for abs_path, rel in sorted(_iter_source_files(repo_root), key=lambda t: t[1]):
+        gap_sites.extend(detect_gaps(abs_path, rel))
+
+    infra_pkg_names = {
+        s["raw_ref"] for s in gap_sites if s["node_type"] == "infra-component"
+    }
+
+    scan_result = scan_repo(repo_root)
+    scanner_sites = []
+    scanner_dep_names: set[str] = set()
+    for s in map_scan_result(scan_result):
+        # Suppress the scanner's dependency node for an infra-classified
+        # package — it is represented once, as infra-component (W1).
+        if s["node_type"] == "dependency" and s["raw_ref"] in infra_pkg_names:
+            continue
+        if s["node_type"] == "dependency":
+            scanner_dep_names.add(s["raw_ref"])
+        scanner_sites.append(s)
+
+    # R5 — declared-dependency INVENTORY the import-driven scanner does not
+    # provide. Dedup target is ONLY the true peer-duplication case: a package
+    # the scanner already emitted as a `uses-package` dependency Connection.
+    # An infra-classified package legitimately appears BOTH as runtime
+    # `infra-component` (from the import) AND as a declared `dependency`
+    # (inventory / digest.dep_manifest_hash) — these are DISTINCT layers with
+    # distinct node ids, not a double representation of the same role (matches
+    # pre-reconciliation Stage-2 enrich behavior + test_enrich/C1 contract).
+    manifest_sites = []
+    for abs_path, rel in sorted(_iter_manifest_files(repo_root), key=lambda t: t[1]):
+        for s in detect_manifest(abs_path, rel):
+            if s["raw_ref"] in scanner_dep_names:
+                continue
+            manifest_sites.append(s)
+
+    return scanner_sites + gap_sites + manifest_sites
+
+
+def enrich(repo_root: Path | str) -> EnrichResult:
+    """Consume the scanner over ``repo_root`` and build the enriched delta.
+
+    Deterministic + order-stable. Never raises on a bad file (the scanner and
+    the gap detectors swallow SyntaxError / OSError). Never fabricates
+    semantics (D5/D6).
     """
     repo_root = Path(repo_root).resolve()
     res = EnrichResult()
     seen_nodes: set[str] = set()
 
-    files = sorted(_iter_source_files(repo_root), key=lambda t: t[1])
-    for abs, rel in files:
-        if is_manifest(rel):
-            sites = detect_manifest(abs, rel)
-        else:
-            sites = detect_file(abs, rel)
+    sites = _collect_sites(repo_root)
 
-        for s in sites:
-            ntype = s["node_type"]
-            ok, ntype_norm, _warn = _tx_validate(ntype)  # warn-not-drop (D7)
-            nid = _node_id(ntype_norm, s["file"], s["line"], s["raw_ref"])
-            if nid in seen_nodes:
-                continue
-            seen_nodes.add(nid)
+    for s in sites:
+        ntype = s["node_type"]
+        ok, ntype_norm, _warn = _tx_validate(ntype)  # warn-not-drop (D7)
+        nid = _node_id(ntype_norm, s["file"], s["line"], s["raw_ref"])
+        if nid in seen_nodes:
+            continue
+        seen_nodes.add(nid)
 
-            node: Dict[str, Any] = {
-                "id": nid,
-                "name": s["raw_ref"] or ntype_norm,
-                "layer": _tx.describe(ntype_norm)["layer"],
-                "type": ntype_norm,
+        node: Dict[str, Any] = {
+            "id": nid,
+            "name": s["raw_ref"] or ntype_norm,
+            "layer": _tx.describe(ntype_norm)["layer"],
+            "type": ntype_norm,
+            "file": s["file"],
+            "line": s["line"],
+            "context": s.get("context", ""),
+            # Semantic fields — NEVER fabricated here (D5/D6). Scout fills.
+            "purpose": None,
+            "model_class": None,
+            "model_example": None,
+        }
+        if "provider" in s:
+            node["provider"] = s["provider"]
+        if "infra_kind" in s:
+            node["infra_kind"] = s["infra_kind"]
+        if "manifest" in s:
+            node["manifest"] = s["manifest"]
+        res.nodes.append(node)
+
+        # Dataflow edge: callsite/dependency --invokes--> external target.
+        if ntype_norm in ("llm-callsite", "mcp-callsite", "api-callsite",
+                          "dependency", "infra-component", "external-service"):
+            tgt = _external_id(ntype_norm, s["raw_ref"] or ntype_norm)
+            if tgt not in seen_nodes:
+                seen_nodes.add(tgt)
+                res.nodes.append({
+                    "id": tgt,
+                    "name": s["raw_ref"] or ntype_norm,
+                    "layer": "external",
+                    "type": "external-service",
+                    "purpose": None,
+                    "model_class": None,
+                    "model_example": None,
+                })
+            res.edges.append({"from": nid, "to": tgt, "type": "invokes"})
+
+        needs = _NEEDS.get(ntype_norm, [])
+        if needs:
+            res.semantic_todo.append({
+                "node_id": nid,
                 "file": s["file"],
                 "line": s["line"],
                 "context": s.get("context", ""),
-                # Semantic fields — NEVER fabricated here (D5/D6). Scout fills.
-                "purpose": None,
-                "model_class": None,
-                "model_example": None,
-            }
-            if "provider" in s:
-                node["provider"] = s["provider"]
-            if "infra_kind" in s:
-                node["infra_kind"] = s["infra_kind"]
-            if "manifest" in s:
-                node["manifest"] = s["manifest"]
-            res.nodes.append(node)
-
-            # Dataflow edge: callsite/dependency --invokes--> external target.
-            if ntype_norm in ("llm-callsite", "mcp-callsite", "api-callsite",
-                              "dependency", "infra-component"):
-                tgt = _external_id(ntype_norm, s["raw_ref"] or ntype_norm)
-                if tgt not in seen_nodes:
-                    seen_nodes.add(tgt)
-                    res.nodes.append({
-                        "id": tgt,
-                        "name": s["raw_ref"] or ntype_norm,
-                        "layer": "external",
-                        "type": "external-service",
-                        "purpose": None,
-                        "model_class": None,
-                        "model_example": None,
-                    })
-                res.edges.append({"from": nid, "to": tgt, "type": "invokes"})
-
-            needs = _NEEDS.get(ntype_norm, [])
-            if needs:
-                res.semantic_todo.append({
-                    "node_id": nid,
-                    "file": s["file"],
-                    "line": s["line"],
-                    "context": s.get("context", ""),
-                    "needs": list(needs),
-                })
+                "needs": list(needs),
+            })
 
     # Final deterministic ordering.
     res.nodes.sort(key=lambda n: (n["id"]))

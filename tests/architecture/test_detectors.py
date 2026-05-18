@@ -21,7 +21,12 @@ import re
 import textwrap
 from pathlib import Path
 
-from build_loop.architecture.detectors import detect_gaps, map_scan_result
+from build_loop.architecture.detectors import (
+    detect_gaps,
+    detect_manifest,
+    is_manifest,
+    map_scan_result,
+)
 from build_loop.architecture.scanner import scan_repo
 
 _FREQ_RE = re.compile(r"count|freq|frequency|invocation|num_calls|hits|times_called", re.I)
@@ -141,6 +146,33 @@ def test_gap_R3_infra_imports_classified(tmp_path):
     assert {"cache", "queue", "db", "object-store"}.issubset(kinds), sites
 
 
+def test_gap_R4_python_llm_sdk_bare_import(tmp_path):
+    # Scanner emits zero connections for Python `import anthropic` /
+    # `from openai import OpenAI` (JS forms ARE scanner-covered). R4 fills it.
+    f = _w(tmp_path / "ai.py", """
+        import anthropic
+        from openai import OpenAI
+        def ask():
+            anthropic.Anthropic().messages.create(model="x", messages=[])
+            OpenAI().chat.completions.create(model="y", messages=[])
+    """)
+    sites = detect_gaps(f, "ai.py")
+    providers = {s.get("provider") for s in sites if s["node_type"] == "llm-callsite"}
+    assert {"anthropic", "openai"}.issubset(providers), sites
+    for s in sites:
+        if s["node_type"] == "llm-callsite":
+            assert s.get("model_class") is None and s.get("purpose") is None
+
+
+def test_gap_R4_js_llm_sdk_not_emitted(tmp_path):
+    # JS @anthropic-ai/sdk is fully scanner-covered — detect_gaps must NOT
+    # also emit it (single representation).
+    f = _w(tmp_path / "a.ts",
+           'import Anthropic from "@anthropic-ai/sdk";\nconst c = new Anthropic();\n')
+    sites = detect_gaps(f, "a.ts")
+    assert not any(s["node_type"] == "llm-callsite" for s in sites), sites
+
+
 def test_gap_detectors_never_emit_scanner_owned_types(tmp_path):
     # detect_gaps must NOT emit dependency / generic LLM-SDK-import nodes —
     # those are scanner-owned (single representation).
@@ -150,6 +182,20 @@ def test_gap_detectors_never_emit_scanner_owned_types(tmp_path):
     """)
     sites = detect_gaps(f, "x.py")
     assert not any(s["node_type"] == "dependency" for s in sites), sites
+
+
+def test_gap_R5_manifest_dependency_inventory(tmp_path):
+    # Scanner is import-driven and does NOT provide the declared-dependency
+    # inventory. R5 (detect_manifest) parses all declared deps regardless of
+    # whether they are imported.
+    _w(tmp_path / "package.json", '{"dependencies": {"react": "^19", "redis": "^4"}}')
+    _w(tmp_path / "requirements.txt", "anthropic==0.40\nrequests>=2.31\n")
+    assert is_manifest("package.json") and is_manifest("requirements.txt")
+    npm = detect_manifest(tmp_path / "package.json", "package.json")
+    pip = detect_manifest(tmp_path / "requirements.txt", "requirements.txt")
+    assert {"react", "redis"}.issubset({s["raw_ref"] for s in npm})
+    assert {"anthropic", "requests"}.issubset({s["raw_ref"] for s in pip})
+    assert all(s["node_type"] == "dependency" for s in npm + pip)
 
 
 def test_no_frequency_fields_anywhere(tmp_path):
