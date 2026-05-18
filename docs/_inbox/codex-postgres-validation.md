@@ -65,7 +65,7 @@ uv run python scripts/write_decision.py \
   --decision "Codex-authored sentinel to validate the shared Postgres mirror after the DB-URL resolver fix." \
   --status accepted \
   --project _unscoped \
-  --tags tooling,validation \
+  --tags tooling \
   --primary-tag tooling \
   --entity "codex-pg-roundtrip-$STAMP" \
   --confidence explicit \
@@ -90,11 +90,17 @@ uv run python -c "
 import sys; sys.path.insert(0,'scripts')
 import db
 c = db.get_connection().cursor()
-c.execute(\"SELECT tool, subject FROM personal_memory.semantic_facts WHERE tool='codex' AND subject LIKE '%codex-pg-roundtrip-<STAMP>%'\")
+c.execute(\"SELECT tool, subject, object FROM personal_memory.semantic_facts WHERE tool='codex' AND object LIKE '%codex-pg-roundtrip-<STAMP>%'\")
 rows = c.fetchall()
 print('FOUND IN POSTGRES:', rows if rows else 'NOTHING — sentinel did not reach Postgres')
 "
 ```
+
+> Note on the filter: `write_decision.py` stores the row's `subject` as
+> `decision:<project>:<id>` (e.g. `decision:_unscoped:0005`) — the human title /
+> entity goes in the `object` column. Filter on `object` (or
+> `metadata->>'entity'`), **not** `subject`, or the query returns nothing even
+> on success.
 
 **Expected (success):** it prints `FOUND IN POSTGRES:` followed by a row whose first
 value is `codex`. That single row is the proof: a Codex-written fact is now sitting
