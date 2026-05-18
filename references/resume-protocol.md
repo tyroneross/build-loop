@@ -30,7 +30,16 @@ When `BUILD_LOOP_INJECT_FAULT` is set in the environment, the implementer-dispat
 
 The fault-injection helper lives in `tests/test_resume_orchestration.py:_maybe_inject_fault`. Real orchestrator dispatches mirror the same check inline (read env var; raise if matched).
 
-## Heartbeat-staleness path (M4 primary signal)
+## Heartbeat-staleness path (crash-resume staleness signal)
+
+> **Naming note.** This crash-recovery staleness signal previously shared the
+> "M4" label with the (now-removed) concurrent-collision mechanism. They were
+> always separate concerns sharing zero code — this path reads
+> `state.json.execution` heartbeat via `scripts/resume_resolver.py`; it has
+> nothing to do with concurrent-presence collision, which is now owned solely
+> by App Pulse presence (`scripts/app_pulse/presence.py` — see
+> `references/multi-session-coordination.md` and `KNOWN-ISSUES.md` §M4). The
+> label is disambiguated below; the behavior is unchanged.
 
 When `/build-loop:run` is invoked WITHOUT `--resume`, the Skill body runs the resume resolver with `--resume-arg ""`:
 
@@ -45,7 +54,7 @@ If the resolver returns `decision: "prompt_user"`, the Skill body surfaces to th
 
 > "Incomplete build detected (run_id=X, last heartbeat N min ago). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
 
-This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the M4 primary signal. The Stop hook annotation (M4 secondary) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but the prompt path does not depend on it.
+This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the **crash-resume staleness signal** (the primary crash-recovery signal). The Stop hook annotation (crash-resume secondary annotation) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but the prompt path does not depend on it.
 
 ## Resolver decision matrix
 
