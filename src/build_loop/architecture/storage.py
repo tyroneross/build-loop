@@ -65,6 +65,31 @@ def atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
         raise
 
 
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write text atomically: tmp in same dir, fsync, rename.
+
+    Additive sibling of ``atomic_write_json`` for non-JSON artifacts
+    (diagram.mmd / diagram.dot). Does not touch the JSON helper.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def read_json(path: Path) -> Optional[Dict[str, Any]]:
     p = Path(path)
     if not p.exists():

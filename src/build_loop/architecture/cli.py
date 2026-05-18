@@ -348,6 +348,22 @@ def cmd_schema(args: argparse.Namespace) -> int:
 
 def cmd_diagram(args: argparse.Namespace) -> int:
     repo = _resolve_repo(args.repo)
+
+    # D8: native deterministic generator — no NavGator dependency. Used when
+    # --mode=native (or the default 'auto' now that the native path exists).
+    if getattr(args, "mode", "auto") in ("native", "auto"):
+        from .diagram import write_diagrams
+        from .storage import read_json
+
+        graph = read_json(arch_dir(repo) / "graph.json")
+        if graph is None:
+            print("No graph found. Run `scan` (and `enrich`) first.",
+                  file=sys.stderr)
+            return 2
+        paths = write_diagrams(repo, graph)
+        print(json.dumps({"ok": True, "written": paths}, indent=2, sort_keys=True))
+        return 0
+
     try:
         result = _adapter_for(args).diagram(
             repo, mode=args.diagram_mode, focus=args.focus
