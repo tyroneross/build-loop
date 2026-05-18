@@ -15,6 +15,44 @@ from typing import Any, Dict, List, Optional
 SCHEMA_VERSION = "1.0.0"
 
 
+# ---------------------------------------------------------------------------
+# Open-vocabulary type validation (D7 — warn, never drop).
+#
+# The Component/Connection constructors already accept an arbitrary string
+# ``type`` and stash unknown keys in ``extra``/``raw``; these validators add
+# the *gate* that enrich/digest/diagram call. An unknown type returns
+# ``ok=True`` (RETAINED) plus a warning string so the unknown threads the full
+# chain (schema → enrich → digest → diagram → checkpoint) without being
+# dropped. Adding a type is additive and never bumps SCHEMA_VERSION.
+# ---------------------------------------------------------------------------
+
+def _validate_type(kind: str, t: str) -> tuple[bool, str, Optional[str]]:
+    # Lazy import — keeps schemas.py free of an import cycle with _taxonomy.
+    from . import _taxonomy as _tx
+
+    known = (
+        _tx.known_node_types() if kind == "node" else _tx.known_edge_types()
+    )
+    if t in known:
+        return True, t, None
+    # D7: unknown is retained, flagged with a warning — never rejected/dropped.
+    return (
+        True,
+        t,
+        f"unknown {kind} type {t!r} — retained (open vocab, warn-not-drop, D7)",
+    )
+
+
+def validate_node_type(t: str) -> tuple[bool, str, Optional[str]]:
+    """(ok, normalized, warning|None). Unknown → ok=True + warning (retained)."""
+    return _validate_type("node", t)
+
+
+def validate_edge_type(t: str) -> tuple[bool, str, Optional[str]]:
+    """(ok, normalized, warning|None). Unknown → ok=True + warning (retained)."""
+    return _validate_type("edge", t)
+
+
 def _split_known(declared: set[str], data: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     known = {k: v for k, v in data.items() if k in declared}
     extra = {k: v for k, v in data.items() if k not in declared}
