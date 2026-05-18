@@ -104,10 +104,19 @@ def _iter_presence(channel_dir: Path):
 
 
 def reap_stale(channel_dir: Path) -> list:
-    """Remove presence older than the heartbeat window. Returns reaped IDs."""
+    """Remove stale *live* presence. Returns reaped session IDs.
+
+    Pure-reader cursor stubs (``tool == "reader"``, ``heartbeat_ts``
+    intentionally 0) are NOT reaped — they are not live peers and their
+    sole purpose is to persist a delta cursor between polls. Only real
+    live presence (a positive heartbeat older than the window) is
+    removed.
+    """
     cutoff = time.time() - heartbeat_minutes(channel_dir) * 60
     reaped: list = []
     for f, rec in _iter_presence(channel_dir):
+        if rec.get("tool") == "reader":
+            continue  # cursor stub — keep, never a peer
         if float(rec.get("heartbeat_ts", 0)) < cutoff:
             try:
                 f.unlink()
@@ -118,10 +127,13 @@ def reap_stale(channel_dir: Path) -> list:
 
 
 def read_active_presence(channel_dir: Path, *, exclude_session: str) -> list:
-    """Live peers (post-reap), excluding ``exclude_session``. Never locks."""
+    """Live peers (post-reap), excluding ``exclude_session`` and reader
+    cursor stubs. Never locks."""
     reap_stale(channel_dir)
     out = []
     for _f, rec in _iter_presence(channel_dir):
+        if rec.get("tool") == "reader":
+            continue  # cursor stub is not a peer
         if rec.get("session_id") != exclude_session:
             out.append(rec)
     return out
@@ -145,14 +157,35 @@ def get_cursor(channel_dir: Path, session_id: str) -> dict:
 def set_cursor(
     channel_dir: Path, session_id: str, *, revision: int, changes_offset: int
 ) -> None:
-    """Advance this session's own cursor in-place (preserves other fields)."""
+    """Advance this session's own cursor (preserves other fields).
+
+    Pure readers (the SessionStart / pre-edit hooks) have no presence
+    file of their own, yet their cursor MUST persist or every poll
+    re-surfaces the same delta. So when no presence file exists we write
+    a minimal cursor-only stub with ``heartbeat_ts: 0`` — the reaper
+    treats it as long-stale (never a "live peer") and eventually cleans
+    it, but the cursor survives between polls. Delta-only reads for
+    readers are thus first-class, not a special case.
+    """
     try:
         p = _presence_path(channel_dir, session_id)
-        rec = json.loads(p.read_text())
+        try:
+            rec = json.loads(p.read_text())
+        except (FileNotFoundError, OSError, ValueError):
+            rec = {
+                "session_id": session_id,
+                "tool": "reader",
+                "model": "n/a",
+                "run_id": "n/a",
+                "app_slug": "",
+                "phase": "reader",
+                "files_in_flight": [],
+                "heartbeat_ts": 0,  # never counts as a live peer
+            }
         rec["cursor"] = {
             "revision": int(revision),
             "changes_offset": int(changes_offset),
         }
         _atomic_write(p, rec)
-    except (FileNotFoundError, OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError):
         return
