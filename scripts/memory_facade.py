@@ -20,8 +20,9 @@ Each backend degrades gracefully:
   - state.json runs   → returns [] silently if file missing.
   - episodic dirs     → returns [] silently if dir missing or empty.
   - Postgres          → returns [] AND records reason="db_unavailable" when
-                        BUILD_LOOP_DATABASE_URL is unset, psycopg is missing,
-                        or the connection fails. Never raises.
+                        no DB URL is configured (BUILD_LOOP_DATABASE_URL /
+                        DATABASE_URL / connection.env all unset), psycopg is
+                        missing, or the connection fails. Never raises.
   - debugger MCP      → returns [] AND records reason="mcp_unavailable" when
                         the MCP server is not running. Detection is via the
                         bundled `dist/src/mcp/server.js` reachability check;
@@ -62,6 +63,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
+
+# Shared DB-URL resolver. `_db_url` is stdlib-only (os, pathlib) so this
+# import keeps memory_facade stdlib-only-at-import (it must NOT import
+# `db.py`, which pulls psycopg at module top).
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from _db_url import NO_URL_REASON, resolve_db_url  # noqa: E402
+
 DEFAULT_LIMIT = 10
 KINDS = ("runs", "decisions", "lessons", "semantic", "debugger")
 
@@ -397,9 +407,9 @@ def read_semantic(
     if skip_postgres:
         reasons.append("skipped_postgres")
         return [], reasons
-    db_url = os.environ.get("BUILD_LOOP_DATABASE_URL", "").strip()
+    db_url = resolve_db_url()
     if not db_url:
-        reasons.append("db_unavailable: BUILD_LOOP_DATABASE_URL unset")
+        reasons.append(f"db_unavailable: {NO_URL_REASON}")
         return [], reasons
     try:
         # Lazy import — many environments don't have psycopg.

@@ -210,34 +210,24 @@ def _is_safe_schema(schema: str) -> bool:
 def _resolve_dsn() -> str | None:
     """Plan-doc DSN order: BUILD_LOOP_DATABASE_URL → DATABASE_URL → connection.env.
 
-    Returns None when nothing is configured. Caller treats None as
-    'postgres unavailable' and exits 0 with the soft-failure envelope.
+    Delegates to the shared resolver (`scripts/_db_url.py`). Returns None
+    when nothing is configured (the shared resolver returns ""); caller
+    treats None as 'postgres unavailable' and exits 0 with the
+    soft-failure envelope.
     """
-    bl = os.environ.get("BUILD_LOOP_DATABASE_URL")
-    if bl:
-        return bl
-    dsn = os.environ.get("DATABASE_URL")
-    if dsn:
-        return dsn
-    conn_env = Path.home() / ".config" / "agent-memory" / "connection.env"
-    if conn_env.exists():
-        try:
-            for line in conn_env.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line.startswith("DATABASE_URL="):
-                    return line.split("=", 1)[1].strip()
-        except OSError:
-            return None
-    return None
+    from _db_url import resolve_db_url  # noqa: PLC0415
+
+    return resolve_db_url() or None
 
 
 def _open_connection():
     """Open a psycopg connection. Raises on any failure.
 
-    DSN comes from `_resolve_dsn`. We do NOT delegate to ``scripts.db``
-    because ``db.get_connection`` only reads ``DATABASE_URL`` /
-    connection.env — the plan-doc explicitly asks us to honour
-    ``BUILD_LOOP_DATABASE_URL`` first as a build-loop-namespaced override.
+    DSN comes from `_resolve_dsn`, which delegates to the shared
+    `scripts/_db_url.py` resolver (BUILD_LOOP_DATABASE_URL → DATABASE_URL →
+    connection.env). We open psycopg directly here rather than via
+    ``scripts.db`` to keep this script's soft-failure (return-None →
+    exit-0) envelope instead of db.py's raise-on-missing contract.
     """
     import psycopg  # type: ignore  # noqa: PLC0415
 

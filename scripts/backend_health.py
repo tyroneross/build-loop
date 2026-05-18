@@ -40,6 +40,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
+
+# Shared DB-URL resolver. `_db_url` is stdlib-only (os, pathlib) so this
+# import does not pull psycopg at module top.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from _db_url import NO_URL_REASON, resolve_db_url  # noqa: E402
+
 PER_BACKEND_TIMEOUT_S = 5
 TOTAL_BUDGET_S = 30
 
@@ -206,8 +214,9 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
 def probe_semantic(workdir: Path) -> Dict[str, Any]:
     """Probe Postgres `agent_memory.<schema>.semantic_facts` reachability.
 
-    Mirrors the contract from `memory_facade.read_semantic`: BUILD_LOOP_DATABASE_URL
-    drives the connection. We just attempt a `SELECT 1 FROM <schema>.semantic_facts LIMIT 1`
+    Mirrors the contract from `memory_facade.read_semantic`: the shared
+    resolver (`_db_url.resolve_db_url`) drives the connection. We just
+    attempt a `SELECT 1 FROM <schema>.semantic_facts LIMIT 1`
     so a wedged-but-up Postgres still classifies as `ok`.
     """
     started = time.monotonic()
@@ -225,11 +234,11 @@ def probe_semantic(workdir: Path) -> Dict[str, Any]:
             result["reason"] = msg or "postgres_unavailable"
         return result
 
-    db_url = os.environ.get("BUILD_LOOP_DATABASE_URL", "").strip()
+    db_url = resolve_db_url()
     if not db_url:
         return {
             "ok": False,
-            "reason": "postgres_unavailable: BUILD_LOOP_DATABASE_URL unset",
+            "reason": f"postgres_unavailable: {NO_URL_REASON}",
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
     try:
