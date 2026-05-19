@@ -130,6 +130,72 @@ class DeploymentPolicyTests(unittest.TestCase):
         self.assertEqual(data["action"], "confirm")
         self.assertIn("policy error", data["reason"])
 
+    def test_protected_branches_empty_routes_main_push_to_preview(self) -> None:
+        """Empty protectedBranches => main is no longer protected; routes as preview.
+
+        Per-repo opt-in for iOS / single-trunk workflows where push-to-main
+        is the trigger for a CI-driven TestFlight/preview deploy.
+        """
+        self.write_config({"protectedBranches": []})
+        result = run(self.workdir, "git push origin main")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        data = output(result)
+        self.assertEqual(data["target"], "preview")
+        self.assertEqual(data["action"], "auto")
+
+    def test_protected_branches_subset_protects_only_named(self) -> None:
+        """Only branches in the override list route as production."""
+        self.write_config({"protectedBranches": ["release"]})
+
+        main_push = run(self.workdir, "git push origin main")
+        self.assertEqual(output(main_push)["target"], "preview")
+
+        release_push = run(self.workdir, "git push origin release")
+        self.assertEqual(output(release_push)["target"], "production")
+        self.assertEqual(output(release_push)["action"], "confirm")
+
+    def test_protected_branches_case_insensitive(self) -> None:
+        """Override names are compared lowercased."""
+        self.write_config({"protectedBranches": ["MAIN"]})
+        result = run(self.workdir, "git push origin main")
+        self.assertEqual(output(result)["target"], "production")
+
+    def test_protected_branches_snake_case_alias_honored(self) -> None:
+        """`protected_branches` (snake_case) is accepted as well."""
+        self.write_config({"protected_branches": []})
+        result = run(self.workdir, "git push origin main")
+        self.assertEqual(output(result)["target"], "preview")
+
+    def test_protected_branches_invalid_type_fails_closed(self) -> None:
+        """Non-list protectedBranches => PolicyError; default fail-closed verdict."""
+        self.write_config({"protectedBranches": "main"})
+        result = run(self.workdir, "git push origin main")
+        self.assertEqual(result.returncode, 1)
+        data = output(result)
+        self.assertEqual(data["action"], "confirm")
+        self.assertIn("policy error", data["reason"])
+
+    def test_protected_branches_default_preserves_main_protection(self) -> None:
+        """No override => behavior unchanged: main is protected."""
+        self.write_config({"production": "confirm"})  # explicit target only, no protectedBranches
+        result = run(self.workdir, "git push origin main")
+        self.assertEqual(output(result)["target"], "production")
+        self.assertEqual(output(result)["action"], "confirm")
+
+    def test_protected_branches_does_not_override_production_shape_commands(self) -> None:
+        """Branch declassification does not weaken production for production-shaped commands.
+
+        Per the user-permission posture: declassifying a branch only changes
+        routing path; commands that are inherently production-shaped (npm publish,
+        gh release, vercel --prod) still route as production regardless.
+        """
+        self.write_config({"protectedBranches": []})
+        for cmd in ("npm publish", "gh release create v1.2.3", "vercel deploy --prod"):
+            with self.subTest(cmd=cmd):
+                data = output(run(self.workdir, cmd))
+                self.assertEqual(data["target"], "production")
+                self.assertEqual(data["action"], "confirm")
+
 
 if __name__ == "__main__":
     unittest.main()
