@@ -14,9 +14,20 @@ Repo override:
       "preview": "auto",
       "testflight": "auto",
       "production": "confirm",
-      "unknown": "confirm"
+      "unknown": "confirm",
+      "protectedBranches": ["main", "master", "release"]
     }
   }
+
+`protectedBranches` overrides which branch names route `git push` as
+`production` (default: main / master / production / prod / release /
+stable / trunk / live). Empty list = no branches are protected → any
+git push routes as preview unless the command shape is itself
+production-flavored (npm publish, gh release, etc.). Casing is
+ignored; names are compared lowercased. `production` always stays
+`confirm` unless the repo explicitly opts in via target-action
+mapping — branch declassification only changes the routing path, not
+the user-permission posture for true production-shaped commands.
 """
 from __future__ import annotations
 
@@ -66,6 +77,7 @@ ACTION_ALIASES = {
     "deny": "block",
 }
 PRODUCTION_BRANCHES = {"main", "master", "production", "prod", "release", "stable", "trunk", "live"}
+PROTECTED_BRANCHES_KEYS = {"protectedBranches", "protected-branches", "protected_branches"}
 
 
 class PolicyError(ValueError):
@@ -127,10 +139,58 @@ def load_policy(workdir: Path) -> tuple[dict[str, str], str]:
 
     policy = dict(DEFAULT_POLICY)
     for raw_target, raw_action in raw_policy.items():
+        if raw_target in PROTECTED_BRANCHES_KEYS:
+            # Honored by load_protected_branches; not a target-action mapping.
+            continue
         target = _normalize_target(str(raw_target))
         action = _normalize_action(raw_action)
         policy[target] = action
     return policy, str(config_path)
+
+
+def load_protected_branches(workdir: Path) -> frozenset[str]:
+    """Return the effective protected-branch set for this repo.
+
+    Default = `PRODUCTION_BRANCHES`. Override via
+    `deploymentPolicy.protectedBranches` (or `protected-branches` /
+    `protected_branches`) in `.build-loop/config.json`. Must be a list of
+    strings; empty list = no protected branches.
+    """
+    config_path = workdir / ".build-loop" / "config.json"
+    if not config_path.exists():
+        return frozenset(PRODUCTION_BRANCHES)
+    try:
+        config = json.loads(config_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise PolicyError(f"{config_path} is not valid JSON: {exc}") from exc
+    if not isinstance(config, dict):
+        raise PolicyError(f"{config_path} must contain a JSON object")
+    raw_policy = config.get("deploymentPolicy", {}) or {}
+    if not isinstance(raw_policy, dict):
+        raise PolicyError("deploymentPolicy must be a JSON object")
+    raw_value: Any = None
+    for key in PROTECTED_BRANCHES_KEYS:
+        if key in raw_policy:
+            raw_value = raw_policy[key]
+            break
+    if raw_value is None:
+        return frozenset(PRODUCTION_BRANCHES)
+    return _normalize_protected_branches(raw_value)
+
+
+def _normalize_protected_branches(value: Any) -> frozenset[str]:
+    if not isinstance(value, list):
+        raise PolicyError("deploymentPolicy.protectedBranches must be a list of strings")
+    normalized: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise PolicyError(
+                f"deploymentPolicy.protectedBranches entries must be strings, got {type(item).__name__}"
+            )
+        name = item.strip().lower()
+        if name:
+            normalized.add(name)
+    return frozenset(normalized)
 
 
 def _normalize_target(value: str) -> str:
@@ -148,7 +208,10 @@ def _normalize_action(value: Any) -> str:
     return action
 
 
-def classify_command(raw_command: str) -> tuple[str, str]:
+def classify_command(
+    raw_command: str,
+    protected_branches: frozenset[str] | set[str] | None = None,
+) -> tuple[str, str]:
     command = extract_command(raw_command)
     if not command.strip():
         return "unknown", "empty command"
@@ -156,6 +219,9 @@ def classify_command(raw_command: str) -> tuple[str, str]:
     tokens = _split(command)
     lower_tokens = [token.lower() for token in tokens]
     lower_text = command.lower()
+    effective_protected = (
+        PRODUCTION_BRANCHES if protected_branches is None else protected_branches
+    )
 
     if _is_testflight_command(lower_text, lower_tokens):
         return "testflight", "Apple TestFlight/App Store Connect upload or export"
@@ -167,7 +233,7 @@ def classify_command(raw_command: str) -> tuple[str, str]:
         branch = _git_push_target_branch(tokens)
         if branch is None:
             return "unknown", "git push without an explicit target branch"
-        if branch.lower() in PRODUCTION_BRANCHES:
+        if branch.lower() in effective_protected:
             return "production", f"git push targets protected branch {branch}"
         return "preview", f"git push targets non-production branch {branch}"
 
@@ -287,7 +353,8 @@ def _has_option_value(tokens: list[str], option: str, value: str) -> bool:
 
 def analyze(workdir: Path, command: str) -> dict[str, str | bool]:
     policy, source = load_policy(workdir)
-    target, reason = classify_command(command)
+    protected = load_protected_branches(workdir)
+    target, reason = classify_command(command, protected_branches=protected)
     action = policy.get(target, DEFAULT_POLICY[target])
     return {
         "target": target,
