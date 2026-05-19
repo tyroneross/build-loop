@@ -236,6 +236,8 @@ Blocking gates route to Iterate. Queue entries flow into Phase 5's prioritized w
 
 **Sub-step E — Simplify**: trim the diff — inline single-use helpers, delete dead branches, remove validation for upstream-guaranteed invariants. Preserve public API, tests, observability, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION`.
 
+*Deep mode (opt-in)*: the light pass above is the default and unchanged. An opt-in flag (`deepSimplify` in `.build-loop/config.json`) adds one consolidated, diff-scoped pass over changed Python files only. A zero-dependency stdlib-AST detector (`scripts/complexity_detector.py`) emits ranked hotspots (high complexity, deep nesting, accidental O(n^2), redundant multi-pass, needless single-call-site indirection). For each high-severity hotspot the running agent proposes a simpler rewrite. APPLY only if it is a clear win AND the existing test subset for the touched files still passes AND public signatures + observable behavior are unchanged (reuse the existing Validate + commit-auditor gates — no new safety machinery, no perf gate, no benchmark). Ambiguous or uncertain rewrites are emitted as advisory variances, never applied. With the flag off, none of this runs.
+
 **Sub-step F — Report** (only on final Review pass):
 - **Scorecard** with final pass/fail per criterion + evidence
 - **Verified** (working with evidence), **Unknown** (untested), **Unfixed** (post-cap)

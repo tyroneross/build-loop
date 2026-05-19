@@ -127,7 +127,7 @@ Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-ste
 - **B. Validate** — UI-validator-first when `uiTarget != null` (see `agents/ui-validator.md`); UI input/output contract check; code graders; runtime smoke gate (`scripts/runtime_smoke.py` + SSE-specific contract gate when server module touched); LLM-as-judge; plugin-tests advisory; memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
-- **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value.
+- **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value. Opt-in `deepSimplify` adds one diff-scoped `complexity_detector.py` pass; apply-vs-advise reuses Review-B + commit-auditor (see `phase-4-review.md` §"Deep mode").
 - **F. Auto-Resolve** — `python3 scripts/autonomy_gate.py` against each candidate from A/D; `auto` executes, `warn` executes with `[warn]` prefix + autonomyEvents entry, `confirm` → `## Held`, `block` → `## Blocked`. Strong-checkpoint findings never enter this queue.
 - **G. Report** (final pass only) — scorecard, run entry via `write_run_entry.py`, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate (below). Report sections in order: `## Done` (verified + Auto-Resolve auto + `[warn]` items), `## Held` (confirm verdicts), `## Blocked` (block verdicts), `## Status markers` (✅/⚠️/❓). Forbidden: "Open Recommendations" headers, "Want me to X?" / "Should I Y?" phrasing, lists inviting operator selection. Empty categories: `_(none)_`.
 

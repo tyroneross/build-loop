@@ -16,6 +16,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | `subagent-driven-development` | Phase 3 (Execute) | Dispatch parallel agents manually using the host's available delegation tool for independent file groups |
 | `verification-before-completion` | Phase 4 sub-step G (Report) | Run all test/build/lint commands and confirm output before claiming completion |
 | `simplify` (slash: `/simplify`) | Phase 4 sub-step E (Simplify) | Self-review the diff: remove scaffolding, inline single-use helpers, delete dead branches |
+| `complexity_detector.py` (opt-in `deepSimplify`) | Phase 4 sub-step E deep mode | Diff-scoped stdlib-AST hotspot detector for changed Python; high-severity hotspots get a simpler rewrite, apply-vs-advise via existing Review-B + commit-auditor (see `phase-4-review.md` §"Deep mode") |
 | `build-loop:self-improve` | Phase 6 (Learn) | Scan recent runs for recurring patterns, auto-draft experimental skills/agents with A/B tracking, notify user for keep/remove decisions |
 | Intent capability pack | Phases 1-4 | Read `references/intent-capability-pack.md`; write `.build-loop/intent.md`; pass the intent packet to every subagent |
 | Modular systems pack | Phases 1-4 | Read `references/modular-systems-pack.md`; partition files/tasks MECE; prefer modular scalable boundaries unless an exception is documented |

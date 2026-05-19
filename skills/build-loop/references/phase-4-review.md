@@ -146,6 +146,17 @@ Run `/simplify` (or load the `simplify` skill directly) against the changed file
 
 Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION: <reason>`. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
 
+#### Deep mode (opt-in — default is the light pass above)
+
+Light E above is the **default and unchanged**. Deep mode is an opt-in flag (`deepSimplify: true` in `.build-loop/config.json`, or `--deep-simplify` on the run) that adds *one consolidated, diff-scoped pass* on top of light E for **changed Python files only**. It goes beyond light E's conservative readability trimming — it may change abstraction/behavior shape — but only for *clear* wins, and it adds **no new safety machinery** (reuses the gates already in this Review pass).
+
+1. **Detect.** Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/complexity_detector.py --changed-files <build's changed .py files> --json`. The stdlib-`ast` detector (zero deps) emits a ranked hotspot envelope (`high_complexity`, `deep_nesting`, `accidental_quadratic`, `redundant_multipass`, `needless_indirection`). It is diff-scoped — never a whole-repo scan. Unparseable / non-`.py` / missing paths are skipped, never fatal.
+2. **Propose.** For each `severity: "high"` hotspot, the running build-loop subagent (no external LLM API) proposes a simpler — and, where it falls out naturally, faster — rewrite. `severity: "advisory"` hotspots are *not* rewritten in-pass; they surface as advisory only.
+3. **Apply vs. advise.** APPLY a rewrite **only if all hold**: (a) it is a clear win (not a lateral rewrite); (b) the existing test subset for the touched files still passes — reuse the Sub-step B Validate machinery on E's changed paths only, not the full gate; (c) public signatures and observable behavior are unchanged — the detector's own AST-signature comparison plus the existing **commit-auditor** behavior advisory. If a rewrite is ambiguous, uncertain-architectural, or fails (b)/(c) → do **not** apply; emit it as an **advisory variance via the existing commit-auditor surface** (Phase 4 Report `## Notes from judges`). No new verifier, no perf gate, no benchmark, no cost-proxy — the "faster" outcome is an unmeasured bonus, never asserted or gated.
+4. **Report.** Log one line: `[Simplify:deep] N hotspots, M applied, K advised`; record applied/advised counts in the Sub-step G report. An applied rewrite that later fails a re-validate routes like any Sub-step B failure (Phase 5 Iterate, existing 5x cap).
+
+Deep-mode applied edits flow through the existing single-writer Phase 3 commit contract — they are part of the build's diff, not a side-channel. With the flag off, none of the above runs and Sub-step E is the light pass verbatim.
+
 ### Sub-step F: Auto-Resolve (drain non-destructive open items)
 
 Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
