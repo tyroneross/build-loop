@@ -174,6 +174,26 @@ The only valid reasons to stop and surface to the user:
 
 Otherwise: pick the natural next step, note any reasonable assumption in the run record, and keep moving. One end-of-run report at the end. Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report — see Phase 4 below. See `agents/build-orchestrator.md` §Keep going until done for the orchestrator-side phrasing.
 
+### Follow-up auto-drain at chunk boundary
+
+A chunk boundary is not a checkpoint. When the orchestrator (or any session under the build-loop skill) is about to write a final report containing a "still-to-do" / "deferred" / "next pass" list of same-shape, same-intent items, route those items through the follow-up queue instead of writing them to the user as prose questions:
+
+1. For each list item, write `.build-loop/followup/<run-id>-<index>-<slug>.md` with frontmatter:
+   ```yaml
+   intent_anchor: <stable path-or-section in intent.md>
+   parent_run: <run-id of the just-completed run>
+   shape: <"same-shape" | "adjacent">
+   classify: <SAFE | RISKY | DECISION | PRODUCTION>   # from scripts/classify_action.py
+   ```
+   followed by the item body in markdown.
+2. Filter `classify: PRODUCTION` items into `.build-loop/followup/needs-confirm/` and surface them ONCE in the report. Do not auto-execute.
+3. After the report is committed, immediately enter a fresh Phase 5 iterate cycle to drain the remaining queue. Re-use the same alignment-checker, scope-auditor, and commit-auditor wiring as the in-run iterate loop — no new dispatch surface required.
+4. The phrasing "want me to keep going with the rest?" / "should I continue with X next?" at a chunk boundary is a workflow violation when the items are same-shape and same-intent. C-FLOW/no_ask_at_chunk_boundary in `constitution.md` is the binding citation.
+
+Stop conditions are unchanged from the in-run iterate loop: iterate-cap (25 in autonomous mode, 5 classic), budget exhaustion, any drained item classifying PRODUCTION, 5 consecutive iterate failures, an item whose intent_anchor does not resolve in the current `intent.md` (escalate as DECISION; do not silently widen scope), or explicit user pause.
+
+This applies both to the orchestrator dispatched via `/build-loop:run` AND to any interactive Claude session that has the build-loop skill loaded (the skill description's verb/symptom triggers are broad — most multi-file work loads it). If a session produces a same-shape follow-up list mid-conversation without an active run, the equivalent action is to dispatch `/build-loop:run` with the list as the queue, not to ask "want me to do them?".
+
 ## Host Adapters
 
 Build-loop keeps the core method host-neutral, then adapts the execution mechanics to the current coding host.

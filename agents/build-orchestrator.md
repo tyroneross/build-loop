@@ -65,6 +65,23 @@ Once the user has accepted a plan, every phase is authorized scope. Every action
 
 Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report. One end-of-run report, not a checkpoint between every phase.
 
+#### Follow-up auto-drain (chunk boundaries are not checkpoints)
+
+Before emitting any final report, scan its draft for prose patterns matching `still( on the| to do| open)|deferred|next pass|will sweep|skip( these)? for now|follow.?up( list)?:|to follow up`. For each item under such a heading, write a queue entry to `.build-loop/followup/<run-id>-<NN>-<slug>.md` (NN = zero-padded ordinal) with frontmatter:
+
+```yaml
+intent_anchor: <path-or-section in intent.md the item maps to>
+parent_run: <this run id>
+shape: <same-shape | adjacent>
+classify: <SAFE | RISKY | DECISION | PRODUCTION>   # from scripts/classify_action.py
+```
+
+Items classified `PRODUCTION` move to `.build-loop/followup/needs-confirm/` and are surfaced ONCE in the report. Everything else stays in the queue. Strip the prose follow-up section from the report; it is now the queue's job.
+
+After the report is committed, enter a fresh Phase 5 iterate cycle to drain the queue using the same alignment-checker + scope-auditor + commit-auditor wiring as the in-run iterate loop. Stop conditions match Phase 5 — iterate-cap (25 autonomous / 5 classic), budget exhausted, PRODUCTION encounter, intent_anchor that does not resolve in current `intent.md` (escalate as DECISION), 5 consecutive iterate failures, or explicit user pause.
+
+C-FLOW/followup_auto_drain and C-FLOW/no_ask_at_chunk_boundary in `~/.build-loop/memory/constitution.md` (or the template if not yet adopted) are the binding citations. Asking the user "want me to continue with the rest?" at a chunk boundary, when the items are same-shape and same-intent, is a workflow violation — return the queue-drain answer, not the question.
+
 ## Multi-session concurrency (cross-terminal / cross-host)
 
 Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). **App Pulse presence is the single concurrent-presence source of truth** (the legacy `session_registry.py` collision mechanism was documented-dead and removed 2026-05-18 — KNOWN-ISSUES §M4). At the Phase 1 preamble write session `presence` to `~/.build-loop/apps/<slug>/sessions/<session-id>.json` via `scripts/app_pulse/presence.write_presence` (slug from `scripts/app_pulse/channel_paths.app_slug` — worktree/clone-independent, D1); at each phase-start refresh presence with the phase's `files_in_flight`, append a `phase record` (`changes.append_change` `kind="phase"`), then call `presence.read_active_presence` + `scripts/app_pulse/checkpoint.checkpoint_read`; when its envelope carries peers/`dep-change`/`arch-scan-complete`/file-overlap, surface the compact reaction block (reinstall · re-baseline · `soft-claim` peer-owned files). `soft-claim` is ALWAYS a WARNING, never a block (D4); headless hosts log + proceed (no sentinel, no non-zero exit). No explicit unregister — `reap_stale` self-heals after the heartbeat window. All writes fire-and-forget. Memory coordination is separate (**M5**): `memory_writer.py` (canonical writer with provenance) + `memory_index.py` (append-only discovery log; tail/scan between phases, canonical writes for all memory). Full protocol in `references/multi-session-coordination.md` + `references/app-pulse-protocol.md`.
