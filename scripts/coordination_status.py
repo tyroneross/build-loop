@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""Summarize Build Loop coordination state without spending LLM tokens.
+
+This is the cheap sensor layer for multi-agent coordination. It reads App
+Pulse, the repo-local coordination note, and git status, then emits a compact
+``clear | warn | blocked`` JSON envelope. Agents should read the full
+coordination markdown only when this script reports ``warn`` or ``blocked``.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from app_pulse import changes, channel_paths, presence, revision  # noqa: E402
+
+VERDICT_RE = re.compile(
+    r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"
+    r"(?P<actor>[A-Za-z0-9_-]+)\s+(?P<label>[A-Z]+(?:[/-][A-Z]+)*)\s*$"
+)
+STEP_RE = re.compile(r"^\*\*Step:\*\*\s*(?P<step>.+?)\s*$")
+VERDICT_LINE_RE = re.compile(r"^\*\*Verdict:\*\*\s*(?P<verdict>.+?)\s*$")
+BLOCKING_VERDICTS = {"BLOCKED", "VARIANCE", "PARTIAL / BLOCKED"}
+
+
+def _path_keys(value: str, workdir: Path) -> set[str]:
+    p = Path(value)
+    keys = {value, p.as_posix()}
+    try:
+        abs_path = p if p.is_absolute() else (workdir / p)
+        abs_resolved = abs_path.resolve(strict=False)
+        keys.add(abs_resolved.as_posix())
+        try:
+            keys.add(abs_resolved.relative_to(workdir.resolve()).as_posix())
+        except ValueError:
+            pass
+    except OSError:
+        pass
+    return {k for k in keys if k}
+
+
+def _load_owned_files(args: argparse.Namespace, workdir: Path) -> list[str]:
+    out: list[str] = []
+    out.extend(args.owned_file or [])
+    if args.owned_files:
+        p = Path(args.owned_files)
+        if not p.is_absolute():
+            p = workdir / p
+        try:
+            raw = p.read_text(encoding="utf-8").strip()
+        except OSError:
+            raw = ""
+        if raw:
+            if raw.startswith("["):
+                try:
+                    vals = json.loads(raw)
+                    if isinstance(vals, list):
+                        out.extend(str(v) for v in vals)
+                except json.JSONDecodeError:
+                    out.extend(line.strip() for line in raw.splitlines())
+            else:
+                out.extend(line.strip() for line in raw.splitlines())
+    if args.owned_files_csv:
+        out.extend(v.strip() for v in args.owned_files_csv.split(","))
+    return [v for v in out if v]
+
+
+def _default_coordination_file(workdir: Path) -> Path | None:
+    root = workdir / ".build-loop" / "coordination"
+    try:
+        candidates = [p for p in root.glob("*.md") if p.is_file()]
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _parse_coordination_verdicts(path: Path | None) -> list[dict[str, str]]:
+    if path is None or not path.exists():
+        return []
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        m = VERDICT_RE.match(line)
+        if m:
+            if current:
+                entries.append(current)
+            current = {
+                "stamp": m.group("stamp").strip(),
+                "actor": m.group("actor").strip(),
+                "label": m.group("label").strip(),
+                "step": "",
+                "verdict": m.group("label").strip(),
+            }
+            continue
+        if current is None:
+            continue
+        m = STEP_RE.match(line)
+        if m:
+            current["step"] = m.group("step").strip()
+            continue
+        m = VERDICT_LINE_RE.match(line)
+        if m:
+            current["verdict"] = m.group("verdict").strip()
+    if current:
+        entries.append(current)
+    return entries
+
+
+def _latest_by_step(entries: list[dict[str, str]]) -> list[dict[str, str]]:
+    latest: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        step = entry.get("step") or "(unspecified)"
+        latest[step] = entry
+    return list(latest.values())
+
+
+def _read_recent_changes(channel_dir: Path, max_changes: int) -> list[dict[str, Any]]:
+    recs, _offset = changes.read_changes_since(channel_dir, 0)
+    return recs[-max_changes:] if len(recs) > max_changes else recs
+
+
+def _git_dirty_files(workdir: Path) -> list[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workdir), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    out: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        out.append(path)
+    return out
+
+
+def build_status(args: argparse.Namespace) -> dict[str, Any]:
+    workdir = Path(args.workdir).expanduser().resolve()
+    session_id = args.session_id
+    slug = channel_paths.app_slug(workdir)
+    channel_dir = channel_paths.app_channel_dir(slug)
+    owned_files = _load_owned_files(args, workdir)
+    owned_key_map = {f: _path_keys(f, workdir) for f in owned_files}
+    owned_keys = set().union(*owned_key_map.values()) if owned_key_map else set()
+
+    active_peers = presence.read_active_presence(
+        channel_dir, exclude_session=session_id
+    )
+    overlaps: list[dict[str, Any]] = []
+    for peer in active_peers:
+        peer_files = peer.get("files_in_flight") or []
+        peer_keys: dict[str, set[str]] = {
+            str(f): _path_keys(str(f), workdir) for f in peer_files
+        }
+        matched: list[str] = []
+        for peer_file, keys in peer_keys.items():
+            if keys.intersection(owned_keys):
+                matched.append(peer_file)
+        if matched:
+            overlaps.append({
+                "peer": peer.get("session_id"),
+                "tool": peer.get("tool"),
+                "phase": peer.get("phase"),
+                "files": sorted(matched),
+                "severity": "warning",
+                "reason": "active_conflict",
+            })
+
+    coordination_file = (
+        Path(args.coordination_file).expanduser()
+        if args.coordination_file else _default_coordination_file(workdir)
+    )
+    if coordination_file and not coordination_file.is_absolute():
+        coordination_file = workdir / coordination_file
+    verdict_entries = _latest_by_step(_parse_coordination_verdicts(coordination_file))
+    unresolved = [
+        v for v in verdict_entries
+        if (v.get("verdict") or v.get("label", "")).upper() in BLOCKING_VERDICTS
+    ]
+
+    dirty = _git_dirty_files(workdir)
+    dirty_outside_owned = []
+    for path in dirty:
+        keys = _path_keys(path, workdir)
+        if owned_keys and keys.intersection(owned_keys):
+            continue
+        dirty_outside_owned.append(path)
+
+    recent_changes = _read_recent_changes(channel_dir, args.max_changes)
+    current_revision = revision.read_revision(channel_dir)
+    new_changes = [
+        c for c in recent_changes
+        if args.since_revision is None
+        or int(c.get("revision", 0)) > args.since_revision
+    ]
+
+    if unresolved:
+        status = "blocked"
+        required_action = "resolve_unresolved_coordination_verdicts"
+    elif overlaps or dirty_outside_owned:
+        status = "warn"
+        required_action = "review_peer_overlap_or_dirty_files"
+    else:
+        status = "clear"
+        required_action = "none"
+
+    return {
+        "schema_version": "1.0",
+        "status": status,
+        "required_action": required_action,
+        "workdir": str(workdir),
+        "app_slug": slug,
+        "channel_dir": str(channel_dir),
+        "session_id": session_id,
+        "revision": current_revision,
+        "active_peers": [
+            {
+                "session_id": p.get("session_id"),
+                "tool": p.get("tool"),
+                "phase": p.get("phase"),
+                "files_in_flight_count": len(p.get("files_in_flight") or []),
+            }
+            for p in active_peers
+        ],
+        "overlaps": overlaps,
+        "coordination_file": str(coordination_file) if coordination_file else None,
+        "latest_verdicts": verdict_entries,
+        "unresolved": unresolved,
+        "dirty_files": dirty,
+        "dirty_outside_owned": dirty_outside_owned,
+        "new_changes": new_changes,
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--workdir", default=".")
+    p.add_argument("--session-id", required=True)
+    p.add_argument("--owned-file", action="append", default=[])
+    p.add_argument("--owned-files", default=None, help="Path to newline or JSON list")
+    p.add_argument("--owned-files-csv", default=None)
+    p.add_argument("--coordination-file", default=None)
+    p.add_argument("--since-revision", type=int, default=None)
+    p.add_argument("--max-changes", type=int, default=20)
+    p.add_argument("--json", action="store_true")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    status = build_status(args)
+    if args.json:
+        print(json.dumps(status, indent=2, sort_keys=True))
+    else:
+        print(f"{status['status']}: {status['required_action']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

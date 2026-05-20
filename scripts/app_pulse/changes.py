@@ -28,7 +28,17 @@ from pathlib import Path
 _LOG_NAME = "changes.jsonl"
 
 # Known kinds (D7: this is advisory — unknown kinds warn but are kept).
-KNOWN_KINDS = ("commit", "dep-change", "phase", "arch-scan-complete")
+# Added 2026-05-20 for coordination dogfood: "feedback" (verifier verdicts:
+# PASS/VARIANCE/BLOCKED) and "handoff" (plan owner → verifier work-item
+# transfer). Both surface in checkpoint_read like any other kind.
+KNOWN_KINDS = (
+    "commit",
+    "dep-change",
+    "phase",
+    "arch-scan-complete",
+    "feedback",
+    "handoff",
+)
 
 _RECORD_KEYS = (
     "ts", "kind", "tool", "model", "run_id", "app_slug", "payload",
