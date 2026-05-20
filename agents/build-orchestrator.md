@@ -130,6 +130,11 @@ Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 - At coordination checkpoints, verify outputs align before continuing.
 - Consult `model-router` per dispatch — see `references/capability-routing.md` §"Phase 3 routing".
 - **M1/M2/M3 — Crash-recovery + cost-ledger**: at every dispatch + return, write subagent envelopes atomically (M1), heartbeat the chunk pointer + working-state (M2), and emit cost-ledger rows (M3). Full procedure in `references/m-series-protocol.md` (six M2 trigger points: run_id provenance + run start, dispatch_chunk, return_chunk, phase_transition, iterate_attempt, complete).
+- **Step 9 — Per-agent invocation telemetry (cost-ledger extension)** [closes OPEN-ITEMS #4]: wrap every `Agent(subagent_type=..., ...)` call site with TWO `scripts/write_cost_ledger_row.py` invocations sharing the same `--task-id` (format: `t-<8-hex>`, generated before dispatch):
+  1. **Dispatch row** (before `Agent(...)` returns): `--status dispatched --called true --started-at <iso> --elapsed-seconds null`. If the call site decided NOT to dispatch (gate untripped, trivial bypass, prior-pass cached), emit instead with `--called false --skipped-reason "<why>" --status dispatched`.
+  2. **Return row** (after `Agent(...)` returns): `--status <terminal value from envelope> --called true --failed <bool> --issue-found <bool> --elapsed-seconds <float> --completed-at <iso>`. The orchestrator backfills `--downstream-iterate-outcome <enum>` once Phase 5 closes (one of `clean | resolved-on-pass-1 | resolved-on-pass-2-or-later | overflow-to-followup | abandoned`).
+
+  Consumers join the two rows on `task_id`. The `agent` field carries the `subagent_type`. Together this provides: which agents were dispatched (vs skipped); how long each took; whether they found issues; and what the downstream verification did with their output. All new fields are additive + nullable — existing cost-ledger readers ignore them. Storage stays at `~/.bookmark/cost-ledger.jsonl`.
 
 #### Phase 3 commit step (single-writer git contract)
 

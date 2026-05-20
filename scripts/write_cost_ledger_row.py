@@ -77,6 +77,23 @@ def build_row(args: argparse.Namespace) -> dict[str, Any]:
         row["run_id"] = args.run_id
     if args.chunk_id:
         row["chunk_id"] = args.chunk_id
+    # Step 9: per-agent invocation telemetry (additive, nullable). Closes
+    # OPEN-ITEMS #4. The orchestrator emits two rows per dispatch — one at
+    # dispatch time (status: "dispatched", elapsed_seconds: null), one at
+    # return time (status: terminal value, elapsed_seconds: populated). Both
+    # rows share the same task_id so consumers can join them.
+    if args.called is not None:
+        row["called"] = args.called
+    if args.skipped_reason is not None:
+        row["skipped_reason"] = args.skipped_reason
+    if args.failed is not None:
+        row["failed"] = args.failed
+    if args.issue_found is not None:
+        row["issue_found"] = args.issue_found
+    if args.elapsed_seconds is not None:
+        row["elapsed_seconds"] = args.elapsed_seconds
+    if args.downstream_iterate_outcome is not None:
+        row["downstream_iterate_outcome"] = args.downstream_iterate_outcome
     return row
 
 
@@ -124,6 +141,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ledger-path",
         default=str(DEFAULT_LEDGER_PATH),
         help="Override default ledger location (testing/CI use only)",
+    )
+    # Step 9: per-agent invocation telemetry fields (additive, nullable).
+    # All default to None; omitted from the row when not supplied so existing
+    # downstream consumers don't see new keys until the orchestrator emits them.
+    p.add_argument(
+        "--called", type=lambda v: v.lower() == "true", default=None,
+        help="Bool: did the orchestrator actually call this agent? (false when skipped/short-circuited)",
+    )
+    p.add_argument(
+        "--skipped-reason", default=None,
+        help="Free-text: why the agent was skipped (e.g. 'trivial bypass', 'gate not triggered')",
+    )
+    p.add_argument(
+        "--failed", type=lambda v: v.lower() == "true", default=None,
+        help="Bool: did the dispatch fail (vs. complete with no issues)?",
+    )
+    p.add_argument(
+        "--issue-found", type=lambda v: v.lower() == "true", default=None,
+        help="Bool: did the agent return a non-empty findings/variances list?",
+    )
+    p.add_argument(
+        "--elapsed-seconds", type=float, default=None,
+        help="Float: dispatch-to-return wall-clock (= wall_clock_seconds at return; null on dispatched rows)",
+    )
+    p.add_argument(
+        "--downstream-iterate-outcome", default=None,
+        choices=[
+            "clean",
+            "resolved-on-pass-1",
+            "resolved-on-pass-2-or-later",
+            "overflow-to-followup",
+            "abandoned",
+        ],
+        help="Enum: backfilled by orchestrator after Phase 5 closes — what the iterate cycle did with this dispatch's commit",
     )
     return p.parse_args(argv)
 
