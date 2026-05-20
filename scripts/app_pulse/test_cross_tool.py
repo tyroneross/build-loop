@@ -338,7 +338,11 @@ def test_v2_codex_presence_warns_claude_then_reaped(
         my_files=["src/b.py", "src/c.py"])
     sc = [r for r in env["reactions"] if r.get("type") == "soft-claim"]
     assert sc, "claude must be warned codex owns an overlapping file"
-    assert sc[0]["severity"] == "warning", "D4: soft-claim never a block"
+    # 2026-05-19: severity reason-keyed; D4 ("never a block") still holds.
+    assert sc[0]["severity"] in {"warning", "informational"}, \
+        "D4: soft-claim never a block"
+    assert sc[0].get("reason") in {"merged_residue", "squash_landed",
+                                   "active_conflict"}
     assert "src/b.py" in sc[0]["files"]
     assert sc[0]["peer"] == "codex-exec"
 

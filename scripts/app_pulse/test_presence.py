@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -103,3 +104,74 @@ def test_graceful_absence(chan: Path):
     assert pr.get_cursor(chan / "nope", "s") == {
         "revision": 0, "changes_offset": 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Branch merge-status fields (2026-05-19 — peer-merged gate)
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    """Run git with a hardcoded committer identity; raise on failure."""
+    env = {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+    }
+    subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        capture_output=True, text=True, timeout=5, env=env, check=True,
+    )
+
+
+def _make_repo(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-q", "-b", "main")
+    (root / "a.txt").write_text("a")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "init")
+    return root
+
+
+def test_branch_merge_status_merged(chan: Path, tmp_path: Path):
+    """HEAD is an ancestor of main -> 'merged'."""
+    repo = _make_repo(tmp_path / "repo")
+    pr.write_presence(
+        chan, session_id="s", tool="t", model="m", run_id="r",
+        app_slug="a", phase="p", cwd=repo,
+    )
+    rec = json.loads((chan / "sessions" / "s.json").read_text())
+    assert rec["branch_merge_status"] == "merged"
+    assert rec["branch_name"] == "main"
+    assert rec["branch_head_sha"] != "unknown"
+    assert isinstance(rec["branch_merge_status_checked_ts"], (int, float))
+
+
+def test_branch_merge_status_unmerged(chan: Path, tmp_path: Path):
+    """A feature branch ahead of main -> 'unmerged'."""
+    repo = _make_repo(tmp_path / "repo")
+    _git(repo, "checkout", "-q", "-b", "feat")
+    (repo / "b.txt").write_text("b")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "wip")
+    pr.write_presence(
+        chan, session_id="s", tool="t", model="m", run_id="r",
+        app_slug="a", phase="p", cwd=repo,
+    )
+    rec = json.loads((chan / "sessions" / "s.json").read_text())
+    assert rec["branch_merge_status"] == "unmerged"
+    assert rec["branch_name"] == "feat"
+
+
+def test_branch_merge_status_unknown_non_git(chan: Path, tmp_path: Path):
+    """Non-git directory -> all 'unknown', no raise."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    pr.write_presence(
+        chan, session_id="s", tool="t", model="m", run_id="r",
+        app_slug="a", phase="p", cwd=plain,
+    )
+    rec = json.loads((chan / "sessions" / "s.json").read_text())
+    assert rec["branch_merge_status"] == "unknown"
+    assert rec["branch_name"] == "unknown"
+    assert rec["branch_head_sha"] == "unknown"

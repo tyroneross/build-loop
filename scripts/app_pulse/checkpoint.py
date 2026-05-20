@@ -23,6 +23,7 @@ creates nothing implicitly, and never errors (zero regression).
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,6 +36,44 @@ import presence as _pr  # noqa: E402
 import revision as _rev  # noqa: E402
 
 _ARCH_DIGEST_REL = ("arch", "digest.json")
+_FILES_LANDED_TIMEOUT_S = 0.5
+_FILES_LANDED_CAP = 10
+
+
+def _peer_files_already_landed(cwd: str | None, files: list) -> bool:
+    """Return True iff ``git diff origin/main -- <files>`` is empty in cwd.
+
+    Squash-merge fallback: if the peer's branch tip is not an ancestor of
+    main but the file content equals main, the peer's edits already
+    landed via squash. Capped at ``_FILES_LANDED_CAP`` files, bounded by
+    ``_FILES_LANDED_TIMEOUT_S``. On any failure (missing cwd, git error,
+    timeout, non-git dir) returns False — the conservative answer
+    preserves the existing warning.
+    """
+    if not cwd or not files:
+        return False
+    capped = list(files)[:_FILES_LANDED_CAP]
+    for upstream in ("origin/main", "main"):
+        try:
+            v = subprocess.run(
+                ["git", "-C", cwd, "rev-parse", "--verify", "--quiet",
+                 upstream],
+                capture_output=True, text=True,
+                timeout=_FILES_LANDED_TIMEOUT_S,
+            )
+            if v.returncode != 0:
+                continue
+            r = subprocess.run(
+                ["git", "-C", cwd, "diff", "--quiet", upstream, "--",
+                 *capped],
+                capture_output=True, text=True,
+                timeout=_FILES_LANDED_TIMEOUT_S,
+            )
+            # exit 0 = no diff (content == main); exit 1 = diff present
+            return r.returncode == 0
+        except (subprocess.SubprocessError, OSError, ValueError):
+            return False
+    return False
 
 
 def _empty(session_id: str) -> dict:
@@ -71,13 +110,26 @@ def _derive_reactions(new_changes: list, peers: list, my_files) -> list:
     if mine:
         for p in peers:
             overlap = sorted(mine.intersection(p.get("files_in_flight", [])))
-            if overlap:
-                reactions.append({
-                    "type": "soft-claim",
-                    "severity": "warning",  # D4: never a block
-                    "peer": p.get("session_id"),
-                    "files": overlap,
-                })
+            if not overlap:
+                continue
+            # Three-way classification (2026-05-19 — peer-merged gate):
+            #   1. peer's branch tip is ancestor of main -> merged_residue
+            #   2. file content already on main         -> squash_landed
+            #   3. otherwise                            -> active_conflict
+            peer_status = p.get("branch_merge_status", "unknown")
+            if peer_status == "merged":
+                severity, reason = "informational", "merged_residue"
+            elif _peer_files_already_landed(p.get("cwd"), overlap):
+                severity, reason = "informational", "squash_landed"
+            else:
+                severity, reason = "warning", "active_conflict"
+            reactions.append({
+                "type": "soft-claim",
+                "severity": severity,  # D4: never a block in any case
+                "reason": reason,
+                "peer": p.get("session_id"),
+                "files": overlap,
+            })
     return reactions
 
 

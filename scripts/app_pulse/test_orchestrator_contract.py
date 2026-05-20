@@ -65,7 +65,12 @@ def test_orchestrator_preamble_and_phase_flow(chan: Path):
     types = {r["type"] for r in env["reactions"]}
     assert "reinstall" in types
     soft = [r for r in env["reactions"] if r["type"] == "soft-claim"]
-    assert soft and soft[0]["severity"] == "warning"
+    assert soft
+    # 2026-05-19: severity is now one of {warning, informational} keyed
+    # off the peer's merge-status; D4 still holds — never a "block".
+    assert soft[0]["severity"] in {"warning", "informational"}
+    assert soft[0].get("reason") in {"merged_residue", "squash_landed",
+                                     "active_conflict"}
     # D4: soft-claim never carries a blocking directive.
     assert "block" not in soft[0] and soft[0].get("severity") != "block"
 

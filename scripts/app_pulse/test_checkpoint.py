@@ -10,7 +10,10 @@
 """
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -97,7 +100,111 @@ def test_reactions(chan: Path):
     types = {r["type"] for r in env["reactions"]}
     assert "reinstall" in types and "re-baseline" in types
     sc = [r for r in env["reactions"] if r["type"] == "soft-claim"]
-    assert sc and sc[0]["severity"] == "warning" and "src/x.py" in sc[0]["files"]
+    # 2026-05-19: soft-claim now carries severity + reason. The peer's
+    # cwd is whatever real repo the test runs in; status may resolve to
+    # merged / unmerged / unknown depending on host repo state. The
+    # invariant under test here is: a soft-claim with the expected file
+    # AND a known reason is emitted. Severity is governed by reason.
+    assert sc and "src/x.py" in sc[0]["files"]
+    assert sc[0]["reason"] in {"merged_residue", "squash_landed",
+                               "active_conflict"}
+    if sc[0]["reason"] == "active_conflict":
+        assert sc[0]["severity"] == "warning"
+    else:
+        assert sc[0]["severity"] == "informational"
+
+
+# ---------------------------------------------------------------------------
+# Three-way soft-claim severity (2026-05-19 — peer-merged gate)
+# ---------------------------------------------------------------------------
+
+
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+    "PATH": "/usr/bin:/bin:/usr/local/bin",
+}
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(cwd), *args],
+                   capture_output=True, text=True, timeout=5,
+                   env=_GIT_ENV, check=True)
+
+
+def _seed_overlap(chan: Path, peer_id: str, peer_files: list,
+                  *, branch_merge_status: str = "unmerged",
+                  peer_cwd: str | None = None) -> None:
+    """Seed self ('B') + a peer record with a controlled branch_merge_status
+    and cwd, then bump revision via a peer commit so checkpoint_read takes
+    the slow path."""
+    pr.write_presence(chan, session_id="B", tool="t", model="m",
+                      run_id="rB", app_slug="a", phase="p")
+    sess = chan / "sessions" / f"{peer_id}.json"
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text(json.dumps({
+        "session_id": peer_id, "tool": "t", "model": "m", "run_id": "rA",
+        "app_slug": "a", "phase": "execute",
+        "files_in_flight": peer_files,
+        "heartbeat_ts": time.time(),
+        "cursor": {"revision": 0, "changes_offset": 0},
+        "branch_name": "feat", "branch_head_sha": "deadbee",
+        "branch_merge_status": branch_merge_status,
+        "branch_merge_status_checked_ts": time.time(),
+        "cwd": peer_cwd or "",
+    }))
+    ch.append_change(chan, ch.make_record(
+        kind="commit", tool="t", model="m", run_id="rA", app_slug="a",
+        payload={}, revision=1))
+    rev.bump_revision(chan)
+
+
+def test_soft_claim_merged_residue(chan: Path):
+    """Peer branch_merge_status == 'merged' -> informational/merged_residue."""
+    _seed_overlap(chan, "A", ["src/x.py"], branch_merge_status="merged")
+    env = cp.checkpoint_read(chan, session_id="B",
+                             my_files=["src/x.py", "src/y.py"])
+    sc = [r for r in env["reactions"] if r["type"] == "soft-claim"]
+    assert sc and sc[0]["severity"] == "informational"
+    assert sc[0]["reason"] == "merged_residue"
+    assert sc[0]["files"] == ["src/x.py"]
+
+
+def test_soft_claim_squash_landed(chan: Path, tmp_path: Path):
+    """Peer branch_merge_status == 'unmerged' BUT file content equals main
+    -> informational/squash_landed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "x.py").write_text("matches main\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "init")
+    # Peer's worktree files already match main; branch_merge_status is
+    # forced to 'unmerged' so we hit the file-level check path.
+    _seed_overlap(chan, "A", ["x.py"], branch_merge_status="unmerged",
+                  peer_cwd=str(repo))
+    env = cp.checkpoint_read(chan, session_id="B", my_files=["x.py"])
+    sc = [r for r in env["reactions"] if r["type"] == "soft-claim"]
+    assert sc and sc[0]["severity"] == "informational"
+    assert sc[0]["reason"] == "squash_landed"
+
+
+def test_soft_claim_active_conflict(chan: Path, tmp_path: Path):
+    """Peer 'unmerged' + file content differs from main -> warning/active_conflict."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "x.py").write_text("v1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "init")
+    # Peer's worktree has unstaged edits diverging from main.
+    (repo / "x.py").write_text("v2 peer wip\n")
+    _seed_overlap(chan, "A", ["x.py"], branch_merge_status="unmerged",
+                  peer_cwd=str(repo))
+    env = cp.checkpoint_read(chan, session_id="B", my_files=["x.py"])
+    sc = [r for r in env["reactions"] if r["type"] == "soft-claim"]
+    assert sc and sc[0]["severity"] == "warning"
+    assert sc[0]["reason"] == "active_conflict"
 
 
 def test_reader_does_not_lock_log(chan: Path):
