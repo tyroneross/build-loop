@@ -240,10 +240,6 @@ class ForbiddenPathConflictTests(unittest.TestCase):
         )
         self.assertEqual(findings, [])
 
-    def test_bullet_form_files_owned(self) -> None:
-        findings = self._run("## Chunk c1\n**Files owned**: project.yml, foo.py\n")
-        self.assertEqual(len(findings), 1)
-
     def test_fenced_code_block_excluded(self) -> None:
         """Plans showing example files_owned in a code fence should NOT trigger."""
         findings = self._run(

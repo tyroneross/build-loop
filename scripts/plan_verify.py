@@ -990,7 +990,6 @@ DEFAULT_FORBIDDEN_PATHS = (
     "Package.resolved",
 )
 _FILES_OWNED_YAML_RE = re.compile(r"^\s*files_owned\s*:\s*(.*)$", re.IGNORECASE)
-_FILES_OWNED_BULLET_RE = re.compile(r"\*\*Files\s+owned\*\*\s*:\s*(.*)", re.IGNORECASE)
 _PATH_TOKEN_RE = re.compile(r"[`\"']?([A-Za-z0-9_./\-\*]+\.[A-Za-z0-9]+|\.?[A-Za-z0-9_./\-\*]+/[A-Za-z0-9_./\-\*]+)[`\"']?")
 
 
@@ -1010,18 +1009,13 @@ def _load_forbidden_paths(repo: Path | None) -> tuple[str, ...]:
     return DEFAULT_FORBIDDEN_PATHS
 
 
-def _extract_owned_paths(line: str) -> list[str]:
-    """Pull file-shaped tokens out of a files_owned line. Handles YAML inline
-    list (`[a, b]`), YAML flow (just text after the colon), and bullet form."""
-    return [m.group(1) for m in _PATH_TOKEN_RE.finditer(line)]
-
-
 def rule_forbidden_path_conflict(
     plan_path: Path, lines: list[tuple[int, str]], repo: Path | None
 ) -> list[dict[str, Any]]:
-    """WARN if a chunk's files_owned intersects the dispatch's forbidden-paths
-    set. Surfaces grep-checkable plan/policy conflicts at Phase 2 instead of
-    letting them bail Phase 3 with implementer time already spent."""
+    """WARN if a chunk's `files_owned:` (YAML inline list, e.g. `[a, b]`)
+    intersects the dispatch's forbidden-paths set. Surfaces grep-checkable
+    plan/policy conflicts at Phase 2 instead of bailing Phase 3 with
+    implementer time already spent."""
     forbidden = _load_forbidden_paths(repo)
     if not forbidden:
         return []
@@ -1029,10 +1023,10 @@ def rule_forbidden_path_conflict(
     for lineno, line in lines:
         if not line:
             continue
-        m = _FILES_OWNED_YAML_RE.match(line) or _FILES_OWNED_BULLET_RE.search(line)
+        m = _FILES_OWNED_YAML_RE.match(line)
         if not m:
             continue
-        owned = _extract_owned_paths(m.group(1) or line)
+        owned = [t.group(1) for t in _PATH_TOKEN_RE.finditer(m.group(1))]
         if not owned:
             continue
         hits = [p for p in owned if any(fnmatch.fnmatch(p, pat) for pat in forbidden)]
