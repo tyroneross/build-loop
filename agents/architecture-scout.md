@@ -19,6 +19,7 @@ You are the build-loop architecture scout. The orchestrator dispatches you with 
 | `iterate-subgraph` | `failing_files: [...]` | Compute subgraph + trace; recommend fix scope. | `{kind: "impact", file, downstream, upstream, fix_scope_files: [...]}` |
 | `learn-sync` | none (Phase 6) | Promote new lessons + sync NavGator lessons to Postgres. | `{kind: "lesson", id, source, action: "promoted|synced"}` |
 | `enrich` | none (Phase 1/4) | Run the native enriched scan, then label each `semantic_todo` site. | `{kind: "enriched", node_id, type, model_class, purpose}` |
+| `schema-map` | none (Phase 1 baseline / Phase 3 when `dataChanges: true`) | Walk persistence + API layer; emit `schema_delta` for `design-contract-specialist` to integrate into `.build-loop/app-contract/data.md`. **Delta-emit only — do not write the contract.** | `{kind: "schema-delta", payload: <schema_delta JSON>}` (see "schema-map task" below for shape) |
 
 ## Native vs NavGator decision rule
 
@@ -116,6 +117,54 @@ If your findings exceed the budget, truncate the `findings[]` array and add `"_t
 1. Try `scripts/promote_violation_to_lesson.py` (Chunk 8); if missing, log `"promote_violation_to_lesson_missing"` and skip.
 2. Try `scripts/sync_navgator_lessons.py` (Chunk 7); if missing, log `"sync_navgator_lessons_missing"` and skip.
 3. `summary`: counts of lessons promoted/synced; report no-op when both scripts are absent.
+
+### `schema-map` (Phase 1 baseline / Phase 3 chunk-close when `dataChanges: true`) — Step 10 / audit §6
+
+**Delta-emit only.** This task DOES NOT write `.build-loop/app-contract/data.md`. The `design-contract-specialist` is the **sole writer** to `.build-loop/app-contract/*` (see `agents/design-contract-specialist.md`). You emit a `schema_delta` JSON; the orchestrator hands it to the specialist at Phase 3 chunk-close.
+
+Procedure:
+1. Walk the persistence layer for the project (heuristics: `prisma/schema.prisma`, `drizzle/`, `db/migrations/*.sql`, `models/`, `*.sql` migration files).
+2. Walk the API layer (`app/api/`, `pages/api/`, `routes/`, `handlers/`) to enumerate route → handler → table relationships.
+3. Detect privacy-sensitive columns (heuristics: column names matching `email|name|phone|ssn|dob|ip_address|stripe_*|access_token|refresh_token` OR explicitly tagged `@encrypted` / `@pii`).
+4. Return a single `findings[].kind: "schema-delta"` row with `payload` matching the shape below.
+
+**`schema_delta` payload shape:**
+
+```json
+{
+  "schema_version": "1.0",
+  "tables": [
+    {
+      "name": "<table_name>",
+      "source_file": "<path:line>",
+      "columns": [
+        {"name": "...", "type": "...", "nullable": true, "pii": false, "indexes": ["..."]}
+      ],
+      "rls": {"posture": "rls-enabled | rls-disabled | not-applicable", "policies": ["..."]}
+    }
+  ],
+  "api_routes": [
+    {
+      "route": "<path>",
+      "method": "<verb>",
+      "handler_file": "<path:line>",
+      "tables_read": ["..."],
+      "tables_written": ["..."],
+      "auth_middleware_present": true,
+      "rls_enforced_in_query": true
+    }
+  ],
+  "privacy_boundaries": [
+    {"column": "<table>.<col>", "egress_routes": ["..."], "encrypted_at_rest": true}
+  ],
+  "changed_since_baseline": {
+    "tables_added": [], "tables_removed": [], "columns_added": [], "columns_removed": []
+  }
+}
+```
+
+- Set `changed_since_baseline.*` only when invoked at Phase 3 chunk-close with `dataChanges: true` (the orchestrator passes the chunk's `files_changed` so you can diff against the baseline cache). Leave empty at Phase 1 baseline.
+- The specialist consumes this delta and writes `.build-loop/app-contract/data.md` + the data half of `traceability.json`. You write nothing under `.build-loop/app-contract/`.
 
 ### `enrich` (Phase 1 Assess / Phase 4 Review — the detect/label split, D5)
 
