@@ -94,6 +94,47 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(by_step["Coordination + memory review"]["label"], "FOLLOW-UP")
         self.assertEqual(by_step["Coordination + memory review"]["verdict"], "VARIANCE")
 
+    def test_default_coordination_file_prefers_oldest_audit_run_not_newest_stub(self):
+        coord_dir = self.workdir / ".build-loop" / "coordination"
+        coord_dir.mkdir(parents=True)
+        run = coord_dir / "audit-execution-v0128-2026-05-20.md"
+        handoff = coord_dir / "zz-new-handoff.md"
+        run.write_text(
+            "### 2026-05-20 13:32 PDT — Codex PASS\n\n"
+            "**Step:** active run\n"
+            "**Verdict:** PASS\n",
+            encoding="utf-8",
+        )
+        handoff.write_text(
+            "### 2026-05-20 13:47 PDT — Codex BLOCKED\n\n"
+            "**Step:** handoff stub\n"
+            "**Verdict:** BLOCKED\n",
+            encoding="utf-8",
+        )
+        os.utime(run, (1_700_000_000, 1_700_000_000))
+        os.utime(handoff, (1_700_000_100, 1_700_000_100))
+
+        status = self._run()
+
+        self.assertEqual(Path(status["coordination_file"]).resolve(), run.resolve())
+        self.assertEqual(status["unresolved"], [])
+
+    def test_default_coordination_file_uses_active_pointer(self):
+        coord_dir = self.workdir / ".build-loop" / "coordination"
+        coord_dir.mkdir(parents=True)
+        old = coord_dir / "audit-execution-old.md"
+        active = coord_dir / "active-run.md"
+        old.write_text("", encoding="utf-8")
+        active.write_text("", encoding="utf-8")
+        (coord_dir / "active.json").write_text(
+            json.dumps({"coordination_file": ".build-loop/coordination/active-run.md"}),
+            encoding="utf-8",
+        )
+
+        status = self._run()
+
+        self.assertEqual(Path(status["coordination_file"]).resolve(), active.resolve())
+
     def test_watch_emits_one_state(self):
         cmd = [
             sys.executable, str(HERE / "coordination_watch.py"),
