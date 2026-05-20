@@ -92,3 +92,16 @@ App Pulse presence is awareness-only (D4), so headless hosts never block on it. 
 - Peers WITH overlapping `files_in_flight`: log the `soft-claim` WARNING (peer, files, phase) and proceed. There is no hard-stop, sentinel, or non-zero exit — coordination is the human's call after the fact, not a gate.
 
 The interactive→headless distinction lives in this prompt, not in the scripts: `read_active_presence` returns the same peer list regardless of host; only the surfacing differs (interactive MAY additionally `AskUserQuestion`).
+
+## R5 — Pre/post canonical snapshot around isolated dispatch
+
+Every `Agent(subagent_type=..., isolation: "worktree", ...)` dispatch MUST be wrapped in a `git status --porcelain` snapshot of the canonical working tree. After the dispatch returns, re-snapshot. Non-empty diff with no canonical edits in between = isolation contract broken; surface as an error in the run report.
+
+```bash
+PRE=$(git -C "$CANONICAL_WORKDIR" status --porcelain)
+# ... Agent(isolation: "worktree", ...) dispatch here ...
+POST=$(git -C "$CANONICAL_WORKDIR" status --porcelain)
+[ "$PRE" = "$POST" ] || { echo "❌ ISOLATION_BREACH: canonical changed during dispatch"; echo "PRE:"; echo "$PRE"; echo "POST:"; echo "$POST"; }
+```
+
+Detects, does not fix. The breach class (unproven mechanism — possible causes: interrupted earlier dispatch leaking edits, Codex sub-subagent running outside the worktree, IDE auto-fix, background hooks) is case-by-case. Naming the breach is the contract; the operator decides recovery. Cost is two `git status` calls per dispatch — small enough to make automatic.

@@ -194,5 +194,63 @@ class FixtureABTests(unittest.TestCase):
                          f"by_rule={res['payload']['summary']['by_rule_id']}")
 
 
+class ForbiddenPathConflictTests(unittest.TestCase):
+    """rule_forbidden_path_conflict — Phase 2 catch for plan × dispatch-forbidden-paths conflicts."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run(self, plan_text: str, config: dict | None = None) -> list[dict]:
+        self.plan.write_text(plan_text, encoding="utf-8")
+        if config is not None:
+            cfg = self.repo / ".build-loop" / "config.json"
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            cfg.write_text(json.dumps(config))
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [f for f in run_all(self.plan, self.repo) if f["rule_id"] == "forbidden-path-conflict"]
+
+    def test_default_forbidden_project_yml_in_files_owned_is_warn(self) -> None:
+        findings = self._run("## Chunk c1\nfiles_owned: [project.yml, scripts/foo.py]\n")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "WARN")
+        self.assertIn("project.yml", findings[0]["claim_text"])
+
+    def test_no_overlap_is_silent(self) -> None:
+        findings = self._run("## Chunk c1\nfiles_owned: [scripts/foo.py, tests/test_foo.py]\n")
+        self.assertEqual(findings, [])
+
+    def test_wildcard_forbidden_path_matches(self) -> None:
+        findings = self._run("## Chunk c1\nfiles_owned: [.github/workflows/ci.yml]\n")
+        self.assertEqual(len(findings), 1)
+
+    def test_config_override_relaxes_default(self) -> None:
+        """User can opt-in to allowing project.yml edits by setting an empty forbiddenPaths."""
+        findings = self._run(
+            "## Chunk c1\nfiles_owned: [project.yml]\n",
+            config={"dispatch": {"forbiddenPaths": []}},
+        )
+        self.assertEqual(findings, [])
+
+    def test_bullet_form_files_owned(self) -> None:
+        findings = self._run("## Chunk c1\n**Files owned**: project.yml, foo.py\n")
+        self.assertEqual(len(findings), 1)
+
+    def test_fenced_code_block_excluded(self) -> None:
+        """Plans showing example files_owned in a code fence should NOT trigger."""
+        findings = self._run(
+            "## Example\n```yaml\nfiles_owned: [project.yml]\n```\n",
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

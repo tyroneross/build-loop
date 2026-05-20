@@ -8,6 +8,18 @@
 
 ### Understand current state
 
+0. **Peer-detection (cheap fail-fast — runs BEFORE plugin detection so a peer collision can stop the build before any other Phase 1 cost is paid).** Bash, ≤4 commands; output goes into the assess report. If any line is non-empty AND its scope overlaps the stated goal, Phase 2 Plan MUST declare a reconciliation strategy before proceeding (rebase / wait / split / accept hand-off). Complements App Pulse session-presence (§"Multi-session concurrency" in `agents/build-orchestrator.md`) — App Pulse covers active *sessions*; this covers dormant *artifacts* (coordination notes, stale worktrees, unmerged branches) those sessions leave behind.
+
+   ```bash
+   ls .build-loop/coordination/*.md 2>/dev/null | grep -v /archived/   # live coordination notes
+   git worktree list --porcelain                                       # all worktrees
+   git worktree list --porcelain | awk '/^worktree /{print $2}' \
+     | while read -r wt; do [ -d "$wt" ] && echo "$wt dirty=$(git -C "$wt" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"; done  # per-worktree dirty (Codex addition: dirty is stronger signal than branch merge status)
+   git branch -a --no-merged main | grep -vE 'archive|HEAD'            # unmerged branches
+   ```
+
+   Helper errors (`grep -v`/`awk` non-zero) are NOT a failure — empty output means clean. Any non-empty line surfaces in the assess report for Phase 2 to reason about.
+
 1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
 2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
