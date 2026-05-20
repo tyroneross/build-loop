@@ -8,7 +8,7 @@
 
 ### Understand current state
 
-0. **Peer-detection (cheap fail-fast — runs BEFORE plugin detection so a peer collision can stop the build before any other Phase 1 cost is paid).** Bash, ≤4 commands; output goes into the assess report. If any line is non-empty AND its scope overlaps the stated goal, Phase 2 Plan MUST declare a reconciliation strategy before proceeding (rebase / wait / split / accept hand-off). Complements App Pulse session-presence (§"Multi-session concurrency" in `agents/build-orchestrator.md`) — App Pulse covers active *sessions*; this covers dormant *artifacts* (coordination notes, stale worktrees, unmerged branches) those sessions leave behind.
+0. **Peer-detection (cheap fail-fast — runs BEFORE plugin detection so a peer collision is surfaced before any other Phase 1 cost is paid).** Bash, ≤4 commands; output goes into the assess report. **The check is automated end-to-end — never pauses to ask the user.** Any non-empty line is written to `state.json.assess.peerDetect[]` and surfaces in `## Notes from judges`. Phase 2 Plan auto-routes per default policy: if scope overlap is detected, the orchestrator fast-forwards (`git merge --ff-only`) when ancestry allows, otherwise splits the affected chunks out and continues, logging `WARN: peer_collision_<kind>` either way. Operator reviews the report post-hoc. Complements App Pulse session-presence (§"Multi-session concurrency" in `agents/build-orchestrator.md`) — App Pulse covers active *sessions*; this covers dormant *artifacts* (coordination notes, stale worktrees, unmerged branches) those sessions leave behind.
 
    ```bash
    ls .build-loop/coordination/*.md 2>/dev/null | grep -v /archived/   # live coordination notes
