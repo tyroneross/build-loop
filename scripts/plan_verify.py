@@ -94,18 +94,25 @@ def has_marker_within(lines: list[tuple[int, str]], idx: int, window: int = 3) -
 
 
 def repo_grep(pattern: str, repo: Path) -> tuple[bool, str]:
-    """Run rg if available else grep -R. Return (found, command_used).
-    Excludes .git, node_modules, dist, .build-loop, .navgator, fixture dirs."""
-    excludes_grep = [
-        "--exclude-dir=.git",
-        "--exclude-dir=node_modules",
-        "--exclude-dir=dist",
-        "--exclude-dir=.build-loop",
-        "--exclude-dir=.navgator",
-        "--exclude-dir=test-fixtures",
-        "--exclude-dir=__pycache__",
-    ]
-    # Try rg first
+    """Return (found, command_used).
+    Prefers `git grep` (fast, respects gitignore, no exclude-flags drift). Falls back
+    to `rg`, then portable Python rglob if neither is available. The previous BSD-grep
+    fallback was removed — macOS /usr/bin/grep doesn't honor --exclude-dir reliably and
+    traverses .git/, blowing past the 10s timeout on real repos."""
+    # Prefer git grep when repo is a git working tree (handles ignore rules for free)
+    if (repo / ".git").exists():
+        # `:!pattern` is a non-magic pathspec exclude; matches only at repo root.
+        # For nested dirs (skills/plan-verify/test-fixtures) we need the glob form.
+        cmd = ["git", "-C", str(repo), "grep", "-l", "--untracked", "-e", pattern, "--",
+               ":!**/test-fixtures/**", ":!.build-loop", ":!.navgator"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            # git grep exit code: 0=found, 1=not found, 128=error
+            if r.returncode in (0, 1):
+                return (r.returncode == 0 and bool(r.stdout.strip()), " ".join(cmd))
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    # rg fallback (real binary only; shell function won't be found by subprocess)
     try:
         cmd = ["rg", "-l", "--hidden", "-g", "!.git", "-g", "!node_modules",
                "-g", "!dist", "-g", "!.build-loop", "-g", "!.navgator",
@@ -114,13 +121,24 @@ def repo_grep(pattern: str, repo: Path) -> tuple[bool, str]:
         return (r.returncode == 0 and bool(r.stdout.strip()), " ".join(cmd))
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    # Fallback to grep
+    # Python-native fallback (no external dep). Scans text files only, skips well-known
+    # heavy dirs. Slower than git grep but correct + works without any tools.
+    _SKIP = {".git", "node_modules", "dist", ".build-loop", ".navgator", "test-fixtures", "__pycache__"}
     try:
-        cmd = ["grep", "-R", "-l"] + excludes_grep + [pattern, str(repo)]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        return (r.returncode == 0 and bool(r.stdout.strip()), " ".join(cmd))
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return (False, "grep:unavailable")
+        compiled = re.compile(re.escape(pattern))
+    except re.error:
+        return (False, "python-fallback:bad-pattern")
+    for p in repo.rglob("*"):
+        if not p.is_file():
+            continue
+        if any(part in _SKIP for part in p.parts):
+            continue
+        try:
+            if compiled.search(p.read_text(encoding="utf-8", errors="ignore")):
+                return (True, f"python-fallback:rglob (pattern={pattern!r})")
+        except OSError:
+            continue
+    return (False, "python-fallback:rglob (no match)")
 
 
 # ---------------------------------------------------------------------------

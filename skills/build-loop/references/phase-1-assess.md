@@ -71,6 +71,9 @@
 14. **State the goal** in concrete, measurable terms.
 15. **Suggest 3-5 scoring criteria** from: functionality, code quality, UX, performance, security, accessibility, test coverage — select what's relevant to the project and goal. Include intent fidelity/user value when the change affects user experience or product behavior. Include modularity/MECE/scalability when the change spans modules, agents, domains, repo areas, data boundaries, or long-lived interfaces. Show for confirmation.
 
+    **Warning/lint criteria MUST be relative, not absolute** (R4 from the 2026-05-19 iOS retro). An absolute "zero warnings tagged X" criterion false-fires on pre-existing warnings, forcing subagents to either lie, exit-fail honest work, or write apologetic prose. Author as **"no NEW warnings matching `<filter>` vs `git merge-base origin/main HEAD` using the same build command, destination, SDK, and filter"** (Codex correction: baseline only valid when capture and current invocations match). Inline diff helper:
+    `comm -23 <(<current> 2>&1 | grep -E 'warning:' | grep -E '<filter>' | sort -u) <(<baseline> ... | sort -u)`. Persist baselines as plain text under `.build-loop/baselines/warnings-<base-sha>-<filter-slug>.txt` only when one is needed; ad-hoc capture is fine.
+
    **When `uiTarget != null`, the following criteria are REQUIRED and added automatically (not optional)**:
    - **UI-1 Design-rule compliance**: scanner exits 0 on changed files (must-fix=0). Grader: code (`audit-design-rules.mjs`).
    - **UI-2 Reduce Motion compliance**: every animation gated on platform's reduce-motion API. Grader: code (scanner rule `animation-without-reducemotion`).
