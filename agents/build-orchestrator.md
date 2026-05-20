@@ -88,6 +88,8 @@ Multiple build-loop sessions can run concurrently in different terminals and acr
 
 **Pre-conflict merge-status gate (NEW 2026-05-19)**: `checkpoint_read` reactions now carry `severity` and `reason` per soft-claim. Treat `severity: "informational"` (reason `merged_residue` or `squash_landed`) as NOT a conflict source — proceed with `isolation: "worktree"`. Only `severity: "warning"` (reason `active_conflict`) triggers the peer-no-mutate path (wait, rebase onto peer, or non-overlapping-file isolation). Before declaring a conflict not surfaced by checkpoint (e.g. reasoning from `git worktree list` directly), run `git merge-base --is-ancestor <peer-head> $(git rev-parse --verify --quiet origin/main || echo main)` AND `git diff origin/main -- <files>` from the peer's worktree; both must indicate unmerged for a true conflict. Schema: presence records carry `branch_name`, `branch_head_sha`, `branch_merge_status` ∈ {merged, unmerged, unknown}, `branch_merge_status_checked_ts`, and `cwd`; treat `"unknown"` like `"unmerged"` (conservative). See memory `feedback_verify_peer_merged_before_blocking`.
 
+**Isolation-worktree lifecycle**: log every `Agent(isolation="worktree", ...)` dispatch in `state.json.runs[N].dispatchedWorktrees[]` (path + branch + dispatch_ts) so Phase D Closeout can force-remove them (`git worktree remove -f -f` + `git branch -D`) at run end. See §"Phase D: Closeout" — automated cleanup replaces the manual-operator pattern that previously left worktrees locked across runs.
+
 ## Phase Coordination
 
 ### Phase 1: Assess
@@ -125,6 +127,7 @@ Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 
 - Identify independent tasks from the plan's dependency graph; dispatch one subagent per task.
 - Each agent gets: task description, file paths, integration contract, fallback snippets, intent packet from `.build-loop/intent.md`, MECE ownership packet (`owns`, `does not own`, `interface contract`, `integration checkpoint`), `architecture_context:` block read verbatim from `.build-loop/architecture/scout-cache/chunk-<N>.json`, and `available_capabilities:` block from `state.json.activeCapabilities["3"][-1].results[:8]` (fall back to `["2"]`). Implementers MUST flag any change that exits the architecture slice in their return envelope. Do NOT re-dispatch the scout in Phase 3 and do NOT re-run `capability_shortlist.py`.
+- **MECE-packet lint (advisory) before peer-handoff dispatch**: for every `Agent(subagent_type=..., ...)` call that includes a peer-handoff brief (Phase 3 implementer dispatch, cross-session worktree-isolated dispatch, Codex slice handoff), write the brief to a tmpfile and run `python3 scripts/brief_mece_validator.py --brief-file <tmpfile> --json` BEFORE the Agent call. Exit 0 → proceed silently. Exit 1 → log a `[warn]` line citing the missing fields (one of `owns / does-not-own / interface-contract / integration-checkpoint`); dispatch ALSO proceeds (C-FLOW pattern — non-blocking lint, never halts execution). Surface lint findings in the run report's `## Done` section as `[warn] MECE lint: chunk <id> missing <fields>`. Skip the lint ONLY for pure-read handoffs ("go look at this and tell me what you find"). Memory citation: `feedback_handoffs_require_mece_packets`. Constitution: `references/coordination-rules.md` §"MECE Packets".
 - **Implementer brief template**: structure each brief per `references/implementer-brief-template.md`. Pre-Execute checklist: schema pre-grepped, reference patterns verified, LoC target computed, test cap math shown, scope-auditor caller-audit accepted. If any can't be populated, return to Phase 2.
 - For UI work, every visible control/nav item/option/message/chart must have working behavior, clear user purpose, matching contract entry. Prefer one primary action. UI briefs must include contract section + `templates/ui-subagent-prompt.md`.
 - At coordination checkpoints, verify outputs align before continuing.
@@ -176,6 +179,23 @@ Full protocol in `references/iterate-protocol.md`. Highlights:
 - Loop back to Review-B; A usually skipped on re-runs.
 - Hard stop at 5 iterations (classic) or 25 iterations (autonomous); overflow to `.build-loop/followup/`.
 - **Phase 5 autonomous iterate loop** (when `state.json.autonomous.enabled == true`): budget check + interrupt check + iterate cap on every loop entry; body drains the queue via `alignment-checker` (per-item verdict `aligned`/`misaligned`/`uncertain`); commits + advances; exits on queue-empty, finalize_and_stop, halt sentinel, iterate-cap, or concurrent-modification. Report contribution: `budget_summary` JSON via `write_run_entry.py --budget-summary-json`. Resume preserves `deadline_at` verbatim. Full procedure in `references/iterate-protocol.md` §"Phase 5 autonomous iterate loop".
+
+### Phase D: Closeout (runs by default at end of every run)
+
+Closeout terminates live processes, reaps stale presence records, force-removes dispatch worktrees, archives the active coordination file, and posts a `run-closeout` phase record to the channel. This is automated, not operator-discipline-dependent. Skipping it leaves ghost-peer signals that the next run has to debug. Memory citation: `feedback_close_out_stops_the_watcher`. Constitution: `references/coordination-rules.md` §"Closeout hygiene".
+
+**Mandatory closeout sequence (run after Phase 6 Learn if it ran; otherwise immediately after Review-G):**
+
+1. **Reap this session's presence**: `scripts/app_pulse/lifecycle.reap_my_sessions(channel_dir, my_session_id)`. Deletes `~/.build-loop/apps/<slug>/sessions/<my-session>.json`. Fire-and-forget — returns count reaped but the orchestrator never crashes on a permission/IO error.
+2. **Reap stale peer presence (defense-in-depth)**: `scripts/app_pulse/lifecycle.reap_stale_sessions(channel_dir, stale_after_seconds=3600)` removes any presence file whose mtime is older than 1 hour. Independent of `presence.reap_stale`'s 15-min heartbeat window.
+3. **Stop coordination watchers**: SIGTERM any `coordination_watch.py --interval N` background processes started during this run. Track PIDs in `state.json.runs[N].watcherPids[]`; iterate + `os.kill(pid, SIGTERM)`. Errors swallowed.
+4. **Force-remove dispatch worktrees**: for every `Agent(isolation="worktree", ...)` dispatch logged in `state.json.runs[N].dispatchedWorktrees[]`, run `git worktree remove -f -f <path>` then `git branch -D worktree-agent-<id>`. The double `-f` is required when the worktree was locked by the agent process. Track outcomes for the run report; do not block closeout on a failed remove.
+5. **Archive the coordination file**: `mv .build-loop/coordination/<this-coord-file>.md .build-loop/coordination/archived/`. Preserves the durable record while clearing the active queue. Skip when no coord file was used or it was already archived; `state.json.runs[N].coordinationFile` tracks the path.
+6. **Optional changes.jsonl rotation**: `scripts/app_pulse/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)`. Rotates when EITHER threshold is exceeded; returns the rotated-to path or `None`. Logged in `state.json.runs[N].channelRotated`.
+7. **Final post**: `scripts/app_pulse/post.post(channel_dir=..., kind="phase", payload={"phase": "run-closeout", "session_id": <id>, "coord_file": <archived-path>, "outcomes": {...}})`. Signals to peers + future readers that this run is done; readers know to skip its presence/changes when scoping new work.
+8. **State tracking**: write `state.json.runs[N].closeout_status` ∈ {`completed`, `partial`, `failed`} with per-step outcomes. The run report (Review-G) includes a closeout summary line; future-session pattern-miners and Phase 6 Learn use the per-step outcomes to detect chronic closeout failures.
+
+Phase D runs even when Phase 6 Learn is disabled (`autoSelfImprove: false`). The only way to skip is an explicit `closeout: false` in the dispatch envelope (used by debug-only runs); set this conservatively.
 
 ### Phase 6: Learn (optional)
 
