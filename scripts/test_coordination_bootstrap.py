@@ -189,6 +189,74 @@ class BootstrapErrorHandlingTests(unittest.TestCase):
         self.assertTrue(any("template" in e.lower() for e in result["errors"]))
 
 
+class BootstrapConcurrencyTests(unittest.TestCase):
+    """R1 (v0.12.10): atomic-create regression test.
+
+    Spawns N concurrent bootstrap calls against the same topic in the same
+    workdir. Pre-v0.12.10 (exists+write_text), all N could race past the
+    exists() check and produce N "bootstrapped" envelopes + N duplicate
+    handoff posts. With open('x') atomic create, exactly 1 returns
+    "bootstrapped" and N-1 return "joined-existing-coord".
+
+    This is the concurrency property Codex's rev 71 VARIANCE flagged
+    against v0.12.9.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="bootstrap-concurrent-")
+        self.workdir = Path(self.tmpdir)
+        self.template_path = self.workdir / "template.md"
+        self.template_path.write_text(MINI_TEMPLATE, encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_concurrent_bootstrap_invocations_atomic_exactly_one_creates(self):
+        """5 parallel bootstrap subprocesses against same topic →
+        exactly 1 'bootstrapped', 4 'joined-existing-coord'."""
+        N = 5
+        env = dict(os.environ)
+        env["HOME"] = str(self.workdir)
+        cmd = [
+            sys.executable,
+            str(REPO / "scripts" / "coordination_bootstrap.py"),
+            "--workdir", str(self.workdir),
+            "--topic", "v0130-concurrent-test",
+            "--scope", "concurrency atomicity smoke",
+            "--template", str(self.template_path),
+            "--json",
+        ]
+        procs = []
+        for i in range(N):
+            p = subprocess.Popen(
+                cmd + ["--session-id", f"concurrent-sid-{i}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=True,
+            )
+            procs.append(p)
+        results = []
+        for p in procs:
+            stdout, stderr = p.communicate(timeout=30)
+            self.assertEqual(p.returncode, 0, f"subprocess failed: stderr={stderr}")
+            results.append(json.loads(stdout))
+        actions = [r["action"] for r in results]
+        bootstrapped_count = sum(1 for a in actions if a == "bootstrapped")
+        joined_count = sum(1 for a in actions if a == "joined-existing-coord")
+        self.assertEqual(
+            bootstrapped_count, 1,
+            f"Expected exactly 1 'bootstrapped' (atomic race winner), got {bootstrapped_count}. Actions: {actions}"
+        )
+        self.assertEqual(
+            joined_count, N - 1,
+            f"Expected {N-1} 'joined-existing-coord' (race losers), got {joined_count}. Actions: {actions}"
+        )
+        # Only one coord file should exist (all subprocesses computed the same path)
+        coord_files = list((self.workdir / ".build-loop" / "coordination").glob("v0130-concurrent-test-*.md"))
+        self.assertEqual(len(coord_files), 1, f"Expected exactly 1 coord file, got {len(coord_files)}")
+
+
 class BootstrapCLITests(unittest.TestCase):
 
     def setUp(self):

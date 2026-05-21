@@ -155,8 +155,19 @@ def bootstrap(
     except OSError as exc:
         errors.append(f"could not create coord dir {coord_dir}: {exc}")
 
-    already_exists = target.exists()
-    if not already_exists:
+    # R1 fix (v0.12.10): atomic create via open(mode='x') eliminates the
+    # exists()+write_text() race where two concurrent bootstrappers can both
+    # pass the exists() check, both write the file, both post handoff.
+    #
+    # Optimization: do the fast exists() check first to skip template-load
+    # work when joining an existing coord. The exists() check is NOT the
+    # correctness mechanism — the open('x') atomic create is. Race-lost
+    # bootstrappers (where exists() returns False but open('x') raises
+    # FileExistsError because a peer created the file between the two calls)
+    # gracefully fall through to action="joined-existing-coord".
+    if target.exists():
+        action = "joined-existing-coord"
+    else:
         template_resolved = _resolve_template_path(workdir, template_path)
         try:
             template_text = template_resolved.read_text(encoding="utf-8")
@@ -178,9 +189,17 @@ def bootstrap(
             tool=tool,
             date_iso=_today_iso(now),
         )
+        # Atomic create: 'x' mode means exclusive create — raises FileExistsError
+        # if the file already exists. This is the actual race-safety mechanism.
         try:
-            target.write_text(rendered, encoding="utf-8")
+            with open(target, "x", encoding="utf-8") as f:
+                f.write(rendered)
             action = "bootstrapped"
+        except FileExistsError:
+            # Race lost: a peer created the coord file between our exists()
+            # check and our open('x'). Fall through to join semantics —
+            # do NOT overwrite, do NOT duplicate the handoff post.
+            action = "joined-existing-coord"
         except OSError as exc:
             errors.append(f"could not write coord file {target}: {exc}")
             return {
@@ -191,8 +210,6 @@ def bootstrap(
                 "presence_written": False,
                 "errors": errors,
             }
-    else:
-        action = "joined-existing-coord"
 
     # Write presence (fire-and-forget; never blocks).
     try:
