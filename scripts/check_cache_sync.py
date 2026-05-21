@@ -40,13 +40,13 @@ IGNORE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".build-loop"}
 CODEX_DEFAULT_MARKETPLACE = "ross-labs-local"
 COORDINATION_EXACT_REFS = (
     "commands/agent-rally-point.md",
-    "references/app-pulse-protocol.md",
+    "references/rally-point-protocol.md",
     "references/coordination-rules.md",
     "references/multi-session-coordination.md",
     "scripts/check_cache_sync.py",
 )
 COORDINATION_PREFIXES = (
-    "scripts/app_pulse",
+    "scripts/rally_point",
 )
 COORDINATION_GLOBS = (
     "scripts/coordination_*.py",

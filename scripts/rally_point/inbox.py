@@ -144,7 +144,7 @@ def send_to_tool(
                 scripts_dir = Path(__file__).resolve().parent.parent
                 if str(scripts_dir) not in sys.path:
                     sys.path.insert(0, str(scripts_dir))
-                from app_pulse.post import post
+                from rally_point.post import post
 
             channel_revision = post(
                 channel_dir=Path(channel_dir),

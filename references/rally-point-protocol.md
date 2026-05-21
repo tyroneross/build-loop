@@ -1,4 +1,4 @@
-# App Pulse — orchestrator presence/phase protocol (Stage 1)
+# Rally Point — orchestrator presence/phase protocol (Stage 1)
 
 The per-app shared channel (`~/.build-loop/apps/<slug>/`) carries what
 concurrent build-loop sessions (Claude **and** Codex, any checkout) are
@@ -9,7 +9,7 @@ daemon (D3). Awareness only, never a lock (D4).
 
 ## Slug (D1, worktree-aware)
 
-`scripts/app_pulse/channel_paths.app_slug(cwd=<repo>)` resolves the slug
+`scripts/rally_point/channel_paths.app_slug(cwd=<repo>)` resolves the slug
 from `git rev-parse --git-common-dir` → canonical-repo basename, so the
 **main checkout and every `git worktree` of the same repo share one
 channel** (the exact concurrent scenario this targets — agent dispatches
@@ -31,7 +31,7 @@ O_APPEND, errors swallowed). The `revision` bump is the only locked
 write (short-timeout `fcntl`, skip-on-timeout). None can block or fail a
 host action.
 
-Use `scripts/app_pulse/post.py` for all new change records. It wraps the
+Use `scripts/rally_point/post.py` for all new change records. It wraps the
 revision bump and `changes.jsonl` append in the canonical order; do not call
 `changes.append_change(...)` directly from new orchestration code unless the
 caller has already handled the revision bump.
@@ -96,11 +96,11 @@ archive/delete, or shared/high-risk file edit.
 
 An absent channel/dir yields an empty envelope (`changed: false`,
 empty lists, `arch_digest: null`), creates nothing implicitly, and
-never errors — zero regression for repos that have never seen App Pulse.
+never errors — zero regression for repos that have never seen Rally Point.
 
 ## Non-goal guard
 
 Records and the envelope carry structure/data-flow only. No
 call-frequency / invocation-count field is ever written or surfaced
-(asserted in `scripts/app_pulse/test_changes.py` and
+(asserted in `scripts/rally_point/test_changes.py` and
 `test_checkpoint.py`).

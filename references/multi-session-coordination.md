@@ -1,35 +1,35 @@
-# Multi-Session Coordination (App Pulse presence, M5 memory index)
+# Multi-Session Coordination (Rally Point presence, M5 memory index)
 
 _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
 
 Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
 
-- **App Pulse presence** — `scripts/app_pulse/presence.py` + `scripts/app_pulse/channel_paths.py`: the single concurrent-presence source of truth. One file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
+- **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/channel_paths.py`: the single concurrent-presence source of truth. One file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
 - `scripts/memory_writer.py` — canonical writer for memory files (provenance frontmatter + atomic INDEX append in one operation)
 - `scripts/memory_index.py` — append-only discovery log at `~/.build-loop/memory/INDEX.jsonl`
 
 ## Required orchestrator integration points
 
-This section defines the App Pulse presence integration plus the M5 trigger family. They complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
+This section defines the Rally Point presence integration plus the M5 trigger family. They complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
 
-- **App Pulse presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3). New change records use `scripts/app_pulse/post.py`, not raw `append_change`.
-- **Script-first status checks — token conservation.** `scripts/coordination_status.py` and `scripts/coordination_watch.py` compress App Pulse, coordination verdicts, peer overlap, and dirty-file state into compact JSON so agents do not repeatedly reread the full coordination note.
+- **Rally Point presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3). New change records use `scripts/rally_point/post.py`, not raw `append_change`.
+- **Script-first status checks — token conservation.** `scripts/coordination_status.py` and `scripts/coordination_watch.py` compress Rally Point, coordination verdicts, peer overlap, and dirty-file state into compact JSON so agents do not repeatedly reread the full coordination note.
 - **M5 — Memory index append + canonical writer.** Fires on every memory write to `~/.build-loop/memory/` (via `memory_writer.py write`) and every read between phases (via `memory_index.py tail --since`). Telemetry + cross-session discovery; never blocks.
 
-### App Pulse presence — slug resolution (D1, worktree-aware)
+### Rally Point presence — slug resolution (D1, worktree-aware)
 
-`scripts/app_pulse/channel_paths.app_slug(cwd=<repo>)` resolves the channel slug from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Falls back to memory's `derive_slug_from_cwd` only outside a git repo. Use this resolver; never reimplement slug derivation.
+`scripts/rally_point/channel_paths.app_slug(cwd=<repo>)` resolves the channel slug from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Falls back to memory's `derive_slug_from_cwd` only outside a git repo. Use this resolver; never reimplement slug derivation.
 
-### App Pulse presence — On Phase 1 Assess preamble (after `run_id` is generated, BEFORE any planning):
+### Rally Point presence — On Phase 1 Assess preamble (after `run_id` is generated, BEFORE any planning):
 
 1. `presence.write_presence(channel_dir, session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=<from channel_paths.app_slug>, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget: never raises, never blocks.
 2. `peers = presence.read_active_presence(channel_dir, exclude_session=<this session_id>)` (this also reaps stale presence whose `heartbeat_ts` is older than the channel's `heartbeat_minutes`, default 15).
 3. **Peer handling** (awareness, never a hard block — D4):
    - No peers — continue silently.
    - Peers, no file overlap — log one line per peer: tool, run_id, phase.
-   - Peers WITH `files_in_flight` overlapping this session's planned files — surface a `soft-claim` **WARNING** naming the peer + overlapping files + the peer's phase, then proceed with awareness. Interactive hosts MAY additionally `AskUserQuestion` to coordinate; headless hosts log + proceed (per `feedback_no_permission_asks.md`). There is no SAFE-STOP sentinel and no non-zero exit — App Pulse is awareness, not a lock.
+   - Peers WITH `files_in_flight` overlapping this session's planned files — surface a `soft-claim` **WARNING** naming the peer + overlapping files + the peer's phase, then proceed with awareness. Interactive hosts MAY additionally `AskUserQuestion` to coordinate; headless hosts log + proceed (per `feedback_no_permission_asks.md`). There is no SAFE-STOP sentinel and no non-zero exit — Rally Point is awareness, not a lock.
 
-### App Pulse presence — On each phase-start and when files-owned changes:
+### Rally Point presence — On each phase-start and when files-owned changes:
 
 Refresh presence so concurrent peers see the current phase and the files this session will touch:
 
@@ -67,7 +67,7 @@ Inbox routing has two wake paths. Targeted messages append to
 `inbox/<tool>.jsonl`; broadcast messages append to `inbox/all.jsonl`. Agents
 read both their direct inbox and `all`, while still mirroring important
 messages to `changes.jsonl` for durable channel polling.
-### App Pulse presence — On clean completion:
+### Rally Point presence — On clean completion:
 
 No explicit unregister is needed. The last presence write stands; `presence.reap_stale` (run opportunistically at every peer read) removes it once `heartbeat_ts` exceeds the stale window. A forgotten session is therefore self-healing — no `dead/` directory, no cleanup step.
 
@@ -113,7 +113,7 @@ The writer adds provenance frontmatter (source_repo auto-detected, source_workdi
 
 ## Headless host (Codex, cron) deterministic defaults
 
-App Pulse presence is awareness-only (D4), so headless hosts never block on it. Per the `feedback_no_permission_asks.md` posture:
+Rally Point presence is awareness-only (D4), so headless hosts never block on it. Per the `feedback_no_permission_asks.md` posture:
 
 - No peers / peers without file overlap: log + proceed at normal cadence.
 - Peers WITH overlapping `files_in_flight`: log the `soft-claim` WARNING (peer, files, phase) and proceed. There is no hard-stop, sentinel, or non-zero exit — coordination is the human's call after the fact, not a gate.
@@ -122,7 +122,7 @@ The interactive→headless distinction lives in this prompt, not in the scripts:
 
 `coordination_status.py` can report `blocked` when the durable coordination
 record contains unresolved `VARIANCE` or `BLOCKED` verdicts. That is a
-coordination gate, not an App Pulse lock: the plan owner must resolve,
+coordination gate, not a Rally Point lock: the plan owner must resolve,
 acknowledge, or explicitly override the verdict before advancing the step.
 
 ## R5 — Pre/post canonical snapshot around isolated dispatch

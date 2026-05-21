@@ -24,12 +24,12 @@ A `VARIANCE` left unresolved blocks the next step. A `BLOCKED` entry (verifier c
 
 ---
 
-## Channel & App Pulse
+## Channel & Rally Point
 
-**Every cross-session signal goes through App Pulse using the canonical `scripts/app_pulse/post.py` `post()` helper.** Raw `append_change(...)` without a subsequent `bump_revision(...)` is a silent-no-op for consumers — the record lands on disk but no peer's `checkpoint_read(...)` ever surfaces it because their cursor still matches the unchanged revision.
+**Every cross-session signal goes through Rally Point using the canonical `scripts/rally_point/post.py` `post()` helper.** Raw `append_change(...)` without a subsequent `bump_revision(...)` is a silent-no-op for consumers — the record lands on disk but no peer's `checkpoint_read(...)` ever surfaces it because their cursor still matches the unchanged revision.
 
 ```python
-from scripts.app_pulse.post import post
+from scripts.rally_point.post import post
 from pathlib import Path
 channel = Path("~/.build-loop/apps/build-loop").expanduser()
 post(
@@ -45,13 +45,13 @@ post(
 
 `post()` bumps the revision FIRST, then appends the record. That ordering guarantees readers who see the new revision can always find the corresponding record (no race where revision is ahead of the log).
 
-**Channel scope (worktree- and clone-independent):** `~/.build-loop/apps/<slug>/` where `slug` is derived from `git rev-parse --git-common-dir` via `scripts/app_pulse/channel_paths.app_slug(cwd)`. The main checkout, every worktree, and every clone of the same canonical repo share ONE channel. Different canonical repos get different channel directories (cross-repo isolation). Slug collisions across two different repos with the same basename are mitigated by `_safe_project_tag` but basename collision remains possible — accept it; the alternative scoping (per-coord-file channel) loses cross-run pattern memory.
+**Channel scope (worktree- and clone-independent):** `~/.build-loop/apps/<slug>/` where `slug` is derived from `git rev-parse --git-common-dir` via `scripts/rally_point/channel_paths.app_slug(cwd)`. The main checkout, every worktree, and every clone of the same canonical repo share ONE channel. Different canonical repos get different channel directories (cross-repo isolation). Slug collisions across two different repos with the same basename are mitigated by `_safe_project_tag` but basename collision remains possible — accept it; the alternative scoping (per-coord-file channel) loses cross-run pattern memory.
 
 **Anti-pattern (silent no-op):**
 
 ```python
 # Never do this — readers' checkpoint_read returns changed: false
-from scripts.app_pulse.changes import append_change
+from scripts.rally_point.changes import append_change
 append_change(channel_dir, record)  # forgot bump_revision; record invisible
 ```
 
@@ -150,15 +150,15 @@ Plugin version bumps in the RossLabs ecosystem update **three** files in lockste
 
 ## Closeout hygiene
 
-**A coordination run is not complete until all live processes, presence records, worktrees, and active coord files are explicitly cleaned up.** Stale heartbeats in `~/.build-loop/apps/<slug>/sessions/` and locked worktrees in `.claude/worktrees/` mislead the next run's peer-detection — App Pulse may report "active peer" for a dead process; `git worktree list` may show locked entries that block branch operations.
+**A coordination run is not complete until all live processes, presence records, worktrees, and active coord files are explicitly cleaned up.** Stale heartbeats in `~/.build-loop/apps/<slug>/sessions/` and locked worktrees in `.claude/worktrees/` mislead the next run's peer-detection — Rally Point may report "active peer" for a dead process; `git worktree list` may show locked entries that block branch operations.
 
 **Phase D closeout protocol (orchestrator runs by default at end of every run):**
 
-1. **Reap this run's session presence:** `scripts/app_pulse/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
+1. **Reap this run's session presence:** `scripts/rally_point/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
 2. **Stop watchers:** SIGTERM any `coordination_watch.py --interval N` processes started during the run.
 3. **Force-remove dispatch worktrees:** `git worktree remove -f -f <path>` + `git branch -D worktree-agent-<id>` for any `Agent(isolation="worktree", ...)` dispatch. The double `-f` is required if the worktree was locked by the agent process.
 4. **Archive the coord file:** `mv .build-loop/coordination/<this-coord-file>.md .build-loop/coordination/archived/`. Not deletion — preserves the durable record while clearing the active queue.
-5. **Optional changes.jsonl rotation:** `scripts/app_pulse/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)` rotates when either threshold is exceeded.
+5. **Optional changes.jsonl rotation:** `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)` rotates when either threshold is exceeded.
 6. **Final post:** `post(kind="phase", payload={"phase": "run-closeout", ...})` signals to channel that this run is done; future readers know to skip its presence/changes when scoping.
 7. **Track in state:** `state.json.runs[N].closeout_status`.
 
@@ -171,12 +171,12 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 | Rule | Canonical implementation |
 |---|---|
 | Operating rule (verdicts gating) | `scripts/coordination_status.py` `BLOCKING_VERDICTS` constant; coord file Operating Rule section |
-| `post()` mandatory | `scripts/app_pulse/post.py` (the helper itself) |
+| `post()` mandatory | `scripts/rally_point/post.py` (the helper itself) |
 | Cheap detection at step boundaries | `scripts/coordination_status.py` + `scripts/coordination_watch.py` |
 | MECE packets enforcement | `scripts/brief_mece_validator.py` + `agents/build-orchestrator.md` dispatch wrappers |
 | Release-surface verification | `scripts/verify_release_surface.py` |
 | Three-file lockstep enforcement | `scripts/test_plugin_manifest.py` `VersionShapeTests` |
-| Closeout hygiene | `scripts/app_pulse/lifecycle.py` + `agents/build-orchestrator.md` Phase D |
+| Closeout hygiene | `scripts/rally_point/lifecycle.py` + `agents/build-orchestrator.md` Phase D |
 | Coord-file shape | `references/coordination-file-template.md` |
 
 ---

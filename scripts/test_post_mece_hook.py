@@ -24,13 +24,13 @@ from unittest.mock import patch
 # Allow running from repo root: python3 scripts/test_post_mece_hook.py
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.app_pulse.post import post  # noqa: E402
+from scripts.rally_point.post import post  # noqa: E402
 
 
 def _good_ownership() -> dict:
     return {
-        "owns": ["scripts/app_pulse/post.py"],
-        "does_not_own": ["scripts/app_pulse/rally.py"],
+        "owns": ["scripts/rally_point/post.py"],
+        "does_not_own": ["scripts/rally_point/rally.py"],
         "interface_contract": "post() returns new revision int on success",
         "integration_checkpoint": "test_post_mece_hook.py exit 0",
     }
@@ -175,7 +175,7 @@ class TestMECEHook(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_validator_exception_does_not_propagate(self) -> None:
         with patch(
-            "scripts.app_pulse.mece_gate.validate_handoff",
+            "scripts.rally_point.mece_gate.validate_handoff",
             side_effect=RuntimeError("injected failure"),
         ):
             result = post(

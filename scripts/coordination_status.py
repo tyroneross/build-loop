@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from app_pulse import changes, channel_paths, inbox, presence, revision  # noqa: E402
+from rally_point import changes, channel_paths, inbox, presence, revision  # noqa: E402
 
 VERDICT_RE = re.compile(
     r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"

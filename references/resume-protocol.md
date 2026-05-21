@@ -37,7 +37,7 @@ The fault-injection helper lives in `tests/test_resume_orchestration.py:_maybe_i
 > always separate concerns sharing zero code — this path reads
 > `state.json.execution` heartbeat via `scripts/resume_resolver.py`; it has
 > nothing to do with concurrent-presence collision, which is now owned solely
-> by App Pulse presence (`scripts/app_pulse/presence.py` — see
+> by Rally Point presence (`scripts/rally_point/presence.py` — see
 > `references/multi-session-coordination.md` and `KNOWN-ISSUES.md` §M4). The
 > label is disambiguated below; the behavior is unchanged.
 

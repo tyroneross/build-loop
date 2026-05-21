@@ -25,8 +25,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from app_pulse import changes, channel_paths, presence, revision  # noqa: E402
-from app_pulse.post import post  # noqa: E402
+from rally_point import changes, channel_paths, presence, revision  # noqa: E402
+from rally_point.post import post  # noqa: E402
 
 
 def _timestamp_id(now: float | None = None) -> str:

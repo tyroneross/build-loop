@@ -15,7 +15,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import coordination_rally as cr  # noqa: E402
-from app_pulse import changes, channel_paths, presence  # noqa: E402
+from rally_point import changes, channel_paths, presence  # noqa: E402
 
 
 class CoordinationRallyTests(unittest.TestCase):

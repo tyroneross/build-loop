@@ -206,7 +206,7 @@ Build-loop keeps the core method host-neutral, then adapts the execution mechani
 
 **Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation/parallel agent work or uses a command flag such as `--parallel`. Without that signal, keep execution local while preserving the MECE plan.
 
-**Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active App Pulse peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Use a stable tool id (`claude_code`, `codex`, `cursor`, etc.). Run a one-shot status check first:
+**Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active rally-point peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Use a stable tool id (`claude_code`, `codex`, `cursor`, etc.). Run a one-shot status check first:
 
 ```bash
 python3 scripts/coordination_status.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --json
@@ -218,7 +218,7 @@ If the status has `active_peers`, `coordination_file`, `inbox_unread_count > 0`,
 python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --interval 5 --jsonl --baseline-current
 ```
 
-Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME"`, read `~/.build-loop/apps/<slug>/inbox/<tool>.jsonl` plus `~/.build-loop/apps/<slug>/inbox/all.jsonl` or run `python3 scripts/app_pulse/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --json`, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
+Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME"`, read `~/.build-loop/apps/<slug>/inbox/<tool>.jsonl` plus `~/.build-loop/apps/<slug>/inbox/all.jsonl` or run `python3 scripts/rally_point/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --json`, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
 
 ## Intent Capability Pack
 
@@ -325,7 +325,7 @@ Routing rule: "Would this apply to a different project?" Yes → global. No → 
 **On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
 > "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
 
-This is the crash-resume staleness signal — heartbeat staleness on `state.json.execution`, no hook dependency, fires every fresh dispatch. (A crash-recovery concern, distinct from concurrent-presence collision, which is owned solely by App Pulse presence — see `KNOWN-ISSUES.md` §M4.)
+This is the crash-resume staleness signal — heartbeat staleness on `state.json.execution`, no hook dependency, fires every fresh dispatch. (A crash-recovery concern, distinct from concurrent-presence collision, which is owned solely by Rally Point presence — see `KNOWN-ISSUES.md` §M4.)
 
 **Concurrent-modification handling**: when `concurrent_modifications` is non-empty in the resolver output, the agent's §0 branch surfaces each flagged chunk as `status: concurrent_modification_detected` and asks the user whether to redo the chunk (default) or keep the hand-edits.
 

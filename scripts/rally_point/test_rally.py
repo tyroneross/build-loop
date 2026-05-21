@@ -12,8 +12,8 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from app_pulse import changes, rally  # noqa: E402
-from app_pulse.post import post  # noqa: E402
+from rally_point import changes, rally  # noqa: E402
+from rally_point.post import post  # noqa: E402
 
 
 class RallyPointerTests(unittest.TestCase):

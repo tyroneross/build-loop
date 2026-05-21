@@ -48,7 +48,7 @@ Per-run amendments: {{ANY_RUN_SPECIFIC_OPERATING_AMENDMENTS_OR_NONE}}
 
 ## Coordination Protocol (binding — inherited)
 
-- **All App Pulse writes** go through `scripts/app_pulse/post.py` `post()` helper.
+- **All Rally Point writes** go through `scripts/rally_point/post.py` `post()` helper.
 - **Cheap detection at every step boundary**: `python3 scripts/coordination_status.py --workdir . --session-id <id> --owned-file <path> --coordination-file .build-loop/coordination/{{THIS_FILE_NAME}}.md --json`. `--coordination-file` REQUIRED — explicit beats implicit.
 - **Verifier feedback entry format** (append-only to "Verifier feedback log" at bottom):
 
@@ -128,7 +128,7 @@ Exit 0 = all seven release-surface checks pass; exit 1 = at least one failed. Ve
 ## Anti-checklist (don't do these)
 
 - No new coordination-file FORMAT — reuse this template's section shape.
-- No new presence mechanism — reuse App Pulse `presence.write_presence` + `post()`.
+- No new presence mechanism — reuse Rally Point `presence.write_presence` + `post()`.
 - No new agents unless explicitly justified.
 - No silent scope creep — if a piece grows mid-execution, post `VARIANCE` to the feedback log first.
 
@@ -170,6 +170,6 @@ Before committing your filled-in coord file:
 - Binding rules: `references/coordination-rules.md`
 - Validator for MECE packets: `scripts/brief_mece_validator.py`
 - Status sensor: `scripts/coordination_status.py`
-- Channel helper: `scripts/app_pulse/post.py`
+- Channel helper: `scripts/rally_point/post.py`
 - Release verifier (when bumping a version): `scripts/verify_release_surface.py`
-- Closeout protocol: `scripts/app_pulse/lifecycle.py` + `agents/build-orchestrator.md` Phase D
+- Closeout protocol: `scripts/rally_point/lifecycle.py` + `agents/build-orchestrator.md` Phase D

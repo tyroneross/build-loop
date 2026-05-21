@@ -46,7 +46,7 @@ When you halt, the orchestrator dispatches your `novel_decisions[]` entries to t
 | `ui_delta` | when `uiTouched: true` | the `design_doc_delta` field from ui-validator's envelope (may be `null` when ui-validator returned `skipped` — handle gracefully) |
 | `schema_delta` | when `dataChanges: true` | the `schema_delta` JSON from architecture-scout `task: schema-map` |
 | `files_changed` | yes | list of paths the chunk/build touched (used to ground both deltas against real code) |
-| `app_slug` | yes | from `scripts/app_pulse/channel_paths.app_slug` (worktree-independent project identifier) |
+| `app_slug` | yes | from `scripts/rally_point/channel_paths.app_slug` (worktree-independent project identifier) |
 | `state_path` | yes | absolute path to `.build-loop/state.json` |
 | `existing_contract_dir` | yes | absolute path to `.build-loop/app-contract/` (may not exist yet on baseline) |
 | `available_capabilities` | recommended | the orchestrator-cached capability shortlist for this phase |

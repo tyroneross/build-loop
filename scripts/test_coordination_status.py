@@ -15,7 +15,7 @@ sys.path.insert(0, str(HERE))
 
 import coordination_status as cs  # noqa: E402
 import coordination_watch as cw  # noqa: E402
-from app_pulse import changes, channel_paths, inbox, presence  # noqa: E402
+from rally_point import changes, channel_paths, inbox, presence  # noqa: E402
 
 
 class CoordinationStatusTests(unittest.TestCase):
@@ -238,7 +238,7 @@ class CoordinationStatusTests(unittest.TestCase):
             )
             # Patch presence file to add empty ``owns`` field.
             import json as _json
-            from app_pulse.presence import _presence_path
+            from rally_point.presence import _presence_path
             p = _presence_path(channel, f"peer{i}")
             rec = _json.loads(p.read_text())
             rec["owns"] = []
@@ -270,7 +270,7 @@ class CoordinationStatusTests(unittest.TestCase):
         )
         # Patch peer presence to add owns: ["b.py"].
         import json as _json
-        from app_pulse.presence import _presence_path
+        from rally_point.presence import _presence_path
         p = _presence_path(channel, "peer0")
         rec = _json.loads(p.read_text())
         rec["owns"] = ["b.py"]

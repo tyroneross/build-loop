@@ -200,7 +200,7 @@ class BootstrapJoinSemanticsTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.fake_channel = self.workdir / "fake-channel"
-        from app_pulse import channel_paths
+        from rally_point import channel_paths
         self._orig = channel_paths.app_channel_dir
         self._channel_paths = channel_paths
         channel_paths.app_channel_dir = lambda slug: self.fake_channel
@@ -210,7 +210,7 @@ class BootstrapJoinSemanticsTests(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _read_channel_changes(self) -> list[dict]:
-        from app_pulse.changes import read_changes_since
+        from rally_point.changes import read_changes_since
         recs, _ = read_changes_since(self.fake_channel, 0)
         return recs
 

@@ -19,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 
-from app_pulse import lifecycle  # noqa: E402
+from rally_point import lifecycle  # noqa: E402
 
 
 def _make_session(sd: Path, sid: str, age_seconds: float = 0) -> Path:
