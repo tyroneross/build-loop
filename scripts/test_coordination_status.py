@@ -43,7 +43,16 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(status["status"], "clear")
         self.assertEqual(status["required_action"], "none")
 
-    def test_peer_overlap_warns(self):
+    def test_peer_files_in_flight_vs_owned_populates_overlaps_field(self):
+        """Peer's files_in_flight vs our owned_file populates legacy overlaps field.
+
+        NOTE: As of R1 C8, the ``overlaps`` field is preserved for backward
+        compat but it no longer drives the ``status: warn`` outcome.  Warn is
+        now driven exclusively by peer's ``owns`` intersecting our
+        ``files_in_flight`` (ownership-aware check).  A peer with no ``owns``
+        field will not trigger warn even if their files_in_flight overlaps our
+        owned_file.
+        """
         slug = channel_paths.app_slug(self.workdir)
         channel = channel_paths.ensure_channel_dir(slug)
         presence.write_presence(
@@ -57,8 +66,9 @@ class CoordinationStatusTests(unittest.TestCase):
             files_in_flight=["src/app.py"],
             cwd=self.workdir,
         )
+        # Peer has no ``owns`` field → overlaps list populates (legacy) but
+        # status is clear because peer did not declare ownership.
         status = self._run("--owned-file", "src/app.py")
-        self.assertEqual(status["status"], "warn")
         self.assertEqual(status["overlaps"][0]["peer"], "peer")
 
     def test_blocked_verdict_blocks(self):
@@ -171,6 +181,124 @@ class CoordinationStatusTests(unittest.TestCase):
         event = json.loads(r.stdout.strip())
         self.assertEqual(event["event"], "coordination_state_changed")
         self.assertEqual(event["status"], "clear")
+
+    # ------------------------------------------------------------------
+    # Ownership-aware warn tests (R1 C8)
+    # ------------------------------------------------------------------
+
+    def test_peers_with_empty_owns_and_our_files_in_flight_is_clear(self):
+        """3 peers with owns: [] and our files_in_flight: ["a.py"] -> clear.
+
+        This is the false-positive regression: the old code warned whenever
+        peers existed; now warn fires only on actual ownership intersection.
+        """
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        for i in range(3):
+            presence.write_presence(
+                channel,
+                session_id=f"peer{i}",
+                tool="claude_code",
+                model="m",
+                run_id="r",
+                app_slug=slug,
+                phase="execute",
+                files_in_flight=["a.py"],
+                cwd=self.workdir,
+            )
+            # Patch presence file to add empty ``owns`` field.
+            import json as _json
+            from app_pulse.presence import _presence_path
+            p = _presence_path(channel, f"peer{i}")
+            rec = _json.loads(p.read_text())
+            rec["owns"] = []
+            p.write_text(_json.dumps(rec))
+
+        status = self._run("--files-in-flight", "a.py")
+        self.assertEqual(status["status"], "clear",
+                         f"Expected clear but got {status['status']}; "
+                         f"peer_overlap_files={status.get('peer_overlap_files')}")
+        self.assertEqual(status["peer_overlap_files"], [])
+
+    def test_peer_owns_intersection_with_our_files_in_flight_warns(self):
+        """Peer owns b.py and our files_in_flight includes b.py -> warn.
+
+        peer_overlap_files must list b.py; status must be warn.
+        """
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        presence.write_presence(
+            channel,
+            session_id="peer0",
+            tool="claude_code",
+            model="m",
+            run_id="r",
+            app_slug=slug,
+            phase="execute",
+            files_in_flight=[],
+            cwd=self.workdir,
+        )
+        # Patch peer presence to add owns: ["b.py"].
+        import json as _json
+        from app_pulse.presence import _presence_path
+        p = _presence_path(channel, "peer0")
+        rec = _json.loads(p.read_text())
+        rec["owns"] = ["b.py"]
+        p.write_text(_json.dumps(rec))
+
+        # Second peer with owns: [] — must not contribute to overlap.
+        presence.write_presence(
+            channel,
+            session_id="peer1",
+            tool="claude_code",
+            model="m",
+            run_id="r",
+            app_slug=slug,
+            phase="execute",
+            files_in_flight=[],
+            cwd=self.workdir,
+        )
+        p1 = _presence_path(channel, "peer1")
+        rec1 = _json.loads(p1.read_text())
+        rec1["owns"] = []
+        p1.write_text(_json.dumps(rec1))
+
+        status = self._run("--files-in-flight", "b.py")
+        self.assertEqual(status["status"], "warn",
+                         f"Expected warn but got {status['status']}")
+        self.assertIn("b.py", status["peer_overlap_files"])
+
+    def test_backward_compat_existing_fields_present(self):
+        """Existing fields are still present in output JSON after refactor."""
+        status = self._run()
+        required_fields = [
+            "schema_version", "status", "required_action", "workdir",
+            "app_slug", "channel_dir", "session_id", "revision",
+            "active_peers", "overlaps", "coordination_file",
+            "latest_verdicts", "unresolved", "dirty_files",
+            "dirty_outside_owned", "new_changes",
+            # New fields
+            "peer_overlap_files", "inbox_unread_count",
+        ]
+        for field in required_fields:
+            self.assertIn(field, status, f"Missing field: {field}")
+
+    def test_inbox_unread_count_zero_when_no_inbox(self):
+        """inbox_unread_count is 0 when inbox file doesn't exist."""
+        status = self._run()
+        self.assertEqual(status["inbox_unread_count"], 0)
+
+    def test_inbox_unread_count_counts_nonempty_lines(self):
+        """inbox_unread_count counts non-blank lines in the inbox jsonl."""
+        slug = channel_paths.app_slug(self.workdir)
+        from app_pulse import channel_paths as cp
+        inbox_dir = cp.ensure_channel_dir(slug) / "inbox"
+        inbox_dir.mkdir(parents=True, exist_ok=True)
+        inbox_file = inbox_dir / "claude_code.jsonl"
+        inbox_file.write_text('{"msg": "a"}\n\n{"msg": "b"}\n', encoding="utf-8")
+
+        status = self._run()
+        self.assertEqual(status["inbox_unread_count"], 2)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,42 @@ def _load_owned_files(args: argparse.Namespace, workdir: Path) -> list[str]:
     return [v for v in out if v]
 
 
+def _load_files_in_flight(args: argparse.Namespace) -> list[str]:
+    """Return the list of files this session is currently touching.
+
+    Populated from ``--files-in-flight`` (comma-separated).  When the flag
+    is omitted the list is empty and peer-overlap detection is skipped
+    (can't compute intersection without our side declared).
+
+    Uses ``getattr`` so callers that share the ``args`` namespace without
+    defining ``--files-in-flight`` (e.g. ``coordination_watch.py``) degrade
+    gracefully to an empty list rather than raising ``AttributeError``.
+    """
+    raw = getattr(args, "files_in_flight", None)
+    if not raw:
+        return []
+    return [v.strip() for v in raw.split(",") if v.strip()]
+
+
+def _read_inbox_unread_count(slug: str, tool: str) -> int:
+    """Count unread lines in ``~/.build-loop/apps/<slug>/inbox/<tool>.jsonl``.
+
+    Blank lines are ignored.  Returns 0 when the file is absent or
+    unreadable.  This is a direct-read placeholder: when
+    ``scripts/app_pulse/inbox.py`` (Codex C9) lands with
+    ``unread_count(slug, tool)``, this function will be replaced by a call
+    to that API.  The field name and semantics in the output JSON
+    (``inbox_unread_count``) remain stable.
+    """
+    from app_pulse import channel_paths  # local import avoids circular dep
+    try:
+        inbox_file = channel_paths.app_channel_dir(slug) / "inbox" / f"{tool}.jsonl"
+        text = inbox_file.read_text(encoding="utf-8")
+        return sum(1 for line in text.splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
 def _default_coordination_file(workdir: Path) -> Path | None:
     root = workdir / ".build-loop" / "coordination"
     pointed = _active_coordination_pointer(root, workdir)
@@ -223,9 +259,22 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     owned_key_map = {f: _path_keys(f, workdir) for f in owned_files}
     owned_keys = set().union(*owned_key_map.values()) if owned_key_map else set()
 
+    # Files this session is actively touching right now (from --files-in-flight).
+    # Used for ownership-aware peer overlap detection: warn only when a peer's
+    # declared ``owns`` set intersects *our* files_in_flight, not merely because
+    # peers exist.
+    this_session_files_in_flight = _load_files_in_flight(args)
+    fif_key_map = {f: _path_keys(f, workdir) for f in this_session_files_in_flight}
+    fif_keys = set().union(*fif_key_map.values()) if fif_key_map else set()
+
+    # Requesting tool name (default: "claude_code") used for inbox lookup.
+    requesting_tool = getattr(args, "tool", None) or "claude_code"
+
     active_peers = presence.read_active_presence(
         channel_dir, exclude_session=session_id
     )
+
+    # Legacy overlap: peer's files_in_flight vs our owned_files.
     overlaps: list[dict[str, Any]] = []
     for peer in active_peers:
         peer_files = peer.get("files_in_flight") or []
@@ -245,6 +294,22 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
                 "severity": "warning",
                 "reason": "active_conflict",
             })
+
+    # Ownership-aware overlap: peer's ``owns`` vs our files_in_flight.
+    # This is the primary warn trigger.  ``overlaps`` (legacy) is retained
+    # for backward compat but does NOT drive warn independently.
+    peer_overlap_files: list[str] = []
+    for peer in active_peers:
+        peer_owns = peer.get("owns") or []
+        if not peer_owns or not fif_keys:
+            continue
+        peer_owns_keys: dict[str, set[str]] = {
+            str(f): _path_keys(str(f), workdir) for f in peer_owns
+        }
+        for owned_file, keys in peer_owns_keys.items():
+            if keys.intersection(fif_keys) and owned_file not in peer_overlap_files:
+                peer_overlap_files.append(owned_file)
+    peer_overlap_files = sorted(peer_overlap_files)
 
     coordination_file = (
         Path(args.coordination_file).expanduser()
@@ -274,10 +339,16 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         or int(c.get("revision", 0)) > args.since_revision
     ]
 
+    inbox_unread_count = _read_inbox_unread_count(slug, requesting_tool)
+
     if unresolved:
         status = "blocked"
         required_action = "resolve_unresolved_coordination_verdicts"
-    elif overlaps or dirty_outside_owned:
+    elif peer_overlap_files or dirty_outside_owned:
+        # warn only when a peer's ``owns`` intersects our files_in_flight,
+        # OR when dirty files exist outside our owned set.  Raw peer count
+        # does NOT trigger warn (prevents false positives when peers share
+        # no files with us).
         status = "warn"
         required_action = "review_peer_overlap_or_dirty_files"
     else:
@@ -303,6 +374,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
             for p in active_peers
         ],
         "overlaps": overlaps,
+        "peer_overlap_files": peer_overlap_files,
+        "inbox_unread_count": inbox_unread_count,
         "coordination_file": str(coordination_file) if coordination_file else None,
         "latest_verdicts": verdict_entries,
         "unresolved": unresolved,
@@ -319,6 +392,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--owned-file", action="append", default=[])
     p.add_argument("--owned-files", default=None, help="Path to newline or JSON list")
     p.add_argument("--owned-files-csv", default=None)
+    p.add_argument(
+        "--files-in-flight",
+        default=None,
+        help="Comma-separated list of files this session is currently touching. "
+             "Used for ownership-aware peer overlap detection: warn fires when a "
+             "peer's ``owns`` set intersects these paths. Omit when unknown — "
+             "peer_overlap_files will be [] (cannot compute without our side).",
+    )
+    p.add_argument(
+        "--tool",
+        default="claude_code",
+        help="Tool name for inbox unread count lookup (default: claude_code).",
+    )
     p.add_argument("--coordination-file", default=None)
     p.add_argument("--since-revision", type=int, default=None)
     p.add_argument("--max-changes", type=int, default=20)
