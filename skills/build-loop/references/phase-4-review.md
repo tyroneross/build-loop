@@ -209,6 +209,18 @@ Final report sections, in this order:
 - `## Blocked` — items Auto-Resolve verdicted as `block`, same shape as Held.
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; keep this section).
 
+Before emitting the final report, write the draft to a temp file and run:
+
+```bash
+python3 scripts/build_report_lint.py <report.md> --json
+```
+
+- Exit 0 → emit the report.
+- Exit 1 → revise the report before emitting it. The linter blocks vague verified/known claims, missing `parallel_batch` / `parallel_skipped_reason`, and missing `merge_plan` fields.
+- Exit 2 → lint outage. Record `[warn] build-report-lint skipped (<reason>)` in `## Done` and continue.
+
+Evidence contract: each verified/known claim must name `observer=... method=... artifact=...`. Multi-chunk or parallel reports must include `merge_plan:` with `clean_against`, `conflicts_with`, and `suggested_order`.
+
 **Forbidden in the report**:
 - Recommendation-list headers (e.g. headers that invite operator selection of which items to execute)
 - "Next Action" sentences that read like questions

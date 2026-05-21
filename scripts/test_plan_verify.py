@@ -248,5 +248,54 @@ class ForbiddenPathConflictTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class ParallelDecisionRecordTests(unittest.TestCase):
+    """rule_parallel_decision_record — Phase 2 dispatch decision enforcement."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [
+            f for f in run_all(self.plan, self.repo)
+            if f["rule_id"] == "parallel-decision-record"
+        ]
+
+    def test_parallel_safe_multi_chunk_plan_requires_decision(self) -> None:
+        findings = self._findings(
+            "## C1\nfiles_owned: [scripts/a.py]\n\n"
+            "## C2\nfiles_owned: [scripts/b.py]\n\n"
+            "C1 and C2 are independent and parallel-safe.\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "BLOCKER")
+
+    def test_parallel_batch_satisfies_rule(self) -> None:
+        findings = self._findings(
+            "## C1\nfiles_owned: [scripts/a.py]\n\n"
+            "## C2\nfiles_owned: [scripts/b.py]\n\n"
+            "C1 and C2 are independent and parallel-safe.\n"
+            "parallel_batch: [[C1, C2]]\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_single_chunk_parallel_word_is_silent(self) -> None:
+        findings = self._findings(
+            "## C1\nfiles_owned: [scripts/a.py]\n\n"
+            "C1 can run in parallel with nothing else.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -10,6 +10,8 @@
 
 1. **Invoke `writing-plans` skill** for detailed task breakdown
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
+   - If the graph has 2+ independent / parallel-safe chunks, write `parallel_batch:` naming the chunks that will dispatch together.
+   - If the graph appears parallelizable but execution must serialize, write `parallel_skipped_reason:` with the specific dependency, tool limit, or coordination constraint.
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
 4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
@@ -39,6 +41,7 @@
    - Exit 0 → proceed to step 8.
    - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
    - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
+   - `parallel-decision-record` is a BLOCKER: plans that name independent / parallel-safe multi-chunk work must include `parallel_batch:` or `parallel_skipped_reason:`.
    - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
 9. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 8 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
 10. **Dispatch `scope-auditor` agent** (NEW 2026-05-07 — Plan→Execute boundary): pass the plan + extracted commit table (with `modifies_api` per commit). The auditor is Opus + read-only; it traces every caller-site of every modified-API symbol via project-wide grep, classifies callers as in-scope / out-of-scope, and emits a `## Caller Audit (Scope Auditor)` JSON section appended to the plan. Verdict `scope_gap_found` requires plan revision (absorb missing callers into the right commit's owned-files) before Phase 3, OR explicit acceptance in `state.json.scopeGapAccepted[]` with rationale. Skip ONLY when the plan has zero `modifies_api` entries (doc-only commits). Prevents the fan-out scope-blindness defect class — see `agents/scope-auditor.md`.

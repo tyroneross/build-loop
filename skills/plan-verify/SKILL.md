@@ -9,8 +9,9 @@ description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/bu
 
 Catch grep-checkable plan errors before they ship — orphan misclassifications,
 internal numeric drift, route changes without evidence, package-state
-contradictions, and missing markers on factual claims. The deterministic
-counterpart to `plan-critic` (LLM, non-deterministic checks).
+contradictions, missing markers on factual claims, and missing parallel
+dispatch decisions. The deterministic counterpart to `plan-critic` (LLM,
+non-deterministic checks).
 
 ## When to invoke
 
@@ -55,6 +56,7 @@ Args:
 | 8 | `tool-without-permission-tier` | Plan introduces a new tool / MCP server / plugin / skill without naming a T0–T5 permission tier or `permission_tier` keyword within 10 lines | **BLOCKER** |
 | 9 | `external-call-without-budget-ceiling` | Plan introduces a new external API or LLM call without a budget / max_tokens / timeout / rate_limit keyword within 10 lines | WARN |
 | 10 | `risk-surface-change-without-threat-model` | Plan surfaces any risk-surface signal (new tool / MCP / LLM call / persistent memory / auth change / external API / user-data handling) without referencing a threat-model artifact, OWASP/ASI ID, or "threat-model: not-applicable: <reason>" anywhere in the doc | **BLOCKER** |
+| 11 | `parallel-decision-record` | A plan names multiple independent / parallel-safe chunks but omits `parallel_batch:` or `parallel_skipped_reason:` | **BLOCKER** |
 
 Rules 8–10 ship with the `security-methodology` skill (build-loop 0.7.x). They lint the security boundary at Phase 2 the same way rules 1–4 lint the factual / orphan / package boundary. When rule 10 fires, the orchestrator's Phase 1 trigger-detector should also be flipping `triggers.riskSurfaceChange: true` — if rule 10 fires but the trigger isn't set, that's a Phase 1 detection gap worth investigating.
 

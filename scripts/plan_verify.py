@@ -13,7 +13,7 @@ package-state, missing-evidence, scope-split, less-invasive-shim,
 tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
 synthesis-dim-vague-value, risk-reason-invalid-value,
-scope-audit-required.
+scope-audit-required, parallel-decision-record.
 
 Plan Evidence Contract (per finding):
 {
@@ -946,6 +946,69 @@ def rule_synthesis_dim_vague_value(plan_path: Path, lines: list[tuple[int, str]]
 
 
 # ---------------------------------------------------------------------------
+# Rule: parallel-decision-record (2026-05-21) — BLOCKER when a plan names
+# multiple independent/parallel-safe chunks but omits an explicit dispatch
+# decision. This prevents build-loop reports from praising parallelism while
+# the actual execution path silently serializes independent work.
+# ---------------------------------------------------------------------------
+
+PARALLEL_SIGNAL_RE = re.compile(
+    r"\b(independent|parallel[- ]safe|parallelizable|fan[- ]out|concurrent)\b",
+    re.IGNORECASE,
+)
+PARALLEL_DECISION_RE = re.compile(
+    r"\b(parallel_batch|parallel_skipped_reason)\b",
+    re.IGNORECASE,
+)
+CHUNK_ID_RE = re.compile(r"\b(?:C|chunk[-_ ]?)(\d+)\b", re.IGNORECASE)
+
+
+def rule_parallel_decision_record(
+    plan_path: Path, lines: list[tuple[int, str]]
+) -> list[dict[str, Any]]:
+    """BLOCKER if a multi-chunk plan claims independent/parallel-safe work
+    without recording the dispatch decision.
+
+    The rule is intentionally opt-in by text signal: it only fires after the
+    plan itself says the work is independent/parallel-safe/concurrent. That
+    avoids guessing dependencies from file lists while still enforcing the
+    high-value case that caused the feedback item.
+    """
+    chunk_ids: set[str] = set()
+    signal_line: tuple[int, str] | None = None
+    has_decision = False
+
+    for lineno, line in lines:
+        if not line:
+            continue
+        for match in CHUNK_ID_RE.finditer(line):
+            chunk_ids.add(match.group(1))
+        if PARALLEL_SIGNAL_RE.search(line) and signal_line is None:
+            signal_line = (lineno, line)
+        if PARALLEL_DECISION_RE.search(line):
+            has_decision = True
+
+    if len(chunk_ids) < 2 or signal_line is None or has_decision:
+        return []
+
+    lineno, line = signal_line
+    return [_finding(
+        claim_text=(
+            "Plan identifies multiple independent/parallel-safe chunks but "
+            "does not record `parallel_batch` or `parallel_skipped_reason`."
+        ),
+        claim_kind="parallel_decision_missing",
+        subject={"path": None, "symbol": None, "noun": "dispatch_plan"},
+        verification_command=None,
+        evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+        result="no_match",
+        severity="BLOCKER",
+        confidence="high",
+        rule_id="parallel-decision-record",
+    )]
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -970,6 +1033,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_scope_audit_required(plan_path, lines))
     findings.extend(rule_task_id_convention(plan_path, lines))
     findings.extend(rule_forbidden_path_conflict(plan_path, lines, repo))
+    findings.extend(rule_parallel_decision_record(plan_path, lines))
     return findings
 
 
