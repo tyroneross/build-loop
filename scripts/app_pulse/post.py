@@ -79,6 +79,13 @@ def post(
             revision=new_rev,
         )
         append_change(d, record)
+        if kind == "phase" and (payload or {}).get("phase") == "rally-start":
+            try:
+                from . import rally
+
+                rally.write_current(d, record)
+            except Exception:
+                pass
         return new_rev
     except Exception:
         # Fire-and-forget per protocol; never raise into the caller.
