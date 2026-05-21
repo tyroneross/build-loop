@@ -66,6 +66,17 @@ def post(
         d = Path(channel_dir)
         d.mkdir(parents=True, exist_ok=True)
 
+        # MECE validation: reject malformed handoff payloads before any write
+        if kind == "handoff":
+            from . import mece_gate
+
+            valid, rejection = mece_gate.validate_handoff(payload or {}, tool=tool)
+            if not valid:
+                mece_gate.log_rejection(
+                    d, kind=kind, tool=tool, rejection=rejection, payload=payload or {}
+                )
+                return None
+
         # Bump first so the new record's revision matches what readers see
         new_rev = bump_revision(d)
 
