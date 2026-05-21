@@ -291,6 +291,9 @@ def bootstrap(
         errors.append(f"presence.write_presence failed: {exc}")
 
     # Post handoff or join record (fire-and-forget; post() swallows errors).
+    # NOTE: kind=handoff payloads require MECE ownership per C4 (mece_gate
+    # validator at post() time).  Bootstrap declares an empty initial
+    # ownership claim: no chunks owned yet at coordination-open time.
     payload = {
         "from": tool,
         "topic": topic,
@@ -299,6 +302,17 @@ def bootstrap(
         "coord_file": str(target),
         "action": action,
     }
+    if action == "bootstrapped":
+        payload["ownership"] = {
+            "owns": [],
+            "does_not_own": [],
+            "interface_contract": (
+                f"Coordination bootstrapped by {tool} for topic '{topic}'. "
+                "No chunks claimed yet; peers ack by reading coord file and "
+                "posting kind=feedback step=coord-protocol verdict=PASS."
+            ),
+            "integration_checkpoint": str(target),
+        }
     channel_rev = post(
         channel_dir=channel_dir,
         kind="handoff" if action == "bootstrapped" else "phase",
