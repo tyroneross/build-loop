@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -20,8 +21,12 @@ import pytest
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
+if str(_HERE.parent) not in sys.path:
+    sys.path.append(str(_HERE.parent))
 
+import lifecycle as lc  # noqa: E402
 import presence as pr  # noqa: E402
+import coordination_status as cs  # noqa: E402
 
 
 @pytest.fixture()
@@ -74,6 +79,56 @@ def test_reap_stale(chan: Path):
     assert [p["session_id"]
             for p in pr.read_active_presence(chan, exclude_session="x")] \
         == ["fresh"]
+
+
+def _write_stale_presence(channel: Path, session_id: str, *, age_seconds: int) -> Path:
+    sessions = channel / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    p = sessions / f"{session_id}.json"
+    stale_ts = time.time() - age_seconds
+    p.write_text(json.dumps({
+        "session_id": session_id,
+        "tool": "codex",
+        "model": "gpt",
+        "run_id": "r",
+        "app_slug": "a",
+        "phase": "execute",
+        "files_in_flight": ["scripts/coordination_bootstrap.py"],
+        "heartbeat_ts": stale_ts,
+        "cursor": {"revision": 0, "changes_offset": 0},
+    }))
+    # lifecycle.reap_stale_sessions keys off mtime, not heartbeat_ts.
+    p.touch()
+    os.utime(p, (stale_ts, stale_ts))
+    return p
+
+
+def test_stale_presence_regression_across_presence_status_and_lifecycle(tmp_path: Path, monkeypatch):
+    """R4: stale heartbeats must not surface as active peers."""
+    apps_root = tmp_path / "apps"
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(apps_root))
+    slug = cs.channel_paths.app_slug(workdir)
+    channel = cs.channel_paths.ensure_channel_dir(slug)
+
+    old = _write_stale_presence(channel, "stale-presence", age_seconds=16 * 60)
+    assert pr.read_active_presence(channel, exclude_session="me") == []
+    assert not old.exists()
+
+    old = _write_stale_presence(channel, "stale-status", age_seconds=16 * 60)
+    args = cs.parse_args([
+        "--workdir", str(workdir),
+        "--session-id", "me",
+        "--json",
+    ])
+    status = cs.build_status(args)
+    assert status["active_peers"] == []
+    assert not old.exists()
+
+    old = _write_stale_presence(channel, "stale-lifecycle", age_seconds=2 * 3600)
+    assert lc.reap_stale_sessions(channel, stale_after_seconds=3600) == 1
+    assert not old.exists()
 
 
 def test_reap_respects_config_override(chan: Path):

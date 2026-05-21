@@ -1,17 +1,15 @@
 ---
-description: "Inspect or invoke build-loop's multi-session coordination (App Pulse + per-run coord file). Subcommands: status (default), init, docs."
+description: "Inspect or invoke build-loop's multi-session coordination (App Pulse + per-run coord file). Subcommands: status (default), init, docs, help."
 allowed-tools: Bash, Read
-argument-hint: "[status|init|docs] [args]"
+argument-hint: "[status|init|docs|help] [args]"
 model: inherit
 ---
 
-{{#if ARGUMENTS}}
-
-Parse `{{ARGUMENTS}}` as `<subcommand> [args...]`. If `<subcommand>` is omitted, default to `status`.
+Parse `{{ARGUMENTS}}` as `<subcommand> [args...]`. **If `<subcommand>` is omitted or empty, default to `status`** (the no-args case — most common interactive use).
 
 ## Subcommands
 
-### `status` (default)
+### `status` (default — no-args runs this)
 
 Cheap (~100-token) sensor poll. Reports active peer sessions, unresolved verifier verdicts, dirty files, and the active coord file path. Run this BEFORE any step-boundary decision (next-step recommendation, subagent dispatch, commit, version bump, archive/delete).
 
@@ -21,9 +19,10 @@ Executes:
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_status.py \
   --workdir "$PWD" \
   --session-id "user-rally-$(date +%s)" \
-  --coordination-file <auto-detect or pass --coordination-file=<path>> \
   --json
 ```
+
+(If the user passed `--coordination-file=<path>` in subcommand args, forward it.)
 
 Example output (clear):
 
@@ -49,7 +48,7 @@ Example output (warn — peer overlap on owned files):
 
 ### `init <topic> <scope-one-liner>`
 
-Bootstrap a NEW coord file at `.build-loop/coordination/<topic>-YYYY-MM-DD.md` from `references/coordination-file-template.md`. Writes own presence, posts a `kind=handoff` record so peers see it. Idempotent: if the coord file already exists, joins (writes presence + posts `phase=joined-existing-coord`) instead of overwriting.
+Bootstrap a NEW coord file at `.build-loop/coordination/<topic>-YYYY-MM-DD.md` from `references/coordination-file-template.md`. Writes own presence, posts a `kind=handoff` record so peers see it. **Idempotent and atomic** (per v0.12.10): if the coord file already exists OR a concurrent peer creates it between our check and our write, joins (writes presence + posts `phase=joined-existing-coord`) instead of overwriting.
 
 Executes:
 
@@ -85,33 +84,34 @@ Executes:
 cat ${CLAUDE_PLUGIN_ROOT}/references/coordination-rules.md
 ```
 
+### `help`
+
+Shows the subcommand reference table (replaces what the no-args case used to do pre-v0.12.10).
+
+Outputs:
+
+```
+/agent-rally-point — inspect or invoke build-loop's multi-session coordination
+
+Subcommands:
+  status (default)   Sensor poll: active peers, unresolved verdicts, coord file
+  init <topic> <scope>   Bootstrap a coord file from template; atomic + idempotent
+  docs               Print the binding coordination constitution
+  help               This message
+
+No-args invocation runs `status` (the most common interactive use).
+
+When auto-invoke is enough:
+  The build-orchestrator agent auto-invokes coordination at three trigger
+  points (Phase 1 Assess preamble, Phase 3 chunk-close, Phase 4 Review-A).
+  See agents/build-orchestrator.md §"Auto-invoke coordination".
+  /agent-rally-point is for cases where you want to inspect or bootstrap
+  from outside a build-loop run (manual peer setup, debugging coordination
+  state, onboarding a fresh verifier session).
+```
+
 ## Dispatch
 
-Based on the parsed subcommand, run the corresponding bash command above using the Bash tool. Quote the result and surface key fields (status / coord_file / unresolved) in the response.
+Based on the parsed subcommand (or `status` when `{{ARGUMENTS}}` is empty), run the corresponding bash command above using the Bash tool. Quote the result and surface key fields (status / coord_file / unresolved) in the response.
 
 For `status`, if `unresolved: []` is non-empty, hold and resolve them before the user's intended step proceeds.
-
-{{else}}
-
-**`/agent-rally-point`** — inspect or invoke build-loop's multi-session coordination.
-
-## Subcommands
-
-| Subcommand | Use when |
-|---|---|
-| `status` (default) | Before any step boundary: are peers active? Are there unresolved verifier verdicts? Default if no subcommand. |
-| `init <topic> <scope>` | Start a NEW coordinated run; bootstraps `.build-loop/coordination/<topic>-YYYY-MM-DD.md` from the template, writes presence, posts `kind=handoff`. Idempotent. |
-| `docs` | Print `references/coordination-rules.md` — the binding constitution (verdict-gating, `post()` helper, MECE packets, closeout). |
-
-## Examples
-
-- `/agent-rally-point` → status (default)
-- `/agent-rally-point status` → explicit status
-- `/agent-rally-point init v0130-feature-x "Add X across orchestrator + tests"` → bootstrap a coord file
-- `/agent-rally-point docs` → print the constitution
-
-## When auto-invoke is enough
-
-The `build-orchestrator` agent auto-invokes coordination at three trigger points (Phase 1 Assess preamble, Phase 3 chunk-close, Phase 4 Review-A) — see `agents/build-orchestrator.md` §"Auto-invoke coordination". `/agent-rally-point` is for cases where you want to inspect or bootstrap from outside a build-loop run (manual peer setup, debugging coordination state, onboarding a fresh verifier session).
-
-{{/if}}

@@ -124,16 +124,39 @@ class CoordinationStatusTests(unittest.TestCase):
         coord_dir.mkdir(parents=True)
         old = coord_dir / "audit-execution-old.md"
         active = coord_dir / "active-run.md"
+        newer = coord_dir / "zz-newer-stub.md"
         old.write_text("", encoding="utf-8")
         active.write_text("", encoding="utf-8")
+        newer.write_text("", encoding="utf-8")
         (coord_dir / "active.json").write_text(
-            json.dumps({"coordination_file": ".build-loop/coordination/active-run.md"}),
+            json.dumps({"coord_file": ".build-loop/coordination/active-run.md"}),
             encoding="utf-8",
         )
+        os.utime(old, (1_700_000_000, 1_700_000_000))
+        os.utime(active, (1_700_000_100, 1_700_000_100))
+        os.utime(newer, (1_700_000_200, 1_700_000_200))
 
         status = self._run()
 
         self.assertEqual(Path(status["coordination_file"]).resolve(), active.resolve())
+
+    def test_default_coordination_file_stale_active_pointer_falls_back(self):
+        coord_dir = self.workdir / ".build-loop" / "coordination"
+        coord_dir.mkdir(parents=True)
+        run = coord_dir / "audit-execution-current.md"
+        newer = coord_dir / "zz-newer-stub.md"
+        run.write_text("", encoding="utf-8")
+        newer.write_text("", encoding="utf-8")
+        (coord_dir / "active.json").write_text(
+            json.dumps({"coord_file": ".build-loop/coordination/deleted.md"}),
+            encoding="utf-8",
+        )
+        os.utime(run, (1_700_000_000, 1_700_000_000))
+        os.utime(newer, (1_700_000_100, 1_700_000_100))
+
+        status = self._run()
+
+        self.assertEqual(Path(status["coordination_file"]).resolve(), run.resolve())
 
     def test_watch_emits_one_state(self):
         cmd = [

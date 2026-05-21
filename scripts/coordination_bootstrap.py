@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -58,8 +59,55 @@ def _coord_dir(workdir: Path) -> Path:
     return workdir / ".build-loop" / "coordination"
 
 
+def _active_pointer_path(workdir: Path) -> Path:
+    return _coord_dir(workdir) / "active.json"
+
+
 def _default_coord_path(workdir: Path, topic: str, now: float | None = None) -> Path:
     return _coord_dir(workdir) / f"{topic}-{_today_iso(now)}.md"
+
+
+def _timestamp_iso(now: float | None = None) -> str:
+    t = time.gmtime(now) if now is not None else time.gmtime()
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", t)
+
+
+def _write_active_pointer(
+    *,
+    workdir: Path,
+    target: Path,
+    session_id: str,
+    now: float | None = None,
+) -> bool:
+    """Atomically write the active coordination pointer for default-pick readers.
+
+    Only points at files inside ``.build-loop/coordination``; an explicit
+    ``--coord-file`` outside that directory is allowed, but it should not
+    become the repo-global default.
+    """
+    try:
+        root = _coord_dir(workdir).resolve(strict=False)
+        resolved_target = target.resolve(strict=False)
+        if resolved_target != root and root not in resolved_target.parents:
+            return False
+        pointer = _active_pointer_path(workdir)
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        tmp = pointer.parent / f".{pointer.name}.tmp.{os.getpid()}"
+        tmp.write_text(
+            json.dumps(
+                {
+                    "coord_file": str(resolved_target),
+                    "session_id": session_id,
+                    "created_at": _timestamp_iso(now),
+                },
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        os.replace(str(tmp), str(pointer))
+        return True
+    except OSError:
+        return False
 
 
 def _render_template(
@@ -132,6 +180,7 @@ def bootstrap(
           "channel_revision": <int or null>,
           "session_id": "<id>",
           "presence_written": <bool>,
+          "active_pointer_written": <bool>,
           "errors": [<str>...],
         }
     """
@@ -148,6 +197,7 @@ def bootstrap(
     presence_written = False
     action: str
     channel_rev: int | None = None
+    active_pointer_written = False
 
     coord_dir = target.parent
     try:
@@ -155,8 +205,19 @@ def bootstrap(
     except OSError as exc:
         errors.append(f"could not create coord dir {coord_dir}: {exc}")
 
-    already_exists = target.exists()
-    if not already_exists:
+    # R1 fix (v0.12.10): atomic create via open(mode='x') eliminates the
+    # exists()+write_text() race where two concurrent bootstrappers can both
+    # pass the exists() check, both write the file, both post handoff.
+    #
+    # Optimization: do the fast exists() check first to skip template-load
+    # work when joining an existing coord. The exists() check is NOT the
+    # correctness mechanism — the open('x') atomic create is. Race-lost
+    # bootstrappers (where exists() returns False but open('x') raises
+    # FileExistsError because a peer created the file between the two calls)
+    # gracefully fall through to action="joined-existing-coord".
+    if target.exists():
+        action = "joined-existing-coord"
+    else:
         template_resolved = _resolve_template_path(workdir, template_path)
         try:
             template_text = template_resolved.read_text(encoding="utf-8")
@@ -168,6 +229,7 @@ def bootstrap(
                 "channel_revision": None,
                 "session_id": session_id,
                 "presence_written": False,
+                "active_pointer_written": False,
                 "errors": errors,
             }
         rendered = _render_template(
@@ -178,9 +240,17 @@ def bootstrap(
             tool=tool,
             date_iso=_today_iso(now),
         )
+        # Atomic create: 'x' mode means exclusive create — raises FileExistsError
+        # if the file already exists. This is the actual race-safety mechanism.
         try:
-            target.write_text(rendered, encoding="utf-8")
+            with open(target, "x", encoding="utf-8") as f:
+                f.write(rendered)
             action = "bootstrapped"
+        except FileExistsError:
+            # Race lost: a peer created the coord file between our exists()
+            # check and our open('x'). Fall through to join semantics —
+            # do NOT overwrite, do NOT duplicate the handoff post.
+            action = "joined-existing-coord"
         except OSError as exc:
             errors.append(f"could not write coord file {target}: {exc}")
             return {
@@ -189,10 +259,19 @@ def bootstrap(
                 "channel_revision": None,
                 "session_id": session_id,
                 "presence_written": False,
+                "active_pointer_written": False,
                 "errors": errors,
             }
-    else:
-        action = "joined-existing-coord"
+
+    if action == "bootstrapped":
+        active_pointer_written = _write_active_pointer(
+            workdir=workdir,
+            target=target,
+            session_id=session_id,
+            now=now,
+        )
+        if not active_pointer_written:
+            errors.append(f"could not write active pointer for {target}")
 
     # Write presence (fire-and-forget; never blocks).
     try:
@@ -236,6 +315,7 @@ def bootstrap(
         "channel_revision": channel_rev,
         "session_id": session_id,
         "presence_written": presence_written,
+        "active_pointer_written": active_pointer_written,
         "errors": errors,
     }
 

@@ -116,7 +116,7 @@ def _active_coordination_pointer(root: Path, workdir: Path) -> Path | None:
             except json.JSONDecodeError:
                 continue
             if isinstance(data, dict):
-                for key in ("coordination_file", "path", "active"):
+                for key in ("coordination_file", "coord_file", "path", "active"):
                     candidate = data.get(key)
                     if isinstance(candidate, str) and candidate.strip():
                         value = candidate.strip()
