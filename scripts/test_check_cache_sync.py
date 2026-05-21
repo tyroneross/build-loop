@@ -162,6 +162,22 @@ class CoordinationCacheParityTests(unittest.TestCase):
         self.assertEqual(data["mode"], "coordination-cache-parity")
         self.assertIn("scripts/rally_point/post.py", data["refs_checked"])
 
+    def test_coordination_cache_parity_json_failure_emits_one_report(self) -> None:
+        write(self.codex_cache / "scripts/rally_point/post.py", "print('newer')\n")
+
+        result = run([
+            "--source", str(self.source),
+            "--coordination-cache-parity",
+            "--claude-cache", str(self.claude_cache),
+            "--codex-cache", str(self.codex_cache),
+            "--json",
+        ])
+
+        self.assertEqual(result.returncode, 1)
+        data = json.loads(result.stdout)
+        self.assertEqual(len(data["diffs"]), 1)
+        self.assertEqual(data["diffs"][0]["status"], "host_cache_diverged")
+
     def test_coordination_cache_parity_fails_when_host_cache_missing(self) -> None:
         result = run([
             "--source", str(self.source),

@@ -357,6 +357,7 @@ def main() -> int:
                 "refs_checked": sorted(refs),
                 "diffs": diffs,
             }, indent=2))
+            return 1 if diffs else 0
         else:
             if not diffs:
                 print(
