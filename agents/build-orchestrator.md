@@ -90,6 +90,64 @@ Multiple build-loop sessions can run concurrently in different terminals and acr
 
 **Isolation-worktree lifecycle**: log every `Agent(isolation="worktree", ...)` dispatch in `state.json.runs[N].dispatchedWorktrees[]` (path + branch + dispatch_ts) so Phase D Closeout can force-remove them (`git worktree remove -f -f` + `git branch -D`) at run end. See §"Phase D: Closeout" — automated cleanup replaces the manual-operator pattern that previously left worktrees locked across runs.
 
+## Auto-invoke coordination
+
+Coordination is auto-invoked at three trigger points — Phase 1 Assess preamble, Phase 3 chunk-close, and Phase 4 Review-A — using one ~100-token `coordination_status.py` poll per trigger. Solo runs incur the poll cost and nothing else (no coord file written, no presence-handoff post). Peer runs auto-bootstrap a coord file from `references/coordination-file-template.md`, write own presence, post `kind=handoff`, and flip the orchestrator's internal `mode=coordinated`. The user-facing `/agent-rally-point` slash command exposes the same primitives manually (`status` / `init` / `docs`).
+
+**Trigger points (all three follow the same branching pseudocode):**
+
+1. **Phase 1 Assess preamble** — after presence is written, before architecture baseline dispatches.
+2. **Phase 3 chunk-close** — after the per-chunk commit step closes and before the next chunk dispatches.
+3. **Phase 4 Review-A** — before commit-auditor dispatches at build scope.
+
+**Branching pseudocode (executed at each trigger point):**
+
+```python
+# Cheap poll (always)
+status = run_cli(
+    "python3", "scripts/coordination_status.py",
+    "--workdir", ".",
+    "--session-id", session_id,
+    "--coordination-file", active_coord_file_or_none,
+    "--json",
+)
+peers = status["active_peers"]
+
+if not peers and not status.get("coordination_file"):
+    mode = "solo"  # no further action; downstream phases run normal solo path
+else:
+    coord_path = status.get("coordination_file")
+    if coord_path is None:
+        # Peers detected, no active coord file -> bootstrap
+        run_cli(
+            "python3", "scripts/coordination_bootstrap.py",
+            "--workdir", ".",
+            "--topic", f"{run_slug}-{date}",
+            "--scope", scope_one_liner,
+            "--session-id", session_id,
+            "--json",
+        )
+        # bootstrap writes own presence + posts kind=handoff internally
+    else:
+        # Existing coord file -> join (write presence + post joined-existing-coord)
+        from scripts.app_pulse.presence import write_presence
+        from scripts.app_pulse.post import post
+        write_presence(channel_dir, session_id=session_id, ...)
+        post(channel_dir=channel_dir, kind="phase",
+             payload={"phase": "joined-existing-coord", "coord_file": coord_path, ...})
+    mode = "coordinated"
+
+# Coordinated mode: subsequent dispatches honor verdict-gating per coordination-rules.md
+```
+
+**Token budget**: solo mode is `status.json` poll only (~100 tokens × 3 triggers = ~300 tokens/run). Coordinated mode adds the bootstrap call (~200 tokens once per run, idempotent) + per-handoff post (~50 tokens). Net negligible vs. the cost of an unsurfaced peer collision.
+
+**Idempotency**: `coordination_bootstrap.py` is idempotent — if the coord file already exists, it writes presence + posts a `phase=joined-existing-coord` record instead of overwriting. Two orchestrators bootstrapping at the same moment converge on one coord file; the second posts a join record.
+
+**Path-cutover note**: this protocol uses build-loop's current convention `.build-loop/coordination/<topic>.md`. The standalone `agent-rally-point` CLI (sprint 3 cutover, v1.0) will rename this to `.agent-rally-point/coordination.md`. When that ships, the bootstrap helper switches to the rally-point CLI; the trigger-point branching logic is unchanged.
+
+**User-facing manual invocation**: `/agent-rally-point status` runs the same poll; `/agent-rally-point init` runs the same bootstrap. The slash command is documented at `commands/agent-rally-point.md`.
+
 ## Phase Coordination
 
 ### Phase 1: Assess
@@ -101,6 +159,7 @@ Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 - **Self-recursion + drift/branch echo**: `detect_self_recursive.py` then (if self-recursive) `version_drift_warning.py` + `working_branch_echo.py` in parallel; surface 🔁 banner and any drift warning.
 - **Sub-routers + triggers**: set `uiTarget`, `platform`, `migrationSource`, `structuredWriting`, `promptAuthoring`, `promptEditingExisting`, `riskSurfaceChange` per `references/trigger-rules.md`. Then `infer_risk_surface.py` to auto-infer `riskSurfaceChange` from constitution overlap (never downgrade a manual `true` to `false`).
 - **Load memory** — executable read protocol (full detail in `references/memory-systems.md` §"Read protocol — Phase 1 Assess"): (0) `Read("~/.build-loop/memory/constitution.md")` + `Read("~/.build-loop/memory/projects/<slug>/constitution.md")` if present (slug from `derive_slug_from_cwd`); (1) `Read("~/.build-loop/memory/MEMORY.md")` + `Read("~/.build-loop/memory/projects/<slug>/MEMORY.md")` (project overrides global on key conflict); (2) `Read(".build-loop/state.json")` inspect `runs[-3:]`; (3) `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall --query "<goal-keywords>" --limit 10`; (4) `Skill("build-loop:debugging-memory")` with `intent: "list-recent"`; (5) `backend_health.py` health-check, write to `state.json.architecture.backendHealth`.
+- **Auto-invoke coordination check (Trigger 1 of 3)**: after presence is written and before architecture baseline dispatches, run the branching pseudocode in §"Auto-invoke coordination" above. Solo mode → continue normally. Peer-detected mode → bootstrap or join coord file, set `mode=coordinated`, downstream dispatches honor verdict gating.
 - **Architecture baseline**: `Agent(subagent_type="build-loop:architecture-scout", prompt='task: baseline')`; cache to `.build-loop/architecture/scout-cache/baseline.json`. If `triggers.promptAuthoring` or `promptEditingExisting`, also invoke `mcp__plugin_navgator__llm_map`.
 - **Design-contract baseline reconciliation**: when `.build-loop/app-contract/` exists on disk, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase1-baseline')` with the architecture baseline's findings + the existing contract paths. Skip on first build (no contract directory yet). The specialist is the **sole writer** to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`; ui-validator and architecture-scout only EMIT deltas. See `agents/design-contract-specialist.md`.
 - **Observability** + **runtime-server detection** (`detect_runtime_server.py`) + **pre-commit baseline detection** (betterer/lint-staged) + **deployment policy**.
@@ -143,6 +202,8 @@ Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 
 Full protocol in `references/single-writer-commit-protocol.md`. Implementers no longer call `git add` or `git commit` (Hard rule 4); the orchestrator owns `.git/` as a single-writer resource. After each parallel batch returns, sequentially per envelope with `status: fixed | partial | completed`: verify-no-staged-residue → verify-scope → stage → commit (pre-commit hook runs HERE; no `--no-verify`) → verify-landed → attestation-lint → synthesis-critic (UI files only) → commit-auditor advisory (with trivial bypass). For `status: blocked`, see `references/halt-and-ask-protocol.md` (C5 architectural-decision backstop, N=3 cap, Thinking-tier resolver).
 
+**Auto-invoke coordination check (Trigger 2 of 3)**: after the commit step closes and before the next chunk dispatches, run the branching pseudocode in §"Auto-invoke coordination". When `mode=coordinated`, poll `coordination_status.py --coordination-file <active>` for new peer verdicts; pause dispatch on `status: blocked` until unresolved verdicts clear. When still `mode=solo`, re-check active peers (a peer session may have joined mid-run); on transition to coordinated, bootstrap or join per the same pseudocode.
+
 #### Phase 3 UI spot-check (between chunks)
 
 After each chunk's commit step closes and before the next chunk dispatches, fire `ui-validator` whenever `uiTouched: true`. Full protocol — `uiTouched` signal table, dispatch brief, routing on return (`pass`/`fail`/`skipped`), iteration budget, backward-compat fallback — in `references/halt-and-ask-protocol.md` §"Phase 3 UI spot-check (between chunks)".
@@ -155,7 +216,7 @@ After UI spot-check returns AND whenever `uiTouched: true OR dataChanges: true` 
 
 Routing checklist in `references/phase-gate-checklist.md`. Seven ordered sub-steps:
 
-- **A. Critic** — `commit-auditor` at build scope (replaces retired `sonnet-critic`) + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. Auto-Resolve routing for variances with `auto_fixable: true` AND `severity ≤ minor`. Strong-checkpoint variances (severity=major, verdict=new_approach) → Execute (no iteration burn). After commit-auditor returns, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase4-review-a')` once per build with the aggregate of all chunks' `design_doc_delta` + `schema_delta` envelopes. Specialist writes the build-wide app-contract update; its `violations_found[]` flow into the Phase 4 Report alongside commit-auditor's variances.
+- **A. Critic** — **Auto-invoke coordination check (Trigger 3 of 3)** runs before commit-auditor dispatches: execute the branching pseudocode in §"Auto-invoke coordination"; on `mode=coordinated`, ensure all per-chunk verdicts in the active coord file are PASS or resolved-VARIANCE before proceeding (a `verification-pending` chunk blocks build-scope critique). Then `commit-auditor` at build scope (replaces retired `sonnet-critic`) + (if `triggers.riskSurfaceChange`) `security-reviewer` in parallel. Auto-Resolve routing for variances with `auto_fixable: true` AND `severity ≤ minor`. Strong-checkpoint variances (severity=major, verdict=new_approach) → Execute (no iteration burn). After commit-auditor returns, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase4-review-a')` once per build with the aggregate of all chunks' `design_doc_delta` + `schema_delta` envelopes. Specialist writes the build-wide app-contract update; its `violations_found[]` flow into the Phase 4 Report alongside commit-auditor's variances.
 - **B. Validate** — UI-validator-first when `uiTarget != null` (see `agents/ui-validator.md`); UI input/output contract check; code graders; runtime smoke gate (`scripts/runtime_smoke.py` + SSE-specific contract gate when server module touched); LLM-as-judge; plugin-tests advisory; memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
