@@ -4,8 +4,10 @@
 The orchestrator's auto-invoke pseudocode (agents/build-orchestrator.md
 §"Auto-invoke coordination") branches on three states:
 
-1. **solo** — no active peers, no active coord file -> no coord file
-   write, no presence write, no channel post.
+1. **solo** — no active peers, no active coord file -> post kind=phase
+   payload phase=rally-start, write presence, NO coord file created.
+   (Codex retro §6: prior "noop" codified the bug that caused the
+   2026-05-21 dogfood failure; solo mode must still announce itself.)
 2. **peer-detected, no coord file** -> bootstrap_called=True, presence
    written, kind=handoff posted.
 3. **peer-detected, coord file exists** -> bootstrap NOT called for
@@ -50,25 +52,32 @@ def decide_coordination_action(status_envelope: dict) -> dict:
         peers = status_envelope["active_peers"]
         coord_path = status_envelope.get("coordination_file")
         if not peers and not coord_path:
-            mode = "solo"; action = "noop"
+            # solo: announce via rally-start post + write presence; no coord file
+            mode = "solo"; action = "rally_start"
         elif coord_path is None:
             action = "bootstrap"; mode = "coordinated"
         else:
             action = "join"; mode = "coordinated"
 
     Returns a dict with keys {action, mode, bootstrap_called,
-    presence_should_be_written, post_kind}.
+    presence_should_be_written, post_kind, payload_phase, coordination_file}.
+
+    Codex retro §6: the prior "solo → noop" shape codified the bug.
+    Solo mode MUST post kind=phase payload.phase=rally-start and write
+    presence so peers that come online later can see the run is live.
+    It must NOT create a coord file (coordination_file=null).
     """
     peers = status_envelope.get("active_peers") or []
     coord_path = status_envelope.get("coordination_file")
 
     if not peers and not coord_path:
         return {
-            "action": "noop",
+            "action": "rally_start",
             "mode": "solo",
-            "bootstrap_called": False,
-            "presence_should_be_written": False,
-            "post_kind": None,
+            "presence_should_be_written": True,
+            "post_kind": "phase",
+            "payload_phase": "rally-start",
+            "coordination_file": None,
         }
 
     if coord_path is None:
@@ -78,6 +87,8 @@ def decide_coordination_action(status_envelope: dict) -> dict:
             "bootstrap_called": True,
             "presence_should_be_written": True,
             "post_kind": "handoff",
+            "payload_phase": None,
+            "coordination_file": None,
         }
 
     return {
@@ -86,6 +97,8 @@ def decide_coordination_action(status_envelope: dict) -> dict:
         "bootstrap_called": False,  # bootstrap helper is still called, but for join not create
         "presence_should_be_written": True,
         "post_kind": "phase",  # payload includes phase="joined-existing-coord"
+        "payload_phase": "joined-existing-coord",
+        "coordination_file": coord_path,
     }
 
 
@@ -95,15 +108,38 @@ def decide_coordination_action(status_envelope: dict) -> dict:
 
 
 class SoloModeTests(unittest.TestCase):
+    """Solo mode contract (Codex retro §6).
 
-    def test_no_peers_no_coord_file_returns_solo_noop(self):
+    Prior shape was action=noop / no presence / no post — that silenced the
+    orchestrator entirely when no peers were detected at startup, causing the
+    2026-05-21 dogfood failure where a late-joining peer had no way to discover
+    the run was live.  The correct contract:
+
+        {
+            "action": "rally_start",
+            "mode": "solo",
+            "presence_should_be_written": true,
+            "post_kind": "phase",
+            "payload_phase": "rally-start",
+            "coordination_file": null
+        }
+    """
+
+    def test_no_peers_no_coord_file_posts_rally_start_and_writes_presence(self):
+        """Solo: no peers, no coord file -> rally_start posted, presence written, no coord file."""
         envelope = {"active_peers": [], "coordination_file": None}
         decision = decide_coordination_action(envelope)
-        self.assertEqual(decision["action"], "noop")
+        self.assertEqual(decision["action"], "rally_start",
+                         "solo mode must emit action=rally_start (not noop)")
         self.assertEqual(decision["mode"], "solo")
-        self.assertFalse(decision["bootstrap_called"])
-        self.assertFalse(decision["presence_should_be_written"])
-        self.assertIsNone(decision["post_kind"])
+        self.assertTrue(decision["presence_should_be_written"],
+                        "solo mode must write presence so late peers can discover the run")
+        self.assertEqual(decision["post_kind"], "phase",
+                         "solo mode must post kind=phase (not None)")
+        self.assertEqual(decision["payload_phase"], "rally-start",
+                         "solo mode post payload must have phase=rally-start")
+        self.assertIsNone(decision["coordination_file"],
+                          "solo mode must NOT create a coord file")
 
 
 class PeerDetectedNoCoordTests(unittest.TestCase):
