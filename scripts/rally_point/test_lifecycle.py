@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for scripts/app_pulse/lifecycle.py.
+"""Tests for scripts/rally_point/lifecycle.py.
 
 Stdlib only. Run from repo root:
-    python3 scripts/app_pulse/test_lifecycle.py
+    python3 scripts/rally_point/test_lifecycle.py
 """
 from __future__ import annotations
 

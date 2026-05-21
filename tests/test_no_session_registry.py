@@ -1,8 +1,8 @@
 """Regression guard: the dead M4 collision mechanism stays retired.
 
 `scripts/session_registry.py` was the M4 concurrent-collision-detection
-mechanism that never fired (KNOWN-ISSUES.md §M4). App Pulse presence
-(`scripts/app_pulse/presence.py` + `channel_paths.py`) is now the single
+mechanism that never fired (KNOWN-ISSUES.md §M4). Rally Point presence
+(`scripts/rally_point/presence.py` + `channel_paths.py`) is now the single
 concurrent-presence source of truth. This test fails loudly if anyone
 re-introduces the dead parallel mechanism — the exact ambiguity the
 2026-05-18 retirement build removed.
@@ -21,8 +21,8 @@ REPO = Path(__file__).resolve().parent.parent
 def test_session_registry_module_deleted() -> None:
     assert not (REPO / "scripts" / "session_registry.py").exists(), (
         "scripts/session_registry.py is the retired dead M4 collision "
-        "mechanism. It must stay deleted — App Pulse presence "
-        "(scripts/app_pulse/presence.py) is the single presence source."
+        "mechanism. It must stay deleted — Rally Point presence "
+        "(scripts/rally_point/presence.py) is the single presence source."
     )
 
 
@@ -84,5 +84,5 @@ def test_no_live_session_registry_invocation_in_tracked_files() -> None:
     assert not offenders, (
         "Live session_registry invocation remains (criterion-1 failure):\n"
         + "\n".join(offenders)
-        + "\nThese must point at App Pulse presence instead."
+        + "\nThese must point at Rally Point presence instead."
     )

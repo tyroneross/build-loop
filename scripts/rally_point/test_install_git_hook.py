@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/install_git_hook.py — idempotent installer.
+"""Tests for scripts/rally_point/install_git_hook.py — idempotent installer.
 
   - only installs inside a git repo
   - idempotent (re-run = no dup)
@@ -62,3 +62,19 @@ def test_chains_existing_hook(repo: Path):
     body = hook.read_text()
     assert "preexisting-unrelated-hook" in body  # never clobbered
     assert igh.MARKER in body  # ours appended/chained
+
+
+def test_migrates_legacy_app_pulse_segment(repo: Path):
+    hook = repo / ".git" / "hooks" / "post-commit"
+    hook.write_text(
+        "#!/bin/sh\n"
+        f"{igh.LEGACY_MARKER}\n"
+        "APP_PULSE_CAPTURE=.git/hooks/.app-pulse-capture.py\n"
+        f"{igh.LEGACY_MARKER_END}\n"
+    )
+    hook.chmod(0o755)
+    assert igh.install(repo) is True
+    body = hook.read_text()
+    assert igh.MARKER in body
+    assert igh.LEGACY_MARKER not in body
+    assert ".rally-point-capture.py" in body

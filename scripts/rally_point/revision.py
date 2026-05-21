@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""App Pulse revision counter — the cheap "did anything change" signal.
+"""Rally Point revision counter — the cheap "did anything change" signal.
 
 One ``revision`` integer per channel. Bumped under a short-timeout
 ``fcntl`` exclusive lock; **skip-on-timeout** (return current value

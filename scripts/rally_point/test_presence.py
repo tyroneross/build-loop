@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/presence.py — presence, reaper, cursor.
+"""Tests for scripts/rally_point/presence.py — presence, reaper, cursor.
 
   - presence schema + overwrite-in-place
   - reap_stale drops files older than heartbeat_minutes (default 15,

@@ -1,6 +1,6 @@
-"""Compact App Pulse channel digest (D2 — published, full graph stays local).
+"""Compact Rally Point channel digest (D2 — published, full graph stays local).
 
-NET-NEW module. Does NOT touch any ``scripts/app_pulse/`` signature/test;
+NET-NEW module. Does NOT touch any ``scripts/rally_point/`` signature/test;
 the Stage-1 checkpoint reader already *consumes* ``arch/digest.json`` but
 nothing wrote it until now (it noted "Stage 2 publishes it").
 
@@ -15,7 +15,7 @@ call-count data — asserted in tests):
 
 ``publish_digest`` writes ``<channel_dir>/arch/digest.json`` atomically.
 ``channel_dir`` is explicit (tests pass a tmp dir — never touches $HOME); if
-omitted the caller may resolve it via ``scripts/app_pulse/_paths`` itself.
+omitted the caller may resolve it via ``scripts/rally_point/channel_paths.py``.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def publish_digest(
 
     ``channel_dir`` is required and explicit — this function never resolves a
     $HOME path itself (tests pass a tmp dir; the orchestrator/hook passes the
-    app-slug channel resolved via ``scripts/app_pulse/_paths``).
+    app-slug channel resolved via ``scripts/rally_point/channel_paths.py``).
     """
     out = Path(channel_dir) / "arch" / "digest.json"
     atomic_write_json(out, build_digest(graph))

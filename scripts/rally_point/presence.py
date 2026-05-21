@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""App Pulse presence — live session liveness, reaper, and read cursor.
+"""Rally Point presence — live session liveness, reaper, and read cursor.
 
 One ``sessions/<session-id>.json`` per live session, overwrite-in-place
 via tmp+rename (atomic, no partial reads). Each carries the per-session

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""App Pulse rally pointer helpers.
+"""Rally Point rally pointer helpers.
 
 ``changes.jsonl`` is the immutable audit trail. ``rally/current.json`` is the
 small mutable index that lets a fresh session find the latest active rally

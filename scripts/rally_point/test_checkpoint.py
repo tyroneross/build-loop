@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/checkpoint.py — the one consume entry point.
+"""Tests for scripts/rally_point/checkpoint.py — the one consume entry point.
 
   - revision == session cursor.revision -> empty envelope, NO tail read
   - changed -> {new_changes, active_peers, arch_digest|null, reactions}

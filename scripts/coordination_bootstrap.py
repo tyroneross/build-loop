@@ -4,7 +4,7 @@
 Reads ``references/coordination-file-template.md``, substitutes the
 ``{{PLACEHOLDER}}`` tokens, writes the result to
 ``.build-loop/coordination/<topic>.md``, writes the bootstrapping session's
-App Pulse presence, and posts a ``kind=handoff`` channel record so peers
+Rally Point presence, and posts a ``kind=handoff`` channel record so peers
 notice.
 
 Idempotent: if the target coord file already exists, this script does NOT
@@ -13,7 +13,7 @@ posts a ``kind=phase`` record with ``phase=joined-existing-coord``, returns
 the existing coord file path (or a structured JSON envelope when ``--json``
 is passed).
 
-Fire-and-forget on channel write errors — per the App Pulse contract,
+Fire-and-forget on channel write errors — per the Rally Point contract,
 coordination signals never block a caller. Returns exit 0 on success,
 exit 1 only on hard errors (template missing, IO refused).
 
@@ -339,7 +339,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--workdir", default=".")
     p.add_argument("--topic", required=True, help="Run slug, e.g. v0130-feature-x")
     p.add_argument("--scope", required=True, help="One-liner scope summary")
-    p.add_argument("--session-id", required=True, help="App Pulse session id")
+    p.add_argument("--session-id", required=True, help="Rally Point session id")
     p.add_argument("--coord-file", default=None, help="Explicit coord file path (default: .build-loop/coordination/<topic>-YYYY-MM-DD.md)")
     p.add_argument("--template", default=None, help="Explicit template path (default: references/coordination-file-template.md)")
     p.add_argument("--tool", default="claude_code")

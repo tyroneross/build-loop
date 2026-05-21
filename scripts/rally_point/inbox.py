@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Targeted App Pulse inbox helpers.
+"""Targeted Rally Point inbox helpers.
 
 The shared ``changes.jsonl`` channel is the audit trail. The inbox is the
 direct-addressed wake path: a peer can append a small JSONL message under

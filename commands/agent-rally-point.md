@@ -1,5 +1,5 @@
 ---
-description: "Inspect or invoke build-loop's multi-session coordination (App Pulse + per-run coord file). Subcommands: status (default), watch, announce, init, docs, help."
+description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, announce, init, docs, help."
 allowed-tools: Bash, Read
 argument-hint: "[status|watch|announce|init|docs|help] [args]"
 model: inherit
@@ -77,7 +77,7 @@ the channel before continuing.
 
 ### `announce [message]`
 
-Publish lightweight App Pulse presence + a `kind=handoff` rally record for the current app slug, without creating a durable coordination file. Use this when another host (Codex, Claude Code, CI verifier) needs to see that this agent is present before work ownership is split, or when dogfooding coordination from outside a full build-loop run.
+Publish lightweight Rally Point presence + a `kind=handoff` rally record for the current app slug, without creating a durable coordination file. Use this when another host (Codex, Claude Code, CI verifier) needs to see that this agent is present before work ownership is split, or when dogfooding coordination from outside a full build-loop run.
 
 Executes:
 
@@ -155,7 +155,7 @@ Outputs:
 Subcommands:
   status (default)        Sensor poll: active peers, unresolved verdicts, coord file
   watch                   Continuous sensor loop for peer/inbox changes
-  announce [message]      Publish App Pulse presence + handoff without coord file
+  announce [message]      Publish Rally Point presence + handoff without coord file
   init <topic> <scope>    Bootstrap a coord file from template; atomic + idempotent
   docs                    Print the binding coordination constitution
   help                    This message

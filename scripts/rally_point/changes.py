@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""App Pulse change log — append-only, immutable, cross-tool event stream.
+"""Rally Point change log — append-only, immutable, cross-tool event stream.
 
 One ``changes.jsonl`` per channel. Each line is one self-contained JSON
 record. Writes use ``O_APPEND`` with a single ``os.write`` of one
@@ -83,12 +83,12 @@ def validate_record(record: dict) -> dict:
     missing = [k for k in _RECORD_KEYS if k not in record]
     if missing:
         print(
-            f"app-pulse: change record missing keys {missing} (kept anyway)",
+            f"rally-point: change record missing keys {missing} (kept anyway)",
             file=sys.stderr,
         )
     if record.get("kind") not in KNOWN_KINDS:
         print(
-            f"app-pulse: unknown change kind {record.get('kind')!r} "
+            f"rally-point: unknown change kind {record.get('kind')!r} "
             f"(warns-not-drops per D7)",
             file=sys.stderr,
         )

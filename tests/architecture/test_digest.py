@@ -3,7 +3,7 @@
 ``arch/digest.json`` carries per-type node counts + API/MCP/LLM inventory
 hash + dep-manifest hash + stable-ID adjacency matrix. NO frequency/
 call-count data (explicit Non-goal — asserted). publish_digest writes the
-channel artifact atomically and never touches scripts/app_pulse/ signatures.
+channel artifact atomically and never touches scripts/rally_point/ signatures.
 """
 
 from __future__ import annotations

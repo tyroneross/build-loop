@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""App Pulse channel lifecycle hygiene.
+"""Rally Point channel lifecycle hygiene.
 
 The channel under ``~/.build-loop/apps/<slug>/`` is append-only across
 ``changes.jsonl`` and accumulates one ``sessions/<session-id>.json`` per
@@ -7,7 +7,7 @@ heartbeat-live process. Without explicit cleanup, the channel becomes a
 graveyard:
 
     - ``sessions/`` collects stale heartbeats that mislead peer-detection
-      (App Pulse may classify a dead process as a "live peer" until the
+      (Rally Point may classify a dead process as a "live peer" until the
       staleness threshold passes — minutes after a run ended).
     - ``changes.jsonl`` grows unbounded; after dozens of runs it's a
       single fat file that's expensive to scan.

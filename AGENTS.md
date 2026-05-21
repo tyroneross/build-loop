@@ -46,15 +46,15 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - If web/mobile UI: capture current visual state for before/after comparison, then load `skills/build-loop/references/ui-io-contract.md` and inventory the affected user inputs and system outputs before planning
 - **Supply-chain dependency cooldown**: if a JS project (`package.json`), run `scripts/inject_dependency_cooldown.py --workdir <repo>` to idempotently write the 7-day publish-age config using each PM's native key: npm ≥ 11.10.0 → `.npmrc` `min-release-age` (DAYS); pnpm → `pnpm-workspace.yaml` `minimumReleaseAge` (MINUTES) + `.npmrc` `minimum-release-age` for 10.x; yarn ≥ 4.10 → `.yarnrc.yml` `npmMinimalAgeGate` (numeric MINUTES). npm has no native exclude (npm/cli#8994), so on npm the user-authored allowlist (`.build-loop/config.json` → `dependencyCooldown.allowlist`, default `["@tyroneross/*"]`) is enforced by the PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`), which stays engaged even with native config; pnpm/yarn carry the exclude natively so the hook stands down once enforced. `--check` verifies the PM actually recognizes the key (no false `enforced:true`). Constitution rule: `C-SUPPLY/dependency_cooldown`. Older npm (< 11.10.0) falls back to the hook's `--before=<7d ago>` date-pin. pip/cargo not covered in v1.
 
-**Multi-session presence (App Pulse — cross-host: Claude Code, Codex, Gemini CLI, others):**
+**Multi-session presence (Rally Point — cross-host: Claude Code, Codex, Gemini CLI, others):**
 
-Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. App Pulse presence is the single concurrent-presence source of truth — an awareness layer (never a lock), host-neutral, invoked from any host. (The legacy `session_registry.py` / `~/.build-loop/sessions/` collision mechanism was documented-dead and removed 2026-05-18 — see `KNOWN-ISSUES.md` §M4.)
+Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. Rally Point presence is the single concurrent-presence source of truth — an awareness layer (never a lock), host-neutral, invoked from any host. (The legacy `session_registry.py` / `~/.build-loop/sessions/` collision mechanism was documented-dead and removed 2026-05-18 — see `KNOWN-ISSUES.md` §M4.)
 
 1. **Write presence at the Phase 1 preamble** (immediately after `run_id` is known), and refresh it at each phase-start:
    ```python
-   from app_pulse import channel_paths, presence
+   from scripts.rally_point import channel_paths, presence
    slug = channel_paths.app_slug(cwd="$PWD")          # D1: worktree/clone-independent
-   channel = channel_paths.channel_dir(slug)
+   channel = channel_paths.ensure_channel_dir(slug)
    presence.write_presence(channel, session_id="<sid>", tool="codex",
        model="<model>", run_id="$RUN_ID", app_slug=slug,
        phase="assess", files_in_flight=[])

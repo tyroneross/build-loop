@@ -7,6 +7,18 @@ tool-agnostic capture mechanisms (the other two: the git post-commit
 hook, and — Stage 2 — the enriched arch scan). Checkpoint-poll only, no
 daemon (D3). Awareness only, never a lock (D4).
 
+## Naming and legacy alias
+
+**Rally Point is canonical.** New code, docs, commands, and tests use
+`scripts/rally_point/` and `/agent-rally-point`.
+
+`scripts/app_pulse/` is a deprecated alias boundary for one release cycle.
+It contains routing shims only; every legacy module import forwards to the
+matching `scripts/rally_point` module and emits a `DeprecationWarning`.
+This includes `scripts.app_pulse.*`, `app_pulse.*`, and old bare imports from
+callers that put `scripts/app_pulse` directly on `sys.path`. Do not add runtime
+behavior there.
+
 ## Slug (D1, worktree-aware)
 
 `scripts/rally_point/channel_paths.app_slug(cwd=<repo>)` resolves the slug

@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/revision.py — fcntl-locked monotonic counter.
+"""Tests for scripts/rally_point/revision.py — fcntl-locked monotonic counter.
 
   - missing file == revision 0
   - bump is monotonic

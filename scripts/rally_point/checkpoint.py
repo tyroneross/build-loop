@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""App Pulse checkpoint read — the single consume entry point (D3).
+"""Rally Point checkpoint read — the single consume entry point (D3).
 
 ``checkpoint_read`` is the one call hooks and the orchestrator make to
 learn what changed. Checkpoint-poll only (D3, no daemon). Flow:

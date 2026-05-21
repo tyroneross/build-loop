@@ -12,7 +12,7 @@ canonical pattern so future callers can't repeat the mistake.
 
 Usage:
 
-    from scripts.app_pulse.post import post
+    from scripts.rally_point.post import post
 
     post(
         channel_dir=...,

@@ -33,7 +33,7 @@ with ``effect: null`` and a follow-up `memory-effect` row once outcome is
 known. The follow-up row's `correlation_id` joins back to the original.
 
 Contract:
-    - Fire-and-forget per the M5 + App Pulse pattern; never raise into the
+    - Fire-and-forget per the M5 + Rally Point pattern; never raise into the
       caller.
     - Append-only; never rewrites rows.
     - Uses fcntl.flock for cross-process safety on macOS/Linux.

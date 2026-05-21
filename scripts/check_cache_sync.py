@@ -9,7 +9,7 @@ For Codex, checks the installed Codex plugin cache against Codex-visible source
 surfaces: .codex-plugin/plugin.json, AGENTS.md, README.md, commands/*.md, and
 skills/**/*.md/json/js/mjs/py/sh/ts.
 
-For Rally Point / App Pulse coordination work, ``--coordination-cache-parity``
+For Rally Point coordination work, ``--coordination-cache-parity``
 compares the installed Claude and Codex plugin caches against each other for
 coordination runtime surfaces. CI should fail if one host has a stale
 coordination script while the other host has the new one.

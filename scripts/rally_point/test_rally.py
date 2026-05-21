@@ -18,7 +18,7 @@ from rally_point.post import post  # noqa: E402
 
 class RallyPointerTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="app-pulse-rally-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="rally-point-"))
         self.channel = self.tmp / "apps" / "demo"
         self.channel.mkdir(parents=True)
 

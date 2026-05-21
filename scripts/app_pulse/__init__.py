@@ -1,17 +1,17 @@
-"""Deprecated alias for the ``rally_point`` package.
+"""Deprecated alias package for ``rally_point``.
 
-This module re-exports the rally_point public surface and emits a
-DeprecationWarning on import.  Remove after one release cycle.
+Canonical code lives in ``scripts/rally_point``. This package is a segmented
+compatibility boundary for one release cycle so older imports like
+``scripts.app_pulse.post`` and ``app_pulse.post`` route to the Rally Point
+modules without duplicating implementation.
 """
-import warnings
-warnings.warn(
-    "app_pulse has been renamed to rally_point. Update your imports.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-# Re-export everything (intra-package modules + top-level functions)
-from rally_point import *  # noqa: F401,F403
-from rally_point import (  # noqa: F401
-    changes, channel_paths, checkpoint, inbox, lifecycle,
-    mece_gate, post, presence, rally, revision,
-)
+from __future__ import annotations
+
+from ._alias import MODULES, route_module, warn_deprecated
+
+warn_deprecated(__name__)
+
+for _module_name in MODULES:
+    globals()[_module_name] = route_module(f"{__name__}.{_module_name}", _module_name)
+
+__all__ = list(MODULES)

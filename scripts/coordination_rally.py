@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Publish a lightweight App Pulse rally point without creating a coord file.
+"""Publish a lightweight Rally Point rally point without creating a coord file.
 
 Use this when an agent needs to become visible to peers on the current app's
-canonical App Pulse channel, but the work does not yet warrant a durable
+canonical Rally Point channel, but the work does not yet warrant a durable
 ``.build-loop/coordination/*.md`` ledger. It writes:
 
 1. Presence with ``phase=rally-point`` (or the supplied phase).

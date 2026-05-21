@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/channel_paths.py — channel path resolver (D1).
+"""Tests for scripts/rally_point/channel_paths.py — channel path resolver (D1).
 
 Coverage:
   - slug parity: identical canonical slug from a temp `git worktree` and

@@ -8,7 +8,7 @@ between phases to see what siblings have learned and decide whether to
 incorporate it into the current build.
 
 This is the discovery side of the multi-session model. Concurrent-presence
-detection is owned by App Pulse presence (scripts/app_pulse/presence.py)
+detection is owned by Rally Point presence (scripts/rally_point/presence.py)
 so two sessions can see each other and avoid clobbering each other's
 WORK. Memory INDEX lets them propagate each other's LEARNINGS.
 

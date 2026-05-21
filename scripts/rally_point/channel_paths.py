@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""App Pulse channel path resolver (D1: worktree-aware slug).
+"""Rally Point channel path resolver (D1: worktree-aware slug).
 
 The shared per-app channel lives at ``~/.build-loop/apps/<slug>/``. The
 slug MUST be identical across a clone, the main checkout, and any
 ``git worktree`` of the same canonical repo — otherwise concurrent
-sessions (the exact scenario App Pulse targets, often under
+sessions (the exact scenario Rally Point targets, often under
 ``isolation: "worktree"``) split the channel.
 
 D1 (amended 2026-05-17): resolve the slug from
@@ -37,7 +37,7 @@ from pathlib import Path
 # ``scripts/_paths.py``. We load it by explicit file path under a
 # distinct module name so it never collides with THIS module (both are
 # basename ``_paths`` — a bare ``import _paths`` would self-shadow when
-# ``scripts/app_pulse/`` is on sys.path ahead of ``scripts/``).
+# ``scripts/rally_point/`` is on sys.path ahead of ``scripts/``).
 import importlib.util as _ilu  # noqa: E402
 
 _MEM_PATHS_FILE = Path(__file__).resolve().parent.parent / "_paths.py"

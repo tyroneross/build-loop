@@ -1,5 +1,5 @@
 #!/bin/sh
-# App Pulse post-commit capture (cross-tool).
+# Rally Point post-commit capture (cross-tool).
 #
 # git fires this regardless of which tool (Claude / Codex / plain git)
 # made the commit, so it is the durable cross-tool capture boundary.
@@ -7,19 +7,19 @@
 # immediately so it can NEVER slow down or fail a commit.
 #
 # Identity comes from the environment when present:
-#   APP_PULSE_TOOL   (default: unknown)
-#   APP_PULSE_RUN_ID (default: unknown)
-#   APP_PULSE_MODEL  (default: unknown)
+#   RALLY_POINT_TOOL   (default: unknown; APP_PULSE_TOOL fallback supported)
+#   RALLY_POINT_RUN_ID (default: unknown; APP_PULSE_RUN_ID fallback supported)
+#   RALLY_POINT_MODEL  (default: unknown; APP_PULSE_MODEL fallback supported)
 #
 # Idempotent installer chains this after any pre-existing post-commit;
-# this body is the App-Pulse segment only.
+# this body is the Rally Point segment only.
 
-# --- BEGIN app-pulse post-commit ---
-APP_PULSE_CAPTURE="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.app-pulse-capture.py"
-if [ -f "$APP_PULSE_CAPTURE" ]; then
+# --- BEGIN rally-point post-commit ---
+RALLY_POINT_CAPTURE="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.rally-point-capture.py"
+if [ -f "$RALLY_POINT_CAPTURE" ]; then
   (
-    python3 "$APP_PULSE_CAPTURE" >/dev/null 2>&1
+    python3 "$RALLY_POINT_CAPTURE" >/dev/null 2>&1
   ) </dev/null >/dev/null 2>&1 &
 fi
-# --- END app-pulse post-commit ---
+# --- END rally-point post-commit ---
 exit 0

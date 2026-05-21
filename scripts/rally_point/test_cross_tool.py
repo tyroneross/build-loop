@@ -2,7 +2,7 @@
 
 WHAT THIS PROVES (and what it does NOT).
 
-App Pulse's promise is that a Claude session and a Codex session working
+Rally Point's promise is that a Claude session and a Codex session working
 the *same* app share one ``~/.build-loop/apps/<slug>/`` channel and see
 each other's commits / dep-changes / presence / arch digest. The risk
 class this guards is the D1 worktree-slug split and any future
@@ -13,8 +13,8 @@ This suite simulates the two tools by:
 
   1. Tagging records/presence with ``tool="codex"`` vs ``tool="claude"``
      (the *identity* a real session would carry).
-  2. Loading the app_pulse channel modules TWICE under distinct module
-     names — once from the canonical ``scripts/app_pulse`` tree and once
+  2. Loading the rally_point channel modules TWICE under distinct module
+     names — once from the canonical ``scripts/rally_point`` tree and once
      from a hermetic ``tmp_path`` copy of that package (a real,
      physically separate install location that is NOT a symlink back to
      the canonical tree) — and asserting a write made through one module
@@ -23,7 +23,7 @@ This suite simulates the two tools by:
      close the Postgres-mirror question this project.
 
      The second set was previously discovered from
-     ``~/.claude/plugins/cache/.../scripts/app_pulse``. In a standard
+     ``~/.claude/plugins/cache/.../scripts/rally_point``. In a standard
      local-dev install that cache dir is a symlink back to this repo, so
      ``Path(...).resolve()`` collapsed both "install locations" onto the
      SAME real files and the dual-path proof was environment-contingent
@@ -38,7 +38,7 @@ cross-tool channel *path* — that the channel API is import-path /
 install-location independent and that two independently-loaded copies of
 these modules interoperate over one ``$HOME``-keyed channel. The live
 Codex *binary* leg (a real Codex session running the channel) is V4 in
-``docs/_inbox/codex-apppulse-validation.md`` and is human-run, pending a
+``docs/_inbox/codex-rally-point-validation.md`` and is human-run, pending a
 real Codex run — it is intentionally NOT asserted here.
 
 Python stdlib only (plus pytest as the runner). Every test redirects
@@ -55,21 +55,21 @@ from pathlib import Path
 
 import pytest
 
-_HERE = Path(__file__).resolve().parent  # scripts/app_pulse (canonical)
+_HERE = Path(__file__).resolve().parent  # scripts/rally_point (canonical)
 _CANON_SCRIPTS = _HERE.parent  # scripts/
 
 
-def _materialize_peer_app_pulse(dest_root: Path) -> Path:
-    """Build a hermetic, physically-distinct copy of the app_pulse
-    package under ``dest_root`` and return its ``app_pulse`` dir.
+def _materialize_peer_rally_point(dest_root: Path) -> Path:
+    """Build a hermetic, physically-distinct copy of the rally_point
+    package under ``dest_root`` and return its ``rally_point`` dir.
 
     This is the "second tool / second install location" code path. It is
-    a real ``shutil.copytree`` of ``scripts/app_pulse/*.py`` plus the
+    a real ``shutil.copytree`` of ``scripts/rally_point/*.py`` plus the
     sibling ``scripts/_paths.py`` (``channel_paths.py`` loads it via
     ``__file__.parent.parent / "_paths.py"``), laid out as::
 
         <dest_root>/scripts/_paths.py
-        <dest_root>/scripts/app_pulse/<modules>.py
+        <dest_root>/scripts/rally_point/<modules>.py
 
     Provenance — NOT the ``~/.claude/plugins/cache`` tree — is the whole
     point: that cache path is, in a standard local-dev install, a symlink
@@ -83,7 +83,7 @@ def _materialize_peer_app_pulse(dest_root: Path) -> Path:
     checkout, worktree, CI, any user). Stdlib + ``shutil`` only.
     """
     scripts_dst = dest_root / "scripts"
-    ap_dst = scripts_dst / "app_pulse"
+    ap_dst = scripts_dst / "rally_point"
     # Copy only the non-test .py module tree (deterministic, no pycache,
     # no recursive test collection under the tmp dir).
     shutil.copytree(
@@ -99,9 +99,9 @@ def _materialize_peer_app_pulse(dest_root: Path) -> Path:
     return ap_dst
 
 
-def _load_module_set(app_pulse_dir: Path, tag: str) -> dict:
+def _load_module_set(rally_point_dir: Path, tag: str) -> dict:
     """Load checkpoint/changes/presence/revision/channel_paths from
-    ``app_pulse_dir`` under a unique name prefix ``tag``.
+    ``rally_point_dir`` under a unique name prefix ``tag``.
 
     Each set is fully independent (separate module objects, separate
     ``sys.modules`` entries) so the test genuinely exercises two distinct
@@ -116,11 +116,11 @@ def _load_module_set(app_pulse_dir: Path, tag: str) -> dict:
     # the load so checkpoint's top-level imports bind THIS tree's files,
     # not whichever set was loaded first. Restored afterwards so the two
     # sets stay fully independent.
-    scripts_dir = app_pulse_dir.parent
+    scripts_dir = rally_point_dir.parent
     bare_names = ("revision", "changes", "presence")
     saved = {n: sys.modules.pop(n, None) for n in bare_names}
     inserted = []
-    for p in (str(app_pulse_dir), str(scripts_dir)):
+    for p in (str(rally_point_dir), str(scripts_dir)):
         if p not in sys.path:
             sys.path.insert(0, p)
             inserted.append(p)
@@ -133,7 +133,7 @@ def _load_module_set(app_pulse_dir: Path, tag: str) -> dict:
             "channel_paths",
         ):
             spec = importlib.util.spec_from_file_location(
-                f"{tag}_{name}", app_pulse_dir / f"{name}.py"
+                f"{tag}_{name}", rally_point_dir / f"{name}.py"
             )
             assert spec and spec.loader
             m = importlib.util.module_from_spec(spec)
@@ -159,30 +159,30 @@ def _load_module_set(app_pulse_dir: Path, tag: str) -> dict:
 
 @pytest.fixture()
 def canon() -> dict:
-    """Canonical ``scripts/app_pulse`` module set (this checkout)."""
+    """Canonical ``scripts/rally_point`` module set (this checkout)."""
     return _load_module_set(_HERE, "canon")
 
 
 @pytest.fixture(scope="session")
-def _peer_app_pulse_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Session-scoped hermetic copy of the app_pulse package.
+def _peer_rally_point_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Session-scoped hermetic copy of the rally_point package.
 
     One physically-distinct ``copytree`` reused across the suite (the
     copy is read-only for the tests — channel state lives elsewhere under
     the per-test ``$BUILD_LOOP_APPS_ROOT`` tmp dir).
     """
     dest = tmp_path_factory.mktemp("peer_install")
-    return _materialize_peer_app_pulse(dest)
+    return _materialize_peer_rally_point(dest)
 
 
 @pytest.fixture()
-def cache(_peer_app_pulse_dir: Path) -> dict:
+def cache(_peer_rally_point_dir: Path) -> dict:
     """Second ("other tool") module set, loaded from the hermetic
     ``tmp_path`` copy — a real, physically separate install location that
     is NOT a symlink back to the canonical tree. Always present (no
     env-gap None): the dual-path proof is now environment-independent.
     """
-    return _load_module_set(_peer_app_pulse_dir, "peer")
+    return _load_module_set(_peer_rally_point_dir, "peer")
 
 
 @pytest.fixture()

@@ -1,4 +1,4 @@
-"""Tests for scripts/app_pulse/changes.py — append-only immutable log.
+"""Tests for scripts/rally_point/changes.py — append-only immutable log.
 
   - record schema build + validate (warns-not-drops unknown kind, D7)
   - NON-GOAL guard: no frequency/invocation/count keys anywhere

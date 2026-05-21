@@ -18,10 +18,10 @@ Build-loop's deterministic scripts. Each script:
 | `optimize_loop.py`, `optimize_doe.py`, `metric_runner.py` | Optimization runner + DOE |
 | `sync_skills.py`, `check_cache_sync.py` | Native-skill drift detector + cache hygiene |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
-| `coordination_status.py` | Cheap multi-agent coordination sensor: App Pulse peers, overlaps, latest verdicts, dirty files → `clear | warn | blocked` JSON |
-| `coordination_rally.py` | Lightweight App Pulse rally publisher: presence + handoff without creating a coordination file |
+| `coordination_status.py` | Cheap multi-agent coordination sensor: Rally Point peers, overlaps, latest verdicts, dirty files → `clear | warn | blocked` JSON |
+| `coordination_rally.py` | Lightweight Rally Point rally publisher: presence + handoff without creating a coordination file |
 | `coordination_watch.py` | Active-coding watcher; polls `coordination_status.py` and prints only state transitions, including direct/broadcast inbox unread count |
-| `app_pulse/inbox.py` | Inbox API at `apps/<slug>/inbox/<tool>.jsonl` plus common `inbox/all.jsonl`, with optional `changes.jsonl` mirror |
+| `rally_point/inbox.py` | Inbox API at `apps/<slug>/inbox/<tool>.jsonl` plus common `inbox/all.jsonl`, with optional `changes.jsonl` mirror |
 
 ## Phase B: repo-local episodic memory (added 2026-05-04)
 

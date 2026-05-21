@@ -1,4 +1,4 @@
-"""Contract test for orchestrator App Pulse presence/phase surfacing (T7).
+"""Contract test for orchestrator Rally Point presence/phase surfacing (T7).
 
 Two halves:
   1. Behavioural: exercise the REAL presence + changes + checkpoint
@@ -7,7 +7,7 @@ Two halves:
      checkpoint_read; peers/dep/arch reactions show in the envelope;
      soft-claim is a WARNING, never a block.
   2. Doc contract: agents/build-orchestrator.md contains the documented
-     App Pulse surfacing block (grep — existence only, not behaviour).
+     Rally Point surfacing block (grep — existence only, not behaviour).
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def test_orchestrator_preamble_and_phase_flow(chan: Path):
 
 def test_orchestrator_doc_documents_surfacing_block():
     text = _ORCH_DOC.read_text()
-    assert "App Pulse" in text
+    assert "Rally Point" in text
     # the documented surfacing contract must name the entry point,
     # presence write, phase record, and the soft-claim-is-warning rule.
     for token in ("checkpoint_read", "presence", "phase record",

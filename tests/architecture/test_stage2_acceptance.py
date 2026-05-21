@@ -29,7 +29,7 @@ _REPO = Path(__file__).resolve().parents[2]
 
 def _checkpoint_read():
     """Import the FROZEN Stage-1 checkpoint reader (consumed, not modified)."""
-    ap = _REPO / "scripts" / "app_pulse"
+    ap = _REPO / "scripts" / "rally_point"
     if str(ap) not in sys.path:
         sys.path.insert(0, str(ap))
     import checkpoint  # type: ignore
@@ -147,7 +147,7 @@ def test_C5_novel_node_type_survives_full_chain(fixture_app, tmp_path):
     publish_digest(graph, channel_dir=channel)
 
     # Drive a revision bump + cursor so checkpoint_read takes the changed path.
-    sys.path.insert(0, str(_REPO / "scripts" / "app_pulse"))
+    sys.path.insert(0, str(_REPO / "scripts" / "rally_point"))
     import revision as _rev  # type: ignore
     import changes as _ch     # type: ignore
 

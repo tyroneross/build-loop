@@ -4,8 +4,8 @@
 Companion to memory_index.py. Memory writes go through this script so
 every entry under ~/.build-loop/memory/ carries the provenance fields
 that make cross-repo trust gradients possible. Concurrent-presence
-detection is a separate concern owned by App Pulse presence
-(scripts/app_pulse/presence.py), not this writer.
+detection is a separate concern owned by Rally Point presence
+(scripts/rally_point/presence.py), not this writer.
 
 Provenance schema (YAML frontmatter added to every memory file):
   ---
