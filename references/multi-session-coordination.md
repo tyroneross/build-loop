@@ -56,8 +56,17 @@ If it returns `clear`, proceed without spending tokens on the coordination
 note. If it returns `warn` or `blocked`, read the reported coordination file or
 verdicts and resolve before the next shared-file edit, commit, version bump, or
 archive/delete. During high-overlap work, run `coordination_watch.py --interval
-3 --jsonl`; it prints only state transitions.
+3 --tool "$TOOL_NAME" --jsonl --baseline-current`; it prints only state
+transitions plus inbox unread count.
 
+Use the same rule for every coding host. Claude Code uses `claude_code`, Codex
+uses `codex`, Cursor can use `cursor`, and future agents should pick a stable
+tool id before writing presence or inbox messages.
+
+Inbox routing has two wake paths. Targeted messages append to
+`inbox/<tool>.jsonl`; broadcast messages append to `inbox/all.jsonl`. Agents
+read both their direct inbox and `all`, while still mirroring important
+messages to `changes.jsonl` for durable channel polling.
 ### App Pulse presence — On clean completion:
 
 No explicit unregister is needed. The last presence write stands; `presence.reap_stale` (run opportunistically at every peer read) removes it once `heartbeat_ts` exceeds the stale window. A forgotten session is therefore self-healing — no `dead/` directory, no cleanup step.

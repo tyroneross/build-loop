@@ -38,6 +38,7 @@ KNOWN_KINDS = (
     "arch-scan-complete",
     "feedback",
     "handoff",
+    "message",
 )
 
 _RECORD_KEYS = (

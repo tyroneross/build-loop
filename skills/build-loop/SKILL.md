@@ -206,6 +206,20 @@ Build-loop keeps the core method host-neutral, then adapts the execution mechani
 
 **Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation/parallel agent work or uses a command flag such as `--parallel`. Without that signal, keep execution local while preserving the MECE plan.
 
+**Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active App Pulse peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Use a stable tool id (`claude_code`, `codex`, `cursor`, etc.). Run a one-shot status check first:
+
+```bash
+python3 scripts/coordination_status.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --json
+```
+
+If the status has `active_peers`, `coordination_file`, `inbox_unread_count > 0`, or a user asks whether another host has responded, start:
+
+```bash
+python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --interval 5 --jsonl --baseline-current
+```
+
+Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME"`, read `~/.build-loop/apps/<slug>/inbox/<tool>.jsonl` plus `~/.build-loop/apps/<slug>/inbox/all.jsonl` or run `python3 scripts/app_pulse/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --json`, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
+
 ## Intent Capability Pack
 
 Every build uses `references/intent-capability-pack.md`. Phase 1 captures the app/repo north star and the update intent. Phase 2 maps tasks to that intent. Phase 3 includes an intent packet in every subagent prompt. Phase 4 reviews intent fidelity, user value, UI intentionality, data integrity, and simplicity/scalability.

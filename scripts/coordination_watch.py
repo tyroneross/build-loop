@@ -38,7 +38,14 @@ def _signature(status: dict) -> dict:
             for u in status.get("unresolved", [])
         ],
         "dirty_outside_owned": status.get("dirty_outside_owned", []),
+        "direct_inbox_unread_count": status.get("direct_inbox_unread_count", 0),
+        "broadcast_inbox_unread_count": status.get("broadcast_inbox_unread_count", 0),
+        "inbox_unread_count": status.get("inbox_unread_count", 0),
     }
+
+
+def _change_revisions(status: dict) -> list[int]:
+    return [int(c.get("revision", 0)) for c in status.get("new_changes", [])]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -49,18 +56,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Reuse coordination_status args.
     p.add_argument("--workdir", default=".")
     p.add_argument("--session-id", required=True)
+    p.add_argument("--tool", default="claude_code")
+    p.add_argument(
+        "--files-in-flight", default=None,
+        help="Comma-separated files this watcher session is currently touching.")
     p.add_argument("--owned-file", action="append", default=[])
     p.add_argument("--owned-files", default=None)
     p.add_argument("--owned-files-csv", default=None)
     p.add_argument("--coordination-file", default=None)
     p.add_argument("--since-revision", type=int, default=None)
     p.add_argument("--max-changes", type=int, default=20)
+    p.add_argument(
+        "--baseline-current",
+        action="store_true",
+        help="Treat the current state as already seen and emit only future changes.",
+    )
+    p.add_argument(
+        "--exit-on-change",
+        action="store_true",
+        help="Exit 0 after emitting a changed state; useful for wake-on-change wrappers.",
+    )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     last_sig = None
+    if args.baseline_current:
+        last_sig = _signature(coordination_status.build_status(args))
     count = 0
     while True:
         status = coordination_status.build_status(args)
@@ -75,12 +98,22 @@ def main(argv: list[str] | None = None) -> int:
                 "overlaps": status["overlaps"],
                 "unresolved": status["unresolved"],
                 "dirty_outside_owned": status["dirty_outside_owned"],
+                "direct_inbox_unread_count": status.get(
+                    "direct_inbox_unread_count", 0
+                ),
+                "broadcast_inbox_unread_count": status.get(
+                    "broadcast_inbox_unread_count", 0
+                ),
+                "inbox_unread_count": status.get("inbox_unread_count", 0),
+                "new_change_revisions": _change_revisions(status),
             }
             if args.jsonl:
                 print(json.dumps(event, separators=(",", ":")), flush=True)
             else:
                 print(json.dumps(event, indent=2, sort_keys=True), flush=True)
             last_sig = sig
+            if args.exit_on_change:
+                return 0
         count += 1
         if args.iterations and count >= args.iterations:
             return 0

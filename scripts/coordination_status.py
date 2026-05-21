@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from app_pulse import changes, channel_paths, presence, revision  # noqa: E402
+from app_pulse import changes, channel_paths, inbox, presence, revision  # noqa: E402
 
 VERDICT_RE = re.compile(
     r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"
@@ -91,23 +91,9 @@ def _load_files_in_flight(args: argparse.Namespace) -> list[str]:
     return [v.strip() for v in raw.split(",") if v.strip()]
 
 
-def _read_inbox_unread_count(slug: str, tool: str) -> int:
-    """Count unread lines in ``~/.build-loop/apps/<slug>/inbox/<tool>.jsonl``.
-
-    Blank lines are ignored.  Returns 0 when the file is absent or
-    unreadable.  This is a direct-read placeholder: when
-    ``scripts/app_pulse/inbox.py`` (Codex C9) lands with
-    ``unread_count(slug, tool)``, this function will be replaced by a call
-    to that API.  The field name and semantics in the output JSON
-    (``inbox_unread_count``) remain stable.
-    """
-    from app_pulse import channel_paths  # local import avoids circular dep
-    try:
-        inbox_file = channel_paths.app_channel_dir(slug) / "inbox" / f"{tool}.jsonl"
-        text = inbox_file.read_text(encoding="utf-8")
-        return sum(1 for line in text.splitlines() if line.strip())
-    except OSError:
-        return 0
+def _read_inbox_unread_counts(slug: str, tool: str) -> dict[str, int]:
+    """Count direct, broadcast, and total unread inbox lines for ``tool``."""
+    return inbox.unread_counts(channel_paths.app_channel_dir(slug), tool)
 
 
 def _default_coordination_file(workdir: Path) -> Path | None:
@@ -339,7 +325,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         or int(c.get("revision", 0)) > args.since_revision
     ]
 
-    inbox_unread_count = _read_inbox_unread_count(slug, requesting_tool)
+    inbox_counts = _read_inbox_unread_counts(slug, requesting_tool)
 
     if unresolved:
         status = "blocked"
@@ -375,7 +361,10 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         ],
         "overlaps": overlaps,
         "peer_overlap_files": peer_overlap_files,
-        "inbox_unread_count": inbox_unread_count,
+        "direct_inbox_unread_count": inbox_counts["direct"],
+        "broadcast_inbox_unread_count": inbox_counts["broadcast"],
+        "inbox_unread_count": inbox_counts["total"],
+        "inbox_unread_counts": inbox_counts,
         "coordination_file": str(coordination_file) if coordination_file else None,
         "latest_verdicts": verdict_entries,
         "unresolved": unresolved,

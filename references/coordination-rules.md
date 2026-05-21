@@ -84,9 +84,22 @@ python3 scripts/coordination_status.py \
 6. Editing a shared / no-touch-zone file.
 7. Transitioning a step from `verification-pending` to `done`.
 
-Between triggers, no polling needed. Status `clear` → proceed; status `warn` → review peer overlap + dirty files; status `blocked` → resolve unresolved verdicts before any of the above. Memory citation: `feedback_poll_channel_at_step_boundaries`, `feedback_script_first_coordination_checks`.
+Between triggers, no polling is needed only when there is no active peer, no
+active coord file, and no tool inbox message. When a host is waiting on an
+async peer response, has an active peer, or has an inbox message, keep a cheap
+watcher running:
 
-During active high-overlap coding, `scripts/coordination_watch.py --interval 3 --jsonl` is the cheap sensor loop (prints only state transitions; near-zero token cost).
+```bash
+python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --interval 5 --jsonl --baseline-current
+```
+
+Use stable tool ids (`claude_code`, `codex`, `cursor`, etc.) so targeted
+`inbox/<tool>.jsonl` messages route cleanly. Broadcast messages live in
+`inbox/all.jsonl`; every tool's read path includes that file in addition to
+its direct inbox. Status `clear` → proceed; status `warn` → review peer
+overlap + dirty files; status `blocked` → resolve unresolved verdicts before
+any of the above. Memory citation:
+`feedback_poll_channel_at_step_boundaries`, `feedback_script_first_coordination_checks`.
 
 ---
 

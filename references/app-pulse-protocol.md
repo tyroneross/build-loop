@@ -79,13 +79,16 @@ For high-overlap or long-running work, use the watcher:
 python3 scripts/coordination_watch.py \
   --workdir "$PWD" \
   --session-id "$SESSION_ID" \
+  --tool "$TOOL_NAME" \
   --owned-files .build-loop/coordination/current-owned-files.txt \
   --interval 3 \
-  --jsonl
+  --jsonl \
+  --baseline-current
 ```
 
-The scripts emit compact `clear | warn | blocked` state. AI should read full
-coordination context only when the script reports `warn` or `blocked`, a step
+The scripts emit compact `clear | warn | blocked` state plus inbox unread
+count. AI should read full coordination context only when the script reports
+`warn` or `blocked`, a target inbox changes, a step
 moves to `verification-pending`, or the next action is a commit, version bump,
 archive/delete, or shared/high-risk file edit.
 

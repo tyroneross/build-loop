@@ -14,7 +14,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import coordination_status as cs  # noqa: E402
-from app_pulse import channel_paths, presence  # noqa: E402
+import coordination_watch as cw  # noqa: E402
+from app_pulse import changes, channel_paths, inbox, presence  # noqa: E402
 
 
 class CoordinationStatusTests(unittest.TestCase):
@@ -182,6 +183,35 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(event["event"], "coordination_state_changed")
         self.assertEqual(event["status"], "clear")
 
+    def test_watch_accepts_codex_tool_and_surfaces_inbox_unread_count(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(
+            channel,
+            sender="claude_code",
+            recipient="codex",
+            payload={"summary": "codex should see this"},
+        )
+        cmd = [
+            sys.executable, str(HERE / "coordination_watch.py"),
+            "--workdir", str(self.workdir),
+            "--session-id", "me",
+            "--tool", "codex",
+            "--iterations", "1",
+            "--interval", "0.1",
+            "--jsonl",
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        event = json.loads(r.stdout.strip())
+        self.assertEqual(event["inbox_unread_count"], 1)
+        self.assertEqual(event["direct_inbox_unread_count"], 1)
+        self.assertEqual(event["broadcast_inbox_unread_count"], 0)
+
+    def test_watch_signature_changes_when_inbox_count_changes_without_revision(self):
+        base = {"status": "clear", "required_action": "none", "revision": 1}
+        self.assertNotEqual(cw._signature({**base, "inbox_unread_count": 0}),
+                            cw._signature({**base, "inbox_unread_count": 1}))
+
     # ------------------------------------------------------------------
     # Ownership-aware warn tests (R1 C8)
     # ------------------------------------------------------------------
@@ -278,7 +308,9 @@ class CoordinationStatusTests(unittest.TestCase):
             "latest_verdicts", "unresolved", "dirty_files",
             "dirty_outside_owned", "new_changes",
             # New fields
-            "peer_overlap_files", "inbox_unread_count",
+            "peer_overlap_files", "direct_inbox_unread_count",
+            "broadcast_inbox_unread_count", "inbox_unread_count",
+            "inbox_unread_counts",
         ]
         for field in required_fields:
             self.assertIn(field, status, f"Missing field: {field}")
@@ -291,14 +323,78 @@ class CoordinationStatusTests(unittest.TestCase):
     def test_inbox_unread_count_counts_nonempty_lines(self):
         """inbox_unread_count counts non-blank lines in the inbox jsonl."""
         slug = channel_paths.app_slug(self.workdir)
-        from app_pulse import channel_paths as cp
-        inbox_dir = cp.ensure_channel_dir(slug) / "inbox"
-        inbox_dir.mkdir(parents=True, exist_ok=True)
-        inbox_file = inbox_dir / "claude_code.jsonl"
-        inbox_file.write_text('{"msg": "a"}\n\n{"msg": "b"}\n', encoding="utf-8")
+        channel = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(channel, sender="codex", recipient="claude_code", payload={"msg": "a"})
+        inbox.write_message(channel, sender="codex", recipient="claude_code", payload={"msg": "b"})
 
         status = self._run()
         self.assertEqual(status["inbox_unread_count"], 2)
+        self.assertEqual(status["direct_inbox_unread_count"], 2)
+        self.assertEqual(status["broadcast_inbox_unread_count"], 0)
+
+    def test_inbox_unread_count_is_tool_scoped(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(channel, sender="claude_code", recipient="codex", payload={"msg": "a"})
+        inbox.write_message(channel, sender="codex", recipient="claude_code", payload={"msg": "b"})
+
+        codex_status = self._run("--tool", "codex")
+        claude_status = self._run("--tool", "claude_code")
+
+        self.assertEqual(codex_status["inbox_unread_count"], 1)
+        self.assertEqual(claude_status["inbox_unread_count"], 1)
+
+    def test_inbox_broadcast_all_is_visible_to_every_tool(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(
+            channel,
+            sender="claude_code",
+            recipient="all",
+            payload={"msg": "broadcast"},
+        )
+        inbox.write_message(
+            channel,
+            sender="claude_code",
+            recipient="codex",
+            payload={"msg": "direct"},
+        )
+
+        codex_status = self._run("--tool", "codex")
+        claude_status = self._run("--tool", "claude_code")
+
+        self.assertEqual(codex_status["direct_inbox_unread_count"], 1)
+        self.assertEqual(codex_status["broadcast_inbox_unread_count"], 1)
+        self.assertEqual(codex_status["inbox_unread_count"], 2)
+        self.assertEqual(claude_status["direct_inbox_unread_count"], 0)
+        self.assertEqual(claude_status["broadcast_inbox_unread_count"], 1)
+        self.assertEqual(claude_status["inbox_unread_count"], 1)
+
+        codex_messages = inbox.read_tool(channel, tool="codex")
+        self.assertEqual([m["payload"]["msg"] for m in codex_messages],
+                         ["direct", "broadcast"])
+
+    def test_send_to_tool_dual_writes_inbox_and_channel(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+
+        result = inbox.send_to_tool(
+            channel,
+            sender="claude_code",
+            recipient="codex",
+            payload={"summary": "please review"},
+            model="test-model",
+            run_id="run-1",
+            app_slug=slug,
+        )
+
+        self.assertTrue(result["written"])
+        self.assertEqual(result["channel_revision"], 1)
+        self.assertEqual(inbox.unread_count(channel, "codex"), 1)
+        records, _ = changes.read_changes_since(channel, 0)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["kind"], "message")
+        self.assertEqual(records[0]["payload"]["to"], "codex")
 
 
 if __name__ == "__main__":
