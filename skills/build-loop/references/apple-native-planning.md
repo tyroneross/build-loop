@@ -402,3 +402,36 @@ If a target name appears in the first list but not the second, the test bundle e
 **FlowDoro example (build 79).** `FlowDoro-UnitTests` had been a `bundle.unit-test` on `platform: macOS`, wired into the macOS scheme's `test.targets` only. Builds 71-78 shipped without exercising any of the new code paths in CI. Build 79 added five test files covering AlertConfig codable, pomodoro notification identifier generation, Local Network permission classification, keychain-cache stability, and biometric break-signal default-off wiring. The test target was migrated to `platform: iOS`, added to `FlowDoro-iOS.schemes.test.targets`, and removed from the macOS scheme (which can no longer host an iOS-platform bundle). Net: `xcodebuild test -scheme FlowDoro-iOS -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:FlowDoro-UnitTests` runs 51 tests in ~7 seconds.
 
 **When test isolation must round-trip through `UserDefaults.standard`.** A common pattern in app-level singletons: `init(defaults: UserDefaults = .standard)` reads from injected defaults, but property `didSet` writes target `UserDefaults.standard` unconditionally. Tests that assert "value persists across two store instances" cannot rely on injected defaults for the write path — they have to either snapshot/restore `.standard` in `setUp`/`tearDown`, or refactor production to plumb the same defaults through both read and write. For a test-only access change this is heavier than a simple `private → internal` flip; document the constraint in the test file rather than push a deeper production change.
+
+## SourceKit ghost diagnostics on Xcode 26.x
+
+Discovered: SpeakSavvy-iOS Run A + Run A.1 (2026-05-20). Generalized so every Apple-platform build-loop run starts inoculated.
+
+### Pattern
+
+On Xcode 26.x XcodeGen projects, editing `.swift` files and running `xcodegen generate` produces false-positive `<new-diagnostics>` SourceKit errors of the form `Cannot find type 'X' in scope` for types defined in sibling files within the same module. The diagnostics arrive AFTER `xcodebuild` ships `** BUILD SUCCEEDED **`. They are stale index output, not real errors. Upstream tracking: [anthropics/claude-code#46651](https://github.com/anthropics/claude-code/issues/46651).
+
+### Two distinct causes, same symptom
+
+1. **New file not registered in `.pbxproj`** — file exists on disk, `xcodegen generate` not yet run. Both SourceKit and `xcodebuild` fail. Fix by running `xcodegen generate`.
+2. **Xcode 26.x SourceKit cross-file index lag** — `xcodegen generate` has run, `xcodebuild` succeeds, SourceKit's index is 5–30s behind. Fix is wait or ⌘⇧K in Xcode; do not edit code.
+
+Cause 1 is a real problem with a real fix. Cause 2 is a harness/IDE bug; touching code makes things worse.
+
+### What the orchestrator must do
+
+When `state.json.platform == "apple"` and the goal touches existing `.swift` files, the Phase 2 plan output must include this preamble before any Execute dispatch:
+
+> SourceKit `<new-diagnostics>` arriving within ~30s of `xcodegen generate` are presumed stale until `xcodebuild` disagrees. Do not panic-edit a file because the diagnostic stream cannot find a type that grep can.
+
+The same preamble belongs in subagent prompts that touch Swift files, per `feedback_subagent_skill_reactivity` (knowledge in CLAUDE.md alone doesn't reach subagents).
+
+### When to actually act
+
+A SourceKit "Cannot find type" diagnostic is real (not a ghost) when ANY apply:
+- `xcodebuild` produces the same error
+- The named type does not exist anywhere in the module (`grep -rn "<type>" --include="*.swift"` returns nothing)
+- The named type is defined in a different module that is not imported
+- The file was just created and `xcodegen generate` has not been run
+
+Otherwise it's a ghost and the fix is patience.
