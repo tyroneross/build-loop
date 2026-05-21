@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.12.8",
+  "version": "0.12.9",
   "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2. Optional UI design gates. Bundled debug-loop, debugging-memory, logging-tracer skills + MCP incident-memory server. Orchestrator owns when-to-fire; bundled skills own procedural detail; bridges are optional escalation hops to supporting plugins for extended capability.",
   "author": {
     "name": "Tyrone Ross",
