@@ -297,6 +297,21 @@ def write(
     except Exception as exc:  # never block the write on index failure
         print(f"WARN: memory_index append failed: {exc}", file=sys.stderr)
 
+    # M5 + Step 8: emit memory-write telemetry to TELEMETRY.jsonl (separate file
+    # from INDEX.jsonl; preserves M5 discovery schema untouched). Fire-and-forget.
+    try:
+        from scripts import memory_telemetry as _mt  # local import keeps module optional
+        _why = (extra_frontmatter or {}).get("why_durable") or description or "(unspecified)"
+        _mt.emit_write(
+            phase=str((extra_frontmatter or {}).get("phase", "unknown")),
+            writer=host,
+            memory_id=str(memory_dir / file_rel),
+            why_durable=_why,
+            action=action,
+        )
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
+        print(f"WARN: memory_telemetry emit_write failed: {exc}", file=sys.stderr)
+
     return fm
 
 

@@ -105,6 +105,16 @@ When build-loop integrates capabilities from other plugins, **bridge the actions
 
 This repo includes `AGENTS.md` — the open-standard version of the build loop methodology. Non-Claude tools (Codex, Copilot, Cursor, etc.) can use that file directly for the same workflow without Claude-specific integration.
 
+## Coordination
+
+Multi-session, multi-tool runs (Claude Code + Codex; two Claude sessions; Claude + CI verifier) coordinate via App Pulse + a per-run coordination file. The binding rules — operating rule (verdicts gating), `post()`-mandatory channel writes, MECE packets for every write-handoff, release-surface verification, Phase D closeout — live in **`references/coordination-rules.md`**. New coord files start from **`references/coordination-file-template.md`** (drop-in shape; placeholders, mandatory sections, parser-compatible verdict headings).
+
+Cheat-sheet (full detail in B1):
+
+- Verifier verdicts (`PASS` / `VARIANCE` / `BLOCKED`) are gating, not advisory; Claude does not advance past `verification-pending` until the latest verifier verdict for that step is `PASS` or a resolved `VARIANCE`.
+- Every cross-session signal goes through `scripts/app_pulse/post.py` `post()` (bumps revision + appends record in canonical order — never raw `append_change`).
+- Every write-handoff brief MUST include all four MECE fields (owns / does-not-own / interface-contract / integration-checkpoint); linted via `scripts/brief_mece_validator.py`.
+
 ## Plugin Development
 
 - Plugin manifest: `.claude-plugin/plugin.json`

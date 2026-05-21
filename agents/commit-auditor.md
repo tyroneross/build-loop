@@ -143,6 +143,46 @@ A single JSON object matching the §12.5 variance verdict envelope. No prose out
 - You do not block the commit. The orchestrator routes the verdict; it does not gate on it.
 - You do not invent new constitution rules. If you'd want one, put the thought in `meta_guidance`.
 
+## MAST 14-mode failure checklist (Phase 4 surface, build scope only)
+
+[MAST](https://arxiv.org/abs/2503.13657) — Multi-Agent System Failure Taxonomy, Cemri et al. 2025 — studied 1600+ multi-agent system traces across 7 MAS frameworks (κ=0.88 inter-annotator agreement) and identified 3 categories × 14 unique failure modes. When you run at **build scope** (Phase 4 Review-A), pass the diff against this checklist. Cite any matching mode in `variances[].spec_ref` as `mast:<mode_id>`.
+
+**FC1 — System design failures** (pre-execution issues; orchestration & specification):
+
+| ID | Mode | Build-loop signal to check |
+|---|---|---|
+| 1.1 | Disobey task specification | Diff implements a different feature than the plan's `T-N` requested; commit message describes work not in `task_ids_in_scope`. |
+| 1.2 | Disobey role specification | An agent acted outside its frontmatter scope (e.g. ui-validator wrote to source files; specialist wrote outside `.build-loop/app-contract/`). |
+| 1.3 | Step repetition | Two chunks did the same work (same files, same intent) — wasted effort, possible MECE-partition bug. |
+| 1.4 | Loss of conversation history | Brief omitted required context (prior envelope, architecture slice) that the implementer needed and didn't recover. |
+| 1.5 | Unaware of termination conditions | Iterate loop ran past its cap without surfacing `overflow-to-followup`; orchestrator didn't honor the 5/25 iteration cap. |
+
+**FC2 — Inter-agent misalignment failures** (handoff & coordination issues):
+
+| ID | Mode | Build-loop signal to check |
+|---|---|---|
+| 2.1 | Conversation reset | Mid-build context loss between chunks — the brief for chunk N+1 doesn't reflect what chunk N committed. |
+| 2.2 | Fail to ask for clarification | Implementer guessed at an ambiguous synthesis decision instead of populating `novel_decisions[]` (architectural-class) or `synthesis_attestation` deviation note. |
+| 2.3 | Task derailment | Mid-chunk pivot to a different objective without surfacing via `novel_decisions[]`; commit subject ≠ chunk's stated intent. |
+| 2.4 | Information withholding | Implementer's envelope omits material info (failing test, partial fix, deferred concern) that the orchestrator needs to route correctly. |
+| 2.5 | Ignored other agent's input | Implementer received commit-auditor's chunk-scope `rethink` and committed unchanged without addressing or disputing in `implementer_response`. |
+| 2.6 | Reasoning–action mismatch | The diff doesn't do what `notes` / `synthesis_attestation` claims; e.g. attests `error_state_pattern: applied` but no error path was added. |
+
+**FC3 — Task verification failures** (post-execution issues; quality & termination):
+
+| ID | Mode | Build-loop signal to check |
+|---|---|---|
+| 3.1 | Premature termination | A chunk closed with `status: completed` but `f_criteria` had unaddressed `fail` entries. |
+| 3.2 | No or incomplete verification | Phase 4 Review-B skipped or grader fired but did not re-run on every reachable surface; `verifications` map in legacy envelopes was hollow. |
+| 3.3 | Incorrect verification | A grader claimed pass but the artifact under inspection was stale or wrong-scoped (e.g. ran tests against the pre-change branch). |
+
+**Usage:**
+- At build scope, walk this table once per Phase 4 Review-A pass. For every match, add a `variances[]` entry with `spec_ref: "mast:<id>"` (e.g. `mast:1.2`) and severity calibrated per the standard rubric (constitution violations and information withholding are at least `major`; step repetition and conversation reset typically `minor`; reasoning-action mismatch ranges by impact).
+- Cite MAST findings in `policy_refs` as `mast:<id>` so Phase 6 Learn can mine recurrence.
+- This is **advisory only**. You do not block; the orchestrator routes per the standard Phase 4 Auto-Resolve table.
+
+Full taxonomy source: Cemri, Pan, Yang et al. "Why Do Multi-Agent LLM Systems Fail?" arXiv:2503.13657 (2025) — sourced in `~/dev/research/topics/agentic-systems/agentic-systems.build-loop-agent-audit-2026-05-20.md` §5.D + Bucket 3.
+
 ## Trivial bypass (orchestrator-side; chunk scope only)
 
 The orchestrator skips dispatching you at **chunk scope** when ALL of:

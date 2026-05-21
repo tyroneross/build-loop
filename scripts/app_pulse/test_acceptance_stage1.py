@@ -86,7 +86,12 @@ def test_stage1_acceptance(app_repo: Path, tmp_path: Path):
     assert any(c["kind"] == "commit" for c in env["new_changes"])
     assert any(p["session_id"] == "A" for p in env["active_peers"])
     sc = [r for r in env["reactions"] if r["type"] == "soft-claim"]
-    assert sc and sc[0]["severity"] == "warning"  # D4
+    # 2026-05-19: severity is now reason-keyed (merged_residue /
+    # squash_landed -> informational; active_conflict -> warning). D4
+    # ("never a block") is unchanged.
+    assert sc and sc[0]["severity"] in {"warning", "informational"}
+    assert sc[0].get("reason") in {"merged_residue", "squash_landed",
+                                   "active_conflict"}
 
     # --- (2) dependency-manifest commit -> dep-change -----------------
     (app_repo / "requirements.txt").write_text("requests==2.0\n")

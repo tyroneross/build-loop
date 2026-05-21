@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -25,6 +26,72 @@ _SESSIONS_DIR = "sessions"
 _CONFIG_NAME = "config.json"
 _DEFAULT_HEARTBEAT_MIN = 15
 _ZERO_CURSOR = {"revision": 0, "changes_offset": 0}
+_GIT_TIMEOUT_S = 0.5  # cap any single git call; fail-open on timeout
+_UNKNOWN_BRANCH = {
+    "branch_name": "unknown",
+    "branch_head_sha": "unknown",
+    "branch_merge_status": "unknown",
+}
+
+
+def _compute_branch_status(cwd: Path) -> dict:
+    """Return branch_name, branch_head_sha, branch_merge_status for cwd.
+
+    Fail-open: any git error, timeout, detached HEAD, or non-git dir
+    returns the all-``unknown`` record. Never raises. ~5 ms per call on
+    a healthy repo.
+
+    Merge-status check: ``git merge-base --is-ancestor HEAD <upstream>``
+    where upstream is ``origin/main`` with fallback to ``main``. Exit 0
+    means HEAD is an ancestor of (i.e. merged into) the upstream tip.
+    Squash-merged branches return ``unmerged`` here — file-level fallback
+    lives in checkpoint._peer_files_already_landed.
+    """
+    rec = dict(_UNKNOWN_BRANCH)
+    try:
+        cwd_str = str(cwd)
+        # Branch name (detached HEAD -> "HEAD"; we still return that as-is).
+        r = subprocess.run(
+            ["git", "-C", cwd_str, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            rec["branch_name"] = r.stdout.strip()
+        else:
+            return rec  # not a git repo (or worse) — bail
+        # HEAD SHA.
+        r = subprocess.run(
+            ["git", "-C", cwd_str, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            rec["branch_head_sha"] = r.stdout.strip()
+        else:
+            return rec
+        # Merge-status: try origin/main first, fall back to main.
+        for upstream in ("origin/main", "main"):
+            # Verify upstream exists before --is-ancestor (cheaper failure).
+            v = subprocess.run(
+                ["git", "-C", cwd_str, "rev-parse", "--verify", "--quiet",
+                 upstream],
+                capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+            )
+            if v.returncode != 0:
+                continue
+            a = subprocess.run(
+                ["git", "-C", cwd_str, "merge-base", "--is-ancestor",
+                 rec["branch_head_sha"], upstream],
+                capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+            )
+            if a.returncode == 0:
+                rec["branch_merge_status"] = "merged"
+            elif a.returncode == 1:
+                rec["branch_merge_status"] = "unmerged"
+            # other exit codes (128 etc.) fall through to "unknown"
+            return rec
+        return rec  # neither upstream resolved
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return dict(_UNKNOWN_BRANCH)
 
 
 def _sessions_dir(channel_dir: Path) -> Path:
@@ -62,8 +129,15 @@ def write_presence(
     app_slug: str,
     phase: str,
     files_in_flight: list | None = None,
+    cwd: Path | None = None,
 ) -> None:
     """Write/refresh presence (overwrite-in-place). Preserves the cursor.
+
+    ``cwd`` (optional) — the working directory whose branch state should
+    be recorded. When omitted, ``Path.cwd()`` is used. The branch fields
+    (``branch_name``, ``branch_head_sha``, ``branch_merge_status``,
+    ``branch_merge_status_checked_ts``) are computed via
+    ``_compute_branch_status``; any git failure yields ``"unknown"``.
 
     Fire-and-forget: never raises, never blocks the host action.
     """
@@ -74,6 +148,7 @@ def write_presence(
             cursor = json.loads(p.read_text()).get("cursor", cursor)
         except (FileNotFoundError, OSError, ValueError):
             pass
+        branch = _compute_branch_status(cwd if cwd is not None else Path.cwd())
         rec = {
             "session_id": session_id,
             "tool": tool or "unknown",
@@ -84,6 +159,11 @@ def write_presence(
             "files_in_flight": list(files_in_flight or []),
             "heartbeat_ts": time.time(),
             "cursor": cursor,
+            "branch_name": branch["branch_name"],
+            "branch_head_sha": branch["branch_head_sha"],
+            "branch_merge_status": branch["branch_merge_status"],
+            "branch_merge_status_checked_ts": time.time(),
+            "cwd": str(cwd) if cwd is not None else str(Path.cwd()),
         }
         _atomic_write(p, rec)
     except Exception:  # noqa: BLE001 — fire-and-forget

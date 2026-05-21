@@ -589,6 +589,25 @@ def recall(
         merged.extend(results[k])
     merged.sort(key=lambda x: (x.get("_recency_ts") or 0), reverse=True)
 
+    # M5 + Step 8: emit memory-read telemetry (separate file from M5
+    # INDEX.jsonl; preserves discovery schema untouched). Fire-and-forget.
+    # `correlation_id` is returned so the caller can later emit a follow-up
+    # memory-effect row once the consumer acts on the result.
+    correlation_id: Optional[str] = None
+    try:
+        from scripts import memory_telemetry as _mt  # local import keeps module optional
+        seen_ids = [r.get("id") or r.get("slug") or r.get("path") or "" for r in merged]
+        correlation_id = _mt.emit_read(
+            phase="unknown",  # facade has no phase context; callers may emit follow-up rows
+            reader="memory_facade.recall",
+            query=query,
+            memory_ids_seen=[s for s in seen_ids if s],
+            effect=None,  # consumer reports effect via emit_effect(correlation_id, ...)
+            reason="",
+        )
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
+        print(f"WARN: memory_telemetry emit_read failed: {exc}", file=sys.stderr)
+
     return {
         "query": query,
         "kind_filter": kind,
@@ -596,6 +615,7 @@ def recall(
         "results_by_kind": results,
         "merged": merged[: limit * len(KINDS)],
         "reasons": reasons,
+        "telemetry_correlation_id": correlation_id,
     }
 
 

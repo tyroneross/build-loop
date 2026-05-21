@@ -18,6 +18,8 @@ Build-loop's deterministic scripts. Each script:
 | `optimize_loop.py`, `optimize_doe.py`, `metric_runner.py` | Optimization runner + DOE |
 | `sync_skills.py`, `check_cache_sync.py` | Native-skill drift detector + cache hygiene |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
+| `coordination_status.py` | Cheap multi-agent coordination sensor: App Pulse peers, overlaps, latest verdicts, dirty files → `clear | warn | blocked` JSON |
+| `coordination_watch.py` | Active-coding watcher; polls `coordination_status.py` and prints only state transitions |
 
 ## Phase B: repo-local episodic memory (added 2026-05-04)
 

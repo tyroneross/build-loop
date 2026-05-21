@@ -58,11 +58,54 @@ You are a deterministic UI validator. You run signal-only scans against the live
   "route_timings": [
     { "route": "/app/library", "seconds": 2.1 }
   ],
-  "wall_clock_seconds": 12.4
+  "wall_clock_seconds": 12.4,
+  "design_doc_delta": {
+    "schema_version": "1.0",
+    "elements_seen": [
+      {"route": "/app/library", "selector": "button.primary", "file_line": "components/Library.tsx:42", "computed_tier_hint": "cta-primary", "props": {"bg": "indigo-600", "h": "32"}}
+    ],
+    "tier_drift_candidates": [
+      {"element_a": "components/Library.tsx:42", "element_b": "components/Dashboard.tsx:88", "shared_tier_hint": "cta-primary", "diff": "bg: indigo-600 vs blue-600"}
+    ],
+    "unclassified_candidates": [
+      {"file_line": "components/Onboarding.tsx:14", "selector": "button.action", "best_guess_tier": "cta-secondary"}
+    ]
+  }
 }
 ```
 
 `failing_assertion` is set whenever `status == "fail"`. The orchestrator routes that string directly to Iterate; no extra critic burn. `skip_reason` is required whenever `status == "skipped"` and null otherwise. `routes_truncated` is the count of routes implicated but not scanned because the cap was reached (see Route selection); 0 when nothing was truncated. `out_of_slice` is true when at least one scanned route came from the `architecture_context:` slice but not the changed-files list (see Architecture context). `route_timings` is emitted only when `triggerPoint == "phase4-review-b"` per Telemetry below; omit on Phase 3 chunk-close to keep the envelope small.
+
+### `design_doc_delta` field (Step 10 — delta-emit only)
+
+**Additive, nullable.** When the scan surfaces UI elements that the `design-contract-specialist` needs to reconcile against `.build-loop/app-contract/ui.md`'s Design Hierarchy Registry, populate `design_doc_delta`. **You do NOT write to `.build-loop/app-contract/*`** — the specialist is the sole writer (MECE; see `agents/design-contract-specialist.md`). You only emit the deltas; the orchestrator hands them to the specialist at Phase 3 chunk-close.
+
+Shape:
+
+```json
+"design_doc_delta": {
+  "schema_version": "1.0",
+  "elements_seen": [
+    {"route": "...", "selector": "...", "file_line": "<path>:<line>",
+     "computed_tier_hint": "<tier_id or null>",
+     "props": {"<token>": "<value>"}}
+  ],
+  "tier_drift_candidates": [
+    {"element_a": "<file:line>", "element_b": "<file:line>",
+     "shared_tier_hint": "<tier_id>", "diff": "<one-line>"}
+  ],
+  "unclassified_candidates": [
+    {"file_line": "<path>:<line>", "selector": "...",
+     "best_guess_tier": "<tier_id or null>"}
+  ]
+}
+```
+
+- `elements_seen[]`: UI elements observed on scanned routes; include a `computed_tier_hint` when the element's visual props plausibly match an existing tier in the registry (you may grep `.build-loop/app-contract/ui.md` if present), `null` otherwise.
+- `tier_drift_candidates[]`: pairs of elements you observed using the same `shared_tier_hint` but with diverging visual props — the specialist routes these as `hierarchy-drift` violations.
+- `unclassified_candidates[]`: elements with no tier match — the specialist routes these as `unclassified-element` violations.
+
+`design_doc_delta` is **null** (not omitted) when you scanned but observed no elements worth surfacing. Omit the field entirely on `status: "skipped"`.
 
 ## Path selection — library first, fallback second
 

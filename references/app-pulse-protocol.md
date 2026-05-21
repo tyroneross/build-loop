@@ -22,7 +22,7 @@ sub-component convention preserved.
 | Trigger | Action |
 |---|---|
 | Phase 1 preamble (once) | `presence.write_presence(...)` — session_id, tool, model, run_id, app_slug, phase=`assess`, files_in_flight=`[]` |
-| Every phase-start | `changes.append_change(make_record(kind="phase", payload={"phase": <name>}, ...))`, bump revision, then `checkpoint.checkpoint_read(...)` |
+| Every phase-start | `post.post(kind="phase", payload={"phase": <name>}, ...)`, then `checkpoint.checkpoint_read(...)` |
 | files owned for the phase change | refresh `presence.write_presence` with `files_in_flight` |
 | Run complete | last presence write (the reaper clears it after the heartbeat window — no explicit unregister needed) |
 
@@ -30,6 +30,11 @@ All writes are fire-and-forget (atomic JSON tmp+rename / JSONL
 O_APPEND, errors swallowed). The `revision` bump is the only locked
 write (short-timeout `fcntl`, skip-on-timeout). None can block or fail a
 host action.
+
+Use `scripts/app_pulse/post.py` for all new change records. It wraps the
+revision bump and `changes.jsonl` append in the canonical order; do not call
+`changes.append_change(...)` directly from new orchestration code unless the
+caller has already handled the revision bump.
 
 ## Reading & surfacing
 
@@ -54,6 +59,35 @@ When `changed` is true, surface a compact block:
 `arch_digest` is `null` in Stage 1 (the digest is published in Stage 2,
 D2). The reader advances **only its own cursor**; it never locks the
 change log and never blocks.
+
+## Script-First Coordination Checks
+
+During active coding, agents should not reread the full coordination markdown
+on every check. Run the deterministic status script first:
+
+```bash
+python3 scripts/coordination_status.py \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --owned-files .build-loop/coordination/current-owned-files.txt \
+  --json
+```
+
+For high-overlap or long-running work, use the watcher:
+
+```bash
+python3 scripts/coordination_watch.py \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --owned-files .build-loop/coordination/current-owned-files.txt \
+  --interval 3 \
+  --jsonl
+```
+
+The scripts emit compact `clear | warn | blocked` state. AI should read full
+coordination context only when the script reports `warn` or `blocked`, a step
+moves to `verification-pending`, or the next action is a commit, version bump,
+archive/delete, or shared/high-risk file edit.
 
 ## Graceful absence
 

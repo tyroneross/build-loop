@@ -21,6 +21,9 @@ Per-brief envelope shapes (round-1 through round-3) are deprecated. New briefs r
 | `wall_clock_seconds` | number | End-to-end implementer wall-clock duration. Orchestrator uses this for tier-mix telemetry. |
 | `task_id` | string | Per-dispatch unique identifier echoed from the orchestrator's `[TASK_ID: <id>]` prompt prefix. Format: `t-<8-hex-chars>`. The orchestrator generates this before dispatch and writes one row per dispatch to `~/.bookmark/cost-ledger.jsonl` via `scripts/write_cost_ledger_row.py`. The implementer MUST echo it back unmodified so the row's completed-at update can be correlated against its dispatched-at row. Missing field = malformed envelope. If the brief omits the `[TASK_ID: …]` prefix (legacy briefs), return `task_id: "unknown"`. |
 | `status` | string | Optional for routine Phase 3 Execute commits (legacy). REQUIRED when the implementer halts on an architectural-class novel decision: set `status: "blocked"` and return early without committing. See "status enum" below. |
+| `capabilities_used` | array of strings | **Additive (Step 7 / audit §5.E).** IDs of `available_capabilities[]` entries from the brief that the implementer actually invoked during this chunk. Empty array `[]` when none were used. The orchestrator joins this against the cost-ledger row and surfaces credit-assignment telemetry in Phase 4 Report. Backward-compat: legacy envelopes that omit the field are accepted; the parser treats absence as `[]`. |
+| `capabilities_rejected` | array of objects | **Additive (Step 7 / audit §5.E).** Capabilities from `available_capabilities[]` the implementer considered but did NOT use, with a short reason. Shape per entry: `{"id": "<capability_id>", "reason": "<one-sentence why-not>"}`. Empty array `[]` when none were considered-and-rejected. Powers the self-improvement-architect's Phase 6 credit-assignment pattern detector: a capability rejected with the same reason across N chunks is a signal the registry entry needs revision. |
+| `downstream_iterate_outcome` | string or null | **Additive (Step 7 / audit §5.E).** Set by the orchestrator AFTER this commit's downstream Phase 5 Iterate cycle closes (the implementer leaves this `null`; the orchestrator backfills via `write_run_entry.py`). Enum: `"clean"` (no Iterate needed), `"resolved-on-pass-1"`, `"resolved-on-pass-2-or-later"`, `"overflow-to-followup"`, `"abandoned"`. Used by Phase 6 Learn to attribute commit-time decisions to their downstream verification outcomes. Backward-compat: legacy envelopes omit this; the parser treats absence as `null`. |
 
 **Contract:** missing required fields = malformed envelope. Use empty/null sentinels (`""`, `0`, `[]`, `{}`) for absent data; **do not omit keys**. The orchestrator's parser distinguishes "field absent" (malformed) from "field present but empty" (legitimate).
 
@@ -263,6 +266,25 @@ envelope:
   notes: "Both dimensions applied as specified. Ledger entries document why alternatives were rejected."
   wall_clock_seconds: 142
 ```
+
+## Brief-construction: input_filter pattern (Step 7 / audit §5.E)
+
+The orchestrator constructs each implementer brief from a superset of context (intent, plan, MECE packet, architecture slice, capability shortlist, memory recall, prior chunk envelopes). Without scoping, this can balloon — particularly when many prior chunks have closed.
+
+OpenAI Agents SDK ships an `input_filter` primitive on its `handoff(...)` call: a function that receives the full `HandoffInputData` (with `input_history`, `pre_handoff_items`, `new_items`) and returns a filtered subset for the downstream agent. Build-loop's structure is **agent-as-tools** (not handoff per Microsoft's distinction — control returns to the orchestrator after each dispatch), so build-loop does not adopt the OpenAI runtime. It DOES adopt the `input_filter` pattern at the brief-construction layer.
+
+**Pattern adoption (internal, build-loop-native):**
+
+1. Each Phase 3 dispatch site in `agents/build-orchestrator.md` builds a candidate brief from the full context superset.
+2. Before dispatching, the orchestrator MAY apply a per-chunk `filter` callable to the brief's context blocks (architecture slice, memory recall, prior envelopes). The callable returns a scoped subset — e.g. only memory entries whose `domain` matches `files_owned`, or only prior envelopes from chunks the current chunk has a dependency edge to.
+3. The implementer brief carries an `applied_filter` annotation (one line: `applied_filter: <name>; dropped: <N entries>`) so commit-auditor knows what was suppressed.
+4. Default behavior is the identity filter (no scoping); filters are opt-in per-chunk in the plan via `chunk[*].brief_filter:` field. The orchestrator's catalogue of built-in filters lives in `references/brief-filters.md` (TBD; not required for this step).
+
+**Why this matters for the envelope schema**: `capabilities_used[]` / `capabilities_rejected[]` are the implementer's view of brief utility. `applied_filter` is the orchestrator's view. Together they let Phase 6 Learn answer "did we send the right context?" without the implementer having to enumerate everything it ignored.
+
+**Sources** (full citations in `~/dev/research/topics/agentic-systems/agentic-systems.build-loop-agent-audit-2026-05-20.md` §5):
+- OpenAI Agents SDK — `handoff(input_type, on_handoff, input_filter)` primitive (Bucket 1 §5.A core)
+- Microsoft Agent Framework — handoff vs agent-as-tools distinction (§5.C)
 
 ## Parser behavior
 

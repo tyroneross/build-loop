@@ -304,7 +304,7 @@ Quick summary:
 | Agent definitions | `./agents/*.md` | Claude only |
 | Hooks | `./hooks/hooks.json` | Claude only (Codex has its own system) |
 
-Keep `name` and `version` identical across the two manifests — users think of it as one plugin.
+Keep `name` and `version` identical across the two-or-three manifests — users think of it as one plugin. **Include `.claude-plugin/marketplace.json` if the plugin ships its own marketplace listing** (both `metadata.version` AND the `plugins[name=<plugin>].version` entry must match). The version-sync test enforces all enforced manifests; treat the test (`scripts/test_plugin_manifest.py` for build-loop; equivalent elsewhere) as the **source of truth** — read its failure output to enumerate every enforced manifest before drafting a version-bump brief. Prose can undercount silently; the test cannot. See `references/coordination-rules.md` §"Verification of release surface" for the cross-cutting release-surface rule that includes this lockstep check (memory: `feedback_three_file_lockstep_plugin_manifest`).
 
 ## Additional Resources
 

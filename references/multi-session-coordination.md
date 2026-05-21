@@ -12,7 +12,8 @@ Multiple build-loop sessions can run concurrently in different terminals and acr
 
 This section defines the App Pulse presence integration plus the M5 trigger family. They complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
 
-- **App Pulse presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3).
+- **App Pulse presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3). New change records use `scripts/app_pulse/post.py`, not raw `append_change`.
+- **Script-first status checks — token conservation.** `scripts/coordination_status.py` and `scripts/coordination_watch.py` compress App Pulse, coordination verdicts, peer overlap, and dirty-file state into compact JSON so agents do not repeatedly reread the full coordination note.
 - **M5 — Memory index append + canonical writer.** Fires on every memory write to `~/.build-loop/memory/` (via `memory_writer.py write`) and every read between phases (via `memory_index.py tail --since`). Telemetry + cross-session discovery; never blocks.
 
 ### App Pulse presence — slug resolution (D1, worktree-aware)
@@ -39,6 +40,23 @@ presence.write_presence(channel_dir, session_id=..., tool="claude_code", model=.
 ```
 
 Then `checkpoint.checkpoint_read(channel_dir, session_id=..., my_files=[...])`; when its envelope reports peers / `dep-change` (→ reinstall) / `arch-scan-complete` (→ re-baseline scout cache) / file-overlap (→ `soft-claim` WARNING), surface the compact reaction block. The `presence.write_presence` call preserves the per-session read cursor across refreshes. All writes are fire-and-forget; the only locked write is the `revision` bump (short-timeout, skip-on-timeout). None can block or fail a host action.
+
+For active coding, run the cheap status script before asking an LLM to inspect
+coordination details:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_status.py \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --owned-files <owned-files-list> \
+  --json
+```
+
+If it returns `clear`, proceed without spending tokens on the coordination
+note. If it returns `warn` or `blocked`, read the reported coordination file or
+verdicts and resolve before the next shared-file edit, commit, version bump, or
+archive/delete. During high-overlap work, run `coordination_watch.py --interval
+3 --jsonl`; it prints only state transitions.
 
 ### App Pulse presence — On clean completion:
 
@@ -92,6 +110,11 @@ App Pulse presence is awareness-only (D4), so headless hosts never block on it. 
 - Peers WITH overlapping `files_in_flight`: log the `soft-claim` WARNING (peer, files, phase) and proceed. There is no hard-stop, sentinel, or non-zero exit — coordination is the human's call after the fact, not a gate.
 
 The interactive→headless distinction lives in this prompt, not in the scripts: `read_active_presence` returns the same peer list regardless of host; only the surfacing differs (interactive MAY additionally `AskUserQuestion`).
+
+`coordination_status.py` can report `blocked` when the durable coordination
+record contains unresolved `VARIANCE` or `BLOCKED` verdicts. That is a
+coordination gate, not an App Pulse lock: the plan owner must resolve,
+acknowledge, or explicitly override the verdict before advancing the step.
 
 ## R5 — Pre/post canonical snapshot around isolated dispatch
 
