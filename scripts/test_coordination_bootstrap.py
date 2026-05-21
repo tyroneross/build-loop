@@ -97,6 +97,13 @@ class BootstrapHappyPathTests(unittest.TestCase):
         # File is under .build-loop/coordination/
         self.assertEqual(coord_path.parent.name, "coordination")
         self.assertEqual(coord_path.parent.parent.name, ".build-loop")
+        active_pointer = coord_path.parent / "active.json"
+        self.assertTrue(active_pointer.exists(), "active pointer not written")
+        pointer = json.loads(active_pointer.read_text(encoding="utf-8"))
+        self.assertEqual(Path(pointer["coord_file"]).resolve(), coord_path.resolve())
+        self.assertEqual(pointer["session_id"], "test-session-001")
+        self.assertRegex(pointer["created_at"], r"^\d{4}-\d{2}-\d{2}T")
+        self.assertTrue(result["active_pointer_written"])
 
     def test_custom_coord_file_path_is_honored(self):
         custom = self.workdir / "custom" / "myfile.md"
@@ -157,6 +164,7 @@ class BootstrapIdempotencyTests(unittest.TestCase):
         )
         self.assertEqual(r2["action"], "joined-existing-coord")
         self.assertEqual(Path(r2["coord_file"]), coord_path)
+        self.assertFalse(r2["active_pointer_written"])
         # Content preserved
         self.assertEqual(coord_path.read_text(encoding="utf-8"), original_text)
         # mtime preserved (no write occurred)
