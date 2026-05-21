@@ -9,6 +9,11 @@ For Codex, checks the installed Codex plugin cache against Codex-visible source
 surfaces: .codex-plugin/plugin.json, AGENTS.md, README.md, commands/*.md, and
 skills/**/*.md/json/js/mjs/py/sh/ts.
 
+For Rally Point / App Pulse coordination work, ``--coordination-cache-parity``
+compares the installed Claude and Codex plugin caches against each other for
+coordination runtime surfaces. CI should fail if one host has a stale
+coordination script while the other host has the new one.
+
 Run from a plugin source repo (or with --source).
 
 Exit codes:
@@ -33,6 +38,19 @@ REF_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_][A-Za-z0-9_./\-]*[A-
 SEARCH_EXTS = {".md", ".json", ".py", ".sh", ".mjs", ".js", ".ts"}
 IGNORE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".build-loop"}
 CODEX_DEFAULT_MARKETPLACE = "ross-labs-local"
+COORDINATION_EXACT_REFS = (
+    "commands/agent-rally-point.md",
+    "references/app-pulse-protocol.md",
+    "references/coordination-rules.md",
+    "references/multi-session-coordination.md",
+    "scripts/check_cache_sync.py",
+)
+COORDINATION_PREFIXES = (
+    "scripts/app_pulse",
+)
+COORDINATION_GLOBS = (
+    "scripts/coordination_*.py",
+)
 
 
 def sha256(path: Path) -> str:
@@ -101,6 +119,36 @@ def find_codex_surfaces(source: Path) -> set[str]:
     return refs
 
 
+def find_coordination_surfaces(source: Path) -> set[str]:
+    """Return host-shared coordination surfaces that must stay cache-aligned."""
+    refs: set[str] = set()
+    for ref in COORDINATION_EXACT_REFS:
+        if (source / ref).is_file():
+            refs.add(ref)
+
+    for prefix in COORDINATION_PREFIXES:
+        root_path = source / prefix
+        if not root_path.exists():
+            continue
+        for root, dirs, files in os.walk(root_path):
+            dirs[:] = [
+                d for d in dirs
+                if d not in IGNORE_DIRS and not d.startswith(".")
+            ]
+            for name in files:
+                p = Path(root) / name
+                if p.suffix in SEARCH_EXTS:
+                    refs.add(str(p.relative_to(source)))
+
+    for pattern in COORDINATION_GLOBS:
+        refs.update(
+            str(p.relative_to(source))
+            for p in source.glob(pattern)
+            if p.is_file() and p.suffix in SEARCH_EXTS
+        )
+    return refs
+
+
 def find_installed_versions(cache_root: Path, name: str) -> list[Path]:
     if not cache_root.exists():
         return []
@@ -154,6 +202,54 @@ def check_sync(source: Path, cache: Path, refs: set[str]) -> list[dict]:
     return diffs
 
 
+def check_cache_parity(
+    *,
+    source: Path,
+    claude_cache: Path,
+    codex_cache: Path,
+    refs: set[str],
+) -> list[dict]:
+    """Compare installed Claude and Codex caches for ``refs``.
+
+    The source repo defines the authoritative ref set. The comparison itself is
+    cache-to-cache so CI catches the specific failure where one installed host
+    has newer coordination code than the other.
+    """
+    diffs: list[dict] = []
+    for ref in sorted(refs):
+        src = source / ref
+        if not src.exists() or src.is_dir():
+            continue
+        claude = claude_cache / ref
+        codex = codex_cache / ref
+        if not claude.exists():
+            diffs.append({
+                "path": ref,
+                "status": "missing_in_claude_cache",
+                "claude": str(claude),
+                "codex": str(codex),
+            })
+            continue
+        if not codex.exists():
+            diffs.append({
+                "path": ref,
+                "status": "missing_in_codex_cache",
+                "claude": str(claude),
+                "codex": str(codex),
+            })
+            continue
+        if claude.is_dir() or codex.is_dir():
+            continue
+        if sha256(claude) != sha256(codex):
+            diffs.append({
+                "path": ref,
+                "status": "host_cache_diverged",
+                "claude": str(claude),
+                "codex": str(codex),
+            })
+    return diffs
+
+
 def suggest_fix(source: Path, cache: Path) -> str:
     return (
         f"  rsync -av --delete --exclude=.git --exclude=node_modules --exclude=__pycache__ "
@@ -169,12 +265,125 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--marketplace", default=None, help="Marketplace name (default: autodetect from parent marketplace.json)")
     p.add_argument("--json", action="store_true", help="Emit JSON report instead of human-readable")
     p.add_argument("--fail-on-missing-cache", action="store_true", help="Treat a missing cache dir as exit 1 (default: exit 0)")
+    p.add_argument(
+        "--coordination-cache-parity",
+        action="store_true",
+        help="Compare installed Claude and Codex caches for coordination surfaces.",
+    )
+    p.add_argument(
+        "--claude-cache",
+        default=None,
+        help="Claude cache dir for --coordination-cache-parity.",
+    )
+    p.add_argument(
+        "--codex-cache",
+        default=None,
+        help="Codex cache dir for --coordination-cache-parity.",
+    )
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     source = Path(args.source).resolve()
+    if args.coordination_cache_parity:
+        claude_manifest = load_manifest(source, "claude")
+        codex_manifest = load_manifest(source, "codex")
+        name = claude_manifest.get("name")
+        version = claude_manifest.get("version")
+        if not name or not version:
+            print("error: .claude-plugin/plugin.json missing name or version", file=sys.stderr)
+            return 2
+        if codex_manifest.get("name") != name or codex_manifest.get("version") != version:
+            print("error: Claude and Codex manifests disagree on name/version", file=sys.stderr)
+            return 2
+
+        if args.claude_cache:
+            claude_cache = Path(args.claude_cache).resolve()
+        else:
+            claude_cache, _ = default_cache(source, "claude", name, version, args.marketplace)
+        if args.codex_cache:
+            codex_cache = Path(args.codex_cache).resolve()
+            stale_versions: list[Path] = []
+        else:
+            codex_cache, stale_versions = default_cache(source, "codex", name, version, args.marketplace)
+
+        missing: list[dict] = []
+        if not claude_cache.exists():
+            missing.append({"host": "claude", "cache": str(claude_cache)})
+        if not codex_cache.exists():
+            missing.append({"host": "codex", "cache": str(codex_cache)})
+        if missing:
+            if args.json:
+                print(json.dumps({
+                    "mode": "coordination-cache-parity",
+                    "plugin": name,
+                    "version": version,
+                    "source": str(source),
+                    "claude_cache": str(claude_cache),
+                    "codex_cache": str(codex_cache),
+                    "missing_caches": missing,
+                    "stale_codex_versions": [str(p) for p in stale_versions],
+                    "diffs": [],
+                }, indent=2))
+            else:
+                for item in missing:
+                    print(
+                        f"cache for {item['host']} {name}@{version} not installed "
+                        f"at {item['cache']}",
+                        file=sys.stderr,
+                    )
+                if stale_versions:
+                    print("found other installed Codex version(s):", file=sys.stderr)
+                    for stale in stale_versions:
+                        print(f"  {stale}", file=sys.stderr)
+            return 1
+
+        refs = find_coordination_surfaces(source)
+        diffs = check_cache_parity(
+            source=source,
+            claude_cache=claude_cache,
+            codex_cache=codex_cache,
+            refs=refs,
+        )
+        if args.json:
+            print(json.dumps({
+                "mode": "coordination-cache-parity",
+                "plugin": name,
+                "version": version,
+                "source": str(source),
+                "claude_cache": str(claude_cache),
+                "codex_cache": str(codex_cache),
+                "refs_checked": sorted(refs),
+                "diffs": diffs,
+            }, indent=2))
+        else:
+            if not diffs:
+                print(
+                    f"✅ coordination cache parity: {name}@{version} "
+                    f"all {len(refs)} coordination surfaces match"
+                )
+                print(f"   claude: {claude_cache}")
+                print(f"   codex:  {codex_cache}")
+            else:
+                print(
+                    f"❌ coordination cache parity: {name}@{version} "
+                    f"{len(diffs)} file(s) diverged between host caches"
+                )
+                print(f"   claude: {claude_cache}")
+                print(f"   codex:  {codex_cache}")
+                print()
+                for d in diffs:
+                    status = d["status"]
+                    path = d["path"]
+                    if status == "missing_in_claude_cache":
+                        print(f"   [MISSING IN CLAUDE CACHE] {path}")
+                    elif status == "missing_in_codex_cache":
+                        print(f"   [MISSING IN CODEX CACHE]  {path}")
+                    elif status == "host_cache_diverged":
+                        print(f"   [HOST CACHE DIVERGED]     {path}")
+            return 1 if diffs else 0
+
     manifest = load_manifest(source, args.host)
     name = manifest.get("name")
     version = manifest.get("version")

@@ -39,6 +39,16 @@ def write_codex_source(root: Path, *, version: str = "1.0.0") -> None:
     write(root / "skills/build-loop/SKILL.md", "---\nname: build-loop\n---\n")
 
 
+def write_dual_host_source(root: Path, *, version: str = "1.0.0") -> None:
+    write(root / ".claude-plugin/plugin.json", json.dumps({"name": "build-loop", "version": version}))
+    write_codex_source(root, version=version)
+    write(root / "scripts/app_pulse/post.py", "print('post')\n")
+    write(root / "scripts/coordination_status.py", "print('status')\n")
+    write(root / "scripts/check_cache_sync.py", "print('sync')\n")
+    write(root / "commands/agent-rally-point.md", "# Rally\n")
+    write(root / "references/coordination-rules.md", "# Rules\n")
+
+
 class CheckCacheSyncCodexTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -86,6 +96,83 @@ class CheckCacheSyncCodexTests(unittest.TestCase):
         self.assertIn("0.2.0", result.stderr)
 
 
+class CoordinationCacheParityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.source = self.root / "source"
+        self.claude_cache = self.root / "claude-cache"
+        self.codex_cache = self.root / "codex-cache"
+        write_dual_host_source(self.source)
+        for ref in (
+            "scripts/app_pulse/post.py",
+            "scripts/coordination_status.py",
+            "scripts/check_cache_sync.py",
+            "commands/agent-rally-point.md",
+            "references/coordination-rules.md",
+        ):
+            text = (self.source / ref).read_text()
+            write(self.claude_cache / ref, text)
+            write(self.codex_cache / ref, text)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run_parity(self) -> subprocess.CompletedProcess:
+        return run([
+            "--source", str(self.source),
+            "--coordination-cache-parity",
+            "--claude-cache", str(self.claude_cache),
+            "--codex-cache", str(self.codex_cache),
+        ])
+
+    def test_coordination_cache_parity_passes_when_host_caches_match(self) -> None:
+        result = self._run_parity()
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertIn("coordination cache parity", result.stdout)
+
+    def test_coordination_cache_parity_fails_when_coordination_script_diverges(self) -> None:
+        write(self.codex_cache / "scripts/app_pulse/post.py", "print('newer')\n")
+
+        result = self._run_parity()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[HOST CACHE DIVERGED]     scripts/app_pulse/post.py", result.stdout)
+
+    def test_coordination_cache_parity_fails_when_coordination_script_missing(self) -> None:
+        (self.codex_cache / "scripts/coordination_status.py").unlink()
+
+        result = self._run_parity()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[MISSING IN CODEX CACHE]  scripts/coordination_status.py", result.stdout)
+
+    def test_coordination_cache_parity_json_reports_refs_checked(self) -> None:
+        result = run([
+            "--source", str(self.source),
+            "--coordination-cache-parity",
+            "--claude-cache", str(self.claude_cache),
+            "--codex-cache", str(self.codex_cache),
+            "--json",
+        ])
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["mode"], "coordination-cache-parity")
+        self.assertIn("scripts/app_pulse/post.py", data["refs_checked"])
+
+    def test_coordination_cache_parity_fails_when_host_cache_missing(self) -> None:
+        result = run([
+            "--source", str(self.source),
+            "--coordination-cache-parity",
+            "--claude-cache", str(self.claude_cache),
+            "--codex-cache", str(self.root / "missing-codex-cache"),
+        ])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cache for codex build-loop@1.0.0 not installed", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
