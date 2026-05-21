@@ -96,6 +96,22 @@ def _read_inbox_unread_counts(slug: str, tool: str) -> dict[str, int]:
     return inbox.unread_counts(channel_paths.app_channel_dir(slug), tool)
 
 
+def _read_rejection_count(slug: str) -> int:
+    """Count MECE rejections logged to ``<channel_dir>/rejections.jsonl``.
+
+    Surfaces the C4 ``mece_gate.log_rejection`` output so peers can see
+    when malformed handoff posts are being rejected without inspecting
+    the file directly.  Blank lines are ignored.  Returns 0 when the file
+    is absent or unreadable.
+    """
+    try:
+        rej_file = channel_paths.app_channel_dir(slug) / "rejections.jsonl"
+        text = rej_file.read_text(encoding="utf-8")
+        return sum(1 for line in text.splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
 def _default_coordination_file(workdir: Path) -> Path | None:
     root = workdir / ".build-loop" / "coordination"
     pointed = _active_coordination_pointer(root, workdir)
@@ -326,6 +342,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     inbox_counts = _read_inbox_unread_counts(slug, requesting_tool)
+    rejection_count = _read_rejection_count(slug)
 
     if unresolved:
         status = "blocked"
@@ -365,6 +382,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "broadcast_inbox_unread_count": inbox_counts["broadcast"],
         "inbox_unread_count": inbox_counts["total"],
         "inbox_unread_counts": inbox_counts,
+        "rejection_count": rejection_count,
         "coordination_file": str(coordination_file) if coordination_file else None,
         "latest_verdicts": verdict_entries,
         "unresolved": unresolved,

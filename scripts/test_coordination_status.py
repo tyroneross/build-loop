@@ -396,6 +396,27 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(records[0]["kind"], "message")
         self.assertEqual(records[0]["payload"]["to"], "codex")
 
+    def test_rejection_count_zero_when_no_rejections_file(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel_paths.ensure_channel_dir(slug)
+        out = self._run()
+        self.assertEqual(out["rejection_count"], 0)
+
+    def test_rejection_count_counts_nonempty_jsonl_lines(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        rej_file = channel / "rejections.jsonl"
+        # Three rejection records + one blank line — blank should be ignored.
+        rej_file.write_text(
+            json.dumps({"reason": "missing_mece_fields", "tool": "codex"}) + "\n"
+            + json.dumps({"reason": "missing_mece_fields", "tool": "codex"}) + "\n"
+            + "\n"
+            + json.dumps({"reason": "empty_required_string", "tool": "claude_code"}) + "\n",
+            encoding="utf-8",
+        )
+        out = self._run()
+        self.assertEqual(out["rejection_count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
