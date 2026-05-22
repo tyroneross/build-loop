@@ -1,24 +1,35 @@
-# Private app slug denylist — copy this file to `.private-slugs` and edit.
+# Private app slug denylist — FORMAT TEMPLATE (not a working denylist).
 #
-# `.private-slugs` is gitignored. The private-slug guard
-# (scripts/check_private_slugs.py) reads it at runtime and blocks any
-# commit — and fails CI — that stages one of these slugs in a tracked
-# file. build-loop is open source; this keeps the maintainer's private
-# project names out of every tracked file, including the guard itself.
+# This tracked file documents the FORMAT of the denylist only. It must
+# never contain a real private slug, and it must never contain a token
+# that legitimately appears elsewhere in this open-source repo — the
+# guard scans the whole tree, so a colliding token here causes a false
+# CI failure.
+#
+# Where the REAL denylist lives:
+#   - Local pre-commit hook (maintainers): the gitignored `.private-slugs`
+#     file at the repo root. Copy this file to `.private-slugs` and
+#     replace the sentinels below with your real private slugs.
+#   - CI enforcement: the `PRIVATE_SLUGS` GitHub Actions repository
+#     secret (newline-separated). The private-slug-guard workflow writes
+#     the secret to `.private-slugs` at runtime, then scans. If the
+#     secret is not configured, CI prints a skip notice and passes —
+#     forks and contributor PRs are never blocked by a missing secret.
 #
 # Format:
 #   - one slug per line
 #   - blank lines and `#` comments are ignored
 #   - each line is a case-insensitive regex fragment, matched as a
-#     word-ish token (so `example-app` will not match `examples`)
+#     word-ish token (so a slug will not match a longer surrounding word)
 #   - escape regex metacharacters: write a literal dot as `\.`
 #
-# The guard FAILS CLOSED: if `.private-slugs` is missing or empty when
+# The guard FAILS CLOSED: if `.private-slugs` is present but empty when
 # run in CI / `--all` mode, it exits non-zero rather than passing.
 #
-# The entries below are placeholders — replace them with your real
-# private slugs in your local `.private-slugs`.
-example-app
-example-ios-app
-example-web-app
-example\.com
+# The entries below are SENTINELS — obvious non-tokens that cannot occur
+# in real repo content. Replace every line with your real private slugs
+# in your local `.private-slugs` (and in the `PRIVATE_SLUGS` secret).
+your-private-app-name
+your-private-app-ios
+your-private-app-web
+your-company-domain\.example

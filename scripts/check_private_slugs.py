@@ -190,11 +190,16 @@ def main(argv: list[str]) -> int:
     hits: list[tuple[str, int, str, str]] = []
     unreadable: list[str] = []
     for path in files:
-        # The denylist config necessarily contains the slug literals;
-        # never scan it (it is gitignored anyway, but an explicit
-        # FILE... invocation could still name it). Match by basename so
-        # the exemption holds from any cwd / worktree.
-        if Path(path).name == DENYLIST_FILENAME:
+        # The denylist config and its tracked format-template both
+        # necessarily contain denylist-vocabulary tokens; never scan
+        # either. `.private-slugs` is gitignored, but an explicit
+        # FILE... invocation could still name it; `.private-slugs.example`
+        # IS tracked and would otherwise self-trip the guard on its own
+        # sentinel tokens. Match by basename so the exemption holds from
+        # any cwd / worktree. Neither file can hold a real private slug:
+        # `.private-slugs` is gitignored and `.private-slugs.example`
+        # ships sentinel placeholders reviewed in every PR.
+        if Path(path).name in (DENYLIST_FILENAME, EXAMPLE_FILENAME):
             continue
         if _is_self(root, path) or path in EXEMPT_PATHS:
             continue
@@ -215,10 +220,9 @@ def main(argv: list[str]) -> int:
 
     if hits:
         print("BLOCKED: private app slug found in staged content.", file=sys.stderr)
-        print("build-loop is open source — replace with a generic placeholder",
+        print("build-loop is open source — replace each hit with a generic,",
               file=sys.stderr)
-        print("(example-app, example-ios-app, example-web-app, example.com).\n",
-              file=sys.stderr)
+        print("non-private placeholder before committing.\n", file=sys.stderr)
         for path, lineno, slug, line in hits:
             print(f"  {path}:{lineno}: [{slug}] {line}", file=sys.stderr)
         print(f"\nIf a hit is an intentional historical record, add the path to",

@@ -165,6 +165,54 @@ def test_readable_clean_tree_passes(repo: Path, monkeypatch):
     assert cps.main(["--all"]) == 0
 
 
+# --- CI flow: PRIVATE_SLUGS secret -> .private-slugs -> --all scan ----
+
+# Sentinel tokens are assembled at runtime, never written as literals in
+# this test source — this file is itself scanned by the repo's own guard,
+# and a literal sentinel here would self-trip it.
+_SENTINELS = ["-".join(["your", "private", "app", w]) for w in ("name", "ios", "web")]
+
+
+def test_ci_flow_sentinel_denylist_passes(repo: Path):
+    """Mirrors the workflow: a .private-slugs holding only obvious
+    sentinel tokens (the kind shipped in .private-slugs.example) finds
+    nothing in a clean tree and exits 0.
+    """
+    (repo / ".private-slugs").write_text("\n".join(_SENTINELS) + "\n")
+    (repo / "doc.md").write_text("ordinary content, no private slugs\n")
+    _git(["add", "-A"], repo)
+    res = _run(repo, "--all")
+    assert res.returncode == 0, res.stderr
+
+
+def test_ci_flow_real_slug_in_tracked_file_fails(repo: Path):
+    """A real private slug from the secret, planted in a tracked file,
+    must fail the scan (exit 1) — this is the enforcement path.
+    """
+    slug = "-".join(["acme", "secret", "project"])
+    (repo / ".private-slugs").write_text(slug + "\n")
+    (repo / "leaked.md").write_text(f"references {slug} here\n")
+    _git(["add", "-A"], repo)
+    res = _run(repo, "--all")
+    assert res.returncode == 1
+    assert slug in res.stdout + res.stderr
+
+
+def test_example_file_is_exempt_from_scan(repo: Path):
+    """`.private-slugs.example` is a tracked format template that
+    necessarily contains denylist-vocabulary tokens. The guard must skip
+    it by basename, exactly as it skips `.private-slugs` and itself —
+    otherwise the example file self-trips the scan.
+    """
+    slug = "-".join(["acme", "secret", "project"])
+    (repo / ".private-slugs").write_text(slug + "\n")
+    # The example file contains the very token on the denylist.
+    (repo / ".private-slugs.example").write_text(f"# template\n{slug}\n")
+    _git(["add", "-A"], repo)
+    res = _run(repo, "--all")
+    assert res.returncode == 0, res.stderr
+
+
 # --- SEC-008-adjacent: missing repo root exits 2 ----------------------
 
 def test_not_a_git_repo_exits_2(tmp_path: Path):
