@@ -1,0 +1,24 @@
+name: Private Slug Guard
+
+# Server-side enforcement of the private-app-slug data-separation guard.
+# The local hooks/pre-commit running the same script is bypassable
+# (--no-verify, fresh clones, no server run); this job is not.
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  private-slug-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Scan tracked files for private app slugs
+        run: python3 scripts/check_private_slugs.py --all
