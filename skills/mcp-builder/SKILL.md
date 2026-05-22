@@ -7,6 +7,24 @@ description: Use when building, packaging, or debugging an MCP server, adding MC
 
 Build, bundle, and ship Model Context Protocol servers for Claude Code. Companion to `plugin-builder` — use both when the plugin exposes MCP tools.
 
+## Doc lookup — api-registry first
+
+Do **not** hardcode or fetch protocol-doc URLs from memory. Resolve them through the api-registry plugin's local doc cache:
+
+```
+/api-registry:docs mcp-spec "<your question>"        # MCP protocol spec
+/api-registry:docs mcp-ts-sdk "<your question>"      # TypeScript SDK
+/api-registry:docs mcp-python-sdk "<your question>"  # Python SDK
+/api-registry:docs anthropic-plugins-reference "<your question>"  # plugins-reference MCP section
+/api-registry:docs mcp-servers "<your question>"     # active reference servers
+```
+
+These registered services (`category: protocol`) carry authoritative `docs_url`s; api-registry answers from a dated local cache with a 7-day freshness contract and re-curates when stale. **Context7 MCP is the fallback only** — reached when no registered source exists. If the api-registry plugin is absent, fall back to the canonical URLs in the References section.
+
+## Security preflight (mandatory)
+
+Before writing any MCP server code, load `references/mcp-security.md` and run its inference + decision table. It produces a Tier 1 (always-mandatory) + Tier 2 (stage/type-gated) control checklist for *this* build. The checklist is **advisory** — it routes to the build-loop run report (Notes from judges / `state.json`), never an `AskUserQuestion` or hard gate. The `security-reviewer` agent grades the finished diff against the same matrix during Phase 4 Review-A.
+
 ## Scope split with plugin-builder
 
 | Concern | Skill |
@@ -231,11 +249,16 @@ Common failure modes after the schema fix:
 
 ## References
 
+- `references/mcp-security.md` — NSA-derived stage-aware MCP security model (Tier 1 always-mandatory + Tier 2 decision table). Loaded by the Security preflight step above.
 - `plugin-builder/references/plugin-hygiene-lessons.md` — real incidents, `.mcp.json` schema war stories, packaging traps (sections 7, 8, 11, 13)
-- `plugin-builder/references/authoritative-sources.md` — canonical Anthropic + MCP doc URLs
-- https://code.claude.com/docs/en/plugins-reference#mcp-servers — Anthropic's MCP section
-- https://modelcontextprotocol.io/ — protocol spec
-- https://github.com/modelcontextprotocol/typescript-sdk — TypeScript reference SDK
+
+**Doc sources** — resolve via `/api-registry:docs <service>` (primary path); the URLs below are the fallback only, used when the api-registry plugin is not installed:
+
+- `mcp-spec` → https://modelcontextprotocol.io/specification — protocol spec
+- `mcp-ts-sdk` → https://github.com/modelcontextprotocol/typescript-sdk — TypeScript reference SDK
+- `mcp-python-sdk` → https://github.com/modelcontextprotocol/python-sdk — Python reference SDK
+- `anthropic-plugins-reference` → https://code.claude.com/docs/en/plugins-reference#mcp-servers — Anthropic's MCP section
+- `mcp-servers` / `mcp-servers-archived` → reference server lists (the archived list flags unsupported projects)
 - https://github.com/tyroneross/interface-built-right — `tsup`-bundled example
 
 ## Preflight checklist (MCP-specific, supplements plugin-builder checklist)
