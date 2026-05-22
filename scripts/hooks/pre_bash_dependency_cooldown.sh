@@ -156,7 +156,7 @@ export _BL_ENFORCED="$ENFORCED"
 export _BL_MECHANISM="$MECHANISM"
 
 python3 <<'PY'
-import json, os, re, sys
+import json, os, re, subprocess, sys
 from datetime import datetime, timedelta, timezone
 
 cmd = os.environ.get("_BL_CMD", "")
@@ -191,6 +191,48 @@ def glob_match(name, pattern):
     return re.match(rx, name) is not None
 
 
+def registry_author_owned(pkg):
+    """Best-effort: ask api-registry whether `pkg` is author-owned.
+
+    Returns True only on a clear positive from the registry. Any failure
+    (registry absent, tsx missing, lookup error, timeout) returns False so the
+    static `@tyroneross/*` allowlist remains the sole gate — fail-open is
+    correct here because a false negative just keeps the cooldown engaged.
+
+    Mirrors api-registry's own `author_owned` exemption so the hook honors the
+    registry's project list (build-loop, IBR, NavGator, bookmark, ...), not
+    just the npm-scope glob.
+    """
+    db = os.path.expanduser("~/.api-registry/registry.db")
+    if not os.path.exists(db):
+        return False
+    # api-registry is a sibling plugin; locate its lookup script if present.
+    candidates = []
+    cpr = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if cpr:
+        candidates.append(os.path.join(os.path.dirname(cpr), "api-registry"))
+    candidates.append(os.path.expanduser("~/dev/git-folder/api-registry"))
+    script = None
+    for c in candidates:
+        s = os.path.join(c, "scripts", "lookup.ts")
+        if os.path.exists(s):
+            script = s
+            break
+    if not script:
+        return False
+    try:
+        out = subprocess.run(
+            ["npx", "--no-install", "tsx", script, pkg],
+            capture_output=True, text=True, timeout=8, check=False,
+        )
+        if out.returncode != 0 or not out.stdout.strip():
+            return False
+        data = json.loads(out.stdout)
+        return bool(data.get("found") and data.get("cooldown", {}).get("author_owned"))
+    except Exception:
+        return False
+
+
 # Extract explicit package args (tokens that are not flags and not the
 # npm/pnpm/yarn/subcommand head). Heuristic but conservative.
 toks = cmd.split()
@@ -208,9 +250,16 @@ for t in toks:
         base = base[:at]
     pkgs.append(base)
 
-all_allowlisted = bool(pkgs) and all(
-    any(glob_match(p, a) for a in allowlist) for p in pkgs
-)
+def _allowlisted(p):
+    # Static glob allowlist first (cheap, offline). Only fall back to the
+    # api-registry author_owned lookup when the glob misses — keeps the common
+    # path free of subprocess cost.
+    if any(glob_match(p, a) for a in allowlist):
+        return True
+    return registry_author_owned(p)
+
+
+all_allowlisted = bool(pkgs) and all(_allowlisted(p) for p in pkgs)
 
 is_npm = re.search(r"\bnpm\s+(i|install|add|update)\b", cmd) is not None
 is_npm_ci = re.search(r"\bnpm\s+ci\b", cmd) is not None
