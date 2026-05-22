@@ -7,6 +7,91 @@ Build-loop's deterministic scripts. Each script:
 - Targets Python 3.11+ stdlib unless otherwise noted below.
 - Has a sibling `test_<name>.py` with deterministic tests.
 
+## Lifecycle & discovery (G5)
+
+The orchestrator routes work by selecting from a **capability registry**
+(`build_capability_registry.py` → `.build-loop/capability-registry.json`),
+narrowed per dispatch by `capability_shortlist.py` to ≤8 candidates. A
+registry polluted with completed one-shots, orphans, and mis-classified
+scripts routes agents to dead code — a coordination failure, not adjacent
+hygiene. The lifecycle below keeps the registry honest.
+
+### The capability header (authored, not heuristic)
+
+Every `scripts/*.py` should declare a `# capability:` header — a four-line
+comment block immediately after the shebang. The registry reads it instead
+of guessing the category from the filename.
+
+```python
+#!/usr/bin/env python3
+# capability:
+#   purpose: One sentence — what this script does.
+#   application: coordination
+#   status: active
+"""Module docstring follows as normal."""
+```
+
+| Field | Meaning |
+|---|---|
+| `purpose` | One-sentence description. Shown in the registry entry. |
+| `application` | The coarse namespace (taxonomy below). Overrides the filename heuristic. |
+| `status` | Lifecycle state — one of the four values below. |
+
+**`status` values:**
+
+| Status | Meaning | Registry / relevance effect |
+|---|---|---|
+| `active` | In live use. | Routable. `keep` verdict if referenced. |
+| `experimental` | New, not yet load-bearing. | Routable; flagged experimental. |
+| `deprecated` | Superseded; kept temporarily. | `attic` candidate — move to `_attic/`. |
+| `oneshot-complete` | A migration/backfill that has run. | `attic` candidate. |
+| _absent_ | No header authored. | `status: unknown` — `review` verdict. |
+
+### The `application` namespace taxonomy
+
+`application` is the coarse routing label. Today's namespaces:
+`coordination`, `meta`, `architecture`, `debugging`, `validation`,
+`planning`, `execution`, `observability`, `memory`, `testing`,
+`deployment`, `ux-ui`, `optimization`.
+
+When `scripts/` grows enough that a flat directory obscures purpose,
+namespaces become physical subdirectories (`scripts/coordination/`,
+`scripts/memory/`, …), migrated **opportunistically** — a script moves the
+next time a build touches it, not in a big-bang reshuffle.
+
+### Lifecycle: add → find → move → deprecate
+
+**Add.** Create the script. Author the `# capability:` header in the same
+commit — an absent header surfaces as `status: unknown` and a `review`
+verdict in `script_relevance.py`.
+
+**Find.** Agents do not browse `scripts/`. They route via the registry +
+shortlist. After adding or renaming a script, the registry rebuilds on the
+next Phase 1 Assess; rebuild manually with
+`python3 scripts/build_capability_registry.py --workdir "$PWD"`.
+
+**Move.** When a build touches a script and its `application` warrants a
+subdirectory, move it then, update every importer (`git grep <name>.py`),
+and rebuild the registry.
+
+**Deprecate.** When a script is superseded or a one-shot has run:
+
+1. Set its header `status` to `deprecated` or `oneshot-complete`.
+2. Run `python3 scripts/script_relevance.py --workdir "$PWD"` to confirm it
+   is not still referenced.
+3. Once the detector lists it under `attic_candidates`, move it to
+   `scripts/_attic/`. The registry crawler excludes `_attic/`, so the
+   script disappears from routing without being deleted.
+
+### The relevance detector
+
+`script_relevance.py` cross-references three signals per script — the
+authored `status`, git last-touched age (`--stale-days`, default 120), and
+whether any other tracked file references the script — and emits a JSON
+report with a `keep` / `review` / `attic` verdict each. It is **read-only**:
+it never moves a file. Run it before a deprecation sweep, or as a periodic
+hygiene check as `scripts/` scales.
+
 ## Phase A: orchestrator + plan tooling (pre-existing)
 
 | Script | Purpose |

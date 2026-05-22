@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Publish lightweight Rally Point presence + handoff without a durable coord file.
+#   application: coordination
+#   status: active
 """Publish a lightweight Rally Point rally point without creating a coord file.
 
 Use this when an agent needs to become visible to peers on the current app's

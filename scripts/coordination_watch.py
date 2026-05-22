@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Continuous adaptive-cadence sensor loop printing coordination state transitions.
+#   application: coordination
+#   status: active
 """Poll coordination status and print only state transitions.
 
 Use during active coding when a cheap 2-5 second sensor loop is useful. The

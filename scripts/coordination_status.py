@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Cheap sensor poll of multi-session coordination state (clear/warn/blocked).
+#   application: coordination
+#   status: active
 """Summarize Build Loop coordination state without spending LLM tokens.
 
 This is the cheap sensor layer for multi-agent coordination. It reads App

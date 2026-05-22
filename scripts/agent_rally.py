@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Host-neutral CLI wrapping Rally Point presence, handoff, status, and lead operations.
+#   application: coordination
+#   status: active
 """Host-neutral Rally Point CLI (G4 — cross-tool parity).
 
 Claude Code reaches Rally Point through the `/agent-rally-point` slash

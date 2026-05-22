@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Crawl repo surfaces into the capability registry the orchestrator routes against.
+#   application: meta
+#   status: active
 """Capability registry builder.
 
 Crawls every surface the build-loop orchestrator can route to and emits a
@@ -139,6 +143,52 @@ MODEL_HINTS = {
 }
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+# G5 — authored capability header. A script declares its lifecycle by
+# embedding a `# capability:` block near the top, e.g.:
+#
+#   # capability:
+#   #   purpose: Build the capability registry from repo surfaces.
+#   #   application: meta
+#   #   status: active
+#
+# The header is read instead of heuristic guessing. An absent header
+# yields `status: unknown` so the relevance detector can flag it.
+# `status` is one of: active | deprecated | oneshot-complete | experimental.
+_VALID_STATUSES = ("active", "deprecated", "oneshot-complete", "experimental")
+# Match a `# capability:` comment block — the header lines are `#`-prefixed
+# `key: value` pairs immediately following. Scans the first ~60 lines only.
+_CAP_HEADER_KEY_RE = re.compile(r"^#\s*(purpose|application|status)\s*:\s*(.+?)\s*$")
+
+
+def _parse_capability_header(text: str) -> Dict[str, str]:
+    """Extract an authored `# capability:` header from a script.
+
+    Returns a dict with any of {purpose, application, status} that were
+    declared. Absent header or absent keys -> empty/partial dict. The
+    caller fills `status: unknown` when `status` is missing.
+    """
+    out: Dict[str, str] = {}
+    lines = text.splitlines()[:60]
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^#\s*capability\s*:\s*$", stripped):
+            in_block = True
+            continue
+        if in_block:
+            m = _CAP_HEADER_KEY_RE.match(stripped)
+            if m:
+                out[m.group(1)] = m.group(2).strip()
+                continue
+            # A non-`#` line or a `#` line that is not a header key ends
+            # the block.
+            if not stripped.startswith("#") or stripped == "#":
+                break
+            # A `#` comment line that is not a recognised key also ends it
+            # unless it is blank-ish; be strict to avoid swallowing prose.
+            break
+    return out
 
 
 def _read_text(p: Path) -> Optional[str]:
@@ -395,10 +445,29 @@ def crawl_scripts(repo: Path) -> Iterable[Dict[str, Any]]:
         description = (m.group(1).strip().splitlines()[0] if m else "").strip()
         rel = p.relative_to(repo).as_posix()
         name = p.stem
+
+        # G5 — prefer the authored capability header over heuristics.
+        header = _parse_capability_header(text)
+        status = header.get("status", "").strip().lower()
+        if status not in _VALID_STATUSES:
+            # Absent or malformed header -> flagged for the relevance detector.
+            status = "unknown"
+        authored_app = header.get("application", "").strip().lower()
+        if authored_app:
+            category = authored_app
+            category_source = "authored"
+        else:
+            category = _classify_category(name, description, rel)
+            category_source = "heuristic"
+        purpose = header.get("purpose", "").strip()
+
         yield {
             "name": name,
             "kind": "script",
-            "category": _classify_category(name, description, rel),
+            "category": category,
+            "category_source": category_source,
+            "status": status,
+            "purpose": purpose or _short(description),
             "triggers": _extract_triggers(description),
             "tier": "n/a",
             "tools_consumed": [],
@@ -421,17 +490,22 @@ def build_registry(repo: Path) -> Dict[str, Any]:
     entries.sort(key=lambda e: (e["kind"], e["name"]))
     by_kind: Dict[str, int] = {}
     by_category: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
     for e in entries:
         by_kind[e["kind"]] = by_kind.get(e["kind"], 0) + 1
         by_category[e["category"]] = by_category.get(e["category"], 0) + 1
+        # `status` is script-only (G5 authored header); other kinds omit it.
+        if "status" in e:
+            by_status[e["status"]] = by_status.get(e["status"], 0) + 1
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "generator": "build_capability_registry.py",
-        "generator_version": "0.1.0",
+        "generator_version": "0.2.0",
         "repo_root": str(repo),
         "total": len(entries),
         "counts_by_kind": by_kind,
         "counts_by_category": by_category,
+        "counts_by_script_status": by_status,
         "entries": entries,
     }
 
