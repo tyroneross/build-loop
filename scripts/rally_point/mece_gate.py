@@ -10,6 +10,17 @@ The four required fields:
   - interface_contract    (str, non-empty)
   - integration_checkpoint (str, non-empty)
 
+Lateral limits (G2 — added 2026-05-22): two additional REQUIRED list
+fields naming the tool boundary of the handoff — the agentic analog of
+military left/right limits / fire-control measures:
+  - allowed_tools         (list, may be empty)
+  - denied_tools          (list, may be empty)
+
+A subordinate has full autonomy with ``allowed_tools`` and must not use
+anything in ``denied_tools``. Both must be present on a ``kind=handoff``
+post; either may be an empty list (an empty ``allowed_tools`` is a valid,
+explicit "no tools" boundary — only a missing or non-list field rejects).
+
 Rejections are logged to ``<channel_dir>/rejections.jsonl`` in a
 fire-and-forget manner — this module never raises.
 """
@@ -23,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 # Fields that must exist in payload.ownership
-_LIST_FIELDS = ("owns", "does_not_own")
+_LIST_FIELDS = ("owns", "does_not_own", "allowed_tools", "denied_tools")
 _NONEMPTY_STRING_FIELDS = ("interface_contract", "integration_checkpoint")
 
 

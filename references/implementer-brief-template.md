@@ -30,6 +30,17 @@ Read `docs/plans/<slug>.handoff.md` §"Commit <N>" + ADR-<NN> in the spec.
 ### does not own
 - <named other-commit surfaces, explicit>. Future commits handle those.
 
+### lateral limits (tool boundary — the agentic left/right limits)
+The `owns`/`does not own` lists bound *files*; these two lists bound *tools*. The
+subordinate has full autonomy with `allowed_tools` and must not use anything in
+`denied_tools`. Both lists are REQUIRED on a `kind=handoff` Rally Point post —
+either may be empty, but an empty `allowed_tools` is an explicit "no tools"
+boundary, not an omission. The orchestrator populates these when it assembles
+the brief; `rally_point/mece_gate.py::validate_handoff` enforces presence.
+
+- `allowed_tools` — explicit tool allowlist, e.g. `["Read", "Edit", "Bash:pytest"]`.
+- `denied_tools` — explicit denylist, e.g. `["Bash:git push", "Bash:rm -rf"]`.
+
 ### contract (concrete, not pseudocode)
 ```ts
 // Public exports + types EXACTLY as they should appear post-commit:
