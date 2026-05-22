@@ -376,6 +376,32 @@ class SoloModeContractTests(_ProbeTestBase):
 
 
 # ---------------------------------------------------------------------------
+# SEC-007 — session-id random component uses a CSPRNG
+# ---------------------------------------------------------------------------
+
+class SessionIdRandomnessTests(unittest.TestCase):
+
+    def test_short_random_is_hex_and_long_enough(self):
+        """_short_random returns a hex token of >= 16 chars (8 bytes)."""
+        tok = sp._short_random()
+        self.assertGreaterEqual(len(tok), 16)
+        self.assertTrue(all(c in "0123456789abcdef" for c in tok))
+
+    def test_short_random_distinct_across_calls(self):
+        """Many calls yield distinct tokens (no trivial collisions)."""
+        tokens = {sp._short_random() for _ in range(200)}
+        self.assertEqual(len(tokens), 200)
+
+    def test_short_random_uses_secrets_module(self):
+        """SEC-007 — the CSPRNG (secrets), not random.choices, is used."""
+        with patch("rally_point.session_probe.secrets.token_hex",
+                   return_value="abc123") as mock_tok:
+            tok = sp._short_random()
+        mock_tok.assert_called_once()
+        self.assertEqual(tok, "abc123")
+
+
+# ---------------------------------------------------------------------------
 # Test 7: CLI — returns clean envelope with no crash on nonexistent repo
 # ---------------------------------------------------------------------------
 

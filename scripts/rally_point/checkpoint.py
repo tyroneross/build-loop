@@ -39,6 +39,62 @@ _ARCH_DIGEST_REL = ("arch", "digest.json")
 _FILES_LANDED_TIMEOUT_S = 0.5
 _FILES_LANDED_CAP = 10
 
+# SEC-002 — change-record sanitization for LLM-context surfacing.
+# changes.jsonl is an unauthenticated, trusted-local-peers-only channel:
+# any process able to write the channel dir can append a record, and its
+# free-text payload values flow into orchestrator LLM context via
+# new_changes[]. A hostile/buggy writer could embed prompt-injection text.
+# We do NOT add signing (disproportionate for a local single-user dev
+# tool). Instead, at the surface boundary we expose only known structured
+# metadata and length-cap any free-text payload string before it can
+# reach a prompt.
+_SURFACE_TOP_KEYS = (
+    "ts", "kind", "tool", "model", "run_id", "app_slug", "revision",
+)
+# Payload keys whose values are structured metadata safe to surface as-is
+# (non-string values) or capped (string values).
+_SURFACE_PAYLOAD_KEYS = (
+    "phase", "step", "verdict", "session_id", "to_session_id",
+    "from_session_id", "lease_until", "scope", "mode", "run_id",
+    "acknowledges", "requested_action", "reason",
+)
+_FREETEXT_CAP = 240
+
+
+def _cap_text(value):
+    """Length-cap a free-text string for safe LLM-context surfacing."""
+    if not isinstance(value, str):
+        return value
+    if len(value) <= _FREETEXT_CAP:
+        return value
+    return value[:_FREETEXT_CAP] + "...[truncated]"
+
+
+def sanitize_change_for_surface(record: dict) -> dict:
+    """Return an LLM-safe projection of a changes.jsonl record (SEC-002).
+
+    Keeps only known structured top-level metadata and a whitelist of
+    structured payload keys. Every string value (top-level or payload) is
+    length-capped so an oversized free-text field cannot dominate or
+    inject into orchestrator context. Unknown payload keys are dropped
+    from the surfaced projection but remain intact on disk — the raw log
+    is immutable and untouched.
+    """
+    if not isinstance(record, dict):
+        return {"kind": "unknown", "_unsanitized": True}
+    out: dict = {}
+    for key in _SURFACE_TOP_KEYS:
+        if key in record:
+            out[key] = _cap_text(record[key])
+    raw_payload = record.get("payload")
+    if isinstance(raw_payload, dict):
+        safe_payload: dict = {}
+        for key in _SURFACE_PAYLOAD_KEYS:
+            if key in raw_payload:
+                safe_payload[key] = _cap_text(raw_payload[key])
+        out["payload"] = safe_payload
+    return out
+
 
 def _peer_files_already_landed(cwd: str | None, files: list) -> bool:
     """Return True iff ``git diff origin/main -- <files>`` is empty in cwd.
@@ -160,12 +216,16 @@ def checkpoint_read(
             env["revision"] = current_rev
             return env
 
-        new_changes, new_offset = _ch.read_changes_since(
+        raw_changes, new_offset = _ch.read_changes_since(
             d, cursor.get("changes_offset", 0)
         )
         peers = _pr.read_active_presence(d, exclude_session=session_id)
         arch_digest = _read_arch_digest(d)
-        reactions = _derive_reactions(new_changes, peers, my_files)
+        # Reactions are derived from the RAW records (kind is structured,
+        # not free text) before sanitization. The envelope itself carries
+        # only the sanitized projection — SEC-002.
+        reactions = _derive_reactions(raw_changes, peers, my_files)
+        new_changes = [sanitize_change_for_surface(c) for c in raw_changes]
 
         # The only write a reader performs: advance its OWN cursor.
         _pr.set_cursor(

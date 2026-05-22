@@ -1,7 +1,7 @@
 ---
-description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, announce, init, docs, help."
+description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, announce, init, lead, escalate, docs, help."
 allowed-tools: Bash, Read
-argument-hint: "[status|watch|announce|init|docs|help] [args]"
+argument-hint: "[status|watch|announce|init|lead|escalate|docs|help] [args]"
 model: inherit
 ---
 
@@ -131,6 +131,52 @@ Example output:
   "channel_revision": 65,
   "session_id": "user-rally-1779320000"
 }
+```
+
+### `lead <claim|renew|transfer|relinquish|status>`
+
+Operate the leadership lease (G1). A multi-agent run has exactly ONE lead
+with a liveness lease; "lead" used to be implicit in whoever opened the
+coord file. The orchestrator auto-claims at Phase 1, renews at each
+phase-start, and relinquishes at Phase D closeout — use this command for
+manual lead inspection, an out-of-band takeover, or dogfooding.
+
+All `lead` ops shell out to the host-neutral CLI:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py lead <op> \
+  --workdir "$PWD" \
+  --session-id "user-rally-$(date +%s)" \
+  --tool "claude_code" \
+  --run-id "<run-id>"
+```
+
+- `claim` — become lead if the channel has no lead or the lease expired.
+  Returns `{"claimed": bool, "lead": {...}}`. A second claim while a valid
+  lease is held returns `claimed: false` with the incumbent.
+- `renew` — extend the current lease (lead only; `--renew-every-minutes`,
+  default 15). `renew_every_minutes` is the lease clock — distinct from the
+  `watch` poll cadence.
+- `transfer` — hand the lead to another session (`--to-session-id`,
+  `--to-tool`, `--to-model`); rejected from a non-lead.
+- `relinquish` — give up the lead so the next `claim` succeeds immediately.
+- `status` — read the current lead + `lease_valid`.
+
+Example: `/agent-rally-point lead status`
+
+### `escalate <reason>`
+
+Post a `kind=escalation` change record (G3) — "needs lead or user
+attention now", distinct from routine `phase`/`feedback`. An open
+escalation makes `status` report `blocked` until acknowledged.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py escalate \
+  --workdir "$PWD" \
+  --session-id "user-rally-$(date +%s)" \
+  --tool "claude_code" \
+  --run-id "<run-id>" \
+  --reason "<why this needs attention>"
 ```
 
 ### `docs`

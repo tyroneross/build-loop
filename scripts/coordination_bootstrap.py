@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Bootstrap a new per-run coordination file from the canonical template.
+#   application: coordination
+#   status: active
 """Bootstrap a new per-run coordination file from the canonical template.
 
 Reads ``references/coordination-file-template.md``, substitutes the

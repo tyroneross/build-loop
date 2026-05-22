@@ -44,6 +44,50 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(status["status"], "clear")
         self.assertEqual(status["required_action"], "none")
 
+    def test_open_escalation_drives_blocked_status(self):
+        """G3 — an escalation-kind change record makes status `blocked` and
+        populates escalation_count + latest_escalation."""
+        from rally_point.post import post
+
+        slug = channel_paths.app_slug(self.workdir)
+        channel_dir = channel_paths.ensure_channel_dir(slug)
+        post(
+            channel_dir=channel_dir,
+            kind="escalation",
+            tool="codex",
+            model="gpt-5",
+            run_id="run-1",
+            app_slug=slug,
+            payload={"session_id": "codex-r1", "reason": "schema decision"},
+        )
+        status = self._run()
+        self.assertEqual(status["status"], "blocked")
+        self.assertEqual(status["required_action"], "resolve_open_escalations")
+        self.assertEqual(status["escalation_count"], 1)
+        self.assertEqual(
+            status["latest_escalation"]["payload"]["reason"], "schema decision"
+        )
+
+    def test_acknowledged_escalation_does_not_block(self):
+        """G3 — an escalation carrying `acknowledges` is not counted open."""
+        from rally_point.post import post
+
+        slug = channel_paths.app_slug(self.workdir)
+        channel_dir = channel_paths.ensure_channel_dir(slug)
+        rev1 = post(
+            channel_dir=channel_dir, kind="escalation", tool="codex",
+            model="gpt-5", run_id="run-1", app_slug=slug,
+            payload={"reason": "x"},
+        )
+        post(
+            channel_dir=channel_dir, kind="escalation", tool="claude_code",
+            model="m", run_id="run-1", app_slug=slug,
+            payload={"reason": "resolved", "acknowledges": rev1},
+        )
+        status = self._run()
+        self.assertEqual(status["escalation_count"], 0)
+        self.assertEqual(status["status"], "clear")
+
     def test_peer_files_in_flight_vs_owned_populates_overlaps_field(self):
         """Peer's files_in_flight vs our owned_file populates legacy overlaps field.
 
@@ -130,44 +174,57 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(Path(status["coordination_file"]).resolve(), run.resolve())
         self.assertEqual(status["unresolved"], [])
 
-    def test_default_coordination_file_uses_active_pointer(self):
+    def test_active_json_pointer_is_ignored_audit_run_chosen_by_scan(self):
+        """SEC-001 — a writable ``active.json`` pointer must NOT influence
+        the default coordination-file pick.
+
+        The pointer-dereference path was removed: any process able to write
+        ``coordination/`` could aim the pointer at an arbitrary ``.md``.
+        Selection is now a pure directory scan (prefer ``audit-execution-*``,
+        then oldest mtime). Here the pointer names ``zz-newer-stub.md`` but
+        the scan must still pick the ``audit-execution-*`` run.
+        """
         coord_dir = self.workdir / ".build-loop" / "coordination"
         coord_dir.mkdir(parents=True)
-        old = coord_dir / "audit-execution-old.md"
-        active = coord_dir / "active-run.md"
-        newer = coord_dir / "zz-newer-stub.md"
-        old.write_text("", encoding="utf-8")
-        active.write_text("", encoding="utf-8")
-        newer.write_text("", encoding="utf-8")
-        (coord_dir / "active.json").write_text(
-            json.dumps({"coord_file": ".build-loop/coordination/active-run.md"}),
-            encoding="utf-8",
-        )
-        os.utime(old, (1_700_000_000, 1_700_000_000))
-        os.utime(active, (1_700_000_100, 1_700_000_100))
-        os.utime(newer, (1_700_000_200, 1_700_000_200))
-
-        status = self._run()
-
-        self.assertEqual(Path(status["coordination_file"]).resolve(), active.resolve())
-
-    def test_default_coordination_file_stale_active_pointer_falls_back(self):
-        coord_dir = self.workdir / ".build-loop" / "coordination"
-        coord_dir.mkdir(parents=True)
-        run = coord_dir / "audit-execution-current.md"
+        run = coord_dir / "audit-execution-old.md"
         newer = coord_dir / "zz-newer-stub.md"
         run.write_text("", encoding="utf-8")
         newer.write_text("", encoding="utf-8")
         (coord_dir / "active.json").write_text(
-            json.dumps({"coord_file": ".build-loop/coordination/deleted.md"}),
+            json.dumps({"coord_file": ".build-loop/coordination/zz-newer-stub.md"}),
             encoding="utf-8",
         )
         os.utime(run, (1_700_000_000, 1_700_000_000))
-        os.utime(newer, (1_700_000_100, 1_700_000_100))
+        os.utime(newer, (1_700_000_200, 1_700_000_200))
 
         status = self._run()
 
         self.assertEqual(Path(status["coordination_file"]).resolve(), run.resolve())
+
+    def test_active_json_pointer_cannot_redirect_outside_coordination_dir(self):
+        """SEC-001 — a malicious ``active.json`` pointing at a file OUTSIDE
+        the coordination dir (symlink-escape style) must be ignored.
+
+        The chosen file is always a real entry enumerated from
+        ``coordination/*.md`` — never a dereferenced pointer value.
+        """
+        coord_dir = self.workdir / ".build-loop" / "coordination"
+        coord_dir.mkdir(parents=True)
+        legit = coord_dir / "audit-execution-current.md"
+        legit.write_text("", encoding="utf-8")
+        # Attacker-controlled file outside the coordination directory.
+        outside = self.workdir / "secrets.md"
+        outside.write_text("attacker-controlled content", encoding="utf-8")
+        (coord_dir / "active.json").write_text(
+            json.dumps({"coord_file": str(outside)}),
+            encoding="utf-8",
+        )
+
+        status = self._run()
+
+        self.assertEqual(
+            Path(status["coordination_file"]).resolve(), legit.resolve()
+        )
 
     def test_watch_emits_one_state(self):
         cmd = [

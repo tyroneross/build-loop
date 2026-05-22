@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# capability:
+#   purpose: Cheap sensor poll of multi-session coordination state (clear/warn/blocked).
+#   application: coordination
+#   status: active
 """Summarize Build Loop coordination state without spending LLM tokens.
 
 This is the cheap sensor layer for multi-agent coordination. It reads App
@@ -22,6 +26,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import changes, channel_paths, inbox, presence, revision  # noqa: E402
+from rally_point.checkpoint import sanitize_change_for_surface  # noqa: E402
 
 VERDICT_RE = re.compile(
     r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"
@@ -113,10 +118,19 @@ def _read_rejection_count(slug: str) -> int:
 
 
 def _default_coordination_file(workdir: Path) -> Path | None:
+    """Pick the active coordination file by direct directory scan.
+
+    SEC-001: this function never dereferences a path value read from a
+    writable JSON pointer (``active.json``). A pointer file is attacker-
+    controllable — any process that can write ``coordination/`` could aim
+    it at an arbitrary ``.md`` (and ``resolve()`` ran before the
+    containment check, so a symlink could escape the directory). Instead
+    we enumerate ``coordination/*.md`` directly: ``glob`` only yields
+    real entries inside ``root``, and each candidate is confirmed to be a
+    regular file. The selection heuristic (prefer ``audit-execution-*``,
+    then oldest mtime) is deterministic and reads no external pointer.
+    """
     root = workdir / ".build-loop" / "coordination"
-    pointed = _active_coordination_pointer(root, workdir)
-    if pointed is not None:
-        return pointed
     try:
         candidates = [p for p in root.glob("*.md") if p.is_file()]
     except OSError:
@@ -129,55 +143,6 @@ def _default_coordination_file(workdir: Path) -> Path | None:
         return min(pool, key=lambda p: p.stat().st_mtime)
     except OSError:
         return sorted(pool)[0]
-
-
-def _active_coordination_pointer(root: Path, workdir: Path) -> Path | None:
-    """Return an explicit active coordination file if the repo declares one.
-
-    The fallback must not guess "newest markdown": fresh handoff stubs are often
-    newer than the run ledger they point at. A tiny repo-local pointer gives
-    orchestrators a deterministic way to name the active run while preserving a
-    safe no-pointer fallback below.
-    """
-    for name in ("active.json", "active", "current"):
-        pointer = root / name
-        try:
-            raw = pointer.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if not raw:
-            continue
-        value = raw
-        if name.endswith(".json"):
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict):
-                for key in ("coordination_file", "coord_file", "path", "active"):
-                    candidate = data.get(key)
-                    if isinstance(candidate, str) and candidate.strip():
-                        value = candidate.strip()
-                        break
-                else:
-                    continue
-            elif isinstance(data, str):
-                value = data.strip()
-            else:
-                continue
-        path = Path(value).expanduser()
-        if not path.is_absolute():
-            path = workdir / path
-        try:
-            path = path.resolve(strict=False)
-            root_resolved = root.resolve(strict=False)
-        except OSError:
-            continue
-        if path.suffix == ".md" and path.is_file() and (
-            path == root_resolved or root_resolved in path.parents
-        ):
-            return path
-    return None
 
 
 def _parse_coordination_verdicts(path: Path | None) -> list[dict[str, str]]:
@@ -335,8 +300,14 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
 
     recent_changes = _read_recent_changes(channel_dir, args.max_changes)
     current_revision = revision.read_revision(channel_dir)
+    # SEC-002 — ``new_changes`` is surfaced into orchestrator LLM context.
+    # changes.jsonl is unauthenticated (trusted-local-peers-only); sanitize
+    # each record to known structured metadata + length-capped free text
+    # before it reaches a prompt. Escalation derivation below still reads
+    # the RAW ``recent_changes`` (it only inspects structured fields).
     new_changes = [
-        c for c in recent_changes
+        sanitize_change_for_surface(c)
+        for c in recent_changes
         if args.since_revision is None
         or int(c.get("revision", 0)) > args.since_revision
     ]
@@ -344,9 +315,42 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     inbox_counts = _read_inbox_unread_counts(slug, requesting_tool)
     rejection_count = _read_rejection_count(slug)
 
-    if unresolved:
+    # G3 — escalation salience. An `escalation`-kind change record marks
+    # "needs lead or user attention now", distinct from routine phase/
+    # feedback. Surface the open count + the most-recent escalation, and
+    # treat an open escalation as `blocked` so the cheap sensor flags it
+    # without the caller reading the full changes.jsonl. An escalation is
+    # acknowledged once a later record carries `payload.acknowledges`.
+    escalation_records = [
+        c for c in recent_changes if c.get("kind") == "escalation"
+    ]
+    acknowledged_revs: set[int] = set()
+    for rec in escalation_records:
+        payload = rec.get("payload") or {}
+        ack = payload.get("acknowledges") if isinstance(payload, dict) else None
+        if isinstance(ack, int):
+            acknowledged_revs.add(ack)
+    open_escalations = [
+        rec for rec in escalation_records
+        if int(rec.get("revision", 0)) not in acknowledged_revs
+        and not (rec.get("payload") or {}).get("acknowledges")
+    ]
+    escalation_count = len(open_escalations)
+    latest_escalation = open_escalations[-1] if open_escalations else None
+    # BLOCKED-verdict count: the most-urgent slice of `unresolved`.
+    blocked_verdict_count = sum(
+        1 for v in unresolved
+        if "BLOCKED" in (v.get("verdict") or v.get("label", "")).upper()
+    )
+
+    if unresolved or escalation_count:
         status = "blocked"
-        required_action = "resolve_unresolved_coordination_verdicts"
+        if escalation_count and not unresolved:
+            required_action = "resolve_open_escalations"
+        elif escalation_count:
+            required_action = "resolve_escalations_and_coordination_verdicts"
+        else:
+            required_action = "resolve_unresolved_coordination_verdicts"
     elif peer_overlap_files or dirty_outside_owned:
         # warn only when a peer's ``owns`` intersects our files_in_flight,
         # OR when dirty files exist outside our owned set.  Raw peer count
@@ -383,6 +387,15 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "inbox_unread_count": inbox_counts["total"],
         "inbox_unread_counts": inbox_counts,
         "rejection_count": rejection_count,
+        "escalation_count": escalation_count,
+        "blocked_verdict_count": blocked_verdict_count,
+        "latest_escalation": (
+            sanitize_change_for_surface(latest_escalation)
+            if latest_escalation else None
+        ),
+        "open_escalations": [
+            sanitize_change_for_surface(rec) for rec in open_escalations
+        ],
         "coordination_file": str(coordination_file) if coordination_file else None,
         "latest_verdicts": verdict_entries,
         "unresolved": unresolved,
@@ -425,7 +438,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(status, indent=2, sort_keys=True))
     else:
-        print(f"{status['status']}: {status['required_action']}")
+        line = f"{status['status']}: {status['required_action']}"
+        # G3 — escalation/BLOCKED salience in the plain-text line.
+        salience = []
+        if status.get("escalation_count"):
+            salience.append(f"{status['escalation_count']} open escalation(s)")
+        if status.get("blocked_verdict_count"):
+            salience.append(f"{status['blocked_verdict_count']} BLOCKED verdict(s)")
+        if salience:
+            line += "  [!] " + ", ".join(salience)
+        print(line)
     return 0
 
 
