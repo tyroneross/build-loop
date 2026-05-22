@@ -47,10 +47,9 @@ SELF = "scripts/check_private_slugs.py"
 
 # Files where a slug is an intentional, load-bearing historical record.
 # These are exempt because genericizing them would falsify the record.
-# Keep this list short and justify every entry.
-EXEMPT_PATHS: set[str] = {
-    "docs/SECURITY_FOLLOWUP_2026-05-05.md",  # quotes a past fixture-scrub fix verbatim
-}
+# Keep this list short and justify every entry. Currently empty: every
+# tracked file is fully scrubbed and the guard enforces zero exceptions.
+EXEMPT_PATHS: set[str] = set()
 
 _PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])(" + "|".join(PRIVATE_SLUGS) + r")(?![A-Za-z0-9])",
