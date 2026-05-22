@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Reciprocal Rank Fusion for hybrid retrieval.
 
-Phase A chunk 3. Direct lift of Atomize's `rrfFuse`
-(`atomize-ai/lib/search/retrieval/pipeline-rag.ts:52-80`).
+Phase A chunk 3. Direct lift of Example App's `rrfFuse`
+(`example-app/lib/search/retrieval/pipeline-rag.ts:52-80`).
 
 Reference: Cormack, Clarke, Buettcher 2009 — for an item appearing in
 legs L_i at rank r_i (1-indexed):
@@ -38,7 +38,7 @@ DEFAULT_K = 60
 """Cormack/Clarke/Buettcher 2009 canonical smoothing constant. Higher
 values flatten the per-rank contribution curve (good when leg orderings
 disagree often); lower values amplify rank-1 wins. 60 is the published
-default and is what Atomize ships."""
+default and is what Example App ships."""
 
 
 def rrf_fuse(
@@ -67,7 +67,7 @@ def rrf_fuse(
       - Empty `legs` → returns `[]`.
       - Items with falsy/missing id_key are skipped (logged silently).
       - Duplicate items within the same leg are accepted; each rank
-        contributes independently (matches Atomize's loop semantics).
+        contributes independently (matches Example App's loop semantics).
         Callers that don't want this should dedupe before passing in.
     """
     if not legs:

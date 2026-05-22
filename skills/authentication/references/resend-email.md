@@ -44,7 +44,7 @@ export async function sendTransactional({
 
 ## Wiring Better Auth's `sendVerificationEmail` (or `sendMagicLink`)
 
-Pattern from atomize-ai. The handler is small because Better Auth gives you the URL and email; Resend just delivers:
+Pattern from example-app. The handler is small because Better Auth gives you the URL and email; Resend just delivers:
 
 ```ts
 // lib/email/send-magic-link.ts
@@ -89,7 +89,7 @@ For email-verification on email/password sign-up, swap `magicLink` for `emailVer
 
 **Critical:** without signature verification, an attacker can POST fake `email.bounced` events at your webhook to mark legit emails as bounced (potentially blocking real users from receiving mail, depending on your bounce-handling policy).
 
-Pattern from `Travel Planner/app/api/webhooks/resend/route.ts`:
+Pattern from `Example Web App/app/api/webhooks/resend/route.ts`:
 
 ```ts
 // app/api/webhooks/resend/route.ts
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
   const webhookSecret = process.env.RESEND_WEBHOOK_SECRET
 
   if (!webhookSecret) {
-    // Decision call: warn vs hard-fail. Travel Planner warns. For a stricter
+    // Decision call: warn vs hard-fail. Example Web App warns. For a stricter
     // posture, return 401 here when the secret isn't configured in prod.
     console.warn('RESEND_WEBHOOK_SECRET not configured — verification disabled')
   }

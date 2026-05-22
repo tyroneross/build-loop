@@ -15,7 +15,12 @@
 # this body is the Rally Point segment only.
 
 # --- BEGIN rally-point post-commit ---
-RALLY_POINT_CAPTURE="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.rally-point-capture.py"
+RALLY_POINT_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
+  echo "rally-point post-commit: cannot resolve repo toplevel" >&2
+  exit 2
+fi
+RALLY_POINT_CAPTURE="$RALLY_POINT_TOPLEVEL/.git/hooks/.rally-point-capture.py"
 if [ -f "$RALLY_POINT_CAPTURE" ]; then
   (
     python3 "$RALLY_POINT_CAPTURE" >/dev/null 2>&1

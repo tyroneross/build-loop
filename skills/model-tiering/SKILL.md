@@ -80,7 +80,7 @@ Before consulting the role table, classify the task by reasoning shape. The MECE
 | Audit / learnings / Phase 6 promotion-decision | Synthesis | Opus | medium | Cross-run synthesis |
 | Recurring-pattern detection across runs[] | Recognition | Haiku | low | Pattern-match across structured logs |
 
-## Round 2 evidence (2026-05-07, atomize-ai news-podcast iteration 2)
+## Round 2 evidence (2026-05-07, example-app news-podcast iteration 2)
 
 n=2 dispatch-pattern A/B comparison on a 6-commit feature reversed the round-1 belief that Skill-path (Sonnet fan-out) is materially cheaper across the board:
 

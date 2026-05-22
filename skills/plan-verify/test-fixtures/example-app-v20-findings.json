@@ -1,5 +1,5 @@
 {
-  "fixture": "atomize-ai-v20.md",
+  "fixture": "example-app-v20.md",
   "expected_exit_code": 1,
   "description": "Synthetic fixture with 5 known plan errors. Run with --repo pointing at build-loop repo so grep can disprove the delete claims.",
   "expectations_by_rule_id": {

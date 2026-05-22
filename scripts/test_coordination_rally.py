@@ -22,7 +22,7 @@ class CoordinationRallyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="coord-rally-"))
         self.apps = self.tmp / "apps"
-        self.workdir = self.tmp / "SpeakSavvy-iOS"
+        self.workdir = self.tmp / "Example-iOS-App"
         self.workdir.mkdir()
         self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps)
@@ -44,15 +44,15 @@ class CoordinationRallyTests(unittest.TestCase):
             model="gpt-5",
             to="claude_code",
             owns=[],
-            does_not_own=["SpeakSavvy/Views/HomeView.swift"],
+            does_not_own=["ExampleApp/Views/HomeView.swift"],
         )
 
         self.assertEqual(result["action"], "rally-point-posted")
-        self.assertEqual(result["app_slug"], "speaksavvy-ios")
+        self.assertEqual(result["app_slug"], "example-ios-app")
         self.assertTrue(result["presence_written"])
         self.assertEqual(result["channel_revision"], 1)
 
-        channel = channel_paths.app_channel_dir("speaksavvy-ios")
+        channel = channel_paths.app_channel_dir("example-ios-app")
         peers = presence.read_active_presence(channel, exclude_session="reader")
         self.assertEqual(len(peers), 1)
         self.assertEqual(peers[0]["session_id"], "codex-rally-test")
@@ -66,7 +66,7 @@ class CoordinationRallyTests(unittest.TestCase):
         self.assertEqual(payload["to"], "claude_code")
         self.assertEqual(
             payload["ownership"]["does_not_own"],
-            ["SpeakSavvy/Views/HomeView.swift"],
+            ["ExampleApp/Views/HomeView.swift"],
         )
 
     def test_cli_defaults_session_id_and_splits_csv(self):

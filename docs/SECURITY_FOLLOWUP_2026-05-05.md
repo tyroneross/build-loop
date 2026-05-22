@@ -8,7 +8,7 @@ Findings from the post-Phase-C security review. HIGH-severity items that touch p
 |---|---|---|---|
 | SEC-002 | HIGH | `recall.py` `_add_meta_filter` and `_add_meta_in_filter` now enforce a frozenset allowlist on `field` before f-string interpolation. Future callers passing dynamic input will raise `ValueError` instead of silently allowing SQL injection. | `de17a72` |
 | SEC-004 | MEDIUM (raised — could enable leaks) | `_paths.decisions_dir_for_project` validates project tag against `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$` and asserts the resolved path stays under `decisions_root()`. Path traversal via crafted project tag now raises `ValueError`. | `de17a72` |
-| SEC-009 | MEDIUM (data leak) | Removed `~/.claude/plans/are-the-database-amnd-kind-cook.md` reference from `init_agent_memory_schema.sql`. Replaced hardcoded `/dev/git-folder/build-loop-memory` assertion in `test_project_resolver.py` with a check against `_paths.DEFAULT_AGENT_MEMORY_ROOT`. Replaced `atomize-ai` and `speaksavvy` test fixtures with generic `example-app`/`acme-app`/`another-app` placeholders. | `de17a72`, prior commits |
+| SEC-009 | MEDIUM (data leak) | Removed `~/.claude/plans/are-the-database-amnd-kind-cook.md` reference from `init_agent_memory_schema.sql`. Replaced hardcoded `/dev/git-folder/build-loop-memory` assertion in `test_project_resolver.py` with a check against `_paths.DEFAULT_AGENT_MEMORY_ROOT`. Replaced private app test fixtures with generic `example-app`/`acme-app`/`another-app` placeholders. | `de17a72`, prior commits |
 | (test isolation) | — | All tests now isolate `AGENT_MEMORY_ROOT` via the new `MemIsolationMixin` in `_test_helpers.py`. Tests no longer pollute the user's real memory store. | `2c5ddbf` |
 
 ## Remaining items

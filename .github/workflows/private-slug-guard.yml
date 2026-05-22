@@ -1,0 +1,61 @@
+name: Private Slug Guard
+
+# Server-side enforcement of the private-app-slug data-separation guard.
+# The local hooks/pre-commit running the same script is bypassable
+# (--no-verify, fresh clones, no server run); this job is not.
+#
+# The real denylist cannot be tracked in this open-source repo:
+#   - tracking the real private slugs would re-leak them;
+#   - tracking placeholder tokens either scans for nothing (theater) or
+#     collides with the repo's own scrub placeholders (false failure).
+# The only sound source is an encrypted GitHub Actions secret.
+#
+# Enforcement is therefore conditional on the `PRIVATE_SLUGS` repository
+# secret. When it is set, the guard runs for real and fails the job on a
+# hit. When it is NOT set (forks, contributor PRs, or before a maintainer
+# configures it), the job prints a notice and passes — a missing secret
+# must never block a contributor. Maintainers still get local
+# enforcement via the gitignored `.private-slugs` pre-commit hook.
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  private-slug-guard:
+    runs-on: ubuntu-latest
+    # Job-level env so the secret is visible to each step's `if:`
+    # condition. A step-level `env:` is NOT in scope for that same
+    # step's `if:` (the condition is evaluated before the step env is
+    # applied), so the guard must read it from the job context.
+    env:
+      PRIVATE_SLUGS: ${{ secrets.PRIVATE_SLUGS }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Notice — PRIVATE_SLUGS secret not configured
+        if: ${{ env.PRIVATE_SLUGS == '' }}
+        run: |
+          echo "::notice title=Private Slug Guard skipped::PRIVATE_SLUGS secret not configured — slug enforcement skipped (local pre-commit hook still enforces for maintainers)."
+
+      - name: Provision the runtime denylist from the secret
+        if: ${{ env.PRIVATE_SLUGS != '' }}
+        # .private-slugs is gitignored. Write the secret (newline-
+        # separated slugs) to it via a quoted env-var expansion so no
+        # slug content is interpreted by the shell. printf %s avoids any
+        # escape-sequence processing of the secret body.
+        run: |
+          printf '%s\n' "$PRIVATE_SLUGS" > .private-slugs
+
+      - name: Scan tracked files for private app slugs
+        if: ${{ env.PRIVATE_SLUGS != '' }}
+        # The guard FAILS CLOSED: if .private-slugs is present but empty
+        # the script exits non-zero. A real hit also exits non-zero and
+        # fails the job — that is the enforcement.
+        run: python3 scripts/check_private_slugs.py --all

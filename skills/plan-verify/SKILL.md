@@ -91,8 +91,8 @@ Each finding conforms to:
 
 `skills/plan-verify/test-fixtures/`:
 
-- `atomize-ai-v20.md` — synthetic, 5 known errors. Expected exit 1.
-- `atomize-ai-v22.md` — copy of current real plan v2.2. Expected exit 0.
+- `example-app-v20.md` — synthetic, 5 known errors. Expected exit 1.
+- `example-app-v22.md` — synthetic full-scale plan, clean by the new standard. Expected exit 0.
 - `unrelated-good-plan.md` — false-positive control. Expected exit 0.
 - `*-findings.json` — per-fixture expectations.
 

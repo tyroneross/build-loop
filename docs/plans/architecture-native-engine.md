@@ -261,7 +261,7 @@ Each commit ships with green tests for the module being added; later commits don
 ## Risk + open questions
 
 1. **TypeScript AST scanner.** NavGator's `ast-scanner.ts` may need real AST parsing for accuracy on complex TS. **Resolution path**: start with regex (matches what NavGator's other connection scanners do); upgrade to `tree-sitter-typescript` Python bindings only if parity tests fail.
-2. **Performance on large monorepos.** NavGator scans 10K-file repos in ~3s. Python may be 2-3× slower. **Resolution**: incremental-by-default; only full-scan on demand; profile against a real monorepo (the user's atomize-ai repo would be a good benchmark).
+2. **Performance on large monorepos.** NavGator scans 10K-file repos in ~3s. Python may be 2-3× slower. **Resolution**: incremental-by-default; only full-scan on demand; profile against a real monorepo (the user's example-app repo would be a good benchmark).
 3. **Hook noise.** PreToolUse Edit/Write hooks fire frequently. **Resolution**: extension allowlist + single-flight + 3s timeout + background spawn. Keep an off-switch (`BUILD_LOOP_ARCH_HOOK=0`).
 4. **Schema drift between native and NavGator output.** Could surface only after weeks of use. **Resolution**: run `mode=auto` and `mode=navgator` in parallel for the first project that adopts it; diff regularly.
 5. **NavGator lesson schema evolution.** If NavGator introduces a v2 schema while build-loop is on v1, the write-through breaks. **Resolution**: version-gate the write-through; emit a warning if NavGator JSON has a schema version we don't know.

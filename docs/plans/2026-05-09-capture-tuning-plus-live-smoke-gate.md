@@ -7,7 +7,7 @@
 
 ## Headline
 
-Two unrelated but co-shipping plugin changes: (C1) silence the 80-orphan auto-capture noise without breaking the dual stdin/stdout contract locked by decision 0091, and (C2) close the pytest-with-mocks blind spot that let local-smartz ship 27 commits' worth of green tests with two real user-facing bugs by adding a live HTTP/SSE smoke gate to Phase 4 Validate when the project actually runs a server.
+Two unrelated but co-shipping plugin changes: (C1) silence the 80-orphan auto-capture noise without breaking the dual stdin/stdout contract locked by decision 0091, and (C2) close the pytest-with-mocks blind spot that let example-app ship 27 commits' worth of green tests with two real user-facing bugs by adding a live HTTP/SSE smoke gate to Phase 4 Validate when the project actually runs a server.
 
 ## Intent
 

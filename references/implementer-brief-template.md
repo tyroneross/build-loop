@@ -1,6 +1,6 @@
 # Implementer Brief Template — Reference
 
-Based on round-3 (atomize-ai 2026-05-07) reflection: implementer brief quality directly affects implementer output quality, especially in Mode A (Sonnet fan-out) where each implementer cannot see siblings' files. Round-3 briefs were 30-40% longer than round-2's because of specific patterns that closed common gaps. This template bakes those patterns into a reusable structure so every future build-loop run starts at round-3 quality, not orchestrator-memory quality.
+Based on round-3 (example-app 2026-05-07) reflection: implementer brief quality directly affects implementer output quality, especially in Mode A (Sonnet fan-out) where each implementer cannot see siblings' files. Round-3 briefs were 30-40% longer than round-2's because of specific patterns that closed common gaps. This template bakes those patterns into a reusable structure so every future build-loop run starts at round-3 quality, not orchestrator-memory quality.
 
 ## When to use
 

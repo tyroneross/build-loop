@@ -48,7 +48,7 @@ top 3 pages from 1760 chunks  ·  graph: 198 nodes / 1114 edges
 
 3. [ppr 0.005 | cos 0.667 | lex 2.260] [seedling] concept-vector-vs-keyword-search § Implementation notes  (graph)
    wiki/concepts/concept-vector-vs-keyword-search.md
-   Atomize-news picks hybrid (vector + BM25 via pgvector + PostgreSQL FTS + RRF) because news articles combine topical prose (semantic query) with named entities (exact-match query). An article about "the Fed raising rates"...
+   Example-app news picks hybrid (vector + BM25 via pgvector + PostgreSQL FTS + RRF) because news articles combine topical prose (semantic query) with named entities (exact-match query). An article about "the Fed raising rates"...
 """
 
 SAMPLE_OUTPUT_ROOT_PAGE = """\

@@ -65,7 +65,7 @@ When a PRD is present:
 4. **Write to `.build-loop/state.json.prd`:**
    ```json
    {
-     "path": "docs/prd-speaksavvy.md",
+     "path": "docs/prd-example-app.md",
      "status": "living",
      "revision": "0.1",
      "last_updated": "2026-05-01",

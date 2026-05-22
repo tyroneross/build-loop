@@ -66,7 +66,7 @@ When a new bug class ships through, add a test that would have caught it. Patter
 3. Add the script to the runner in §"How to run"
 4. Add a `(skill, phrase)` to `EXPECTED_TRIGGERS` in `test_trigger_phrases.py` if the new test covers a class that should be discoverable by user phrasing
 
-Don't migrate to pytest, vitest, or Playwright. The stdlib pattern keeps the harness portable, zero-install, and CI-friendly. (See the testing survey at the head of `KNOWN-ISSUES.md` 2026-05-02 entry — IBR's vitest, atomize-ai's Jest+Playwright, prompt-test-lab's Playwright stratification all have their place; for plugin metadata validation specifically, stdlib Python wins.)
+Don't migrate to pytest, vitest, or Playwright. The stdlib pattern keeps the harness portable, zero-install, and CI-friendly. (See the testing survey at the head of `KNOWN-ISSUES.md` 2026-05-02 entry — IBR's vitest, example-app's Jest+Playwright, prompt-test-lab's Playwright stratification all have their place; for plugin metadata validation specifically, stdlib Python wins.)
 
 ## What this skill does NOT do
 

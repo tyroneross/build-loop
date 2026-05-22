@@ -1,0 +1,38 @@
+# Private app slug denylist — FORMAT TEMPLATE (not a working denylist).
+#
+# This tracked file documents the FORMAT of the denylist only. It must
+# never contain a real private slug, and it must never contain a token
+# that legitimately appears elsewhere in this open-source repo — the
+# guard scans the whole tree, so a colliding token here causes a false
+# CI failure.
+#
+# Where the REAL denylist lives:
+#   - Local pre-commit hook (maintainers): the gitignored `.private-slugs`
+#     file at the repo root. Copy this file to `.private-slugs` and
+#     replace the sentinels below with your real private slugs.
+#   - CI enforcement: the `PRIVATE_SLUGS` GitHub Actions repository
+#     secret (newline-separated). The private-slug-guard workflow writes
+#     the secret to `.private-slugs` at runtime, then scans. If the
+#     secret is not configured, CI prints a skip notice and passes —
+#     forks and contributor PRs are never blocked by a missing secret.
+#
+# Format:
+#   - one slug per line
+#   - blank lines and `#` comments are ignored
+#   - each line is a LITERAL slug, matched case-insensitively as a
+#     word-ish token (so a slug will not match a longer surrounding
+#     word). No regex knowledge needed — write the slug exactly as it
+#     appears. Regex metacharacters are escaped automatically, so a
+#     literal dot in `example.com` matches only a real dot, never a
+#     hyphen (it will not match `example-com`).
+#
+# The guard FAILS CLOSED: if `.private-slugs` is present but empty when
+# run in CI / `--all` mode, it exits non-zero rather than passing.
+#
+# The entries below are SENTINELS — obvious non-tokens that cannot occur
+# in real repo content. Replace every line with your real private slugs
+# in your local `.private-slugs` (and in the `PRIVATE_SLUGS` secret).
+your-private-app-name
+your-private-app-ios
+your-private-app-web
+your-company-domain.example

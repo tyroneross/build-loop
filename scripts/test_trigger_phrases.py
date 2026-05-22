@@ -17,7 +17,7 @@ Adding new pairs:
   phrases short (3-6 words) and lowercase. The check is case-insensitive
   substring match, so 'magic links' matches 'wire up magic links'.
 
-Pattern borrowed from atomize-ai's trigger spec testing approach but
+Pattern borrowed from example-app's trigger spec testing approach but
 simplified to stdlib-only golden-list comparison.
 """
 from __future__ import annotations

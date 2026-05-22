@@ -405,7 +405,7 @@ If a target name appears in the first list but not the second, the test bundle e
 
 ## SourceKit ghost diagnostics on Xcode 26.x
 
-Discovered: SpeakSavvy-iOS Run A + Run A.1 (2026-05-20). Generalized so every Apple-platform build-loop run starts inoculated.
+Discovered: Example-iOS-App Run A + Run A.1 (2026-05-20). Generalized so every Apple-platform build-loop run starts inoculated.
 
 ### Pattern
 

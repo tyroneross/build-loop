@@ -44,6 +44,9 @@ def app_repo(tmp_path: Path, monkeypatch):
     _git(["init", "-q"], repo)
     _git(["config", "user.email", "t@e.com"], repo)
     _git(["config", "user.name", "t"], repo)
+    # The pre-commit guard fails closed without a denylist; provide one
+    # so the install-and-commit flow under test is not blocked by it.
+    (repo / ".private-slugs").write_text("nonexistent-private-slug\n")
     assert igh.install(repo) is True
     return repo
 
