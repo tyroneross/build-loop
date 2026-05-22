@@ -348,9 +348,42 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     inbox_counts = _read_inbox_unread_counts(slug, requesting_tool)
     rejection_count = _read_rejection_count(slug)
 
-    if unresolved:
+    # G3 — escalation salience. An `escalation`-kind change record marks
+    # "needs lead or user attention now", distinct from routine phase/
+    # feedback. Surface the open count + the most-recent escalation, and
+    # treat an open escalation as `blocked` so the cheap sensor flags it
+    # without the caller reading the full changes.jsonl. An escalation is
+    # acknowledged once a later record carries `payload.acknowledges`.
+    escalation_records = [
+        c for c in recent_changes if c.get("kind") == "escalation"
+    ]
+    acknowledged_revs: set[int] = set()
+    for rec in escalation_records:
+        payload = rec.get("payload") or {}
+        ack = payload.get("acknowledges") if isinstance(payload, dict) else None
+        if isinstance(ack, int):
+            acknowledged_revs.add(ack)
+    open_escalations = [
+        rec for rec in escalation_records
+        if int(rec.get("revision", 0)) not in acknowledged_revs
+        and not (rec.get("payload") or {}).get("acknowledges")
+    ]
+    escalation_count = len(open_escalations)
+    latest_escalation = open_escalations[-1] if open_escalations else None
+    # BLOCKED-verdict count: the most-urgent slice of `unresolved`.
+    blocked_verdict_count = sum(
+        1 for v in unresolved
+        if "BLOCKED" in (v.get("verdict") or v.get("label", "")).upper()
+    )
+
+    if unresolved or escalation_count:
         status = "blocked"
-        required_action = "resolve_unresolved_coordination_verdicts"
+        if escalation_count and not unresolved:
+            required_action = "resolve_open_escalations"
+        elif escalation_count:
+            required_action = "resolve_escalations_and_coordination_verdicts"
+        else:
+            required_action = "resolve_unresolved_coordination_verdicts"
     elif peer_overlap_files or dirty_outside_owned:
         # warn only when a peer's ``owns`` intersects our files_in_flight,
         # OR when dirty files exist outside our owned set.  Raw peer count
@@ -387,6 +420,10 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "inbox_unread_count": inbox_counts["total"],
         "inbox_unread_counts": inbox_counts,
         "rejection_count": rejection_count,
+        "escalation_count": escalation_count,
+        "blocked_verdict_count": blocked_verdict_count,
+        "latest_escalation": latest_escalation,
+        "open_escalations": open_escalations,
         "coordination_file": str(coordination_file) if coordination_file else None,
         "latest_verdicts": verdict_entries,
         "unresolved": unresolved,
@@ -429,7 +466,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(status, indent=2, sort_keys=True))
     else:
-        print(f"{status['status']}: {status['required_action']}")
+        line = f"{status['status']}: {status['required_action']}"
+        # G3 — escalation/BLOCKED salience in the plain-text line.
+        salience = []
+        if status.get("escalation_count"):
+            salience.append(f"{status['escalation_count']} open escalation(s)")
+        if status.get("blocked_verdict_count"):
+            salience.append(f"{status['blocked_verdict_count']} BLOCKED verdict(s)")
+        if salience:
+            line += "  [!] " + ", ".join(salience)
+        print(line)
     return 0
 
 

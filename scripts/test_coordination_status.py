@@ -44,6 +44,50 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(status["status"], "clear")
         self.assertEqual(status["required_action"], "none")
 
+    def test_open_escalation_drives_blocked_status(self):
+        """G3 — an escalation-kind change record makes status `blocked` and
+        populates escalation_count + latest_escalation."""
+        from rally_point.post import post
+
+        slug = channel_paths.app_slug(self.workdir)
+        channel_dir = channel_paths.ensure_channel_dir(slug)
+        post(
+            channel_dir=channel_dir,
+            kind="escalation",
+            tool="codex",
+            model="gpt-5",
+            run_id="run-1",
+            app_slug=slug,
+            payload={"session_id": "codex-r1", "reason": "schema decision"},
+        )
+        status = self._run()
+        self.assertEqual(status["status"], "blocked")
+        self.assertEqual(status["required_action"], "resolve_open_escalations")
+        self.assertEqual(status["escalation_count"], 1)
+        self.assertEqual(
+            status["latest_escalation"]["payload"]["reason"], "schema decision"
+        )
+
+    def test_acknowledged_escalation_does_not_block(self):
+        """G3 — an escalation carrying `acknowledges` is not counted open."""
+        from rally_point.post import post
+
+        slug = channel_paths.app_slug(self.workdir)
+        channel_dir = channel_paths.ensure_channel_dir(slug)
+        rev1 = post(
+            channel_dir=channel_dir, kind="escalation", tool="codex",
+            model="gpt-5", run_id="run-1", app_slug=slug,
+            payload={"reason": "x"},
+        )
+        post(
+            channel_dir=channel_dir, kind="escalation", tool="claude_code",
+            model="m", run_id="run-1", app_slug=slug,
+            payload={"reason": "resolved", "acknowledges": rev1},
+        )
+        status = self._run()
+        self.assertEqual(status["escalation_count"], 0)
+        self.assertEqual(status["status"], "clear")
+
     def test_peer_files_in_flight_vs_owned_populates_overlaps_field(self):
         """Peer's files_in_flight vs our owned_file populates legacy overlaps field.
 
