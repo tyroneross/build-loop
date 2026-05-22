@@ -19,9 +19,12 @@
 # Format:
 #   - one slug per line
 #   - blank lines and `#` comments are ignored
-#   - each line is a case-insensitive regex fragment, matched as a
-#     word-ish token (so a slug will not match a longer surrounding word)
-#   - escape regex metacharacters: write a literal dot as `\.`
+#   - each line is a LITERAL slug, matched case-insensitively as a
+#     word-ish token (so a slug will not match a longer surrounding
+#     word). No regex knowledge needed — write the slug exactly as it
+#     appears. Regex metacharacters are escaped automatically, so a
+#     literal dot in `example.com` matches only a real dot, never a
+#     hyphen (it will not match `example-com`).
 #
 # The guard FAILS CLOSED: if `.private-slugs` is present but empty when
 # run in CI / `--all` mode, it exits non-zero rather than passing.
@@ -32,4 +35,4 @@
 your-private-app-name
 your-private-app-ios
 your-private-app-web
-your-company-domain\.example
+your-company-domain.example

@@ -33,8 +33,9 @@ import sys
 from pathlib import Path
 
 # Runtime denylist config (gitignored). One slug per line; ``#`` comments
-# and blank lines ignored. Each line is treated as a regex fragment,
-# matched case-insensitively as a word-ish token.
+# and blank lines ignored. Each line is a LITERAL slug (regex
+# metacharacters are escaped), matched case-insensitively as a word-ish
+# token.
 DENYLIST_FILENAME = ".private-slugs"
 EXAMPLE_FILENAME = ".private-slugs.example"
 
@@ -110,8 +111,18 @@ def _compile_pattern(slugs: list[str]) -> re.Pattern[str]:
     # ``_atomize`` or ``atomize_`` is caught. The original guard's
     # lookbehind included ``_`` while the lookahead did not; that
     # asymmetry let an underscore-prefixed slug slip past (SEC-005).
+    #
+    # Each denylist entry is a LITERAL slug, not a regex fragment — the
+    # SEC-011 runtime ``.private-slugs`` config holds plain strings a
+    # maintainer types without knowing regex. ``re.escape`` neutralises
+    # every metacharacter, so a literal dot in ``rosslabs.ai`` matches
+    # only a real dot, not the public ``rosslabs-ai-toolkit`` name.
+    # Skipping ``re.escape`` here was the SEC-011 regression: it turned
+    # a literal ``.`` into a wildcard and flagged ~30 legitimate public
+    # marketplace references in CI.
+    escaped = (re.escape(s) for s in slugs)
     return re.compile(
-        r"(?<![A-Za-z0-9])(" + "|".join(slugs) + r")(?![A-Za-z0-9])",
+        r"(?<![A-Za-z0-9])(" + "|".join(escaped) + r")(?![A-Za-z0-9])",
         re.IGNORECASE,
     )
 

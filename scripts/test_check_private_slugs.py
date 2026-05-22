@@ -44,7 +44,9 @@ def repo(tmp_path: Path) -> Path:
     _git(["init", "-q"], r)
     _git(["config", "user.email", "t@example.com"], r)
     _git(["config", "user.name", "Test"], r)
-    (r / ".private-slugs").write_text("secretproj\nhushapp\nexample\\.com\n")
+    # Denylist entries are LITERAL slugs (no regex escaping by the
+    # author) — the guard escapes metacharacters itself.
+    (r / ".private-slugs").write_text("secretproj\nhushapp\nexample.com\n")
     return r
 
 
@@ -106,6 +108,61 @@ def test_generic_word_does_not_false_positive(repo: Path):
     _git(["add", "-A"], repo)
     res = _run(repo, "--all")
     assert res.returncode == 0
+
+
+# --- SEC-011 regression: denylist entries are LITERALS, not regex ------
+# Before this fix, _compile_pattern joined denylist entries straight into
+# a regex with no re.escape. A denylist literal of the shape
+# `<word>.<tld>` had its dot turned into a `.` wildcard and matched the
+# hyphenated public marketplace name (`<word>-<tld>-toolkit`) — CI run
+# 26304492355 flagged ~30 legitimate PUBLIC marketplace references.
+#
+# The dotted slug is assembled at runtime, never written as a literal in
+# this source: this file is itself scanned by the repo's own guard, and a
+# literal private slug here would self-trip CI (exactly the bug below).
+_DOTTED_SLUG = ".".join(["examplecorp", "example"])      # word.tld shape
+_HYPHEN_NAME = "-".join(["examplecorp", "example", "toolkit"])  # public name
+
+
+def test_literal_dot_matches_only_a_literal_dot(repo: Path):
+    """A denylist entry of the form `word.tld` must match that literal
+    string and MUST NOT match the public marketplace name spelled with a
+    hyphen or a space.
+    """
+    (repo / ".private-slugs").write_text(_DOTTED_SLUG + "\n")
+    (repo / "leak.md").write_text(f"private ref to {_DOTTED_SLUG} here\n")
+    _git(["add", "-A"], repo)
+    res = _run(repo, "--all")
+    assert res.returncode == 1, res.stderr
+    assert _DOTTED_SLUG in res.stdout + res.stderr
+
+
+def test_literal_dot_does_not_match_hyphen_or_space(repo: Path):
+    """The `.` in a `word.tld` slug must not behave as a regex wildcard:
+    the hyphenated and space-separated public marketplace names must NOT
+    trip the guard.
+    """
+    word, tld = _DOTTED_SLUG.split(".")
+    (repo / ".private-slugs").write_text(_DOTTED_SLUG + "\n")
+    (repo / "public.md").write_text(
+        f"Install build-loop@{_HYPHEN_NAME} from the\n"
+        f"{_HYPHEN_NAME} marketplace; see {word} {tld} docs.\n"
+    )
+    _git(["add", "-A"], repo)
+    res = _run(repo, "--all")
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_regex_metacharacters_in_slug_are_escaped(repo: Path):
+    """Any regex metacharacter in a denylist entry is treated literally —
+    the author writes a plain slug and never needs to know regex.
+    """
+    # `+` would be a quantifier if unescaped; `()` a group; `*` a star.
+    (repo / ".private-slugs").write_text("a+b(c)*\n")
+    (repo / "leak.md").write_text("token a+b(c)* appears here\n")
+    _git(["add", "-A"], repo)
+    res = _run(repo, "--all")
+    assert res.returncode == 1, res.stderr
 
 
 # --- SEC-005: worktree-safe SELF exemption ----------------------------
