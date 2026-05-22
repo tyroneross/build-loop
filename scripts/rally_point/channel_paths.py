@@ -149,7 +149,12 @@ def app_channel_dir(slug: str) -> Path:
     cs, rs = str(candidate), str(root_resolved)
     if not (cs == rs or cs.startswith(rs + os.sep)):
         raise ValueError(f"slug {slug!r} resolves outside apps_root()")
-    return apps_root() / Path(*parts)
+    # SEC-009: return the SAME resolved path that was validated, not a
+    # freshly re-joined unresolved path. Returning the unresolved form
+    # opened a TOCTOU gap — the validated target and the returned target
+    # could differ if a path component was a symlink, or be re-resolved
+    # later against a mutated filesystem.
+    return candidate
 
 
 def ensure_channel_dir(slug: str) -> Path:

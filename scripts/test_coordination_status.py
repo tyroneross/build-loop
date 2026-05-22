@@ -174,44 +174,57 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(Path(status["coordination_file"]).resolve(), run.resolve())
         self.assertEqual(status["unresolved"], [])
 
-    def test_default_coordination_file_uses_active_pointer(self):
+    def test_active_json_pointer_is_ignored_audit_run_chosen_by_scan(self):
+        """SEC-001 — a writable ``active.json`` pointer must NOT influence
+        the default coordination-file pick.
+
+        The pointer-dereference path was removed: any process able to write
+        ``coordination/`` could aim the pointer at an arbitrary ``.md``.
+        Selection is now a pure directory scan (prefer ``audit-execution-*``,
+        then oldest mtime). Here the pointer names ``zz-newer-stub.md`` but
+        the scan must still pick the ``audit-execution-*`` run.
+        """
         coord_dir = self.workdir / ".build-loop" / "coordination"
         coord_dir.mkdir(parents=True)
-        old = coord_dir / "audit-execution-old.md"
-        active = coord_dir / "active-run.md"
-        newer = coord_dir / "zz-newer-stub.md"
-        old.write_text("", encoding="utf-8")
-        active.write_text("", encoding="utf-8")
-        newer.write_text("", encoding="utf-8")
-        (coord_dir / "active.json").write_text(
-            json.dumps({"coord_file": ".build-loop/coordination/active-run.md"}),
-            encoding="utf-8",
-        )
-        os.utime(old, (1_700_000_000, 1_700_000_000))
-        os.utime(active, (1_700_000_100, 1_700_000_100))
-        os.utime(newer, (1_700_000_200, 1_700_000_200))
-
-        status = self._run()
-
-        self.assertEqual(Path(status["coordination_file"]).resolve(), active.resolve())
-
-    def test_default_coordination_file_stale_active_pointer_falls_back(self):
-        coord_dir = self.workdir / ".build-loop" / "coordination"
-        coord_dir.mkdir(parents=True)
-        run = coord_dir / "audit-execution-current.md"
+        run = coord_dir / "audit-execution-old.md"
         newer = coord_dir / "zz-newer-stub.md"
         run.write_text("", encoding="utf-8")
         newer.write_text("", encoding="utf-8")
         (coord_dir / "active.json").write_text(
-            json.dumps({"coord_file": ".build-loop/coordination/deleted.md"}),
+            json.dumps({"coord_file": ".build-loop/coordination/zz-newer-stub.md"}),
             encoding="utf-8",
         )
         os.utime(run, (1_700_000_000, 1_700_000_000))
-        os.utime(newer, (1_700_000_100, 1_700_000_100))
+        os.utime(newer, (1_700_000_200, 1_700_000_200))
 
         status = self._run()
 
         self.assertEqual(Path(status["coordination_file"]).resolve(), run.resolve())
+
+    def test_active_json_pointer_cannot_redirect_outside_coordination_dir(self):
+        """SEC-001 — a malicious ``active.json`` pointing at a file OUTSIDE
+        the coordination dir (symlink-escape style) must be ignored.
+
+        The chosen file is always a real entry enumerated from
+        ``coordination/*.md`` — never a dereferenced pointer value.
+        """
+        coord_dir = self.workdir / ".build-loop" / "coordination"
+        coord_dir.mkdir(parents=True)
+        legit = coord_dir / "audit-execution-current.md"
+        legit.write_text("", encoding="utf-8")
+        # Attacker-controlled file outside the coordination directory.
+        outside = self.workdir / "secrets.md"
+        outside.write_text("attacker-controlled content", encoding="utf-8")
+        (coord_dir / "active.json").write_text(
+            json.dumps({"coord_file": str(outside)}),
+            encoding="utf-8",
+        )
+
+        status = self._run()
+
+        self.assertEqual(
+            Path(status["coordination_file"]).resolve(), legit.resolve()
+        )
 
     def test_watch_emits_one_state(self):
         cmd = [

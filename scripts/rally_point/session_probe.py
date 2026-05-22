@@ -25,9 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import random
-import string
+import secrets
 import subprocess
 import sys
 import time
@@ -54,8 +52,16 @@ except ImportError:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _short_random(n: int = 6) -> str:
-    return "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
+def _short_random(n: int = 8) -> str:
+    """Return a random hex token for session-id disambiguation (SEC-007).
+
+    Uses ``secrets.token_hex`` (CSPRNG) rather than ``random.choices``:
+    session ids are written into a shared multi-peer channel, and a
+    predictable id makes collision/forgery against another session's
+    presence record cheap. ``n`` is the byte count (default 8 → 16 hex
+    chars), well clear of birthday-collision range for concurrent peers.
+    """
+    return secrets.token_hex(n)
 
 
 def _utc_stamp() -> str:

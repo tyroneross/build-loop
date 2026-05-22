@@ -39,6 +39,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,32 @@ def _build_lead_doc(
     }
 
 
+def _audit_log(kind: str, *, tool: str, run_id: str, session_id: str | None,
+               extra: dict[str, Any] | None = None) -> None:
+    """Emit a stderr audit line for a lead-* mutation (SEC-003).
+
+    The leadership lease is **advisory coordination, not access control**:
+    every mutating call trusts a caller-supplied ``session_id`` with no
+    identity verification, so a lead claim is forgeable. A signing/auth
+    layer is disproportionate for a local single-user dev tool. The
+    proportionate control is observability — a durable, greppable record
+    of which tool/run touched the lead, so a forged or unexpected
+    transfer is at least visible after the fact. Fire-and-forget: a
+    logging failure never affects the lease operation.
+    """
+    try:
+        suffix = ""
+        if extra:
+            suffix = " " + " ".join(f"{k}={v}" for k, v in extra.items())
+        print(
+            f"[rally-point audit] {kind} tool={tool} run_id={run_id} "
+            f"session_id={session_id}{suffix}",
+            file=sys.stderr,
+        )
+    except Exception:  # noqa: BLE001 — audit logging never fails the op
+        pass
+
+
 def _post_lead_record(
     channel_dir: Path,
     *,
@@ -202,6 +229,10 @@ def _post_lead_record(
     extra: dict[str, Any] | None = None,
 ) -> None:
     """Fire-and-forget durable audit record for a lead-* event."""
+    _audit_log(
+        kind, tool=tool, run_id=run_id,
+        session_id=lead.get("session_id"), extra=extra,
+    )
     payload: dict[str, Any] = {
         "session_id": lead.get("session_id"),
         "lease_until": lead.get("lease_until"),

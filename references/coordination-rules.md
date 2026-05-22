@@ -59,6 +59,20 @@ Memory citation: `feedback_post_helper_prevents_revision_bump_bug`.
 
 ---
 
+## Trust model (unauthenticated channel; advisory leadership lease)
+
+**The coordination channel is unauthenticated and trusted-local-peers-only.** `changes.jsonl`, `presence/`, `rally/lead.json`, and the coordination markdown all live under `~/.build-loop/apps/<slug>/` with ordinary user-account file permissions. Any process running as the same local user can append a change record, write a presence file, or claim/transfer the leadership lease. There is no signing, no authentication, and no identity verification — and there should not be: build-loop is a local single-user developer tool, so a cryptographic trust layer would be disproportionate to the threat.
+
+What this means in practice:
+
+- **Change-record payloads are untrusted free text.** A buggy or hostile channel writer can put arbitrary text — including prompt-injection content — into a `payload` field. Records flow into orchestrator LLM context via `checkpoint_read` `new_changes[]` and `coordination_status` `new_changes` / `open_escalations`. **Mitigation (SEC-002):** the consume boundary sanitizes every record before surfacing — `scripts/rally_point/checkpoint.sanitize_change_for_surface()` keeps only known structured metadata keys and length-caps every free-text string. The raw `changes.jsonl` log stays immutable and untouched; only the *surfaced projection* is sanitized. Reactions (`dep-change`, `arch-scan-complete`, `soft-claim`) are derived from raw records first, because they read only the structured `kind` field.
+
+- **The leadership lease is advisory coordination, not access control (SEC-003).** Every mutating call in `scripts/rally_point/leadership.py` (`claim_lead`, `renew_lease`, `transfer_lead`, `relinquish_lead`) trusts a caller-supplied `session_id`. `claim_lead` succeeds for anyone whenever the lease is absent or expired; `renew`/`transfer`/`relinquish` "authorize" only by string-matching `session_id` against the world-readable `lead.json`. Any local process that reads `lead.json` learns the incumbent's `session_id` and can forge a renew, transfer, or relinquish. **The orchestrator MUST NOT gate an irreversible action on a lead claim** — a lead claim answers "who is coordinating" for cooperating peers, not "who is authorized". The proportionate control is observability: every `claim_lead` / `transfer_lead` / `relinquish_lead` emits a stderr audit line (`[rally-point audit] ...`) recording the requesting tool and `run_id`, in addition to the durable `lead-*` record in `changes.jsonl`, so an unexpected lease mutation is visible after the fact.
+
+Threats this model does NOT cover (out of scope by design): a hostile process running as the same user, a compromised local account, or a multi-tenant host. Those are the operating system's responsibility, not the coordination channel's.
+
+---
+
 ## Cheap detection at step boundaries
 
 **Poll `coordination_status.py` BEFORE any step-boundary decision.** Costs ~100 tokens; prevents stale-state recommendations that cost full plan rewrites (~5K tokens).
