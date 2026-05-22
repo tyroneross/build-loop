@@ -1,11 +1,11 @@
-# Travel Planner — Better Auth lessons
+# Example Web App — Better Auth lessons
 
 ## When to use
 
-Read this when you're hitting a class of problem the Travel Planner build hit during the migration from `@supabase/ssr` to Better Auth + Drizzle + Neon. Each section is a real incident or near-miss documented at the time. Diagnostic-style — symptom first, cause, what to look for, how it was fixed.
+Read this when you're hitting a class of problem the Example Web App build hit during the migration from `@supabase/ssr` to Better Auth + Drizzle + Neon. Each section is a real incident or near-miss documented at the time. Diagnostic-style — symptom first, cause, what to look for, how it was fixed.
 
 For runnable Better Auth config, see `better-auth-setup.md`.
-For the Google-API-side lessons (Calendar, Places, Maps, Cloud Console), see the older `google-lessons-travel-planner.md`.
+For the Google-API-side lessons (Calendar, Places, Maps, Cloud Console), see the older `google-lessons-example-web-app.md`.
 
 ## Incident: Production sign-in works, then the next request 401s
 
@@ -53,7 +53,7 @@ Cross-reference: Universal footgun #8 in `../SKILL.md`.
 
 ## Incident: Family Calendar creation triggers a second consent prompt
 
-**Symptom.** User signs in to Travel Planner (Google OAuth, basic scopes). Clicks "Create Family Calendar." Browser redirects back to Google for ANOTHER consent screen requesting Calendar scope. Half of users abandon at this second prompt.
+**Symptom.** User signs in to Example Web App (Google OAuth, basic scopes). Clicks "Create Family Calendar." Browser redirects back to Google for ANOTHER consent screen requesting Calendar scope. Half of users abandon at this second prompt.
 
 **Cause.** The initial sign-in only requested `openid email profile`. Calendar scope (`https://www.googleapis.com/auth/calendar.app.created`) was added in a later `auth.api.linkOAuth` call.
 
@@ -105,7 +105,7 @@ Cross-reference: Universal footgun #11 in `../SKILL.md`.
 
 ## Migration narrative: `@supabase/ssr` → Better Auth
 
-The Travel Planner migration took ~2 weeks part-time. Order of operations:
+The Example Web App migration took ~2 weeks part-time. Order of operations:
 
 1. **Stand up Better Auth in parallel**, on `/api/auth/[...all]`. Supabase auth still active on the old `/auth/callback`. App routes fall back to either depending on a feature flag.
 2. **Migrate user records** with a one-time script. Map Supabase `auth.users` → Better Auth `user`, add corresponding `account` rows for OAuth provider linkage. Test on a copy of prod first.

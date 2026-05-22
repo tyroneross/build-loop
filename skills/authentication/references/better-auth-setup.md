@@ -6,14 +6,14 @@
 - Adding social providers (Google, Apple) to an existing Better Auth instance
 - Wiring an iOS/mobile client via the Bearer plugin
 - Verifying that Google sign-in produces a usable `refresh_token`
-- Migrating away from `@supabase/ssr` (Travel Planner did this — see `lessons-travel-planner-better-auth.md`)
+- Migrating away from `@supabase/ssr` (Example Web App did this — see `lessons-example-web-app-better-auth.md`)
 
 For magic-link / OTP setup, see `better-auth-magic-link.md`.
 For runtime API doc lookups, use `mcp__plugin_context7_context7__query-docs` with library `/better-auth/better-auth`.
 
 ## Server instance (Drizzle + Neon + Google + Apple)
 
-Pattern from `Travel Planner/lib/auth.ts` (production-grade, multi-platform). Adjust provider list to your needs.
+Pattern from `Example Web App/lib/auth.ts` (production-grade, multi-platform). Adjust provider list to your needs.
 
 ```ts
 // lib/auth.ts
@@ -98,7 +98,7 @@ That single file replaces every Supabase callback / NextAuth route handler.
 
 Two patterns ship in the wild. Pick by need:
 
-**Minimal (Travel Planner)** — uses `window.location.origin` by default, no `basePath` override:
+**Minimal (Example Web App)** — uses `window.location.origin` by default, no `basePath` override:
 
 ```ts
 // lib/auth-client.ts
@@ -112,7 +112,7 @@ export const authClient = createAuthClient({
 export const { signIn, signUp, signOut, useSession } = authClient
 ```
 
-**Explicit basePath + `credentials: include` (ProductPilot)** — needed when the client and API are on different origins, or when you've mounted the handler under a non-default path:
+**Explicit basePath + `credentials: include` (Example App)** — needed when the client and API are on different origins, or when you've mounted the handler under a non-default path:
 
 ```ts
 // client/src/lib/auth.ts
@@ -134,7 +134,7 @@ export const authClient = createAuthClient({
 })
 ```
 
-## Feature flag with anonymous fallback (atomize-ai pattern)
+## Feature flag with anonymous fallback (example-app pattern)
 
 When auth is being introduced incrementally and existing routes were written assuming an anonymous user, this gate keeps everything working until you flip `ENABLE_AUTH=true`:
 
@@ -160,7 +160,7 @@ Important: this is a transitional pattern. Remove it before declaring auth "ship
 
 ## IDOR guard — `dbForUser(userId)`
 
-Better Auth gives you a session, but it does NOT enforce per-row authorization. Every query must scope to the session's user id. Travel Planner's `lib/db/index.ts` exports a `dbForUser(userId)` helper that returns CRUD methods pre-bound to that user:
+Better Auth gives you a session, but it does NOT enforce per-row authorization. Every query must scope to the session's user id. Example Web App's `lib/db/index.ts` exports a `dbForUser(userId)` helper that returns CRUD methods pre-bound to that user:
 
 ```ts
 // lib/db/index.ts (sketch)
@@ -217,6 +217,6 @@ For Drizzle schema, see Better Auth docs: `mcp__plugin_context7_context7__query-
 ## Cross-references
 
 - Universal footguns #7 (Vercel URL mismatch), #8 (refresh_token guarantee), #9 (IDOR guard), #11 (cookie config) in `../SKILL.md`
-- `lessons-travel-planner-better-auth.md` — incident-style narrative of these issues hitting production
+- `lessons-example-web-app-better-auth.md` — incident-style narrative of these issues hitting production
 - `better-auth-magic-link.md` — magic-link plugin setup
 - `resend-email.md` — wiring `sendVerificationEmail` to Resend

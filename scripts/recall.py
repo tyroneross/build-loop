@@ -67,7 +67,7 @@ DEFAULT_NEIGHBOR_WINDOW = 3
 DEFAULT_FLOOR = "confirmed"
 DEFAULT_MODE = "hybrid"
 VALID_MODES = ("hybrid", "vector_only", "sparse_only")
-PER_LEG_OVERFETCH = 21  # Atomize HYBRID_VECTOR_LIMIT — see research entry
+PER_LEG_OVERFETCH = 21  # Example App HYBRID_VECTOR_LIMIT — see research entry
 
 
 def confidence_to_float(c: str) -> float:

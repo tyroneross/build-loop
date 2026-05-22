@@ -166,7 +166,7 @@ class FixtureABTests(unittest.TestCase):
                 "stderr": r.stderr}
 
     def test_v20_fails_loudly(self) -> None:
-        res = self._payload("atomize-ai-v20.md")
+        res = self._payload("example-app-v20.md")
         self.assertEqual(res["rc"], 1, f"v2.0 should exit 1; stderr={res['stderr']}")
         rules = res["payload"]["summary"]["by_rule_id"]
         # Per goal.md criterion 2:
@@ -180,7 +180,7 @@ class FixtureABTests(unittest.TestCase):
                                 f"v2.0 needs ≥1 missing-evidence WARN; got {rules}")
 
     def test_v22_passes(self) -> None:
-        res = self._payload("atomize-ai-v22.md")
+        res = self._payload("example-app-v22.md")
         self.assertEqual(res["rc"], 0,
                          f"v2.2 should exit 0; got {res['rc']}; "
                          f"BLOCKERs={res['payload']['summary']['by_severity']['BLOCKER']}; "

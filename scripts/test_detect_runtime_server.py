@@ -45,7 +45,7 @@ if __name__ == "__main__":
 '''
 
 # Test-file fixture that imports BaseHTTPRequestHandler for mock-server purposes.
-# This shape is what caused local-smartz to be misclassified before commit 1.
+# This shape is what caused example-app to be misclassified before commit 1.
 TEST_FIXTURE = '''\
 from http.server import BaseHTTPRequestHandler
 
@@ -101,7 +101,7 @@ class TestIsTestPath(unittest.TestCase):
 
 
 class TestServerModulePriority(unittest.TestCase):
-    """Regression test for the local-smartz 2026-05-11 misclassification."""
+    """Regression test for the example-app 2026-05-11 misclassification."""
 
     def test_real_server_wins_over_test_fixture(self):
         """When tests/ and src/ both match substrate+emit, src/ wins."""

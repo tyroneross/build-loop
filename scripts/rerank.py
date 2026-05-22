@@ -45,7 +45,7 @@ from typing import Any, Callable, Sequence
 
 DEFAULT_MODEL = "BAAI/bge-reranker-v2-m3"
 DEFAULT_POOL_SIZE = 50
-"""Atomize uses 100 in production; the research entry notes that quality
+"""Example App uses 100 in production; the research entry notes that quality
 plateaus past ~100 (arXiv 2411.11767 "Drowning in Documents"). On a local
 M-series box, 50 is the speed/quality knee — saves ~30ms per query vs 100
 with negligible quality cost on build-loop's identifier-dense queries."""

@@ -162,7 +162,7 @@ def find_dead_anchors(path: Path) -> list[tuple[int, str]]:
 # whether the tag content has any onX={...} handler OR `disabled` (intentionally non-interactive).
 # Replaces the prior line-bound `<button\b[^>]*?(?<!on[A-Z])>` regex which only inspected the
 # chars immediately before `>` — it flagged `<button onClick={x} className="y">` as dead because
-# `"y"` precedes `>`, not `on[A-Z]`. Per atomize-ai integration test 2026-05-03: 5/9 reported
+# `"y"` precedes `>`, not `on[A-Z]`. Per example-app integration test 2026-05-03: 5/9 reported
 # findings were this exact false-positive shape.
 _BUTTON_TAG_RE = re.compile(r"<button\b([^<>]*?)>", re.DOTALL)
 _HAS_HANDLER_OR_DISABLED = re.compile(r"\b(on[A-Z][a-zA-Z]+|disabled|aria-disabled|formAction|type\s*=\s*['\"]submit['\"])")

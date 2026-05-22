@@ -3,9 +3,9 @@
 **Date**: 2026-04-20
 **Method**: Run each fallback's actual grep/git commands against real projects. This is not a trace simulation — the commands were executed and the output captured below.
 
-## 1. `fallbacks.md#web-ui` against atomize-ai
+## 1. `fallbacks.md#web-ui` against example-app
 
-Target: `/Users/tyroneross/Desktop/git-folder/atomize-ai` — real Next.js app with `components/` and `app/` directories, no IBR installed at scan time. 5 of the 10 grep checks spot-checked.
+Target: `/Users/tyroneross/Desktop/git-folder/example-app` — real Next.js app with `components/` and `app/` directories, no IBR installed at scan time. 5 of the 10 grep checks spot-checked.
 
 ### Check 1: Gestalt violations (borders on `.map()` items)
 ```
@@ -28,7 +28,7 @@ grep -rnE "<button[^>]*>" --include="*.tsx" --include="*.jsx" components/ app/ |
 Three "Save All" / "Export" / "Hide All" buttons with no onClick — **these are real production bugs**. The fallback surfaced them.
 
 ### Check 5: Icon-only buttons missing aria-label
-**Result**: 0 matches — atomize-ai is clean on this.
+**Result**: 0 matches — example-app is clean on this.
 
 ### Check 9: Console leftovers in production paths
 ```
@@ -132,7 +132,7 @@ The fallback surfaced a relevant prior lesson (the hardening run that caught res
 
 All three fallbacks were executed live against real targets and produced actionable output:
 
-- **web-ui**: caught 3 clear production bugs + 3 log leftovers in atomize-ai
+- **web-ui**: caught 3 clear production bugs + 3 log leftovers in example-app
 - **architecture**: correctly identified the two most-churned files as hotspots in build-loop
 - **bug-memory**: surfaced a relevant prior lesson from `feedback.md`
 

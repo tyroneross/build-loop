@@ -99,7 +99,7 @@ Example output:
 ```json
 {
   "action": "rally-point-posted",
-  "app_slug": "speaksavvy-ios",
+  "app_slug": "example-ios-app",
   "channel_revision": 1,
   "presence_written": true
 }

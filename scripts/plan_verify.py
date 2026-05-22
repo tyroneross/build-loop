@@ -228,9 +228,9 @@ def rule_delete_with_callers(plan_path: Path, lines: list[tuple[int, str]], repo
 
 
 # Numeric drift: only fire on summary-style nouns where a count drift is the
-# documented atomize-ai failure mode. "callers"/"files"/"routes" routinely
+# documented example-app failure mode. "callers"/"files"/"routes" routinely
 # vary by subject across rows of a table and are NOT internal contradictions.
-# The atomize-ai v2.0 leak was orphan-count drift in a totals statement.
+# The example-app v2.0 leak was orphan-count drift in a totals statement.
 NUM_NOUN_RE = re.compile(
     r"(?:total[^.\n]{0,40}|\bremoved?\b[^.\n]{0,40}|\bremaining\b[^.\n]{0,40}|\bonly\b\s+)?"
     r"\*?\*?\b(\d+)\b\s+(orphans?)\b",

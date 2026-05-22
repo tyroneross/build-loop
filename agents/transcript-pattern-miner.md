@@ -78,7 +78,7 @@ For each correction cluster from Section 1 of the report, decide one of:
 ### Classification examples
 
 ```
-Cluster: 14× "I do NOT want mock data. NO MOCK DATA" (atomize-ai, stratagem)
+Cluster: 14× "I do NOT want mock data. NO MOCK DATA" (example-app, stratagem)
 → already-covered: feedback_no_fake_stats.md
    (CLAUDE.md non-negotiable also covers this)
 

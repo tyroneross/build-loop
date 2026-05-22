@@ -5,7 +5,7 @@ description: Use when setting up Google Cloud Console for a web app — Google O
 
 # Google Cloud Console — Auth + Maps + Calendar
 
-Hard-won reference for wiring Google Cloud services into a web app. Lessons baked in from a real Next.js + Supabase build (Trip Planner, 2025). Every footgun here was paid for once already — don't pay for it again.
+Hard-won reference for wiring Google Cloud services into a web app. Lessons baked in from a real Next.js + Supabase build (Example Web App, 2025). Every footgun here was paid for once already — don't pay for it again.
 
 ## When to Use
 
@@ -61,11 +61,11 @@ Load only what you need:
 - **`references/places.md`** — Places API (New) v1 — Text Search, Nearby, Place Details. Field masks (cost control). Migration from legacy. Autocomplete.
 - **`references/geocoding-directions.md`** — Geocoding + Directions + Distance Matrix, rate limits, caching strategy.
 - **`references/calendar-sync.md`** — Google Calendar API v3 scopes, incremental sync with `syncToken`, 410 recovery, refresh-token storage, watch channels for push.
-- **`references/lessons-travel-planner.md`** — Real failure modes from production: Supabase SSR cookie bug, production-only redirect loops, route-group manifest conflicts, credential rotation pain.
+- **`references/lessons-example-web-app.md`** — Real failure modes from production: Supabase SSR cookie bug, production-only redirect loops, route-group manifest conflicts, credential rotation pain.
 
 ## The 10 Footguns (Read This Section Every Time)
 
-These are the failures that cost days in the Trip Planner build. Check for each when something breaks.
+These are the failures that cost days in the Example Web App build. Check for each when something breaks.
 
 1. **Supabase SSR cookie API mismatch (Next.js 15+)** — Must use `getAll`/`setAll`, NOT `get`/`set`/`remove`. Works in dev, fails in prod. Error surfaces as "Cannot read properties of undefined (reading 'get')" in Supabase SSR. See `references/oauth-setup.md#nextjs-cookies`.
 

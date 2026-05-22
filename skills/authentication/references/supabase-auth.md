@@ -14,7 +14,7 @@ For runtime API doc lookups, use `mcp__plugin_context7_context7__query-docs` wit
 
 | Need | Pick |
 |---|---|
-| Brand-new project, Next.js, single repo | **Better Auth + Neon + Drizzle** (Travel Planner migrated TO this) |
+| Brand-new project, Next.js, single repo | **Better Auth + Neon + Drizzle** (Example Web App migrated TO this) |
 | Existing project on Supabase, working fine | **Stay on Supabase** — migration cost > benefit |
 | Multi-project portfolio (3+ apps) | **Better Auth** — per-project Supabase cost adds up |
 | Edge functions doing JWT verification on every request | **Supabase** — built-in JWT verification at the edge |
@@ -87,9 +87,9 @@ export function createBrowserSupabase() {
 }
 ```
 
-## Env-var validation — warn, don't fail (super_news pattern)
+## Env-var validation — warn, don't fail (example-app pattern)
 
-Useful when Supabase is optional infrastructure and you want CI / preview envs without a real backend. From `super_news/lib/supabase.ts`:
+Useful when Supabase is optional infrastructure and you want CI / preview envs without a real backend. From `example-app/lib/supabase.ts`:
 
 ```ts
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
@@ -144,7 +144,7 @@ If you adopt RLS, run a periodic audit: log every distinct combination of (table
 
 ## Migrating away from Supabase Auth
 
-Travel Planner migrated `@supabase/ssr` → Better Auth. Pattern:
+Example Web App migrated `@supabase/ssr` → Better Auth. Pattern:
 
 1. Stand up Better Auth in parallel (keeps Supabase running)
 2. Migrate user records via a one-time script (account, session, verification tables)
@@ -167,4 +167,4 @@ The biggest risk is in step 2 — schema mismatch. Better Auth's user/account/se
 
 - Universal footgun #11 (cookie config) in `../SKILL.md`
 - `better-auth-setup.md` — the recommended alternative for new projects
-- For the Travel Planner migration narrative, see `lessons-travel-planner-better-auth.md`
+- For the Example Web App migration narrative, see `lessons-example-web-app-better-auth.md`

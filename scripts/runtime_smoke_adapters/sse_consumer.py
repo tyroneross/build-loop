@@ -3,7 +3,7 @@
 
 Triggered when the diff touches a project with `triggers.runtimeServer == true`
 AND the changed files include the server module OR the embedded UI module.
-Closes the silent-server / ignored-client class of bug observed in local-smartz
+Closes the silent-server / ignored-client class of bug observed in example-app
 2026-05-08 (27 commits passed pytest, 2 user-facing bugs shipped because the
 server emitted SSE event types the embedded UI didn't handle).
 

@@ -13,7 +13,7 @@ in:
   - decision _unscoped/0003 (live HTTP/SSE smoke required when
     build-loop touches a runtime server)
   - feedback_buildloop_pytest_insufficient_for_runtime (rule semantics)
-  - gotcha_serve_sse_live_smoke_required (local-smartz reference impl)
+  - gotcha_serve_sse_live_smoke_required (example-app reference impl)
 
 Stdlib only. Heuristic; intentionally conservative — single-pattern
 matches don't trigger so test files that import e.g. ``flask`` for unit
@@ -140,7 +140,7 @@ def _walk_candidate_files(root: Path) -> Iterable[Path]:
     Non-tests/ paths yield BEFORE tests/ paths so that when multiple files
     match the substrate+emit signature, a real server module wins over a
     test fixture that imports ``BaseHTTPRequestHandler`` for mock-server
-    purposes. local-smartz 2026-05-11 evidence: without this priority,
+    purposes. example-app 2026-05-11 evidence: without this priority,
     ``tests/test_sse_cancellation.py`` was picked over
     ``src/localsmartz/serve.py`` and the inline-UI was invisible.
     """

@@ -24,7 +24,7 @@ Reference library for wiring external authentication and authorization into a we
 |---|---|---|
 | Better Auth setup, Drizzle adapter, social providers, refresh_token | `references/better-auth-setup.md` | `/better-auth/better-auth` |
 | Magic links / OTP via Better Auth | `references/better-auth-magic-link.md` | `/better-auth/better-auth` |
-| Travel Planner Better Auth real-build lessons | `references/lessons-travel-planner-better-auth.md` | — |
+| Example Web App Better Auth real-build lessons | `references/lessons-example-web-app-better-auth.md` | — |
 | Supabase Auth (SSR cookies, RLS, env validation, when-to-use vs Better Auth) | `references/supabase-auth.md` | `/supabase/supabase` |
 | Resend transactional + Better Auth `sendVerificationEmail` integration + webhook signatures | `references/resend-email.md` | `/websites/resend` |
 | Resend OTP / magic-link delivery + retries + bounce handling | `references/resend-otp-magic-link.md` | `/websites/resend`, `/resend/resend-skills` |
@@ -34,7 +34,7 @@ Reference library for wiring external authentication and authorization into a we
 | Google Geocoding / Directions | `references/google-geocoding-directions.md` | — |
 | Google Calendar sync | `references/google-calendar-sync.md` | — |
 | Broad Google Cloud Console walkthrough (4-layer mental model: identity, APIs, credentials, quotas) | `references/google-cloud-console.md` | — |
-| Real Google build incident lessons (Trip Planner, Next.js + Supabase) | `references/google-lessons-travel-planner.md` | — |
+| Real Google build incident lessons (Example Web App, Next.js + Supabase) | `references/google-lessons-example-web-app.md` | — |
 
 Services not yet documented (planned as additional references): GitHub OAuth, generic OAuth 2.0 callbacks, service-account key handling, API key rotation. Add them as `references/<service>-<topic>.md` following the same pattern.
 
@@ -46,10 +46,10 @@ Services not yet documented (planned as additional references): GitHub OAuth, ge
 4. **Scopes are sticky across authorizations.** If you add a scope later, existing users need to re-consent — the original grant doesn't auto-upgrade.
 5. **"Invalid grant" usually means one of: clock skew, expired refresh token, revoked authorization, or JWT signature mismatch.** Check system clock first.
 6. **Service accounts ≠ user accounts.** Service accounts act on their own identity with their own quota. User-delegated access (domain-wide delegation) is a separate flow with separate risks.
-7. **`NEXT_PUBLIC_APP_URL` / `BETTER_AUTH_URL` mismatch on Vercel CNAMEs.** Preview/production URLs diverge from the registered redirect; bind detection to the actual `VERCEL_URL` fallback and verify at boot. Travel Planner shipped a production-only auth failure from this exact mismatch.
+7. **`NEXT_PUBLIC_APP_URL` / `BETTER_AUTH_URL` mismatch on Vercel CNAMEs.** Preview/production URLs diverge from the registered redirect; bind detection to the actual `VERCEL_URL` fallback and verify at boot. Example Web App shipped a production-only auth failure from this exact mismatch.
 8. **Refresh-token guarantee on Google.** Better Auth's Google provider must explicitly request `accessType: 'offline'` AND `prompt: 'select_account consent'` — otherwise `refresh_token` is missing on second consent. Verify the `account.refresh_token` and `account.expires_at` columns populate before shipping. (See `references/better-auth-setup.md`.)
-9. **IDOR via shared DB connection.** Per-request `dbForUser(userId)` wrappers (or RLS) — never trust client-supplied user IDs in queries. Travel Planner's `lib/db/index.ts` is the canonical pattern.
-10. **Magic-link expiry & idempotency.** Default 10 min; single-use; rate-limit by email; log delivery failures (Resend bounces ≠ user error). atomize-ai's `magicLink({ expiresIn: 60 * 10 })` is the reference config.
+9. **IDOR via shared DB connection.** Per-request `dbForUser(userId)` wrappers (or RLS) — never trust client-supplied user IDs in queries. Example Web App's `lib/db/index.ts` is the canonical pattern.
+10. **Magic-link expiry & idempotency.** Default 10 min; single-use; rate-limit by email; log delivery failures (Resend bounces ≠ user error). example-app's `magicLink({ expiresIn: 60 * 10 })` is the reference config.
 11. **Cookie config is non-negotiable.** `httpOnly: true`, `secure: true` (prod), `sameSite: 'lax'` for OAuth redirects. `sameSite: 'strict'` breaks Google callback. Better Auth defaults are correct; override with care.
 
 ## Pattern: adding a new auth reference
@@ -73,6 +73,6 @@ Known Context7 ids (verified 2026-05-02): `/better-auth/better-auth`, `/supabase
 
 ## History
 
-Originally imported from a standalone `google-cloud-console` skill (2025, Trip Planner build). Converted to a general `authentication` parent skill on 2026-04-21 so GitHub OAuth, generic OAuth 2.0, and API-key patterns can share the routing layer and universal footgun section without each becoming its own island.
+Originally imported from a standalone `google-cloud-console` skill (2025, Example Web App build). Converted to a general `authentication` parent skill on 2026-04-21 so GitHub OAuth, generic OAuth 2.0, and API-key patterns can share the routing layer and universal footgun section without each becoming its own island.
 
-Extended on 2026-05-02 to multi-provider coverage: added Better Auth (Drizzle/Neon, magic-link, Google + Apple social), Supabase Auth (legacy + alternate), and Resend (transactional, magic-link/OTP, webhook verification). Lessons harvested from Travel Planner, atomize-ai, ProductPilot, and super_news. Adopted the Context7 lookup pattern so SKILL.md stays light while doc depth lives in references and the live Context7 index.
+Extended on 2026-05-02 to multi-provider coverage: added Better Auth (Drizzle/Neon, magic-link, Google + Apple social), Supabase Auth (legacy + alternate), and Resend (transactional, magic-link/OTP, webhook verification). Lessons harvested from Example Web App, example-app, Example App, and example-app. Adopted the Context7 lookup pattern so SKILL.md stays light while doc depth lives in references and the live Context7 index.

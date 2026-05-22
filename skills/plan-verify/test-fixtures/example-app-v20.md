@@ -1,6 +1,6 @@
-# Atomize AI Knowledge-Graph Cleanup — v2.0 (synthetic)
+# Example App Knowledge-Graph Cleanup — v2.0 (synthetic)
 
-> Synthetic fixture reconstructing the five errors caught in atomize-ai v2.0 review cycles.
+> Synthetic fixture reconstructing the five errors caught in example-app v2.0 review cycles.
 > Used to validate `plan_verify.py`. Do not treat as a real plan.
 
 ## Goal

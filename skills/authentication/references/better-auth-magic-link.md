@@ -2,14 +2,14 @@
 
 ## When to use
 
-- Email-only auth (no password, no social) — atomize-ai and ProductPilot both use this
+- Email-only auth (no password, no social) — example-app and Example App both use this
 - Adding magic-link as an alternative sign-in method on top of social providers
 - OTP / verification-code flows (uses the same plugin with a different delivery template)
 
 For the broader Better Auth setup (database, providers, routes), start at `better-auth-setup.md`.
 For Resend wiring on the email delivery side, see `resend-email.md` (transactional) or `resend-otp-magic-link.md` (delivery + retry patterns).
 
-## Server config (atomize-ai pattern)
+## Server config (example-app pattern)
 
 ```ts
 // lib/auth.ts
@@ -36,7 +36,7 @@ export const auth = betterAuth({
 })
 ```
 
-For Drizzle, swap `prismaAdapter(prisma, { provider: 'postgresql' })` with `drizzleAdapter(db, { provider: 'pg' })` (Travel Planner / ProductPilot use Drizzle).
+For Drizzle, swap `prismaAdapter(prisma, { provider: 'postgresql' })` with `drizzleAdapter(db, { provider: 'pg' })` (Example Web App / Example App use Drizzle).
 
 ## Client (with magic-link plugin)
 
@@ -59,7 +59,7 @@ export const { signIn, signOut, useSession } = authClient
 
 ## Email delivery handoff (dev-friendly, prod-strict)
 
-atomize-ai's `lib/email/send-magic-link.ts` shows a useful pattern: log to console in dev, throw in prod, with the actual Resend block ready to uncomment.
+example-app's `lib/email/send-magic-link.ts` shows a useful pattern: log to console in dev, throw in prod, with the actual Resend block ready to uncomment.
 
 ```ts
 interface SendMagicLinkParams { email: string; url: string }

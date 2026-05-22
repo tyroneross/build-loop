@@ -162,7 +162,7 @@ The following build-loop 0.9.0+ behaviors cannot be exercised inside a session t
 
 **What IS testable mid-session and was verified**:
 - Script-level: `version_advisor.py` (Gate 6), `ibr_quickpass.py` (Gate 8), `ux_triage.py` (Gate 7) — all edge cases including parallel pool, comment-strip, stable IDs, multi-line tag matching.
-- Inline-implementer fallback path (the load-bearing alternative to item 1) — drained 3 atomize-ai queue entries with 14 file modifications, all verifications green.
+- Inline-implementer fallback path (the load-bearing alternative to item 1) — drained 3 example-app queue entries with 14 file modifications, all verifications green.
 - `plugin-dev:plugin-validator` static review of all build-loop agents including the new implementer.
 
 **Workaround for item 1**: write a queue entry to `.build-loop/ux-queue/<id>.md` and let the orchestrator's inline-implementer fallback handle it. Same protocol, same quality bar, no parallelism.

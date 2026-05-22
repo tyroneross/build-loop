@@ -95,7 +95,7 @@ Fires when prompts are a core part of the product, not when prompts appear incid
 
 Trigger if any of:
 
-- Building or editing prompts that the app sends to an LLM at runtime: document-generation prompts (ProductPilot style), chat-with-user system prompts, voice-interaction prompts (SpeakSavvy style), reranker prompts, eval-judge prompts.
+- Building or editing prompts that the app sends to an LLM at runtime: document-generation prompts (Example App style), chat-with-user system prompts, voice-interaction prompts (example app style), reranker prompts, eval-judge prompts.
 - Robust agent or prompt pipeline present in the product: multi-step prompts, RAG, tool-use flows.
 - Semantic search over user queries: use `prompt-builder` to revise the query before embedding or retrieval.
 - Authoring a new agent's instructions (the body of an `agents/*.md` file serving as LLM guidance).

@@ -85,7 +85,7 @@ def _file_paths_from_evidence(tasks: dict) -> list[str]:
 
 
 def convert_wave_to_run(wave: dict, fallback_started: str | None, fallback_build: str | None) -> dict:
-    """Convert one wave entry (Travel-Planner-style) to a canonical run record.
+    """Convert one wave entry (Example-Web-App-style) to a canonical run record.
 
     Best-effort. Marks the result with migrated_from: "wave_based" so the
     forensic trail stays clear in Phase 6 Learn output.

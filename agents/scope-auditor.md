@@ -1,6 +1,6 @@
 ---
 name: scope-auditor
-description: Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the "fan-out scope-blindness" defect class observed in round-2 of dispatch-pattern testing (atomize-ai 2026-05-07).
+description: Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the "fan-out scope-blindness" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-07).
 model: opus
 tools: ["Read", "Grep", "Glob"]
 ---
@@ -116,4 +116,4 @@ You return ONLY the JSON described in step 4. The orchestrator handles plan revi
 
 ## Success criteria
 
-A successful Scope Auditor run prevents the round-2 atomize-ai iteration: a Sonnet implementer adds `savedMode`/`savedVoice` props to `<PodcastGenerator>`, but the parent `<AIBriefPage>` (rendered at line 88) is never updated to pass them, so T-04 (voice propagation) silently no-ops at runtime. Your job is to surface that gap before Execute starts.
+A successful Scope Auditor run prevents the round-2 example-app iteration: a Sonnet implementer adds `savedMode`/`savedVoice` props to `<PodcastGenerator>`, but the parent `<AIBriefPage>` (rendered at line 88) is never updated to pass them, so T-04 (voice propagation) silently no-ops at runtime. Your job is to surface that gap before Execute starts.

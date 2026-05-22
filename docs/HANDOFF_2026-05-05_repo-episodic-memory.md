@@ -230,7 +230,7 @@ for t in scripts/test_*.py; do python3 "$t" || echo "FAIL: $t"; done
 | 2 | **Investigate `auto-decision-capture` skill firing rate** in interactive sessions over a few days | Tells us whether the skill is reactive-but-firing OR reactive-and-silent | Passive observation |
 | 3 | **Auto-population for `closing_commit`** via git post-commit hook | Closes the decision → commit linkage automatically | Small (~50 LOC + 1 hook entry) |
 | 4 | **`task_category` and `domain` auto-inference** from conversational context (currently most captures default to `unknown`) | Better cohort queries; enables filter-driven retrieval | Medium (~150 LOC + LLM-driven classifier) |
-| 5 | **Cross-project promotion via `/research:save` integration** (when `tags: [..., promote-global]`) | Decisions in atomize-ai relevant to travel-planner surface in both | Medium |
+| 5 | **Cross-project promotion via `/research:save` integration** (when `tags: [..., promote-global]`) | Decisions in example-app relevant to example-web-app surface in both | Medium |
 | 6 | **`recall.py` query-rewriting using local LLM** when initial cosine retrieval has low confidence | Better recall on vocabulary-mismatched queries | Medium |
 | 7 | **Auto-memory frontmatter expansion** (`~/.claude/projects/.../memory/` files currently have only `name, description, type` — could match v3 schema for unified categorization) | Cross-system consistency | Small but separate system |
 | 8 | **Procedural memory auto-draft** (Phase 3 of the three-phase governance, gated at ≥5 hand-authored procedures) — currently 1 procedure exists, gate not yet open | Will fire automatically when threshold met | 0 effort until threshold met |

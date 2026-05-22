@@ -1,4 +1,4 @@
-# Lessons from Travel Planner (2025 Build)
+# Lessons from Example Web App (2025 Build)
 
 Real failures from shipping a Next.js + Supabase + Google OAuth app. Each one cost at least half a day. Read this when something breaks — there's a decent chance it's listed here.
 

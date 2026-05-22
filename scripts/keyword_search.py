@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Sparse-retrieval (tsvector + ts_rank) leg for hybrid recall.
 
-Phase A chunk 2. Mirrors Atomize's `makeTsvectorKeywordSearch`
-(`atomize-ai/lib/search/retrieval/pipeline-rag.ts:136-188`) over
+Phase A chunk 2. Mirrors Example App's `makeTsvectorKeywordSearch`
+(`example-app/lib/search/retrieval/pipeline-rag.ts:136-188`) over
 build-loop's semantic_facts table.
 
 The `search_vector` GENERATED column added by `migrate_add_fts_column.py`

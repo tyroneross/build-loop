@@ -182,7 +182,7 @@ Repo-scoped namespace, separate from `entity` (which targets a module
 inside the project). Default: derived from `entity` prefix before `:`
 (e.g. `build-loop:foo` → `build-loop`), else basename of
 `$CLAUDE_PROJECT_DIR`, else `unknown`. Examples: `build-loop`,
-`speaksavvy`, `atomize-ai`.
+`example-app`, `example-app`.
 
 ### 9.2 `tool` — closed enum
 

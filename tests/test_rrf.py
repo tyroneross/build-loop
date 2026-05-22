@@ -30,7 +30,7 @@ def test_canonical_two_legs():
 
 
 def test_default_k_is_60():
-    """Spec / Cormack 2009 / Atomize all use k=60."""
+    """Spec / Cormack 2009 / Example App all use k=60."""
     assert DEFAULT_K == 60
 
 

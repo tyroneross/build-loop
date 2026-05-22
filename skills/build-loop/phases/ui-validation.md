@@ -4,7 +4,7 @@ How build-loop turns design rules into gates. Triggered when Phase 1 ASSESS dete
 
 ## Why this exists
 
-A retrospective on a real shipped build (SpeakSavvy build 50) found that mockup-parity validation was insufficient. Subagents reproduced mockups faithfully, including anti-patterns the project's own design rules forbade — colored status pills, ungated `repeatForever` animations, theme-token bypass, hardcoded font sizes in body copy.
+A retrospective on a real shipped build (example app build 50) found that mockup-parity validation was insufficient. Subagents reproduced mockups faithfully, including anti-patterns the project's own design rules forbade — colored status pills, ungated `repeatForever` animations, theme-token bypass, hardcoded font sizes in body copy.
 
 Root cause: design rules in `CLAUDE.md` were loaded as session context but didn't enter individual subagent prompts. Knowledge that doesn't enter the prompt doesn't reach the code.
 
@@ -230,9 +230,9 @@ A UI build is considered production-ready when ALL of these pass on the first bu
 If all six pass on the first build attempt, the gates worked as designed. If any fail, the gates need tightening — file a feedback note in `.build-loop/feedback.md`.
 
 Real bugs that bypassed the gates and were only caught visually (build-loop hardening came from these):
-- **Build 53–55 (SpeakSavvy)**: Semicircle gauge rendered upside-down because `Path.addArc clockwise:true` traces the bottom half in SwiftUI's flipped y-axis. Track stroke used `Theme.surfacePrimary` (#1A1F26), invisible against `Theme.background` (#0F1419). Tick marks correctly placed but appeared "stray" because no arc was visible. Static scanner couldn't see this.
-- **Build 53–56 (SpeakSavvy)**: Detailed mode's 7th dim row, Profile's version row, Practice's bottom drill all clipped behind iOS 26 floating tab bar because `safeAreaPadding` didn't push scroll content. Required explicit `Color.clear.frame(height: 100)` spacer.
-- **Build 56 (SpeakSavvy)**: "Engagement" dim name wrapped to 2 lines in History session chips because no `lineLimit` + `minimumScaleFactor` constraint, AND right column timestamps wrapped because no `fixedSize` width policy.
+- **Build 53–55 (example app)**: Semicircle gauge rendered upside-down because `Path.addArc clockwise:true` traces the bottom half in SwiftUI's flipped y-axis. Track stroke used `Theme.surfacePrimary` (#1A1F26), invisible against `Theme.background` (#0F1419). Tick marks correctly placed but appeared "stray" because no arc was visible. Static scanner couldn't see this.
+- **Build 53–56 (example app)**: Detailed mode's 7th dim row, Profile's version row, Practice's bottom drill all clipped behind iOS 26 floating tab bar because `safeAreaPadding` didn't push scroll content. Required explicit `Color.clear.frame(height: 100)` spacer.
+- **Build 56 (example app)**: "Engagement" dim name wrapped to 2 lines in History session chips because no `lineLimit` + `minimumScaleFactor` constraint, AND right column timestamps wrapped because no `fixedSize` width policy.
 
 These shipped to TestFlight before being caught — gates are now tightened to prevent recurrence.
 

@@ -67,7 +67,7 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertNotEqual(state["runs"][0]["run_id"], state["runs"][1]["run_id"])
 
     def test_legacy_state_additive_migration(self) -> None:
-        # Simulate SpeakSavvy-iOS v0.2.0 shape: no runs[], rich existing data
+        # Simulate Example-iOS-App v0.2.0 shape: no runs[], rich existing data
         self.state.parent.mkdir(parents=True)
         legacy = {
             "goal": "old goal",

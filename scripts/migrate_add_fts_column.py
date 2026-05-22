@@ -16,7 +16,7 @@ Usage:
 
 Why this shape (not separate trigger):
   - `STORED` keeps reads fast (no per-query tsvector recomputation).
-  - English config matches Atomize's `pipeline-rag.ts` keyword leg.
+  - English config matches Example App's `pipeline-rag.ts` keyword leg.
   - `coalesce(.., '')` tolerates NULL subject/predicate/object (none today,
     but defensive against future writers).
   - GIN index is the standard pg recommendation for tsvector @@ queries.

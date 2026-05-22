@@ -1,7 +1,7 @@
 # Retrospective: App Pulse Rally-Point Coordination
 
 **Date:** 2026-05-21
-**Scope:** Build-loop cross-host coordination, App Pulse, `/agent-rally-point`, Codex-to-Claude Code dogfood on SpeakSavvy.
+**Scope:** Build-loop cross-host coordination, App Pulse, `/agent-rally-point`, Codex-to-Claude Code dogfood on example app.
 
 ## Bottom Line
 
@@ -13,7 +13,7 @@ The current system has the right primitives, but the start path is split. App Pu
 
 ### 1. The shared channel model worked once a write happened
 
-After Codex explicitly wrote presence and a handoff to `~/.build-loop/apps/speaksavvy-ios`, Claude Code could see the same app slug, channel revision, and active peer state. That validates the core App Pulse design: one app channel, shared across hosts, with lightweight records instead of direct agent-to-agent messaging.
+After Codex explicitly wrote presence and a handoff to `~/.build-loop/apps/example-ios-app`, Claude Code could see the same app slug, channel revision, and active peer state. That validates the core App Pulse design: one app channel, shared across hosts, with lightweight records instead of direct agent-to-agent messaging.
 
 Why it matters: the coordination surface does not require Claude and Codex to talk to each other directly. They only need to agree on the app slug and channel protocol.
 
@@ -39,7 +39,7 @@ Why it matters: source correctness is not runtime correctness. Any cross-host co
 
 ### 1. Passive reads were mistaken for coordination
 
-Codex initially verified that the SpeakSavvy channel was absent and reported `status: clear`. That was accurate as a read, but it did not create any signal for Claude Code to find. From Claude's perspective, Codex was invisible.
+Codex initially verified that the example app channel was absent and reported `status: clear`. That was accurate as a read, but it did not create any signal for Claude Code to find. From Claude's perspective, Codex was invisible.
 
 Root cause: `coordination_status.py` is a sensor, not a publisher. It reads App Pulse and git state. It does not write presence.
 
@@ -79,9 +79,9 @@ Claude Code's follow-up retrospective sharpens the recommendation. The main corr
 
 Confirmed from runtime state:
 
-- The SpeakSavvy channel has `changes.jsonl`, `revision`, `revision.lock`, and `sessions/`, but no channel `active.json`.
+- The example app channel has `changes.jsonl`, `revision`, `revision.lock`, and `sessions/`, but no channel `active.json`.
 - `scripts/app_pulse/` has no `write_active` or `read_active_pointer` helper. The only active pointer code is repo-local in `coordination_bootstrap.py`.
-- SpeakSavvy commits `353d562` and `3545cba` landed at 2026-05-21 09:44 Pacific, before Codex's 09:50 App Pulse post that declared no app-file ownership. That proves channel ownership claims can be stale or incomplete unless the rally-start path inspects recent commits and current repo state before posting.
+- example app commits `353d562` and `3545cba` landed at 2026-05-21 09:44 Pacific, before Codex's 09:50 App Pulse post that declared no app-file ownership. That proves channel ownership claims can be stale or incomplete unless the rally-start path inspects recent commits and current repo state before posting.
 - Current source `coordination_status.py` returns `warn` for overlaps, unresolved verdicts, or dirty files, not peer count alone. Claude's observed "warn on 4 peers" is still useful dogfood evidence, but the implementation task should first reproduce the exact code path before changing status semantics.
 
 The strongest combined conclusion: App Pulse needs a start-of-run publisher plus an active pointer. MECE validation should be applied to handoff/claim payloads, but not blindly to every `post()` call.
@@ -129,7 +129,7 @@ Shape:
 ```json
 {
   "schema_version": "1.0",
-  "app_slug": "speaksavvy-ios",
+  "app_slug": "example-ios-app",
   "current_run_id": "run-20260521-0950",
   "latest_session_id": "codex-...",
   "status": "active",
@@ -264,7 +264,7 @@ If channel `active.json` is missing or stale, rebuild it from the tail of `chang
 
 ## Success Criteria
 
-- A new Codex build-loop run on SpeakSavvy creates a visible App Pulse rally record before any app file is edited.
+- A new Codex build-loop run on example app creates a visible App Pulse rally record before any app file is edited.
 - A Claude Code run started after that can see the Codex session with only `coordination_status.py`.
 - A no-peer solo run creates no `.build-loop/coordination/*.md` file.
 - A peer overlap promotes to a durable coordination file and writes/updates the active pointer.

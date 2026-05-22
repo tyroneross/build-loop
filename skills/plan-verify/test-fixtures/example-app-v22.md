@@ -1,8 +1,8 @@
-# Atomize AI — Unified AI Search Architecture (Full Plan)
+# Example App — Unified AI Search Architecture (Full Plan)
 
 **Version:** 2.2 — SOTA research integrated (RRF, cross-encoder reranker, CRAG, multi-query, HippoRAG)
 **Last updated:** 2026-04-28
-**Working directory:** `/Users/tyroneross/dev/git-folder/atomize-ai/`
+**Working directory:** `/Users/you/example-app/`
 **Provider priority:** Accuracy first → speed → cost. Stay on Groq throughout (cheaper + faster than OpenAI/Anthropic for comparable workloads, ~5–10× cost advantage, 3–12× speed advantage). **Pick the right Groq model per task** — strict-schema work (Tier 3 intent classifier) uses `openai/gpt-oss-120b` (constrained decoding, 100% schema-valid); synthesis uses Llama 3.3 70B; fast-path classification uses Llama 3.1 8B. Cross-provider swaps (OpenAI Structured Outputs, dedicated rerankers like Zerank-2 / Voyage 2.5 / Jina v3) stay deferred to a final optimization phase **only after the architecture is working end-to-end**, per user direction. Per-call `max_tokens` and per-run `budget` set in the provider-config block; new LLM calls inherit that ceiling. **Threat model:** PII handling (§13.2) covered by hash-only-store control; new tier-2 embed call mapped to OWASP LLM01 / LLM06 review at top of §11. See `security-methodology` skill for the full OWASP / ASI ID matrix.
 
 > **Codex review applied 2026-04-28** — five errors corrected, scope tightened to Milestone 1 (format-intent + structured-results) merge-able alone, Milestone 2 (consolidations) explicitly deferred. Full change log at §11.
@@ -666,7 +666,7 @@ PHASE 11 Evaluate + swap candidates                     ─── ~1   day  (NEW
 - Today's pipeline runs vector search (pgvector) and keyword search (`title ILIKE`) in sequence with implicit precedence. Replace with parallel queries + RRF fusion.
 - Run pgvector `ORDER BY embedding <-> $query LIMIT 50` AND Postgres `tsvector` (`websearch_to_tsquery`) `LIMIT 50` in parallel.
 - Fuse with RRF: `score(doc) = Σ 1/(k + rank_i)` across both lists, k=60. Trim to top-20 for rerank.
-- Recall lift expectation: ~62–78% → ~84–91% recall@10 (per Supermemory, ParadeDB, Tiger Data, Weaviate benchmarks). **Verify on atomize fixtures via Phase 0 eval — direction is documented; magnitude must be measured.**
+- Recall lift expectation: ~62–78% → ~84–91% recall@10 (per Supermemory, ParadeDB, Tiger Data, Weaviate benchmarks). **Verify on example-app fixtures via Phase 0 eval — direction is documented; magnitude must be measured.**
 - Keep current Groq Llama 3.3 70B as the reranker over the top-20 fused candidates. Dedicated cross-encoder reranker swap is deferred to **Phase 11 (last step)** per user direction — code is wired so the swap is one provider-abstraction change.
 
 **NEW (v2.2) — CRAG-style relevance gate inside `agentic-rag.ts`** (~0.5 day):
@@ -734,7 +734,7 @@ PHASE 11 Evaluate + swap candidates                     ─── ~1   day  (NEW
 
 ### 5.9.5 Phase 5e — HippoRAG-style PPR over `entity_pairs` for KG-RAG (1.5 days, NEW in v2.2)
 
-**Why:** GraphRAG-Bench (ICLR'26) shows HippoRAG / HippoRAG2 lead on multi-hop reasoning — Evidence Recall 87–91%, Context Relevance 85–88% — vs Microsoft GraphRAG (community-summary, expensive to index) and LightRAG (lower latency, lower accuracy). atomize-ai's `entities` + `entity_pairs` schema fits HippoRAG's Personalized PageRank pattern *natively* — no new tables, no re-indexing.
+**Why:** GraphRAG-Bench (ICLR'26) shows HippoRAG / HippoRAG2 lead on multi-hop reasoning — Evidence Recall 87–91%, Context Relevance 85–88% — vs Microsoft GraphRAG (community-summary, expensive to index) and LightRAG (lower latency, lower accuracy). example-app's `entities` + `entity_pairs` schema fits HippoRAG's Personalized PageRank pattern *natively* — no new tables, no re-indexing.
 
 - In `lib/search/retrieval/kg-rag.ts`: replace the current "fetch entity neighbors" walk with a Personalized PageRank seeded by entities matched in the query.
 - Implementation: precompute entity_pair edge weights from co-occurrence + recency; run PPR (5–10 iterations, damping 0.85) over the seeded entities; rank papers/articles by their entity-membership score.
@@ -820,10 +820,10 @@ Candidates to evaluate at this phase, in priority order:
    - **Voyage Rerank 2.5** — competitive accuracy, ~2× lower latency than Cohere.
    - **Zerank-2** — current ELO leader (1638) on 2026 reranker leaderboards.
    - **BGE-reranker-v2-m3** — open-source, self-host on existing Railway worker fleet (matches user's "build from scratch" preference).
-   - Decision criterion: run all four against atomize fixtures via Phase 0 eval; pick the model with the best (faithfulness × context-recall) / latency curve. Expected latency win: 500–2000ms LLM-rerank → 50–200ms cross-encoder.
+   - Decision criterion: run all four against example-app fixtures via Phase 0 eval; pick the model with the best (faithfulness × context-recall) / latency curve. Expected latency win: 500–2000ms LLM-rerank → 50–200ms cross-encoder.
 2. **OpenAI Structured Outputs for Tier 3** — only if Groq `openai/gpt-oss-120b` strict mode shows ≥3% schema-validation drift in production telemetry. Drop-in `gpt-4.1-mini` or `gpt-5-mini` if needed.
 3. **Cohere Rerank 4.0 Pro / Fast** — comparable accuracy to top-tier; managed; only if self-host BGE creates ops burden you don't want.
-4. **Late interaction (ColBERT v2 / PLAID)** — premium upgrade after RRF caps out; only if recall@10 plateaus below 90% on atomize-specific eval.
+4. **Late interaction (ColBERT v2 / PLAID)** — premium upgrade after RRF caps out; only if recall@10 plateaus below 90% on example-app-specific eval.
 
 **Reversible?** Yes — provider abstraction means each swap is config-only.
 
@@ -1436,13 +1436,13 @@ Same query as input. Annotations show transformations and integration points.
 - Structured outputs / constrained decoding: [Groq Structured Outputs docs (verified 2026-04-28)](https://console.groq.com/docs/structured-outputs), [Groq supported models docs](https://console.groq.com/docs/models), [arXiv 2408.11061 StructuredRAG](https://arxiv.org/abs/2408.11061), [OpenAI Structured Outputs docs](https://developers.openai.com/api/docs/guides/structured-outputs)
 - Evaluation: [Ragas metrics docs](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/), [PremAI RAG evaluation 2026](https://blog.premai.io/rag-evaluation-metrics-frameworks-testing-2026/)
 - Provider comparison (Groq vs OpenAI): [Groq pricing](https://groq.com/pricing), [Artificial Analysis Groq provider page](https://artificialanalysis.ai/providers/groq), [LLM API comparison 2026](https://www.morphllm.com/llm-api), [TokenMix Groq pricing breakdown](https://tokenmix.ai/blog/groq-api-pricing)
-- Research packet: `~/dev/git-folder/atomize-ai/.build-loop/research/2026-04-28-unified-search-sota-validation.md`
+- Research packet: `~/projects/example-app/.build-loop/research/2026-04-28-unified-search-sota-validation.md`
 
 **Internal sources:**
 - Fresh NavGator scan 2026-04-28: 236 components, 2,580 connections, 1,889 files
-- File-level Explore pass over `/Users/tyroneross/dev/git-folder/atomize-ai/`
+- File-level Explore pass over `/Users/you/example-app/`
 - Read all 6 candidate "orphan" route files end-to-end (5 confirmed orphan, 1 reclassified as live sibling per Codex review)
-- Memory: `reference_atomize_ai_railway_workers.md`, `atomize-ai.md`, `feedback_no_fake_stats.md`
+- Memory: `reference_example_app_railway_workers.md`, `example-app.md`, `feedback_no_fake_stats.md`
 - `vercel.json` (11 cron entries, 60s function timeout)
 - `ecosystem.config.js` (PM2 layer for non-Railway deploys)
 - Existing tests: `tests/lib/search/{query-router,groq-reranker,rerank-policy}.test.ts`, `tests/unit/intelligent-query-engine-fallback.test.ts`
@@ -1516,8 +1516,8 @@ This means the **format-intent fix can ship without ever deleting a route or con
 - ✅ Recharts present at `package.json:133`, version `^3.8.0` — verified by Codex review
 - Some web sources are dated 2026 but published in early 2026 — directional, not statistically authoritative
 - ✅ **(v2.2) Verified at console.groq.com/docs/structured-outputs (2026-04-28):** strict `json_schema` mode (constrained decoding, 100% schema adherence) is supported on Groq for `openai/gpt-oss-20b` and `openai/gpt-oss-120b` only. Best-effort `json_schema` adds `openai/gpt-oss-safeguard-20b` and `meta-llama/llama-4-scout-17b-16e-instruct`. All other Groq models (Llama 3.3 70B, Llama 3.1 8B, Kimi K2, Qwen 3, etc.) only support `json_object` mode (valid JSON, no schema enforcement).
-- TAG:INFERRED **(v2.2)** RRF recall lift (~62-78% → ~84-91%) and reranker latency wins (500-2000ms → 50-200ms) are aggregate industry benchmarks, not measured on atomize fixtures. Phase 0 RAGAS eval must confirm magnitude before locking M2/M3.
-- ⚠️ Untested **(v2.2)** HippoRAG-vs-current-KG retrieval comparison — GraphRAG-Bench (ICLR'26) results are general; needs atomize-specific eval.
+- TAG:INFERRED **(v2.2)** RRF recall lift (~62-78% → ~84-91%) and reranker latency wins (500-2000ms → 50-200ms) are aggregate industry benchmarks, not measured on example-app fixtures. Phase 0 RAGAS eval must confirm magnitude before locking M2/M3.
+- ⚠️ Untested **(v2.2)** HippoRAG-vs-current-KG retrieval comparison — GraphRAG-Bench (ICLR'26) results are general; needs example-app-specific eval.
 - ✅ **(v2.2)** User provider preference — Groq cheaper+faster than OpenAI verified via live web search 2026-04-28: 3-12× tps, 5-10× cheaper, TTFT 120-250ms vs 300-700ms.
 
 ---
@@ -1538,7 +1538,7 @@ User asked `/build-loop:research` to validate whether v2.1's approach reflects c
 | 2 | Pure pgvector retrieval ≈ 62-78% recall@10. Pure BM25/tsvector ≈ 65%. Vector + BM25 fused with **Reciprocal Rank Fusion (RRF, k=60)** ≈ 84-91% recall@10. RRF is now table-stakes for pgvector hybrid search. | T1 — Supermemory, ParadeDB, Tiger Data, Weaviate, Glaforge, Supabase docs, multiple benchmarks | **Added to Phase 4.** Pure code change, no new dependency. |
 | 3 | Modern "agentic RAG" expects a self-correction loop (Self-RAG, **CRAG**) that critiques retrieval quality post-rerank and reformulates or honest-downgrades when relevance is low. v2.1's "agentic" branch fans out and merges but never gates on quality. | T2 — arXiv 2501.09136, Data Nucleus 2026, multiple 2026 medium guides | **Added to Phase 4.** Reuses existing Groq Llama 3.3 70B as critic; honest-downgrade pattern already in plan for `unsupported-format`. |
 | 4 | DMQR-RAG (multi-query rewriting) shows +14.46% P@5 on FreshQA, +8% on HotpotQA multi-hop. **RAG-Fusion** (multi-query + RRF) is now the standard query-rewrite pattern. HyDE remains valuable specifically for *vague* queries; multi-query better for *complex/multi-hop*. | T1 — DMQR-RAG arXiv 2411.13154, multiple 2026 guides | **Phase 5b extended.** Multi-query is now primary, HyDE is the vague-query fallback, both routed by `intent.complexity`. |
-| 5 | GraphRAG-Bench (ICLR'26) shows **HippoRAG / HippoRAG2** lead multi-hop reasoning at 87-91% Evidence Recall, 85-88% Context Relevance. atomize's `entities` + `entity_pairs` schema fits HippoRAG's Personalized PageRank pattern *natively* — no new tables. LightRAG = lower latency but slightly lower accuracy. Microsoft GraphRAG = community-summary, expensive to index. | T1 — GraphRAG-Bench (ICLR'26), arXiv 2506.05690, Graph Praxis 2026 | **Added as Phase 5e (M2).** Uses existing schema; flag-gated; old KG retrieval is fallback. |
+| 5 | GraphRAG-Bench (ICLR'26) shows **HippoRAG / HippoRAG2** lead multi-hop reasoning at 87-91% Evidence Recall, 85-88% Context Relevance. example-app's `entities` + `entity_pairs` schema fits HippoRAG's Personalized PageRank pattern *natively* — no new tables. LightRAG = lower latency but slightly lower accuracy. Microsoft GraphRAG = community-summary, expensive to index. | T1 — GraphRAG-Bench (ICLR'26), arXiv 2506.05690, Graph Praxis 2026 | **Added as Phase 5e (M2).** Uses existing schema; flag-gated; old KG retrieval is fallback. |
 | 6 | RAGAS reference-free metrics (faithfulness, context recall, context precision, answer relevance) are the 2026 standard for production RAG eval. v2.1 eval covered intent accuracy only. | T1 — Ragas docs, PremAI 2026 review, Maxim AI | **Phase 0 extended; merge gates added in §6.** Judged by existing Groq Llama 3.3 70B (~$5/full run). |
 | 7 | **Groq supports strict `json_schema`** (constrained decoding, 100% schema adherence) on `openai/gpt-oss-20b` and `openai/gpt-oss-120b` only. All other Groq models (including Llama 3.3 70B and 3.1 8B) only support `json_object` mode. The `gpt-oss-120b` model on Groq runs at ~500 tps with strict schema enforcement — better speed AND strictness than OpenAI Structured Outputs at lower cost. | T1 — verified live at console.groq.com/docs/structured-outputs (2026-04-28) | **Phase 1 Tier 3 model pinned to `openai/gpt-oss-120b` strict mode**, with `gpt-oss-20b` and `llama-4-scout` as fallbacks. **Stays on Groq.** Cross-provider OpenAI swap deferred to Phase 11 only if telemetry shows drift. |
 | 8 | **Reranker leadership has shifted in 2026** — Zerank-2 (1638 ELO leader), Voyage Rerank 2.5, Jina Reranker v3 (81.33% Hit@1 at 188ms) now lead Cohere on accuracy. Cohere Rerank 3.5/4.0 still competitive but no longer #1. Cross-encoders run 50-200ms vs LLM-rerank 500-2000ms with comparable or better accuracy. | T1/T2 — agentset.ai leaderboard, Mixedbread benchmarks, Jina docs, ZeroEntropy guide 2026 | **Deferred to Phase 11 (last step) per user direction.** v2.2 keeps Groq Llama 3.3 70B as reranker; Phase 4 wires the provider abstraction so swap is config-only later. |
@@ -1586,8 +1586,8 @@ Confirmed live 2026-04-28: Groq is **3-12× faster (tps)** and **5-10× cheaper*
 
 ### 13.6 Items still flagged for further verification
 
-- RAGAS judge calibration on atomize fixtures — Llama 3.3 70B as judge is cheap but hasn't been calibrated against human ratings on atomize-specific data. First eval run will reveal whether scores are stable.
-- HippoRAG PPR performance on `entity_pairs` of atomize's actual size — verify edge count and required indices via `EXPLAIN` before Phase 5e build.
+- RAGAS judge calibration on example-app fixtures — Llama 3.3 70B as judge is cheap but hasn't been calibrated against human ratings on example-app-specific data. First eval run will reveal whether scores are stable.
+- HippoRAG PPR performance on `entity_pairs` of example-app's actual size — verify edge count and required indices via `EXPLAIN` before Phase 5e build.
 - CRAG threshold (0.5) — placeholder. Tune from one week of shadow-mode telemetry.
 - Multi-query cost amplification — 4× retrieval calls per complex query. Measure actual cost lift vs RAGAS quality lift; abort if cost > 2× without quality gain.
 - Whether Groq `openai/gpt-oss-120b` strict mode actually achieves ~99.5% schema validity in production (one community report flagged "Structured Outputs ignored by openai/gpt-oss-120b"). Phase 1 shadow mode telemetry validates this empirically before Phase 5 cuts over.

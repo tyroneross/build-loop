@@ -122,7 +122,7 @@ Many UI states are only reachable after the user has done something — complete
 Pattern (SwiftUI/SwiftData example):
 
 ```swift
-// SpeakSavvy/Services/DebugSeeder.swift
+// ExampleApp/Services/DebugSeeder.swift
 #if DEBUG
 import Foundation
 import SwiftData
@@ -139,7 +139,7 @@ enum DebugSeeder {
 ```
 
 ```swift
-// SpeakSavvyApp.swift init()
+// ExampleApp.swift init()
 #if DEBUG
 if CommandLine.arguments.contains("-SeedDebugSessions") {
     DebugSeeder.seedIfEmpty(context: container.mainContext)
