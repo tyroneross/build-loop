@@ -31,6 +31,11 @@ _LOG_NAME = "changes.jsonl"
 # Added 2026-05-20 for coordination dogfood: "feedback" (verifier verdicts:
 # PASS/VARIANCE/BLOCKED) and "handoff" (plan owner → verifier work-item
 # transfer). Both surface in checkpoint_read like any other kind.
+# Added 2026-05-22 for the leadership lease (G1) + escalation salience (G3):
+# the four "lead-*" kinds form the durable audit trail of who held the lead;
+# "escalation" marks a record needing lead/user attention now (distinct from
+# routine "phase"/"feedback"). All five are additive — D7 means any older
+# reader that predates them warns-not-drops, so no existing consumer breaks.
 KNOWN_KINDS = (
     "commit",
     "dep-change",
@@ -39,6 +44,11 @@ KNOWN_KINDS = (
     "feedback",
     "handoff",
     "message",
+    "lead-claim",
+    "lead-renew",
+    "lead-transfer",
+    "lead-relinquish",
+    "escalation",
 )
 
 _RECORD_KEYS = (

@@ -41,8 +41,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .changes import append_change, make_record
-from .revision import bump_revision
+try:  # package import
+    from .changes import append_change, make_record
+    from .revision import bump_revision
+except ImportError:  # script import (sys.path-inserted, no parent package)
+    from changes import append_change, make_record  # type: ignore
+    from revision import bump_revision  # type: ignore
 
 
 def post(
@@ -68,7 +72,10 @@ def post(
 
         # MECE validation: reject malformed handoff payloads before any write
         if kind == "handoff":
-            from . import mece_gate
+            try:  # package import
+                from . import mece_gate
+            except ImportError:  # script import
+                import mece_gate  # type: ignore
 
             valid, rejection = mece_gate.validate_handoff(payload or {}, tool=tool)
             if not valid:
@@ -92,7 +99,10 @@ def post(
         append_change(d, record)
         if kind == "phase" and (payload or {}).get("phase") == "rally-start":
             try:
-                from . import rally
+                try:  # package import
+                    from . import rally
+                except ImportError:  # script import
+                    import rally  # type: ignore
 
                 rally.write_current(d, record)
             except Exception:
