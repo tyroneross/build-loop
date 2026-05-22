@@ -20,5 +20,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Provision the runtime denylist
+        # .private-slugs is gitignored (it holds the real private slugs).
+        # CI needs a denylist to scan against; the open-source CI run uses
+        # the tracked placeholder example so the guard wiring is exercised
+        # end-to-end. A maintainer-private CI may instead inject the real
+        # list from a secret. The guard FAILS CLOSED if this file is
+        # absent, so this step must run before the scan.
+        run: cp .private-slugs.example .private-slugs
+
       - name: Scan tracked files for private app slugs
         run: python3 scripts/check_private_slugs.py --all

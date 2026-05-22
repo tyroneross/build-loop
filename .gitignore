@@ -49,3 +49,7 @@ __pycache__/
 
 # Bookmark snapshot data
 .bookmark/
+
+# Private-slug guard runtime config (real slugs — never tracked).
+# See .private-slugs.example for the format.
+.private-slugs

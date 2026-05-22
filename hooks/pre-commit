@@ -11,7 +11,12 @@
 # this body is the private-slug-guard segment only.
 
 # --- BEGIN private-slug-guard pre-commit ---
-PRIVATE_SLUG_GUARD="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.private-slug-check.py"
+RALLY_POINT_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
+  echo "private-slug-guard: cannot resolve repo toplevel — refusing to skip the guard" >&2
+  exit 2
+fi
+PRIVATE_SLUG_GUARD="$RALLY_POINT_TOPLEVEL/.git/hooks/.private-slug-check.py"
 if [ -f "$PRIVATE_SLUG_GUARD" ]; then
   python3 "$PRIVATE_SLUG_GUARD" || exit 1
 fi

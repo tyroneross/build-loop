@@ -1,0 +1,24 @@
+# Private app slug denylist — copy this file to `.private-slugs` and edit.
+#
+# `.private-slugs` is gitignored. The private-slug guard
+# (scripts/check_private_slugs.py) reads it at runtime and blocks any
+# commit — and fails CI — that stages one of these slugs in a tracked
+# file. build-loop is open source; this keeps the maintainer's private
+# project names out of every tracked file, including the guard itself.
+#
+# Format:
+#   - one slug per line
+#   - blank lines and `#` comments are ignored
+#   - each line is a case-insensitive regex fragment, matched as a
+#     word-ish token (so `example-app` will not match `examples`)
+#   - escape regex metacharacters: write a literal dot as `\.`
+#
+# The guard FAILS CLOSED: if `.private-slugs` is missing or empty when
+# run in CI / `--all` mode, it exits non-zero rather than passing.
+#
+# The entries below are placeholders — replace them with your real
+# private slugs in your local `.private-slugs`.
+example-app
+example-ios-app
+example-web-app
+example\.com

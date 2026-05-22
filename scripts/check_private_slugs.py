@@ -15,12 +15,14 @@ Usage:
 Exit codes:
     0 — no private slug found (commit may proceed)
     1 — private slug found (commit blocked); offending lines printed
-    2 — usage / git error
+    2 — usage / git / config error (e.g. missing .private-slugs)
 
 ------------------------------------------------------------------------
-DENYLIST — edit this list to add or remove guarded slugs.
-Each entry is a case-insensitive regex fragment matched as a word-ish
-token. Keep them specific enough not to false-positive on generic words.
+DENYLIST — runtime config, NOT shipped in the tracked tree.
+The list of guarded slugs lives in a gitignored ``.private-slugs`` file
+(one slug per line) at the repo root. A tracked ``.private-slugs.example``
+documents the format with generic placeholders. This keeps the real
+private slugs out of every tracked file, including this one.
 ------------------------------------------------------------------------
 """
 from __future__ import annotations
@@ -30,31 +32,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-# --- EDIT HERE: the private app slugs / domains that must never ship ---
-PRIVATE_SLUGS: list[str] = [
-    r"speaksavvy",
-    r"atomize-ai",
-    r"atomize",
-    r"travel-planner",
-    r"productpilot",
-    r"local-smartz",
-    r"rosslabs\.ai",
-]
-# -----------------------------------------------------------------------
+# Runtime denylist config (gitignored). One slug per line; ``#`` comments
+# and blank lines ignored. Each line is treated as a regex fragment,
+# matched case-insensitively as a word-ish token.
+DENYLIST_FILENAME = ".private-slugs"
+EXAMPLE_FILENAME = ".private-slugs.example"
 
-# This file necessarily contains the denylist literals; never scan it.
-SELF = "scripts/check_private_slugs.py"
+# This file necessarily contains denylist-adjacent logic; never scan it.
+# Matched by resolved path (worktree/submodule-safe) and by basename.
+SELF_BASENAME = "check_private_slugs.py"
 
 # Files where a slug is an intentional, load-bearing historical record.
 # These are exempt because genericizing them would falsify the record.
 # Keep this list short and justify every entry. Currently empty: every
 # tracked file is fully scrubbed and the guard enforces zero exceptions.
 EXEMPT_PATHS: set[str] = set()
-
-_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9_])(" + "|".join(PRIVATE_SLUGS) + r")(?![A-Za-z0-9])",
-    re.IGNORECASE,
-)
 
 
 def _repo_root() -> Path:
@@ -63,10 +55,65 @@ def _repo_root() -> Path:
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
+        if not out:
+            print("check_private_slugs: cannot resolve repo root", file=sys.stderr)
+            sys.exit(2)
         return Path(out)
     except (subprocess.CalledProcessError, OSError):
         print("check_private_slugs: not a git repo", file=sys.stderr)
         sys.exit(2)
+
+
+def _load_denylist(root: Path) -> list[str]:
+    """Read the gitignored .private-slugs file.
+
+    Fail closed: a missing or empty config file is a usage error (exit 2),
+    never a silent pass. Shipping the guard with no denylist would let
+    every slug through unnoticed.
+    """
+    cfg = root / DENYLIST_FILENAME
+    if not cfg.exists():
+        print(
+            f"check_private_slugs: {DENYLIST_FILENAME} not found at repo root.",
+            file=sys.stderr,
+        )
+        print(
+            f"  Copy {EXAMPLE_FILENAME} to {DENYLIST_FILENAME} and add the "
+            f"private slugs to guard (one per line). The guard cannot run "
+            f"without it.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        raw = cfg.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        print(f"check_private_slugs: cannot read {DENYLIST_FILENAME}: {exc}",
+              file=sys.stderr)
+        sys.exit(2)
+    slugs = [
+        ln.strip() for ln in raw.splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    if not slugs:
+        print(
+            f"check_private_slugs: {DENYLIST_FILENAME} is empty — no slugs "
+            f"to guard. Add at least one slug or remove the guard.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return slugs
+
+
+def _compile_pattern(slugs: list[str]) -> re.Pattern[str]:
+    # Boundary class is alphanumeric ONLY — underscore is treated as a
+    # boundary that still allows the match, so an embedded slug like
+    # ``_atomize`` or ``atomize_`` is caught. The original guard's
+    # lookbehind included ``_`` while the lookahead did not; that
+    # asymmetry let an underscore-prefixed slug slip past (SEC-005).
+    return re.compile(
+        r"(?<![A-Za-z0-9])(" + "|".join(slugs) + r")(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    )
 
 
 def _staged_files(root: Path) -> list[str]:
@@ -101,30 +148,68 @@ def _disk_content(root: Path, path: str) -> str | None:
         return None
 
 
+def _is_self(root: Path, path: str) -> bool:
+    """Worktree/submodule-safe SELF check.
+
+    A relative-path string compare breaks when the script is invoked
+    from a worktree, a submodule, or with a cwd that differs from the
+    repo root. Compare the resolved absolute path, with a basename
+    fallback so the exemption holds even if path resolution is degraded.
+    """
+    if Path(path).name == SELF_BASENAME:
+        try:
+            resolved = (root / path).resolve()
+            return resolved == Path(__file__).resolve()
+        except (OSError, RuntimeError):
+            # Resolution failed — fall back to the basename match, which
+            # is already True at this point. The guard scanning itself
+            # would always block, so basename exemption is the safe call.
+            return True
+    return False
+
+
 def main(argv: list[str]) -> int:
     root = _repo_root()
+    pattern = _compile_pattern(_load_denylist(root))
     mode_all = "--all" in argv
     explicit = [a for a in argv if not a.startswith("-")]
 
     if explicit:
         files = explicit
         reader = _disk_content
+        ci_mode = True  # explicit/CI invocation — fail closed on unreadable
     elif mode_all:
         files = _all_tracked(root)
         reader = _disk_content
+        ci_mode = True
     else:
         files = _staged_files(root)
         reader = _staged_content
+        ci_mode = False
 
     hits: list[tuple[str, int, str, str]] = []
+    unreadable: list[str] = []
     for path in files:
-        if path == SELF or path in EXEMPT_PATHS:
+        # The denylist config necessarily contains the slug literals;
+        # never scan it (it is gitignored anyway, but an explicit
+        # FILE... invocation could still name it). Match by basename so
+        # the exemption holds from any cwd / worktree.
+        if Path(path).name == DENYLIST_FILENAME:
+            continue
+        if _is_self(root, path) or path in EXEMPT_PATHS:
             continue
         content = reader(root, path)
         if content is None:
+            unreadable.append(path)
+            # Staged mode: a blob git can't show is not committable
+            # content for this path — skip is reasonable. CI/explicit
+            # mode: never silently pass an unreadable tracked file.
+            if ci_mode:
+                print(f"check_private_slugs: cannot read tracked file: {path}",
+                      file=sys.stderr)
             continue
         for lineno, line in enumerate(content.splitlines(), start=1):
-            m = _PATTERN.search(line)
+            m = pattern.search(line)
             if m:
                 hits.append((path, lineno, m.group(1), line.strip()[:200]))
 
@@ -136,9 +221,17 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         for path, lineno, slug, line in hits:
             print(f"  {path}:{lineno}: [{slug}] {line}", file=sys.stderr)
-        print("\nIf a hit is an intentional historical record, add the path to",
+        print(f"\nIf a hit is an intentional historical record, add the path to",
               file=sys.stderr)
-        print(f"EXEMPT_PATHS in {SELF}.", file=sys.stderr)
+        print(f"EXEMPT_PATHS in scripts/{SELF_BASENAME}.", file=sys.stderr)
+        return 1
+
+    if ci_mode and unreadable:
+        print(
+            f"\ncheck_private_slugs: {len(unreadable)} tracked file(s) could "
+            f"not be read and were NOT scanned — failing closed.",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

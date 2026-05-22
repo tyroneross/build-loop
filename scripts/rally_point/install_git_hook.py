@@ -47,8 +47,18 @@ LEGACY_SEGMENT_RE = re.compile(
 _PKG_DIR = Path(__file__).resolve().parent
 _HOOK_TEMPLATE = (_PKG_DIR.parent.parent / "hooks" / "post-commit")
 
+SEGMENT_RE = re.compile(
+    rf"{re.escape(MARKER)}.*?{re.escape(MARKER_END)}\n?",
+    re.DOTALL,
+)
+
 _SEGMENT = f'''{MARKER}
-RALLY_POINT_CAPTURE="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.rally-point-capture.py"
+RALLY_POINT_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
+  echo "rally-point post-commit: cannot resolve repo toplevel" >&2
+  exit 2
+fi
+RALLY_POINT_CAPTURE="$RALLY_POINT_TOPLEVEL/.git/hooks/.rally-point-capture.py"
 if [ -f "$RALLY_POINT_CAPTURE" ]; then
   ( python3 "$RALLY_POINT_CAPTURE" >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
 fi
@@ -62,8 +72,18 @@ PRE_MARKER_END = "# --- END private-slug-guard pre-commit ---"
 # The pinned guard script next to the hook resolves the plugin's
 # check_private_slugs.py recorded at install time, so the hook works
 # regardless of the committing tool's cwd or sys.path.
+PRE_SEGMENT_RE = re.compile(
+    rf"{re.escape(PRE_MARKER)}.*?{re.escape(PRE_MARKER_END)}\n?",
+    re.DOTALL,
+)
+
 _PRE_SEGMENT = f'''{PRE_MARKER}
-PRIVATE_SLUG_GUARD="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/.private-slug-check.py"
+RALLY_POINT_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$RALLY_POINT_TOPLEVEL" ]; then
+  echo "private-slug-guard: cannot resolve repo toplevel — refusing to skip the guard" >&2
+  exit 2
+fi
+PRIVATE_SLUG_GUARD="$RALLY_POINT_TOPLEVEL/.git/hooks/.private-slug-check.py"
 if [ -f "$PRIVATE_SLUG_GUARD" ]; then
   python3 "$PRIVATE_SLUG_GUARD" || exit 1
 fi
@@ -213,7 +233,12 @@ def _install_post_commit(hooks_dir: Path) -> None:
     else:
         body = hook.read_text()
         if MARKER in body:
-            return  # idempotent: our segment already chained
+            # Re-install: replace our segment in place so the pinned
+            # capture wiring stays current if the plugin moved or the
+            # segment template changed.
+            hook.write_text(SEGMENT_RE.sub(_SEGMENT, body))
+            _make_executable(hook)
+            return
         if LEGACY_MARKER in body:
             hook.write_text(LEGACY_SEGMENT_RE.sub(_SEGMENT, body))
             _make_executable(hook)
@@ -232,6 +257,12 @@ def _install_pre_commit(hooks_dir: Path) -> None:
     its segment exits non-zero on a hit. When chaining onto an existing
     pre-commit, the guard segment is appended last so a prior hook's
     own checks still run first.
+
+    On re-install when our segment is already present, the segment is
+    REPLACED in place (not early-returned). The segment text carries the
+    pinned guard wiring; a re-install after the plugin moved, or after
+    the segment template changed, must refresh it — early-returning
+    would leave a stale segment that can silently disable the guard.
     """
     checker = _PKG_DIR.parent / "check_private_slugs.py"
     if not checker.exists():
@@ -246,7 +277,11 @@ def _install_pre_commit(hooks_dir: Path) -> None:
     else:
         body = hook.read_text()
         if PRE_MARKER in body:
-            return  # idempotent: our segment already chained
+            # Re-install: replace our (possibly stale) segment in place
+            # so the pinned guard wiring is always current.
+            hook.write_text(PRE_SEGMENT_RE.sub(_PRE_SEGMENT, body))
+            _make_executable(hook)
+            return
         if not body.endswith("\n"):
             body += "\n"
         hook.write_text(body + "\n" + _PRE_SEGMENT)
