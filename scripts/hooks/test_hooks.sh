@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # Fixture-driven tests for pre_bash_autonomy.sh and stop_finalize.sh
 # (plus the dependency-cooldown backstop hook). Any failure exits non-zero.
 

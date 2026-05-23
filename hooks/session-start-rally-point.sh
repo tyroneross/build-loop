@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # SessionStart hook — Rally Point announce + listen (R2 auto-invoke).
 #
 # Contract (Stop-hook discipline, per feedback_hook_design.md):

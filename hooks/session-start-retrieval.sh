@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # SessionStart retrieval warmup + silent-failure canary.
 #
 # Two responsibilities, both fire-and-forget:

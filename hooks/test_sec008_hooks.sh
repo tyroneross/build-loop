@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # SEC-008 regression test for hooks/pre-commit and hooks/post-commit.
 #
 # Both hooks compute the repo toplevel via `git rev-parse --show-toplevel`.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # SessionStart hook — worktree GC (R3 from 2026-05-19 iOS retro).
 #
 # Contract:
