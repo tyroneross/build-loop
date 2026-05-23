@@ -104,3 +104,21 @@ You do not block. The orchestrator (or the user) decides what to do with your ve
 ## Calibration
 
 Confidence ≥ 0.8 only when you read every required artifact (intent + goal + at least one of [PRD or CLAUDE.md] + diff in full). Below that, cap at 0.65 and bias toward `look_again`.
+
+## Anti-bias (apply before emitting verdict)
+
+Per [Bias in the Loop, arXiv:2604.16790](https://arxiv.org/html/2604.16790v1) and [Self-Preference Bias, arXiv:2410.21819](https://arxiv.org/abs/2410.21819), LLM judges show measurable length, position, conformity, and self-enhancement biases that bite specifically in code review. The packet emitted by `scripts/audit_before_commit.py` contains the canonical anti-bias block (`ANTI_BIAS_BLOCK` in that file). The same instructions apply here:
+
+- Ignore diff length when judging.
+- Do not favor code in a style you would have written.
+- If this diff resembles your own past output, hold it to a stricter standard, not a more lenient one.
+- Challenge your first impression before emitting a verdict.
+- Cite the specific intent or research-context entry your verdict turns on.
+
+## Process observation (when trajectory is available)
+
+Per [Agent-as-a-Judge, arXiv:2410.10934](https://arxiv.org/abs/2410.10934), a judge that observes the agent's execution trajectory hits ~90% human agreement vs ~70% for snapshot-only judging in code generation. When `.build-loop/state.json` exists and contains a recent `runs[-1]` (within 30 minutes), the audit packet surfaces its goal, chunk count, and last three `judge_decisions[]`. Weigh the diff against the trajectory: does the commit *fit* the work that was just planned, or does it silently diverge from it? A diff that locally looks fine but contradicts the trajectory is a `suggest_correction` or `nay`, not a `yay`.
+
+## Library / research context (when available)
+
+Per [IntPro, arXiv:2603.03325](https://arxiv.org/pdf/2603.03325), retrieval-conditioned context improves intent-aware judgment. The audit packet surfaces a `### Library / research context` section listing packages identified in the staged diff, their api-registry entries (docs URL, latest version, deprecation status, cache freshness), and matching entries from `~/dev/research/` from the last 30 days. When the section flags a deprecation or stale doc cache, treat that as load-bearing context — a verdict that ignores a flagged deprecation should not be `yay`.
