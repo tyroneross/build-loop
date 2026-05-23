@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
+#
+# REUSE 3.3 annotations for files that cannot carry an in-file SPDX header
+# (JSON has no comment syntax; binary/generated assets must be covered by
+# REUSE.toml or by sidecar .license files).
+#
+# Spec: https://reuse.software/spec-3.3/
+# Validate: `uvx reuse lint` or `pipx run reuse lint`
+
+version = 1
+
+# All shipped JSON sources — plugin manifests, hook configuration, test
+# fixtures, the architecture taxonomy, tsconfig. JSON has no comment
+# syntax, so REUSE.toml is the canonical machine-readable home for their
+# attribution.
+[[annotations]]
+path = [
+    ".claude-plugin/marketplace.json",
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    ".agents/plugins/marketplace.json",
+    ".mcp.json",
+    "hooks/hooks.json",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Skill and test-fixture JSON
+[[annotations]]
+path = [
+    "skills/**/*.json",
+    "docs/test-fixtures/*.json",
+    "src/**/*.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Top-level docs and metadata that aren't covered by per-file SPDX
+# headers because they live outside the shipped source-tree globs.
+[[annotations]]
+path = [
+    "README.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "NOTICE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross"
+SPDX-License-Identifier = "Apache-2.0"
