@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Targeted Rally Point inbox helpers.
 
 The shared ``changes.jsonl`` channel is the audit trail. The inbox is the

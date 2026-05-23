@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """knowledge_review — surface review-needing items across episodic memory.
 
 Backs the `/knowledge:review` slash command. Read-only — never auto-resolves.

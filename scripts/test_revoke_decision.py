@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for revoke_decision.py. Zero deps.
 
 Run: python3 test_revoke_decision.py

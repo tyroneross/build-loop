@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Stage 3 — automated cross-tool channel validation (V1-V3).
 
 WHAT THIS PROVES (and what it does NOT).

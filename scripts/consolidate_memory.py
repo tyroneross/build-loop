@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Memory consolidation pass.
 
 Reads `.semantic/_candidates.jsonl` (one JSON object per line), embeds

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Deterministic Review-F writer for build-loop.
 
 Appends a run entry to `.build-loop/state.json.runs[]` and, for each active

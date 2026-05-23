@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for scripts/rally_point/mece_gate.py — MECE + lateral-limits validation.
 
 Covers:

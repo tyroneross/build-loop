@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """list_projects.py — enumerate project-scoped memory subdirectories.
 
 Walks ``~/.build-loop/memory/projects/`` and prints one row per project

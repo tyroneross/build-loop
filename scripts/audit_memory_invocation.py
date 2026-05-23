@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Runtime probe for build-loop memory call sites.
 
 Companion to `.build-loop/audits/memory-invocation-2026-05-05.md`. For each

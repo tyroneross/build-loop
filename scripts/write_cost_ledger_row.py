@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Append a single row to ~/.bookmark/cost-ledger.jsonl.
 
 Called by the orchestrator at each implementer (or other subagent) dispatch

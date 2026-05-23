@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for sse_consumer.py adapter shape coercion.
 
 Specifically covers _normalize_handler_locations() — the adapter's defensive

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """One-way NavGator lessons → Postgres semantic_facts sync (Chunk 7).
 
 Reads project-local + global NavGator lessons.json files and upserts each

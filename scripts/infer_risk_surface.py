@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """infer_risk_surface.py — deterministic riskSurfaceChange auto-infer.
 
 Phase 1 Assess helper. Returns `risk_surface_change: true` whenever the goal,

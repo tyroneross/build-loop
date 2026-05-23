@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Advise (never auto-bump) plugin versions for build-loop Review Sub-step D Gate 6.
 
 Default state is `hold` — emit a one-line nudge in Review-F. Switches to `suggest`

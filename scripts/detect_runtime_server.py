@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Detect whether a project ships a live HTTP/SSE runtime server.
 
 Phase 1 ASSESS calls this with ``--workdir <repo> --json`` and writes the

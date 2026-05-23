@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """
 apple_sourcekit_triage.py — classify SourceKit "Cannot find type" diagnostics
 as false-positive (ghost) vs real, by consulting ground truth (xcodebuild).

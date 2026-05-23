@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Integration test for the post-commit capture path.
 
 A real commit in a temp repo (with the hook installed) writes exactly

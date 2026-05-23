@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for scripts/rally_point/revision.py — fcntl-locked monotonic counter.
 
   - missing file == revision 0

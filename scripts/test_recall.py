@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Test recall.py end-to-end against a temporary test schema.
 
 - Inserts 5 known facts via the schema's semantic_facts table.

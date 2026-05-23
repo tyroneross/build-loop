@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Add `search_vector tsvector` GENERATED column + GIN index to semantic_facts.
 
 Phase A chunk 2: the sparse leg of hybrid retrieval needs a stable

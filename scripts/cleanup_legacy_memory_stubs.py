@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """cleanup_legacy_memory_stubs.py — safely remove migration .MOVED.md stubs.
 
 After the memory-consolidation series (PR 1 → PR 1.5 → PR 2 → PR 3) lands,

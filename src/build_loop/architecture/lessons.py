@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Lessons store — read/write ``.build-loop/architecture/lessons.json``.
 
 Mirrors NavGator's lesson shape (id, category, pattern, signature, severity,

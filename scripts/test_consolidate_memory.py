@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Live tests for consolidate_memory.py.
 
 Requires real Postgres + real embed backend (MLX or Ollama). Skipped

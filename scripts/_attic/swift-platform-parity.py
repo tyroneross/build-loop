@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """swift-platform-parity — detect Swift cross-platform parity issues and write
 NavGator lessons.
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Runtime smoke gate entry point for the build-loop plugin.
 
 Detects whether any changed file matches a runtime-smoke trigger pattern, selects the

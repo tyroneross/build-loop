@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for autonomy_gate.py. Zero deps. Run: python3 test_autonomy_gate.py"""
 from __future__ import annotations
 

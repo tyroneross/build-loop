@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for deployment_policy.py. Zero deps. Run: python3 test_deployment_policy.py"""
 from __future__ import annotations
 

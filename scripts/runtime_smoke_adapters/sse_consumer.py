@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """SSE-consumer runtime smoke adapter.
 
 Triggered when the diff touches a project with `triggers.runtimeServer == true`

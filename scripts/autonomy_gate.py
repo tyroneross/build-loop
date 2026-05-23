@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Classify arbitrary build-loop actions against a generalized autonomy policy.
 
 Precedence (highest to lowest):

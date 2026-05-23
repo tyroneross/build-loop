@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Cross-encoder rerank for hybrid retrieval (Phase A chunk 4).
 
 Reranks RRF-fused candidates using `BAAI/bge-reranker-v2-m3` via the

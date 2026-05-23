@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Rally Point checkpoint read — the single consume entry point (D3).
 
 ``checkpoint_read`` is the one call hooks and the orchestrator make to

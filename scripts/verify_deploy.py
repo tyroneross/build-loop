@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Post-deploy verification gate for the build-loop plugin (Vercel web deploys).
 
 Sibling of scripts/runtime_smoke.py — same envelope contract (`status`, `findings`,

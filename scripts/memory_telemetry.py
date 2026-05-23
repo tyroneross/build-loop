@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Memory-read / memory-write telemetry writer.
 
 Writes append-only rows to ``~/.build-loop/memory/TELEMETRY.jsonl`` recording

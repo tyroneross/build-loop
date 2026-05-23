@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 """optimize_loop.py — Core loop mechanics for the build-loop optimize skill.

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Re-embed semantic_facts rows whose vector was produced by a non-bge-m3 model.
 
 Phase A migration helper. Cross-vector-space cosine is meaningless, so

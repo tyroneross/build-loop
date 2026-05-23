@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for scripts/rally_point/install_git_hook.py — idempotent installer.
 
   - only installs inside a git repo

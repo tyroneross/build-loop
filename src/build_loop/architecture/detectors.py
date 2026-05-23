@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Scanner-adapter + 3 gap detectors (D5 detection half, Stage 2.5).
 
 After the Stage 2.5 reconciliation the peer native-scanner (``scanner.py``) is

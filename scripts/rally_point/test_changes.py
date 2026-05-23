@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for scripts/rally_point/changes.py — append-only immutable log.
 
   - record schema build + validate (warns-not-drops unknown kind, D7)

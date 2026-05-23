@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """migrate_state_schema.py — normalize .build-loop/state.json files to canonical schema.
 
 Scans known locations, detects the schema shape of each file, migrates to the

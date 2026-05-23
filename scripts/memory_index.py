@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Append-only log of build-loop memory writes for cross-session discovery.
 
 Companion to memory_writer.py. Every memory write/update/delete in

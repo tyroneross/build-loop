@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Knowledge-graph leg for hybrid recall (Phase B).
 
 In-memory networkx DiGraph built from `markdown_graph_parser.parse_decisions_dir`,

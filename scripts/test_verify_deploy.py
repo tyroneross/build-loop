@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for verify_deploy.py. Zero third-party deps. Run: python3 test_verify_deploy.py
 
 Strategy:

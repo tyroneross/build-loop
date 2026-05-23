@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # capability:
 #   purpose: Publish lightweight Rally Point presence + handoff without a durable coord file.
 #   application: coordination

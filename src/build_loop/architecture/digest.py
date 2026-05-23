@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Compact Rally Point channel digest (D2 — published, full graph stays local).
 
 NET-NEW module. Does NOT touch any ``scripts/rally_point/`` signature/test;

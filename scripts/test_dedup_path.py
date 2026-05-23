@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Test the cosine-similarity dedup path against real embeddings.
 
 Seeds a known fact directly via the live psycopg connection (so we

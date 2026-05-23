@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Test sync_db_from_files.py against a temporary test schema.
 
 - Write 3 MADR files via write_decision.py (--no-db).

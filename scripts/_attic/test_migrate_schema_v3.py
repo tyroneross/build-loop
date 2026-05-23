@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for migrate_schema_v3.py (file + events tier; DB tier opt-in).
 
 - v2 fixture migrates: all 7 v3 fields populated with defaults.

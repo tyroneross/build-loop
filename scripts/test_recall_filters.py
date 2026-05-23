@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for v2 metadata filters in recall.py (design §15).
 
 Inserts 3 facts with different (project, tool, task_category) tuples;

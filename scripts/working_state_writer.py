@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """working_state_writer.py — per-step execution observability for build-loop.
 
 Per plan §15.2: agents write super-concise progress state during execution so

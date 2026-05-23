@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Rally Point session probe — auto-invoke runtime for session entry.
 
 ``probe(workdir, tool, ...)`` is the single entry point. On session start

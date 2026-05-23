@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """One-shot migrate `.build-loop/feedback.md` → `.episodic/decisions/`.
 
 Each line of feedback.md follows the date-stamped pattern:

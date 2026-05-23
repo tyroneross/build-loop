@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 # capability:
 #   purpose: Crawl repo surfaces into the capability registry the orchestrator routes against.
 #   application: meta

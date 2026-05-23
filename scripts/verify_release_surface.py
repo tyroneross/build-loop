@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Verify the complete release surface for a build-loop / plugin version.
 
 A release is not complete just because manifests were edited and the test

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Long-running embedder daemon (Phase H).
 
 The cold-load cliff: every fresh `recall.py` process pays ~3000ms loading

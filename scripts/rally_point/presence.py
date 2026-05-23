@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Rally Point presence — live session liveness, reaper, and read cursor.
 
 One ``sessions/<session-id>.json`` per live session, overwrite-in-place

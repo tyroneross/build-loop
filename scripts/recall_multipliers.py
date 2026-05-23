@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Quality, recency, and combined-score multipliers for hybrid recall.
 
 Phase A chunk 5. Lifted from `~/ObsidianVault/tools/scripts/vault_vector.py`

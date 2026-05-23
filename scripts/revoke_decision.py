@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Explicit revoke for a decision (Scenario 8 — different from supersede).
 
 Revoke means: this decision should not have been recorded, OR it has been

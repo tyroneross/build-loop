@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for scripts/rally_point/leadership.py — the lead lease (G1).
 
 Covers:

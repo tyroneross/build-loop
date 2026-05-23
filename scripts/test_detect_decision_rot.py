@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for detect_decision_rot.py. Zero deps. Run: python3 test_detect_decision_rot.py
 
 Covers:

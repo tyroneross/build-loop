@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Build-loop native architecture engine (Chunk 1).
 
 Python-native scanner, storage, analysis, and lessons store. NavGator interop is

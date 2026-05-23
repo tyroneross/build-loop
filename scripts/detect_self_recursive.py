@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Detect whether the working directory IS the runtime executing build-loop.
 
 Self-recursive = plugin developer dogfooding. Three checks must all pass:

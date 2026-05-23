@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Inject a dependency-cooldown config into a JS project (supply-chain gate).
 
 Build-loop Phase 1 ASSESS calls this with ``--workdir <repo>`` to make the

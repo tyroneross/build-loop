@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Open, growable controlled-vocabulary registry for node/edge types (D7).
 
 Single source of truth for:

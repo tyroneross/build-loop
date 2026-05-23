@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Build the Architecture Context Pack (ACP) from `.build-loop/architecture/`.
 
 The ACP is a compact JSON object summarizing current architecture state. Phase 1

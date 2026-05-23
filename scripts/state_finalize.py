@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """M4 — Best-effort Stop hook annotation for crash detection.
 
 When invoked from Claude Code's Stop hook, this script atomically annotates

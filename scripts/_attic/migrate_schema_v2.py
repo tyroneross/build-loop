@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """One-shot migration of `.episodic/` + Postgres rows to v2 metadata schema.
 
 Adds the nine new fields (`project`, `tool`, `model`, `task_category`,

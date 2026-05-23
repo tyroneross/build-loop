@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """NavGator adapter — optional capability provider for build-loop.
 
 Native engine (Chunk 1) handles ``scan``/``impact``/``trace``/``connections``/

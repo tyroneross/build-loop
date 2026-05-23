@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Embedding backend abstraction for repo-local episodic memory.
 
 Default: MLX (`mlx-community/mxbai-embed-large-v1`, 1024-dim). Faster

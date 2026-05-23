@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Enrich orchestration — scanner output → enriched taxonomy graph + handoff.
 
 Stage 2.5 reconciliation: the peer native-scanner (``scanner.py``) is the

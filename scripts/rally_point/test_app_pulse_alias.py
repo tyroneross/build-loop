@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Regression tests for the deprecated ``app_pulse`` alias boundary."""
 from __future__ import annotations
 

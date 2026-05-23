@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """migrate_project_memory.py — move project memory into the consolidated tree.
 
 Migrates content from per-repo legacy paths::

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Extend the `search_vector` GENERATED column to include `chunk_context`.
 
 Phase D — sparse-leg side. The Phase A migration created

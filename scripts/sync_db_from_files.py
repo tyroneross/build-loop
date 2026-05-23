@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Rebuild Postgres state from canonical markdown files.
 
 Reads every `.episodic/decisions/*.md` (excluding `_history/` by default;

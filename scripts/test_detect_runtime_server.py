@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-License-Identifier: Apache-2.0
 """Tests for detect_runtime_server.py. Zero deps. Run: python3 test_detect_runtime_server.py"""
 from __future__ import annotations
 
