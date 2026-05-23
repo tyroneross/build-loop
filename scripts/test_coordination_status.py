@@ -228,6 +228,44 @@ class CoordinationStatusTests(unittest.TestCase):
             Path(status["coordination_file"]).resolve(), legit.resolve()
         )
 
+    def test_plain_text_first_line_is_channel_header(self):
+        """Channel-discovery: plain-text output MUST lead with
+        ``channel: <channel_dir>`` so any session running the helper
+        without ``--json`` immediately sees where it joined.
+        """
+        cmd = [
+            sys.executable, str(HERE / "coordination_status.py"),
+            "--workdir", str(self.workdir),
+            "--session-id", "me",
+            # no --json
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        lines = r.stdout.splitlines()
+        slug = channel_paths.app_slug(self.workdir)
+        expected_channel = str(channel_paths.app_channel_dir(slug))
+        self.assertGreater(len(lines), 0, "expected at least one line of output")
+        self.assertEqual(lines[0], f"channel: {expected_channel}")
+
+    def test_json_shape_unchanged_after_channel_header(self):
+        """Regression: adding the plain-text channel header MUST NOT change
+        the JSON envelope. Parsers reading --json output keep working.
+        """
+        status = self._run()
+        # All originally-documented top-level keys still present.
+        for key in (
+            "status", "required_action", "channel_dir", "active_peers",
+            "overlaps", "peer_overlap_files",
+            "inbox_unread_count", "inbox_unread_counts",
+            "rejection_count", "escalation_count", "blocked_verdict_count",
+            "coordination_file", "latest_verdicts", "unresolved",
+            "dirty_files", "dirty_outside_owned", "new_changes",
+        ):
+            self.assertIn(key, status, f"JSON envelope missing key {key!r}")
+        # channel_dir matches the resolver output.
+        slug = channel_paths.app_slug(self.workdir)
+        self.assertEqual(status["channel_dir"],
+                         str(channel_paths.app_channel_dir(slug)))
+
     def test_watch_emits_one_state(self):
         cmd = [
             sys.executable, str(HERE / "coordination_watch.py"),
