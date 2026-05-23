@@ -249,20 +249,4 @@ Follow the returned `action`: `auto` may proceed after Review passes; `confirm` 
 
 **Post-deploy verification gate (after a deploy actually ran)**: once a deploy executed — i.e. the deployment policy gate returned `auto` and the deploy/push command ran, or the pushed branch auto-deploys via Vercel — invoke `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/verify_deploy.py --workdir "$PWD" --changed-route <route> [--changed-route <route> ...] --json`. The script detects a Vercel link (`.vercel/project.json` or `vercel.json`), resolves the latest production deployment, polls `vercel inspect` to a terminal state, then probes the prod root + each changed route. `pass` proceeds; `fail` routes to Iterate using the envelope's `findings` as the rubric; `skipped` (no Vercel link, CLI missing, not authed, or other transient infra) records `deploy_verify: skipped (<reason>)` in Review-F and proceeds. An auth-gated `401`/`403` on a protected route is **healthy** (function deployed and running) — only a `5xx`/build-error is a real failure. Never block the build on infra. See `agents/build-orchestrator.md` §"Review: Post-deploy verification gate" for the routing rules and `fallbacks.md#web-deploy-verify` for the inline degraded procedure.
 
-**Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. Delegate to `scripts/write_run_entry.py` — do not hand-write JSON; the script owns the schema, atomic writes, legacy-state migration, and per-experiment confound fan-out. Invocation example in `agents/build-orchestrator.md` §Report & Memory Write. Schema (as the script emits):
-
-```json
-{
-  "run_id": "run_<ISO-basic>_<sha256(goal)[:8]>",
-  "date": "<ISO-8601 UTC>",
-  "goal": "<short goal text>",
-  "outcome": "pass | fail | partial",
-  "phases": { "assess": { "status": "pass|fail", "duration_s": N, "root_cause": "?" }, "plan": {...}, "execute": {...}, "review": {...}, "iterate": {...} },
-  "diagnosticCommands": ["shell commands run during build"],
-  "filesTouched": ["absolute paths edited"],
-  "manualInterventions": [{ "phase": "review", "note": "short description" }],
-  "active_experimental_artifacts": []
-}
-```
-
-Capture `filesTouched` from `git diff --name-only` relative to the pre-build HEAD. `diagnosticCommands` and `manualInterventions` come from orchestrator state tracking. `active_experimental_artifacts` lists experimental skills that triggered this run (for Learn's confound tracking).
+**Append a run entry to `.build-loop/state.json.runs[]`** for Learn (Phase 6) to scan. The orchestrator agent owns the invocation — see `agents/build-orchestrator.md` §G for the canonical call (including `--judge-decisions-json` and `--budget-summary-json`). Schema and flags are owned by `scripts/write_run_entry.py --help`; do not hand-write JSON.
