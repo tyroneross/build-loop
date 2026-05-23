@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Configure Claude Code hooks for automatic debugging memory integration
  */
