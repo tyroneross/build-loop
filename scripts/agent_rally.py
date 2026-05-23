@@ -17,6 +17,7 @@ Subcommands:
     presence     write/refresh this session's presence record
     handoff      post a kind=handoff record (MECE + lateral-limits packet)
     status       read the cheap coordination-status envelope
+    where        print the global channel_dir for the current repo (joins it)
     lead claim       claim the leadership lease
     lead renew       renew the current lease (lead only)
     lead transfer    hand the lead to another session (lead only)
@@ -145,6 +146,35 @@ def cmd_escalate(args: argparse.Namespace) -> int:
         "app_slug": slug,
         "channel_revision": new_rev,
     })
+
+
+def cmd_where(args: argparse.Namespace) -> int:
+    """Print the GLOBAL channel_dir for the current repo (the dir Rally Point
+    joins). This is the discovery primitive every host needs: ``channel_dir``
+    lives at ``~/.build-loop/apps/<slug>/`` (worktree/clone-independent), and
+    is auto-derived from ``git rev-parse --git-common-dir`` via
+    ``channel_paths.app_slug``. Distinct from the per-topic ``coord_file``
+    which lives repo-local at ``.build-loop/coordination/<topic>.md``.
+
+    Default output: bare path on stdout (so ``cd "$(rally where)"`` works).
+    --json: ``{"channel_dir": "...", "app_slug": "..."}`` envelope.
+    Exit non-zero with a clear message when cwd is not under a git repo
+    (slug resolves to ``_unscoped`` — discovery is meaningless there).
+    """
+    wd = Path(args.workdir).expanduser().resolve()
+    slug = channel_paths.app_slug(wd)
+    if slug == "_unscoped":
+        sys.stderr.write(
+            f"error: {wd} is not under a git repository — channel_paths.app_slug "
+            "returned '_unscoped'. Rally Point channels are repo-scoped; run "
+            "this from inside a git checkout (main or worktree).\n"
+        )
+        return 2
+    channel_dir = channel_paths.app_channel_dir(slug)
+    if args.json:
+        return _emit({"channel_dir": str(channel_dir), "app_slug": slug})
+    sys.stdout.write(f"{channel_dir}\n")
+    return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -295,6 +325,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp_esc.add_argument("--reason", required=True)
     sp_esc.add_argument("--needs", default="lead-or-user-attention")
     sp_esc.set_defaults(func=cmd_escalate)
+
+    sp_where = sub.add_parser(
+        "where",
+        help="Print the global channel_dir for the current repo.",
+    )
+    sp_where.add_argument("--workdir", default=".")
+    sp_where.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON envelope with channel_dir + app_slug keys.",
+    )
+    sp_where.set_defaults(func=cmd_where)
 
     sp_status = sub.add_parser("status", help="Read coordination status.")
     sp_status.add_argument("--workdir", default=".")
