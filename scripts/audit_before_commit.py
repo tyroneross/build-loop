@@ -32,6 +32,7 @@ import datetime as _dt
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,20 @@ MAX_DIFF_LINES = 200
 MAX_TEXT_CHARS = 500
 MAX_PRD_CHARS = 1000
 README_HEAD_LINES = 50
+TRAJECTORY_FRESH_MIN = 30
+RESEARCH_DIR = Path.home() / "dev" / "research"
+API_REGISTRY_DB = Path.home() / ".api-registry" / "registry.db"
+API_REGISTRY_STALENESS = Path.home() / ".api-registry" / "staleness.json"
+
+# Per arXiv:2604.16790 (Bias in the Loop) + 2410.21819 (Self-Preference Bias):
+# explicit prompt-side mitigation. Single source of truth — both the audit
+# packet and `agents/independent-auditor.md` reference this verbatim.
+ANTI_BIAS_BLOCK = (
+    "Ignore diff length when judging. Do not favor code in a style you would have written. "
+    "If this diff resembles your own past output, hold it to a stricter standard, not a more lenient one. "
+    "Challenge your first impression before emitting a verdict. "
+    "Cite the specific intent or research-context entry your verdict turns on."
+)
 SECRET_FILENAME_PATTERNS = (
     re.compile(r"(^|/)\.env(\..*)?$"),
     re.compile(r"(^|/)id_rsa(\..*)?$"),
@@ -176,6 +191,177 @@ def _log_bypass(reason: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Research-validated upgrades (see ~/dev/research/llm-judge-agents-for-coding-2026-05-23.md)
+#   1. Parallel library/research context (IntPro arXiv:2603.03325)
+#   2. Process-observation trajectory (Agent-as-a-Judge arXiv:2410.10934)
+#   4. Hook-path persistence to runs[] (Verifiability-First arXiv:2512.17259)
+
+_PKG_PATTERNS = (
+    re.compile(r'^\+\s*"([@a-z0-9][\w./@-]*)"\s*:\s*"[\^~]?[\d.]', re.MULTILINE),  # npm
+    re.compile(r"^\+\s*(?:from\s+(\w+)|import\s+(\w+))", re.MULTILINE),             # python
+    re.compile(r'^\+\s*([\w./-]+)\s+v\d', re.MULTILINE),                            # go
+)
+_STDLIB = frozenset({"os", "sys", "re", "json", "datetime", "pathlib", "subprocess",
+                     "typing", "collections", "functools", "itertools", "io", "time",
+                     "math", "uuid", "hashlib", "tempfile", "shutil", "argparse",
+                     "logging", "sqlite3"})
+
+
+def _extract_packages(diff_body: str) -> list[str]:
+    pkgs: set[str] = set()
+    for pat in _PKG_PATTERNS:
+        for m in pat.finditer(diff_body):
+            name = next((g for g in m.groups() if g), "").split(".")[0]
+            if name and len(name) > 1 and not name.startswith("_"):
+                pkgs.add(name)
+    return sorted(pkgs - _STDLIB)[:10]
+
+
+def _library_context(diff_body: str) -> str:
+    pkgs = _extract_packages(diff_body)
+    if not pkgs:
+        return "_(no library identifiers in staged diff)_\n"
+    if not API_REGISTRY_DB.is_file():
+        return "_(api-registry not present — skipping library lookup)_\n"
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=30)).timestamp()
+    staleness: dict = {}
+    if API_REGISTRY_STALENESS.is_file():
+        try:
+            staleness = json.loads(API_REGISTRY_STALENESS.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            staleness = {}
+    lines: list[str] = []
+    try:
+        conn = sqlite3.connect(f"file:{API_REGISTRY_DB}?mode=ro", uri=True, timeout=2)
+    except sqlite3.Error:
+        return "_(api-registry read failed)_\n"
+    try:
+        for pkg in pkgs:
+            try:
+                row = conn.execute(
+                    "SELECT docs_url, latest_version, deprecated_notes FROM services "
+                    "WHERE name = ? OR package_ids LIKE ? LIMIT 1",
+                    (pkg, f'%"{pkg}"%'),
+                ).fetchone()
+            except sqlite3.Error:
+                row = None
+            if row:
+                tag = f"`{pkg}`: {row[0] or '(no docs_url)'}"
+                if row[1]:
+                    tag += f" · latest {row[1]}"
+                if row[2]:
+                    tag += f" · DEPRECATED: {row[2][:80]}"
+                age = staleness.get(pkg, {}).get("age_days") if isinstance(staleness.get(pkg), dict) else None
+                if isinstance(age, (int, float)) and age > 7:
+                    tag += f" · cache stale {age}d"
+                lines.append(f"- {tag}")
+            else:
+                lines.append(f"- `{pkg}`: not in api-registry")
+            # Research grep
+            if RESEARCH_DIR.is_dir():
+                pat = re.compile(re.escape(pkg), re.IGNORECASE)
+                hits = 0
+                for md in sorted(RESEARCH_DIR.glob("*.md")):
+                    try:
+                        if md.stat().st_mtime < cutoff:
+                            continue
+                        text = md.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    if pat.search(text):
+                        excerpt = next((ln.strip() for ln in text.splitlines() if pat.search(ln)), "")[:140]
+                        lines.append(f"  - research: **{md.stem}** — {excerpt}")
+                        hits += 1
+                        if hits >= 3:
+                            break
+    finally:
+        conn.close()
+    return "\n".join(lines) + "\n"
+
+
+def _recent_trajectory(root: Path) -> str:
+    state_path = root / ".build-loop" / "state.json"
+    if not state_path.is_file():
+        return "_(no active build trajectory)_\n"
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return "_(no active build trajectory)_\n"
+    runs = data.get("runs") or []
+    if not runs:
+        return "_(no active build trajectory)_\n"
+    last = runs[-1]
+    ts_str = last.get("endedAt") or last.get("date") or ""
+    try:
+        if "T" in ts_str and ts_str.endswith("Z") and "-" not in ts_str:
+            run_ts = _dt.datetime.strptime(ts_str, "%Y%m%dT%H%M%SZ").replace(tzinfo=_dt.timezone.utc)
+        else:
+            run_ts = _dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return "_(no active build trajectory — timestamp unparseable)_\n"
+    age_min = (_dt.datetime.now(_dt.timezone.utc) - run_ts).total_seconds() / 60
+    if age_min > TRAJECTORY_FRESH_MIN:
+        return f"_(last run {int(age_min)} min old — beyond {TRAJECTORY_FRESH_MIN} min window)_\n"
+    chunks = last.get("chunks") or last.get("phases", {}).get("execute", {}).get("chunks") or []
+    out = [f"- goal: {(last.get('goal') or '')[:160]}", f"- chunks: {len(chunks)}"]
+    decisions = last.get("judge_decisions") or []
+    if decisions:
+        out.append("- last 3 judge_decisions:")
+        for jd in decisions[-3:]:
+            brief = (jd.get("brief") or jd.get("reason") or "")[:80]
+            out.append(f"  - {jd.get('judge_id', '?')} → {jd.get('verdict', '?')}: {brief}")
+    else:
+        out.append("- (no judge_decisions yet)")
+    return "\n".join(out) + "\n"
+
+
+def _record_runs_judge_entry(root: Path, commit_hash: str, status: str, brief: str) -> None:
+    """Append a synthetic judge_decisions entry to runs[-1]; idempotent on (target, status) within 60s."""
+    state_path = root / ".build-loop" / "state.json"
+    if not state_path.is_file():
+        return
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return
+    runs = data.setdefault("runs", [])
+    now_dt = _dt.datetime.now(_dt.timezone.utc)
+    if not runs:
+        runs.append({
+            "run_id": f"hook_{now_dt.strftime('%Y%m%dT%H%M%SZ')}",
+            "date": now_dt.strftime("%Y%m%dT%H%M%SZ"),
+            "goal": "(hook-only commit; no orchestrator run)",
+            "outcome": "partial", "phases": {}, "filesTouched": [],
+            "diagnosticCommands": [], "manualInterventions": [],
+            "active_experimental_artifacts": [], "judge_decisions": [],
+        })
+    decisions = runs[-1].setdefault("judge_decisions", [])
+    for existing in decisions:
+        if existing.get("target") == commit_hash and existing.get("status") == status:
+            try:
+                ets = _dt.datetime.fromisoformat(existing.get("ts", "").replace("Z", "+00:00"))
+                if (now_dt - ets).total_seconds() < 60:
+                    return
+            except (ValueError, TypeError):
+                pass
+    decisions.append({
+        "judge_id": "independent-auditor-hook", "target": commit_hash,
+        "status": status, "verdict": "pending", "brief": brief,
+        "ts": now_dt.isoformat(timespec="seconds"),
+    })
+    tmp = state_path.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, state_path)
+    except OSError:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Packet emission
 
 
@@ -260,12 +446,29 @@ def _emit_packet(root: Path) -> int:
     out((trajectory or "(no history)") + "\n")
     out("```\n\n")
 
+    # Upgrade 1 — parallel research-context path (IntPro arXiv:2603.03325)
+    out("### Library / research context\n")
+    out(_library_context(diff_body) + "\n")
+
+    # Upgrade 2 — process-observation (Agent-as-a-Judge arXiv:2410.10934)
+    out("### Recent trajectory\n")
+    out(_recent_trajectory(root) + "\n")
+
+    # Upgrade 4 — persist a synthetic hook-path entry to runs[].judge_decisions[]
+    commit_hash = _run(["git", "rev-parse", "--short", "HEAD"]).strip() or "staged"
+    status = "deterministic_block" if blocked else "packet_emitted"
+    _record_runs_judge_entry(root, commit_hash, status, reason if blocked else f"{len(files)} files staged")
+
     out("### Verdict request\n")
     out("Render ONE of the four verdicts in your next assistant message, naming the verdict explicitly:\n\n")
     out("- **yay (approve)** — packet aligns with intent + constitution; the commit ships as-is.\n")
     out("- **nay (reject)** — packet contradicts intent or trips a constitution rule; the commit should not land.\n")
     out("- **suggest correction** — partial alignment; name specific edits the implementer should make before re-committing.\n")
     out("- **look again** — context insufficient to judge; name the missing artifact (PRD section, prior decision, test result) and gather it.\n\n")
+    out("**Anti-bias instruction (apply before emitting the verdict):**\n")
+    out(ANTI_BIAS_BLOCK + "\n\n")
+    out("After rendering the verdict, persist it to runs[] with:\n")
+    out("`python3 scripts/audit_record_verdict.py --verdict <yay|nay|suggest|look-again> --reason \"<one-line>\"`\n\n")
     out("This audit packet is independent of any orchestrator dispatch. The hook fires at the git-commit boundary on every commit.\n\n")
 
     return 2 if blocked else 0
@@ -278,6 +481,12 @@ def _emit_packet(root: Path) -> int:
 def main() -> int:
     if os.environ.get("BUILDLOOP_AUDIT_BYPASS") == "1":
         _log_bypass("BUILDLOOP_AUDIT_BYPASS=1")
+        try:
+            root = _repo_root()
+            commit_hash = _run(["git", "rev-parse", "--short", "HEAD"]).strip() or "staged"
+            _record_runs_judge_entry(root, commit_hash, "bypass", "BUILDLOOP_AUDIT_BYPASS=1")
+        except Exception:  # noqa: BLE001 — never crash a commit
+            pass
         sys.stderr.write("[independent-commit-auditor] BYPASS active (BUILDLOOP_AUDIT_BYPASS=1) — logged.\n")
         return 0
 
