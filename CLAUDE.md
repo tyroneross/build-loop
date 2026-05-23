@@ -36,8 +36,8 @@ Build-loop is **multi-model**. Roles are assigned by **tier** (Thinking / Code /
 
 | Tier | Anthropic default | Role | Substitution rule |
 |---|---|---|---|
-| **Thinking** | Opus 4.7 | Orchestrator, plan, severity ranking, audit, scope-auditor, commit-auditor (chunk + build scope), promotion-reviewer | SWE-bench Verified ≥78% AND frontier-class on ARC-AGI / GPQA |
-| **Code** | Sonnet 4.6 | Implementer, optimize-runner, overfitting-reviewer, self-improvement-architect, synthesis-critic, alignment-checker | SWE-bench Verified ≥75% AND tool-use accuracy ≥85% |
+| **Thinking** | Opus 4.7 | Orchestrator, plan, severity ranking, audit, scope-auditor, promotion-reviewer | SWE-bench Verified ≥78% AND frontier-class on ARC-AGI / GPQA |
+| **Code** | Sonnet 4.6 | Implementer, optimize-runner, overfitting-reviewer, self-improvement-architect, synthesis-critic, alignment-checker, independent-auditor (chunk + build scope, consolidated 2026-05-23) | SWE-bench Verified ≥75% AND tool-use accuracy ≥85% |
 | **Pattern** | Haiku 4.5 | Mock-scanner, recurring-pattern-detector | Fast/cheap; doesn't hallucinate on bounded structured tasks |
 | (inherit) | session model | Fact-checker | Inherits from caller — context-driven |
 

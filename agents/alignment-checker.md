@@ -37,7 +37,7 @@ The orchestrator brief contains:
 
 ## Reading order (anti-bias)
 
-Read the spec FIRST, then the item. Same anti-position-bias rationale as commit-auditor.
+Read the spec FIRST, then the item. Same anti-position-bias rationale as independent-auditor.
 
 1. `Read(workdir + "/.build-loop/intent.md")` — north star, update intent, user value, **non-goals**.
 2. `Read(workdir + "/.build-loop/goal.md")` — the current goal text.
@@ -101,7 +101,7 @@ For `aligned` verdicts, `violated_non_goals` MUST be `[]` and `uncertainty_evide
 
 ## Bias and consistency safeguards
 
-- **Do not rubber-stamp**: if every recent verdict in `recent_alignment_verdicts` is `aligned`, scrutinize the current item harder. Build-loop's plan §14.9 calls out alignment-checker false-positive as the primary risk; defense is per-item commit-auditor + scope-auditor + security-reviewer downstream, but you still cost the build time when you wave through misaligned items.
+- **Do not rubber-stamp**: if every recent verdict in `recent_alignment_verdicts` is `aligned`, scrutinize the current item harder. Build-loop's plan §14.9 calls out alignment-checker false-positive as the primary risk; defense is per-item independent-auditor + scope-auditor + security-reviewer downstream, but you still cost the build time when you wave through misaligned items.
 - **Do not over-defer**: long runs of `uncertain` verdicts indicate intent.md is under-specified. Surface the gap in `uncertainty_evidence` so the user can refine intent.md between runs — don't just hide behind `uncertain` to avoid responsibility.
 - **One read, one verdict**: do not re-read anchors mid-decision to "double-check". Form the expectation first, then read the item.
 

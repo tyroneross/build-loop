@@ -3,11 +3,11 @@
 
 # Independent Commit Auditor
 
-A boundary-gated audit that fires on every `git commit`, regardless of who initiates the commit. Distinguished from the existing `commit-auditor` agent in three ways:
+Single source of truth for build-loop commit/build-scope adversarial review. **Consolidated 2026-05-23** — replaces both the retired `commit-auditor` agent (chunk + build scope) and the earlier retired `sonnet-critic`. Operates on two surfaces sharing one context-gathering procedure and one verdict taxonomy:
 
-1. **Boundary-gated, not orchestrator-dispatched.** A PreToolUse Bash hook in `hooks/hooks.json` invokes `scripts/audit_before_commit.py` whenever the Bash tool runs a command matching `git commit`. The orchestrator cannot skip it. Manual user commits, Codex commits, IDE commits, and build-loop commits all pass through it.
+1. **Boundary-gated hook (every commit).** A PreToolUse Bash hook in `hooks/hooks.json` invokes `scripts/audit_before_commit.py` whenever the Bash tool runs a command matching `git commit`. The orchestrator cannot skip it. Manual user commits, Codex commits, IDE commits, and build-loop commits all pass through it.
 2. **Self-contextualizing.** The script gathers its own context from on-disk `.build-loop/intent.md`, `.build-loop/goal.md`, repo `CLAUDE.md` + `README.md`, the first PRD found (`docs/PRD.md` → `docs/prd.md` → `docs/prd/*.md` → `.build-loop/prd.md`), `~/.build-loop/memory/constitution.md`, and the last 5 commit subjects. No upstream packet needed.
-3. **Verdict rendered in conversation.** The hook itself is a deterministic packet-builder — no LLM call from inside the hook (which would be slow and blocked). The script emits a structured packet to stderr; the running Claude session reads it and renders one of four verdicts in conversation.
+3. **LLM-grade dispatched agent.** The `independent-auditor` agent (`agents/independent-auditor.md`) is dispatched at Phase 3 chunk-close (chunk advisory) and Phase 4 Review-A (build scope). Same context procedure as the hook, plus diff range — emits a structured JSON envelope. Verdict rendered in conversation by the running Claude session.
 
 ## Four-verdict taxonomy
 
@@ -40,9 +40,9 @@ BUILDLOOP_AUDIT_BYPASS=1 git commit -m "emergency hotfix"
 
 Each bypass is logged to `~/.build-loop/audit-bypass.log` with timestamp + cwd + reason. Bypasses are valid but visible — Phase 6 Learn can mine the log for chronic-bypass patterns.
 
-## Escalation agent
+## Dispatched-agent surface
 
-For richer LLM-grade judgment on a specific commit or commit range, dispatch `Agent(subagent_type="build-loop:independent-auditor", ...)`. The agent uses the same context-gathering procedure as the script but renders a structured JSON envelope (with explicit `context_seen` flags and `missing_artifacts[]`) that the orchestrator can route the same way it routes `commit-auditor` verdicts. The agent is Sonnet-tier (cheap); use it for cross-chunk reviews or pre-squash gates, not for every commit.
+For LLM-grade judgment on a specific commit or commit range, dispatch `Agent(subagent_type="build-loop:independent-auditor", ...)`. The agent uses the same context-gathering procedure as the script and renders a structured JSON envelope (with explicit `context_seen` flags and `missing_artifacts[]`). The agent is Sonnet-tier; use it for per-chunk advisory, cross-chunk reviews, and Phase 4 Review-A build-scope critique.
 
 ## How the running session should interpret a packet
 

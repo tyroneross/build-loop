@@ -191,7 +191,7 @@ A chunk boundary is not a checkpoint. When the orchestrator (or any session unde
    ```
    followed by the item body in markdown.
 2. Filter `classify: PRODUCTION` items into `.build-loop/followup/needs-confirm/` and surface them ONCE in the report. Do not auto-execute.
-3. After the report is committed, immediately enter a fresh Phase 5 iterate cycle to drain the remaining queue. Re-use the same alignment-checker, scope-auditor, and commit-auditor wiring as the in-run iterate loop — no new dispatch surface required.
+3. After the report is committed, immediately enter a fresh Phase 5 iterate cycle to drain the remaining queue. Re-use the same alignment-checker, scope-auditor, and independent-auditor wiring as the in-run iterate loop — no new dispatch surface required.
 4. The phrasing "want me to keep going with the rest?" / "should I continue with X next?" at a chunk boundary is a workflow violation when the items are same-shape and same-intent. C-FLOW/no_ask_at_chunk_boundary in `constitution.md` is the binding citation.
 
 Stop conditions are unchanged from the in-run iterate loop: iterate-cap (25 in autonomous mode, 5 classic), budget exhaustion, any drained item classifying PRODUCTION, 5 consecutive iterate failures, an item whose intent_anchor does not resolve in the current `intent.md` (escalate as DECISION; do not silently widen scope), or explicit user pause.
@@ -286,11 +286,11 @@ Key steps: subagent-driven-development → model assignment (Sonnet default) →
 
 Seven sub-steps run in order: A Critic → B Validate → C Optimize (opt-in) → D Fact-Check → E Simplify → F Auto-Resolve → G Report. F drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G is final-pass-only.
 
-Key steps: commit-auditor (build scope) adversarial read → IBR-first validation → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry.
+Key steps: independent-auditor (build scope) adversarial read → IBR-first validation → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry.
 
 **Load `skills/build-loop/references/phase-4-review.md`** for sub-step details, gate matrices, routing rules, and the full Sub-step F Auto-Resolve protocol (all 4 verdict arms including `warn` exit-0 behavior).
 
-**Independent commit auditor — boundary gate (NEW).** Separate from the orchestrator-dispatched `commit-auditor` agent, a PreToolUse Bash hook fires `scripts/audit_before_commit.py` on every `git commit` regardless of who initiates it (manual user, Codex, build-loop, IDE). The script is a deterministic packet-builder — it reads on-disk `.build-loop/intent.md`, `.build-loop/goal.md`, repo `CLAUDE.md` / `README.md`, the first PRD it finds, `~/.build-loop/memory/constitution.md`, and the last 5 commits, then emits a structured packet to stderr. The running Claude session renders one of four verdicts in conversation: `yay (approve)`, `nay (reject)`, `suggest correction`, `look again`. The hook also hard-blocks (exit 2) on staged secret files and unresolved merge-conflict markers. Bypass for emergencies via `BUILDLOOP_AUDIT_BYPASS=1`, logged to `~/.build-loop/audit-bypass.log`. For LLM-grade escalation on a specific commit range, dispatch `Agent(subagent_type="build-loop:independent-auditor", ...)`. Full reference: `skills/build-loop/references/independent-auditor.md`.
+**Independent commit auditor — boundary gate + dispatched judge.** Single consolidated auditor (2026-05-23 — replaces retired `commit-auditor` and earlier retired `sonnet-critic`). Two surfaces share the same context-gathering procedure and verdict taxonomy: (1) a PreToolUse Bash hook fires `scripts/audit_before_commit.py` on every `git commit` regardless of who initiates it (manual, Codex, build-loop, IDE) — deterministic packet-builder, hard-blocks (exit 2) on staged secrets and merge-conflict markers, bypass via `BUILDLOOP_AUDIT_BYPASS=1`; (2) the `independent-auditor` agent dispatches at Phase 3 chunk-close (chunk advisory) and Phase 4 Review-A (build scope) for LLM-grade judgment. Four verdicts: `yay (approve)` / `nay (reject)` / `suggest_correction` / `look_again`. Full reference: `skills/build-loop/references/independent-auditor.md` + `agents/independent-auditor.md`.
 
 ## Phase 5: Iterate — Fix Review Failures + UX Queue (up to 5x)
 
