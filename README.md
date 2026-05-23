@@ -1,3 +1,5 @@
+<!-- build-loop@tyroneross:canary:build-loop -->
+<!-- canary-end -->
 # build-loop
 
 A plugin for Claude Code that turns big code changes into a checked, repeatable workflow.

@@ -60,6 +60,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre_bash_dependency_cooldown.sh",
             "timeout": 2000
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/audit_before_commit.py\"",
+            "timeout": 5000
           }
         ]
       }
