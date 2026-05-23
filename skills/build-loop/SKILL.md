@@ -290,6 +290,8 @@ Key steps: commit-auditor (build scope) adversarial read → IBR-first validatio
 
 **Load `skills/build-loop/references/phase-4-review.md`** for sub-step details, gate matrices, routing rules, and the full Sub-step F Auto-Resolve protocol (all 4 verdict arms including `warn` exit-0 behavior).
 
+**Independent commit auditor — boundary gate (NEW).** Separate from the orchestrator-dispatched `commit-auditor` agent, a PreToolUse Bash hook fires `scripts/audit_before_commit.py` on every `git commit` regardless of who initiates it (manual user, Codex, build-loop, IDE). The script is a deterministic packet-builder — it reads on-disk `.build-loop/intent.md`, `.build-loop/goal.md`, repo `CLAUDE.md` / `README.md`, the first PRD it finds, `~/.build-loop/memory/constitution.md`, and the last 5 commits, then emits a structured packet to stderr. The running Claude session renders one of four verdicts in conversation: `yay (approve)`, `nay (reject)`, `suggest correction`, `look again`. The hook also hard-blocks (exit 2) on staged secret files and unresolved merge-conflict markers. Bypass for emergencies via `BUILDLOOP_AUDIT_BYPASS=1`, logged to `~/.build-loop/audit-bypass.log`. For LLM-grade escalation on a specific commit range, dispatch `Agent(subagent_type="build-loop:independent-auditor", ...)`. Full reference: `skills/build-loop/references/independent-auditor.md`.
+
 ## Phase 5: Iterate — Fix Review Failures + UX Queue (up to 5x)
 
 Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
