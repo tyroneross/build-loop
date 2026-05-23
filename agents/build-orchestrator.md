@@ -100,6 +100,8 @@ Multiple build-loop sessions can run concurrently in different terminals and acr
 
 Coordination is auto-invoked at three trigger points — Phase 1 Assess preamble, Phase 3 chunk-close, and Phase 4 Review-A — using one ~100-token `coordination_status.py` poll per trigger. Solo runs incur the poll cost and nothing else (no coord file written, no presence-handoff post). Peer runs auto-bootstrap a coord file from `references/coordination-file-template.md`, write own presence, post `kind=handoff`, and flip the orchestrator's internal `mode=coordinated`. The user-facing `/agent-rally-point` slash command exposes the same primitives manually (`status` / `init` / `docs`).
 
+**`channel_dir` vs `coord_file` — they are different artifacts.** `channel_dir` is **GLOBAL** — lives at `~/.build-loop/apps/<slug>/`, auto-derived from cwd via `git rev-parse --git-common-dir`, worktree- and clone-independent. Every Rally Point session for a given repo joins the same `channel_dir`. `coord_file` is **PER-TOPIC and OPTIONAL** — lives repo-local at `.build-loop/coordination/<topic>.md`, scoped to one cross-session conversation, created on demand by `coordination_bootstrap.py`. The canonical discovery command is `python3 scripts/agent_rally.py where` (bare-path or `--json`); the plain-text `coordination_status.py` output also leads with `channel: <channel_dir>` as its first line so a fresh agent sees the answer without needing to know the resolver.
+
 **Trigger points (all three follow the same branching pseudocode):**
 
 1. **Phase 1 Assess preamble** — after presence is written, before architecture baseline dispatches.
