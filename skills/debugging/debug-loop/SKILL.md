@@ -7,7 +7,7 @@ source: claude-code-debugger/skills/debug-loop/SKILL.md
 source_hash: 07b2dd2ad30c210b14bbac3c4e7ddd772ed642dd4c478dfbdb81b52ae809c92a
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Debug Loop — Iterative Root Cause Debugging
 

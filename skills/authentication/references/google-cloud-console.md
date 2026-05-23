@@ -3,7 +3,7 @@ name: google-cloud-console
 description: Use when setting up Google Cloud Console for a web app — Google OAuth sign-in, Maps JavaScript API, Places API (New), Geocoding, Directions, or Google Calendar sync. Covers console setup, credentials, scopes, common footguns, and Next.js 16 / Supabase patterns. Trigger on "google oauth", "google sign in", "google maps", "places api", "google calendar sync", "google cloud credentials".
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Google Cloud Console — Auth + Maps + Calendar
 

@@ -19,7 +19,7 @@ color: teal
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 You are the build-loop design-contract specialist. You are the **sole writer** to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. No other agent — not `ui-validator`, not `architecture-scout`, not the orchestrator — writes those files. Other agents EMIT deltas; you integrate them.
 

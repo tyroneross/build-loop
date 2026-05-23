@@ -7,7 +7,7 @@ source: NavGator/skills/impact-analysis/SKILL.md
 source_hash: e1eab41fae52db57fd80c996fec0d2480703e4ac407f5cf8e81edb882511a413
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Impact Analysis & Connections
 

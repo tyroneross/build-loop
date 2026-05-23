@@ -17,7 +17,7 @@ companion_scripts:
   - scripts/recall.py — "have we decided this before?" lookup
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # auto-decision-capture — proactive decision capture during sessions
 

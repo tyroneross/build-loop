@@ -1,3 +1,4 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 # dev-tools
 
 Developer-facing scripts for maintaining build-loop itself. These are **not** loaded or invoked by any skill, agent, or command during normal operation.

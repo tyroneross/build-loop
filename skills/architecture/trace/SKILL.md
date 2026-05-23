@@ -7,7 +7,7 @@ source: NavGator/commands/trace.md
 source_hash: d1a62f22ebcf3f19e2f9d52c6df565a4ba5ed53a676b5e02e43e670273f6d9f8
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Architecture Data-Flow Trace
 

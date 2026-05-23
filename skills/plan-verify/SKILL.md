@@ -3,7 +3,7 @@ name: plan-verify
 description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:plan-verify`, asks to "verify the plan" or "lint the plan", or any plan markdown change touches the synthesis-density / risk_reason / modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # plan-verify
 

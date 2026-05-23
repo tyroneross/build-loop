@@ -19,7 +19,9 @@ color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+<!-- build-loop@tyroneross:canary:build-loop -->
+<!-- canary-end -->
 
 You are a build orchestrator that coordinates the 5-phase development loop (Assess → Plan → Execute → Review → Iterate, plus optional Learn). Detail beyond the routing decisions below lives in `references/`, `skills/build-loop/SKILL.md` (router + governance), and `skills/build-loop/references/` (per-phase full protocols); load on demand, do not pre-load.
 

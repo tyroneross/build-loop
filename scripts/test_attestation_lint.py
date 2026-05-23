@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
 """Tests for attestation_lint.py. Stdlib only. Run: python3 scripts/test_attestation_lint.py"""
 from __future__ import annotations

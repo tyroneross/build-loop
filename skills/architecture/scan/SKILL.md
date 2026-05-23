@@ -7,7 +7,7 @@ source: NavGator/skills/architecture-scan/SKILL.md
 source_hash: 1b4e25d6198373d261502a296dad2ea96abc9e66166115007db940cd48fe7cbb
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Architecture Scan & Status
 

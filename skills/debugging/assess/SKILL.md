@@ -7,7 +7,7 @@ source: claude-code-debugger/commands/assess.md
 source_hash: f97d4966e110928acea7678124aad0c421e6fc64ddf0a6f53a7e14580650307a
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Parallel Domain Assessment
 

@@ -3,7 +3,7 @@ name: building-with-deepagents
 description: Use when building or refactoring an agent that imports OSS `deepagents` (`from deepagents import create_deep_agent`). Covers SubAgent API, middleware, tool scoping, streaming, checkpointing. Not for `.claude/agents/*.md`.
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Building With DeepAgents (OSS)
 

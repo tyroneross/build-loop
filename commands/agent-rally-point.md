@@ -5,7 +5,7 @@ argument-hint: "[status|watch|announce|init|lead|escalate|docs|help] [args]"
 model: inherit
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 Parse `{{ARGUMENTS}}` as `<subcommand> [args...]`. **If `<subcommand>` is omitted or empty, default to `status`** (the no-args case — most common interactive use).
 

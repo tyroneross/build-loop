@@ -4,7 +4,7 @@ description: Use when Phase 1 Assess or Phase 5 Iterate detects a new API depend
 user-invocable: false
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # api-registry-bridge (inside build-loop)
 

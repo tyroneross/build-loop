@@ -1,4 +1,4 @@
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Contributing to build-loop
 
@@ -17,45 +17,28 @@ Per-file headers in this repo follow REUSE 3.3 (https://reuse.software/spec-3.3/
 
 ## AI co-author attribution
 
-A significant portion of this codebase was written collaboratively with Anthropic's Claude AI models. The convention this repo follows: **every commit produced with meaningful AI assistance ends with a Git `Co-Authored-By:` trailer naming the model**. For Claude Code sessions, the trailer is:
+A significant portion of this codebase was written collaboratively with AI coding assistants — Anthropic's Claude (via Claude Code) and OpenAI's Codex (via Codex CLI). The convention this repo follows: **every commit produced with meaningful AI assistance ends with a Git `Co-Authored-By:` trailer naming the model**.
+
+For Claude Code sessions, the trailer is:
 
 ```
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
-Substitute the actual model + tier you used (e.g., `Claude Sonnet 4.6`, `Claude Haiku 4.5`). GitHub renders the avatar of any recognized email on the commit page, so the AI contribution is visible at the commit level.
+Substitute the actual model + tier you used (e.g., `Claude Sonnet 4.6`, `Claude Haiku 4.5`).
 
-This is a community convention, not a legal requirement of Apache 2.0. It exists because attribution at the commit level is more durable and machine-readable than ad-hoc mentions in PR descriptions.
+For Codex CLI sessions, the trailer is:
 
-If you're authoring without AI assistance — omit the trailer. Don't pad commits with it.
+```
+Co-Authored-By: OpenAI Codex <noreply@openai.com>
+```
+
+GitHub renders the avatar of any recognized email on the commit page, so the AI contribution is visible at the commit level. This is a community convention, not a legal requirement of Apache 2.0. If you're authoring without AI assistance, omit the trailer; don't pad commits with it.
 
 ## Signed commits
 
-Signed commits (`git commit -S` for GPG, or SSH-signed via `git config gpg.format ssh`) are **recommended** and surfaced as `Verified` badges by GitHub. They strengthen the evidentiary chain in case of an authorship dispute. They are not enforced; unsigned commits are accepted.
-
-Set up once:
-
-```sh
-git config --global user.signingkey <KEY-ID>
-git config --global commit.gpgsign true
-# or, for SSH signing:
-git config --global gpg.format ssh
-git config --global user.signingkey ~/.ssh/id_ed25519.pub
-```
+Signed commits (`git commit -S` for GPG, or SSH-signed via `git config gpg.format ssh`) are **recommended** and surfaced as `Verified` badges by GitHub. They strengthen the evidentiary chain in case of an authorship dispute. They are not enforced.
 
 ## Commit message style
 
 Conventional Commits (https://www.conventionalcommits.org/) — `type(scope): subject`. Common types in this repo: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`.
-
-```
-feat(phase-3): add scope-auditor gate before dispatch
-
-Body explains the why if it isn't obvious from the subject and diff.
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
-```
-
-## PRs
-
-- Build-loop's own development uses build-loop. Pull requests that touch core loop logic should reference the build-loop run that produced them (run-id + branch) when applicable.
-- The orchestrator opens PRs with `Do NOT merge` flagged in the description by default; the maintainer merges manually after review.

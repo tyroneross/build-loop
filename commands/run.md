@@ -3,7 +3,7 @@ description: "Orchestrated development loop: assess → plan → execute → rev
 argument-hint: "[--parallel] [goal description]"
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 {{#if ARGUMENTS}}
 Load the `build-loop:build-loop` skill. Goal: `{{ARGUMENTS}}`

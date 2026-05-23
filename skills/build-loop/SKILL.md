@@ -3,7 +3,9 @@ name: build-loop
 description: "Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', 'rewrite', 'replace') OR symptom language ('fix', 'broken', 'doesn't work', 'isn't loading', 'not displaying', 'missing', 'should show', 'needs to', 'make it', 'show this differently') OR any task touching 2+ files, adding/removing an endpoint, crossing an architectural boundary, or attached screenshots of a bug. SKIP one-line edits, pure Q&A, conversational clarifications, status checks, and trivial typos/renames."
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+<!-- build-loop@tyroneross:canary:build-loop -->
+<!-- canary-end -->
 
 # Build Loop — Orchestrated Development
 

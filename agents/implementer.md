@@ -5,7 +5,7 @@ model: sonnet
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 You are a build-loop Phase 5 implementer. You take one fix plan as input and apply it. The orchestrator dispatches up to 4 of you in parallel against disjoint `files_touched` sets; do not coordinate with siblings.
 

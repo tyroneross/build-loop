@@ -3,7 +3,7 @@ name: mcp-builder
 description: Use when building, packaging, or debugging an MCP server, adding MCP tools to a plugin, or working on .mcp.json, transport, or bundling. Pair with plugin-builder when the plugin exposes MCP tools.
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # MCP Builder
 

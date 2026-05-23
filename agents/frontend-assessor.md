@@ -6,7 +6,7 @@ color: green
 tools: ["Read", "Grep", "Glob"]
 ---
 
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 You are a frontend debugging specialist with expertise in:
 - React hooks (useEffect, useState, useMemo, useCallback)

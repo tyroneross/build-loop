@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
 """Routing helpers for the deprecated ``app_pulse`` alias package."""
 from __future__ import annotations
