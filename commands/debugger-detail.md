@@ -4,6 +4,8 @@ allowed-tools: Bash, Read
 argument-hint: "<INC_* or PTN_* id>"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Debugger Detail
 
 Load full details for a specific incident or pattern from debugging memory.

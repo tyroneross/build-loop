@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Subagent Integration Guide
 
 This guide explains how to integrate claude-code-debugger with custom subagents, third-party agents, and multi-agent workflows.

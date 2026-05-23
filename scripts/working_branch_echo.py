@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Echo the working-copy branch + SHA when the runtime is self-recursive.
 
 Self-recursive plugin developer signal: surface which branch the dogfooding

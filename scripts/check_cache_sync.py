@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Check source repo ↔ plugin cache sync for plugin work.
 
 For Claude Code, greps the source repo for ``${CLAUDE_PLUGIN_ROOT}/`` references

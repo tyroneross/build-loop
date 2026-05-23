@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the Step 9 invocation-telemetry fields added to write_cost_ledger_row.py.
 
 Covers the new additive, nullable fields:

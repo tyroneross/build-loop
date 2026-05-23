@@ -5,6 +5,8 @@ version: 0.1.0
 user-invocable: false
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # PRD Bridge
 
 Lets build-loop ground every phase decision in a project's strategic frame (its PRD) when one exists, and surfaces a recommendation when one doesn't. The PRD is the source of strategic truth; this bridge consumes it without coupling to its content.

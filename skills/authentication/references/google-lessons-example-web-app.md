@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Lessons from Example Web App (2025 Build)
 
 Real failures from shipping a Next.js + Supabase + Google OAuth app. Each one cost at least half a day. Read this when something breaks — there's a decent chance it's listed here.

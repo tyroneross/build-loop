@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Deterministic graph.json → diagram.{mmd,dot} generator (D8 — native only).
 
 No LLM, no NavGator import. Pure function of the graph dict:

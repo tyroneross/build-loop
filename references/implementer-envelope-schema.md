@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Implementer Envelope Schema — Canonical Contract
 
 This document defines the **canonical return envelope** every build-loop implementer (Mode A fan-out subagent or Mode B inline self-call) MUST populate. The orchestrator and `scope-auditor` parse implementer output against this schema; missing required fields cause the orchestrator to mark the commit as **malformed** and either request a revision or quarantine the diff.

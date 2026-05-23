@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+// SPDX-License-Identifier: Apache-2.0
 /**
  * build-loop Phase 7, Gate C: Design Rule Scanner
  *

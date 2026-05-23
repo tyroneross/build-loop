@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 # capability:
 #   purpose: Host-neutral CLI wrapping Rally Point presence, handoff, status, and lead operations.
 #   application: coordination

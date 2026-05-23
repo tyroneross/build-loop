@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Pay-it-Forward Architectural Posture (full protocol)
 
 > Loaded from `skills/build-loop/SKILL.md` summary. Encodes the user's preference that scalability and product-roadmap unlocks matter more than short-term build velocity when costs aren't prohibitive.

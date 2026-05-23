@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 # Fixture-driven tests for the Rally Point hooks:
 #   - session-start-rally-point.sh : one-line restore only on delta,
 #                                    silent + exit 0 otherwise

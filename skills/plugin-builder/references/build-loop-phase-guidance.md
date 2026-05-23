@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Plugin Hygiene — Build-Loop Lessons
 
 When build-loop phases produce, modify, or ship Claude Code plugins, apply these rules. Each is traceable to a real failure in the `rosslabs-ai-toolkit` marketplace.

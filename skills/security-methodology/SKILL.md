@@ -5,6 +5,8 @@ version: 0.1.0
 user-invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Security Methodology
 
 This is the canon the `security-reviewer` agent grades against, and the canon the `defenseclaw-bridge` skill maps to runtime config. It is **not** a runtime defense layer: it does not block prompts, it does not rewrite outputs, it does not replace DefenseClaw / NeMo Guardrails / Llama Guard. It tells you (a) what risk classes exist, (b) how to detect them by reading code, and (c) which IDs from which framework apply.

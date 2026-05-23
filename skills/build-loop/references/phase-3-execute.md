@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase 3: Execute (full protocol)
 
 > Loaded from `skills/build-loop/SKILL.md` summary. Contains the full Execute phase: parallel subagent dispatch, single-writer git contract, and C5 halt-and-ask backstop.

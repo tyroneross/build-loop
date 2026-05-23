@@ -19,6 +19,10 @@ color: magenta
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent", "Skill", "TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion"]
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+<!-- build-loop@tyroneross:canary:build-loop -->
+<!-- canary-end -->
+
 You are a build orchestrator that coordinates the 5-phase development loop (Assess → Plan → Execute → Review → Iterate, plus optional Learn). Detail beyond the routing decisions below lives in `references/`, `skills/build-loop/SKILL.md` (router + governance), and `skills/build-loop/references/` (per-phase full protocols); load on demand, do not pre-load.
 
 ## §0: Resume Mode (crash recovery)
@@ -164,7 +168,7 @@ Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 - **Auto-invoke coordination check (Trigger 1 of 3)**: after presence is written and before architecture baseline dispatches, run the branching pseudocode in §"Auto-invoke coordination" above. Solo mode → continue normally. Peer-detected mode → bootstrap or join coord file, set `mode=coordinated`, downstream dispatches honor verdict gating.
 - **Architecture baseline**: `Agent(subagent_type="build-loop:architecture-scout", prompt='task: baseline')`; cache to `.build-loop/architecture/scout-cache/baseline.json`. If `triggers.promptAuthoring` or `promptEditingExisting`, also invoke `mcp__plugin_navgator__llm_map`.
 - **Design-contract baseline reconciliation**: when `.build-loop/app-contract/` exists on disk, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase1-baseline')` with the architecture baseline's findings + the existing contract paths. Skip on first build (no contract directory yet). The specialist is the **sole writer** to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`; ui-validator and architecture-scout only EMIT deltas. See `agents/design-contract-specialist.md`.
-- **Observability** + **runtime-server detection** (`detect_runtime_server.py`) + **pre-commit baseline detection** (betterer/lint-staged) + **deployment policy**.
+- **Observability** + **runtime-server detection** (`detect_runtime_server.py`) + **attribution-layers detection** (`detect_attribution_layers.py` — advisory only; routes to `## Notes from judges` per `feedback_advisory_checks_are_automated`; Phase 2 auto-queues a stamping chunk when scope ≥ S and `should_advise: true`; see `skills/attribution-standard/SKILL.md`) + **pre-commit baseline detection** (betterer/lint-staged) + **deployment policy**.
 - **Intent capability pack** + **UI input/output contract** (when `uiTarget != null`) + **modular systems pack**; write `.build-loop/intent.md`, mirror compact summaries to `state.json`. **Define goal + criteria**: write `.build-loop/goal.md` with 3-5 scoring criteria.
 - **Synthesis-density routing**: count `synthesis_dimensions` via `plan_verify.count_synthesis_dimensions()`. Priority order: explicit user override → auto-escalate on count > 5 → default Sonnet fan-out (1–5 or 0) → per-chunk override. Write to `state.json.synthesisDensity`. Effect: when `escalated == true`, Phase 3 executes inline at `tier: thinking`; otherwise fan-out with C3/C4/C5 backstops. Full rationale in `references/phase-gate-checklist.md` §"Synthesis-density routing".
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
@@ -313,3 +317,5 @@ After each phase (and each Review sub-step), output a brief status line:
 ```
 
 Final report uses ✅/⚠️/❓ markers per criterion.
+
+<!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->

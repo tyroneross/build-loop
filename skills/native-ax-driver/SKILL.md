@@ -5,6 +5,8 @@ version: 1.0.0
 user-invocable: false
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Native AX Driver
 
 **Built-in capability**, not a bridge. Build-loop ships its own Swift binary and Python launcher for navigating macOS apps via the Accessibility API. When this skill loads, the orchestrator can read the AX tree of any running `.app` and dispatch actions on individual elements **while the user keeps using their cursor for something else**.

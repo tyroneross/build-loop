@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """DOE matrix generation + effects analysis for build-loop:optimize.
 
 Stdlib + numpy only. Provably equivalent to pyDOE3 1.6.2 for the three

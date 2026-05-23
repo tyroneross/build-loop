@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the Auto-Resolve routing logic (Sub-step F).
 
 Verifies that the autonomy_gate verdicts are consumed correctly by the

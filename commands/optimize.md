@@ -4,6 +4,8 @@ description: "Run autonomous metric-driven optimization. Detects available targe
 argument-hint: "[target]"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 Load the `build-loop:optimize` skill.
 
 {{#if ARGUMENTS}}

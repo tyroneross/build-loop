@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase Gate Checklist — orchestrator routing detail
 
 Loaded on demand by the orchestrator. Covers Phase 1 Assess (full protocol) and Phase 4 Review (sub-steps A–G). See `skills/build-loop/SKILL.md` for the full spec; this file is the orchestrator's routing checklist.

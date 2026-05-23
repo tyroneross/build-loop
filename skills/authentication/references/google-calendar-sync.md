@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Google Calendar API v3 — Sync Patterns
 
 Syncing events between your app and a user's Google Calendar. Covers scopes, incremental sync via `syncToken`, refresh-token storage, and the 410-recovery dance.

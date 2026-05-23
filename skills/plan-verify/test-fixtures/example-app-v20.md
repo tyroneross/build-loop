@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Example App Knowledge-Graph Cleanup — v2.0 (synthetic)
 
 > Synthetic fixture reconstructing the five errors caught in example-app v2.0 review cycles.

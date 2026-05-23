@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Canonical writer for build-loop memory files with provenance frontmatter.
 
 Companion to memory_index.py. Memory writes go through this script so

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Regenerate `.episodic/decisions/INDEX.md` and `.episodic/issues/INDEX.md`.
 
 Frontmatter-rollup index per design §2/§4. Defaults to filtering on

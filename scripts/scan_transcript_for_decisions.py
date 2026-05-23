@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """End-of-session sweep for tier-3 (inferred / assumed) decisions.
 
 Runs from a Claude Code Stop hook. Reads the session transcript JSONL,

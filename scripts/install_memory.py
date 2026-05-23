@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """install_memory.py — bootstrap the build-loop memory directory.
 
 Creates `~/.build-loop/memory/` (the canonical global memory store) and seeds

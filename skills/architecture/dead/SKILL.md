@@ -7,6 +7,8 @@ source: NavGator/commands/dead.md
 source_hash: e01c7f0e3c71a2a5c695c1d0ea9d3506672e6032cd58078f8f5b7b49b7b1a75d
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Dead-Code / Orphan Scan
 
 Detect orphaned components — those NavGator tracks but with zero incoming AND zero outgoing connections. Use the `mcp__plugin_navgator__dead` MCP tool (or `navgator dead` CLI).

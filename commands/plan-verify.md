@@ -4,6 +4,8 @@ description: "Deterministic verifier for plan markdown — grep-checkable rules 
 argument-hint: "<plan.md>"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 Load the `plan-verify` skill from `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md` for context.
 
 {{#if ARGUMENTS}}

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Run the project's existing IBR test suite (a "quick pass") for build-loop Review Sub-step B.
 
 Discovers `**/*.ibr-test.json` (skipping node_modules, .build-loop, .ibr, _draft),

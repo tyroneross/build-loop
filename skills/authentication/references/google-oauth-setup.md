@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # OAuth Setup — Console + App Wiring
 
 End-to-end recipe for "Sign in with Google" on a web app. Includes Supabase flow (recommended for Next.js) and direct-OAuth flow (for when you're not using an auth provider).

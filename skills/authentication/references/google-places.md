@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Places API (New) v1 — 2026
 
 The legacy Places API can no longer be enabled on new projects. Use **Places API (New)** with the v1 REST endpoints and **field masks** on every call.

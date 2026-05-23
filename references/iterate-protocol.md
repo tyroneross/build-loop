@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase 5 Iterate Protocol — orchestrator reference
 
 Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on demand at Phase 5.

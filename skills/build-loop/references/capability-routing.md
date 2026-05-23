@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Capability Routing (full protocol)
 
 > Loaded from `skills/build-loop/SKILL.md` summary. Contains the full capability routing table, trigger conditions, and plugin/hook/skill/agent mandatory routing rules.

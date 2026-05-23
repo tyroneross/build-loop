@@ -7,6 +7,8 @@ source: NavGator/commands/test.md
 source_hash: 4a967c08ff3d7cddd408e7caefcd07b09e8931bcaccf9ea70c0f5aa94349e0d1
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Architecture Rules / Violation Check
 
 Run NavGator's rules engine to detect architectural violations using the `mcp__plugin_navgator__rules` MCP tool. Classifies findings as blocking (circular dependency, layer violation, database isolation breach, frontend-direct-DB at error level) vs warning (hotspot, high-fan-out, orphan).

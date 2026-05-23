@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Authoritative Sources for Claude Code Plugin Development
 
 When the plugin-builder skill or any build-loop phase needs to verify a claim about plugin behavior, cite from this list. T1 sources override training data — if the docs changed, the docs win.

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Cross-Source Risk Matrix
 
 Single decision table mapping each risk class to its OWASP LLM ID, OWASP Agentic ID, NIST 600-1 risk area, and the DefenseClaw runtime control that implements the operational defense (when one exists).

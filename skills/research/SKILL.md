@@ -3,6 +3,8 @@ name: research
 description: Use when the user asks to "research", "investigate", "evaluate options", or "find out about" a topic. Generate a repo-grounded research packet before deciding whether/how to build — pre-decision analysis with risks, best path, confidence, next action.
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Research — Pre-Decision Analysis
 
 Produces a repo-grounded research packet without committing to implementation. Use when evaluating approaches, comparing options, or preparing a handoff.

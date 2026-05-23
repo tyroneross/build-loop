@@ -5,6 +5,8 @@ version: 1.5.0
 user-invocable: false
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Debugging Memory Workflow
 
 This skill integrates the claude-code-debugger memory system into debugging workflows. The core principle: **never solve the same bug twice**.

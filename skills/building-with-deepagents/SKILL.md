@@ -3,6 +3,8 @@ name: building-with-deepagents
 description: Use when building or refactoring an agent that imports OSS `deepagents` (`from deepagents import create_deep_agent`). Covers SubAgent API, middleware, tool scoping, streaming, checkpointing. Not for `.claude/agents/*.md`.
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Building With DeepAgents (OSS)
 
 This skill is for agents running on the open-source `deepagents` package (`pip install deepagents`) on top of LangChain / LangGraph, typically paired with a local model via `langchain-ollama`. It is **not** for the hosted LangChain/DeepAgents cloud product — if you find yourself reaching for LangSmith Platform or hosted subagents, stop: those features don't apply here. Prefer Arize Phoenix (self-hosted, OpenInference instrumentation) for observability in OSS deployments.

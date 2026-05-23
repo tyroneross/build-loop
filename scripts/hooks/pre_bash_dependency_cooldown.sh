@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 # PreToolUse hook: dependency-cooldown backstop (supply-chain layer 2).
 #
 # Catches ad-hoc package installs in build-loop projects.

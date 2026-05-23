@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # MCP Security Model — stage-aware controls
 
 Derived from the NSA paper *"MCP: Security Design Considerations"* (May 2026) and the OWASP LLM / Agentic Top 10. This reference is the **rubric** the mcp-builder skill runs as a preflight and the `security-reviewer` agent grades against.

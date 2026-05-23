@@ -7,6 +7,8 @@ source: claude-code-debugger/skills/debugging-memory/SKILL.md
 source_hash: 484cd20dfe7fc6f345e508738a54fc6ba9750dca1efa9dbe26c6d57e5ba8f46e
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Debugging Memory Workflow (Native, Sourced)
 
 Memory-first debugging. Core principle: **never solve the same bug twice**. Native to build-loop — content adapted from `claude-code-debugger/skills/debugging-memory/SKILL.md`. Uses the bundled debugger MCP server (`mcp__plugin_build-loop-debugger__*`).

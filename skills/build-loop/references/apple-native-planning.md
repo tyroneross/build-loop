@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Apple Native Planning Reference
 
 Phase 2 (Plan) guidance for native iOS / macOS / watchOS work. Surfaces the upfront decisions that, when skipped, become Phase 5 (Iterate) emergencies.

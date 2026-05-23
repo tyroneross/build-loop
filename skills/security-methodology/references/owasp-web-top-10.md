@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # OWASP Top 10 (Web) 2025 — relevant subset for LLM-backed apps
 
 The web Top 10 still applies under any agent that exposes HTTP endpoints, calls APIs, or processes user-controlled URLs. This file enumerates the four risks that materially overlap with LLM/agentic concerns. The other six (A02 Cryptographic Failures, A04 Insecure Design, A05 Security Misconfiguration, A07 Identification and Authentication Failures, A08 Software and Data Integrity Failures, A09 Security Logging and Monitoring Failures) still apply in their classic form — they're not LLM-specific. This file does not re-enumerate them; the canonical write-up lives at the source.

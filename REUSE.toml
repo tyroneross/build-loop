@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# REUSE 3.3 annotations for files that cannot carry an in-file SPDX header
+# (JSON has no comment syntax; binary/generated assets must be covered by
+# REUSE.toml or by sidecar .license files).
+#
+# Spec: https://reuse.software/spec-3.3/
+# Validate: `uvx reuse lint`
+
+version = 1
+
+# Shipped JSON sources and top-level docs/metadata.
+[[annotations]]
+path = [
+    "**/*.json",
+    "README.md",
+    "CONTRIBUTING.md",
+    "NOTICE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>"
+SPDX-License-Identifier = "Apache-2.0"

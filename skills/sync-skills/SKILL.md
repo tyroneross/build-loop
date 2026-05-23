@@ -5,6 +5,8 @@ version: 0.1.0
 user-invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Sync-Skills — Drift Detection for Native Copies
 
 Build-loop's `skills/architecture/` and `skills/debugging/` skills are copied from canonical upstream repos (NavGator, claude-code-debugger). Each carries a `source:` path and `source_hash:` SHA-256 in its frontmatter. This skill recomputes the hash from the canonical source file and reports any drift.

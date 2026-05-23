@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # MITRE ATLAS — Starter Subset for Product-Dev Agents
 
 ATLAS is to AI what ATT&CK is to enterprise security: an adversary-perspective tactic/technique catalog with case studies. **Designed for red teams, threat hunters, and detection engineers — not for developers writing prompts.** This file does not re-author ATLAS; it points at the source and lists ~12 starter techniques that are the most relevant to product-dev agents at build-time review.

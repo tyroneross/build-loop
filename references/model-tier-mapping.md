@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Model Tier Mapping — Multi-Provider Substitution Reference
 
 Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthropic aliases (`opus`, `sonnet`, `haiku`) by default because Claude Code is the primary host, but the **tier abstraction** (Thinking / Code / Pattern) is what governs the role assignment. This reference documents how to swap providers cleanly.

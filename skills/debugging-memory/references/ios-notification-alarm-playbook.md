@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # iOS Notification / Alarm Diagnostic Playbook
 
 Domain reference for diagnosing "the alarm doesn't fire" on iOS apps that use `UNUserNotificationCenter` for timed completion alerts (Pomodoro timers, meditation apps, fasting trackers, sleep alarms, anything with a scheduled future notification).

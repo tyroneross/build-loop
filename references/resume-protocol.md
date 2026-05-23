@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # Resume Protocol — Crash Recovery via state.json
 
 Build-loop's crash-recovery surface. Loaded on demand by the build-orchestrator agent when its incoming prompt opens with `RESUME_MODE:` or when Phase 1 needs to act on a stale-heartbeat detection. Detail intentionally lives here, not in the orchestrator skeleton, to keep the skeleton ≤200 lines.

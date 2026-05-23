@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Promote recurring architecture violations into build-loop-native lessons.
 
 Chunk 8 — final chunk of the architecture-awareness initiative.

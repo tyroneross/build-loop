@@ -5,6 +5,8 @@ version: 0.1.0
 user-invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # DefenseClaw Bridge
 
 Lets build-loop emit a runtime-security spec that downstream operators can hand to Cisco DefenseClaw (`github.com/cisco-ai-defense/defenseclaw`) — Apache 2.0, the cleanest production-shape implementation of the **Govern / Inspect / Prove** operational pattern. This bridge **only writes spec**; it does not run scanners, does not install the gateway sidecar, does not produce TypeScript plugins.

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Deprecated alias package for ``rally_point``.
 
 Canonical code lives in ``scripts/rally_point``. This package is a segmented

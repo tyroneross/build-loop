@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
 """Slice the ACP to a file set for a single subagent dispatch.
 
 Reads the full ACP (`.build-loop/architecture/acp.json`) and produces a narrowed

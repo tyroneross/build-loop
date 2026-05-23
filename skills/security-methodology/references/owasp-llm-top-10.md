@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
 # OWASP Top 10 for LLM Applications (v1.1, 2025)
 
 Component-and-content-level risks. Frames the LLM as a component inside a wider application — these risks apply to any LLM-backed feature, agent or otherwise.
