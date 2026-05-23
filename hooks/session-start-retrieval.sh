@@ -38,62 +38,21 @@ mkdir -p "$LOG_DIR" 2>/dev/null
 #     because the warmed model dies with the subshell. The daemon fixes
 #     that by being a separate, persistent process the SessionStart hook
 #     only touches via spawn-if-not-running.
-DAEMON_PID_FILE="$LOG_DIR/rerank-daemon.pid"
-if [ -f "$SCRIPT_DIR/rerank_daemon.py" ]; then
-    DAEMON_PORT="${RERANK_DAEMON_PORT:-8765}"
-    daemon_alive=0
-    if [ -f "$DAEMON_PID_FILE" ]; then
-        existing_pid=$(cat "$DAEMON_PID_FILE" 2>/dev/null)
-        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-            daemon_alive=1
-        fi
+# Spawn a long-running daemon if not already alive. Args: script-name port pidfile-name.
+# Liveness = PID-file + kill -0 OR /health probe (belt-and-suspenders against stale PIDs).
+_spawn_daemon() {
+    local script="$1" port="$2" pidfile="$LOG_DIR/$3.pid" log="$LOG_DIR/$3.log"
+    [ -f "$SCRIPT_DIR/$script" ] || return 0
+    if [ -f "$pidfile" ]; then
+        local pid; pid=$(cat "$pidfile" 2>/dev/null)
+        [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
     fi
-    # Belt-and-suspenders: also probe the port — handles the case where
-    # the PID file got stale but a process is still bound to the port.
-    if [ "$daemon_alive" = "0" ]; then
-        if curl -fsS --max-time 0.2 "http://127.0.0.1:${DAEMON_PORT}/health" >/dev/null 2>&1; then
-            daemon_alive=1
-        fi
-    fi
-    if [ "$daemon_alive" = "0" ]; then
-        nohup python3 "$SCRIPT_DIR/rerank_daemon.py" \
-            </dev/null \
-            >>"$LOG_DIR/rerank-daemon.log" 2>&1 &
-        disown 2>/dev/null
-    fi
-fi
-
-# 1c. Embed daemon (Phase H). Same architectural fix as 1b — long-running
-#     stdlib http.server holds the embedder backend (MLX
-#     mxbai-embed-large-v1, or Ollama bge-m3 fallback) in memory across
-#     recall.py invocations, eliminating the ~3000ms cold-load cliff per
-#     fresh process. Independent of the rerank daemon: different port
-#     (8766 vs 8765), different PID file. Both daemons spawn here in
-#     parallel and each survives across recall.py invocations.
-EMBED_DAEMON_PID_FILE="$LOG_DIR/embed-daemon.pid"
-if [ -f "$SCRIPT_DIR/embed_daemon.py" ]; then
-    EMBED_DAEMON_PORT_VAL="${EMBED_DAEMON_PORT:-8766}"
-    embed_daemon_alive=0
-    if [ -f "$EMBED_DAEMON_PID_FILE" ]; then
-        existing_pid=$(cat "$EMBED_DAEMON_PID_FILE" 2>/dev/null)
-        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-            embed_daemon_alive=1
-        fi
-    fi
-    # Belt-and-suspenders: probe the port too — handles stale PID files
-    # left after a hard kill.
-    if [ "$embed_daemon_alive" = "0" ]; then
-        if curl -fsS --max-time 0.2 "http://127.0.0.1:${EMBED_DAEMON_PORT_VAL}/health" >/dev/null 2>&1; then
-            embed_daemon_alive=1
-        fi
-    fi
-    if [ "$embed_daemon_alive" = "0" ]; then
-        nohup python3 "$SCRIPT_DIR/embed_daemon.py" \
-            </dev/null \
-            >>"$LOG_DIR/embed-daemon.log" 2>&1 &
-        disown 2>/dev/null
-    fi
-fi
+    curl -fsS --max-time 0.2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1 && return 0
+    nohup python3 "$SCRIPT_DIR/$script" </dev/null >>"$log" 2>&1 &
+    disown 2>/dev/null
+}
+_spawn_daemon rerank_daemon.py "${RERANK_DAEMON_PORT:-8765}" rerank-daemon
+_spawn_daemon embed_daemon.py "${EMBED_DAEMON_PORT:-8766}"  embed-daemon
 
 # 2. Health canary, backgrounded so SessionStart returns immediately.
 #    Output goes to state.json + a rotating log; nothing reaches the
