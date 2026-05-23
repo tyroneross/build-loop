@@ -420,3 +420,5 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
+
+<!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->

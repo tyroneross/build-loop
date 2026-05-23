@@ -315,3 +315,5 @@ After each phase (and each Review sub-step), output a brief status line:
 ```
 
 Final report uses ✅/⚠️/❓ markers per criterion.
+
+<!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->
