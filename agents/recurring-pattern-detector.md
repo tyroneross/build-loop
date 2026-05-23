@@ -19,6 +19,8 @@ color: yellow
 tools: ["Read", "Glob", "Grep"]
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 You are a pattern-matching scanner. Your only job is to read `.build-loop/state.json` and emit a JSON list of recurring patterns from the `runs[]` array. You do not author skills, do not make judgments about value, do not rank by importance. You count, classify, and return.
 
 ## Input

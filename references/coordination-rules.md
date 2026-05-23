@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Coordination Rules (Binding Constitution)
 
 **Audience:** Any agent participating in a multi-session build-loop run — Claude Code orchestrator, Codex verifier, peer Claude session, CI, headless host.

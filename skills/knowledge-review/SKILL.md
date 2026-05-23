@@ -15,6 +15,8 @@ companion_scripts:
   - scripts/consolidate_memory.py — referenced as the next-step action when surface items accumulate
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # knowledge-review — surface review-needing items
 
 `/knowledge:review` is the read-only review surface for the four-memory-types

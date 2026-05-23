@@ -5,6 +5,8 @@ version: 0.1.0
 user-invocable: false
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Plugin Tests — Static-Analysis Harness
 
 A pytest-stdlib test suite that validates a Claude Code plugin's structure, manifest, MCP wiring, skill descriptions, and bridge preflights. Designed to catch the bug classes that have actually shipped through build-loop's history (namesake collisions, manifest version drift, missing frontmatter on commands, bare MCP server names).

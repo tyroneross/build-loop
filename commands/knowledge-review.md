@@ -3,6 +3,8 @@ description: "Surface review-needing items across episodic memory: review queue,
 argument-hint: "[--rot-threshold-days N] [--no-db]"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 Load the `build-loop:knowledge-review` skill.
 
 {{#if ARGUMENTS}}

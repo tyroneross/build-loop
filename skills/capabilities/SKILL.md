@@ -5,6 +5,8 @@ model: sonnet
 tools: ["Read", "Bash"]
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Capability shortlist
 
 Anthropic's Tool Search guidance recommends ≤8 candidates per dispatch. The build-loop repo currently exposes ~113 surfaces (20 agents + 34 skills + 14 commands + 5 hooks + 1 MCP server + ~39 scripts). Without filtering, the orchestrator chooses from a haystack on every phase.

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase 1: Assess (full protocol)
 
 > Loaded from `skills/build-loop/SKILL.md` summary. Contains the full Assess phase: state understanding, goal definition, and scoring criteria.

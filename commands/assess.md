@@ -4,6 +4,8 @@ allowed-tools: Bash, Read, Task
 argument-hint: "<symptom>"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 {{#if ARGUMENTS}}
 
 Analyze "{{ARGUMENTS}}" across multiple domains in parallel.

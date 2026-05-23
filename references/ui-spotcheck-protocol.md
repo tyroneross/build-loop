@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # UI Spot-Check Protocol (Phase 3 chunk-close)
 
 _Linked from `agents/build-orchestrator.md` §Phase 3 Execute and §"Phase 3 UI spot-check (between chunks)"._

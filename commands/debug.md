@@ -3,6 +3,8 @@ description: "Deep iterative debugging — causal-tree investigation, fix, verif
 argument-hint: "<symptom>"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 {{#if ARGUMENTS}}
 Load the `build-loop:debug-loop` skill. Symptom: `{{ARGUMENTS}}`
 {{else}}

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Dual-Host Plugin Pattern: Claude Code + Codex
 
 Every plugin in the `rosslabs-ai-toolkit` marketplace ships to **both** Claude Code and Codex from a single repository. This reference covers the shared structure, per-host manifests, and what stays agent-neutral.

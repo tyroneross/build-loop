@@ -7,6 +7,8 @@ source: NavGator/skills/architecture-scan/SKILL.md
 source_hash: 1b4e25d6198373d261502a296dad2ea96abc9e66166115007db940cd48fe7cbb
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Architecture Scan & Status
 
 Scan project architecture, check health, and monitor staleness using Build Loop's native architecture engine (`python -m build_loop.architecture scan`). NavGator remains an optional escalation adapter for capabilities not yet ported into the native engine, such as `llm-map`, `schema`, and `diagram`.

@@ -3,6 +3,8 @@ description: "Show debugging memory statistics"
 allowed-tools: Bash
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 Display the current state of the debugging memory system:
 
 ```bash

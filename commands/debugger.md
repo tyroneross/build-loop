@@ -4,6 +4,8 @@ allowed-tools: Bash, Read
 argument-hint: "<symptom>"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 Search debugging memory for similar past incidents before investigating a new bug.
 
 {{#if ARGUMENTS}}

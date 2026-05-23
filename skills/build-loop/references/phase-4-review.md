@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase 4: Review (full protocol)
 
 > Loaded from `skills/build-loop/SKILL.md` summary. Contains the seven sub-steps A–G including Sub-step F Auto-Resolve with all 4 routing arms (auto/warn/confirm/block).

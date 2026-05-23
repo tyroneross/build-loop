@@ -4,6 +4,8 @@ description: Promote an auto-promoted experimental skill or agent from project-l
 argument-hint: <artifact-name>
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # /build-loop:promote-experiment <name>
 
 Promote a proven experimental artifact into the build-loop plugin itself. This is the manual, user-approved counterpart to Phase 6 Learn's auto-promote — which stays local to the project. Cross-project promotion modifies the plugin repo and affects every user, so it is never automatic.

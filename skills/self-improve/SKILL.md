@@ -5,6 +5,8 @@ version: 0.1.0
 user-invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Build-Loop Self-Improvement (Phase 6 Learn)
 
 This skill runs after Review sub-step F (Report) completes, or on demand. It detects recurring patterns across recent build-loop runs, drafts experimental skills/agents to address them, and notifies the user for keep/remove decisions.

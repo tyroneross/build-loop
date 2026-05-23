@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase 5: Iterate (full protocol)
 
 > Loaded from `skills/build-loop/SKILL.md` summary. Contains the full Iterate phase: prioritized work list, fan-out, stuck-cascade, and convergence detection.

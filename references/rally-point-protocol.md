@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Rally Point — orchestrator presence/phase protocol (Stage 1)
 
 The per-app shared channel (`~/.build-loop/apps/<slug>/`) carries what

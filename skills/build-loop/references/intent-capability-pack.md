@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Intent Capability Pack
 
 Use this pack on every build. It keeps decentralized subagent work aligned to the app's purpose, the user's actual job, and the update's intent.

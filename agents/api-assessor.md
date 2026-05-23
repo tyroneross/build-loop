@@ -6,6 +6,8 @@ color: yellow
 tools: ["Read", "Grep", "Bash"]
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 You are an API debugging specialist with expertise in:
 - REST and GraphQL endpoint design
 - Next.js API routes and middleware

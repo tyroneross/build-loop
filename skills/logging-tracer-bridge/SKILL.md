@@ -5,6 +5,8 @@ version: 0.3.0
 user-invocable: false
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Logging-Tracer Bridge — Extended Capability Escalation
 
 As of build-loop 0.7.1 this bridge's role is **escalation, not primary coordination**. The orchestrator owns when-to-fire (Phase 1 Assess observability scan, Phase 5 Iterate reactive trigger on `evidence_gap`) and routes those phases to the bundled internal `build-loop:logging-tracer` skill, which owns tier selection, stack detection, codegen, the ephemeral-by-default policy (Mechanisms A and B), and code-placement rules.

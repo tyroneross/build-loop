@@ -7,6 +7,8 @@ source: claude-code-debugger/skills/debug-loop/SKILL.md
 source_hash: 07b2dd2ad30c210b14bbac3c4e7ddd772ed642dd4c478dfbdb81b52ae809c92a
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Debug Loop — Iterative Root Cause Debugging
 
 A 7-phase debugging loop: investigate via causal tree analysis, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures. Native to build-loop — content adapted from `claude-code-debugger/skills/debug-loop/SKILL.md`.

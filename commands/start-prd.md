@@ -4,6 +4,8 @@ description: "Start a living PRD for the current project by answering 3-5 strate
 argument-hint: "[appname]"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 Load the `prd-builder` skill from RossLabs-AI-Toolkit if available. If unavailable, fall back to the inline guidance below.
 
 {{#if ARGUMENTS}}

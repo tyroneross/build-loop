@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # UI Input/Output Contract
 
 Use this contract for any build-loop task that adds, modifies, or validates a user-facing UI surface. It turns "build the component" into an explicit inventory of what the user can provide, what the system returns, and which UI pattern must handle each data shape.

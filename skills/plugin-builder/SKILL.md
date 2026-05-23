@@ -3,6 +3,8 @@ name: plugin-builder
 description: Use when the user asks to create, build, scaffold, convert, or migrate a Claude Code plugin, or needs guidance on plugin.json, directory layout, hooks, MCP servers, agents, LSP, or distribution.
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Plugin Builder
 
 Build Claude Code plugins following official documentation and best practices.

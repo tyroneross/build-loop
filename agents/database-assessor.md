@@ -6,6 +6,8 @@ color: cyan
 tools: ["Read", "Grep", "Bash"]
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 ## Architecture context
 
 If the brief includes an `architecture_context:` block (sourced from `.build-loop/architecture/scout-cache/`), treat it as authoritative blast-radius information. Use the slice to focus your assessment on database-touching files in scope and their direct callers; do not assess components outside the slice unless a finding genuinely requires it, and flag any out-of-slice citation explicitly in your output.

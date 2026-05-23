@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Capability Routing — orchestrator reference
 
 Loaded on demand by the build-orchestrator agent when a phase needs a capability (UI build, debug, web-fetch, screenshot, migration, etc.).

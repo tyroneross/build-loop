@@ -3,6 +3,8 @@ name: optimize
 description: Use when the user says "optimize this", "make X faster", "reduce <metric>", or "speed up my app". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables.
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Optimize
 
 Improve a number you can measure. Build time. Lines of code. Response time. Token cost. Anything where you can write a one-line command that returns a number.

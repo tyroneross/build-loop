@@ -7,6 +7,8 @@ source: NavGator/skills/impact-analysis/SKILL.md
 source_hash: e1eab41fae52db57fd80c996fec0d2480703e4ac407f5cf8e81edb882511a413
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Impact Analysis & Connections
 
 Analyze what's affected by a change and map component connections using the NavGator MCP tools (`mcp__plugin_navgator__impact`, `mcp__plugin_navgator__connections`, `mcp__plugin_navgator__trace`). Native to build-loop — content adapted from `NavGator/skills/impact-analysis/SKILL.md`. If NavGator is not installed, no-op with a one-line note.

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # OWASP Top 10 for Agentic Applications (2026)
 
 Released 2025-12-09 by the OWASP GenAI Security Project. Orchestration-and-execution-layer risks specific to agents that plan, act, and use tools. **Complements rather than replaces** the LLM Top 10 — content-level risks (LLM01–10) still apply *inside* an agent.

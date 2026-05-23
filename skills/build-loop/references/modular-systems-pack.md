@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Modular Systems Pack
 
 Use this pack on every non-trivial build. It makes modular, scalable structure the default while allowing a simpler or more integrated approach when that better serves the use case.

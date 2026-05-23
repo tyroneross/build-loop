@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # DeepAgents Anti-Patterns
 
 Concrete bugs from real projects, mapped to what DeepAgents does or does not cover.

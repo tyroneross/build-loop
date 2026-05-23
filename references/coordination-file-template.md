@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Coordination File Template
 
 **Purpose:** Canonical starting shape for a new per-run coordination file at `.build-loop/coordination/<topic>.md`. Inherits binding rules from `references/coordination-rules.md`; this template defines the **structure** every coord file MUST include so verifiers, peer sessions, and `scripts/coordination_status.py` can parse them uniformly.

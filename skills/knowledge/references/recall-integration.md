@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Recall integration — Phase 1 Assess
 
 `scripts/recall.py` is the retrieval entry point for repo-local episodic

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Geocoding + Directions + Distance Matrix
 
 Non-interactive, server-side APIs. Get an API key restricted to your server's IP (or unrestricted + used only via server routes).

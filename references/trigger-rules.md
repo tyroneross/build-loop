@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Trigger Rules — orchestrator reference
 
 Loaded by the build-orchestrator at Phase 1 Assess to set boolean flags under `.build-loop/state.json.triggers`. See `skills/build-loop/SKILL.md` §Trigger Conditions for the canonical rule set.

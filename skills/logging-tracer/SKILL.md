@@ -5,6 +5,8 @@ version: 1.0.0
 user-invocable: false
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Logging & Tracing Code Generation
 
 Generate structured logging and tracing code tailored to the project's stack. Follow a tiered approach: start with zero dependencies, escalate only when the user needs distributed tracing.

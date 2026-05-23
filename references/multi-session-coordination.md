@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Multi-Session Coordination (Rally Point presence, M5 memory index)
 
 _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._

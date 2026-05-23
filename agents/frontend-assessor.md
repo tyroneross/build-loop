@@ -6,6 +6,8 @@ color: green
 tools: ["Read", "Grep", "Glob"]
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 You are a frontend debugging specialist with expertise in:
 - React hooks (useEffect, useState, useMemo, useCallback)
 - Component lifecycle and rendering optimization

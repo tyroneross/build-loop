@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Example App — Unified AI Search Architecture (Full Plan)
 
 **Version:** 2.2 — SOTA research integrated (RRF, cross-encoder reranker, CRAG, multi-query, HippoRAG)

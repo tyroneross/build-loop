@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # UI Subagent Prompt — Design Rule Preamble
 
 > Prepended verbatim to every build-loop subagent prompt that touches UI files. Do NOT replace with a link — agents miss links.

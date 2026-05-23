@@ -7,6 +7,8 @@ source: NavGator/skills/code-review/SKILL.md
 source_hash: 61d49f3329da9dbf059fe54b24b3fe6537050c2d159fcac8d00fadb292dd5d4c
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Architectural Integrity Review
 
 Orchestrates impact analysis, data-flow tracing, the rules engine, and the lessons system into a 5-phase architectural review. Native to build-loop — content adapted from `NavGator/skills/code-review/SKILL.md`. This skill is an architectural integrity reviewer — not a linter, not a bug hunter.

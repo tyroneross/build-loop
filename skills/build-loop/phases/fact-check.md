@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # Phase 7: Fact Check & Mock Scan — Detailed Guidance
 
 Loaded on demand when entering Phase 7.

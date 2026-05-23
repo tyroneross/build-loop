@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 # NIST AI 600-1 — Engineering-Relevant Risk Areas
 
 NIST AI 600-1, "Artificial Intelligence Risk Management Framework: Generative AI Profile" (July 2024), is the GenAI-specific companion to AI RMF 1.0. **Not a regulation** — but as the most detailed government-published GenAI risk framework, it has become the de facto reference for regulators, auditors, insurers, and enterprise procurement.

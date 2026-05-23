@@ -4,6 +4,8 @@ allowed-tools: Bash, Read
 argument-hint: "[--strict] [<test-name>]"
 ---
 
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross | SPDX-License-Identifier: Apache-2.0 -->
+
 Load the `build-loop:plugin-tests` skill.
 
 {{#if ARGUMENTS}}
