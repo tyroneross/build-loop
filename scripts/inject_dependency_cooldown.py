@@ -14,7 +14,7 @@ This is layer 1 of build-loop's 3-layer defense-in-depth (the *primary*
 gate). Layer 2 is the PreToolUse Bash backstop hook
 (``scripts/hooks/pre_bash_dependency_cooldown.sh``) which calls this script
 with ``--check`` to decide whether a project is already protected. Layer 3
-is the ``C-SUPPLY/dependency_cooldown`` constitution rule + commit-auditor
+is the ``C-SUPPLY/dependency_cooldown`` constitution rule + independent-auditor
 advisory flag.
 
 User-authored scopes are exempt via a config-driven allowlist. Default is

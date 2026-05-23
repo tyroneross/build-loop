@@ -14,13 +14,15 @@ Review runs every time we need an evaluation (initial post-Execute, and again af
 
 Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before spending tokens on full validation. Uses a separate read-only agent with no incentive to sandbag.
 
-1. **Dispatch `commit-auditor`** at `scope: "build"` against the full build diff (`<pre_build_sha>..HEAD`). Replaces the retired `sonnet-critic` per plan §15.1 — one Opus judge across all checkpoints. The auditor has tools=[Read, Grep, Glob, Bash] (Bash for `git diff`), no Edit/Write. For the chunk-scope variant fired at Phase 3 step 7, see `agents/commit-auditor.md`.
+1. **Dispatch `independent-auditor`** at `scope: "build"` against the full build diff (`<pre_build_sha>..HEAD`). Consolidated 2026-05-23 — single source of truth replacing both retired `commit-auditor` (chunk + build scope) and earlier retired `sonnet-critic`. The auditor has tools=[Read, Grep, Glob, Bash] (Bash for `git diff`), no Edit/Write. For Phase 3 step 7 (per-chunk advisory), dispatch the same `independent-auditor` with `diff_sha_range: <chunk_parent_sha>..<chunk_sha>` and `reason: "chunk-advisory"`.
 2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (`git diff HEAD~1` or the changed-file set).
-3. **Output**: JSON with `findings`, `strong_checkpoint_count`, `guidance_count`, `pass` boolean.
+3. **Output**: JSON envelope with `verdict` ∈ {yay, nay, suggest_correction, look_again} + `findings[]`. See `agents/independent-auditor.md` for the full schema.
 4. **Routing**:
-   - `pass: true` → proceed to sub-step B (Validate)
-   - `pass: false` with `strong-checkpoint` findings → route back to Execute for fixes (not Iterate — no iteration counter burn yet on critic-only failures)
-   - Findings marked `guidance` → record in `.build-loop/issues/` and proceed
+   - `verdict: yay` → proceed to sub-step B (Validate)
+   - `verdict: nay` with `severity: major` finding → route back to Execute for fixes (strong-checkpoint; no iteration counter burn yet on critic-only failures)
+   - `verdict: suggest_correction` with `auto_fixable: true` AND `severity ≤ minor` → Auto-Resolve queue (Sub-step F)
+   - `verdict: look_again` → operator gathers the named `missing_artifacts` and re-runs the auditor
+   - `severity: info|minor` findings → record in `.build-loop/issues/` and proceed
 5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers.
 6. **Skip** on re-reviews after Iterate (critic already saw the diff at first pass) unless Iterate touched different files. Skip entirely for trivial chunks (single-file typo, config value).
 
@@ -156,7 +158,7 @@ Light E above is the **default and unchanged**. Deep mode is an opt-in flag (`de
 
 1. **Detect.** Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/complexity_detector.py --changed-files <build's changed .py files> --json`. The stdlib-`ast` detector (zero deps) emits a ranked hotspot envelope (`high_complexity`, `deep_nesting`, `accidental_quadratic`, `redundant_multipass`, `needless_indirection`). It is diff-scoped — never a whole-repo scan. Unparseable / non-`.py` / missing paths are skipped, never fatal.
 2. **Propose.** For each `severity: "high"` hotspot, the running build-loop subagent (no external LLM API) proposes a simpler — and, where it falls out naturally, faster — rewrite. `severity: "advisory"` hotspots are *not* rewritten in-pass; they surface as advisory only.
-3. **Apply vs. advise.** APPLY a rewrite **only if all hold**: (a) it is a clear win (not a lateral rewrite); (b) the existing test subset for the touched files still passes — reuse the Sub-step B Validate machinery on E's changed paths only, not the full gate; (c) public signatures and observable behavior are unchanged — the detector's own AST-signature comparison plus the existing **commit-auditor** behavior advisory. If a rewrite is ambiguous, uncertain-architectural, or fails (b)/(c) → do **not** apply; emit it as an **advisory variance via the existing commit-auditor surface** (Phase 4 Report `## Notes from judges`). No new verifier, no perf gate, no benchmark, no cost-proxy — the "faster" outcome is an unmeasured bonus, never asserted or gated.
+3. **Apply vs. advise.** APPLY a rewrite **only if all hold**: (a) it is a clear win (not a lateral rewrite); (b) the existing test subset for the touched files still passes — reuse the Sub-step B Validate machinery on E's changed paths only, not the full gate; (c) public signatures and observable behavior are unchanged — the detector's own AST-signature comparison plus the existing **independent-auditor** behavior advisory. If a rewrite is ambiguous, uncertain-architectural, or fails (b)/(c) → do **not** apply; emit it as an **advisory finding via the existing independent-auditor surface** (Phase 4 Report `## Notes from judges`). No new verifier, no perf gate, no benchmark, no cost-proxy — the "faster" outcome is an unmeasured bonus, never asserted or gated.
 4. **Report.** Log one line: `[Simplify:deep] N hotspots, M applied, K advised`; record applied/advised counts in the Sub-step G report. An applied rewrite that later fails a re-validate routes like any Sub-step B failure (Phase 5 Iterate, existing 5x cap).
 
 Deep-mode applied edits flow through the existing single-writer Phase 3 commit contract — they are part of the build's diff, not a side-channel. With the flag off, none of the above runs and Sub-step E is the light pass verbatim.
@@ -177,7 +179,7 @@ This is **measurement infrastructure, not a factor** — it is present and ident
 
 Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
 
-- **Sub-step A Critic** — variances with `auto_fixable: true` AND `severity ≤ minor` AND `suggestion` naming a single `file:line` (canonical commit-auditor variance fields per `agents/commit-auditor.md`)
+- **Sub-step A Critic** — findings with `severity ≤ minor` AND `suggestion` naming a single `file:line` (canonical independent-auditor finding fields per `agents/independent-auditor.md`)
 - **Sub-step D Fact-Check & Mock Scan** — non-blocking gate findings (e.g. `Plugin Cache Sync` divergence, `Version-Bump Advisor` notes when `release-pending.md` is absent, single-file documentation drift)
 - **Operator queue** — items previously deferred via the `## Held` section of a prior build's report
 

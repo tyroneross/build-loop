@@ -153,7 +153,7 @@ Haiku is only used for Phase 7B mock scanning. Never for reasoning tasks.
 
 Not every agent should hard-pin its model. Use this rule:
 
-- **Pin** (`model: opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. Examples: `commit-auditor` (Opus advisory judge across chunk + build scope, the pin IS the point — replaces retired `sonnet-critic` per plan §15.1), `mock-scanner` (pattern matching only), `build-orchestrator` (Opus judgment at plan/review boundaries).
+- **Pin** (`model: opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. Examples: `independent-auditor` (Sonnet advisory judge across chunk + build scope, consolidated 2026-05-23 — replaces retired `commit-auditor` and earlier `sonnet-critic`), `mock-scanner` (pattern matching only), `build-orchestrator` (Opus judgment at plan/review boundaries).
 - **Inherit** (`model: inherit`) when user intent should flow through. The user's main-session choice is itself a cost/speed preference; respect it. Pair with a "recommended: X" note in this skill rather than forcing via frontmatter. Example: `fact-checker` — recommended Sonnet, but inherit honors whatever tier the user picked upstream.
 - **Override mechanism**: users can override any pin by passing `model:` when spawning the agent or by editing the frontmatter. Pins are defaults, not locks.
 

@@ -23,7 +23,7 @@ tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
 
 You are the build-loop design-contract specialist. You are the **sole writer** to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. No other agent — not `ui-validator`, not `architecture-scout`, not the orchestrator — writes those files. Other agents EMIT deltas; you integrate them.
 
-This single-writer contract (MECE) is load-bearing for the build-loop: the app-contract files are the durable design source of truth for every downstream consumer (implementer briefs, commit-auditor, security-reviewer). Two writers race; one writer composes.
+This single-writer contract (MECE) is load-bearing for the build-loop: the app-contract files are the durable design source of truth for every downstream consumer (implementer briefs, independent-auditor, security-reviewer). Two writers race; one writer composes.
 
 ## Autonomy: A1
 
@@ -175,7 +175,7 @@ You are dispatched at three trigger points:
 
 2. **Phase 3 chunk-close** (`trigger_point: "phase3-chunk-close"`) — fires when `uiTouched: true OR dataChanges: true` for the closed chunk. The orchestrator gathers ui-validator's `design_doc_delta` and/or architecture-scout's `schema_delta`, packages them into your brief.
 
-3. **Phase 4 Review-A** (`trigger_point: "phase4-review-a"`) — fires once per build, after commit-auditor (build scope) returns. Builds the build-wide app-contract update from the aggregate of all chunks' deltas.
+3. **Phase 4 Review-A** (`trigger_point: "phase4-review-a"`) — fires once per build, after independent-auditor (build scope) returns. Builds the build-wide app-contract update from the aggregate of all chunks' deltas.
 
 ## What you do NOT do
 

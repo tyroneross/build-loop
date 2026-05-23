@@ -18,7 +18,7 @@ Schema for autonomousDefaults[N]:
     "confidence": "high|med|low",
     "rationale": str,
     "ts": iso8601,
-    "judge_redirect": {...} | null,   # populated by commit-auditor if it later redirects
+    "judge_redirect": {...} | null,   # populated by independent-auditor if it later redirects
     "escalated": bool             # true when normal-mode surfaced this to operator
   }
 
