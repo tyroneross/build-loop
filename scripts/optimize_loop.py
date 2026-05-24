@@ -17,6 +17,7 @@ NOT responsible for:
 - Running git commit / revert (done by Claude agent)
 """
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -574,10 +575,96 @@ def archive_experiment(workdir: Path) -> Path:
 # CLI
 # ---------------------------------------------------------------------------
 
-def _cli() -> None:
-    import argparse
-    import sys
+def _die(message: str) -> None:
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
 
+
+def _load_doe_baseline(path_text: str) -> dict:
+    bc_path = Path(path_text).resolve()
+    if not bc_path.is_file():
+        _die(f"--baseline-config path not found: {bc_path}")
+    try:
+        effects_data = json.loads(bc_path.read_text())
+    except json.JSONDecodeError as e:
+        _die(f"--baseline-config is not valid JSON: {e}")
+    best_factors = effects_data.get("best_factors")
+    if not isinstance(best_factors, dict) or not best_factors:
+        _die(
+            "--baseline-config does not contain a 'best_factors' block. "
+            "Regenerate the design with a current optimize_doe.py (which embeds "
+            "_factors in design.json runs) and re-run analyze."
+        )
+    return {
+        "source": str(bc_path),
+        "best_run": effects_data.get("best_run"),
+        "best_value": effects_data.get("best_value"),
+        "direction": effects_data.get("direction"),
+        "factors": best_factors,
+        "design_type": effects_data.get("summary", {}).get("design_type"),
+    }
+
+
+def _cmd_init(args: argparse.Namespace, workdir: Path) -> None:
+    if not args.metric_cmd:
+        _die("--metric-cmd required for --init")
+    config = {
+        "target": args.target or "unnamed",
+        "scope": args.scope or "**/*",
+        "metric_cmd": args.metric_cmd,
+        "guard_cmd": args.guard_cmd,
+        "budget": args.budget,
+        "direction": args.direction,
+        "prompt_version": args.prompt_version,
+        "metric_samples": args.metric_samples,
+        "metric_warmups": args.metric_warmups,
+        "metric_aggregate": args.metric_aggregate,
+    }
+    if args.baseline_config:
+        config["doe_baseline"] = _load_doe_baseline(args.baseline_config)
+
+    path = init_experiment(workdir, config)
+    exp = load_experiment(workdir)
+    print(f"Experiment initialized: {path}")
+    print(f"Baseline: {exp['baseline_value']}")
+    if "doe_baseline" in exp:
+        print(
+            f"DOE baseline applied: best_run={exp['doe_baseline'].get('best_run')} "
+            f"factors={exp['doe_baseline'].get('factors')}"
+        )
+
+
+def _cmd_log(args: argparse.Namespace, workdir: Path) -> None:
+    for field_name in ("iteration", "commit", "metric", "delta", "status", "description"):
+        if getattr(args, field_name) is None:
+            _die(f"--{field_name} required for --log")
+    result = IterationResult(
+        iteration=args.iteration,
+        commit=args.commit,
+        metric_value=args.metric,
+        delta=args.delta,
+        status=args.status,
+        description=args.description,
+        hypothesis=args.hypothesis,
+    )
+    log_iteration(workdir, result)
+    print(f"Logged iteration {args.iteration}: {args.status}")
+
+
+def _cmd_check_convergence(args: argparse.Namespace, workdir: Path) -> None:
+    should_stop, reason = check_convergence(workdir)
+    print(f"CONVERGED: {reason}" if should_stop else "CONTINUE")
+    sys.exit(0 if should_stop else 1)
+
+
+_CLI_ACTIONS = {"detect": lambda args, workdir: print(json.dumps(detect_targets(workdir), indent=2)),
+                "init": _cmd_init, "log": _cmd_log,
+                "check_convergence": _cmd_check_convergence,
+                "archive": lambda args, workdir: print(f"Archived to: {archive_experiment(workdir)}"),
+                "summary": lambda args, workdir: print(json.dumps(get_experiment_summary(workdir), indent=2))}
+
+
+def _cli() -> None:
     parser = argparse.ArgumentParser(description="optimize loop mechanics")
     parser.add_argument("--workdir", default=".", help="target repo root")
 
@@ -623,100 +710,8 @@ def _cli() -> None:
     )
 
     args = parser.parse_args()
-    workdir = Path(args.workdir).resolve()
-
-    if args.detect:
-        targets = detect_targets(workdir)
-        print(json.dumps(targets, indent=2))
-
-    elif args.init:
-        config = {
-            "target": args.target or "unnamed",
-            "scope": args.scope or "**/*",
-            "metric_cmd": args.metric_cmd,
-            "guard_cmd": args.guard_cmd,
-            "budget": args.budget,
-            "direction": args.direction,
-            "prompt_version": args.prompt_version,
-            "metric_samples": args.metric_samples,
-            "metric_warmups": args.metric_warmups,
-            "metric_aggregate": args.metric_aggregate,
-        }
-        if not config["metric_cmd"]:
-            print("ERROR: --metric-cmd required for --init", file=sys.stderr)
-            sys.exit(1)
-        # Optional DOE→autoresearch handoff: read the DOE best run's factor
-        # levels from an effects.json file produced by `optimize_doe.py analyze`.
-        if args.baseline_config:
-            bc_path = Path(args.baseline_config).resolve()
-            if not bc_path.is_file():
-                print(f"ERROR: --baseline-config path not found: {bc_path}", file=sys.stderr)
-                sys.exit(1)
-            try:
-                effects_data = json.loads(bc_path.read_text())
-            except json.JSONDecodeError as e:
-                print(f"ERROR: --baseline-config is not valid JSON: {e}", file=sys.stderr)
-                sys.exit(1)
-            best_factors = effects_data.get("best_factors")
-            if not isinstance(best_factors, dict) or not best_factors:
-                print(
-                    "ERROR: --baseline-config does not contain a 'best_factors' block. "
-                    "Regenerate the design with a current optimize_doe.py (which embeds "
-                    "_factors in design.json runs) and re-run analyze.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            config["doe_baseline"] = {
-                "source": str(bc_path),
-                "best_run": effects_data.get("best_run"),
-                "best_value": effects_data.get("best_value"),
-                "direction": effects_data.get("direction"),
-                "factors": best_factors,
-                "design_type": effects_data.get("summary", {}).get("design_type"),
-            }
-        path = init_experiment(workdir, config)
-        exp = load_experiment(workdir)
-        print(f"Experiment initialized: {path}")
-        print(f"Baseline: {exp['baseline_value']}")
-        if "doe_baseline" in exp:
-            print(
-                f"DOE baseline applied: best_run={exp['doe_baseline'].get('best_run')} "
-                f"factors={exp['doe_baseline'].get('factors')}"
-            )
-
-    elif args.log:
-        for field_name in ("iteration", "commit", "metric", "delta", "status", "description"):
-            if getattr(args, field_name) is None:
-                print(f"ERROR: --{field_name} required for --log", file=sys.stderr)
-                sys.exit(1)
-        result = IterationResult(
-            iteration=args.iteration,
-            commit=args.commit,
-            metric_value=args.metric,
-            delta=args.delta,
-            status=args.status,
-            description=args.description,
-            hypothesis=args.hypothesis,
-        )
-        log_iteration(workdir, result)
-        print(f"Logged iteration {args.iteration}: {args.status}")
-
-    elif args.check_convergence:
-        should_stop, reason = check_convergence(workdir)
-        if should_stop:
-            print(f"CONVERGED: {reason}")
-            sys.exit(0)
-        else:
-            print("CONTINUE")
-            sys.exit(1)
-
-    elif args.archive:
-        dest = archive_experiment(workdir)
-        print(f"Archived to: {dest}")
-
-    elif args.summary:
-        summary = get_experiment_summary(workdir)
-        print(json.dumps(summary, indent=2))
+    action = next(name for name in _CLI_ACTIONS if getattr(args, name))
+    _CLI_ACTIONS[action](args, Path(args.workdir).resolve())
 
 
 if __name__ == "__main__":
