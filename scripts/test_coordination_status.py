@@ -266,6 +266,77 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(status["channel_dir"],
                          str(channel_paths.app_channel_dir(slug)))
 
+    def _install_fake_agent_rally_point(self, channel_dir: str, slug: str) -> str:
+        """Install a fake ``agent_rally_point.discover`` into a tmp dir
+        and return the PYTHONPATH that makes it importable. The fake
+        always returns ``installed=true`` with the supplied channel_dir
+        and slug — lets us assert the delegation path deterministically.
+        """
+        fake_root = self.tmp / "fake_arp"
+        pkg = fake_root / "agent_rally_point"
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "__init__.py").write_text("")
+        (pkg / "discover.py").write_text(
+            "def discover(cwd=None):\n"
+            "    return {\n"
+            f"        'installed': True,\n"
+            f"        'channel_dir': {channel_dir!r},\n"
+            f"        'app_slug': {slug!r},\n"
+            "    }\n"
+        )
+        return str(fake_root)
+
+    def test_resolved_via_delegates_when_agent_rally_point_installed(self):
+        """Delegation: when ``agent_rally_point.discover`` is importable
+        AND returns ``installed=true``, the status envelope reports
+        ``resolved_via: "agent-rally-point"`` and uses the discovered
+        channel_dir verbatim — not the build-loop-internal value.
+        """
+        fake_channel = str(self.tmp / "fake_channel")
+        fake_slug = "fake-slug-from-discover"
+        fake_path = self._install_fake_agent_rally_point(fake_channel, fake_slug)
+        env = os.environ.copy()
+        # Prepend so the fake wins over any real install.
+        env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")
+        cmd = [
+            sys.executable, str(HERE / "coordination_status.py"),
+            "--workdir", str(self.workdir),
+            "--session-id", "me",
+            "--json",
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           check=True, env=env)
+        status = json.loads(r.stdout)
+        self.assertEqual(status["resolved_via"], "agent-rally-point")
+        self.assertEqual(status["channel_dir"], fake_channel)
+        self.assertEqual(status["app_slug"], fake_slug)
+
+    def test_resolved_via_falls_back_when_agent_rally_point_missing(self):
+        """Fallback: when ``agent_rally_point`` is not importable, the
+        status envelope reports ``resolved_via: "build-loop-internal"``
+        and matches the legacy channel_paths resolution.
+        """
+        # Force the import to fail by pointing PYTHONPATH at an empty dir
+        # and using -I (isolated) so user-site is excluded.
+        empty = self.tmp / "empty"
+        empty.mkdir(exist_ok=True)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(empty)
+        cmd = [
+            sys.executable, "-I",
+            str(HERE / "coordination_status.py"),
+            "--workdir", str(self.workdir),
+            "--session-id", "me",
+            "--json",
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           check=True, env=env)
+        status = json.loads(r.stdout)
+        self.assertEqual(status["resolved_via"], "build-loop-internal")
+        slug = channel_paths.app_slug(self.workdir)
+        self.assertEqual(status["channel_dir"],
+                         str(channel_paths.app_channel_dir(slug)))
+
     def test_watch_emits_one_state(self):
         cmd = [
             sys.executable, str(HERE / "coordination_watch.py"),
