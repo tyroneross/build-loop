@@ -63,6 +63,9 @@ class BootstrapHappyPathTests(unittest.TestCase):
         # channel_paths.app_slug(workdir) -> app_channel_dir(slug); to avoid
         # writing to the real ~/.build-loop/, monkey-patch app_channel_dir.
         from rally_point import channel_paths
+        from rally_point import discovery_bridge as _bridge
+        os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        _bridge.clear_cache()
         self._orig_app_channel_dir = channel_paths.app_channel_dir
         self._fake_channel = self.workdir / "fake-channel"
         channel_paths.app_channel_dir = lambda slug: self._fake_channel

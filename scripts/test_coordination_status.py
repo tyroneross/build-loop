@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE))
 import coordination_status as cs  # noqa: E402
 import coordination_watch as cw  # noqa: E402
 from rally_point import changes, channel_paths, inbox, presence  # noqa: E402
+from rally_point import discovery_bridge as _bridge  # test isolation
 
 
 class CoordinationStatusTests(unittest.TestCase):
@@ -27,6 +28,9 @@ class CoordinationStatusTests(unittest.TestCase):
         self.workdir = self.tmp / "repo"
         self.workdir.mkdir()
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps)
+        os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        from rally_point import discovery_bridge as _bridge
+        _bridge.clear_cache()
         subprocess.run(["git", "init"], cwd=self.workdir, check=True,
                        capture_output=True)
 

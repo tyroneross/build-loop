@@ -45,9 +45,11 @@ from pathlib import Path
 
 try:  # package import
     from .changes import append_change, make_record
+    from .producer_metadata import producer_metadata
     from .revision import bump_revision
 except ImportError:  # script import (sys.path-inserted, no parent package)
     from changes import append_change, make_record  # type: ignore
+    from producer_metadata import producer_metadata  # type: ignore
     from revision import bump_revision  # type: ignore
 
 
@@ -67,6 +69,9 @@ def post(
     instead of calling ``append_change`` + ``bump_revision`` separately;
     the helper guarantees the canonical ordering and prevents the
     "appended without bumping" silent-no-op bug.
+
+    β1: every outgoing record carries ``producer_metadata`` so peers can
+    detect version skew + cache-vs-source drift across coding hosts.
     """
     try:
         d = Path(channel_dir)
@@ -98,6 +103,8 @@ def post(
             payload=payload,
             revision=new_rev,
         )
+        # β1: attach producer identity to every outgoing record.
+        record.update(producer_metadata())
         append_change(d, record)
         if kind == "phase" and (payload or {}).get("phase") == "rally-start":
             try:

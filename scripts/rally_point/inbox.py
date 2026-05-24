@@ -304,11 +304,19 @@ def unread_counts(
 
 
 def _channel_from_workdir(workdir: str, *, create: bool) -> tuple[str, Path]:
+    """β1: resolve via the shared discovery bridge so inbox CLI writes
+    reach the canonical channel when ``agent-rally-point`` is installed.
+    """
+    try:  # package import
+        from .discovery_bridge import resolve as _bridge_resolve
+    except ImportError:  # script import
+        from discovery_bridge import resolve as _bridge_resolve  # type: ignore
     wd = Path(workdir).expanduser().resolve()
-    slug = channel_paths.app_slug(wd)
-    if create:
-        return slug, channel_paths.ensure_channel_dir(slug)
-    return slug, channel_paths.app_channel_dir(slug)
+    envelope = _bridge_resolve(wd)
+    channel_dir = Path(envelope.channel_dir)
+    if create and envelope.resolved_via == "build-loop-internal":
+        channel_dir.mkdir(parents=True, exist_ok=True)
+    return envelope.app_slug, channel_dir
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

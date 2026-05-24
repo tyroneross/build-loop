@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE))
 
 import coordination_rally as cr  # noqa: E402
 from rally_point import changes, channel_paths, presence  # noqa: E402
+from rally_point import discovery_bridge as _bridge  # test isolation
 
 
 class CoordinationRallyTests(unittest.TestCase):
@@ -28,6 +29,9 @@ class CoordinationRallyTests(unittest.TestCase):
         self.workdir.mkdir()
         self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps)
+        os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        from rally_point import discovery_bridge as _bridge
+        _bridge.clear_cache()
         subprocess.run(["git", "init"], cwd=self.workdir, check=True, capture_output=True)
 
     def tearDown(self):

@@ -32,6 +32,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import changes, channel_paths, presence, revision  # noqa: E402
+from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 from rally_point.post import post  # noqa: E402
 
 
@@ -68,8 +69,14 @@ def rally(
 ) -> dict[str, Any]:
     """Write presence + handoff and return the visible channel envelope."""
     workdir = Path(workdir).expanduser().resolve()
-    slug = channel_paths.app_slug(workdir)
-    channel_dir = channel_paths.ensure_channel_dir(slug)
+    # β1: resolve via the shared discovery bridge. When the canonical
+    # source is unreachable the bridge returns the internal-fallback
+    # channel and we still need to ensure it exists on first use.
+    envelope = _bridge_resolve(workdir)
+    slug = envelope.app_slug
+    channel_dir = Path(envelope.channel_dir)
+    if envelope.resolved_via == "build-loop-internal":
+        channel_dir.mkdir(parents=True, exist_ok=True)
     owns = list(owns or [])
     does_not_own = list(does_not_own or [])
     effective_run_id = run_id or f"rally-{session_id}"
