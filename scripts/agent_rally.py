@@ -148,20 +148,59 @@ def cmd_escalate(args: argparse.Namespace) -> int:
     })
 
 
+def _resolve_via_discover(wd: Path) -> dict[str, Any] | None:
+    """Delegate channel resolution to ``agent-rally-point`` when installed.
+
+    Returns the discover() envelope on success, or ``None`` when the
+    package isn't importable / discovery degrades / installed=false.
+    Never raises — fall-back is the caller's job.
+    """
+    try:
+        from agent_rally_point.discover import discover  # noqa: PLC0415
+    except ImportError:
+        return None
+    try:
+        result = discover(wd)
+    except Exception:  # noqa: BLE001 — discovery must never crash callers
+        return None
+    if not isinstance(result, dict) or not result.get("installed"):
+        return None
+    if not result.get("channel_dir") or not result.get("app_slug"):
+        return None
+    return result
+
+
 def cmd_where(args: argparse.Namespace) -> int:
     """Print the GLOBAL channel_dir for the current repo (the dir Rally Point
-    joins). This is the discovery primitive every host needs: ``channel_dir``
-    lives at ``~/.build-loop/apps/<slug>/`` (worktree/clone-independent), and
-    is auto-derived from ``git rev-parse --git-common-dir`` via
-    ``channel_paths.app_slug``. Distinct from the per-topic ``coord_file``
-    which lives repo-local at ``.build-loop/coordination/<topic>.md``.
+    joins). When ``agent-rally-point`` is installed, delegate to its
+    ``discover()`` (protocol-of-record — canonical→legacy fallback chain).
+    Otherwise, fall back to build-loop's internal
+    ``channel_paths.app_slug`` / ``app_channel_dir`` resolution (legacy path).
+    See ``agent-rally-point/docs/DISCOVERY.md`` for the discovery contract.
 
     Default output: bare path on stdout (so ``cd "$(rally where)"`` works).
-    --json: ``{"channel_dir": "...", "app_slug": "..."}`` envelope.
+    --json: ``{"channel_dir": "...", "app_slug": "...", "resolved_via": ...}``
+    where ``resolved_via`` is ``"agent-rally-point"`` or
+    ``"build-loop-internal"`` so callers can tell which path produced the
+    answer.
     Exit non-zero with a clear message when cwd is not under a git repo
     (slug resolves to ``_unscoped`` — discovery is meaningless there).
     """
     wd = Path(args.workdir).expanduser().resolve()
+    # First try: delegate to agent-rally-point.discover() (protocol-of-record).
+    discovered = _resolve_via_discover(wd)
+    if discovered is not None:
+        channel_dir = discovered["channel_dir"]
+        slug = discovered["app_slug"]
+        if args.json:
+            return _emit({
+                "channel_dir": str(channel_dir),
+                "app_slug": slug,
+                "resolved_via": "agent-rally-point",
+            })
+        sys.stdout.write(f"{channel_dir}\n")
+        return 0
+    # Fallback: build-loop-internal resolution (existing PR #48 logic).
     slug = channel_paths.app_slug(wd)
     if slug == "_unscoped":
         sys.stderr.write(
@@ -172,7 +211,11 @@ def cmd_where(args: argparse.Namespace) -> int:
         return 2
     channel_dir = channel_paths.app_channel_dir(slug)
     if args.json:
-        return _emit({"channel_dir": str(channel_dir), "app_slug": slug})
+        return _emit({
+            "channel_dir": str(channel_dir),
+            "app_slug": slug,
+            "resolved_via": "build-loop-internal",
+        })
     sys.stdout.write(f"{channel_dir}\n")
     return 0
 

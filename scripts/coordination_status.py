@@ -30,6 +30,38 @@ if str(HERE) not in sys.path:
 from rally_point import changes, channel_paths, inbox, presence, revision  # noqa: E402
 from rally_point.checkpoint import sanitize_change_for_surface  # noqa: E402
 
+
+def _resolve_channel_dir(workdir: Path) -> tuple[str, Path, str]:
+    """Resolve (slug, channel_dir, resolved_via) for the given workdir.
+
+    Delegation contract: when ``agent-rally-point`` is installed, ask it
+    (protocol-of-record — canonical→legacy fallback chain). On ImportError
+    or any discover() failure, fall back to build-loop's internal
+    ``channel_paths.app_slug`` / ``app_channel_dir`` resolution. The
+    ``resolved_via`` value is ``"agent-rally-point"`` or
+    ``"build-loop-internal"`` so callers can tell which path produced the
+    answer. See ``agent-rally-point/docs/DISCOVERY.md`` for the contract.
+    """
+    try:
+        from agent_rally_point.discover import discover  # noqa: PLC0415
+    except ImportError:
+        discover = None  # type: ignore[assignment]
+    if discover is not None:
+        try:
+            result = discover(workdir)
+        except Exception:  # noqa: BLE001 — discovery must never crash callers
+            result = None
+        if isinstance(result, dict) and result.get("installed") \
+                and result.get("channel_dir") and result.get("app_slug"):
+            return (
+                str(result["app_slug"]),
+                Path(result["channel_dir"]),
+                "agent-rally-point",
+            )
+    # Fallback: build-loop-internal resolution.
+    slug = channel_paths.app_slug(workdir)
+    return slug, channel_paths.app_channel_dir(slug), "build-loop-internal"
+
 VERDICT_RE = re.compile(
     r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"
     r"(?P<actor>[A-Za-z0-9_-]+)\s+(?P<label>[A-Z]+(?:[/-][A-Z]+)*)\s*$"
@@ -222,8 +254,7 @@ def _git_dirty_files(workdir: Path) -> list[str]:
 def build_status(args: argparse.Namespace) -> dict[str, Any]:
     workdir = Path(args.workdir).expanduser().resolve()
     session_id = args.session_id
-    slug = channel_paths.app_slug(workdir)
-    channel_dir = channel_paths.app_channel_dir(slug)
+    slug, channel_dir, resolved_via = _resolve_channel_dir(workdir)
     owned_files = _load_owned_files(args, workdir)
     owned_key_map = {f: _path_keys(f, workdir) for f in owned_files}
     owned_keys = set().union(*owned_key_map.values()) if owned_key_map else set()
@@ -371,6 +402,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "workdir": str(workdir),
         "app_slug": slug,
         "channel_dir": str(channel_dir),
+        "resolved_via": resolved_via,
         "session_id": session_id,
         "revision": current_revision,
         "active_peers": [
