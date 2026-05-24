@@ -440,6 +440,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(status, indent=2, sort_keys=True))
     else:
+        # Channel-discovery header (first line): the system gap was that
+        # fresh agents had no way to learn where they'd joined. Surface the
+        # global channel_dir up-front; `rally where` is the standalone form.
+        # JSON output already carries `channel_dir` — do not duplicate there.
+        print(f"channel: {status['channel_dir']}")
         line = f"{status['status']}: {status['required_action']}"
         # G3 — escalation/BLOCKED salience in the plain-text line.
         salience = []
