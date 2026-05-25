@@ -89,3 +89,41 @@ def test_missing_ownership_dict_rejects():
     valid, rej = mg.validate_handoff({}, tool="claude_code")
     assert valid is False
     assert rej["missing_or_invalid"] == ["ownership"]
+
+
+# ---------------------------------------------------------------------------
+# Ownership scope rule (relaxed 2026-05-25):
+# ``owns`` may be empty IFF ``does_not_own`` is non-empty AND
+# ``interface_contract`` is non-empty.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_owns_allowed_when_does_not_own_present_and_interface_contract():
+    """Presence-only rally: empty owns + non-empty does_not_own + contract passes."""
+    ownership = _full_ownership()
+    ownership["owns"] = []
+    valid, rej = mg.validate_handoff({"ownership": ownership}, tool="codex")
+    assert valid is True, rej
+
+
+def test_empty_owns_rejected_when_does_not_own_also_empty():
+    """Both lists empty is a vacuous claim and is rejected."""
+    ownership = _full_ownership()
+    ownership["owns"] = []
+    ownership["does_not_own"] = []
+    valid, rej = mg.validate_handoff({"ownership": ownership}, tool="claude_code")
+    assert valid is False
+    assert rej["reason"] == "empty_ownership_scope"
+    assert "owns" in rej["missing_or_invalid"]
+    assert "does_not_own" in rej["missing_or_invalid"]
+
+
+def test_empty_owns_rejected_when_interface_contract_empty():
+    """interface_contract is already required non-empty; empty owns can't bypass."""
+    ownership = _full_ownership()
+    ownership["owns"] = []
+    ownership["interface_contract"] = "   "  # whitespace only
+    valid, rej = mg.validate_handoff({"ownership": ownership}, tool="claude_code")
+    assert valid is False
+    assert rej["reason"] == "empty_required_string"
+    assert "interface_contract" in rej["missing_or_invalid"]

@@ -41,7 +41,6 @@ class CoordinationRallyTests(unittest.TestCase):
             os.environ["BUILD_LOOP_APPS_ROOT"] = self._old_apps_root
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    @unittest.expectedFailure  # β1 follow-up: mece_gate rejects handoff with owns=[]; rev returns None.
     def test_rally_writes_presence_and_handoff(self):
         result = cr.rally(
             workdir=self.workdir,
@@ -92,7 +91,6 @@ class CoordinationRallyTests(unittest.TestCase):
         self.assertEqual(result["ownership"]["does_not_own"], ["c.py"])
         self.assertTrue(result["session_id"].startswith("codex-rally-"))
 
-    @unittest.expectedFailure  # β1 follow-up: same mece_gate-rejects-empty-owns issue.
     def test_verify_mode_confirms_revision_advanced_and_record_exists(self):
         result = cr.rally(
             workdir=self.workdir,
@@ -100,6 +98,7 @@ class CoordinationRallyTests(unittest.TestCase):
             message="verify this post",
             tool="codex",
             model="gpt-5",
+            does_not_own=["ExampleApp/Views/HomeView.swift"],
             verify=True,
         )
 
@@ -108,13 +107,13 @@ class CoordinationRallyTests(unittest.TestCase):
         self.assertEqual(result["verify"]["after_revision"], 1)
         self.assertEqual(result["verify"]["matching_record_count"], 1)
 
-    @unittest.expectedFailure  # β1 follow-up: same mece_gate-rejects-empty-owns issue.
     def test_cli_verify_emits_posted_true(self):
         cmd = [
             sys.executable,
             str(HERE / "coordination_rally.py"),
             "--workdir", str(self.workdir),
             "--message", "hello",
+            "--does-not-own", "ExampleApp/Views/HomeView.swift",
             "--verify",
             "--json",
         ]
@@ -123,6 +122,40 @@ class CoordinationRallyTests(unittest.TestCase):
 
         self.assertTrue(result["posted"])
         self.assertEqual(result["verify"]["matching_record_count"], 1)
+
+    def test_cli_rejects_empty_ownership_scope_with_nonzero_exit(self):
+        """Codex variance (rev 219): without --owns and --does-not-own the
+        CLI used to exit 0 with channel_revision=null / posted=false because
+        the MECE gate silently rejected inside post(). The CLI now rejects
+        at the argparse boundary with exit code 2 and a stderr message.
+        """
+        cmd = [
+            sys.executable,
+            str(HERE / "coordination_rally.py"),
+            "--workdir", str(self.workdir),
+            "--message", "hello",
+            "--verify",
+            "--json",
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn("--owns", run.stderr)
+        self.assertIn("--does-not-own", run.stderr)
+        # Should not have emitted a success envelope on stdout.
+        self.assertEqual(run.stdout, "")
+
+    def test_cli_rejects_empty_ownership_scope_without_verify(self):
+        """Same defense without --verify: empty/empty is rejected at CLI."""
+        cmd = [
+            sys.executable,
+            str(HERE / "coordination_rally.py"),
+            "--workdir", str(self.workdir),
+            "--message", "hello",
+            "--json",
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn("--owns", run.stderr)
 
 
 if __name__ == "__main__":

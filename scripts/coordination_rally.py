@@ -120,6 +120,11 @@ def rally(
             "does_not_own": does_not_own,
             "interface_contract": contract,
             "integration_checkpoint": checkpoint,
+            # Rally is a presence broadcast, not a delegation: lateral
+            # limits default to explicit empty boundaries. Callers that
+            # want a true delegation should use coordination_bootstrap.
+            "allowed_tools": [],
+            "denied_tools": [],
         },
     }
     before_revision = revision.read_revision(channel_dir) if verify else None
@@ -199,6 +204,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    owns = _split_csv(args.owns)
+    does_not_own = _split_csv(args.does_not_own)
+    # Codex variance (rev 219): without ownership args, the MECE gate
+    # rejects the handoff inside post() and the CLI silently exits 0 with
+    # channel_revision=null / posted=false. Reject at the CLI boundary so
+    # the error surfaces as a non-zero exit + stderr message.
+    if not owns and not does_not_own:
+        sys.stderr.write(
+            "coordination_rally: at least one of --owns or --does-not-own "
+            "must be provided (a handoff with empty ownership scope is "
+            "rejected by the MECE gate inside post()).\n"
+        )
+        return 2
     session_id = args.session_id or f"{args.tool}-rally-{_timestamp_id()}"
     result = rally(
         workdir=Path(args.workdir),
@@ -209,8 +227,8 @@ def main(argv: list[str] | None = None) -> int:
         run_id=args.run_id,
         phase=args.phase,
         to=args.to,
-        owns=_split_csv(args.owns),
-        does_not_own=_split_csv(args.does_not_own),
+        owns=owns,
+        does_not_own=does_not_own,
         interface_contract=args.interface_contract,
         integration_checkpoint=args.integration_checkpoint,
         verify=args.verify,

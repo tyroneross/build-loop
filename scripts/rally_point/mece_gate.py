@@ -7,10 +7,16 @@ Validates that kind=handoff payloads carry all four MECE ownership
 fields in their ``payload.ownership`` dict before the post is accepted.
 
 The four required fields:
-  - owns                  (list, may be empty)
-  - does_not_own          (list, may be empty)
+  - owns                  (list)
+  - does_not_own          (list)
   - interface_contract    (str, non-empty)
   - integration_checkpoint (str, non-empty)
+
+Ownership scope rule (relaxed 2026-05-25): ``owns`` may be empty IFF
+``does_not_own`` is non-empty AND ``interface_contract`` is non-empty.
+This admits the presence-only rally case ("I am here, working in this
+repo, not touching X") while still requiring some explicit claim — a
+handoff with BOTH ``owns`` and ``does_not_own`` empty is rejected.
 
 Lateral limits (G2 — added 2026-05-22): two additional REQUIRED list
 fields naming the tool boundary of the handoff — the agentic analog of
@@ -84,6 +90,18 @@ def validate_handoff(payload: dict[str, Any], *, tool: str) -> tuple[bool, dict]
             return False, {
                 "reason": reason,
                 "missing_or_invalid": missing_or_invalid,
+            }
+
+        # Ownership scope rule: ``owns`` may be empty only when
+        # ``does_not_own`` is non-empty (and interface_contract is
+        # non-empty, which is already enforced above). Both lists empty
+        # is a vacuous claim and is rejected.
+        owns_list = ownership["owns"]
+        does_not_own_list = ownership["does_not_own"]
+        if not owns_list and not does_not_own_list:
+            return False, {
+                "reason": "empty_ownership_scope",
+                "missing_or_invalid": ["owns", "does_not_own"],
             }
 
         return True, {}
