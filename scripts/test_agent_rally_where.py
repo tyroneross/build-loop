@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from rally_point import channel_paths  # noqa: E402
+from rally_point import discovery_bridge as _bridge  # test isolation
 
 
 class AgentRallyWhereTests(unittest.TestCase):
@@ -39,6 +40,9 @@ class AgentRallyWhereTests(unittest.TestCase):
         self.workdir.mkdir()
         self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps)
+        os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        from rally_point import discovery_bridge as _bridge
+        _bridge.clear_cache()
         subprocess.run(
             ["git", "init"], cwd=self.workdir, check=True, capture_output=True
         )
@@ -86,6 +90,14 @@ class AgentRallyWhereTests(unittest.TestCase):
         fake_slug = "slug-from-discover"
         fake_path = self._install_fake_arp(fake_channel, fake_slug)
         env = os.environ.copy()
+        # β1 follow-up: this test explicitly exercises the canonical-
+        # delegation path. setUp() sets BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1
+        # for the OTHER tests; pop it for this subprocess so the bridge
+        # actually probes Python import.
+        env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        # Strip PATH so the real pipx-installed agent-rally-discover
+        # cannot shadow the Python-import probe under test.
+        env["PATH"] = "/usr/bin:/bin"
         env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")
         r = self._run_where(env=env)
         result = json.loads(r.stdout)

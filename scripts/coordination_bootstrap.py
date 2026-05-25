@@ -50,6 +50,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import channel_paths, presence  # noqa: E402
+from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 from rally_point.post import post  # noqa: E402
 
 
@@ -197,8 +198,11 @@ def bootstrap(
     if not target.is_absolute():
         target = (workdir / target).resolve()
 
-    slug = channel_paths.app_slug(workdir)
-    channel_dir = channel_paths.app_channel_dir(slug)
+    # β1: resolve channel via the shared discovery bridge so this writes
+    # to the canonical Rally Point root when available.
+    envelope = _bridge_resolve(workdir)
+    slug = envelope.app_slug
+    channel_dir = Path(envelope.channel_dir)
     effective_run_id = run_id or f"bootstrap-{topic}-{session_id}"
     presence_written = False
     action: str
@@ -327,6 +331,7 @@ def bootstrap(
         run_id=effective_run_id,
         app_slug=slug,
         payload=(payload if action == "bootstrapped" else {**payload, "phase": "joined-existing-coord"}),
+        workdir=workdir,
     )
 
     return {

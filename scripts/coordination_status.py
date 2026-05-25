@@ -29,38 +29,27 @@ if str(HERE) not in sys.path:
 
 from rally_point import changes, channel_paths, inbox, presence, revision  # noqa: E402
 from rally_point.checkpoint import sanitize_change_for_surface  # noqa: E402
+from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 
 
 def _resolve_channel_dir(workdir: Path) -> tuple[str, Path, str]:
-    """Resolve (slug, channel_dir, resolved_via) for the given workdir.
+    """Resolve (slug, channel_dir, resolved_via) via the shared bridge.
 
-    Delegation contract: when ``agent-rally-point`` is installed, ask it
-    (protocol-of-record — canonical→legacy fallback chain). On ImportError
-    or any discover() failure, fall back to build-loop's internal
-    ``channel_paths.app_slug`` / ``app_channel_dir`` resolution. The
-    ``resolved_via`` value is ``"agent-rally-point"`` or
-    ``"build-loop-internal"`` so callers can tell which path produced the
-    answer. See ``agent-rally-point/docs/DISCOVERY.md`` for the contract.
+    β1: delegates to ``scripts/rally_point/discovery_bridge.resolve``.
+    The bridge handles env override → PATH binary → Python import →
+    internal fallback in priority order, and refuses to operate on a
+    protocol-version mismatch. Returns the legacy three-tuple shape for
+    backward compatibility with the existing call sites; new callers
+    should call ``_bridge_resolve`` directly and consume the full
+    envelope.
     """
-    try:
-        from agent_rally_point.discover import discover  # noqa: PLC0415
-    except ImportError:
-        discover = None  # type: ignore[assignment]
-    if discover is not None:
-        try:
-            result = discover(workdir)
-        except Exception:  # noqa: BLE001 — discovery must never crash callers
-            result = None
-        if isinstance(result, dict) and result.get("installed") \
-                and result.get("channel_dir") and result.get("app_slug"):
-            return (
-                str(result["app_slug"]),
-                Path(result["channel_dir"]),
-                "agent-rally-point",
-            )
-    # Fallback: build-loop-internal resolution.
-    slug = channel_paths.app_slug(workdir)
-    return slug, channel_paths.app_channel_dir(slug), "build-loop-internal"
+    envelope = _bridge_resolve(workdir)
+    resolved_via = (
+        "agent-rally-point"
+        if envelope.resolved_via != "build-loop-internal"
+        else "build-loop-internal"
+    )
+    return envelope.app_slug, Path(envelope.channel_dir), resolved_via
 
 VERDICT_RE = re.compile(
     r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"
@@ -130,21 +119,33 @@ def _load_files_in_flight(args: argparse.Namespace) -> list[str]:
     return [v.strip() for v in raw.split(",") if v.strip()]
 
 
-def _read_inbox_unread_counts(slug: str, tool: str) -> dict[str, int]:
-    """Count direct, broadcast, and total unread inbox lines for ``tool``."""
-    return inbox.unread_counts(channel_paths.app_channel_dir(slug), tool)
+def _read_inbox_unread_counts(channel_dir: Path, tool: str) -> dict[str, int]:
+    """Count direct, broadcast, and total unread inbox lines for ``tool``.
+
+    β1 channel-split fix: takes the resolved ``channel_dir`` directly
+    instead of re-deriving it via ``channel_paths.app_channel_dir(slug)``.
+    The legacy form silently read inbox counts from the wrong root when
+    discovery returned a canonical path but this helper still resolved
+    via the internal apps root. See ``coordination-substrate-canonical``
+    §"channel-consistency invariant".
+    """
+    return inbox.unread_counts(channel_dir, tool)
 
 
-def _read_rejection_count(slug: str) -> int:
+def _read_rejection_count(channel_dir: Path) -> int:
     """Count MECE rejections logged to ``<channel_dir>/rejections.jsonl``.
 
     Surfaces the C4 ``mece_gate.log_rejection`` output so peers can see
     when malformed handoff posts are being rejected without inspecting
     the file directly.  Blank lines are ignored.  Returns 0 when the file
     is absent or unreadable.
+
+    β1 channel-split fix: takes the resolved ``channel_dir`` (not a slug)
+    so the rejection count sources from the same root the rest of the
+    envelope uses.
     """
     try:
-        rej_file = channel_paths.app_channel_dir(slug) / "rejections.jsonl"
+        rej_file = Path(channel_dir) / "rejections.jsonl"
         text = rej_file.read_text(encoding="utf-8")
         return sum(1 for line in text.splitlines() if line.strip())
     except OSError:
@@ -345,8 +346,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         or int(c.get("revision", 0)) > args.since_revision
     ]
 
-    inbox_counts = _read_inbox_unread_counts(slug, requesting_tool)
-    rejection_count = _read_rejection_count(slug)
+    inbox_counts = _read_inbox_unread_counts(channel_dir, requesting_tool)
+    rejection_count = _read_rejection_count(channel_dir)
 
     # G3 — escalation salience. An `escalation`-kind change record marks
     # "needs lead or user attention now", distinct from routine phase/

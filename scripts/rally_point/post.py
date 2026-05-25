@@ -45,9 +45,11 @@ from pathlib import Path
 
 try:  # package import
     from .changes import append_change, make_record
+    from .producer_metadata import producer_metadata
     from .revision import bump_revision
 except ImportError:  # script import (sys.path-inserted, no parent package)
     from changes import append_change, make_record  # type: ignore
+    from producer_metadata import producer_metadata  # type: ignore
     from revision import bump_revision  # type: ignore
 
 
@@ -60,6 +62,7 @@ def post(
     run_id: str,
     app_slug: str,
     payload: dict,
+    workdir: Path | None = None,
 ) -> int | None:
     """Bump revision + append a change record. Returns new revision on success, None on error.
 
@@ -67,6 +70,17 @@ def post(
     instead of calling ``append_change`` + ``bump_revision`` separately;
     the helper guarantees the canonical ordering and prevents the
     "appended without bumping" silent-no-op bug.
+
+    β1: every outgoing record carries ``producer_metadata`` so peers can
+    detect version skew + cache-vs-source drift across coding hosts.
+
+    β1.2: when ``workdir`` is provided and the discovery bridge reports
+    ``policy: "migration"`` with a populated ``legacy_channel_dir``
+    distinct from ``channel_dir``, mirror-write the same record to the
+    legacy channel. The mirror is fire-and-forget — any failure is
+    swallowed and never affects the canonical write's return value. This
+    keeps non-upgraded peers (e.g. a Codex poller still on the legacy
+    channel) visible during the migration window.
     """
     try:
         d = Path(channel_dir)
@@ -98,6 +112,8 @@ def post(
             payload=payload,
             revision=new_rev,
         )
+        # β1: attach producer identity to every outgoing record.
+        record.update(producer_metadata())
         append_change(d, record)
         if kind == "phase" and (payload or {}).get("phase") == "rally-start":
             try:
@@ -109,6 +125,34 @@ def post(
                 rally.write_current(d, record)
             except Exception:
                 pass
+
+        # β1.2: dual-write mirror to legacy channel during migration.
+        # Fire-and-forget — mirror failure NEVER blocks or invalidates
+        # the canonical write that just succeeded above.
+        if workdir is not None:
+            try:
+                try:  # package import
+                    from .discovery_bridge import resolve as _bridge_resolve
+                except ImportError:  # script import
+                    from discovery_bridge import resolve as _bridge_resolve  # type: ignore
+
+                envelope = _bridge_resolve(workdir)
+                legacy = envelope.legacy_channel_dir
+                if (
+                    envelope.policy == "migration"
+                    and legacy
+                    and str(Path(legacy).resolve()) != str(d.resolve())
+                ):
+                    legacy_dir = Path(legacy)
+                    legacy_dir.mkdir(parents=True, exist_ok=True)
+                    # Mirror the same record AND bump legacy's revision so
+                    # legacy-side readers see a fresh signal.
+                    bump_revision(legacy_dir)
+                    append_change(legacy_dir, record)
+            except Exception:
+                # Fire-and-forget per protocol; mirror failure is silent.
+                pass
+
         return new_rev
     except Exception:
         # Fire-and-forget per protocol; never raise into the caller.

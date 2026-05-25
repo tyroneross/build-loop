@@ -47,7 +47,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from rally_point import channel_paths, leadership, presence  # noqa: E402
+from rally_point import leadership, presence  # noqa: E402
+from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 from rally_point.post import post  # noqa: E402
 
 
@@ -64,9 +65,23 @@ def _split_csv(value: str | None) -> list[str]:
 
 
 def _resolve_channel(workdir: str) -> tuple[str, Path]:
+    """β1 protocol-of-record: resolve via the shared discovery bridge.
+
+    Every legacy `_resolve_channel` caller now goes through the bridge so
+    canonical Rally Point (when ``agent-rally-discover`` is on PATH /
+    ``agent_rally_point`` is importable / ``AGENT_RALLY_DISCOVER`` is set)
+    is preferred over the internal ``channel_paths`` fallback. Returns
+    ``(app_slug, channel_dir)`` for backward compatibility with the
+    existing call sites.
+    """
     wd = Path(workdir).expanduser().resolve()
-    slug = channel_paths.app_slug(wd)
-    return slug, channel_paths.ensure_channel_dir(slug)
+    envelope = _bridge_resolve(wd)
+    channel_dir = Path(envelope.channel_dir)
+    # The canonical channel is created by agent-rally-point; the legacy
+    # internal fallback path may also need a lazy mkdir for first use.
+    if envelope.resolved_via == "build-loop-internal":
+        channel_dir.mkdir(parents=True, exist_ok=True)
+    return envelope.app_slug, channel_dir
 
 
 # --------------------------------------------------------------------------
@@ -117,6 +132,7 @@ def cmd_handoff(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         app_slug=slug,
         payload=payload,
+        workdir=Path(args.workdir).expanduser().resolve(),
     )
     return _emit({
         "action": "handoff-posted" if new_rev is not None else "handoff-rejected",
@@ -140,6 +156,7 @@ def cmd_escalate(args: argparse.Namespace) -> int:
             "reason": args.reason,
             "needs": args.needs,
         },
+        workdir=Path(args.workdir).expanduser().resolve(),
     )
     return _emit({
         "action": "escalation-posted",
@@ -148,75 +165,60 @@ def cmd_escalate(args: argparse.Namespace) -> int:
     })
 
 
-def _resolve_via_discover(wd: Path) -> dict[str, Any] | None:
-    """Delegate channel resolution to ``agent-rally-point`` when installed.
-
-    Returns the discover() envelope on success, or ``None`` when the
-    package isn't importable / discovery degrades / installed=false.
-    Never raises — fall-back is the caller's job.
-    """
-    try:
-        from agent_rally_point.discover import discover  # noqa: PLC0415
-    except ImportError:
-        return None
-    try:
-        result = discover(wd)
-    except Exception:  # noqa: BLE001 — discovery must never crash callers
-        return None
-    if not isinstance(result, dict) or not result.get("installed"):
-        return None
-    if not result.get("channel_dir") or not result.get("app_slug"):
-        return None
-    return result
-
-
 def cmd_where(args: argparse.Namespace) -> int:
     """Print the GLOBAL channel_dir for the current repo (the dir Rally Point
-    joins). When ``agent-rally-point`` is installed, delegate to its
-    ``discover()`` (protocol-of-record — canonical→legacy fallback chain).
-    Otherwise, fall back to build-loop's internal
-    ``channel_paths.app_slug`` / ``app_channel_dir`` resolution (legacy path).
-    See ``agent-rally-point/docs/DISCOVERY.md`` for the discovery contract.
+    joins). β1: delegates to the shared discovery bridge, which prefers
+    ``$AGENT_RALLY_DISCOVER`` → PATH ``agent-rally-discover`` → Python
+    ``agent_rally_point.discover`` → internal ``channel_paths`` fallback.
 
     Default output: bare path on stdout (so ``cd "$(rally where)"`` works).
-    --json: ``{"channel_dir": "...", "app_slug": "...", "resolved_via": ...}``
-    where ``resolved_via`` is ``"agent-rally-point"`` or
-    ``"build-loop-internal"`` so callers can tell which path produced the
-    answer.
+    --json: full envelope including ``channel_dir``, ``app_slug``,
+    ``resolved_via``, ``policy``, ``channel_layout``, ``protocol_version``,
+    ``legacy_channel_dir`` (during migration), and
+    ``coordination_unavailable`` (when set).
+
+    ``resolved_via`` distinguishes between the canonical sources
+    (``env-override``, ``path-binary``, ``python-import``) and the
+    degraded ``build-loop-internal`` fallback. Callers that need
+    canonical-only writes inspect this field.
+
     Exit non-zero with a clear message when cwd is not under a git repo
-    (slug resolves to ``_unscoped`` — discovery is meaningless there).
+    (slug resolves to ``_unscoped`` AND no canonical source is available).
     """
     wd = Path(args.workdir).expanduser().resolve()
-    # First try: delegate to agent-rally-point.discover() (protocol-of-record).
-    discovered = _resolve_via_discover(wd)
-    if discovered is not None:
-        channel_dir = discovered["channel_dir"]
-        slug = discovered["app_slug"]
-        if args.json:
-            return _emit({
-                "channel_dir": str(channel_dir),
-                "app_slug": slug,
-                "resolved_via": "agent-rally-point",
-            })
-        sys.stdout.write(f"{channel_dir}\n")
-        return 0
-    # Fallback: build-loop-internal resolution (existing PR #48 logic).
-    slug = channel_paths.app_slug(wd)
-    if slug == "_unscoped":
+    envelope = _bridge_resolve(wd)
+    if (
+        envelope.resolved_via == "build-loop-internal"
+        and envelope.app_slug == "_unscoped"
+    ):
         sys.stderr.write(
-            f"error: {wd} is not under a git repository — channel_paths.app_slug "
-            "returned '_unscoped'. Rally Point channels are repo-scoped; run "
-            "this from inside a git checkout (main or worktree).\n"
+            f"error: {wd} is not under a git repository — channel resolution "
+            "fell back to internal '_unscoped'. Rally Point channels are "
+            "repo-scoped; run this from inside a git checkout (main or "
+            "worktree).\n"
         )
         return 2
-    channel_dir = channel_paths.app_channel_dir(slug)
     if args.json:
-        return _emit({
-            "channel_dir": str(channel_dir),
-            "app_slug": slug,
-            "resolved_via": "build-loop-internal",
-        })
-    sys.stdout.write(f"{channel_dir}\n")
+        # Backward-compatible field set + bridge extras.
+        result: dict[str, Any] = {
+            "channel_dir": envelope.channel_dir,
+            "app_slug": envelope.app_slug,
+            "resolved_via": (
+                "agent-rally-point"
+                if envelope.resolved_via != "build-loop-internal"
+                else "build-loop-internal"
+            ),
+            "resolved_via_detail": envelope.resolved_via,
+            "policy": envelope.policy,
+            "channel_layout": envelope.channel_layout,
+            "protocol_version": envelope.protocol_version,
+        }
+        if envelope.legacy_channel_dir:
+            result["legacy_channel_dir"] = envelope.legacy_channel_dir
+        if envelope.coordination_unavailable:
+            result["coordination_unavailable"] = envelope.coordination_unavailable
+        return _emit(result)
+    sys.stdout.write(f"{envelope.channel_dir}\n")
     return 0
 
 

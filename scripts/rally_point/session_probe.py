@@ -44,10 +44,12 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 try:
     from rally_point import channel_paths, inbox, post as _post_mod, presence, rally
+    from rally_point.discovery_bridge import resolve as _bridge_resolve
 except ImportError:
     from . import channel_paths, inbox
     from . import post as _post_mod
     from . import presence, rally
+    from .discovery_bridge import resolve as _bridge_resolve
 
 
 # ---------------------------------------------------------------------------
@@ -265,23 +267,18 @@ def probe(
     tool = tool or "unknown"
 
     # ------------------------------------------------------------------
-    # Step 1: Resolve app identity
+    # Step 1: Resolve app identity + channel via the shared bridge (β1)
     # ------------------------------------------------------------------
     try:
-        slug = channel_paths.app_slug(workdir_path)
+        envelope = _bridge_resolve(workdir_path)
+        slug = envelope.app_slug
+        channel_dir = Path(envelope.channel_dir)
+        if envelope.resolved_via == "build-loop-internal":
+            channel_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
-        errors.append(f"slug resolution failed: {exc}")
+        errors.append(f"channel resolution failed: {exc}")
         slug = "_unscoped"
-
-    session_id = _generate_session_id(tool)
-
-    # ------------------------------------------------------------------
-    # Step 2: Read rally/current.json for live pointer
-    # ------------------------------------------------------------------
-    try:
-        channel_dir = channel_paths.ensure_channel_dir(slug)
-    except Exception as exc:
-        errors.append(f"channel_dir creation failed: {exc}")
+        session_id = _generate_session_id(tool)
         return {
             "status": "error",
             "active_peers": [],
@@ -293,6 +290,8 @@ def probe(
             "slug": slug,
             "errors": errors,
         }
+
+    session_id = _generate_session_id(tool)
 
     coordination_file: str | None = _read_coordination_file(channel_dir)
 
