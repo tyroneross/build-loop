@@ -40,6 +40,13 @@ def _git(args, cwd, **env):
 def repo(tmp_path: Path, monkeypatch) -> Path:
     apps = tmp_path / "apps"
     monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(apps))
+    # Channel-paths audit (2026-05-25): the post-commit hook now resolves
+    # its channel via discovery_bridge. Force the bridge to use the legacy
+    # internal fallback so this test's BUILD_LOOP_APPS_ROOT-rooted channel
+    # is the only sink — otherwise an installed agent-rally-discover binary
+    # would route writes to the canonical channel and this test's reads
+    # against the legacy path would see zero records.
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
     r = tmp_path / "depapp"
     r.mkdir()
     _git(["init", "-q"], r)

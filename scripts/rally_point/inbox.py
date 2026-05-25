@@ -21,8 +21,10 @@ from typing import Any
 
 try:  # package import
     from . import channel_paths
+    from .build_loop_id import rally_fields_for
 except ImportError:  # script import
     import channel_paths  # type: ignore
+    from build_loop_id import rally_fields_for  # type: ignore
 
 _INBOX_DIR = "inbox"
 _BROADCAST_TOOL = "all"
@@ -97,6 +99,10 @@ def write_message(
         requires_ack=requires_ack,
         message_id=message_id,
     )
+    # Top-level run-instance identity (orthogonal to producer_metadata).
+    # Absent when workdir is None or no state.execution.build_loop_id —
+    # the inbox write proceeds either way.
+    rec.update(rally_fields_for(workdir))
     line = json.dumps(rec, separators=(",", ":")) + "\n"
     line_bytes = line.encode("utf-8")
     fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)

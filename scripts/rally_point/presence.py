@@ -24,6 +24,11 @@ import subprocess
 import time
 from pathlib import Path
 
+try:  # package import
+    from .build_loop_id import rally_fields_for
+except ImportError:  # script import
+    from build_loop_id import rally_fields_for  # type: ignore
+
 _SESSIONS_DIR = "sessions"
 _CONFIG_NAME = "config.json"
 _DEFAULT_HEARTBEAT_MIN = 15
@@ -167,6 +172,10 @@ def write_presence(
             "branch_merge_status_checked_ts": time.time(),
             "cwd": str(cwd) if cwd is not None else str(Path.cwd()),
         }
+        # Top-level run-instance identity (orthogonal to runtime identity).
+        # ``cwd`` is the run's workdir — read state.execution from there.
+        # Absent when no state.execution.build_loop_id — presence proceeds.
+        rec.update(rally_fields_for(cwd if cwd is not None else Path.cwd()))
         _atomic_write(p, rec)
     except Exception:  # noqa: BLE001 — fire-and-forget
         return

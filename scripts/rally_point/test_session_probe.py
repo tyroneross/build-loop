@@ -93,12 +93,41 @@ class _ProbeTestBase(unittest.TestCase):
 
         self._orig_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.apps_root)
+        # Channel-paths audit (2026-05-25): force the discovery bridge
+        # to use the legacy internal fallback so these tests' reads
+        # against BUILD_LOOP_APPS_ROOT find the same channel session_probe
+        # writes to. Without this, an installed agent-rally-discover
+        # binary routes writes to the canonical channel under
+        # ~/.agent-rally-point/.
+        self._orig_bridge_internal = os.environ.get(
+            "BUILD_LOOP_BRIDGE_INTERNAL_ONLY"
+        )
+        os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        # The bridge caches the canonical-source resolution from any
+        # earlier non-test call in this process; drop the cache so the
+        # internal-only env override is honoured.
+        try:
+            from rally_point.discovery_bridge import clear_cache as _cc
+            _cc()
+        except Exception:
+            pass
 
     def tearDown(self):
         if self._orig_apps_root is None:
             os.environ.pop("BUILD_LOOP_APPS_ROOT", None)
         else:
             os.environ["BUILD_LOOP_APPS_ROOT"] = self._orig_apps_root
+        if self._orig_bridge_internal is None:
+            os.environ.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        else:
+            os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = (
+                self._orig_bridge_internal
+            )
+        try:
+            from rally_point.discovery_bridge import clear_cache as _cc
+            _cc()
+        except Exception:
+            pass
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _slug(self) -> str:

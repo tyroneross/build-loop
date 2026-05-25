@@ -41,6 +41,10 @@ def _git(args, cwd):
 @pytest.fixture()
 def app_repo(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("BUILD_LOOP_APPS_ROOT", str(tmp_path / "apps"))
+    # Channel-paths audit (2026-05-25): pin the discovery bridge to the
+    # legacy internal fallback so this test's BUILD_LOOP_APPS_ROOT-rooted
+    # channel is the single sink the post-commit hook writes to.
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
     repo = tmp_path / "the-app"
     repo.mkdir()
     _git(["init", "-q"], repo)

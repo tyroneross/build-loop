@@ -44,10 +44,12 @@ from __future__ import annotations
 from pathlib import Path
 
 try:  # package import
+    from .build_loop_id import rally_fields_for
     from .changes import append_change, make_record
     from .producer_metadata import producer_metadata
     from .revision import bump_revision
 except ImportError:  # script import (sys.path-inserted, no parent package)
+    from build_loop_id import rally_fields_for  # type: ignore
     from changes import append_change, make_record  # type: ignore
     from producer_metadata import producer_metadata  # type: ignore
     from revision import bump_revision  # type: ignore
@@ -114,6 +116,11 @@ def post(
         )
         # β1: attach producer identity to every outgoing record.
         record.update(producer_metadata())
+        # build_loop_id: top-level run-instance identity, orthogonal to
+        # producer_metadata (runtime identity). Merge AFTER producer so
+        # no producer_* field can shadow it. Absent when workdir is None
+        # or state.json lacks ``execution.build_loop_id`` — write proceeds.
+        record.update(rally_fields_for(workdir))
         append_change(d, record)
         if kind == "phase" and (payload or {}).get("phase") == "rally-start":
             try:
