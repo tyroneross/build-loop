@@ -73,12 +73,19 @@ def write_message(
     kind: str = "message",
     requires_ack: bool = False,
     message_id: str | None = None,
+    workdir: Path | None = None,
 ) -> Path:
     """Append one direct message to ``recipient``'s inbox.
 
     Uses the same O_APPEND single-write pattern as ``changes.py``. Returns the
     recipient inbox path. Raises OSError/TypeError to callers that want a hard
     failure; higher-level fire-and-forget callers can catch and ignore.
+
+    β1.2: when ``workdir`` is provided and the discovery bridge reports
+    ``policy: "migration"`` with a populated ``legacy_channel_dir``
+    distinct from ``channel_dir``, mirror-write the same record to the
+    legacy inbox. The mirror is fire-and-forget — any failure is
+    swallowed and never raises.
     """
     path = inbox_path(Path(channel_dir), recipient)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,11 +98,43 @@ def write_message(
         message_id=message_id,
     )
     line = json.dumps(rec, separators=(",", ":")) + "\n"
+    line_bytes = line.encode("utf-8")
     fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
     try:
-        os.write(fd, line.encode("utf-8"))
+        os.write(fd, line_bytes)
     finally:
         os.close(fd)
+
+    # β1.2: mirror to legacy inbox during migration. Fire-and-forget;
+    # canonical write above already succeeded.
+    if workdir is not None:
+        try:
+            try:  # package import
+                from .discovery_bridge import resolve as _bridge_resolve
+            except ImportError:  # script import
+                from discovery_bridge import resolve as _bridge_resolve  # type: ignore
+
+            envelope = _bridge_resolve(workdir)
+            legacy = envelope.legacy_channel_dir
+            if (
+                envelope.policy == "migration"
+                and legacy
+                and str(Path(legacy).resolve()) != str(Path(channel_dir).resolve())
+            ):
+                legacy_path = inbox_path(Path(legacy), recipient)
+                legacy_path.parent.mkdir(parents=True, exist_ok=True)
+                lfd = os.open(
+                    str(legacy_path),
+                    os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                    0o644,
+                )
+                try:
+                    os.write(lfd, line_bytes)
+                finally:
+                    os.close(lfd)
+        except Exception:
+            pass
+
     return path
 
 
@@ -121,12 +160,18 @@ def send_to_tool(
     run_id: str = "unknown",
     app_slug: str | None = None,
     mirror_to_channel: bool = True,
+    workdir: Path | None = None,
 ) -> dict[str, Any]:
     """Write a targeted inbox message and optionally mirror it to changes.jsonl.
 
     The inbox write is the wake path; the channel mirror is the durable audit
     path all agents already poll. Each append is atomic, but the pair is best
     effort rather than a cross-file transaction.
+
+    β1.2: when ``workdir`` is provided, both the direct-inbox write and the
+    changes.jsonl mirror dual-write to the legacy channel during migration
+    policy. Fire-and-forget; the dual-write never blocks the canonical
+    operation.
     """
     path = write_message(
         Path(channel_dir),
@@ -136,6 +181,7 @@ def send_to_tool(
         kind=kind,
         requires_ack=requires_ack,
         message_id=message_id,
+        workdir=workdir,
     )
     channel_revision: int | None = None
     if mirror_to_channel:
@@ -163,6 +209,7 @@ def send_to_tool(
                     "message_id": message_id,
                     "payload": payload or {},
                 },
+                workdir=workdir,
             )
         except Exception:
             channel_revision = None
@@ -185,6 +232,7 @@ def send_to_all(
     run_id: str = "unknown",
     app_slug: str | None = None,
     mirror_to_channel: bool = True,
+    workdir: Path | None = None,
 ) -> dict[str, Any]:
     """Write one common broadcast message to ``inbox/all.jsonl``."""
     return send_to_tool(
@@ -199,6 +247,7 @@ def send_to_all(
         run_id=run_id,
         app_slug=app_slug,
         mirror_to_channel=mirror_to_channel,
+        workdir=workdir,
     )
 
 
@@ -366,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             run_id=args.run_id,
             app_slug=slug,
             mirror_to_channel=not args.no_channel,
+            workdir=Path(args.workdir).expanduser().resolve(),
         )
         out = {"app_slug": slug, **result}
     elif args.command == "read":

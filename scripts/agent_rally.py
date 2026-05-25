@@ -132,6 +132,7 @@ def cmd_handoff(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         app_slug=slug,
         payload=payload,
+        workdir=Path(args.workdir).expanduser().resolve(),
     )
     return _emit({
         "action": "handoff-posted" if new_rev is not None else "handoff-rejected",
@@ -155,6 +156,7 @@ def cmd_escalate(args: argparse.Namespace) -> int:
             "reason": args.reason,
             "needs": args.needs,
         },
+        workdir=Path(args.workdir).expanduser().resolve(),
     )
     return _emit({
         "action": "escalation-posted",

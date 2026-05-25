@@ -131,6 +131,7 @@ def rally(
         run_id=effective_run_id,
         app_slug=slug,
         payload=payload,
+        workdir=workdir,
     )
     after_revision = revision.read_revision(channel_dir) if verify else None
 

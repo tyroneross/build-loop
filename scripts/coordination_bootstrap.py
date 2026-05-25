@@ -331,6 +331,7 @@ def bootstrap(
         run_id=effective_run_id,
         app_slug=slug,
         payload=(payload if action == "bootstrapped" else {**payload, "phase": "joined-existing-coord"}),
+        workdir=workdir,
     )
 
     return {
