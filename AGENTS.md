@@ -4,6 +4,18 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
+## Session-start preflight
+
+Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Output tells you whether to `proceed_solo` or `join_active` (handle pending ACKs first).
+
+```bash
+agent-rally-preflight --tool codex --start-ping --human
+```
+
+The command is **host-neutral** — the same binary works for every coding tool. Substitute the `--tool` value for your host: `codex`, `cursor`, `gemini`, `claude_code`, or `other`. The JSON form (omit `--human`) is the machine-readable envelope.
+
+**Fallback:** if `agent-rally-preflight` is not on PATH (`pipx install agent-rally-point` hasn't been run yet), proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
+
 ## Phases
 
 | # | Phase | Purpose | Output |
