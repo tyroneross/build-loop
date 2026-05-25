@@ -123,6 +123,40 @@ class CoordinationRallyTests(unittest.TestCase):
         self.assertTrue(result["posted"])
         self.assertEqual(result["verify"]["matching_record_count"], 1)
 
+    def test_cli_rejects_empty_ownership_scope_with_nonzero_exit(self):
+        """Codex variance (rev 219): without --owns and --does-not-own the
+        CLI used to exit 0 with channel_revision=null / posted=false because
+        the MECE gate silently rejected inside post(). The CLI now rejects
+        at the argparse boundary with exit code 2 and a stderr message.
+        """
+        cmd = [
+            sys.executable,
+            str(HERE / "coordination_rally.py"),
+            "--workdir", str(self.workdir),
+            "--message", "hello",
+            "--verify",
+            "--json",
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn("--owns", run.stderr)
+        self.assertIn("--does-not-own", run.stderr)
+        # Should not have emitted a success envelope on stdout.
+        self.assertEqual(run.stdout, "")
+
+    def test_cli_rejects_empty_ownership_scope_without_verify(self):
+        """Same defense without --verify: empty/empty is rejected at CLI."""
+        cmd = [
+            sys.executable,
+            str(HERE / "coordination_rally.py"),
+            "--workdir", str(self.workdir),
+            "--message", "hello",
+            "--json",
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn("--owns", run.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
