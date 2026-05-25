@@ -115,6 +115,8 @@ Cheat-sheet (full detail in B1):
 - Every cross-session signal goes through `scripts/rally_point/post.py` `post()` (bumps revision + appends record in canonical order — never raw `append_change`).
 - Every write-handoff brief MUST include all four MECE fields (owns / does-not-own / interface-contract / integration-checkpoint); linted via `scripts/brief_mece_validator.py`.
 
+For parity with non-Claude tools (which lack SessionStart hooks), the host-neutral preflight CLI is `agent-rally-preflight --tool claude_code --start-ping --human` — same envelope, same routing decision (`proceed_solo` / `join_active`). Claude Code typically gets this for free via SessionStart; the CLI is the manual equivalent when hooks are unavailable. If the binary isn't installed (`pipx install agent-rally-point`), proceed without it.
+
 ## Plugin Development
 
 - Plugin manifest: `.claude-plugin/plugin.json`
