@@ -300,6 +300,12 @@ class CoordinationStatusTests(unittest.TestCase):
         fake_slug = "fake-slug-from-discover"
         fake_path = self._install_fake_agent_rally_point(fake_channel, fake_slug)
         env = os.environ.copy()
+        # β1 follow-up: this test explicitly exercises the canonical-
+        # delegation path. setUp() sets BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1
+        # for the OTHER tests; pop it for this subprocess so the bridge
+        # actually probes Python import.
+        env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        env["PATH"] = "/usr/bin:/bin"  # strip the real pipx-installed CLI
         # Prepend so the fake wins over any real install.
         env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")
         cmd = [

@@ -65,6 +65,13 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         self.workdir.mkdir()
         self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
         os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.tmp / "apps")
+        # β1 follow-up: other test classes may have set BUILD_LOOP_BRIDGE_
+        # INTERNAL_ONLY=1 in setUp without tearDown-restoring it. The
+        # discovery_bridge tests exercise the canonical sources, so we
+        # must explicitly clear that env var here.
+        self._old_internal_only = os.environ.pop(
+            "BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None
+        )
         subprocess.run(
             ["git", "init"], cwd=self.workdir, check=True, capture_output=True
         )
@@ -75,6 +82,8 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             os.environ.pop("BUILD_LOOP_APPS_ROOT", None)
         else:
             os.environ["BUILD_LOOP_APPS_ROOT"] = self._old_apps_root
+        if self._old_internal_only is not None:
+            os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = self._old_internal_only
         shutil.rmtree(self.tmp, ignore_errors=True)
         bridge.clear_cache()
 
@@ -277,7 +286,12 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
             self.skipTest("agent-rally-discover not on PATH; α not installed")
         repo_root = HERE.parent
         cmd = [
+            # Strip PYTHONPATH (env-rigging avoidance), the test-isolation
+            # flag that other test classes leak via os.environ, AND
+            # BUILD_LOOP_APPS_ROOT (also leaked by other suite setUps).
             "env", "-u", "PYTHONPATH",
+            "-u", "BUILD_LOOP_BRIDGE_INTERNAL_ONLY",
+            "-u", "BUILD_LOOP_APPS_ROOT",
             sys.executable, "-c",
             textwrap.dedent(
                 f"""

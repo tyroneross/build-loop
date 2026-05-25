@@ -90,6 +90,14 @@ class AgentRallyWhereTests(unittest.TestCase):
         fake_slug = "slug-from-discover"
         fake_path = self._install_fake_arp(fake_channel, fake_slug)
         env = os.environ.copy()
+        # β1 follow-up: this test explicitly exercises the canonical-
+        # delegation path. setUp() sets BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1
+        # for the OTHER tests; pop it for this subprocess so the bridge
+        # actually probes Python import.
+        env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        # Strip PATH so the real pipx-installed agent-rally-discover
+        # cannot shadow the Python-import probe under test.
+        env["PATH"] = "/usr/bin:/bin"
         env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")
         r = self._run_where(env=env)
         result = json.loads(r.stdout)
