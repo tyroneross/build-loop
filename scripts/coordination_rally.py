@@ -120,6 +120,11 @@ def rally(
             "does_not_own": does_not_own,
             "interface_contract": contract,
             "integration_checkpoint": checkpoint,
+            # Rally is a presence broadcast, not a delegation: lateral
+            # limits default to explicit empty boundaries. Callers that
+            # want a true delegation should use coordination_bootstrap.
+            "allowed_tools": [],
+            "denied_tools": [],
         },
     }
     before_revision = revision.read_revision(channel_dir) if verify else None
