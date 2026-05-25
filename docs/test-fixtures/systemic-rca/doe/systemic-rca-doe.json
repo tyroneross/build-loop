@@ -1,0 +1,194 @@
+{
+  "design": {
+    "type": "fractional",
+    "name": "2^(6-3) fractional factorial",
+    "n_runs": 8,
+    "n_factors": 6
+  },
+  "factors": [
+    {
+      "name": "explanation_format"
+    },
+    {
+      "name": "framework_core"
+    },
+    {
+      "name": "failure_map_shape"
+    },
+    {
+      "name": "forward_scan"
+    },
+    {
+      "name": "classification"
+    },
+    {
+      "name": "evidence_method"
+    }
+  ],
+  "matrix": [
+    [
+      -1.0,
+      -1.0,
+      -1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    [
+      -1.0,
+      -1.0,
+      1.0,
+      1.0,
+      -1.0,
+      -1.0
+    ],
+    [
+      -1.0,
+      1.0,
+      -1.0,
+      -1.0,
+      1.0,
+      -1.0
+    ],
+    [
+      -1.0,
+      1.0,
+      1.0,
+      -1.0,
+      -1.0,
+      1.0
+    ],
+    [
+      1.0,
+      -1.0,
+      -1.0,
+      -1.0,
+      -1.0,
+      1.0
+    ],
+    [
+      1.0,
+      -1.0,
+      1.0,
+      -1.0,
+      1.0,
+      -1.0
+    ],
+    [
+      1.0,
+      1.0,
+      -1.0,
+      1.0,
+      -1.0,
+      -1.0
+    ],
+    [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ]
+  ],
+  "run_order": [
+    2,
+    4,
+    0,
+    6,
+    3,
+    5,
+    7,
+    1
+  ],
+  "runs": [
+    {
+      "_run_id": 0,
+      "_factors": {
+        "explanation_format": "technical_first",
+        "framework_core": "causal_tree_only",
+        "failure_map_shape": "linear_why_chain",
+        "forward_scan": "fmea_interface_failure_modes",
+        "classification": "odc_taxonomy",
+        "evidence_method": "trace_or_delta_debug_required"
+      }
+    },
+    {
+      "_run_id": 1,
+      "_factors": {
+        "explanation_format": "technical_first",
+        "framework_core": "causal_tree_only",
+        "failure_map_shape": "fault_tree_plus_dependency_chain",
+        "forward_scan": "fmea_interface_failure_modes",
+        "classification": "freeform",
+        "evidence_method": "manual_evidence"
+      }
+    },
+    {
+      "_run_id": 2,
+      "_factors": {
+        "explanation_format": "technical_first",
+        "framework_core": "cast_stpa_control_gap",
+        "failure_map_shape": "linear_why_chain",
+        "forward_scan": "none",
+        "classification": "odc_taxonomy",
+        "evidence_method": "manual_evidence"
+      }
+    },
+    {
+      "_run_id": 3,
+      "_factors": {
+        "explanation_format": "technical_first",
+        "framework_core": "cast_stpa_control_gap",
+        "failure_map_shape": "fault_tree_plus_dependency_chain",
+        "forward_scan": "none",
+        "classification": "freeform",
+        "evidence_method": "trace_or_delta_debug_required"
+      }
+    },
+    {
+      "_run_id": 4,
+      "_factors": {
+        "explanation_format": "plain_language_then_system_cause",
+        "framework_core": "causal_tree_only",
+        "failure_map_shape": "linear_why_chain",
+        "forward_scan": "none",
+        "classification": "freeform",
+        "evidence_method": "trace_or_delta_debug_required"
+      }
+    },
+    {
+      "_run_id": 5,
+      "_factors": {
+        "explanation_format": "plain_language_then_system_cause",
+        "framework_core": "causal_tree_only",
+        "failure_map_shape": "fault_tree_plus_dependency_chain",
+        "forward_scan": "none",
+        "classification": "odc_taxonomy",
+        "evidence_method": "manual_evidence"
+      }
+    },
+    {
+      "_run_id": 6,
+      "_factors": {
+        "explanation_format": "plain_language_then_system_cause",
+        "framework_core": "cast_stpa_control_gap",
+        "failure_map_shape": "linear_why_chain",
+        "forward_scan": "fmea_interface_failure_modes",
+        "classification": "freeform",
+        "evidence_method": "manual_evidence"
+      }
+    },
+    {
+      "_run_id": 7,
+      "_factors": {
+        "explanation_format": "plain_language_then_system_cause",
+        "framework_core": "cast_stpa_control_gap",
+        "failure_map_shape": "fault_tree_plus_dependency_chain",
+        "forward_scan": "fmea_interface_failure_modes",
+        "classification": "odc_taxonomy",
+        "evidence_method": "trace_or_delta_debug_required"
+      }
+    }
+  ]
+}

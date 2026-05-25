@@ -133,6 +133,7 @@ The `> 5` threshold matches the empirical inflection point measured in the synth
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
 - **UI input/output contract gate**: if `uiTarget != null`, add a `## UI Input/Output Contract` section before mockups or implementation. It must name every changed surface's inputs, outputs, data taxonomy, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and schema/API/design-system traceability.
+- **Recent design structures gate**: if `uiTarget != null`, pass `skills/build-loop/references/recent-design-structures.md` to `design-contract-specialist` after the UI input/output contract exists. The specialist chooses the structure based on product/workflow/data/platform fit; recent structures are options, not requirements.
 - **Enumerate synthesis dimensions** for any commit that involves design judgment (UI placement, copy tone, CTA tier, schema shape, dispatch contracts, etc.). Add a `synthesis_dimensions:` block to the plan listing each named decision with a concrete claimed value:
   ```yaml
   synthesis_dimensions:
@@ -212,7 +213,7 @@ Two checkpoints fire automatically after every implementer commit on plans that 
 
 Both backstops are first-class on the code-tier (fan-out) implementer path where they catch some of the recall gap, and defense-in-depth on the thinking-tier path where they rarely fire.
 
-**Sub-step B — Validate**: when an IBR-style declarative test runner is installed and the build touches UI, run the project's existing `.ibr-test.json` suite first as a quick pass (`scripts/ibr_quickpass.py --workdir . --scope changed`). A passing existing suite is the strongest possible signal — failing tests route directly to Iterate with the assertion as the rubric. Then check the UI input/output contract for changed surfaces, code-based graders (test, lint, type, build), and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. Scorecard format:
+**Sub-step B — Validate**: when the build touches UI, run build-loop's `ui-validator` first, then check the UI input/output contract for changed surfaces, code-based graders (test, lint, type, build), design-rule scanner, visual evidence capture, and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. IBR is explicit-only and is not auto-routed into the build. Scorecard format:
 
 | # | Criterion | Method | Result | Evidence |
 |---|-----------|--------|--------|----------|
@@ -230,7 +231,7 @@ Both backstops are first-class on the code-tier (fan-out) implementer path where
 - *Plugin Cache Sync* (plugin work): resync the local cache when diverged. Defer version bumps until the feature batch is declared complete (see Version Advisor).
 - *Version Advisor* (plugin work): `scripts/version_advisor.py` reads plugin manifest and last-bump SHA, counts commits since via Conventional Commits to propose semver. Default state is `hold` — a one-line note in Report. State `suggest` only when the user creates `.build-loop/release-pending.md`. Never auto-bumps; never blocks.
 - *UX Triage* (UI work): `scripts/ux_triage.py` static-scans interactability, performance, data-accuracy, and usability across the full project. Each blocker/major finding becomes a queue entry in `.build-loop/ux-queue/<id>.md` with a complete fix plan. Agent-driven augmentation (performance, fact-check on broader surface) merges into the same queue.
-- *Coverage Gap* (UI work + IBR available): for each surface in `.build-loop/ibr-quickpass.json.untested_surfaces`, generate a draft `.ibr-test.json` to `.ibr-tests/_draft/`. Drafts never auto-promote; user accepts by `mv` out of `_draft/`.
+- *Coverage Gap* (UI work): for each changed critical surface lacking render/interaction coverage, add a repo-native test-coverage queue entry with a proposed test plan. Do not auto-draft `.ibr-test.json` files.
 
 Blocking gates route to Iterate. Queue entries flow into Phase 5's prioritized work list. Warnings land in Report.
 
@@ -250,11 +251,11 @@ Before any push/deploy, classify the exact command with `scripts/deployment_poli
 
 ### Phase 5: Iterate
 
-Build a prioritized work list per pass: (1) blocking Validate failures, (2) blocker UX queue entries with `architecture_impact: false`, (3) major UX queue entries with `architecture_impact: false`, (4) optimization findings, (5) IBR coverage-gap drafts. Entries with `architecture_impact: true` are deferred to Report for explicit user confirmation, NOT picked up here. Do not defer based on patch size — the only deferral signal is architecture impact.
+Build a prioritized work list per pass: (1) blocking Validate failures, (2) blocker UX queue entries with `architecture_impact: false`, (3) major UX queue entries with `architecture_impact: false`, (4) optimization findings, (5) UI coverage-gap queue entries. Entries with `architecture_impact: true` are deferred to Report for explicit user confirmation, NOT picked up here. Do not defer based on patch size — the only deferral signal is architecture impact.
 
 Partition the list by disjoint `files_touched` and dispatch up to 4 parallel implementer subagents per pass (the standard cap). Sequential groups process after the parallel batch.
 
-When the build touches UI files and an IBR-style runner is installed, after each implementer reports back AND before re-entering Sub-step B, run `interact_and_verify` against the affected route headlessly. Catches new visual/interaction regressions cheaply.
+When the build touches UI files, after each implementer reports back AND before re-entering Sub-step B, run the build-loop UI re-validate hook against the affected route or screen. Catches new visual/interaction regressions cheaply.
 
 For each fix:
 1. Diagnose root cause (not just symptoms)
@@ -295,7 +296,6 @@ Build loop stores state in `.build-loop/` within the project directory:
 ├── state.json           # Iteration state, phase progress, structure summary
 ├── feedback.md          # Post-build lessons (one line per build)
 ├── release-pending.md   # User-created marker: "feature batch complete, advise version bump"
-├── ibr-quickpass.json   # Summary from scripts/ibr_quickpass.py (UI work + IBR present)
 ├── ux-queue/            # UX-impacting findings with full fix plans (drained by Iterate)
 │   └── <id>.md
 ├── followup/            # Overflow when iteration cap hit; input to subsequent build
@@ -303,11 +303,6 @@ Build loop stores state in `.build-loop/` within the project directory:
 ├── evals/               # Scorecard archives
 │   └── YYYY-MM-DD-*.md
 └── issues/              # Discovered issues
-```
-
-Project-level (not under `.build-loop/`):
-```
-.ibr-tests/_draft/       # IBR test drafts from Coverage Gap; user mv to accept, rm to reject
 ```
 
 This directory is created on first use. Add `.build-loop/` to your project's `.gitignore`.

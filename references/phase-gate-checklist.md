@@ -82,19 +82,11 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 Order: UI-validator-first (when `uiTarget != null`) → code graders → runtime smoke gate (see below) → LLM-as-judge → plugin-tests advisory check → memory-first gate on every failure.
 
-**UI-validator-first when `uiTarget != null`**: dispatch `ui-validator` with `triggerPoint: "phase4-review-b"`; see `agents/ui-validator.md`; supersedes the legacy `scripts/ibr_quickpass.py` shell-out, which the agent still uses as a fallback when `@tyroneross/ibr-core` is not installed — see RFC #30.
+**UI-validator-first when `uiTarget != null`**: dispatch `ui-validator` with `triggerPoint: "phase4-review-b"`; see `agents/ui-validator.md`. This is the build-loop-owned validation route and does not auto-invoke IBR.
 
 **UI-validator routing**: `pass` proceeds; `fail` routes `failing_assertion` to Iterate (same rubric pattern as Phase 3 chunk-close); `skipped (auth-gap)` records `⚠️ ui-validate skipped — auth fixture missing` in Review-G and falls through to scanners.
 
-**IBR-first when present and UI work** (fallback path): load `Skill("build-loop:ibr-bridge")` and run the quick-pass BEFORE any other validator:
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ibr_quickpass.py --workdir "$PWD" --scope changed
-```
-
-Interpret the JSON: `pass == ran` → green-light, proceed to D; any `fail` → route the failing test to Iterate (test assertion is the rubric, no extra critic burn); `no_tests` or `ibr_unavailable` → fall through to scanners. The script writes `.build-loop/ibr-quickpass.json` for Sub-step D Gate 8 to read.
-
-If `availablePlugins.ibr` and UI work AND quick-pass green, also invoke `ibr:design-validation` for web or `ibr:native-testing` for mobile for design-rule depth. If IBR is absent and the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt.
+If `ui-validator` cannot render the route and the build touches UI files, paste `fallbacks.md#web-ui` into the validation subagent prompt. IBR may run only when the user explicitly asks for it; its output is auxiliary evidence, not the default build gate.
 
 #### Runtime smoke gate (post-tests, pre-LLM-judges)
 
@@ -153,7 +145,7 @@ Dispatch `fact-checker` + `mock-scanner` in parallel. **Plus** when code changed
 
 - **Gate 6 — Version-Bump Advisor** (when `pluginWork: true`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_advisor.py --workdir "$PWD"`. State `hold` (default) → one-line note in Review-F. State `suggest` (marker `.build-loop/release-pending.md` exists) → propose semver and ask user before any plugin.json edit. Never auto-bump.
 - **Gate 7 — UX Triage** (when `uiTarget != null`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Each `blocker`/`major` finding becomes a queue entry in `.build-loop/ux-queue/`. Then dispatch `performance-assessor` (full-app sweep) and `fact-checker` (broader file glob, full rendered surface) in parallel for the agent-augmentation portion; merge their findings into the same queue.
-- **Gate 8 — IBR Coverage-Gap** (when `uiTarget != null` AND IBR available): read `.build-loop/ibr-quickpass.json.untested_surfaces`. For each, generate a draft `.ibr-test.json` to `.ibr-tests/_draft/<id>.ibr-test.json` via `mcp__plugin_ibr_ibr__plan_test` (programmatic only). Add a queue entry with `dimension: test-coverage`. Drafts never auto-promote.
+- **Gate 8 — UI Coverage-Gap** (when `uiTarget != null`): compare changed surfaces against existing project test files and the UI input/output contract. For each critical surface without render/interaction coverage, add a queue entry with `dimension: test-coverage` and a repo-native proposed test plan. Do not auto-draft `.ibr-test.json` files.
 
 Blocking (Gates 1–4) → Iterate. Queue entries (Gates 7–8) → flow into Phase 5's prioritized work list. Warnings → Report.
 

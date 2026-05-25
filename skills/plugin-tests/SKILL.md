@@ -73,7 +73,7 @@ Don't migrate to pytest, vitest, or Playwright. The stdlib pattern keeps the har
 ## What this skill does NOT do
 
 - Runtime testing (live MCP calls, actual `Skill()` invocation) — that's Review-B Validate's job, executed by the orchestrator with the live runtime
-- UI testing — for plugins that build UIs, dispatch `ibr:test` against the captured baseline (the `.ibr-test.json` declarative format)
+- UI testing — for plugins that build UIs, use the orchestrator's build-loop-owned UI validation route (`ui-validator`, project-native tests, screenshots/static scanner). Dispatch IBR only when the user explicitly asks for IBR / Interface Built Right / `.ibr-test.json`.
 - Performance / Lighthouse — separate concern, not a plugin metadata issue
 - Cross-plugin integration — that's the bridge skills' job at runtime
 
@@ -83,7 +83,7 @@ Don't migrate to pytest, vitest, or Playwright. The stdlib pattern keeps the har
 - `commands/test.md` — slash-command surface (`/build-loop:test`)
 - `scripts/collision_scan.py` — the static detector that `test_skill_resolution.py` wraps
 - `KNOWN-ISSUES.md` 2026-05-02 entry — testing survey across 13 projects that informed this design
-- IBR's `.ibr-test.json` — declarative format for runtime UI tests on plugin-built UIs
+- `agents/ui-validator.md` and `skills/build-loop/phases/ui-validation.md` — default UI validation route. IBR's `.ibr-test.json` remains an explicit-only auxiliary format.
 
 ## History
 

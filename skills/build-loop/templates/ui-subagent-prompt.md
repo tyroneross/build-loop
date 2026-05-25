@@ -11,8 +11,9 @@
 Load these skills and follow them. Not optional.
 
 - **All UI work**: `calm-precision`
-- **SwiftUI / Apple platforms**: also load `ibr:ios-design` and `ibr:apple-platform`
-- **React / Vue / web**: also load `frontend-design` and `ibr:mobile-web-ui`
+- **All non-trivial UI work**: read `.build-loop/app-contract/ui.md` when present. The `## Design Direction` and `## Design Hierarchy Registry` sections are the binding build-loop-owned style source. If it names a `selected_structure` from `recent-design-structures.md`, implement that structure through the app contract; do not re-pick a different one.
+- **SwiftUI / Apple platforms**: use `apple-dev` only when the task needs Apple implementation or deployment details.
+- **React / Vue / web**: use `frontend-design` only when the user or orchestrator explicitly requests that external guidance.
 
 If a skill is unavailable, proceed but note it in your output.
 
@@ -108,12 +109,12 @@ Mandatory pre-return steps:
 
 4. **Visual validation (REQUIRED for UI work).** The scanner catches static anti-patterns. It cannot catch rendering bugs — an upside-down arc, an invisible track, a clipped row, a chip that wraps. **If you touched a Views/ file, you must render the actual screen and look at it.**
 
-   - **iOS / macOS / watchOS**: install on simulator, launch, capture via `mcp__plugin_ibr_ibr__native_scan` or `xcrun simctl io booted screenshot`. If your change is in a returning-user code path, seed test data first (see "DebugSeeder pattern" below).
-   - **Web**: open in headless Chromium via `mcp__plugin_ibr_ibr__scan` against the dev server URL.
+   - **iOS / macOS / watchOS**: install on simulator, launch, capture via `xcrun simctl io booted screenshot` or the built-in native AX driver for macOS. If your change is in a returning-user code path, seed test data first (see "DebugSeeder pattern" below).
+   - **Web**: open the changed route with the host's available browser/screenshot tooling against the dev server URL.
 
    Compare against the mockup if one exists. Look for: arc/chart geometry rendering correctly, score values positioned where the mockup shows them, no rows clipped behind floating bars / tab bars / safe areas, no text wrapping unexpectedly, no overlapping elements. Real shipped bugs (build 53–55: gauge upside-down with stray ticks; multiple tabs clipping last row behind iOS 26 floating bar) were only caught by visual inspection.
 
-   If IBR / simulator unavailable, document this in your output as a known gap rather than skipping the step silently.
+   If browser/simulator tooling is unavailable, document this in your output as a known gap rather than skipping the step silently.
 
 5. If the scanner doesn't exist (older build-loop install), you still must self-audit against the checklist above before returning.
 

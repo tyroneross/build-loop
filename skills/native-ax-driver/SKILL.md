@@ -13,9 +13,9 @@ user-invocable: false
 
 ## Why this exists
 
-Build-loop's Iterate phase needs to verify native macOS UI fixes the same way it verifies web routes — but `interact_and_verify` only handles browsers. Previously, build-loop deferred to IBR's MCP for native automation, which made native verification IBR-dependent. This skill lifts the same capability into build-loop directly: same Swift code, same AX actions, no MCP hop, no plugin requirement.
+Build-loop's Iterate phase needs to verify native macOS UI fixes the same way it verifies web routes. Previously, build-loop deferred to IBR's MCP for native automation, which made native verification IBR-dependent. This skill lifts the needed capability into build-loop directly: same Swift code lineage, same AX actions, no MCP hop, no plugin requirement.
 
-IBR's MCP path is still allowed (see `skills/ibr-bridge/SKILL.md`) — it adds richer session management, baselines, and screenshots. But every native AX operation build-loop *needs* to ship a verified fix is now in this skill's tree.
+IBR's MCP path is still allowed only when explicitly requested (see `skills/ibr-bridge/SKILL.md`) — it can add session management, baselines, and screenshots as auxiliary evidence. Every native AX operation build-loop needs to ship a verified fix is in this skill's tree.
 
 ## What "cursor-free" means
 
@@ -125,13 +125,13 @@ python3 .../native_driver.py apps
 
 | Phase | Use |
 |---|---|
-| **Sub-step B Validate** (Review) — when uiTarget kind = `native-macos` | Replace `interact_and_verify` (web-only) with: `preflight` → `scan` → drive critical-path actions → re-`scan` → diff. |
-| **Sub-step D Coverage gaps** | Enumerate `scan` results; for any element with `actions != []` and no corresponding test step in `.ibr-tests/_draft/<bundleId>/`, draft a one-step test pinned by `identifier` (preferred) or `title`. |
+| **Sub-step B Validate** (Review) — when uiTarget kind = `native-macos` | Run: `preflight` → `scan` → drive critical-path actions → re-`scan` → diff. |
+| **Sub-step D Coverage gaps** | Enumerate `scan` results; for any element with `actions != []` and no corresponding repo-native render/interaction coverage, write a `.build-loop/ux-queue/` entry with a proposed test step pinned by `identifier` (preferred) or `title`. |
 | **Phase 5 Iterate** — `.swift` files under a macOS target | Re-launch the rebuilt `.app` (`open -b <bundleId>`); replay the failing element-path + action; if two consecutive iterations fail on the same element, escalate to root-cause-investigator with the AX path — common cause is a missing `.accessibilityIdentifier(...)` modifier. |
 
 ## When *not* to use this skill
 
-- **Web targets** — use IBR's `interact_and_verify`, this skill won't help.
+- **Web targets** — use `ui-validator` and the host browser/screenshot tooling; this skill won't help.
 - **iOS simulator** — the simulator runs on macOS, but interaction goes through `idb ui tap`, not direct AX (the simulator's AX surface is too noisy for path stability). See `reference_idb_sim_tap.md`.
 - **Drag-and-drop, hover-only effects, NSTrackingArea-driven UI** — these need real `CGEvent` mouse events. Out of scope. If the feature is critical, fix the AX surface in the app under test (add `.accessibilityAction { … }`) rather than synthesizing mouse events.
 - **App not yet running** — the driver does not launch apps. The orchestrator's pre-step must `open -b <bundleId>` (or `open <path/to/.app>`) and verify with `resolve` before driving.

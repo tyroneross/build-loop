@@ -44,6 +44,8 @@ Before entering the loop, assess whether it's warranted. The trigger is the **ve
 
 **Goal**: Commit to a specific, testable hypothesis before writing any fix.
 
+Start with plain language before implementation detail. State what failed in normal words, then trace visible symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure. Do not use "agent forgot", "agent missed context", or similar actor-blame language as the terminal cause unless you also name the missing system control that allowed it.
+
 1. **State the root cause hypothesis** with evidence level:
    - **Strong**: Multiple evidence types (code, logs, reproduction) all point to this cause
    - **Moderate**: Some direct evidence plus reasonable inference
@@ -134,13 +136,18 @@ Every item in the report gets one marker:
 ### Report Contents
 
 1. **Verdict**: Fixed (all criteria pass + critique approved) or Unresolved (iteration limit hit)
-2. **Root Cause**: The identified cause with evidence level
-3. **Causal Tree**: The investigation path — confirmed branches, pruned branches with rejection evidence, any multi-causal findings
-4. **Fix Applied**: What was changed, with rationale
-5. **Scorecard**: Final pass/fail per criterion with evidence
-6. **Research Used**: What was searched externally, what was found, what sources
-7. **Iteration History** (if >1 iteration): What was tried, what failed, what changed between iterations
-8. **Remaining Gaps**: Anything marked ⚠️ or ❓
+2. **Plain-language failure**: What went wrong in normal words
+3. **Why it happened**: Symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure
+4. **Technical details**: Minimum proof needed to understand the cause
+5. **Tradeoffs and impact**: What improves, what risks remain, and who is affected
+6. **Prevention control**: Durable test, verifier, trace, gate, protocol, or routing rule
+7. **Root cause**: The identified system cause with evidence level
+8. **Causal Tree**: The investigation path — confirmed branches, pruned branches with rejection evidence, any multi-causal findings
+9. **Fix Applied**: What was changed, with rationale
+10. **Scorecard**: Final pass/fail per criterion with evidence
+11. **Research Used**: What was searched externally, what was found, what sources
+12. **Iteration History** (if >1 iteration): What was tried, what failed, what changed between iterations
+13. **Remaining Gaps**: Anything marked ⚠️ or ❓
 
 ### After Reporting
 

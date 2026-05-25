@@ -60,6 +60,6 @@ Skip the dispatch entirely when:
 - `uiTouched: false` (no UI files in chunk)
 - `state.devServer.runtimeServer: false` (library-only project, no dev server to scan against)
 
-## Backward compatibility
+## Render-path fallback
 
-If `@tyroneross/ibr-core` is not installed in the project, `ui-validator` falls back to the existing `scripts/ibr_quickpass.py` shell-out path automatically (see `agents/ui-validator.md` §"Path selection"). The orchestrator's behavior is identical — only the underlying scan implementation differs. Track upstream lib availability via `tyroneross/interface-built-right#5`.
+If no browser/simulator/native-AX render path is available, `ui-validator` returns `skipped` with the reason and the orchestrator records the evidence gap. Review-D then falls back to `audit-design-rules.mjs` plus the static checks in `skills/build-loop/fallbacks.md#web-ui`. IBR is not an automatic fallback; run `build-loop:ibr-bridge` only when the user explicitly asks for IBR / Interface Built Right / `.ibr-test.json`.

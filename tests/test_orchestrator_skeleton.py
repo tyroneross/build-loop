@@ -108,12 +108,15 @@ def test_capability_registry_wired() -> None:
     )
 
 
-def test_ibr_quickpass_present() -> None:
-    """Even though detail moved to phase-gate-checklist.md, the orchestrator
-    must mention the validate sub-step's IBR-first behavior at high level."""
+def test_build_loop_ui_route_present() -> None:
+    """The orchestrator should route UI work through build-loop-owned design
+    and validation surfaces, not the retired IBR-first path."""
     text = _read()
-    # The B sub-step bullet should mention IBR-first.
-    assert "IBR-first" in text or "ibr_quickpass" in text or "ibr-bridge" in text or "IBR" in text
+    assert "design-contract-specialist" in text
+    assert "phase2-design-direction" in text
+    assert "recent_design_structures_path" in text
+    assert "ui-validator" in text
+    assert "do not route to IBR" in text
 
 
 def test_deployment_policy_block_present() -> None:

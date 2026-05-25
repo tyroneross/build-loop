@@ -300,9 +300,9 @@ For native iOS/macOS modernization passes scoped from a prior audit, run a three
 2. **Canonical reference identification**. Name 2–3 modern reference views in the same repo (e.g. `AlertSettingsView`, `SettingsView`, `ProfileSettingsView`) so the audit's "good" target is in-tree, not abstract HIG.
 3. **Structured delta report**. Group by category (color hardcodes / Dynamic Type / spacing / card pattern / interaction / chart hex), count, and rank by user-impact severity.
 
-### IBR's role for native iOS
+### Native visual evidence
 
-IBR's `native_scan` extracts a11y tree + bounds + screenshot. It does NOT extract computed font/color/spacing values — those live in the SwiftUI source. Use IBR for touch-target and a11y-label coverage; use grep + Read for the metric audit. Skip IBR snapshot capture in audit-only loops; reserve it for visual regression after a redesign that changes layout.
+Use built-in simulator screenshots and native AX evidence for visual regression after a redesign that changes layout. Those tools do not extract computed SwiftUI font/color/spacing values, so source-code extraction remains load-bearing for metric audits. Use grep + Read for typography, color, spacing, and token claims. IBR native scans are explicit-only auxiliary evidence when the user asks for IBR.
 
 ### Three-tier ROI ordering
 

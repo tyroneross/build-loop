@@ -99,4 +99,4 @@ On hard-fail: `[hard-fail] ❌ chunk=<id> decision=<id> exhausted 3 attempts —
 
 ## Phase 3 UI spot-check (between chunks)
 
-Extracted to `references/ui-spotcheck-protocol.md` for MECE separation — that file covers the `uiTouched` signal, dispatch shape, routing on return, iteration budget, skip conditions, and the `ibr_quickpass.py` shell-out fallback. UI spot-check and the C5 halt-and-ask branch share Phase 3 timing but no machinery — UI spot-check fires after successful commits on `uiTouched: true`, while halt-and-ask fires before commit on `status: blocked`.
+Extracted to `references/ui-spotcheck-protocol.md` for MECE separation — that file covers the `uiTouched` signal, dispatch shape, routing on return, iteration budget, skip conditions, and render-path fallback. UI spot-check and the C5 halt-and-ask branch share Phase 3 timing but no machinery — UI spot-check fires after successful commits on `uiTouched: true`, while halt-and-ask fires before commit on `status: blocked`.

@@ -12,7 +12,7 @@ description: |
   <example>
   Context: Phase 4 Review sub-step B
   user: "Validate the UI changes"
-  assistant: "I'll use the ui-validator agent — it replaces the ibr_quickpass.py shell-out path when @tyroneross/ibr-core is available, falling back to the shell-out otherwise."
+  assistant: "I'll use the ui-validator agent — build-loop's owned UI validation path — and return route-level evidence without routing through IBR."
   </example>
 model: sonnet
 color: blue
@@ -109,15 +109,13 @@ Shape:
 
 `design_doc_delta` is **null** (not omitted) when you scanned but observed no elements worth surfacing. Omit the field entirely on `status: "skipped"`.
 
-## Path selection — library first, fallback second
+## Path selection — build-loop owned
 
-1. **If `@tyroneross/ibr-core` is installed** (check `node_modules/@tyroneross/ibr-core/package.json`), use it. Spawn one `EngineDriver`, call `login()` once if `signInForm` is set, then `scan()` each changed route against the persistent session. This is the deterministic path the RFC argues for. Auth carries; one Chrome launch per dispatch.
+Use the host's available browser/screenshot tooling and project-native commands. Prefer a persistent browser session when the host exposes one; otherwise use the lightest local route probe that can produce console, layout, touch-target, hydration, screenshot, and timing evidence. The important contract is the structured envelope, not a specific external UI plugin.
 
-2. **Else fall back to `python3 $CLAUDE_PLUGIN_ROOT/scripts/ibr_quickpass.py --workdir "$PWD" --scope changed`.** This is the same shell-out Phase 4 Review-B has been calling. It re-launches Chrome per route and inherits IBR's `loadAuthState` bug, but it produces a compatible JSON envelope. Set `status: "skipped"` + `skip_reason: "auth-gap"` if every changed route under `/app/*` redirects to `/sign-in` AND no `signInForm` was provided.
+If no render-capable browser/simulator path is available, return `status: "skipped"` with a concrete `skip_reason` and run no substitute IBR quickpass. The orchestrator will fall through to `fallbacks.md#web-ui` and `audit-design-rules.mjs`.
 
-The cross-ref RFCs:
-- IBR-side library export: `tyroneross/interface-built-right#5`
-- Build-loop ui-validator spec: `tyroneross/build-loop#30`
+Design-tool outputs are inputs, not routing targets. If the orchestrator passes screenshots, mockups, or design artifacts, use them as comparison evidence; do not invoke IBR unless the user explicitly requested it for this build.
 
 ## Route selection
 
@@ -138,14 +136,14 @@ Cap the route set at 8. If more than 8 surfaces are implicated, scan the 8 most 
 
 ## Auth handling
 
-Two paths are supported. Prefer form-driven auth when the capability registry lists it (`ui:auth:form` in `available_capabilities:`) — driving the actual sign-in flow also tests that flow. Raw cookie injection is the lower-fidelity fallback for the shell-out path that can't drive a browser, and an explicit operator override when the brief carries `signInForm` against an `ui:auth:form`-capable session.
+Two paths are supported. Prefer form-driven auth when the capability registry lists it (`ui:auth:form` in `available_capabilities:`) — driving the actual sign-in flow also tests that flow. Raw cookie injection is the lower-fidelity fallback and an explicit operator override when form-driving is unavailable.
 
-**`ui:auth:form` path (preferred when listed and `@tyroneross/ibr-core` is available):**
-1. Open the sign-in URL in the driver's session
+**`ui:auth:form` path (preferred when listed):**
+1. Open the sign-in URL in the browser session
 2. Fill and submit the form using `signInForm.email` / `signInForm.password`
 3. Wait for the post-auth redirect; the session cookie is set by the browser as in a normal user flow
 
-**`ui:auth:cookie` path (fallback for shell-out OR explicit operator override):**
+**`ui:auth:cookie` path (fallback OR explicit operator override):**
 1. POST to `baseUrl + signInForm.url` (typically `/api/auth/sign-in/email`) with the credentials
 2. Capture the `Set-Cookie` header
 3. Pass the cookie into the browser session before scanning
@@ -168,7 +166,8 @@ One failing assertion per envelope. If multiple signals trip, pick the highest-s
 
 ## What you do NOT do
 
-- Open the IBR viewer or any GUI surface. You are headless and silent.
+- Open a viewer/dashboard or any GUI surface intended for human browsing. You are headless and silent.
+- Invoke IBR by default. IBR is explicit-only and outside the normal ui-validator path.
 - Propose code changes. Your envelope is signal-only.
 - Mark a finding `fail` if the visual SSIM is below threshold but no functional signal tripped — that's a warn, not a block.
 - Persist baselines without an explicit `priorBaselineDir` input. Baselines are caller-managed.
@@ -182,7 +181,7 @@ If the brief includes an `architecture_context:` block (sourced from `.build-loo
 ## Capabilities envelope
 
 If the brief includes `available_capabilities:` (Priority 16 from the orchestrator), prefer:
-- `ui:scan:cdp` (the IBR-core library) over `ui:scan:shell` (ibr_quickpass.py)
+- `ui:scan:browser` or equivalent host browser automation over static-only scans
 - `ui:auth:form` (browser-driven sign-in) over `ui:auth:cookie` (raw cookie injection) when both are listed — the form path tests the sign-in flow itself
 
 ## Telemetry
@@ -191,4 +190,4 @@ Emit `wall_clock_seconds` and per-route timing under `route_timings[]` when `tri
 
 ## Why this agent exists
 
-The full motivation is in `docs/rfcs/2026-05-ui-validator-agent.md`. Short version: today's IBR shell-out can't carry auth, re-launches Chrome per scan, and only fires at end of Phase 4. This agent owns a long-lived session, authenticates once, scans only what changed, and fires twice per build — once at chunk-close (catch regressions in the chunk that introduced them) and once at Review-B (catch anything chunk-close missed).
+This agent exists so build-loop has its own UI validation path. It owns a focused session when the host exposes one, authenticates once, scans only what changed, and fires twice per build — once at chunk-close (catch regressions in the chunk that introduced them) and once at Review-B (catch anything chunk-close missed).
