@@ -62,7 +62,9 @@ jobs:
           npm init -y >/dev/null
           npm install "@tyroneross/build-loop@${{ steps.ver.outputs.version }}"
 
-          INSTALLED=$(node -p "require('@tyroneross/build-loop/package.json').version")
+          # Read the manifest directly. require() would fail because the
+          # package's `exports` field doesn't expose ./package.json.
+          INSTALLED=$(jq -r .version node_modules/@tyroneross/build-loop/package.json)
           if [ "$INSTALLED" != "${{ steps.ver.outputs.version }}" ]; then
             echo "::error::Installed version ($INSTALLED) does not match requested (${{ steps.ver.outputs.version }})"
             exit 1
