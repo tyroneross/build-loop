@@ -161,3 +161,16 @@ Synthesized from these skills and references. Use them by name; the host runtime
 | `design-system` and `accessibility-review` | Tokens, components, patterns, versioning, migration discipline; WCAG 2.1 AA baseline (contrast, keyboard, focus, touch targets, name/role/value) |
 
 Absolute paths are resolved by the host runtime's skill index; this file does not hard-code per-machine locations.
+
+## 9. Cited Precedents (Live-Capture Addendum, 2026-05-26)
+
+Live IBR captures on the 4 primary apps surfaced texture observations that source-read could not. The principles above hold, with these qualifications:
+
+- **Tokens extend beyond visuals.** SpeakSavvy's `HapticVocabulary.swift` defines 5 semantic haptic events (`.confirm/.reward/.warn/.progress/.selection`) that layer atop UIKit feedback generators the same way `Theme.fontDisplay` layers atop `Font.system(...)`. Treat haptics as first-class tokens when the platform supports them, not as call-site decisions.
+- **Selection signaling is platform- and density-specific, not universal.** SpeakSavvy (filter pills, tab bar) uses solid-fill on selected; TruePace (mode cards in modal sheet) uses 1pt border + glyph check. Both are legitimate; the choice is governed by surface density and decision weight, not a single rule. Avoid "selection = fill" claims absent context.
+- **Empty-state vocabulary diverges intentionally.** SpeakSavvy floats a muted SF Symbol + two-line copy (`history-empty`); TruePace renders a 3-stop milestone ladder with connecting line (`focus-journal-insights-empty`); ProductPilot uses a text-only loading label (`loading next question…`). Pick the vocabulary that matches the user's reason-for-emptiness — first-use vs unlock-progression vs transient-load — not a single house pattern.
+- **AI-assist as input-affordance is preferred when input is the primary action.** ProductPilot's sparkle "Enhance" CTA lives inside the textarea, not adjacent. Conserves vertical real estate and signals AI assistance via universal glyph. Pattern: when typing is the action, AI helpers live inside the field; when picking is the action, helpers can sit alongside.
+- **Brand-identity-in-chrome is universal, treatment is product-specific.** All 4 primaries differentiate their header brand: SpeakSavvy plain text title, TruePace custom wordmark asset, atomize-ai plain text + theme toggle, ProductPilot 2-color wordmark + diamond glyph. No primary uses a generic system-font header alone. Treatment should match product voice; avoid system-default brand chrome unless the app is intentionally voice-neutral.
+- **Live capture is mandatory for these observations.** Source files cannot reveal selection-signaling divergence, empty-state-vocabulary divergence, or input-affordance placement — all are render-time decisions. See `evidence-capture-policy.md`.
+
+Evidence: `.build-loop/design-evidence/{speaksavvy-ios, truepace, atomize-ai, productpilot}.md` §"Live IBR Capture (2026-05-26)".

@@ -129,3 +129,17 @@ A new app in this ecosystem should, in priority order:
 7. **Multi-form-factor via viewport-scale tokens, not forked themes.** TruePace's `\.viewportScale` is the reference; the multi-pattern framework draft (`design-patterns-multi.md`) is where this becomes formal if/when prototyped.
 
 When deviating: name the deviation in the token file's comments, the way TruePace flags off-grid spacing and Atomize AI flags tinted error containers. The discipline is the comment.
+
+---
+
+## 9. Live-Capture Addendum (2026-05-26)
+
+Live IBR captures on the 4 primaries surfaced texture observations source-read could not:
+
+- **Tokens extend to haptics.** SpeakSavvy's `HapticVocabulary.swift` (`.confirm/.reward/.warn/.progress/.selection`) is a semantic layer above UIKit feedback generators, parallel to `Theme.fontDisplay` above `Font.system(...)`. Treat haptics as first-class tokens on mobile. Evidence: `speaksavvy-ios.md` §Live IBR Capture.
+- **Selection signaling is NOT consistent across primaries.** SpeakSavvy uses solid-fill on selected (filter pills, tab); TruePace uses 1pt border + glyph check on selected mode card. Both legitimate; choose per surface density and decision weight, not by a single rule. Evidence: `speaksavvy-ios.md` + `truepace.md`.
+- **Empty states diverge by intent.** SpeakSavvy floats SF Symbol + copy (first-use); TruePace renders milestone ladder (unlock-progression); ProductPilot uses text label (transient load). Match vocabulary to user reason-for-emptiness.
+- **AI-assist lives inside input when input is the primary action.** ProductPilot's sparkle "Enhance" sits inside the textarea (`productpilot.md` §Live IBR Capture). Generalizable.
+- **Brand-identity-in-chrome is universal, treatment is product-specific.** All 4 primary apps have distinct brand chrome — no two alike. System-default brand chrome is the explicit deviation.
+
+These supersede any prior synthesis claim that read selection-signaling or empty-state vocabulary as universal. The `evidence-capture-policy.md` reference codifies why source-read alone could not produce these observations.
