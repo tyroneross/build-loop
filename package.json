@@ -1,6 +1,10 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.11.1",
+  "version": "0.12.16",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
   "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate.",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -52,7 +56,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tyroneross/build-loop"
+    "url": "git+https://github.com/tyroneross/build-loop.git"
   },
   "bugs": {
     "url": "https://github.com/tyroneross/build-loop/issues"

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "build-loop"
-version = "0.10.0"
-description = "Build-loop — orchestrated 5-phase development loop. Chunk 1 ships the native Python architecture engine."
+version = "0.12.16"
+description = "Build-loop — orchestrated 5-phase development loop with Rally Point cross-session coordination and independent commit auditor."
 requires-python = ">=3.11"
 readme = "README.md"
 license = "Apache-2.0"
