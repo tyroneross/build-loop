@@ -154,9 +154,20 @@ def _launch_watcher(
     Returns the PID file path on success, None on failure.
     Uses ``watcher_launcher`` callable when provided (for test injection).
     Default uses ``subprocess`` with nohup + detach so the hook returns fast.
+
+    Watcher PID files live under ``<channel_dir>/watchers/`` — the
+    channel dir is resolved via the discovery bridge so canonical/legacy
+    policy is honoured (no direct ``channel_paths.apps_root()`` write).
     """
     watch_script = _SCRIPTS_DIR / "coordination_watch.py"
-    pid_dir = Path(channel_paths.apps_root()) / slug / "watchers"
+    try:
+        envelope = _bridge_resolve(Path(workdir))
+        pid_dir = Path(envelope.channel_dir) / "watchers"
+    except Exception:
+        # Bridge resolution is best-effort; fall back to the legacy
+        # apps_root() path so a single resolver failure doesn't suppress
+        # the watcher.
+        pid_dir = Path(channel_paths.apps_root()) / slug / "watchers"
     pid_file = pid_dir / f"{session_id}.json"
 
     if watcher_launcher is not None:

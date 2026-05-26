@@ -132,9 +132,14 @@ MANIFEST_GLOBS = (
 
 def _main():
     try:
-        import channel_paths as ap
         import changes as ch
         import revision as rev
+        # Discovery bridge: routes the hook's writes to the canonical
+        # channel when policy=canonical (post-cutover state). The bridge
+        # falls back to legacy on its own when discover() is unreachable,
+        # so this import has no failure path that should suppress the
+        # hook itself.
+        from discovery_bridge import resolve as _bridge_resolve
     except Exception:
         return
     try:
@@ -142,8 +147,13 @@ def _main():
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
-        slug = ap.app_slug(cwd=repo)
-        chan = ap.ensure_channel_dir(slug)
+        # Route via bridge so canonical policy is honored. Falls back to
+        # legacy when the bridge resolves via build-loop-internal.
+        envelope = _bridge_resolve(repo)
+        slug = envelope.app_slug
+        from pathlib import Path as _Path
+        chan = _Path(envelope.channel_dir)
+        chan.mkdir(parents=True, exist_ok=True)
         sha = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=repo,
             capture_output=True, text=True, check=True,
