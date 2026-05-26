@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Resolve a current working directory to a project tag.
 
-Reads ``<agent_memory_root>/.config/projects.yaml`` and returns the
+Reads ``<memory_store_root>/config/projects.yaml`` when present, falling
+back to ``<memory_store_root>/.config/projects.yaml`` for migration, and returns the
 project tag whose ``path:`` is the longest prefix match against the
 given ``cwd``. Falls back to the YAML's ``default:`` key, which itself
 defaults to ``_unscoped`` if absent.
@@ -26,13 +27,16 @@ HERE = Path(__file__).resolve().parent
 import sys
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-from _paths import agent_memory_root, derive_slug_from_cwd  # type: ignore  # noqa: E402
+from _paths import derive_slug_from_cwd, memory_store_root  # type: ignore  # noqa: E402
 
 DEFAULT_PROJECT_TAG = "_unscoped"
 
 
 def _projects_yaml_path() -> Path:
-    return agent_memory_root() / ".config" / "projects.yaml"
+    canonical = memory_store_root() / "config" / "projects.yaml"
+    if canonical.exists():
+        return canonical
+    return memory_store_root() / ".config" / "projects.yaml"
 
 
 def load_projects_yaml(path: Path | None = None) -> dict[str, Any]:
@@ -114,8 +118,11 @@ def _parse_projects_yaml(text: str) -> dict[str, Any]:
 
 
 def _normalize(p: str | Path) -> str:
-    """Expand ``~`` and resolve to absolute path string. Trailing slash dropped."""
-    return os.path.normpath(os.path.expanduser(str(p)))
+    """Expand ``~`` and resolve symlinks to an absolute path string."""
+    try:
+        return os.path.normpath(str(Path(os.path.expanduser(str(p))).resolve()))
+    except (OSError, RuntimeError):
+        return os.path.normpath(os.path.expanduser(str(p)))
 
 
 def resolve_project(cwd: Path | str) -> str:

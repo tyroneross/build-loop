@@ -27,33 +27,59 @@ class PathsResolverTests(unittest.TestCase):
     def test_default_root_uses_default_constant(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AGENT_MEMORY_ROOT", None)
-            root = _paths.agent_memory_root()
+            os.environ.pop("BUILD_LOOP_MEMORY_ROOT", None)
+            os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+            root = _paths.memory_store_root()
             self.assertEqual(
                 root,
-                Path(os.path.expanduser(_paths.DEFAULT_AGENT_MEMORY_ROOT)),
+                Path(os.path.expanduser(_paths.DEFAULT_MEMORY_STORE_ROOT)),
             )
 
     def test_root_env_override(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": "/tmp/custom-root"}, clear=False):
+        with mock.patch.dict(os.environ, {"BUILD_LOOP_MEMORY_STORE_ROOT": "/tmp/custom-root"}, clear=False):
+            self.assertEqual(_paths.memory_store_root(), Path("/tmp/custom-root"))
+
+    def test_agent_memory_root_is_compat_alias(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+            "BUILD_LOOP_MEMORY_ROOT": "",
+            "AGENT_MEMORY_ROOT": "/tmp/custom-root",
+        }, clear=False):
             self.assertEqual(_paths.agent_memory_root(), Path("/tmp/custom-root"))
 
-    def test_decisions_root_under_agent_memory_root(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": "/tmp/x"}, clear=False):
-            self.assertEqual(_paths.decisions_root(), Path("/tmp/x/decisions"))
-
-    def test_decisions_dir_for_project_includes_project(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": "/tmp/x"}, clear=False):
+    def test_project_decisions_dir_includes_project(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+            "BUILD_LOOP_MEMORY_ROOT": "",
+            "AGENT_MEMORY_ROOT": "/tmp/x",
+        }, clear=False):
             self.assertEqual(
-                _paths.decisions_dir_for_project("build-loop"),
-                Path("/tmp/x/decisions/build-loop"),
+                _paths.project_decisions_dir("build-loop"),
+                Path("/tmp/x/projects/build-loop/decisions"),
             )
 
-    def test_decisions_dir_empty_project_falls_back_to_unscoped(self) -> None:
-        with mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": "/tmp/x"}, clear=False):
+    def test_project_decisions_dir_empty_project_falls_back_to_unscoped(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+            "BUILD_LOOP_MEMORY_ROOT": "",
+            "AGENT_MEMORY_ROOT": "/tmp/x",
+        }, clear=False):
             self.assertEqual(
-                _paths.decisions_dir_for_project(""),
-                Path("/tmp/x/decisions/_unscoped"),
+                _paths.project_decisions_dir(""),
+                Path("/tmp/x/projects/_unscoped/decisions"),
             )
+
+    def test_top_level_lanes_and_indexes(self) -> None:
+        with mock.patch.dict(os.environ, {
+            "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+            "BUILD_LOOP_MEMORY_ROOT": "",
+            "AGENT_MEMORY_ROOT": "/tmp/x",
+        }, clear=False):
+            self.assertEqual(_paths.top_level_lessons_dir(), Path("/tmp/x/lessons"))
+            self.assertEqual(_paths.top_level_debugging_dir(), Path("/tmp/x/debugging"))
+            self.assertEqual(_paths.top_level_design_dir(), Path("/tmp/x/design"))
+            self.assertEqual(_paths.top_level_product_dir(), Path("/tmp/x/product"))
+            self.assertEqual(_paths.memory_indexes_dir(), Path("/tmp/x/indexes"))
 
     def test_legacy_decisions_dir(self) -> None:
         self.assertEqual(
@@ -153,7 +179,11 @@ class ResolveProjectTests(unittest.TestCase):
         )
         self._env_patch = mock.patch.dict(
             os.environ,
-            {"AGENT_MEMORY_ROOT": str(self.root)},
+            {
+                "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+                "BUILD_LOOP_MEMORY_ROOT": "",
+                "AGENT_MEMORY_ROOT": str(self.root),
+            },
             clear=False,
         )
         self._env_patch.start()
@@ -196,7 +226,11 @@ class ResolveProjectTests(unittest.TestCase):
 class ResolveProjectMissingYamlTests(unittest.TestCase):
     def test_missing_yaml_returns_unscoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": tmp}, clear=False):
+            with mock.patch.dict(os.environ, {
+                "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+                "BUILD_LOOP_MEMORY_ROOT": "",
+                "AGENT_MEMORY_ROOT": tmp,
+            }, clear=False):
                 self.assertEqual(
                     project_resolver.resolve_project("/anywhere"),
                     "_unscoped",

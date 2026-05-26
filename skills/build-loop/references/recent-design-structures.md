@@ -53,9 +53,9 @@ Reject when:
 - The user needs direct table/list management more than conversation.
 
 Recent refs:
-- `UI Guidance/mockups/decision-doctor--v2-01-sunrise-hero.html`
-- `UI Guidance/mockups/decision-doctor--v2-02-electric-mint.html`
-- `UI Guidance/mockups/decision-doctor--v2-05-bloom-organic.html`
+- `UI Guidance/mockups/evaluation-workbench--v2-01-sunrise-hero.html`
+- `UI Guidance/mockups/evaluation-workbench--v2-02-electric-mint.html`
+- `UI Guidance/mockups/evaluation-workbench--v2-05-bloom-organic.html`
 
 ### 2. Bento Operating Dashboard
 
@@ -78,7 +78,7 @@ Reject when:
 - The product has no real standing data.
 
 Recent refs:
-- `UI Guidance/mockups/decision-doctor--v2-04-bento-dashboard.html` (rated yay)
+- `UI Guidance/mockups/evaluation-workbench--v2-04-bento-dashboard.html` (rated yay)
 
 ### 3. Pipeline Wizard
 
@@ -100,7 +100,7 @@ Reject when:
 - The user needs fast repeated scanning instead of guidance.
 
 Recent refs:
-- `UI Guidance/mockups/decision-doctor--v2-03-pipeline-wizard.html`
+- `UI Guidance/mockups/evaluation-workbench--v2-03-pipeline-wizard.html`
 
 ### 4. Outcome Ledger List
 
@@ -121,7 +121,7 @@ Reject when:
 - Detail reading is more important than list scanning.
 
 Recent refs:
-- `UI Guidance/mockups/decision-doctor--v2-06-decisions-list-fun.html`
+- `UI Guidance/mockups/evaluation-workbench--v2-06-decisions-list-fun.html`
 
 ### 5. Pyramid Detail Page
 
@@ -143,7 +143,7 @@ Reject when:
 - There is no actual decision, outcome, or rationale to explain.
 
 Recent refs:
-- `UI Guidance/mockups/decision-doctor--v2-07-detail-fun.html`
+- `UI Guidance/mockups/evaluation-workbench--v2-07-detail-fun.html`
 
 ### 6. Glass Workspace
 

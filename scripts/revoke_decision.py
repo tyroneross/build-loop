@@ -15,9 +15,10 @@ Differs from `supersede_decision.py`:
   - revoke:    withdraws 0042 with NO replacement; old → _history/0042-revoked.md
 
 Effects:
-  - Move file from `.episodic/decisions/0042-...md` to `.episodic/decisions/_history/0042-revoked.md`
+  - Move file from `build-loop-memory/projects/<project>/decisions/0042-...md`
+    to `build-loop-memory/projects/<project>/decisions/_history/0042-revoked.md`
   - Update frontmatter: `status: rejected`, `revoked: true`, `revoke_reason: "..."`
-  - Append `decision_revoked` event to `events.jsonl`
+  - Append `decision_revoked` event to the repo-local `.build-loop/events.jsonl`
   - Best-effort: UPDATE semantic_facts SET status = 'retracted' WHERE metadata->>'decision_id' = ...
 
 Exit codes: 0 success | 1 validation error | 2 filesystem error.
@@ -49,14 +50,25 @@ from write_decision import (  # type: ignore  # noqa: E402
     parse_frontmatter,
     regenerate_index,
 )
+from _paths import project_decisions_dir  # type: ignore  # noqa: E402
+from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
 
-def find_decision_file(workdir: Path, decision_id: str) -> Path | None:
-    decisions_dir = workdir / ".episodic" / "decisions"
+def find_decision_file(decisions_dir: Path, decision_id: str) -> Path | None:
     if not decisions_dir.exists():
         return None
     for f in decisions_dir.glob(f"{decision_id}-*.md"):
         if f.is_file():
+            return f
+    for f in decisions_dir.glob("*.md"):
+        if f.name == "INDEX.md" or not f.is_file():
+            continue
+        try:
+            fm = parse_frontmatter(f.read_text(encoding="utf-8")) or {}
+        except OSError:
+            continue
+        raw_id = str(fm.get("id") or fm.get("legacy_id") or "")
+        if raw_id == decision_id:
             return f
     return None
 
@@ -66,6 +78,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--workdir", default=".")
     p.add_argument("--id", required=True, help="4-digit decision ID to revoke")
     p.add_argument("--reason", required=True, help="Human-readable reason (recorded in frontmatter + event)")
+    p.add_argument(
+        "--project",
+        default=None,
+        help="Project tag. Default: resolve from --workdir via project_resolver.",
+    )
     p.add_argument("--db", dest="db", action="store_true", default=True)
     p.add_argument("--no-db", dest="db", action="store_false")
     p.add_argument(
@@ -95,12 +112,14 @@ def main(argv: list[str] | None = None) -> int:
         log(f"validation error: --id must be 4 digits, got {args.id!r}")
         return 1
 
-    decisions_dir = workdir / ".episodic" / "decisions"
+    project_tag = args.project or resolve_project(workdir)
+    decisions_dir = project_decisions_dir(project_tag)
     history_dir = decisions_dir / "_history"
-    events_path = workdir / ".episodic" / "events.jsonl"
+    events_path = workdir / ".build-loop" / "events.jsonl"
     history_dir.mkdir(parents=True, exist_ok=True)
+    events_path.parent.mkdir(parents=True, exist_ok=True)
 
-    target = find_decision_file(workdir, args.id)
+    target = find_decision_file(decisions_dir, args.id)
     if target is None:
         log(f"validation error: no decision matching id={args.id} in {decisions_dir}")
         return 1
@@ -110,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     writer_lock_target = decisions_dir / ".writer"
     try:
         with LockedFile(writer_lock_target):
-            return _do_revoke(args, workdir, target, history_dir, events_path)
+            return _do_revoke(args, project_tag, decisions_dir, target, history_dir, events_path)
     except TimeoutError as e:
         log(f"filesystem error: {e}")
         return 2
@@ -118,7 +137,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _do_revoke(
     args: argparse.Namespace,
-    workdir: Path,
+    project_tag: str,
+    decisions_dir: Path,
     target: Path,
     history_dir: Path,
     events_path: Path,
@@ -150,7 +170,6 @@ def _do_revoke(
 
     # Regenerate INDEX (the revoked decision drops out of the trusted view)
     try:
-        decisions_dir = workdir / ".episodic" / "decisions"
         regenerate_index(decisions_dir)
     except Exception as e:  # noqa: BLE001
         log(f"warning: failed to regenerate INDEX (continuing): {e}")
@@ -165,8 +184,9 @@ def _do_revoke(
                 "decision_id": args.id,
                 "primary_tag": fm.get("primary_tag"),
                 "entity": fm.get("entity"),
+                "project": project_tag,
                 "reason": args.reason,
-                "dedup_key": f"decision:{args.id}:revoked",
+                "dedup_key": f"decision:{project_tag}:{args.id}:revoked",
             },
         )
     except Exception as e:  # noqa: BLE001
@@ -180,9 +200,9 @@ def _do_revoke(
             sql = (
                 f"UPDATE {args.schema}.semantic_facts "
                 "SET status = 'retracted', valid_to = now() "
-                "WHERE metadata->>'decision_id' = %s;"
+                "WHERE metadata->>'project' = %s AND metadata->>'decision_id' = %s;"
             )
-            execute(sql, (args.id,))
+            execute(sql, (project_tag, args.id))
             log(f"db: marked semantic_facts row(s) for decision {args.id} as retracted")
         except Exception as e:  # noqa: BLE001
             log(

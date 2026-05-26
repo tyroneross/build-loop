@@ -8,7 +8,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Principles
 
-- Self-sufficient: works without any specific tool installed. Build-loop owns its UI design route through `design-contract-specialist`, `skills/build-loop/references/recent-design-structures.md`, `ui-validator`, and `skills/build-loop/fallbacks.md`; external design tools are explicit-only accelerators, not automatic build routes. (As of 0.6.0 the debugger is bundled internally; see KNOWN-ISSUES "Plugin merge — 2026-05-02".)
+- Self-sufficient: works without any specific tool installed. Build-loop owns its UI design route through `build-loop:ui-design`, `design-contract-specialist`, `skills/build-loop/references/recent-design-structures.md`, `skills/ui-design/references/ui-guidance-sources.md`, `ui-validator`, and `skills/build-loop/fallbacks.md`; external design tools are explicit-only accelerators, not automatic build routes. (As of 0.6.0 the debugger is bundled internally; see KNOWN-ISSUES "Plugin merge — 2026-05-02".)
 - North star first: every build captures app/repo purpose, update intent, user value, and non-goals, then passes that intent to each subagent.
 - Beauty in the basics: core flows, real data, clear hierarchy, working controls, useful states, and accurate information matter more than extra surface area.
 - Modular by default, not by dogma: prefer high cohesion, loose coupling, stable interfaces, scalable boundaries, and MECE file/agent ownership unless a documented exception better serves the use case.
@@ -118,3 +118,23 @@ For parity with non-Claude tools (which lack SessionStart hooks), the host-neutr
 - Plugin manifest: `.claude-plugin/plugin.json`
 - Test changes by installing locally: add repo path to `~/.claude/settings.json` under `projects.plugins`
 - Runtime data goes in `.build-loop/` in consumer projects, not in the plugin repo
+
+
+## Debugging Memory
+
+This project uses @tyroneross/claude-code-debugger for debugging memory.
+
+**Automatic behavior:**
+- Past debugging sessions are stored and indexed
+- Similar incidents surface automatically when investigating bugs
+- Patterns are extracted from repeated issues
+- Session stop hook mines audit trail for missed incidents
+
+**Commands:**
+- `/debugger "symptom"` - Search past bugs for similar issues
+- `/debugger` - Show recent bugs, pick one to debug
+- `/debugger-detail <ID>` - Drill into a specific incident or pattern
+- `/debugger-status` - Show memory statistics
+- `/debugger-scan` - Scan recent sessions for debugging work
+
+The system learns from your debugging sessions automatically.

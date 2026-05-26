@@ -228,7 +228,7 @@ projects/
 │   ├── MEMORY.md             # project-specific index (optional)
 │   ├── constitution.md       # project-specific overrides (optional)
 │   └── feedback_*.md / pattern_*.md / reference_*.md
-├── decision-doctor-cc/
+├── example-project/
 │   └── workers/              # sub-component memory (deliberate hierarchy)
 └── _archive/
     └── <retired-project>/    # historical memory, still queryable

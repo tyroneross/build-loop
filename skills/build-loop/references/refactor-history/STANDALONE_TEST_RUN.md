@@ -7,7 +7,7 @@
 
 ## 1. `fallbacks.md#web-ui` against example-app
 
-Target: `/Users/tyroneross/Desktop/git-folder/example-app` — real Next.js app with `components/` and `app/` directories, no IBR installed at scan time. 5 of the 10 grep checks spot-checked.
+Target: `<example-app-repo>` — real Next.js app with `components/` and `app/` directories, no IBR installed at scan time. 5 of the 10 grep checks spot-checked.
 
 ### Check 1: Gestalt violations (borders on `.map()` items)
 ```

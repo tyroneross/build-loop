@@ -60,8 +60,8 @@ def _run(envelope: dict, registry_dir: Path) -> tuple[int, str, str, dict]:
 
 @pytest.fixture
 def workdir(tmp_path: Path) -> Path:
-    """Provide a clean workdir with .episodic/architecture/ subtree."""
-    sub = tmp_path / ".episodic" / "architecture"
+    """Provide a clean registry directory for dry-run parser tests."""
+    sub = tmp_path / "architecture"
     sub.mkdir(parents=True)
     return sub
 
@@ -202,7 +202,7 @@ def test_invalid_json_returns_nonzero(workdir: Path) -> None:
 # Under the filter contract (decision 0092, 2026-05-08):
 #   - violations matching {confidence: inferred} AND {rule: orphan|hotspot}
 #     skip the per-violation MD and instead append to
-#     `<workdir>/.episodic/architecture/auto-violations.jsonl` plus aggregate
+#     `projects/<project>/architecture/auto-violations.jsonl` plus aggregate
 #     into a single rollup MD per scan.
 #   - all other violations (circular-dependency, layer-violation, etc., or
 #     any confirmed-confidence violation) write a full per-violation MD as
@@ -217,12 +217,11 @@ def project_root(tmp_path: Path) -> Path:
     """Project-root-shaped fixture for live-mode tests.
 
     Distinct from the existing `workdir` fixture (which points at the
-    inner `.episodic/architecture/` dir) — the live-mode rollup path
+    inner registry dir) — the live-mode rollup path
     requires the script's ``--workdir`` to be a true project root so
-    `<workdir>/.episodic/architecture/auto-violations.jsonl` lands
+    `projects/<project>/architecture/auto-violations.jsonl` lands
     cleanly. Existing tests stay on `workdir` and dry-run, untouched.
     """
-    (tmp_path / ".episodic" / "architecture").mkdir(parents=True)
     return tmp_path
 
 
@@ -230,7 +229,6 @@ def _run_live(
     envelope: dict, project_root: Path, agent_memory_root: Path
 ) -> tuple[int, str, str, dict]:
     """Run the script in non-dry-run mode against an isolated agent_memory root."""
-    registry_path = project_root / ".episodic" / "architecture" / "known_violations.json"
     env = {
         **__import__("os").environ,
         "AGENT_MEMORY_ROOT": str(agent_memory_root),
@@ -243,8 +241,6 @@ def _run_live(
         [
             sys.executable,
             str(SCRIPT),
-            "--registry",
-            str(registry_path),
             "--workdir",
             str(project_root),
         ],
@@ -319,7 +315,11 @@ def test_filter_skips_inferred_orphan_writes_jsonl_and_rollup(
 
     # JSONL has 3 lines: 2 orphan/warn + 1 hotspot/warn (the filter-matched
     # violations).
-    jsonl = project_root / ".episodic" / "architecture" / "auto-violations.jsonl"
+    architecture_dir = agent_memory_root / "projects" / "build-loop-tests" / "architecture"
+    registry = architecture_dir / "known_violations.json"
+    assert registry.exists(), f"registry should be written; stderr={stderr}"
+
+    jsonl = architecture_dir / "auto-violations.jsonl"
     assert jsonl.exists(), f"jsonl should be written; stderr={stderr}"
     jsonl_lines = [
         json.loads(line)
@@ -337,7 +337,7 @@ def test_filter_skips_inferred_orphan_writes_jsonl_and_rollup(
         assert line["project"] == "build-loop-tests"
 
     # Rollup MD exists with the expected name and a count of 3.
-    rollup_dir = agent_memory_root / "decisions" / "build-loop-tests"
+    rollup_dir = agent_memory_root / "projects" / "build-loop-tests" / "decisions"
     rollups = [
         p
         for p in rollup_dir.iterdir()
@@ -391,10 +391,16 @@ def test_zero_inferred_orphan_no_jsonl_no_rollup(
     assert rc == 0, stderr
     assert payload["new_count"] == 1
     # No jsonl path was created.
-    jsonl = project_root / ".episodic" / "architecture" / "auto-violations.jsonl"
+    jsonl = (
+        agent_memory_root
+        / "projects"
+        / "build-loop-tests"
+        / "architecture"
+        / "auto-violations.jsonl"
+    )
     assert not jsonl.exists(), "jsonl must not be created when filter doesn't fire"
     # No rollup directory or files for this run.
-    rollup_dir = agent_memory_root / "decisions" / "build-loop-tests"
+    rollup_dir = agent_memory_root / "projects" / "build-loop-tests" / "decisions"
     if rollup_dir.exists():
         rollups = [p for p in rollup_dir.iterdir() if "rollup" in p.name]
         assert rollups == [], f"unexpected rollup files: {[p.name for p in rollups]}"
@@ -411,9 +417,6 @@ def test_dry_run_skips_jsonl_and_rollup_even_when_filter_matches(
     even when the filter would fire."""
     agent_memory_root = tmp_path / "agent-memory"
     agent_memory_root.mkdir()
-    registry_path = (
-        project_root / ".episodic" / "architecture" / "known_violations.json"
-    )
     env = {
         **__import__("os").environ,
         "AGENT_MEMORY_ROOT": str(agent_memory_root),
@@ -440,8 +443,6 @@ def test_dry_run_skips_jsonl_and_rollup_even_when_filter_matches(
         [
             sys.executable,
             str(SCRIPT),
-            "--registry",
-            str(registry_path),
             "--workdir",
             str(project_root),
             "--dry-run",
@@ -457,8 +458,10 @@ def test_dry_run_skips_jsonl_and_rollup_even_when_filter_matches(
     # new_count still reflects what would be captured.
     assert payload.get("new_count") == 2
     # No side effects: no jsonl, no rollup, no rollup key in stdout.
-    jsonl = project_root / ".episodic" / "architecture" / "auto-violations.jsonl"
+    architecture_dir = agent_memory_root / "projects" / "build-loop-tests" / "architecture"
+    jsonl = architecture_dir / "auto-violations.jsonl"
     assert not jsonl.exists()
-    rollup_dir = agent_memory_root / "decisions" / "build-loop-tests"
+    assert not (architecture_dir / "known_violations.json").exists()
+    rollup_dir = agent_memory_root / "projects" / "build-loop-tests" / "decisions"
     assert not rollup_dir.exists() or not any(rollup_dir.iterdir())
     assert "rollup" not in payload

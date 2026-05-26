@@ -6,7 +6,7 @@ _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
 
 Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
 
-- **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/channel_paths.py`: the single concurrent-presence source of truth. One file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
+- **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/discovery_bridge.py`: the single concurrent-presence source of truth. One file per live session at `<resolved-channel>/sessions/<session-id>.json`; native `agent-rally-point` installs resolve under `~/.agent-rally-point/apps/<repo-id>/`, and the embedded build-loop fallback uses the same root with a local `<slug>`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
 - `scripts/memory_writer.py` — canonical writer for memory files (provenance frontmatter + atomic INDEX append in one operation)
 - `scripts/memory_index.py` — append-only discovery log at `~/.build-loop/memory/INDEX.jsonl`
 
@@ -18,15 +18,16 @@ This section defines the Rally Point presence integration plus the M5 trigger fa
 - **Script-first status checks — token conservation.** `scripts/coordination_status.py` and `scripts/coordination_watch.py` compress Rally Point, coordination verdicts, peer overlap, and dirty-file state into compact JSON so agents do not repeatedly reread the full coordination note.
 - **M5 — Memory index append + canonical writer.** Fires on every memory write to `~/.build-loop/memory/` (via `memory_writer.py write`) and every read between phases (via `memory_index.py tail --since`). Telemetry + cross-session discovery; never blocks.
 
-### Rally Point presence — slug resolution (D1, worktree-aware)
+### Rally Point presence — channel resolution (D1, worktree-aware)
 
-`scripts/rally_point/channel_paths.app_slug(cwd=<repo>)` resolves the channel slug from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Falls back to memory's `derive_slug_from_cwd` only outside a git repo. Use this resolver; never reimplement slug derivation.
+Use `scripts/rally_point/discovery_bridge.resolve(workdir=<repo>)` for the channel directory before every direct Rally Point write or read. It delegates to native `agent-rally-point` discovery when available, then falls back to `channel_paths.app_slug(cwd=<repo>)` + `channel_paths.app_channel_dir(...)`. The fallback slug comes from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Outside a git repo, fallback slug derivation delegates to memory's `derive_slug_from_cwd`. Use this resolver; never reimplement channel or slug derivation.
 
-### Rally Point presence — On Phase 1 Assess preamble (after `run_id` is generated, BEFORE any planning):
+### Rally Point presence — On Phase 1 Assess preamble (before any Rally Point write, BEFORE any planning):
 
-1. `presence.write_presence(channel_dir, session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=<from channel_paths.app_slug>, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget: never raises, never blocks.
-2. `peers = presence.read_active_presence(channel_dir, exclude_session=<this session_id>)` (this also reaps stale presence whose `heartbeat_ts` is older than the channel's `heartbeat_minutes`, default 15).
-3. **Peer handling** (awareness, never a hard block — D4):
+1. `build_loop_id.generate_or_resume(workdir=Path.cwd(), tool="<tool-id>", session_id=<this session_id>)`. This seeds `state.execution.build_loop_id` and `state.execution.run_label`, or preserves them and updates `current_session_id` on resume.
+2. `envelope = discovery_bridge.resolve(Path.cwd())`, then `presence.write_presence(Path(envelope.channel_dir), session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=envelope.app_slug, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget: never raises, never blocks. The writer attaches top-level `build_loop_id` and `build_loop_run_label` when state has them.
+3. `peers = presence.read_active_presence(channel_dir, exclude_session=<this session_id>)` (this also reaps stale presence whose `heartbeat_ts` is older than the channel's `heartbeat_minutes`, default 15).
+4. **Peer handling** (awareness, never a hard block — D4):
    - No peers — continue silently.
    - Peers, no file overlap — log one line per peer: tool, run_id, phase.
    - Peers WITH `files_in_flight` overlapping this session's planned files — surface a `soft-claim` **WARNING** naming the peer + overlapping files + the peer's phase, then proceed with awareness. Interactive hosts MAY additionally `AskUserQuestion` to coordinate; headless hosts log + proceed (per `feedback_no_permission_asks.md`). There is no SAFE-STOP sentinel and no non-zero exit — Rally Point is awareness, not a lock.

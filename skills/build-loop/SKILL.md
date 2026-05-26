@@ -210,6 +210,8 @@ Build-loop keeps the core method host-neutral, then adapts the execution mechani
 
 **Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation/parallel agent work or uses a command flag such as `--parallel`. Without that signal, keep execution local while preserving the MECE plan.
 
+**Native agent-rally capabilities**: build-loop vendors `skills/agent-rally-point/SKILL.md` and `skills/agent-rally-watcher/SKILL.md` as embedded mini-plugin skills. Use those skill entrypoints for Rally Point substrate or watcher work before reaching for the standalone repos. The grouped extraction contract is `scripts/rally_point/plugin_boundary.json`; validate it with `python3 scripts/agent_rally.py boundary --repo "$PWD" --check --json`.
+
 **Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active rally-point peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Use a stable tool id (`claude_code`, `codex`, `cursor`, etc.). Run a one-shot status check first:
 
 ```bash
@@ -222,7 +224,7 @@ If the status has `active_peers`, `coordination_file`, `inbox_unread_count > 0`,
 python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --interval 5 --jsonl --baseline-current
 ```
 
-Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME"`, read `~/.build-loop/apps/<slug>/inbox/<tool>.jsonl` plus `~/.build-loop/apps/<slug>/inbox/all.jsonl` or run `python3 scripts/rally_point/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --json`, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
+Keep that process attached in the host's tool/session mechanism and poll it before commits, before final responses, and after any 30s work interval. When it emits a revision or inbox change, immediately rerun `coordination_status.py --tool "$TOOL_NAME"`, then run `python3 scripts/rally_point/inbox.py read --workdir "$PWD" --tool "$TOOL_NAME" --json` to read the resolved-channel inbox for `<tool>` plus the common broadcast inbox, and post the required channel response. Do not ask the user to paste peer messages that are already present in the rally channel, the addressed inbox, or the common broadcast inbox.
 
 ## Intent Capability Pack
 
@@ -310,7 +312,7 @@ Key steps: recurring-pattern-detector (Haiku) → filter (confidence: high OR co
 
 ## Memory — Global and Project-Scoped
 
-One consolidated tree: `~/.build-loop/memory/` (global) plus `~/.build-loop/memory/projects/<slug>/` (project-local; slug from `derive_slug_from_cwd`). Every build reads both at Phase 1 Assess; writes go to exactly one based on scope. A legacy per-repo path is read-shimmed during the PR 1/2 transition window and removed in PR 3 — see `references/memory-systems.md` for the transitional read protocol.
+One consolidated long-term tree: `~/dev/git-folder/build-loop-memory/`. Project-specific durable memory lives under `projects/<slug>/...`; cross-project lessons/design/debugging/product memory lives in the matching top-level lane. Every build reads canonical indexes/folders at Phase 1 Assess; writes go to exactly one canonical lane based on scope. Legacy paths (`~/.build-loop/memory`, `.episodic/decisions`, and `build-loop-memory/decisions/<project>`) are migration/archive inputs only.
 
 Routing rule: "Would this apply to a different project?" Yes → global. No → project. Ambiguous → ask the user once.
 
@@ -370,7 +372,7 @@ Build-loop can author new skills mid-flow when a repeated task pattern emerges a
    - Keep (project) — leave in `.build-loop/skills/`.
    - Promote — move to `~/.claude/skills/`, confirm with user.
    - Drop — delete and note in `.build-loop/feedback.md` why it didn't earn its keep.
-5. Record the decision in `.build-loop/memory/` (project) or `~/.build-loop/memory/` (global) as a `pattern` entry.
+5. Record the decision through `scripts/memory_writer.py` into `build-loop-memory/lessons/` or `build-loop-memory/projects/<slug>/lessons/` as a `pattern` entry.
 
 **Never proliferate skills**. A skill that isn't used twice across builds should be dropped. Prefer extending an existing skill over creating a new one.
 
@@ -411,6 +413,8 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
 - `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.
+- `../ui-design/references/universal-design-principles.md` — Cross-medium communication and experience doctrine for app UI, writing, images, decks, docs, reports, spreadsheets, PDFs, and other information artifacts.
+- `../ui-design/references/ui-guidance-sources.md` — Source map for local UI guidance across build-loop, UI Guidance, IBR, Mockup Gallery, document/deck plugins, research, vault, project-local hidden folders, and build-loop-memory.
 - `references/refactor-history/` — Internal assessment of the 2026-04 refactor. `ASSESSMENT.md` explains rationale, `trace-comparison.md` shows before/after flow, `STANDALONE_TEST_RUN.md` validates the model, `scenarios/01..06` contain 6 test scenarios.
 - `eval-guide.md` — How to interpret build-loop scorecards.
 - `fallbacks.md` — Degraded-but-useful behavior when bridge plugins or rendered UI tooling are absent. IBR remains explicit-only through `build-loop:ibr-bridge`.
@@ -425,5 +429,6 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
+- `build-loop:ui-design` — build-loop-owned UI design direction skill loaded before non-trivial UI implementation; `design-contract-specialist` writes the resulting `.build-loop/app-contract/ui.md`.
 
 <!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->

@@ -4,9 +4,9 @@
 
 The system gap this closes: every fresh agent joining a Rally Point session
 mis-inferred the channel dir as repo-local ``.build-loop/rally_point/`` when
-it actually lives globally at ``~/.build-loop/apps/<slug>/``. The resolver
-(channel_paths.app_slug + app_channel_dir) was always correct; no CLI
-surfaced the answer. These tests pin the discovery contract.
+it actually lives in a shared Rally Point channel. Native discovery resolves
+under ``~/.agent-rally-point/apps/<repo-id>/``; the embedded fallback uses the
+same root with a local ``<slug>``. These tests pin the discovery contract.
 
 Coverage:
   - ``where`` (plain text) prints bare channel_dir on stdout (cd-able)
@@ -70,7 +70,9 @@ def test_where_plain_text_prints_bare_path(temp_repo: Path, tmp_path: Path):
     assert result.returncode == 0, result.stderr
     line = result.stdout.strip()
     # Must be cd-able — bare path, no prefix/JSON
-    assert line == str(apps_root / "discovery-fix")
+    assert Path(line).is_absolute()
+    assert Path(line).parent == apps_root
+    assert Path(line).name.startswith("discovery-fix")
     assert "\n" not in line  # single line
 
 
@@ -79,17 +81,22 @@ def test_where_json_envelope(temp_repo: Path, tmp_path: Path):
     result = _run_where(temp_repo, "--json", env_apps_root=apps_root)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert set(payload.keys()) == {"channel_dir", "app_slug"}
-    assert payload["app_slug"] == "discovery-fix"
-    assert payload["channel_dir"] == str(apps_root / "discovery-fix")
+    assert {"channel_dir", "app_slug", "resolved_via"} <= set(payload.keys())
+    assert payload["app_slug"].startswith("discovery-fix")
+    assert Path(payload["channel_dir"]).parent == apps_root
+    assert Path(payload["channel_dir"]).name.startswith("discovery-fix")
 
 
-def test_where_non_git_exits_non_zero(tmp_path: Path):
+def test_where_non_git_returns_unscoped_or_internal_error(tmp_path: Path):
     nongit = tmp_path / "loose"
     nongit.mkdir()
-    result = _run_where(nongit)
-    assert result.returncode != 0
-    assert "not under a git repository" in result.stderr
+    result = _run_where(nongit, "--json")
+    if result.returncode != 0:
+        assert "not under a git repository" in result.stderr
+        return
+    payload = json.loads(result.stdout)
+    assert payload["app_slug"].startswith("_unscoped")
+    assert Path(payload["channel_dir"]).is_absolute()
 
 
 def test_where_worktree_matches_main(temp_repo: Path, tmp_path: Path):

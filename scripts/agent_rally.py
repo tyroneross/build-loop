@@ -23,6 +23,7 @@ Subcommands:
     lead transfer    hand the lead to another session (lead only)
     lead relinquish  give up the lead (lead only)
     lead status      read the current lead
+    boundary     validate embedded agent-rally extraction boundaries
 
 Every subcommand accepts `--json` and prints a JSON envelope to stdout.
 Stdlib only. Fire-and-forget semantics inherited from rally_point.*.
@@ -47,6 +48,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+from rally_point import boundary as _boundary
 from rally_point import leadership, presence  # noqa: E402
 from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 from rally_point.post import post  # noqa: E402
@@ -241,6 +243,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     return result.returncode
 
 
+def cmd_boundary(args: argparse.Namespace) -> int:
+    """Validate the embedded agent-rally extraction boundary."""
+    repo = (
+        Path(args.repo).expanduser().resolve()
+        if args.repo else HERE.parent
+    )
+    result = _boundary.validate_manifest(repo)
+    _emit(result)
+    if args.check and not result["ok"]:
+        return 1
+    return 0
+
+
 def cmd_lead(args: argparse.Namespace) -> int:
     slug, channel_dir = _resolve_channel(args.workdir)
     op = args.lead_op
@@ -389,6 +404,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp_status.add_argument("--coordination-file", default=None)
     sp_status.add_argument("--json", action="store_true")
     sp_status.set_defaults(func=cmd_status)
+
+    sp_boundary = sub.add_parser(
+        "boundary",
+        help="Validate the embedded agent-rally plugin boundary.",
+    )
+    sp_boundary.add_argument(
+        "--workdir",
+        default=".",
+        help="Accepted for CLI parity; boundary validation uses --repo or plugin root.",
+    )
+    sp_boundary.add_argument("--repo", default=None)
+    sp_boundary.add_argument("--check", action="store_true")
+    sp_boundary.add_argument("--json", action="store_true")
+    sp_boundary.set_defaults(func=cmd_boundary)
 
     sp_lead = sub.add_parser("lead", help="Leadership lease operations.")
     lead_sub = sp_lead.add_subparsers(dest="lead_op", required=True)

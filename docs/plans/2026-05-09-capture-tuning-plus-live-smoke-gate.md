@@ -149,6 +149,6 @@ LoC target: detector ~180 LoC (mostly the pattern lists + walker). Tests + fixtu
 ## Test plan (final)
 
 After both commits:
-- `cd /Users/tyroneross/dev/git-folder/build-loop && python3 -m pytest tests/ -x -q` — full suite green.
+- `cd <build-loop-repo> && python3 -m pytest tests/ -x -q` — full suite green.
 - Spot-check the new tests run in isolation: `python3 -m pytest tests/test_capture_violation_contract.py tests/test_detect_runtime_server.py -v`.
 - `python3 scripts/check_cache_sync.py --host claude --source .` and same for `--host codex` — surface divergence.

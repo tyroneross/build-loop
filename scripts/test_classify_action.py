@@ -49,7 +49,7 @@ def configured_workdir(tmp_path: Path) -> Path:
         "git status",
         "git log --oneline",
         "git diff HEAD",
-        "vercel curl --deployment decision-doctor-q80n1w16s.vercel.app /",
+        "vercel curl --deployment preview-abc123.vercel.app /",
         "vercel logs deployment-id",
         "vercel inspect deployment-id",
         "gh pr view 123",

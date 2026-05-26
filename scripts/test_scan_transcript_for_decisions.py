@@ -149,12 +149,14 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
 
-        # Phase C: decision files land in <AGENT_MEMORY_ROOT>/decisions/<project>/.
-        decisions_root = Path(self._memroot.name) / "decisions"
+        # Memory-store cutover: decision files land in
+        # <AGENT_MEMORY_ROOT>/projects/<project>/decisions/.
+        decisions_root = self._decisions_dir("_unscoped")
         review_files = list(decisions_root.rglob("_review/*.md")) if decisions_root.exists() else []
         trusted_files = [
-            f for f in (decisions_root.rglob("[0-9][0-9][0-9][0-9]-*.md") if decisions_root.exists() else [])
+            f for f in (decisions_root.rglob("*.md") if decisions_root.exists() else [])
             if f.is_file() and "_review" not in f.parts and "_history" not in f.parts
+            and f.name != "INDEX.md"
         ]
 
         # The live LLM may classify the explicit decision as either:
@@ -198,7 +200,7 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
             timeout=15,
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
-        review_dir = self.workdir / ".episodic" / "decisions" / "_review"
+        review_dir = self._decisions_dir("_unscoped") / "_review"
         self.assertEqual(len(list(review_dir.glob("*.md"))), 0)
 
     def test_ollama_unreachable_no_op(self) -> None:
@@ -225,7 +227,7 @@ class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
             timeout=20,
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
-        review_dir = self.workdir / ".episodic" / "decisions" / "_review"
+        review_dir = self._decisions_dir("_unscoped") / "_review"
         self.assertEqual(len(list(review_dir.glob("*.md"))), 0)
 
     def test_empty_transcript(self) -> None:
@@ -340,14 +342,15 @@ class HardeningTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
 
     def test_no_capture_flag_skips_immediately(self) -> None:
-        """`.episodic/.no-capture` causes immediate clean exit before any work."""
-        (self.workdir / ".episodic" / ".no-capture").touch()
+        """`.build-loop/.no-capture` causes immediate clean exit before any work."""
+        (self.workdir / ".build-loop").mkdir(parents=True, exist_ok=True)
+        (self.workdir / ".build-loop" / ".no-capture").touch()
         cp = self._run(["--mock-llm-output", str(self.mock_path)])
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
         contents = self.log_file.read_text() if self.log_file.exists() else ""
         self.assertIn("no-capture", contents.lower(), msg=f"expected no-capture log: {contents!r}")
         # No artifacts written.
-        review_dir = self.workdir / ".episodic" / "decisions" / "_review"
+        review_dir = self._decisions_dir("_unscoped") / "_review"
         self.assertEqual(len(list(review_dir.glob("*.md"))), 0)
 
     def test_budget_exceeded_exits_clean(self) -> None:
@@ -367,7 +370,8 @@ class HardeningTests(MemIsolationMixin, unittest.TestCase):
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         self.log_file.write_bytes(oversized)
         # Use --no-capture path so we don't depend on ollama; it still calls log()
-        (self.workdir / ".episodic" / ".no-capture").touch()
+        (self.workdir / ".build-loop").mkdir(parents=True, exist_ok=True)
+        (self.workdir / ".build-loop" / ".no-capture").touch()
         cp = self._run([])
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
         size_after = self.log_file.stat().st_size

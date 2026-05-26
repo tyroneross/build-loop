@@ -10,9 +10,11 @@ Mirrors the atomicity contract of `write_run_entry.py`:
 
 The "memory triad" write-once pattern (design §9.A) — every successful
 invocation produces THREE artifacts atomically as a unit:
-  1. `.episodic/decisions/NNNN-YYYY-MM-DD-slug.md`     (canonical MADR)
-  2. updated `.episodic/decisions/INDEX.md`             (browseable summary)
-  3. one line appended to `.episodic/events.jsonl`     (timeline event)
+  1. `build-loop-memory/projects/<project>/decisions/NNNN-YYYY-MM-DD-slug.md`
+     (canonical MADR)
+  2. updated `build-loop-memory/projects/<project>/decisions/INDEX.md`
+     (browseable summary)
+  3. one line appended to `<repo>/.build-loop/events.jsonl` (timeline event)
 
 Topic-identity supersession (design §10):
   Same `primary_tag + entity` triggers an overwrite check:
@@ -60,8 +62,8 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from _paths import (  # type: ignore  # noqa: E402
     cutover_lock_active,
-    decisions_dir_for_project,
     default_schema as _default_schema,
+    project_decisions_dir,
 )
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
@@ -435,7 +437,12 @@ def slugify(s: str) -> str:
 def list_decisions(decisions_dir: Path) -> list[Path]:
     if not decisions_dir.exists():
         return []
-    return sorted(decisions_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    out: list[Path] = []
+    for path in sorted(decisions_dir.glob("*.md")):
+        if path.name.upper().startswith("INDEX") or path.name.startswith("_"):
+            continue
+        out.append(path)
+    return out
 
 
 def next_id(decisions_dir: Path, history_dir: Path) -> str:
@@ -446,8 +453,25 @@ def next_id(decisions_dir: Path, history_dir: Path) -> str:
                 m = re.match(r"^(\d{4})-", f.name)
                 if m:
                     used.add(int(m.group(1)))
+                    continue
+                if f.suffix != ".md":
+                    continue
+                try:
+                    fm = parse_frontmatter(f.read_text(encoding="utf-8")) or {}
+                except OSError:
+                    continue
+                raw = str(fm.get("legacy_id") or fm.get("id") or "")
+                if re.match(r"^\d{4}$", raw):
+                    used.add(int(raw))
     nxt = (max(used) + 1) if used else 1
     return f"{nxt:04d}"
+
+
+def canonical_decision_id(project: str, slug: str, date: str, sequence: str) -> str:
+    """Return a build-loop-memory canonical decision id."""
+    project_slug = slugify(project or "_unscoped")
+    seq_int = int(sequence) if sequence.isdigit() else 1
+    return f"decision-project-{project_slug}-{slug}-{date.replace('-', '')}-{seq_int:03d}"
 
 
 def find_same_topic(decisions_dir: Path, primary_tag: str, entity: str) -> tuple[Path, dict] | None:
@@ -474,7 +498,7 @@ def regenerate_index(decisions_dir: Path, confidence_floor: str = "confirmed") -
         conf = fm.get("confidence", "assumed")
         if CONFIDENCE_ORDER.get(conf, 0) < floor:
             continue
-        rows.append((str(fm.get("id", "")), fm, f))
+        rows.append((str(fm.get("canonical_id") or fm.get("id", "")), fm, f))
     rows.sort(key=lambda r: r[0])
 
     lines = [
@@ -602,6 +626,7 @@ def db_dualwrite(
         obj_summary = fm.get("title") or ""
         metadata = {
             "decision_id": decision_id,
+            "canonical_id": fm.get("canonical_id"),
             "entity": fm.get("entity"),
             "tags": fm.get("tags"),
             "status": fm.get("status"),
@@ -778,7 +803,7 @@ def psql_run(sql: str, workdir: Path) -> None:  # pragma: no cover - shim
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Atomic decision writer for repo-local episodic memory.")
-    p.add_argument("--workdir", default=".", help="Project root containing .episodic/, .semantic/")
+    p.add_argument("--workdir", default=".", help="Project root used for project/taxonomy resolution")
     p.add_argument("--title", required=True)
     p.add_argument("--decision", required=True, help="One-sentence decision body")
     p.add_argument("--context", default="")
@@ -1138,14 +1163,15 @@ def main(argv: list[str] | None = None) -> int:
 
     workdir = Path(args.workdir).resolve()
 
-    # Phase C cutover (2026-05-05): decision files now live in the global
-    # build-loop-memory store under <agent_memory_root>/decisions/<project>/.
-    # `events.jsonl` stays local to the project — it's a per-repo activity
-    # log, not a decision artifact.
+    # Memory-store cutover (2026-05-26): decision files now live in the
+    # canonical build-loop-memory tree under projects/<project>/decisions/.
+    # `events.jsonl` stays in repo-local .build-loop/ as short-term run
+    # context, not durable memory.
     project_tag = args.project or resolve_project(workdir)
-    decisions_dir = decisions_dir_for_project(project_tag)
+    args.project = project_tag
+    decisions_dir = project_decisions_dir(project_tag)
     history_dir = decisions_dir / "_history"
-    events_path = workdir / ".episodic" / "events.jsonl"
+    events_path = workdir / ".build-loop" / "events.jsonl"
 
     decisions_dir.mkdir(parents=True, exist_ok=True)
     history_dir.mkdir(parents=True, exist_ok=True)
@@ -1239,8 +1265,6 @@ def _do_write(
     # 2) Allocate ID
     new_id = next_id(decisions_dir, history_dir)
     slug = slugify(args.title)
-    new_filename = f"{new_id}-{date}-{slug}.md"
-    new_path = decisions_dir / new_filename
 
     # 3) Build frontmatter
     # Apply v2 defaults (design §15). Validate before writing.
@@ -1280,14 +1304,22 @@ def _do_write(
         log(f"validation error: {e}")
         return 1
 
+    canonical_id = canonical_decision_id(v2["project"], slug, date, new_id)
+    new_filename = f"{canonical_id}.md"
+    new_path = decisions_dir / new_filename
+
     fm: dict[str, Any] = {
         "id": new_id,
+        "canonical_id": canonical_id,
+        "canonical": True,
         "slug": slug,
         "title": args.title,
         "type": "decision",
         "status": args.status,
         "confidence": args.confidence,
         "date": date,
+        "created": date,
+        "updated": date,
         "tags": tags,
         "primary_tag": args.primary_tag,
         "entity": args.entity,
@@ -1347,7 +1379,9 @@ def _do_write(
                     "ts": _iso_utc(),
                     "kind": "decision_superseded",
                     "decision_id": auto_supersede_id,
+                    "canonical_id": prior_fm.get("canonical_id"),
                     "superseded_by": new_id,
+                    "superseded_by_canonical_id": canonical_id,
                     "primary_tag": args.primary_tag,
                     "entity": args.entity,
                     "project": v2["project"],
@@ -1374,6 +1408,7 @@ def _do_write(
                 "ts": _iso_utc(),
                 "kind": accept_kind,
                 "decision_id": new_id,
+                "canonical_id": canonical_id,
                 "title": args.title,
                 "primary_tag": args.primary_tag,
                 "entity": args.entity,

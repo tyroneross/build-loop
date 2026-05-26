@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared test helpers for Phase C isolation.
 
-Phase C cutover (2026-05-05): write_decision.py routes file writes to
-``$AGENT_MEMORY_ROOT/decisions/<project>/`` rather than the legacy
+Memory-store cutover: write_decision.py routes file writes to
+``$AGENT_MEMORY_ROOT/projects/<project>/decisions/`` rather than the legacy
 ``<workdir>/.episodic/decisions/`` path.  Tests that invoke
 ``write_decision.py`` as a subprocess must:
 
@@ -34,7 +34,7 @@ as you call ``super().setUp()`` first.
 ``MemIsolationMixin`` provides:
   - ``self._memroot``            – ``tempfile.TemporaryDirectory`` object
   - ``self._decisions_dir(project)``  – ``Path`` under the tmp memroot
-  - ``self._events_path()``      – still ``workdir / .episodic / events.jsonl``
+  - ``self._events_path()``      – ``workdir / .build-loop / events.jsonl``
 
 Note: ``self.workdir`` and ``self.tmp`` must be set by the subclass *before*
 ``_events_path()`` is called.  Only ``setUp`` ordering guarantees this;
@@ -98,8 +98,12 @@ class MemIsolationMixin:
         super().setUp()  # type: ignore[misc]
         self._memroot = tempfile.TemporaryDirectory()
         self._prev_env: dict[str, str | None] = {
+            "BUILD_LOOP_MEMORY_STORE_ROOT": os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT"),
+            "BUILD_LOOP_MEMORY_ROOT": os.environ.get("BUILD_LOOP_MEMORY_ROOT"),
             "AGENT_MEMORY_ROOT": os.environ.get("AGENT_MEMORY_ROOT"),
         }
+        os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+        os.environ.pop("BUILD_LOOP_MEMORY_ROOT", None)
         os.environ["AGENT_MEMORY_ROOT"] = self._memroot.name
 
     def tearDown(self) -> None:  # type: ignore[override]
@@ -112,12 +116,12 @@ class MemIsolationMixin:
         super().tearDown()  # type: ignore[misc]
 
     def _decisions_dir(self, project: str = "_unscoped") -> Path:
-        """Return the Phase-C location for a project's decision files."""
-        return Path(self._memroot.name) / "decisions" / project
+        """Return the canonical location for a project's decision files."""
+        return Path(self._memroot.name) / "projects" / project / "decisions"
 
     def _events_path(self) -> Path:
         """Return the events.jsonl path (stays local to workdir)."""
-        return self.workdir / ".episodic" / "events.jsonl"  # type: ignore[attr-defined]
+        return self.workdir / ".build-loop" / "events.jsonl"  # type: ignore[attr-defined]
 
 
 def write_legacy_madr(

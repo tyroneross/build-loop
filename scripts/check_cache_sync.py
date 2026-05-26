@@ -39,7 +39,10 @@ from pathlib import Path
 REF_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_][A-Za-z0-9_./\-]*[A-Za-z0-9_])")
 SEARCH_EXTS = {".md", ".json", ".py", ".sh", ".mjs", ".js", ".ts"}
 IGNORE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".build-loop"}
-CODEX_DEFAULT_MARKETPLACE = "ross-labs-local"
+CODEX_DEFAULT_MARKETPLACE = os.environ.get(
+    "BUILD_LOOP_CODEX_DEFAULT_MARKETPLACE",
+    "local-marketplace",
+)
 COORDINATION_EXACT_REFS = (
     "commands/agent-rally-point.md",
     "references/rally-point-protocol.md",

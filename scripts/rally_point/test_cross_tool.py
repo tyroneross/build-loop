@@ -5,7 +5,7 @@
 WHAT THIS PROVES (and what it does NOT).
 
 Rally Point's promise is that a Claude session and a Codex session working
-the *same* app share one ``~/.build-loop/apps/<slug>/`` channel and see
+the *same* app share one resolved app channel and see
 each other's commits / dep-changes / presence / arch digest. The risk
 class this guards is the D1 worktree-slug split and any future
 import-path / install-location divergence between the two tools'
@@ -44,8 +44,8 @@ Codex *binary* leg (a real Codex session running the channel) is V4 in
 real Codex run — it is intentionally NOT asserted here.
 
 Python stdlib only (plus pytest as the runner). Every test redirects
-``$BUILD_LOOP_APPS_ROOT`` to a tmp dir so the real ``~/.build-loop`` is
-never touched.
+``$BUILD_LOOP_APPS_ROOT`` to a tmp dir so the real user channel is never
+touched.
 """
 from __future__ import annotations
 

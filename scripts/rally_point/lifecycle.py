@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Rally Point channel lifecycle hygiene.
 
-The channel under ``~/.build-loop/apps/<slug>/`` is append-only across
+The resolved app channel is append-only across
 ``changes.jsonl`` and accumulates one ``sessions/<session-id>.json`` per
 heartbeat-live process. Without explicit cleanup, the channel becomes a
 graveyard:

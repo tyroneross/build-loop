@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Memory-read / memory-write telemetry writer.
 
-Writes append-only rows to ``~/.build-loop/memory/TELEMETRY.jsonl`` recording
+Writes append-only rows to the canonical build-loop-memory telemetry file recording
 when a memory fact was read or written and what effect (if any) it had on
 the build-loop's downstream behavior. Distinct from
-``~/.build-loop/memory/INDEX.jsonl`` (M5 discovery index, owned by
+the lane `INDEX.jsonl` files (M5 discovery indexes, owned by
 ``scripts/memory_index.py``, schema ``action: write|update|delete``) which
 this module does NOT touch.
 
@@ -54,8 +54,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from _paths import memory_indexes_dir  # type: ignore  # noqa: E402
+
 LOCK_TIMEOUT_S = 5
-DEFAULT_TELEMETRY_PATH = Path.home() / ".build-loop" / "memory" / "TELEMETRY.jsonl"
+
+
+def default_telemetry_path() -> Path:
+    return memory_indexes_dir() / "TELEMETRY.jsonl"
+
+
+DEFAULT_TELEMETRY_PATH = default_telemetry_path()
 SCHEMA_VERSION = "1.0"
 
 KIND_READ = "memory-read"

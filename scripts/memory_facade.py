@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Unified read facade over build-loop's four memory stores.
+"""Unified read facade over build-loop's memory surfaces.
 
 Phase 6 Learn must see signals from all stores. Today's reality:
   1. .build-loop/state.json.runs[]                — local file
-  2. .episodic/decisions/*.md                     — local files
+  2. build-loop-memory indexes/project folders    — canonical files
   3. agent_memory.<schema>.semantic_facts         — Postgres
   4. claude-code-debugger MCP `search` tool       — MCP server
 
@@ -20,7 +20,7 @@ is per-store cap (the merged result returns up to `4 * limit`).
 
 Each backend degrades gracefully:
   - state.json runs   → returns [] silently if file missing.
-  - episodic dirs     → returns [] silently if dir missing or empty.
+  - canonical files   → returns [] silently if dir/index missing or empty.
   - Postgres          → returns [] AND records reason="db_unavailable" when
                         no DB URL is configured (BUILD_LOOP_DATABASE_URL /
                         DATABASE_URL / connection.env all unset), psycopg is
@@ -148,45 +148,45 @@ def read_runs(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any
 
 
 # ---------------------------------------------------------------------------
-# Backend 2: .episodic/decisions/*.md
+# Backend 2: canonical decision indexes + project decisions/*.md
 # ---------------------------------------------------------------------------
 
 DECISION_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 def _resolve_decision_dirs(workdir: Path) -> List[Path]:
-    """Decisions may live in two places after the v0.10.0 cutover:
+    """Return active decision directories for this project.
 
-      1. <workdir>/.episodic/decisions/                    (legacy per-repo)
-      2. ~/dev/git-folder/build-loop-memory/decisions/<project>/
-         (new repo-deletion-survivable global store; project resolves via
-         scripts/_paths.py + scripts/project_resolver.py)
-
-    Both shapes are read; results merge. The resolver is best-effort —
-    when imports fail we still fall back to the legacy path.
+    Normal reads use ``build-loop-memory/projects/<project>/decisions``.
+    Legacy ``.episodic`` and pre-cutover ``decisions/<project>`` paths are
+    migration/diagnostic inputs only; enable them with
+    ``BUILD_LOOP_MEMORY_MIGRATION_MODE=1``.
     """
     dirs: List[Path] = []
-    legacy = workdir / ".episodic" / "decisions"
-    if legacy.is_dir():
-        dirs.append(legacy)
     try:
-        from _paths import decisions_dir_for_project  # type: ignore  # noqa: PLC0415
+        from _paths import decisions_root, project_decisions_dir  # type: ignore  # noqa: PLC0415
         from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
         proj = resolve_project(workdir)
         if proj:
-            new_dir = decisions_dir_for_project(proj)
-            if new_dir.is_dir() and new_dir not in dirs:
-                dirs.append(new_dir)
+            canonical_dir = project_decisions_dir(proj)
+            if canonical_dir.is_dir():
+                dirs.append(canonical_dir)
+            if os.environ.get("BUILD_LOOP_MEMORY_MIGRATION_MODE") == "1":
+                legacy_global = decisions_root() / proj
+                if legacy_global.is_dir() and legacy_global not in dirs:
+                    dirs.append(legacy_global)
     except Exception:  # noqa: BLE001 — best-effort path resolution
         pass
+    if os.environ.get("BUILD_LOOP_MEMORY_MIGRATION_MODE") == "1":
+        legacy = workdir / ".episodic" / "decisions"
+        if legacy.is_dir() and legacy not in dirs:
+            dirs.append(legacy)
     return dirs
 
 
 # ---------------------------------------------------------------------------
 # Backend 2.5: lessons — free-form feedback/pattern/reference/decision_* files
-# in ~/.build-loop/memory/ (global) + ~/.build-loop/memory/projects/<slug>/
-# (project, NEW PR 1) + <workdir>/.build-loop/memory/ (legacy project path,
-# read-only during PR 1/2 transition).
+# in build-loop-memory/lessons/ plus projects/<slug>/lessons/.
 #
 # Distinct from `decisions` (Backend 2) — decisions are the project-tagged
 # sequence-numbered store written by write_decision.py. Lessons are the
@@ -197,46 +197,29 @@ def _resolve_decision_dirs(workdir: Path) -> List[Path]:
 
 
 def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
-    """Return ``[(dir, scope), ...]`` for the build-loop memory tree.
+    """Return ``[(dir, scope), ...]`` for canonical lesson memory.
 
-    Returns (in this exact order — order matters):
-      1. ``(global_dir, "global")`` — ``~/.build-loop/memory`` (always probed)
-      2. ``(project_dir, "project")`` — ``~/.build-loop/memory/projects/<slug>``
-         (only when the resolved project tag is not ``_unscoped``)
-
-    Callers dedup by filename with **later entries OVERRIDING earlier ones**,
-    so the precedence is:
-
-        project > global
-
-    Only existing directories are returned; missing ones are silently
-    dropped.
-
-    PR 3 (2026-05-13): the transitional ``legacy_project`` tier that read
-    from the per-repo location has been REMOVED. Any content still at the
-    legacy path is now invisible to recall — operators holding
-    pre-migration content should run ``scripts/migrate_project_memory.py
-    --apply`` or merge it manually. The ``.MOVED.md`` stubs left by the
-    migration script are inert post-PR-3 and can be deleted.
+    Order matters: top-level lessons first, project lessons second, so
+    project entries override global entries with the same filename.
     """
     out: List[Tuple[Path, str]] = []
     try:
         from _paths import (  # type: ignore  # noqa: PLC0415
-            build_loop_memory_root,
-            project_memory_dir_for_project,
+            project_lessons_dir,
+            top_level_lessons_dir,
         )
         from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
     except Exception:  # noqa: BLE001 — best-effort
         return out
 
-    global_dir = build_loop_memory_root()
+    global_dir = top_level_lessons_dir()
     if global_dir.is_dir():
         out.append((global_dir, "global"))
 
     proj = resolve_project(workdir)
     if proj and proj != "_unscoped":
         try:
-            project_dir = project_memory_dir_for_project(proj)
+            project_dir = project_lessons_dir(proj)
         except ValueError:
             project_dir = None  # type: ignore[assignment]
         if project_dir is not None and project_dir.is_dir():
@@ -325,13 +308,88 @@ def read_lessons(
     return out[:limit], reasons
 
 
+def _read_jsonl(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
+    rows: List[Dict[str, Any]] = []
+    reasons: List[str] = []
+    if not path.is_file():
+        return rows, reasons
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        return rows, [f"index_read_error: {path.name} {e}"]
+    for lineno, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as e:
+            reasons.append(f"index_parse_error: {path.name}:{lineno} {e}")
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows, reasons
+
+
+def _indexed_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Read generated build-loop-memory index rows first."""
+    try:
+        from _paths import memory_indexes_dir  # type: ignore  # noqa: PLC0415
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return [], []
+
+    rows, reasons = _read_jsonl(memory_indexes_dir() / "INDEX.jsonl")
+    if not rows:
+        return [], reasons
+    project = resolve_project(workdir)
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("type") or "") != "decision":
+            continue
+        row_project = str(row.get("project") or "_unscoped")
+        if project and project != "_unscoped" and row_project != project:
+            continue
+        searchable = " ".join(
+            str(row.get(k) or "")
+            for k in ("id", "canonical_id", "title", "status", "legacy_id", "legacy_path")
+        )
+        tags = row.get("tags") or []
+        if isinstance(tags, list):
+            searchable += " " + " ".join(str(t) for t in tags)
+        if not _q_match(searchable, query):
+            continue
+        out.append(
+            {
+                "_kind": "decisions",
+                "_source": "index",
+                "_recency_ts": _parse_iso(row.get("updated") or row.get("date") or row.get("created")),
+                "id": row.get("id") or row.get("canonical_id"),
+                "canonical_id": row.get("canonical_id") or row.get("id"),
+                "legacy_id": row.get("legacy_id"),
+                "title": row.get("title") or "",
+                "primary_tag": "",
+                "project": row_project,
+                "path": row.get("canonical_path") or "",
+                "summary": row.get("title") or "",
+            }
+        )
+    out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
+    return out[:limit], reasons
+
+
 def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
     reasons: List[str] = []
+    indexed, index_reasons = _indexed_decisions(workdir, query, limit)
+    reasons.extend(index_reasons)
     dec_dirs = _resolve_decision_dirs(workdir)
     if not dec_dirs:
-        return [], reasons
+        return indexed, reasons
     out: List[Dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    seen_ids: set[str] = {
+        str(item.get("canonical_id") or item.get("id"))
+        for item in indexed
+        if item.get("canonical_id") or item.get("id")
+    }
     for dec_dir in dec_dirs:
         for p in sorted(dec_dir.glob("*.md")):
             stem = p.stem
@@ -349,6 +407,8 @@ def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str
             title = ""
             ts_raw: Optional[str] = None
             primary_tag = ""
+            canonical_id = stem
+            legacy_id = None
             if m:
                 for line in m.group(1).splitlines():
                     if line.startswith("title:"):
@@ -357,6 +417,10 @@ def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str
                         ts_raw = line.split(":", 1)[1].strip().strip('"').strip("'")
                     elif line.startswith("primary_tag:"):
                         primary_tag = line.split(":", 1)[1].strip().strip('"').strip("'")
+                    elif line.startswith("canonical_id:"):
+                        canonical_id = line.split(":", 1)[1].strip().strip('"').strip("'")
+                    elif line.startswith("id:"):
+                        legacy_id = line.split(":", 1)[1].strip().strip('"').strip("'")
             if not _q_match(text + " " + title, query):
                 continue
             body = text[m.end():] if m else text
@@ -372,16 +436,21 @@ def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str
                 rel_path = str(p)
             out.append({
                 "_kind": "decisions",
+                "_source": "file",
                 "_recency_ts": _parse_iso(ts_raw),
-                "id": stem,
+                "id": canonical_id or stem,
+                "canonical_id": canonical_id or stem,
+                "legacy_id": legacy_id,
                 "title": title,
                 "primary_tag": primary_tag,
                 "path": rel_path,
                 "summary": summary,
             })
-            seen_ids.add(stem)
+            seen_ids.add(canonical_id or stem)
     out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
-    return out[:limit], reasons
+    merged = indexed + out
+    merged.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
+    return merged[:limit], reasons
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +666,10 @@ def recall(
     # memory-effect row once the consumer acts on the result.
     correlation_id: Optional[str] = None
     try:
-        from scripts import memory_telemetry as _mt  # local import keeps module optional
+        try:
+            from scripts import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
+        except ImportError:
+            import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
         seen_ids = [r.get("id") or r.get("slug") or r.get("path") or "" for r in merged]
         correlation_id = _mt.emit_read(
             phase="unknown",  # facade has no phase context; callers may emit follow-up rows

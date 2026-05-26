@@ -73,6 +73,11 @@ EXPECTED_TRIGGERS: list[tuple[str, str]] = [
     ("plan-verify", "plan"),
     ("plan-verify", "evidence"),
 
+    # ui-design — build-loop-owned UI direction selection
+    ("ui-design", "ui design"),
+    ("ui-design", "visual style"),
+    ("ui-design", "design direction"),
+
     # research — pre-decision research
     ("research", "research"),
 
@@ -96,6 +101,7 @@ SKILLS_REQUIRING_USER_TRIGGER_LANGUAGE = {
     "research",
     "optimize",
     "plan-verify",
+    "ui-design",
 }
 
 MIN_DESCRIPTION_CHARS = 40  # short descriptions don't carry enough trigger surface

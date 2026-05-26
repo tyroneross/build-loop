@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""One-shot migrate `.build-loop/feedback.md` → `.episodic/decisions/`.
+"""One-shot migrate `.build-loop/feedback.md` → canonical decision memory.
 
 Each line of feedback.md follows the date-stamped pattern:
   YYYY-MM-DD | <title> | <body...>
@@ -117,9 +117,10 @@ def main(argv: list[str] | None = None) -> int:
     import sys as _sys
     if str(HERE_LOCAL) not in _sys.path:
         _sys.path.insert(0, str(HERE_LOCAL))
-    from _paths import legacy_decisions_dir  # noqa: PLC0415
-    decisions_dir = legacy_decisions_dir(workdir)
-    decisions_dir.mkdir(parents=True, exist_ok=True)
+    from _paths import project_decisions_dir  # noqa: PLC0415
+    from project_resolver import resolve_project  # noqa: PLC0415
+    project = resolve_project(workdir)
+    decisions_dir = project_decisions_dir(project)
 
     entries = parse_feedback_lines(fb.read_text(encoding="utf-8"))
     if not entries:
@@ -147,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.executable,
             str(write_decision_path),
             "--workdir", str(workdir),
+            "--project", project,
             "--title", title,
             "--decision", body or title,  # body becomes the "decision" body
             "--context", "Migrated from .build-loop/feedback.md (post-hoc lesson, not a forward-looking choice).",

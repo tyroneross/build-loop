@@ -40,14 +40,15 @@
 8a. **UI input/output inventory** (if `uiTarget != null`): load `skills/build-loop/references/ui-io-contract.md` and identify every affected user input and system output before component choices are made. Classify each by structural type, content format, persistence intent, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and traceability. Mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical; the full contract is finalized in Phase 2.
 9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See `skills/build-loop/references/memory.md`.
 
-9a. **Multi-session presence (Rally Point)** (always; runs at the Phase 1 preamble after `run_id` is generated):
-   1. Resolve the channel: `slug = scripts/rally_point/channel_paths.app_slug(cwd="$PWD")` (D1: worktree/clone-independent — main checkout and every worktree share one channel). Do NOT reimplement slug derivation.
-   2. Write presence: `scripts/rally_point/presence.write_presence(channel, session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=slug, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget.
-   3. Read active peers: `peers = scripts/rally_point/presence.read_active_presence(channel, exclude_session=...)` (also reaps stale presence past the heartbeat window — no daemon).
-   4. Route per `agents/build-orchestrator.md` §Multi-session concurrency — **awareness only, never a hard block (D4)**:
+9a. **Run identity + multi-session presence (Rally Point)** (always; runs at the Phase 1 preamble before any Rally Point write):
+   1. Generate or resume durable run identity: `execution = scripts/rally_point/build_loop_id.generate_or_resume(workdir="$PWD", tool="<tool-id>", session_id="<session-id>")`. This writes `state.execution.build_loop_id` and `state.execution.run_label` when missing, preserves them on resume, and updates only `current_session_id`.
+   2. Resolve the channel: `slug = scripts/rally_point/channel_paths.app_slug(cwd="$PWD")` (D1: worktree/clone-independent — main checkout and every worktree share one channel). Do NOT reimplement slug derivation.
+   3. Write presence: `scripts/rally_point/presence.write_presence(channel, session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=slug, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget. The writer attaches top-level `build_loop_id` and `build_loop_run_label` from `state.execution`.
+   4. Read active peers: `peers = scripts/rally_point/presence.read_active_presence(channel, exclude_session=...)` (also reaps stale presence past the heartbeat window — no daemon).
+   5. Route per `agents/build-orchestrator.md` §Multi-session concurrency — **awareness only, never a hard block (D4)**:
       - No peers / no `files_in_flight` overlap → log one line per peer (tool, run_id, phase); continue.
       - Overlap with a peer's `files_in_flight` → surface a `soft-claim` WARNING (peer, files, phase); continue with awareness. Interactive MAY additionally `AskUserQuestion` to coordinate; headless logs + proceeds. No SAFE-STOP sentinel, no non-zero exit.
-   5. Initialize the memory-index cursor: capture the current top-of-log timestamp from `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --limit 1 --json` (used by `--since` in subsequent phases to surface new peer learnings).
+   6. Initialize the memory-index cursor: capture the current top-of-log timestamp from `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --limit 1 --json` (used by `--since` in subsequent phases to surface new peer learnings).
 
    **Supersedes** the legacy `ps aux | grep -c "[c]laude$"` advisory below — Rally Point presence is the canonical signal. Keep the legacy line as a fallback only when Rally Point is unavailable (older plugin cache without `scripts/rally_point/`).
 

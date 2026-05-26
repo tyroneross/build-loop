@@ -8,7 +8,7 @@ summary plus a JSON envelope suitable for `state.json.architecture.backendHealth
 
 Backends:
   1. runs[]       — `state.json.runs[]` (filesystem; always probable)
-  2. decisions    — `.episodic/decisions/*.md` (filesystem)
+  2. decisions    — `build-loop-memory/projects/<project>/decisions/*.md`
   3. semantic     — Postgres `agent_memory.<schema>.semantic_facts`
   4. debugger     — `@tyroneross/claude-code-debugger` MCP / npx CLI
 
@@ -118,7 +118,7 @@ def _resolve_canonical_decisions_dir(workdir: Path) -> Optional[Path]:
 
     Mirrors `memory_facade._resolve_decision_dirs` — uses `_paths` and
     `project_resolver` to land on
-    `~/dev/git-folder/build-loop-memory/decisions/<project>/`. Returns
+    `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/`. Returns
     `None` on any resolution failure (graceful degradation contract).
     """
     try:
@@ -128,12 +128,12 @@ def _resolve_canonical_decisions_dir(workdir: Path) -> Optional[Path]:
         scripts_dir = Path(__file__).resolve().parent
         if str(scripts_dir) not in sys.path:
             sys.path.insert(0, str(scripts_dir))
-        from _paths import decisions_dir_for_project  # type: ignore  # noqa: PLC0415
+        from _paths import project_decisions_dir  # type: ignore  # noqa: PLC0415
         from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
         proj = resolve_project(workdir)
         if not proj:
             return None
-        return decisions_dir_for_project(proj)
+        return project_decisions_dir(proj)
     except Exception:  # noqa: BLE001 — best-effort resolution
         return None
 
@@ -159,18 +159,16 @@ def _probe_one_decisions_dir(path: Optional[Path]) -> Dict[str, Any]:
 def probe_decisions(workdir: Path) -> Dict[str, Any]:
     """Probe both decision stores and return a structured envelope.
 
-    Two stores after the v0.10.0 cutover (mirrors `memory_facade`'s read
-    path):
+    Canonical store after the memory-store cutover:
 
-      1. **Legacy (per-repo)**: `<workdir>/.episodic/decisions/*.md`
-      2. **Canonical (global)**: `~/dev/git-folder/build-loop-memory/
-         decisions/<project>/*.md` (resolved via `_paths` +
-         `project_resolver`).
+      1. **Canonical**: `~/dev/git-folder/build-loop-memory/
+         projects/<project>/decisions/*.md`
+      2. **Legacy diagnostic**: `<workdir>/.episodic/decisions/*.md`
 
     Envelope shape (Priority 20):
 
         {
-          "ok": <True if either store has files>,
+          "ok": <True if canonical store has files>,
           "count": <legacy_count + canonical_count>,
           "duration_ms": <int>,
           "legacy":    {"ok": bool, "count": int, "path": str|None, ...},
@@ -191,10 +189,8 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     canonical = _probe_one_decisions_dir(canonical_path)
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    any_ok = legacy["ok"] or canonical["ok"]
-    total_count = (legacy["count"] if legacy["ok"] else 0) + (
-        canonical["count"] if canonical["ok"] else 0
-    )
+    any_ok = canonical["ok"]
+    total_count = canonical["count"] if canonical["ok"] else 0
 
     envelope: Dict[str, Any] = {
         "ok": any_ok,
@@ -205,7 +201,7 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     }
     if not any_ok:
         # Aggregate reason — useful for the one-liner.
-        envelope["reason"] = "no decision stores"
+        envelope["reason"] = "canonical decision store missing"
     return envelope
 
 
@@ -430,14 +426,13 @@ def _format_one_liner(envelope: Dict[str, Any]) -> str:
                  if runs.get("ok") else f"runs: DOWN {runs.get('reason', 'unknown')}")
     decisions = envelope.get("decisions", {})
     if decisions.get("ok"):
-        # Priority 20 — show legacy + canonical split when both shapes are present.
         legacy = decisions.get("legacy") or {}
         canonical = decisions.get("canonical") or {}
         if "legacy" in decisions and "canonical" in decisions:
             legacy_n = legacy.get("count", 0) if legacy.get("ok") else 0
             canonical_n = canonical.get("count", 0) if canonical.get("ok") else 0
             parts.append(
-                f"decisions: OK {legacy_n} legacy + {canonical_n} canonical"
+                f"decisions: OK {canonical_n} canonical + {legacy_n} legacy-diagnostic"
             )
         else:
             parts.append(f"decisions: OK {decisions.get('count', 0)} entries")

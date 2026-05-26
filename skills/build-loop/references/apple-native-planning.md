@@ -4,7 +4,7 @@
 
 Phase 2 (Plan) guidance for native iOS / macOS / watchOS work. Surfaces the upfront decisions that, when skipped, become Phase 5 (Iterate) emergencies.
 
-Source: build-loop run on FlowDoro alarm-not-firing fix (2026-04-26). Generalized from the specific failure modes that bit that build.
+Source: build-loop run on a sample timer app alarm-not-firing fix (2026-04-26). Generalized from the specific failure modes that bit that build.
 
 ## When this reference fires
 
@@ -41,7 +41,7 @@ Pick exactly one per use case. Mixing without intent is the root cause of "alarm
 | Strategy | When | Cost |
 |---|---|---|
 | Scheduled `UNTimeIntervalNotificationTrigger` armed at session START | Pomodoro, fasting, meditation — known duration | Need persisted `endDate`, idempotent re-arm on lifecycle events |
-| Scheduled, armed at background only | Foreground-only apps where backgrounding implies "user left" | High failure rate; FlowDoro proved this |
+| Scheduled, armed at background only | Foreground-only apps where backgrounding implies "user left" | High failure rate in the source timer-app incident |
 | Reactive (`willPresent` while running) | Foreground-only flows; prefers in-app modal over banner | Doesn't survive force-quit |
 | `interruptionLevel = .timeSensitive` | Most timer apps | Free; user opts in via Focus settings |
 | `interruptionLevel = .critical` | Genuine alarms with Apple-approved Critical Alerts entitlement | Must apply to Apple |
@@ -171,7 +171,7 @@ If Plan can't resolve any of §1-§8 from the goal text + existing repo state, e
 
 ## watchOS modernization checklist
 
-Captured from FlowDoro build 73 (2026-04-26). Use during Phase 2 Plan when the goal touches a watchOS target — `*.appiconset` decisions, navigation refactors, or Smart Stack work. Each item is a concrete check, not a recommendation.
+Captured from sample timer app build 73 (2026-04-26). Use during Phase 2 Plan when the goal touches a watchOS target — `*.appiconset` decisions, navigation refactors, or Smart Stack work. Each item is a concrete check, not a recommendation.
 
 ### Navigation
 
@@ -223,7 +223,7 @@ Captured from FlowDoro build 73 (2026-04-26). Use during Phase 2 Plan when the g
 20. **Override `ASSETCATALOG_COMPILER_APPICON_NAME` per target.** When iOS uses `AppIcon` and watchOS uses `AppIcon-Watch`, the catalogs can both ship without name collision. Set the watchOS-target setting in `project.yml` (XcodeGen) or per-target build settings.
 21. **Verify post-build with `xcrun assetutil`:**
     ```bash
-    xcrun assetutil --info path/to/FlowDoro.app/Assets.car | grep -i icon
+    xcrun assetutil --info path/to/SampleTimer.app/Assets.car | grep -i icon
     ```
     Expect to see the icon name you supplied. If not, the catalog isn't being picked up by the target.
 
@@ -244,7 +244,7 @@ Captured from FlowDoro build 73 (2026-04-26). Use during Phase 2 Plan when the g
 
 | Check | Command | Pass signal |
 |------|---------|-------------|
-| watchOS builds | `xcodebuild -scheme FlowDoro-watchOS build CODE_SIGNING_ALLOWED=NO` | `BUILD SUCCEEDED` |
+| watchOS builds | `xcodebuild -scheme SampleTimer-watchOS build CODE_SIGNING_ALLOWED=NO` | `BUILD SUCCEEDED` |
 | Widget builds | (deps from watchOS scheme) | no widget-specific errors in log |
 | Icon compiled | `xcrun assetutil --info <app>/Assets.car \| grep -i icon` | watch icon name appears |
 | All schemes | iterate iOS/macOS/iOSWidget/watchOS | each `BUILD SUCCEEDED` |
@@ -274,7 +274,7 @@ If a feature is reachable as both a tab AND an in-screen drill-in, delete the dr
 
 Symptom: user discovers feature A via Tab; later discovers same feature A via Push from inside Tab B; now wonders if they're different.
 
-### Worked example — FlowDoro WatchModePicker consolidation (build 74)
+### Worked example — sample timer app WatchModePicker consolidation (build 74)
 
 Build 73 introduced a vertical TabView with a Customize tab listing all modes. The pre-existing `WatchModePicker` view (reachable from Timer idle via "Change mode" navigation push) became redundant. Consolidation steps:
 
@@ -346,7 +346,7 @@ grep -rn "onMyCallback = " iOS/ Shared/
 
 If grep returns zero hits, the entire feature path is dead — watch detection runs, the message arrives, and nothing happens on iPhone.
 
-**FlowDoro example.** `onBiometricBreakSignalReceived` was declared in build 73 but inspection during build 78 found two related symptoms:
+**Sample timer app example.** `onBiometricBreakSignalReceived` was declared in build 73 but inspection during build 78 found two related symptoms:
 1. Build 73 wired the closure to `TimerEngine.handleBiometricBreakSignal`, which surfaces an in-app `CheckInData` sheet — but only when the iPhone app is foreground AND a flow session is running ≥15 minutes. In every other state (app backgrounded, no active session, app closed), the signal was effectively dropped.
 2. Build 78 added a second path on the same closure: an opt-in time-sensitive `UNUserNotification` so the signal produces user-visible behavior even when the iPhone app is not in front. Default off; toggle in `AlertSettingsView`.
 
@@ -363,30 +363,30 @@ If grep returns zero hits, the entire feature path is dead — watch detection r
 
 A test target that exists in `project.yml` is only invokable by `xcodebuild test` if it is also a member of a scheme's `test.targets` array. Membership in `targets:` alone makes the bundle compile-clean but unreachable from the test action.
 
-**Symptom.** `xcodebuild test -scheme FlowDoro-iOS -only-testing:FlowDoro-UnitTests` returns:
+**Symptom.** `xcodebuild test -scheme SampleTimer-iOS -only-testing:SampleTimer-UnitTests` returns:
 
 ```
-Cannot test target "FlowDoro-UnitTests"... isn't a member of the specified test plan or scheme
+Cannot test target "SampleTimer-UnitTests"... isn't a member of the specified test plan or scheme
 ```
 
 **Fix.** In `project.yml`, the scheme's `test.targets` array must include the test bundle by name:
 
 ```yaml
 schemes:
-  FlowDoro-iOS:
+  SampleTimer-iOS:
     test:
       config: Debug
       targets:
-        - FlowDoro-UnitTests
-        - FlowDoro-UITests
+        - SampleTimer-UnitTests
+        - SampleTimer-UITests
 ```
 
 Then regenerate (`xcodegen generate --spec project.yml`).
 
-**Platform alignment is part of the wiring.** The test target's `platform:` must match the scheme's runnable destinations. A `bundle.unit-test` declared `platform: macOS` cannot be run from an `FlowDoro-iOS` scheme via `-destination 'platform=iOS Simulator'` — xcodebuild surfaces:
+**Platform alignment is part of the wiring.** The test target's `platform:` must match the scheme's runnable destinations. A `bundle.unit-test` declared `platform: macOS` cannot be run from an `SampleTimer-iOS` scheme via `-destination 'platform=iOS Simulator'` — xcodebuild surfaces:
 
 ```
-Cannot test target "FlowDoro-UnitTests" on "iPhone 17 Pro": ... does not support iphonesimulator
+Cannot test target "SampleTimer-UnitTests" on "iPhone 17 Pro": ... does not support iphonesimulator
 ```
 
 If the wiring goal is "iOS scheme runs the unit tests on iPhone simulator," the test target itself must be `platform: iOS` (and any source files it pulls from `Shared/` need to compile cleanly for iOS — which is usually free since the iOS app target already compiles them). When you switch a previously-macOS test target to iOS, audit every scheme that referenced it: the macOS scheme's `test.targets` will silently break unless updated to drop the now-iOS test target or replaced with a separate macOS-platform test bundle.
@@ -401,7 +401,7 @@ yq '.schemes | to_entries | map(.value.test.targets // []) | flatten' project.ym
 
 If a target name appears in the first list but not the second, the test bundle exists but no scheme can run it.
 
-**FlowDoro example (build 79).** `FlowDoro-UnitTests` had been a `bundle.unit-test` on `platform: macOS`, wired into the macOS scheme's `test.targets` only. Builds 71-78 shipped without exercising any of the new code paths in CI. Build 79 added five test files covering AlertConfig codable, pomodoro notification identifier generation, Local Network permission classification, keychain-cache stability, and biometric break-signal default-off wiring. The test target was migrated to `platform: iOS`, added to `FlowDoro-iOS.schemes.test.targets`, and removed from the macOS scheme (which can no longer host an iOS-platform bundle). Net: `xcodebuild test -scheme FlowDoro-iOS -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:FlowDoro-UnitTests` runs 51 tests in ~7 seconds.
+**Sample timer app example (build 79).** `SampleTimer-UnitTests` had been a `bundle.unit-test` on `platform: macOS`, wired into the macOS scheme's `test.targets` only. Builds 71-78 shipped without exercising any of the new code paths in CI. Build 79 added five test files covering AlertConfig codable, pomodoro notification identifier generation, Local Network permission classification, keychain-cache stability, and biometric break-signal default-off wiring. The test target was migrated to `platform: iOS`, added to `SampleTimer-iOS.schemes.test.targets`, and removed from the macOS scheme (which can no longer host an iOS-platform bundle). Net: `xcodebuild test -scheme SampleTimer-iOS -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:SampleTimer-UnitTests` runs 51 tests in ~7 seconds.
 
 **When test isolation must round-trip through `UserDefaults.standard`.** A common pattern in app-level singletons: `init(defaults: UserDefaults = .standard)` reads from injected defaults, but property `didSet` writes target `UserDefaults.standard` unconditionally. Tests that assert "value persists across two store instances" cannot rely on injected defaults for the write path — they have to either snapshot/restore `.standard` in `setUp`/`tearDown`, or refactor production to plumb the same defaults through both read and write. For a test-only access change this is heavier than a simple `private → internal` flip; document the constraint in the test file rather than push a deeper production change.
 

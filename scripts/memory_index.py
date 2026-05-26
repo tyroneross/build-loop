@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Append-only log of build-loop memory writes for cross-session discovery.
+"""Append-only log of build-loop-memory writes for cross-session discovery.
 
 Companion to memory_writer.py. Every memory write/update/delete in
-~/.build-loop/memory/ (global store) appends one row to
-~/.build-loop/memory/INDEX.jsonl. Active sessions can `tail` this log
-between phases to see what siblings have learned and decide whether to
-incorporate it into the current build.
+the selected canonical build-loop-memory lane appends one row to that
+lane's `INDEX.jsonl`. Active sessions can `tail` this log between phases
+to see what siblings have learned and decide whether to incorporate it
+into the current build.
 
 This is the discovery side of the multi-session model. Concurrent-presence
 detection is owned by Rally Point presence (scripts/rally_point/presence.py)
@@ -46,8 +46,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+HERE = Path(__file__).resolve().parent
+import sys
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from _paths import top_level_lessons_dir  # type: ignore  # noqa: E402
+
 LOCK_TIMEOUT_S = 10
-DEFAULT_INDEX_DIR = Path.home() / ".build-loop" / "memory"
+DEFAULT_INDEX_DIR = top_level_lessons_dir()
 INDEX_FILENAME = "INDEX.jsonl"
 
 VALID_ACTIONS = frozenset({"write", "update", "delete"})
@@ -252,7 +258,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--index-dir",
         default=str(DEFAULT_INDEX_DIR),
-        help="Override default ~/.build-loop/memory/ (testing).",
+        help="Override default canonical memory lane (testing).",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 

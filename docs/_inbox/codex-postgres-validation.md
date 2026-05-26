@@ -24,7 +24,7 @@ Run:
 
 ```bash
 cd ~/dev/git-folder/build-loop
-ls ~/.codex/plugins/cache/ross-labs-local/build-loop/0.12.0/scripts/_db_url.py
+ls ~/.codex/plugins/cache/<local-marketplace>/build-loop/<version>/scripts/_db_url.py
 python3 scripts/check_cache_sync.py --host codex --json
 ```
 

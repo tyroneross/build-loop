@@ -32,22 +32,24 @@ A `VARIANCE` left unresolved blocks the next step. A `BLOCKED` entry (verifier c
 
 ```python
 from scripts.rally_point.post import post
+from scripts.rally_point.discovery_bridge import resolve
 from pathlib import Path
-channel = Path("~/.build-loop/apps/build-loop").expanduser()
+envelope = resolve(Path.cwd())
+channel = Path(envelope.channel_dir)
 post(
     channel_dir=channel,
     kind="feedback",        # or "phase", "commit", "dep-change", "handoff", "arch-scan-complete"
     tool="codex",           # or "claude_code", "gemini_cli", etc.
     model="gpt-5",
     run_id="<run-id>",
-    app_slug="build-loop",
+    app_slug=envelope.app_slug,
     payload={"step": "<id>", "verdict": "PASS", "evidence": {...}, "impact": "...", "requested_action": "..."},
 )
 ```
 
 `post()` bumps the revision FIRST, then appends the record. That ordering guarantees readers who see the new revision can always find the corresponding record (no race where revision is ahead of the log).
 
-**Channel scope (worktree- and clone-independent):** `~/.build-loop/apps/<slug>/` where `slug` is derived from `git rev-parse --git-common-dir` via `scripts/rally_point/channel_paths.app_slug(cwd)`. The main checkout, every worktree, and every clone of the same canonical repo share ONE channel. Different canonical repos get different channel directories (cross-repo isolation). Slug collisions across two different repos with the same basename are mitigated by `_safe_project_tag` but basename collision remains possible — accept it; the alternative scoping (per-coord-file channel) loses cross-run pattern memory.
+**Channel scope (worktree- and clone-independent):** resolve the channel through `scripts/rally_point/discovery_bridge.resolve(workdir)`. Native `agent-rally-point` discovery returns the canonical shared channel (currently `~/.agent-rally-point/apps/<repo-id>/`). The embedded build-loop fallback also defaults to `~/.agent-rally-point/apps/<slug>/`, where `slug` comes from `git rev-parse --git-common-dir` via `scripts/rally_point/channel_paths.app_slug(cwd)`. The main checkout, every worktree, and every clone of the same canonical repo share ONE channel. Different canonical repos get different channel directories (cross-repo isolation).
 
 **Anti-pattern (silent no-op):**
 
@@ -63,7 +65,7 @@ Memory citation: `feedback_post_helper_prevents_revision_bump_bug`.
 
 ## Trust model (unauthenticated channel; advisory leadership lease)
 
-**The coordination channel is unauthenticated and trusted-local-peers-only.** `changes.jsonl`, `presence/`, `rally/lead.json`, and the coordination markdown all live under `~/.build-loop/apps/<slug>/` with ordinary user-account file permissions. Any process running as the same local user can append a change record, write a presence file, or claim/transfer the leadership lease. There is no signing, no authentication, and no identity verification — and there should not be: build-loop is a local single-user developer tool, so a cryptographic trust layer would be disproportionate to the threat.
+**The coordination channel is unauthenticated and trusted-local-peers-only.** `changes.jsonl`, `presence/`, `rally/lead.json`, and the coordination markdown all live under the channel returned by `discovery_bridge.resolve(workdir)` with ordinary user-account file permissions. Any process running as the same local user can append a change record, write a presence file, or claim/transfer the leadership lease. There is no signing, no authentication, and no identity verification — and there should not be: build-loop is a local single-user developer tool, so a cryptographic trust layer would be disproportionate to the threat.
 
 What this means in practice:
 
@@ -166,7 +168,7 @@ Plugin version bumps in the RossLabs ecosystem update **three** files in lockste
 
 ## Closeout hygiene
 
-**A coordination run is not complete until all live processes, presence records, worktrees, and active coord files are explicitly cleaned up.** Stale heartbeats in `~/.build-loop/apps/<slug>/sessions/` and locked worktrees in `.claude/worktrees/` mislead the next run's peer-detection — Rally Point may report "active peer" for a dead process; `git worktree list` may show locked entries that block branch operations.
+**A coordination run is not complete until all live processes, presence records, worktrees, and active coord files are explicitly cleaned up.** Stale heartbeats in the resolved Rally Point channel's `sessions/` directory and locked worktrees in `.claude/worktrees/` mislead the next run's peer-detection — Rally Point may report "active peer" for a dead process; `git worktree list` may show locked entries that block branch operations.
 
 **Phase D closeout protocol (orchestrator runs by default at end of every run):**
 

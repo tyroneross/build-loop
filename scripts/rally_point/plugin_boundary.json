@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0",
+  "intent": "Embedded mini-plugin boundary for future extraction of agent-rally-point and agent-rally-watcher from build-loop.",
+  "principles": [
+    "Keep substrate and watcher logic in dedicated namespaces.",
+    "Keep build-loop entrypoints as compatibility wrappers.",
+    "Resolve paths relative to the plugin root, not the caller cwd.",
+    "Avoid imports from build-loop-only memory or orchestration internals."
+  ],
+  "plugins": {
+    "agent-rally-point": {
+      "purpose": "Coordination substrate: discovery, channel paths, append-only events, presence, inbox, leadership, checkpoint reads, and host-neutral CLI operations.",
+      "skill_entrypoints": [
+        "skills/agent-rally-point/SKILL.md"
+      ],
+      "owns": [
+        "scripts/rally_point/**"
+      ],
+      "compatibility_entrypoints": [
+        "scripts/agent_rally.py",
+        "commands/agent-rally-point.md",
+        "hooks/session-start-rally-point.sh",
+        "hooks/pre-edit-rally-point.sh"
+      ],
+      "build_loop_adapters": [
+        "scripts/coordination_bootstrap.py",
+        "scripts/coordination_rally.py",
+        "scripts/coordination_status.py"
+      ],
+      "docs": [
+        "references/rally-point-protocol.md",
+        "references/multi-session-coordination.md",
+        "references/coordination-rules.md",
+        "skills/build-loop/references/coordination.md"
+      ],
+      "grouped_dependencies": [
+        "scripts/rally_point/**",
+        "scripts/agent_rally.py",
+        "commands/agent-rally-point.md",
+        "hooks/session-start-rally-point.sh",
+        "hooks/pre-edit-rally-point.sh",
+        "references/rally-point-protocol.md",
+        "references/multi-session-coordination.md",
+        "references/coordination-rules.md",
+        "skills/agent-rally-point/SKILL.md"
+      ],
+      "tests": [
+        "scripts/rally_point/test_*.py",
+        "scripts/test_build_loop_id.py",
+        "scripts/test_agent_rally_where.py",
+        "hooks/test_rally_point_hooks.sh"
+      ],
+      "stable_interfaces": [
+        "rally_point.discovery_bridge.resolve(workdir)",
+        "rally_point.post.post(...)",
+        "rally_point.presence.write_presence(...)",
+        "rally_point.checkpoint.checkpoint_read(...)",
+        "python3 scripts/agent_rally.py <subcommand>"
+      ],
+      "forbidden_parent_imports": [
+        "scripts/_paths.py",
+        "scripts/write_decision.py",
+        "scripts/memory_facade.py",
+        "scripts/sync_db_from_files.py",
+        "scripts/scan_transcript_for_decisions.py",
+        "scripts/memory_writer.py"
+      ]
+    },
+    "agent-rally-watcher": {
+      "purpose": "Low-cost coordination sensor loop that watches Rally Point status transitions and emits JSONL deltas for coding hosts.",
+      "skill_entrypoints": [
+        "skills/agent-rally-watcher/SKILL.md"
+      ],
+      "owns": [
+        "scripts/agent_rally_watcher/**"
+      ],
+      "compatibility_entrypoints": [
+        "scripts/coordination_watch.py"
+      ],
+      "build_loop_adapters": [
+        "scripts/coordination_status.py"
+      ],
+      "docs": [
+        "skills/build-loop/references/coordination.md",
+        "scripts/README.md"
+      ],
+      "grouped_dependencies": [
+        "scripts/agent_rally_watcher/**",
+        "scripts/coordination_watch.py",
+        "scripts/coordination_status.py",
+        "commands/agent-rally-point.md",
+        "skills/agent-rally-watcher/SKILL.md",
+        "skills/build-loop/references/coordination.md",
+        "scripts/README.md"
+      ],
+      "tests": [
+        "scripts/test_coordination_status.py",
+        "scripts/rally_point/test_session_probe.py"
+      ],
+      "stable_interfaces": [
+        "agent_rally_watcher.watch.main(argv=None)",
+        "python3 scripts/coordination_watch.py --workdir <repo> --session-id <id> --tool <tool> --jsonl"
+      ],
+      "forbidden_parent_imports": [
+        "scripts/write_decision.py",
+        "scripts/memory_facade.py",
+        "scripts/sync_db_from_files.py",
+        "scripts/scan_transcript_for_decisions.py",
+        "scripts/memory_writer.py"
+      ]
+    }
+  }
+}

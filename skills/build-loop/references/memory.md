@@ -6,28 +6,28 @@
 
 ## Memory — Global and Project-Scoped
 
-Build-loop maintains two memory stores. Every build reads both; writes go to exactly one based on scope.
+Build-loop maintains one canonical long-term memory store at `~/dev/git-folder/build-loop-memory/`. Every build reads canonical indexes/folders; writes go to exactly one lane based on scope.
 
-**Global memory**: `~/.build-loop/memory/`
+**Cross-project memory**: `build-loop-memory/lessons/` plus the sibling top-level lanes `design/`, `debugging/`, and `product/`
 
 - Applies across every project this user builds.
 - Examples: "Deployment to Vercel uses `vercel deploy --prebuilt` when `ENABLE_AUTH=true`"; "Neon is the default Postgres for Next.js 16 projects"; "TestFlight upload uses ASC API key from `~/.appstoreconnect/private_keys/`"; "User prefers zero-dep scripts over package additions".
-- Structure: one file per fact/lesson/tool-discovery. Index in `~/.build-loop/memory/MEMORY.md` (line-per-entry: `- [Title](file.md) — hook`).
+- Structure: one file per fact/lesson/tool-discovery. Generated recall indexes live in `build-loop-memory/indexes/`.
 - Types: `tool`, `deployment`, `library-choice`, `user-preference`, `pattern`.
 
-**Project memory**: `~/.build-loop/memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd`; legacy `<repo>/.build-loop/memory/` is read-shimmed during PR 1/2 transition)
+**Project memory**: `build-loop-memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd`)
 
 - Applies only to the current project.
 - Examples: "This app's design system lives in `src/styles/tokens.css`, not Tailwind"; "Routes under `/admin/` require `requireAdmin()` guard"; "The `custom_themes` table has a user_id VarChar bug from 2026-04-13 — see migration note".
-- Same structure as global; index in `.build-loop/memory/MEMORY.md`.
+- Same lane structure as top level: `decisions/`, `lessons/`, `debugging/`, `design/`, `product/`, and related domain folders.
 - Types: `design`, `convention`, `gotcha`, `decision`, `contract`.
 
 ### Routing rule (always ask this question)
 
 **"Would this apply to a different project?"**
 
-- **Yes** → global (`~/.build-loop/memory/`). Deployment tools, library choices, general user preferences, reusable patterns.
-- **No** → project (`.build-loop/memory/`). Design tokens, internal APIs, project-specific gotchas, per-repo conventions.
+- **Yes** → top-level canonical lane (`build-loop-memory/lessons/`, `design/`, `debugging/`, or `product/`). Deployment tools, library choices, general user preferences, reusable patterns.
+- **No** → project canonical lane (`build-loop-memory/projects/<slug>/...`). Design tokens, internal APIs, project-specific gotchas, per-repo conventions.
 - **Ambiguous** → ask the user once, then save. Don't guess.
 
 ### When to write memory
@@ -49,7 +49,7 @@ Build-loop maintains two memory stores. Every build reads both; writes go to exa
 Multiple build-loop sessions can run concurrently. Two scripts own the cross-session model end-to-end:
 
 - `scripts/memory_writer.py` — canonical WRITER. Adds provenance frontmatter and appends to the index in one atomic operation.
-- `scripts/memory_index.py` — append-only discovery log at `~/.build-loop/memory/INDEX.jsonl`.
+- `scripts/memory_index.py` — append-only discovery log in the selected canonical lane.
 
 ### Provenance frontmatter (every memory file)
 

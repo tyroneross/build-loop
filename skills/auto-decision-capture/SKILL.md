@@ -1,6 +1,6 @@
 ---
 name: auto-decision-capture
-description: Project-scoped skill for proactive in-session decision capture. Loads automatically when `.episodic/` is present in the repo. Provides Claude the signal taxonomy, confidence ladder, overwrite rules, and the three extraction prompts (SPO triplet / MADR-aligned / batch consolidation) so substantive decisions land in `.episodic/decisions/` without manual triggering. Use when the user makes a substantive choice, confirms a proposal, or implies a constraint with textual evidence.
+description: Project-scoped skill for proactive in-session decision capture. Provides Claude the signal taxonomy, confidence ladder, overwrite rules, and the three extraction prompts (SPO triplet / MADR-aligned / batch consolidation) so substantive decisions land in build-loop-memory without manual triggering. Use when the user makes a substantive choice, confirms a proposal, or implies a constraint with textual evidence.
 when_to_use: |
   - User issues a direct verbal marker ("let's go with X", "ship it", "use Y")
   - Claude offered a choice menu and the user picked one
@@ -8,7 +8,7 @@ when_to_use: |
   - Topic shifts past a proposal that stood without objection (continuation)
   - User states a project-scoped constraint, preference, or convention
   - Topic-coherent inference can be drawn with quotable evidence (tier 3)
-namespace: .episodic/decisions/ (at repo root)
+namespace: build-loop-memory/projects/<project>/decisions/
 companion_scripts:
   - scripts/write_decision.py — atomic writer (file + INDEX + events.jsonl + DB)
   - scripts/scan_transcript_for_decisions.py — Stop-hook batch sweep (tier 3)
@@ -38,7 +38,7 @@ without a concrete signal.
 
 | Signal | Confidence | Write target | Write timing | Example |
 |---|---|---|---|---|
-| **Direct verbal marker (user)** | `explicit` | trusted (`.episodic/decisions/`) | immediately on user turn | "let's go with X" / "ship it" / "use Y" |
+| **Direct verbal marker (user)** | `explicit` | trusted (`build-loop-memory/projects/<project>/decisions/`) | immediately on user turn | "let's go with X" / "ship it" / "use Y" |
 | **Choice converter** | `explicit` | trusted | immediately | Claude offered A/B/C; user said "B" |
 | **Implementation declarative (agent)** | `explicit` | trusted | when stated in agent reasoning | "I'll use X for Y", "going with X over Y because Z", "implementing via X". For build-orchestrator subagents specifically — task-execution language IS a decision signal. |
 | **Tradeoff statement** | `explicit` | trusted | when "X over Y because Z" appears | "extend YAML parser instead of changing test expectations" / "use X (Apache-2.0) over Y (GPL-3) because licensing" |
@@ -60,7 +60,7 @@ human entries.
 **Tier 3 + 4 (inferred + assumed) batch sweeps at session end** via the
 Stop hook. The hook runs `scripts/scan_transcript_for_decisions.py`,
 which calls a local LLM (`qwen3:8b-q4_K_M`) with Prompt C below. Tier 3
-results land in `.episodic/decisions/_review/` for user promotion,
+results land in `build-loop-memory/projects/<project>/decisions/_review/` for user promotion,
 NOT in the trusted set.
 
 You can also write tier-3 captures aggressively in-session if a
@@ -103,7 +103,7 @@ capture with `scripts/revoke_decision.py --id <id> --reason ...`.
 
 ## Tag selection — controlled vocabulary
 
-Tags come from `.semantic/TAXONOMY.md`. New tags get the `proposed:`
+Tags come from `write_decision.py`'s controlled vocabulary. New tags get the `proposed:`
 prefix (e.g. `proposed:streaming-llm`), surfaced for promotion in the
 next Phase 1 Assess. Do not invent tags outside this vocabulary —
 vocabulary mismatch is the dominant retrieval failure mode.
@@ -308,20 +308,20 @@ The Stop hook in `hooks/hooks.json` invokes
 2. Calls `qwen3:8b-q4_K_M` with Prompt C (above)
 3. For each candidate: dedups against `semantic_facts` (≥0.85 = SKIP)
 4. Tier 1+2 (explicit+confirmed) → `write_decision.py` → trusted
-5. Tier 3+4 (inferred+assumed) → `.episodic/decisions/_review/` quarantine
+5. Tier 3+4 (inferred+assumed) → `build-loop-memory/projects/<project>/decisions/_review/` quarantine
 
 If ollama is unreachable, the hook logs a no-op and exits 0 — never
 fails the session.
 
 ### Per-session opt-out
 
-Create `.episodic/.no-capture` to skip the auto-capture sweep for the
+Create `.build-loop/.no-capture` to skip the auto-capture sweep for the
 current session. The script exits 0 immediately on startup with a log
 line. Remove the file when you want the sweep back on:
 
 ```bash
-touch .episodic/.no-capture     # disable for this session
-rm .episodic/.no-capture        # re-enable
+touch .build-loop/.no-capture     # disable for this session
+rm .build-loop/.no-capture        # re-enable
 ```
 
 This is a per-repo flag; it does not affect other projects.
@@ -371,7 +371,7 @@ The review surface (loaded by `build-loop:knowledge-review`, backed by
 procedures awaiting human attention:
 
 1. **Review queue** — tier-3 / inferred captures sitting in
-   `.episodic/decisions/_review/` (written there by either the Stop-hook
+   `build-loop-memory/projects/<project>/decisions/_review/` (written there by either the Stop-hook
    batch sweep or in-session aggressive `inferred` captures from this
    skill). User promotes or dismisses each.
 2. **Decision rot** — accepted decisions where `last_validated` (or
@@ -393,5 +393,5 @@ review queue surfaces it; the user takes the explicit decision and
 pins it. The overwrite path then stops firing.
 
 Consolidation (`scripts/consolidate_memory.py`) is the related batch
-script for promoting `.semantic/_candidates.jsonl` entries into
+script for promoting candidate JSONL entries into
 `semantic_facts`.

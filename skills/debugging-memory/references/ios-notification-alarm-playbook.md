@@ -4,7 +4,7 @@
 
 Domain reference for diagnosing "the alarm doesn't fire" on iOS apps that use `UNUserNotificationCenter` for timed completion alerts (Pomodoro timers, meditation apps, fasting trackers, sleep alarms, anything with a scheduled future notification).
 
-Source: build-loop run on FlowDoro (2026-04-26). Single high-confidence root cause; the playbook generalizes the diagnostic moves.
+Source: build-loop run on a sample timer app (2026-04-26). Single high-confidence root cause; the playbook generalizes the diagnostic moves.
 
 ## Smoking-gun pattern
 
@@ -40,7 +40,7 @@ For "alarm doesn't fire," dispatch 3 concurrent investigators. None share state.
 |---|---|---|
 | **Timer architecture** | Where is the notification scheduled, where is it cancelled, what other paths affect lifetime | `*TimerEngine*.swift`, `*Notification*.swift`, every `scheduleCompletion` / `cancelScheduled*` call site |
 | **Audio + haptic routing** | Foreground completion path, AVAudioSession config, ringer-bypass, CoreHaptics fallbacks | `*AudioService*.swift`, `AudioSessionManager*`, `playChime`, `UINotificationFeedbackGenerator`, `CHHapticEngine` |
-| **Lifecycle + cancel** | scenePhase transitions, app delegate hooks, force-quit handling, ActiveSessionRecovery | `FlowDoroApp+iOS.swift` or `App+iOS.swift`, `applicationWillTerminate`, `scenePhase.onChange`, recovery code |
+| **Lifecycle + cancel** | scenePhase transitions, app delegate hooks, force-quit handling, ActiveSessionRecovery | `SampleTimerApp+iOS.swift` or `App+iOS.swift`, `applicationWillTerminate`, `scenePhase.onChange`, recovery code |
 
 ## Symbol search lists
 
@@ -139,13 +139,13 @@ When this playbook applies, use one of the following incident IDs.
 
 ## Confidence
 
-This playbook is built from one canonical incident (FlowDoro 2026-04-26). Promote to "pattern" status (`PTN_IOS_ALARM_*`) once 3+ incidents share the smoking-gun signature.
+This playbook is built from one canonical incident (sample timer app, 2026-04-26). Promote to "pattern" status (`PTN_IOS_ALARM_*`) once 3+ incidents share the smoking-gun signature.
 
 ---
 
 ## Multi-alert identifier-set pattern
 
-Added 2026-04-26 (FlowDoro build 72) when alert customization landed: count, persistence (re-fire every N seconds), and backup escalation expanded the per-transition notification stack from 1 request to up to ~10. The schedule and cancel paths must agree on the identifier set or the cancel will silently leak requests.
+Added 2026-04-26 (sample timer app build 72) when alert customization landed: count, persistence (re-fire every N seconds), and backup escalation expanded the per-transition notification stack from 1 request to up to ~10. The schedule and cancel paths must agree on the identifier set or the cancel will silently leak requests.
 
 ### The bug pattern this prevents
 
@@ -212,7 +212,7 @@ Log the full identifier list, not the count alone, on every schedule and cancel.
 
 ## iOS Local Network discovery checklist
 
-Added 2026-04-26 (FlowDoro build 72) when "Listener failed: NWError -65569 DefunctConnection" appeared in Profile → Nearby Devices. iOS Local Network has three independent failure modes; check them in this order.
+Added 2026-04-26 (sample timer app build 72) when "Listener failed: NWError -65569 DefunctConnection" appeared in Profile → Nearby Devices. iOS Local Network has three independent failure modes; check them in this order.
 
 ### 1. Plist stack (one-time setup, easy to forget)
 

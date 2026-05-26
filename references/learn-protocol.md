@@ -21,12 +21,12 @@ Optional cross-build pattern detection. Runs after Review sub-step F on every bu
    - Honor `.build-loop/skills/.demoted` (do not re-promote names listed there).
    - If `autoPromote` is false (default): every row above becomes "write proposal, no file moves or deletes."
 8. Append concise synthesis to the Review sub-step F report — include any auto-promotes, proposals written, and extend-sample logs. If `autoPromote: false`, state this clearly so the user knows proposals accumulated.
-9. **Episodic memory consolidation** (runs unconditionally after step 8 when `.episodic/` is present in the repo). Two scripts in this order:
-   - `python3 scripts/consolidate_memory.py --workdir "$PWD"` — reads `.semantic/_candidates.jsonl`, embeds each, dedups against `agent_memory.<schema>.semantic_facts` per cosine ladder. No-op when `_candidates.jsonl` is missing.
-   - `python3 scripts/procedural_governance.py --workdir "$PWD" --mode detect-patterns` — clusters `state.json.runs[].root_cause` and writes `.procedural/_candidates.jsonl` for any cluster ≥3 incidents.
+9. **Memory consolidation** (runs unconditionally after step 8 when candidates exist). Two scripts in this order:
+   - `python3 scripts/consolidate_memory.py --workdir "$PWD"` — reads the canonical semantic-candidate location resolved by the memory helpers, embeds each, dedups against `agent_memory.<schema>.semantic_facts` per cosine ladder. No-op when no candidates exist.
+   - `python3 scripts/procedural_governance.py --workdir "$PWD" --mode detect-patterns` — clusters `state.json.runs[].root_cause` and writes procedural candidates through the canonical memory helpers for any cluster ≥3 incidents.
 
    Surface counts in the Phase 6 summary line: `consolidated: N inserted / M merged / K conflicts; procedural candidates: J added`. Do NOT auto-draft procedures — `--mode auto-draft` is gated until ≥5 hand-authored procedures exist, and is left for explicit user invocation.
 
 ## Constraints
 
-Never write outside `.build-loop/` and `.episodic/` / `.semantic/` / `.procedural/`. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.
+Never write outside `.build-loop/` and the canonical `build-loop-memory/` helper paths. Cross-project promotion (into the plugin repo) stays behind `/build-loop:promote-experiment <name>` — user-invoked only.

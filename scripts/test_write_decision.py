@@ -85,8 +85,7 @@ class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
         self.workdir = Path(self.tmp.name)
         # Seed minimal directory structure + TAXONOMY
         (self.workdir / ".semantic").mkdir(parents=True)
-        (self.workdir / ".episodic" / "decisions" / "_history").mkdir(parents=True)
-        (self.workdir / ".episodic" / "issues").mkdir(parents=True)
+        (self.workdir / ".build-loop").mkdir(parents=True)
         (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
         # NB: events.jsonl is created on demand by the writer
 
@@ -124,16 +123,21 @@ class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "0001")
 
         ddir = self._decisions_dir("test-default")
-        files = list(ddir.glob("0001-*.md"))
+        files = [
+            p for p in ddir.glob("*.md")
+            if p.name != "INDEX.md" and not p.name.startswith("_")
+        ]
         self.assertEqual(len(files), 1)
         body = files[0].read_text()
         self.assertIn("id: '0001'", body)
+        self.assertIn("canonical_id: decision-project-test-default-use-pytest-for-testing-", body)
+        self.assertIn("canonical: true", body)
         self.assertIn("entity: build-loop", body)
         self.assertIn("primary_tag: testing", body)
         self.assertIn("confidence: explicit", body)
 
         index = (ddir / "INDEX.md").read_text()
-        self.assertIn("0001", index)
+        self.assertIn("decision-project-test-default-use-pytest-for-testing-", index)
         self.assertIn("Use pytest for testing", index)
 
         events = [
@@ -185,9 +189,13 @@ class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
 
         ddir = self._decisions_dir("test-default")
         index = (ddir / "INDEX.md").read_text()
-        self.assertIn("0001", index)
-        self.assertIn("0002", index)
-        self.assertEqual(len(list(ddir.glob("0*.md"))), 2)
+        self.assertIn("decision-project-test-default-concurrent-0-", index)
+        self.assertIn("decision-project-test-default-concurrent-1-", index)
+        files = [
+            p for p in ddir.glob("*.md")
+            if p.name != "INDEX.md" and not p.name.startswith("_")
+        ]
+        self.assertEqual(len(files), 2)
 
     # ---- topic-identity supersession ----
 
@@ -218,7 +226,10 @@ class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
         current = list(ddir.glob("0001-*.md"))
         self.assertEqual(current, [], f"0001 should be moved out of decisions/, found {current}")
 
-        body_0002 = next(ddir.glob("0002-*.md")).read_text()
+        body_0002 = next(
+            p for p in ddir.glob("*.md")
+            if p.name != "INDEX.md" and "explicit-test-framework" in p.name
+        ).read_text()
         self.assertIn("supersedes: '0001'", body_0002)
 
         body_history = history[0].read_text()

@@ -64,14 +64,17 @@ Multiple build-loop sessions can run concurrently against the same project acros
 
 1. **Write presence at the Phase 1 preamble** (immediately after `run_id` is known), and refresh it at each phase-start:
    ```python
-   from scripts.rally_point import channel_paths, presence
-   slug = channel_paths.app_slug(cwd="$PWD")          # D1: worktree/clone-independent
-   channel = channel_paths.ensure_channel_dir(slug)
+   from pathlib import Path
+   from scripts.rally_point import presence
+   from scripts.rally_point.discovery_bridge import resolve
+   envelope = resolve(Path("$PWD"))
+   slug = envelope.app_slug
+   channel = Path(envelope.channel_dir)
    presence.write_presence(channel, session_id="<sid>", tool="codex",
        model="<model>", run_id="$RUN_ID", app_slug=slug,
        phase="assess", files_in_flight=[])
    ```
-   `tool` values: `claude_code | codex | gemini | other`. Writes one file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
+   `tool` values: `claude_code | codex | gemini | other`. Resolve the channel through `discovery_bridge.resolve(...)` before every direct write; both native `agent-rally-point` discovery and the embedded `channel_paths` fallback write under `~/.agent-rally-point/apps/...` by default. Writes one file per live session at `<resolved-channel>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
 2. **Read active peers** at the preamble and each phase-start:
    ```python
    peers = presence.read_active_presence(channel, exclude_session="<sid>")

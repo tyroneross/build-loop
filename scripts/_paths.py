@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Global path/schema resolver for the episodic memory framework.
+"""Global path/schema resolver for the build-loop memory framework.
 
-This module is the *only* place where legacy path/schema literals live
-outside of test fixtures. Every other writer/reader script imports the
-helpers below and goes through them.
+This module is the active path contract for durable build-loop memory.
+Every writer/reader script should import helpers from here instead of
+embedding store paths directly.
 
 Environment variable contract:
-- ``$AGENT_MEMORY_ROOT``     : override the agent_memory root directory.
+- ``$BUILD_LOOP_MEMORY_STORE_ROOT``: override the build-loop-memory root.
+- ``$BUILD_LOOP_MEMORY_ROOT``: compatibility override for the same root.
+- ``$AGENT_MEMORY_ROOT``     : compatibility override for the same root.
                                 Defaults to ``~/dev/git-folder/build-loop-memory``.
 - ``$AGENT_MEMORY_SCHEMA``   : override the default Postgres schema.
                                 Defaults to ``personal_memory``.
 - ``$AGENT_MEMORY_DUAL_WRITE``: when set to ``"1"``, writers must produce
                                 BOTH the legacy artifact (``<repo>/.episodic/decisions/``,
                                 ``build_loop_memory.semantic_facts``) AND the
-                                new artifact (``<root>/decisions/<project>/``,
+                                new artifact (``<root>/projects/<project>/decisions/``,
                                 ``personal_memory.semantic_facts``).
 
 Cutover lock:
@@ -32,22 +34,22 @@ import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Legacy fallback constants. This is the *only* file outside test fixtures
-# that may name these literals. The drift gate (Acceptance criterion 6)
-# greps for them and excludes this file.
+# Legacy fallback constants. These are for migration/archive tooling only.
+# Active build-loop readers and writers should use the canonical helpers
+# below (`project_decisions_dir`, `project_lessons_dir`, top-level lanes).
 # ---------------------------------------------------------------------------
 LEGACY_SCHEMA = "build_loop_memory"
 LEGACY_DECISIONS_REL = ".episodic/decisions"
 
-DEFAULT_AGENT_MEMORY_ROOT = "~/dev/git-folder/build-loop-memory"
+DEFAULT_MEMORY_STORE_ROOT = "~/dev/git-folder/build-loop-memory"
+DEFAULT_AGENT_MEMORY_ROOT = DEFAULT_MEMORY_STORE_ROOT
 DEFAULT_SCHEMA = "personal_memory"
 
 CUTOVER_LOCK_PATH = "/tmp/agent-memory-cutover.lock"
 
-# Global build-loop memory root — separate from the decisions store. Holds
-# constitution.md, MEMORY.md, free-form lessons (feedback/pattern/reference),
-# and (per memory consolidation PR-series) the projects/<slug>/ subtree.
-DEFAULT_BUILD_LOOP_MEMORY_ROOT = "~/.build-loop/memory"
+# Historical name retained as a compatibility alias. The active root is now
+# the sibling `build-loop-memory` repository, not `~/.build-loop/memory`.
+DEFAULT_BUILD_LOOP_MEMORY_ROOT = DEFAULT_MEMORY_STORE_ROOT
 
 # Sub-component patterns: paths under a project that count as a distinct
 # slug. Today: just `workers/`. Extend by adding entries; order matters
@@ -55,20 +57,36 @@ DEFAULT_BUILD_LOOP_MEMORY_ROOT = "~/.build-loop/memory"
 SUBCOMPONENT_PATTERNS: tuple[str, ...] = ("workers",)
 
 
-def agent_memory_root() -> Path:
-    """Return the root of the global agent_memory store.
+def memory_store_root() -> Path:
+    """Return the canonical build-loop-memory root.
 
-    Reads ``$AGENT_MEMORY_ROOT`` (expanded for ``~``) and falls back to
-    ``~/dev/git-folder/build-loop-memory``. Path is not required to
-    exist; callers that need the directory should create it.
+    Reads, in order, ``$BUILD_LOOP_MEMORY_STORE_ROOT``,
+    ``$BUILD_LOOP_MEMORY_ROOT``, and ``$AGENT_MEMORY_ROOT`` (expanded for
+    ``~``). Falls back to ``~/dev/git-folder/build-loop-memory``. Path is
+    not required to exist; callers that need the directory should create it.
     """
-    raw = os.environ.get("AGENT_MEMORY_ROOT") or DEFAULT_AGENT_MEMORY_ROOT
+    raw = (
+        os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
+        or os.environ.get("BUILD_LOOP_MEMORY_ROOT")
+        or os.environ.get("AGENT_MEMORY_ROOT")
+        or DEFAULT_MEMORY_STORE_ROOT
+    )
     return Path(os.path.expanduser(raw))
 
 
+def agent_memory_root() -> Path:
+    """Compatibility alias for ``memory_store_root()``."""
+    return memory_store_root()
+
+
 def decisions_root() -> Path:
-    """Return ``<agent_memory_root()>/decisions``."""
-    return agent_memory_root() / "decisions"
+    """Return the legacy pre-cutover decisions root.
+
+    This helper exists for migration/archive tooling that still needs to
+    inventory ``<memory_store_root()>/decisions``. Active writers should use
+    ``project_decisions_dir(project)``.
+    """
+    return memory_store_root() / "decisions"
 
 
 # Project tag whitelist: alphanumerics, underscore, dash, dot. No path
@@ -89,27 +107,100 @@ def _safe_project_tag(tag: str) -> str:
     return tag
 
 
-def decisions_dir_for_project(project: str) -> Path:
-    """Return ``decisions_root() / <project>``.
+def _safe_project_relpath(project: str) -> Path:
+    """Return a validated relative path for a project tag.
 
-    Validates ``project`` against ``_safe_project_tag`` to prevent
-    directory traversal. Empty strings collapse to ``_unscoped``.
-    Then asserts the resolved path is rooted under ``decisions_root()``
-    to defend against symlink-based escapes.
+    Empty strings collapse to ``_unscoped``. Slash-separated subcomponent
+    slugs are supported, with every segment validated independently.
     """
     if not project:
         project = "_unscoped"
-    safe = _safe_project_tag(project)
-    candidate = (decisions_root() / safe).resolve()
-    root_resolved = decisions_root().resolve()
+    parts = project.split("/")
+    for part in parts:
+        _safe_project_tag(part)
+    return Path(*parts)
+
+
+def _safe_child(root: Path, relpath: Path, label: str) -> Path:
+    """Return ``root / relpath`` after checking it resolves below root."""
+    candidate = (root / relpath).resolve()
+    root_resolved = root.resolve()
     # Path.is_relative_to was added in 3.9; fall back to startswith on str.
     rel = str(candidate)
     root_str = str(root_resolved)
     if not (rel == root_str or rel.startswith(root_str + os.sep)):
-        raise ValueError(
-            f"project tag {project!r} resolves outside decisions_root()"
-        )
-    return decisions_root() / safe
+        raise ValueError(f"{label} resolves outside {root}")
+    return root / relpath
+
+
+def project_root(project: str) -> Path:
+    """Return ``<memory_store_root()>/projects/<project>`` (validated)."""
+    return _safe_child(memory_store_root() / "projects", _safe_project_relpath(project), "project")
+
+
+def project_decisions_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/decisions``."""
+    return project_root(project) / "decisions"
+
+
+def project_lessons_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/lessons``."""
+    return project_root(project) / "lessons"
+
+
+def project_debugging_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/debugging``."""
+    return project_root(project) / "debugging"
+
+
+def project_design_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/design``."""
+    return project_root(project) / "design"
+
+
+def project_product_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/product``."""
+    return project_root(project) / "product"
+
+
+def project_architecture_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/architecture``."""
+    return project_root(project) / "architecture"
+
+
+def top_level_lessons_dir() -> Path:
+    """Return ``<memory_store_root()>/lessons``."""
+    return memory_store_root() / "lessons"
+
+
+def top_level_debugging_dir() -> Path:
+    """Return ``<memory_store_root()>/debugging``."""
+    return memory_store_root() / "debugging"
+
+
+def top_level_design_dir() -> Path:
+    """Return ``<memory_store_root()>/design``."""
+    return memory_store_root() / "design"
+
+
+def top_level_product_dir() -> Path:
+    """Return ``<memory_store_root()>/product``."""
+    return memory_store_root() / "product"
+
+
+def top_level_architecture_dir() -> Path:
+    """Return ``<memory_store_root()>/architecture``."""
+    return memory_store_root() / "architecture"
+
+
+def memory_indexes_dir() -> Path:
+    """Return ``<memory_store_root()>/indexes``."""
+    return memory_store_root() / "indexes"
+
+
+def decisions_dir_for_project(project: str) -> Path:
+    """Compatibility alias for ``project_decisions_dir(project)``."""
+    return project_decisions_dir(project)
 
 
 def legacy_decisions_dir(workdir: Path) -> Path:
@@ -166,50 +257,18 @@ def cutover_lock_active() -> bool:
 
 
 def build_loop_memory_root() -> Path:
-    """Return the global build-loop memory root (``~/.build-loop/memory``).
-
-    Reads ``$BUILD_LOOP_MEMORY_ROOT`` (expanded for ``~``) and falls back
-    to ``~/.build-loop/memory``. Path is not required to exist; callers
-    that need the directory should create it (typically via
-    ``scripts/install_memory.py``).
-    """
-    raw = os.environ.get("BUILD_LOOP_MEMORY_ROOT") or DEFAULT_BUILD_LOOP_MEMORY_ROOT
-    return Path(os.path.expanduser(raw))
+    """Compatibility alias for ``memory_store_root()``."""
+    return memory_store_root()
 
 
 def project_memory_root() -> Path:
-    """Return ``<build_loop_memory_root()>/projects``."""
-    return build_loop_memory_root() / "projects"
+    """Return ``<memory_store_root()>/projects``."""
+    return memory_store_root() / "projects"
 
 
 def project_memory_dir_for_project(project: str) -> Path:
-    """Return ``project_memory_root() / <project>`` (validated).
-
-    Validates ``project`` against ``_safe_project_tag`` to prevent
-    directory traversal — same validation used for the decisions store.
-    Empty strings collapse to ``_unscoped``.
-
-    Sub-component slugs containing ``/`` (e.g. ``decision-doctor-cc/workers``)
-    are split and each segment validated individually so the path joins
-    cleanly. Resulting path is asserted to be rooted under
-    ``project_memory_root()`` to defend against symlink-based escapes.
-    """
-    if not project:
-        project = "_unscoped"
-    # Split on '/' to allow sub-component slugs like "<project>/workers".
-    parts = project.split("/")
-    for p in parts:
-        _safe_project_tag(p)  # raises ValueError on unsafe segment
-    candidate_rel = Path(*parts)
-    candidate = (project_memory_root() / candidate_rel).resolve()
-    root_resolved = project_memory_root().resolve()
-    rel = str(candidate)
-    root_str = str(root_resolved)
-    if not (rel == root_str or rel.startswith(root_str + os.sep)):
-        raise ValueError(
-            f"project tag {project!r} resolves outside project_memory_root()"
-        )
-    return project_memory_root() / candidate_rel
+    """Compatibility alias for ``project_root(project)``."""
+    return project_root(project)
 
 
 def archive_memory_dir(project: str) -> Path:

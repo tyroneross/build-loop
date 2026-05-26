@@ -102,7 +102,7 @@ When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-d
 
 **On every loop iteration entry — three short calls in order:**
 
-1. **Budget check.** `python3 /Users/tyroneross/.claude/plugins/cache/rosslabs-ai-toolkit/build-loop/<version>/scripts/budget_check.py --workdir "$PWD"`. Parse the envelope.
+1. **Budget check.** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/budget_check.py --workdir "$PWD"`. Parse the envelope.
    - `action: continue` → proceed.
    - `action: checkin` → emit a `PushNotification` (`Build-loop progress @ N% — items closed: X, deferred: Y`), atomic-update `state.execution.budget.last_checkin_at = now()`, proceed (non-blocking).
    - `action: finalize_and_stop` → finish the **current chunk's commit only**, emit the final summary, exit autonomous loop. Do NOT start a new alignment-check or chunk. Plan §14.7 — no mid-commit hard cuts.

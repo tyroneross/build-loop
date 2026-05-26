@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Rally Point channel path resolver (D1: worktree-aware slug).
+"""Rally Point fallback channel path resolver (D1: worktree-aware slug).
 
-The shared per-app channel lives at ``~/.build-loop/apps/<slug>/``. The
-slug MUST be identical across a clone, the main checkout, and any
-``git worktree`` of the same canonical repo — otherwise concurrent
-sessions (the exact scenario Rally Point targets, often under
-``isolation: "worktree"``) split the channel.
+Production writers should call ``rally_point.discovery_bridge.resolve`` first.
+This module supplies the embedded fallback channel under
+``~/.agent-rally-point/apps/<slug>/`` and the slug helper used when native
+``agent-rally-point`` discovery is unavailable. The slug MUST be identical
+across a clone, the main checkout, and any ``git worktree`` of the same
+canonical repo — otherwise concurrent sessions (the exact scenario Rally Point
+targets, often under ``isolation: "worktree"``) split the channel.
 
 D1 (amended 2026-05-17): resolve the slug from
 ``git rev-parse --git-common-dir``. A worktree's git-common-dir points
@@ -51,16 +53,22 @@ SUBCOMPONENT_PATTERNS = _mem.SUBCOMPONENT_PATTERNS
 _safe_project_tag = _mem._safe_project_tag
 derive_slug_from_cwd = _mem.derive_slug_from_cwd
 
-DEFAULT_APPS_ROOT = "~/.build-loop/apps"
+DEFAULT_APPS_ROOT = "~/.agent-rally-point/apps"
 
 
 def apps_root() -> Path:
-    """Return the apps-channel root (``~/.build-loop/apps`` by default).
+    """Return the embedded fallback apps-channel root.
 
-    ``$BUILD_LOOP_APPS_ROOT`` overrides (expanded for ``~``). Not required
-    to exist; ``ensure_channel_dir`` creates on demand.
+    ``$AGENT_RALLY_APPS_ROOT`` is the preferred override.
+    ``$BUILD_LOOP_APPS_ROOT`` remains a compatibility/test override.
+    The root is not required to exist; ``ensure_channel_dir`` creates on
+    demand.
     """
-    raw = os.environ.get("BUILD_LOOP_APPS_ROOT") or DEFAULT_APPS_ROOT
+    raw = (
+        os.environ.get("AGENT_RALLY_APPS_ROOT")
+        or os.environ.get("BUILD_LOOP_APPS_ROOT")
+        or DEFAULT_APPS_ROOT
+    )
     return Path(os.path.expanduser(raw))
 
 

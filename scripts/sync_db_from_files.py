@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Rebuild Postgres state from canonical markdown files.
+"""Rebuild Postgres state from canonical build-loop-memory markdown files.
 
-Reads every `.episodic/decisions/*.md` (excluding `_history/` by default;
-`--include-history` opts in), embeds the body via `embed_backend.embed`
+Reads every `projects/<project>/decisions/*.md` (excluding `_history/` by
+default; `--include-history` opts in), embeds the body via `embed_backend.embed`
 (MLX default, Ollama fallback, 1024-dim), and upserts into
 `agent_memory.<schema>.semantic_facts`.
 
@@ -27,46 +27,74 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from _paths import default_schema as _default_schema  # type: ignore  # noqa: E402
-from db import execute, execute_script, vector_literal  # type: ignore  # noqa: E402
 from embed_backend import embed as _embed  # type: ignore  # noqa: E402
 from write_decision import (  # type: ignore  # noqa: E402
     log,
     parse_frontmatter,
 )
 
+try:
+    from db import execute, execute_script, vector_literal  # type: ignore  # noqa: E402
+    _DB_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # noqa: BLE001
+    execute = execute_script = vector_literal = None  # type: ignore[assignment]
+    _DB_IMPORT_ERROR = exc
+
 
 def list_decision_files(workdir: Path, include_history: bool) -> list[Path]:
     """Find decision files to sync.
 
-    Phase C cutover: when ``workdir`` resolves to the global agent_memory
-    root, walk every ``decisions/<project>/`` subdirectory. Otherwise
-    treat ``workdir`` as a per-repo legacy ``.episodic/decisions/`` source.
-    Both modes support ``--include-history`` for the ``_history/`` subtree.
+    Active mode reads the canonical build-loop-memory tree under
+    ``projects/<project>/decisions``. Legacy sources are considered only
+    when ``BUILD_LOOP_MEMORY_MIGRATION_MODE=1``.
     """
-    from _paths import agent_memory_root, decisions_root  # noqa: PLC0415
+    import os
+
+    from _paths import memory_store_root, project_decisions_dir, project_memory_root  # noqa: PLC0415
+    from project_resolver import resolve_project  # noqa: PLC0415
     workdir = Path(workdir).resolve()
     files: list[Path] = []
-    if workdir == agent_memory_root().resolve() or workdir == decisions_root().resolve():
-        # Global mode: iterate per-project subdirs.
-        root = decisions_root() if workdir == agent_memory_root().resolve() else workdir
-        if not root.exists():
+    root = memory_store_root().resolve()
+    projects_root = project_memory_root().resolve()
+    if workdir in {root, projects_root}:
+        if not projects_root.exists():
             return []
-        for project_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-            files.extend(sorted(project_dir.glob("[0-9][0-9][0-9][0-9]-*.md")))
+        for project_dir in sorted(p for p in projects_root.iterdir() if p.is_dir()):
+            decisions_dir = project_dir / "decisions"
+            files.extend(
+                sorted(
+                    p for p in decisions_dir.glob("*.md")
+                    if not p.name.upper().startswith("INDEX")
+                )
+            )
             if include_history:
-                history = project_dir / "_history"
+                history = decisions_dir / "_history"
                 if history.exists():
                     files.extend(sorted(history.glob("*.md")))
         return files
-    # Legacy mode: per-repo .episodic/decisions/.
-    decisions_dir = workdir / ".episodic" / "decisions"
-    if not decisions_dir.exists():
-        return []
-    files = sorted(decisions_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))
-    if include_history:
-        history = decisions_dir / "_history"
-        if history.exists():
-            files.extend(sorted(history.glob("*.md")))
+
+    project = resolve_project(workdir)
+    decisions_dir = project_decisions_dir(project)
+    if decisions_dir.exists():
+        files.extend(
+            sorted(
+                p for p in decisions_dir.glob("*.md")
+                if not p.name.upper().startswith("INDEX")
+            )
+        )
+        if include_history:
+            history = decisions_dir / "_history"
+            if history.exists():
+                files.extend(sorted(history.glob("*.md")))
+
+    if os.environ.get("BUILD_LOOP_MEMORY_MIGRATION_MODE") == "1":
+        legacy_dir = workdir / ".episodic" / "decisions"
+        if legacy_dir.exists():
+            files.extend(sorted(legacy_dir.glob("[0-9][0-9][0-9][0-9]-*.md")))
+            if include_history:
+                history = legacy_dir / "_history"
+                if history.exists():
+                    files.extend(sorted(history.glob("*.md")))
     return files
 
 
@@ -91,6 +119,9 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
         log(f"skip: no id in frontmatter for {path}")
         return False
     project = (fm.get("project") or "_unscoped").strip() or "_unscoped"
+    if _DB_IMPORT_ERROR is not None or execute is None or vector_literal is None:
+        log(f"db unavailable; cannot upsert {path}: {_DB_IMPORT_ERROR}")
+        return False
 
     try:
         embedding = _embed(text)
@@ -98,11 +129,13 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
         log(f"skip: embed failed for {path}: {e}")
         return False
 
-    subject = f"decision:{project}:{decision_id}"
+    subject_key = fm.get("canonical_id") or decision_id
+    subject = f"decision:{project}:{subject_key}"
     predicate = fm.get("primary_tag") or "decision"
     obj_summary = fm.get("title") or ""
     metadata = {
         "decision_id": decision_id,
+        "canonical_id": fm.get("canonical_id"),
         "entity": fm.get("entity"),
         "tags": fm.get("tags"),
         "status": fm.get("status"),
@@ -180,6 +213,8 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
 def truncate_facts(schema: str) -> None:
     if not re.match(r"^[a-z][a-z0-9_]*$", schema):
         raise ValueError(f"unsafe schema name: {schema!r}")
+    if _DB_IMPORT_ERROR is not None or execute_script is None:
+        raise RuntimeError(f"db unavailable: {_DB_IMPORT_ERROR}")
     execute_script(f"TRUNCATE TABLE {schema}.semantic_facts RESTART IDENTITY CASCADE;")
 
 
@@ -205,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     workdir = Path(args.workdir).resolve()
     files = list_decision_files(workdir, args.include_history)
     if not files:
-        log(f"validation: no decision files under {workdir}/.episodic/decisions/")
+        log(f"validation: no decision files under canonical memory store for {workdir}")
         return 1
 
     if args.rebuild:

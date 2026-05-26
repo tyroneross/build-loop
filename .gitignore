@@ -5,6 +5,14 @@ Thumbs.db
 # Runtime data (created in consumer projects)
 .build-loop/
 .claude/
+.codex/
+.agent-rally-point/
+
+# Runtime memory/state. Durable memory belongs in the private
+# build-loop-memory repo, never in this public plugin repo.
+.episodic/
+.semantic/
+.procedural/
 
 # Editor
 *.swp

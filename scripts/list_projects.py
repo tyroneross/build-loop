@@ -8,7 +8,7 @@ subdirectory:
 
   <slug>  <md_file_count>  <last_modified_iso>
 
-Sub-components (e.g. ``decision-doctor-cc/workers/``) appear as their own
+Sub-components (e.g. ``example-project/workers/``) appear as their own
 rows. The ``_archive/`` subtree is included with an ``[archived]`` marker.
 
 Used by ``install_memory.py --check`` for a quick rollup and by operators

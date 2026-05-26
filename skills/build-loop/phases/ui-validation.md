@@ -42,7 +42,7 @@ Each `blocker` or `major` finding becomes a queue entry from `templates/ux-fix-p
 
 When `uiTarget != null`, build-loop owns the design route:
 
-1. Phase 2 dispatches `design-contract-specialist` with `trigger_point: phase2-design-direction` for non-trivial UI work. It reads the UI input/output contract, `references/recent-design-structures.md`, product/workflow needs, project tokens, mockups, screenshots, and local design artifacts, then chooses a fit-for-purpose direction and writes `.build-loop/app-contract/ui.md`. Recent and existing design patterns are inputs, not mandates.
+1. Phase 2 loads `build-loop:ui-design`, then dispatches `design-contract-specialist` with `trigger_point: phase2-design-direction` for non-trivial UI work. It reads the UI input/output contract, `references/recent-design-structures.md`, `skills/ui-design/references/ui-guidance-sources.md`, product/workflow needs, project tokens, mockups, screenshots, and local design artifacts, then chooses a fit-for-purpose direction and writes `.build-loop/app-contract/ui.md`. Recent and existing design patterns are inputs, not mandates.
 2. Phase 3 implementers receive the UI contract plus `templates/ui-subagent-prompt.md`.
 3. Phase 4-B dispatches `ui-validator` first, then runs scanners and code graders.
 
@@ -54,10 +54,10 @@ The orchestrator must load these skills before dispatching subagents:
 
 | Platform | Always | + Platform skills |
 |---|---|---|
-| SwiftUI / iOS / macOS / watchOS | `calm-precision` + `design-contract-specialist` | `apple-dev` when Apple-platform implementation/deploy details matter |
-| React / Next.js / web | `calm-precision` + `design-contract-specialist` | `frontend-design` only when explicitly requested |
-| Vue / Svelte | `calm-precision` + `design-contract-specialist` | `frontend-design` only when explicitly requested |
-| Native iOS guidance | `calm-precision` + `design-contract-specialist` | `apple-dev` for native platform conventions |
+| SwiftUI / iOS / macOS / watchOS | `build-loop:ui-design` + `calm-precision` + `design-contract-specialist` | `apple-dev` when Apple-platform implementation/deploy details matter |
+| React / Next.js / web | `build-loop:ui-design` + `calm-precision` + `design-contract-specialist` | `frontend-design` only when explicitly requested |
+| Vue / Svelte | `build-loop:ui-design` + `calm-precision` + `design-contract-specialist` | `frontend-design` only when explicitly requested |
+| Native iOS guidance | `build-loop:ui-design` + `calm-precision` + `design-contract-specialist` | `apple-dev` for native platform conventions |
 
 Subagents themselves are also instructed to load these skills via the `templates/ui-subagent-prompt.md` preamble.
 

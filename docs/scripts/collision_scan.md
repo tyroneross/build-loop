@@ -74,7 +74,7 @@ JSON output of the same scan emits an array of 3 records (one per location), sui
 2. Strict mode exits 1 when an accepted-sibling collision is artificially added (catches a regression in the strict-mode logic).
 3. The set of accepted siblings declared in the test file matches what the scanner reports — no quiet drift.
 
-The empirical accuracy of the underlying detection rule was verified by reproducing the original FlowDoro session bug: `Skill("build-loop:build-loop")` returned the slash-command body before the rename to `commands/run.md`; after the rename, the same call resolved correctly. See `KNOWN-ISSUES.md` "Skill-runtime collision".
+The empirical accuracy of the underlying detection rule was verified by reproducing the original private-app session bug: `Skill("build-loop:build-loop")` returned the slash-command body before the rename to `commands/run.md`; after the rename, the same call resolved correctly. See `KNOWN-ISSUES.md` "Skill-runtime collision".
 
 ## Related files
 

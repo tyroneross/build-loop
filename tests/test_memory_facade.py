@@ -40,11 +40,11 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "_no_home"))
     monkeypatch.setattr(mf, "_DEBUGGER_RUNNER_OVERRIDE", None)
-    # Isolate from the live agent-memory store during tests — point
-    # AGENT_MEMORY_ROOT at an empty subdir under tmp_path so the global
-    # decisions store has nothing to merge in.
+    # Isolate from the live memory store during tests.
     isolated_root = tmp_path / "_agent_memory_root"
     isolated_root.mkdir()
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_STORE_ROOT", raising=False)
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_ROOT", raising=False)
     monkeypatch.setenv("AGENT_MEMORY_ROOT", str(isolated_root))
 
     bl = tmp_path / ".build-loop"
@@ -69,10 +69,12 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     }
     (bl / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
-    ep = tmp_path / ".episodic" / "decisions"
-    ep.mkdir(parents=True)
-    (ep / "0001-2026-05-02-arch-baseline.md").write_text(
+    project_dir = isolated_root / "projects" / "_unscoped" / "decisions"
+    project_dir.mkdir(parents=True)
+    (project_dir / "decision-project-unscoped-arch-baseline-20260502-001.md").write_text(
         "---\n"
+        "id: '0001'\n"
+        "canonical_id: decision-project-unscoped-arch-baseline-20260502-001\n"
         "title: Architecture baseline scan: 142 components\n"
         "date: 2026-05-02T08:00:00Z\n"
         "primary_tag: architecture\n"
@@ -80,8 +82,10 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "Captured 142 components, 191 connections.\n",
         encoding="utf-8",
     )
-    (ep / "0002-2026-05-04-debug-flakey.md").write_text(
+    (project_dir / "decision-project-unscoped-debug-flakey-20260504-002.md").write_text(
         "---\n"
+        "id: '0002'\n"
+        "canonical_id: decision-project-unscoped-debug-flakey-20260504-002\n"
         "title: Debug session for flaky test\n"
         "date: 2026-05-04T14:00:00Z\n"
         "primary_tag: debugging\n"

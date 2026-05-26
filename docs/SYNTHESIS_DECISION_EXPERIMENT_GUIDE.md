@@ -15,7 +15,7 @@ The experiment supports the current `> 5` routing rule as the pragmatic default.
 
 Primary numeric source:
 
-- `/Users/tyroneross/dev/research/topics/synthesis-decision-delegation/experiment-2026-05-07/metrics.md`
+- `<research-root>/topics/synthesis-decision-delegation/experiment-2026-05-07/metrics.md`
 
 Related source notes:
 

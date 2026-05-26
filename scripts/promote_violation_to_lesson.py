@@ -6,8 +6,8 @@
 Chunk 8 — final chunk of the architecture-awareness initiative.
 
 Reads:
-    .build-loop/state.json                                — runs[] history
-    .episodic/architecture/known_violations.json          — Chunk 6 registry
+    .build-loop/state.json                                           — runs[] history
+    build-loop-memory/projects/<project>/architecture/known_violations.json — Chunk 6 registry
 
 For each violation ``id`` in known_violations:
     1. Count distinct ``runs[]`` entries that mention the same id under
@@ -66,6 +66,8 @@ if str(_SRC) not in sys.path:
 
 from build_loop.architecture.schemas import Lesson, SCHEMA_VERSION as ENGINE_SCHEMA_VERSION  # noqa: E402
 from build_loop.architecture.storage import atomic_write_json, read_json  # noqa: E402
+from _paths import project_architecture_dir  # type: ignore  # noqa: E402
+from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +124,7 @@ def _read_state_runs(workdir: Path) -> List[Dict[str, Any]]:
 
 
 def _read_registry(workdir: Path) -> Tuple[Path, Dict[str, Any]]:
-    path = workdir / ".episodic" / "architecture" / "known_violations.json"
+    path = project_architecture_dir(resolve_project(workdir)) / "known_violations.json"
     raw = read_json(path) or {}
     if not isinstance(raw, dict):
         raw = {}

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Canonical writer for build-loop memory files with provenance frontmatter.
+"""Canonical writer for build-loop-memory files with provenance frontmatter.
 
 Companion to memory_index.py. Memory writes go through this script so
-every entry under ~/.build-loop/memory/ carries the provenance fields
+every entry under the canonical build-loop-memory lanes carries the provenance fields
 that make cross-repo trust gradients possible. Concurrent-presence
 detection is a separate concern owned by Rally Point presence
 (scripts/rally_point/presence.py), not this writer.
@@ -61,13 +61,28 @@ sys.path.insert(0, str(HERE))
 
 import memory_index as mi  # noqa: E402
 
-DEFAULT_MEMORY_DIR = Path.home() / ".build-loop" / "memory"
+from _paths import (  # type: ignore  # noqa: E402
+    project_lessons_dir,
+    top_level_lessons_dir,
+)
+
+
+def default_memory_dir() -> Path:
+    """Default durable memory write lane: top-level canonical lessons."""
+    return top_level_lessons_dir()
+
+
+DEFAULT_MEMORY_DIR = default_memory_dir()
 
 VALID_HOSTS = frozenset({"claude_code", "codex", "gemini", "other"})
 VALID_TYPES = frozenset({
     "tool", "deployment", "library-choice", "user-preference", "pattern",
     "feedback", "reference", "design", "convention", "gotcha", "decision",
-    "contract",
+    "contract", "lesson", "run-summary", "debug-incident", "debug-fix",
+    "procedure", "architecture", "api-contract", "design-guidance",
+    "product-idea", "product-backlog", "product-opportunity",
+    "product-use-case", "product-ruled-out", "source-summary", "agent",
+    "plugin", "skill",
 })
 
 REQUIRED_PROVENANCE_FIELDS = frozenset({
@@ -302,7 +317,10 @@ def write(
     # M5 + Step 8: emit memory-write telemetry to TELEMETRY.jsonl (separate file
     # from INDEX.jsonl; preserves M5 discovery schema untouched). Fire-and-forget.
     try:
-        from scripts import memory_telemetry as _mt  # local import keeps module optional
+        try:
+            from scripts import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
+        except ImportError:
+            import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
         _why = (extra_frontmatter or {}).get("why_durable") or description or "(unspecified)"
         _mt.emit_write(
             phase=str((extra_frontmatter or {}).get("phase", "unknown")),
@@ -310,6 +328,7 @@ def write(
             memory_id=str(memory_dir / file_rel),
             why_durable=_why,
             action=action,
+            telemetry_path=memory_dir / "TELEMETRY.jsonl",
         )
     except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
         print(f"WARN: memory_telemetry emit_write failed: {exc}", file=sys.stderr)
@@ -467,7 +486,7 @@ def _cli_write(args: argparse.Namespace) -> int:
         body = sys.stdin.read()
     try:
         fm = write(
-            Path(args.memory_dir),
+            _cli_memory_dir(args),
             file_rel=args.file,
             body=body,
             name=args.name,
@@ -489,7 +508,7 @@ def _cli_write(args: argparse.Namespace) -> int:
 def _cli_mark_applied(args: argparse.Namespace) -> int:
     try:
         fm = mark_applied(
-            Path(args.memory_dir),
+            _cli_memory_dir(args),
             file_rel=args.file,
             applying_repo=args.applying_repo,
             applying_workdir=args.applying_workdir,
@@ -506,7 +525,7 @@ def _cli_mark_applied(args: argparse.Namespace) -> int:
 
 def _cli_migrate(args: argparse.Namespace) -> int:
     summary = migrate(
-        Path(args.memory_dir),
+        _cli_memory_dir(args),
         run_id=args.run_id,
         workdir=args.workdir,
         host=args.host,
@@ -529,8 +548,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--memory-dir",
-        default=str(DEFAULT_MEMORY_DIR),
-        help="Override default ~/.build-loop/memory/ (testing).",
+        default=None,
+        help="Override default canonical memory dir (testing/advanced).",
+    )
+    p.add_argument(
+        "--scope",
+        choices=("top-level", "project"),
+        default="top-level",
+        help="Default write lane when --memory-dir is omitted.",
+    )
+    p.add_argument(
+        "--project",
+        default=None,
+        help="Project tag for --scope project. Defaults to resolver on --workdir.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -562,6 +592,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     m.add_argument("--json", action="store_true")
 
     return p.parse_args(argv)
+
+
+def _cli_memory_dir(args: argparse.Namespace) -> Path:
+    if args.memory_dir:
+        return Path(args.memory_dir)
+    if args.scope == "project":
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+
+        workdir = getattr(args, "workdir", None) or getattr(args, "applying_workdir", None) or "."
+        project = args.project or resolve_project(Path(workdir))
+        return project_lessons_dir(project)
+    return default_memory_dir()
 
 
 def main(argv: list[str] | None = None) -> int:

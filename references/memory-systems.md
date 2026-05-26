@@ -9,7 +9,7 @@ Build-loop reads/writes four memory stores. Loaded on demand at Phase 1 Assess a
 | Store | Path | Purpose | Scope |
 |---|---|---|---|
 | Run history | `.build-loop/state.json.runs[]` | Per-build outcome + diagnostic trail. Phase 6 Learn scans this for recurring patterns. | Project-local |
-| Episodic decisions | `.episodic/decisions/*.md` (legacy) OR `~/dev/git-folder/build-loop-memory/decisions/<project>/*.md` (post-cutover canonical) | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
+| Episodic decisions | `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/*.md` (canonical) plus legacy read fan-out from `.episodic/decisions/*.md` when present | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
 | Semantic facts | Postgres `agent_memory.<schema>.semantic_facts` | Embeddings + structured facts for hybrid retrieval. | Project-tagged, opt-in |
 | Debugger incidents | `claude-code-debugger` MCP `store`/`search`/`outcome` | Bug history with verdict-classifier feedback loop. | Cross-project; bundled MCP server |
 
@@ -148,10 +148,10 @@ Decisions live under TWO paths today (canonical + legacy). The orchestrator and 
 
 | Path | Status | Notes |
 |---|---|---|
-| `~/dev/git-folder/build-loop-memory/decisions/<project>/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
+| `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
 | `<repo>/.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` | Legacy (still tracked) | Pre-cutover decisions; some projects still write here during transition. The facade's read fan-out covers it. |
 
-**Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` fans out across both paths and merges results. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover` in `.episodic/architecture/lessons.json`.
+**Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` fans out across canonical and legacy paths and merges results. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover`; consume it through the facade instead of hard-coding the lesson-file path.
 
 **Write path**: `scripts/write_decision.py` writes to the canonical (new) path by default. The legacy path is only written when explicitly requested by tests fixturing pre-cutover state.
 

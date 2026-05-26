@@ -6,7 +6,7 @@
 read a Rally Point channel goes through ``resolve(workdir)``. The bridge
 returns a full discovery envelope so callers can branch on policy,
 channel layout, and protocol version without re-implementing the
-canonical → legacy fallback chain themselves.
+native discovery → embedded fallback chain themselves.
 
 Resolution order (highest → lowest priority):
 
@@ -15,14 +15,16 @@ Resolution order (highest → lowest priority):
    system install of agent-rally-point >= 0.3.0).
 3. ``agent_rally_point.discover`` Python import (sibling-repo install
    or local ``.venv``).
-4. Internal fallback to ``channel_paths.app_slug`` /
-   ``channel_paths.app_channel_dir`` (legacy ``~/.build-loop/apps/``).
+4. Embedded fallback to ``channel_paths.app_slug`` /
+   ``channel_paths.app_channel_dir`` (canonical
+   ``~/.agent-rally-point/apps/`` root, compatibility env overrides honored).
 
 The internal fallback is a degraded-coordination path: it surfaces
 ``resolved_via: "build-loop-internal"`` and ``policy: "legacy-only"``
-so callers can refuse to write when canonical resolution is required.
-**It is never silently treated as canonical** (the v0.12.16 defect
-class — see ``protocol-of-record-audit`` memory note).
+so callers can distinguish embedded fallback from native package discovery.
+The fallback root is canonical, but the protocol source is still not silently
+treated as native agent-rally-point (the v0.12.16 defect class — see
+``protocol-of-record-audit`` memory note).
 
 Protocol-version compatibility: the bridge pins
 ``protocol_version >= 1.0, < 2.0``. When the discover envelope reports
@@ -236,12 +238,12 @@ def _try_python_import(workdir: Path) -> DiscoveryEnvelope | None:
 
 
 def _internal_fallback(workdir: Path) -> DiscoveryEnvelope:
-    """Last-resort resolver using the legacy ``channel_paths`` API.
+    """Last-resort resolver using the embedded ``channel_paths`` API.
 
     Returns ``policy: "legacy-only"`` and ``resolved_via:
     "build-loop-internal"`` so callers can refuse to write when their
-    contract requires canonical resolution. The internal-fallback is
-    NEVER silently treated as canonical.
+    contract requires native package discovery. The embedded fallback is
+    NEVER silently treated as native agent-rally-point discovery.
     """
     slug = channel_paths.app_slug(workdir)
     channel_dir = channel_paths.app_channel_dir(slug)

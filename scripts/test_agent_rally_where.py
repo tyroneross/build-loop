@@ -107,9 +107,9 @@ class AgentRallyWhereTests(unittest.TestCase):
 
     def test_falls_back_to_internal_when_agent_rally_point_missing(self) -> None:
         """When agent_rally_point is NOT importable, ``where --json``
-        returns the build-loop-internal resolution and reports
-        ``resolved_via: "build-loop-internal"``. Uses ``-I`` to isolate
-        from any system-wide install.
+returns the build-loop-internal resolution and reports
+``resolved_via: "build-loop-internal"``. Uses ``-I`` to isolate
+from any system-wide install.
         """
         empty = self.tmp / "empty"
         empty.mkdir(exist_ok=True)

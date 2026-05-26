@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Explicit supersession CLI for repo-local episodic memory.
+"""Explicit supersession CLI for canonical build-loop memory.
 
 Wraps `write_decision.py --supersedes <old-id>` so the existing
 supersession path (file move to `_history/`, frontmatter update,
 `decision_superseded` event, INDEX regen) is reused without duplication.
 
-Verifies the `--old-id` exists in `.episodic/decisions/` before
-delegating, and surfaces a clear error otherwise.
+Verifies the `--old-id` exists in
+`build-loop-memory/projects/<project>/decisions/` before delegating, and
+surfaces a clear error otherwise.
 
 Usage:
   supersede_decision.py \\
@@ -26,7 +27,6 @@ Exit codes: 0 success | 1 validation error | 2 filesystem/delegate error.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -34,18 +34,32 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 WRITE_DECISION = HERE / "write_decision.py"
+sys.path.insert(0, str(HERE))
+
+from _paths import project_decisions_dir  # type: ignore  # noqa: E402
+from project_resolver import resolve_project  # type: ignore  # noqa: E402
+from write_decision import parse_frontmatter  # type: ignore  # noqa: E402
 
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def find_decision_file(workdir: Path, old_id: str) -> Path | None:
-    decisions_dir = workdir / ".episodic" / "decisions"
+def find_decision_file(decisions_dir: Path, old_id: str) -> Path | None:
     if not decisions_dir.exists():
         return None
     for f in decisions_dir.glob(f"{old_id}-*.md"):
         if f.is_file():
+            return f
+    for f in decisions_dir.glob("*.md"):
+        if f.name == "INDEX.md" or not f.is_file():
+            continue
+        try:
+            fm = parse_frontmatter(f.read_text(encoding="utf-8")) or {}
+        except OSError:
+            continue
+        raw_id = str(fm.get("id") or fm.get("legacy_id") or "")
+        if raw_id == old_id:
             return f
     return None
 
@@ -55,6 +69,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Explicit supersession of a prior decision; delegates to write_decision.py."
     )
     p.add_argument("--workdir", default=".")
+    p.add_argument(
+        "--project",
+        default=None,
+        help="Project tag. Default: resolve from --workdir via project_resolver.",
+    )
     p.add_argument("--old-id", required=True, help="4-digit decision ID to supersede")
     p.add_argument("--new-decision", required=True, help="One-sentence decision body")
     p.add_argument("--new-title", default=None, help="Title for the new decision (defaults to --new-decision)")
@@ -101,11 +120,13 @@ def main(argv: list[str] | None = None) -> int:
         log(f"validation error: --old-id must be 4 digits, got {args.old_id!r}")
         return 1
 
-    prior = find_decision_file(workdir, args.old_id)
+    project_tag = args.project or resolve_project(workdir)
+    decisions_dir = project_decisions_dir(project_tag)
+    prior = find_decision_file(decisions_dir, args.old_id)
     if prior is None:
         log(
             f"validation error: no decision matching id={args.old_id} found in "
-            f"{workdir / '.episodic' / 'decisions'}"
+            f"{decisions_dir}"
         )
         return 1
 
@@ -115,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     delegate = [
         sys.executable, str(WRITE_DECISION),
         "--workdir", str(workdir),
+        "--project", project_tag,
         "--title", title,
         "--decision", args.new_decision,
         "--context", args.context,

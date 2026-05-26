@@ -6,7 +6,7 @@
   - idempotent (re-run = no dup)
   - chains an existing post-commit (never clobbers unrelated content)
   - marker-guarded
-  - installs the private-slug-guard pre-commit alongside post-commit
+  - installs public-repo hygiene pre-commit guards alongside post-commit
 """
 from __future__ import annotations
 
@@ -90,6 +90,8 @@ def test_installs_pre_commit_guard(repo: Path):
     assert hook.exists() and igh.PRE_MARKER in hook.read_text()
     assert os.access(hook, os.X_OK)
     assert (repo / ".git" / "hooks" / ".private-slug-check.py").exists()
+    assert (repo / ".git" / "hooks" / ".runtime-memory-tracking-check.py").exists()
+    assert ".runtime-memory-tracking-check.py" in hook.read_text()
 
 
 def test_pre_commit_idempotent(repo: Path):
@@ -136,6 +138,7 @@ def test_pre_commit_reinstall_replaces_stale_segment(repo: Path):
     assert igh.PRE_MARKER in body
     assert body.count(igh.PRE_MARKER) == 1  # exactly one segment
     assert "RALLY_POINT_TOPLEVEL" in body  # current template wiring
+    assert ".runtime-memory-tracking-check.py" in body
 
 
 def test_post_commit_reinstall_replaces_stale_segment(repo: Path):

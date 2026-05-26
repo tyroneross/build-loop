@@ -6,12 +6,12 @@
 Runs from a Claude Code Stop hook. Reads the session transcript JSONL,
 asks a local Ollama model (`qwen3:8b-q4_K_M` by default) to extract
 implicit decisions using design-ref §12 Prompt C (batch consolidation),
-and writes results into `.episodic/decisions/`:
+    and writes results into the canonical build-loop-memory project decisions lane:
 
-  - `confidence: explicit`  → trusted (`.episodic/decisions/`) via write_decision.py
+  - `confidence: explicit`  → trusted (`projects/<project>/decisions/`) via write_decision.py
   - `confidence: confirmed` → trusted via write_decision.py
-  - `confidence: inferred`  → quarantine (`.episodic/decisions/_review/`) for user promotion
-  - `confidence: assumed`   → quarantine (`.episodic/decisions/_review/`)
+  - `confidence: inferred`  → quarantine (`projects/<project>/decisions/_review/`) for user promotion
+  - `confidence: assumed`   → quarantine (`projects/<project>/decisions/_review/`)
 
 Dedup against existing `semantic_facts` is best-effort and uses the same
 embedding pipeline as write_decision.py. Threshold ≥0.85 → IGNORE; <0.85 → INSERT.
@@ -25,7 +25,7 @@ Hook contract — never fail the session:
   - A non-blocking `fcntl.flock` on `/tmp/build-loop-scan.lock` (or the
     `--lock-file` override) prevents concurrent sessions from contending;
     a held lock causes immediate clean exit 0
-  - `.episodic/.no-capture` (per-session opt-out) causes immediate clean exit 0
+  - `.build-loop/.no-capture` (per-session opt-out) causes immediate clean exit 0
   - Output is written to the log file (`--log-file`, default
     `$XDG_STATE_HOME/build-loop/scan.log` or `~/.local/state/build-loop/scan.log`)
     AND to stderr; the Stop hook redirects stderr to /dev/null so terminal
@@ -297,18 +297,17 @@ def _render_turn(obj: dict) -> str:
 
 
 def load_prior_decisions_summary(workdir: Path, limit: int = 20) -> str:
-    # Phase C cutover: read from the global build-loop-memory store under
-    # decisions_dir_for_project(<project>). Falls back to legacy .episodic/
-    # for repos that haven't yet been migrated.
-    from _paths import decisions_dir_for_project as _ddfp  # noqa: PLC0415
+    # Memory-store cutover: read from the canonical build-loop-memory store
+    # under projects/<project>/decisions.
+    from _paths import project_decisions_dir as _pdd  # noqa: PLC0415
     from project_resolver import resolve_project as _rp  # noqa: PLC0415
-    decisions_dir = _ddfp(_rp(workdir))
+    decisions_dir = _pdd(_rp(workdir))
     if not decisions_dir.exists():
-        # Legacy fallback during the soak window; harmless if missing.
-        decisions_dir = workdir / ".episodic" / "decisions"
-        if not decisions_dir.exists():
-            return ""
-    files = sorted(decisions_dir.glob("[0-9][0-9][0-9][0-9]-*.md"))[-limit:]
+        return ""
+    files = sorted(
+        p for p in decisions_dir.glob("*.md")
+        if not p.name.upper().startswith("INDEX")
+    )[-limit:]
     rows: list[str] = []
     for f in files:
         try:
@@ -645,12 +644,12 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     File-only — no event emitted, no DB write, no INDEX entry. The user
     promotes by `mv` out of `_review/` (or runs a future /knowledge:review).
     """
-    # Phase C cutover: tier-3 review captures land in the global store under
-    # <agent_memory_root>/decisions/<project>/_review/ alongside trusted decisions.
-    from _paths import decisions_dir_for_project as _ddfp  # noqa: PLC0415
+    # Tier-3 review captures land in the canonical project decisions lane
+    # alongside trusted decisions.
+    from _paths import project_decisions_dir as _pdd  # noqa: PLC0415
     from project_resolver import resolve_project as _rp  # noqa: PLC0415
     project_tag = _rp(workdir)
-    decisions_dir = _ddfp(project_tag)
+    decisions_dir = _pdd(project_tag)
     review_dir = decisions_dir / "_review"
     history_dir = decisions_dir / "_history"
     review_dir.mkdir(parents=True, exist_ok=True)
@@ -667,7 +666,9 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     title = (item.get("decision") or "(untitled)").strip()
     slug = slugify(title)
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    filename = f"{new_id}-{date}-{slug}.md"
+    compact = date.replace("-", "")
+    canonical_id = f"decision-project-{slugify(project_tag)}-{slug}-{compact}-{int(new_id):03d}"
+    filename = f"{canonical_id}.md"
 
     primary_tag = (item.get("primary_tag") or "process").strip()
     entity = (item.get("entity") or "build-loop").strip()
@@ -698,12 +699,16 @@ def write_review(workdir: Path, item: dict) -> tuple[bool, str]:
     )
     fm: dict[str, Any] = {
         "id": new_id,
+        "canonical_id": canonical_id,
+        "canonical": True,
         "slug": slug,
         "title": title,
         "type": "decision",
         "status": "proposed",
         "confidence": confidence,
         "date": date,
+        "created": date,
+        "updated": date,
         "tags": tags,
         "primary_tag": primary_tag,
         "entity": entity,
@@ -749,7 +754,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--workdir",
         default=os.environ.get("CLAUDE_PROJECT_DIR", "."),
-        help="Project root containing .episodic/. Defaults to $CLAUDE_PROJECT_DIR or cwd.",
+        help="Project root. Defaults to $CLAUDE_PROJECT_DIR or cwd.",
     )
     p.add_argument(
         "--transcript",
@@ -819,13 +824,9 @@ def main(argv: list[str] | None = None) -> int:
         _BUDGET_S = SCRIPT_WALL_CLOCK_BUDGET_S
 
     workdir = Path(args.workdir).resolve()
-    episodic = workdir / ".episodic"
-    if not episodic.exists():
-        log(f"scan: no .episodic/ at {episodic}; skipping (project does not opt in)")
-        return 0
 
-    # Per-session opt-out: presence of .episodic/.no-capture skips all work.
-    no_capture = episodic / ".no-capture"
+    # Per-session opt-out: presence of .build-loop/.no-capture skips all work.
+    no_capture = workdir / ".build-loop" / ".no-capture"
     if no_capture.exists():
         log("scan: skipping per .no-capture flag")
         return 0

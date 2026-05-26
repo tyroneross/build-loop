@@ -21,33 +21,6 @@ PKG="$SCRIPT_DIR/../scripts/rally_point"
 
 [ -d "$PKG" ] || exit 0
 
-WORKDIR="$WORKDIR" PKG="$PKG" python3 - <<'PYEOF' 2>/dev/null || exit 0
-import os
-import sys
-
-sys.path.insert(0, os.environ["PKG"])
-try:
-    import channel_paths as ap
-    import presence as pr
-    import revision as rev
-except Exception:
-    sys.exit(0)
-
-try:
-    slug = ap.app_slug(cwd=os.environ["WORKDIR"])
-    chan = ap.app_channel_dir(slug)
-    if not chan.exists():
-        sys.exit(0)
-    cur = rev.read_revision(chan)            # one stat+read, no lock
-    sid = f"sessionstart-{slug.replace('/', '_')}"
-    seen = pr.get_cursor(chan, sid).get("revision", 0)
-    if cur > seen:
-        print(
-            f"Rally Point: {slug} channel advanced "
-            f"(rev {seen} -> {cur}) — run a checkpoint before editing."
-        )
-except Exception:
-    sys.exit(0)
-PYEOF
+python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" 2>/dev/null || exit 0
 
 exit 0

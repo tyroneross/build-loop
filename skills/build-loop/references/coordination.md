@@ -2,7 +2,13 @@
 
 # Coordination — How build-loop consumes agent-rally
 
-Build-loop is a **consumer** of the agent-rally architecture. It does not own the channel, the schema, the watcher, or the discovery layer — those live in [`agent-rally-point`](https://github.com/tyroneross/agent-rally-point) (substrate) and [`agent-rally-watcher`](https://github.com/tyroneross/agent-rally-watcher) (daemon). This document describes how build-loop **uses** those layers; cross-reference the upstream architecture docs before changing how build-loop reads or writes events.
+Build-loop is a **consumer** of the agent-rally architecture, but it currently
+vendors native embedded copies of the substrate and watcher while the standalone
+repos mature. Treat `agent-rally-point` and `agent-rally-watcher` as
+mini-plugins inside build-loop: grouped scripts, skills, docs, tests, and thin
+build-loop adapters first; full spin-out later. Cross-reference the upstream
+architecture docs before changing how build-loop reads or writes events, but do
+not make build-loop depend on those external repos at runtime yet.
 
 > **Binding constitution** (verdict-gating, MECE briefs, Phase D closeout, peer-no-mutate, release-surface verification) lives in [`references/coordination-rules.md`](../../../references/coordination-rules.md). This file documents the **integration shape**, not the rules of engagement.
 
@@ -13,14 +19,23 @@ Layer 3 — CONSUMERS (build-loop, codex, claude_code, ...)
               ▲
               │  build-loop is one of many
               ▼
-Layer 2 — agent-rally-watcher (optional; for push-based subscribers)
+Layer 2 — agent-rally-watcher (embedded watcher namespace; optional listener)
               ▲
               │  build-loop CAN subscribe, OR poll Layer 1 directly
               ▼
-Layer 1 — agent-rally-point (substrate; channel, schema, post API)
+Layer 1 — agent-rally-point (embedded substrate; channel, schema, post API)
 ```
 
 Build-loop **always** uses Layer 1 (it posts events and calls `checkpoint_read`). It uses Layer 2 **opportunistically** — when a peer session is detected via Rally Point presence, the coordination polling gate spins up a `coordination_watch.py` loop or installs a watcher subscription so chunk-close, commit, and feedback events surface within seconds rather than at the next phase boundary.
+
+Native skill entrypoints:
+
+- `skills/agent-rally-point/SKILL.md` — substrate workflow, CLI, boundary,
+  run identity, and spin-out rules.
+- `skills/agent-rally-watcher/SKILL.md` — watcher workflow, JSONL sensor
+  behavior, closeout, and spin-out rules.
+
+The machine-readable boundary is `scripts/rally_point/plugin_boundary.json`.
 
 ## What build-loop posts
 
@@ -73,9 +88,43 @@ When a peer presence record indicates active work AND that work isn't already me
 
 Read-only operations (Phase 1 architecture baseline, plan drafting, fact-check) are always safe and do not invoke the rule.
 
-## Discovery integration (planned)
+## Embedded mini-plugin boundary
 
-Today build-loop's orchestrator and `coordination_status.py` hardcode `~/.build-loop/apps/<slug>/` as the channel root. As of `agent-rally-point` v0.2.0, the canonical channel root is `~/.agent-rally-point/apps/<slug>/` and the discovery layer (see [`agent-rally-point/docs/DISCOVERY.md`](https://github.com/tyroneross/agent-rally-point/blob/main/docs/DISCOVERY.md)) provides:
+For now, the Rally Point substrate and watcher still ship inside the
+build-loop plugin, but they are treated as embedded mini-plugins with
+explicit extraction edges:
+
+| Future plugin | Embedded namespace | Build-loop compatibility entrypoints |
+|---|---|---|
+| `agent-rally-point` | `scripts/rally_point/**` | `scripts/agent_rally.py`, `commands/agent-rally-point.md`, `hooks/*rally-point.sh`, `scripts/coordination_status.py`, `scripts/coordination_rally.py`, `scripts/coordination_bootstrap.py` |
+| `agent-rally-watcher` | `scripts/agent_rally_watcher/**` | `scripts/coordination_watch.py` |
+
+The machine-readable contract lives at
+`scripts/rally_point/plugin_boundary.json` and is validated by:
+
+```bash
+python3 scripts/rally_point/boundary.py --repo "$PWD" --check --json
+python3 scripts/agent_rally.py boundary --workdir "$PWD" --check --json
+```
+
+Boundary rule: put substrate behavior in `scripts/rally_point/**`, watcher
+behavior in `scripts/agent_rally_watcher/**`, and leave build-loop files as
+thin adapters. Do not import build-loop memory-store or orchestration internals
+from those namespaces unless the dependency is explicitly isolated as an
+adapter in the boundary manifest.
+
+## Discovery integration (current)
+
+Build-loop uses `scripts/rally_point/discovery_bridge.py` as the shared
+channel resolver. It prefers the standalone `agent-rally-point` discovery
+surface when installed and falls back to build-loop's embedded resolver only
+when needed. Both native discovery and the embedded fallback default to
+`~/.agent-rally-point/apps/...`; the fallback uses the local worktree-aware
+`<slug>` when no native `<repo-id>` is available.
+
+The discovery layer (see
+[`agent-rally-point/docs/DISCOVERY.md`](https://github.com/tyroneross/agent-rally-point/blob/main/docs/DISCOVERY.md))
+provides:
 
 ```python
 from agent_rally_point.discover import discover
@@ -83,13 +132,16 @@ info = discover()  # returns dict with channel_dir, channel_layout, active_revis
 channel_dir = info["channel_dir"]   # canonical OR legacy-fallback path
 ```
 
-The orchestrator SHOULD call `discover()` on session start instead of hardcoding the legacy path. Implementation steps (tracked separately from this doc):
+Current build-loop callers route through the bridge:
 
-1. Replace hardcoded `Path("~/.build-loop/apps").expanduser() / slug` lookups with the `discover()` result in `coordination_status.py`, `coordination_watch.py`, and `scripts/rally_point/post.py`'s default-channel resolution.
-2. Honor the discovery result's `channel_layout` field — when it returns `"legacy"`, build-loop should still operate normally (the legacy fallback chain handles backward compatibility transparently); when it returns `"canonical"`, all new event writes land under the canonical root.
-3. Emit a one-shot warning when `channel_layout == "legacy"` so the operator knows a migration is available.
-
-The migration is **read-only** for now — `discover()` resolves the path; it does not move legacy channels. Hard-coded path removal is a separate PR (tracked by the build-loop roadmap, not this document).
+1. `scripts/agent_rally.py` resolves `where`, `presence`, `handoff`, `lead`,
+   and `boundary` through the shared namespace.
+2. `scripts/coordination_status.py` reads status from the resolved channel
+   instead of deriving a parallel channel path.
+3. `scripts/rally_point/session_probe.py` and `scripts/rally_point/hooks.py`
+   use the resolved channel for session-start and pre-edit hook behavior.
+4. `scripts/coordination_watch.py` remains a compatibility wrapper; watcher
+   behavior lives under `scripts/agent_rally_watcher/`.
 
 ## Cross-references
 

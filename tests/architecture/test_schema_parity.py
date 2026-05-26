@@ -15,6 +15,7 @@ expect.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,11 @@ import pytest
 from build_loop.architecture.scanner import ScanResult, scan_repo
 from build_loop.architecture.schemas import Component, Connection
 
-NAVGATOR_COMPONENTS = Path(
-    "/Users/tyroneross/dev/git-folder/NavGator/.navgator/architecture/components"
+NAVGATOR_ARCHITECTURE_ROOT = Path(
+    os.environ.get("NAVGATOR_ARCHITECTURE_DIR", "/nonexistent/navgator/architecture")
 )
-NAVGATOR_CONNECTIONS = Path(
-    "/Users/tyroneross/dev/git-folder/NavGator/.navgator/architecture/connections"
-)
+NAVGATOR_COMPONENTS = NAVGATOR_ARCHITECTURE_ROOT / "components"
+NAVGATOR_CONNECTIONS = NAVGATOR_ARCHITECTURE_ROOT / "connections"
 
 
 @pytest.mark.skipif(

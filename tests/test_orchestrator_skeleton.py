@@ -112,9 +112,11 @@ def test_build_loop_ui_route_present() -> None:
     """The orchestrator should route UI work through build-loop-owned design
     and validation surfaces, not the retired IBR-first path."""
     text = _read()
+    assert "build-loop:ui-design" in text
     assert "design-contract-specialist" in text
     assert "phase2-design-direction" in text
     assert "recent_design_structures_path" in text
+    assert "ui_design_source_map_path" in text
     assert "ui-validator" in text
     assert "do not route to IBR" in text
 

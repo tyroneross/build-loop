@@ -22,7 +22,7 @@ Stdout:
     "schema_version"}``.
 
 CLI flags:
-    --registry PATH     default ``.episodic/architecture/known_violations.json``
+    --registry PATH     default ``build-loop-memory/projects/<project>/architecture/known_violations.json``
     --dry-run           don't write decisions, don't mutate registry on disk
 
 Stdlib only. No new pyproject deps.
@@ -42,19 +42,20 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "1.0.0"
-DEFAULT_REGISTRY = ".episodic/architecture/known_violations.json"
 
 # Low-signal auto-capture filter (decision 0092, 2026-05-08):
 # orphan and hotspot rules at confidence:inferred + source:auto-inferred
 # produce zero-judgment per-file decisions that swamp the decision tree.
 # Filtered violations skip the per-violation MD and instead append a line
-# to .episodic/architecture/auto-violations.jsonl plus aggregate into a
-# single rollup decision MD per scan. Other rules (circular-dependency,
+# to ``projects/<project>/architecture/auto-violations.jsonl`` plus aggregate
+# into a single rollup decision MD per scan. Other rules (circular-dependency,
 # layer-violation, database-isolation, frontend-direct-db) and any
 # confirmed-confidence violation continue to write full per-violation MDs
 # because they encode deliberate architectural intent.
 LOW_SIGNAL_RULES = frozenset({"orphan", "hotspot"})
-JSONL_REL_PATH = ".episodic/architecture/auto-violations.jsonl"
+DEFAULT_REGISTRY_DESC = (
+    "build-loop-memory/projects/<project>/architecture/known_violations.json"
+)
 
 
 # ---------- helpers ----------
@@ -146,6 +147,7 @@ def _resolve_write_decision_script() -> Path | None:
 
 def _invoke_write_decision(
     *,
+    project: str,
     violation_id: str,
     rule_id: str,
     severity: str,
@@ -212,6 +214,8 @@ def _invoke_write_decision(
         str(script),
         "--workdir",
         str(workdir),
+        "--project",
+        project,
         "--title",
         title,
         "--decision",
@@ -293,18 +297,46 @@ def _resolve_run_id() -> str:
 def _resolve_project_for_rollup(workdir: Path) -> str:
     """Project tag used in the rollup MD path.
 
-    Mirrors `write_decision.py`'s `resolve_project()` precedence: env var
-    `$BUILD_LOOP_PROJECT_TAG` if set, else the workdir basename. Falls
-    back to ``_unscoped`` for empty/dot basenames so the rollup never
-    lands at the decisions root.
+    Uses `$BUILD_LOOP_PROJECT_TAG` when set so tests and orchestrators can
+    pin the destination. Otherwise mirrors `write_decision.py` via
+    `project_resolver.resolve_project(workdir)`.
     """
     tag = os.environ.get("BUILD_LOOP_PROJECT_TAG", "").strip()
     if tag:
         return tag
-    base = workdir.name
-    if not base or base in {".", ".."}:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            from project_resolver import resolve_project  # type: ignore
+        finally:
+            try:
+                sys.path.remove(str(Path(__file__).resolve().parent))
+            except ValueError:
+                pass
+        return resolve_project(workdir)
+    except Exception:
         return "_unscoped"
-    return base
+
+
+def _resolve_architecture_dir(project: str) -> Path | None:
+    """Return the canonical project architecture dir, or None on error."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            from _paths import project_architecture_dir  # type: ignore
+        finally:
+            try:
+                sys.path.remove(str(Path(__file__).resolve().parent))
+            except ValueError:
+                pass
+        return project_architecture_dir(project)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[capture_arch_violation] WARN: architecture_dir unavailable "
+            f"({exc!r}); skipping architecture artifact write.",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _resolve_decisions_dir(project: str) -> Path | None:
@@ -469,8 +501,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--registry",
-        default=DEFAULT_REGISTRY,
-        help=f"Path to registry JSON (default: {DEFAULT_REGISTRY})",
+        default=None,
+        help=f"Path to registry JSON (default: {DEFAULT_REGISTRY_DESC})",
     )
     p.add_argument(
         "--dry-run",
@@ -516,8 +548,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    registry_path = Path(args.registry)
     workdir = Path(args.workdir).resolve()
+    project_tag = _resolve_project_for_rollup(workdir)
+    architecture_dir = _resolve_architecture_dir(project_tag)
+    if args.registry:
+        registry_path = Path(args.registry)
+    elif architecture_dir is not None:
+        registry_path = architecture_dir / "known_violations.json"
+    else:
+        print(
+            "[capture_arch_violation] ERROR: no registry path available",
+            file=sys.stderr,
+        )
+        return 2
     registry = _load_registry(registry_path)
     violations_out = registry.setdefault("violations", {})
 
@@ -527,8 +570,11 @@ def main(argv: list[str] | None = None) -> int:
     rollup_entries: list[dict] = []  # populated only when filter fires this scan
     now = _now_iso()
     run_id = _resolve_run_id()
-    project_tag = _resolve_project_for_rollup(workdir)
-    jsonl_path = workdir / JSONL_REL_PATH
+    jsonl_path = (
+        architecture_dir / "auto-violations.jsonl"
+        if architecture_dir is not None
+        else registry_path.parent / "auto-violations.jsonl"
+    )
 
     for raw in violations_in:
         if not isinstance(raw, dict):
@@ -612,6 +658,7 @@ def main(argv: list[str] | None = None) -> int:
             # lands in the registry below for canonical state.
         elif not args.dry_run:
             decision_id = _invoke_write_decision(
+                project=project_tag,
                 violation_id=vid,
                 rule_id=rule_id,
                 severity=severity,
@@ -623,7 +670,11 @@ def main(argv: list[str] | None = None) -> int:
             if decision_id:
                 entry["decision_id"] = decision_id
                 # Path convention from write_decision.py: numbered MADR file.
-                decision_files.append(f".episodic/decisions/{decision_id}-*.md")
+                decisions_dir = _resolve_decisions_dir(project_tag)
+                if decisions_dir is not None:
+                    decision_files.append(str(decisions_dir / f"{decision_id}-*.md"))
+                else:
+                    decision_files.append(f"{decision_id}-*.md")
 
         violations_out[vid] = entry
 

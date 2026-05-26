@@ -39,10 +39,10 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 
 | Capability | Preferred | Secondary | Inline fallback section |
 |---|---|---|---|
-| Web UI build | `build-loop:design-contract-specialist` (`trigger_point: phase2-design-direction`) + `templates/ui-subagent-prompt.md` | `frontend-design:frontend-design` only when explicitly requested | `fallbacks.md#web-ui` |
+| Web UI build | `build-loop:ui-design` + `build-loop:design-contract-specialist` (`trigger_point: phase2-design-direction`) + `calm-precision` + `templates/ui-subagent-prompt.md` | `frontend-design:frontend-design` only when explicitly requested | `fallbacks.md#web-ui` |
 | Web UI validation | `ui-validator` agent + `audit-design-rules.mjs` + browser/screenshot artifact | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
-| Orchestrated UI build | build-loop-owned design direction → implementer fan-out → ui-validator/design-contract reconciliation | explicit user-invoked design tool artifacts passed to `design-contract-specialist` | `fallbacks.md#web-ui` |
-| Mobile UI build | `build-loop:design-contract-specialist` + `apple-dev` (if Apple) + `calm-precision` rules | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
+| Orchestrated UI build | `build-loop:ui-design` → build-loop-owned design direction → implementer fan-out → ui-validator/design-contract reconciliation | explicit user-invoked design tool artifacts passed to `design-contract-specialist` | `fallbacks.md#web-ui` |
+| Mobile UI build | `build-loop:ui-design` + `build-loop:design-contract-specialist` + `calm-precision` + `apple-dev` (if Apple) | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
 | Mobile UI validation | built-in simulator screenshot path or `native-ax-driver` for macOS | `showcase:capture` | `fallbacks.md#mobile-ui` |
 | Design system tokens | `design-contract-specialist` reads project token/theme/component files and records the source in `.build-loop/app-contract/ui.md` | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
 | Recent design structures | `design-contract-specialist` reads `references/recent-design-structures.md` and selects by product/workflow/data fit | explicit design-tool artifacts passed as evidence | `fallbacks.md#web-ui` |

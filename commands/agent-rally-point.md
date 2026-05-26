@@ -1,7 +1,7 @@
 ---
-description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, announce, init, lead, escalate, docs, help."
+description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, announce, init, lead, escalate, boundary, docs, help."
 allowed-tools: Bash, Read
-argument-hint: "[status|watch|announce|init|lead|escalate|docs|help] [args]"
+argument-hint: "[status|watch|announce|init|lead|escalate|boundary|docs|help] [args]"
 model: inherit
 ---
 
@@ -181,6 +181,21 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py escalate \
   --reason "<why this needs attention>"
 ```
 
+### `boundary`
+
+Validate the embedded mini-plugin boundary used to keep Rally Point and the
+watcher extractable while they still ship inside build-loop.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py boundary \
+  --repo "${CLAUDE_PLUGIN_ROOT}" \
+  --check \
+  --json
+```
+
+This checks `scripts/rally_point/plugin_boundary.json` and reports the
+current `agent-rally-point` and `agent-rally-watcher` extraction surfaces.
+
 ### `docs`
 
 Prints the binding coordination constitution at `references/coordination-rules.md`. Use this when onboarding a peer (Codex, second Claude session, CI verifier) so they read the same rules — the verdict-gating operating rule, the `post()` helper mandate, MECE packets for every write-handoff, release-surface verification, Phase D closeout.
@@ -205,6 +220,9 @@ Subcommands:
   watch                   Continuous sensor loop for peer/inbox changes
   announce [message]      Publish Rally Point presence + handoff without coord file
   init <topic> <scope>    Bootstrap a coord file from template; atomic + idempotent
+  lead <op>               Inspect or update the leadership lease
+  escalate <reason>       Post an urgent coordination escalation
+  boundary                Validate embedded agent-rally extraction boundaries
   docs                    Print the binding coordination constitution
   help                    This message
 

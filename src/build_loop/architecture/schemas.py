@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Schemas mirroring NavGator's component/connection JSON shape.
 
-Ground truth: ``/Users/tyroneross/dev/git-folder/NavGator/.navgator/architecture/``.
+Ground truth: ``<repo>/.navgator/architecture/``.
 We use ``dataclasses`` (per project memory: minimal deps, no pydantic) and
 explicitly preserve any unknown keys via ``extra`` so future NavGator schema
 extensions round-trip without code changes. The constructors accept ``**kwargs``

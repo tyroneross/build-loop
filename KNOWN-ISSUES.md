@@ -29,9 +29,9 @@ Resolved (2026-05-16): `scripts/hooks/test_hooks.sh` Cases 1 & 3 (which test `pr
 
 ## M4 session_registry.py doesn't fire — RESOLVED / SUPERSEDED by Rally Point presence (2026-05-18)
 
-**Original symptom (2026-05-12).** During decision-doctor-cc 2026-05-11, two concurrent writers (main Claude session + background build-loop orchestrator) collided on the same worktree. The M4 `scripts/session_registry.py` was supposed to register presence files at `~/.build-loop/sessions/<run_id>.json` and detect this exact collision tier, but the directory was never created and no presence file was ever written — the mechanism never fired.
+**Original symptom (2026-05-12).** During a private app session on 2026-05-11, two concurrent writers (main Claude session + background build-loop orchestrator) collided on the same worktree. The M4 `scripts/session_registry.py` was supposed to register presence files at `~/.build-loop/sessions/<run_id>.json` and detect this exact collision tier, but the directory was never created and no presence file was ever written — the mechanism never fired.
 
-**Resolved (2026-05-18).** The dead M4 collision mechanism was retired and `scripts/session_registry.py` + `scripts/test_session_registry.py` were deleted. **Rally Point presence is now the single concurrent-presence source of truth**: `scripts/rally_point/presence.py` (`write_presence` / `read_active_presence` / `reap_stale` + per-session read cursor) writing one file per live session at `~/.build-loop/apps/<slug>/sessions/<session-id>.json`, where `<slug>` is resolved by `scripts/rally_point/channel_paths.app_slug` (D1: worktree- and clone-independent — the main checkout and every `git worktree` of the same repo share one channel, which is precisely the concurrent scenario that originally collided). It is a checkpoint-poll awareness layer (D3, no daemon); peer file-overlap surfaces as a `soft-claim` **WARNING, never a block** (D4). The orchestrator wires it at the Phase 1 preamble and each phase-start per `references/rally-point-protocol.md` and `references/multi-session-coordination.md`.
+**Resolved (2026-05-18).** The dead M4 collision mechanism was retired and `scripts/session_registry.py` + `scripts/test_session_registry.py` were deleted. **Rally Point presence is now the single concurrent-presence source of truth**: `scripts/rally_point/presence.py` (`write_presence` / `read_active_presence` / `reap_stale` + per-session read cursor) writing one file per live session at `<resolved-channel>/sessions/<session-id>.json`, where `<resolved-channel>` comes from `scripts/rally_point/discovery_bridge.resolve(...)` and defaults to `~/.agent-rally-point/apps/<repo-id-or-slug>/`. The slug remains worktree- and clone-independent (D1), so the main checkout and every `git worktree` of the same repo share one channel. It is a checkpoint-poll awareness layer (D3, no daemon); peer file-overlap surfaces as a `soft-claim` **WARNING, never a block** (D4). The orchestrator wires it at the Phase 1 preamble and each phase-start per `references/rally-point-protocol.md` and `references/multi-session-coordination.md`.
 
 The ambiguity that hid the original collision — two notional presence mechanisms, one of them dead — no longer exists: there is exactly one, and `~/.build-loop/sessions/<run_id>.json` is no longer written or read by any code path.
 
@@ -53,7 +53,7 @@ The ambiguity that hid the original collision — two notional presence mechanis
 Skill(skill="build-loop:build-loop", args="any goal")
 ```
 
-The first observed fallout in the wild was 2026-05-01, FlowDoro session, where the workaround was dispatching the `build-loop:build-orchestrator` agent directly. Same collision affects `claude-code-debugger:debug-loop`.
+The first observed fallout in the wild was a 2026-05-01 private app session, where the workaround was dispatching the `build-loop:build-orchestrator` agent directly. Same collision affects `claude-code-debugger:debug-loop`.
 
 **Root cause (suspected, not fully verified).** Slash commands and skills sharing the same qualified name (`<plugin>:<name>`) — the slash command is at `commands/build-loop.md` (filename-derived name), the skill is at `skills/build-loop/SKILL.md` with `name: build-loop` in frontmatter. The Skill tool's resolver appears to pick the slash-command file. Sibling skills like `build-loop:research` share the same shape (matching command + skill names) but were not directly verified to be working — they may have the same latent bug.
 
@@ -81,7 +81,7 @@ Agent(
 
 This bypasses the resolver entirely and produces the same outcome.
 
-**Discovered:** 2026-05-01 by FlowDoro session investigation; root-cause analysis at `~/dev/git-folder/FlowDoro/.bookmark/` (2026-05-01 SNAP entries).
+**Discovered:** 2026-05-01 by private app session investigation; root-cause analysis at `<private-app>/.bookmark/` (2026-05-01 SNAP entries).
 
 **Resolved:** 2026-05-01 — applied Option 2 (rename slash-command to `commands/run.md`). User surface is now `/build-loop:run [goal]`. Skill name unchanged at `skills/build-loop/SKILL.md`, so all `Skill("build-loop:build-loop")` callers (build-orchestrator agent, downstream plugins) continue to resolve correctly. README + CLAUDE.md updated.
 

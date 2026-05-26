@@ -89,7 +89,7 @@ class CheckCacheSyncCodexTests(unittest.TestCase):
 
     def test_codex_cache_reports_stale_installed_versions(self) -> None:
         home = self.root / "home"
-        stale = home / ".codex/plugins/cache/ross-labs-local/build-loop/0.2.0"
+        stale = home / ".codex/plugins/cache/local-marketplace/build-loop/0.2.0"
         write(stale / ".codex-plugin/plugin.json", json.dumps({"name": "build-loop", "version": "0.2.0"}))
 
         result = run(["--host", "codex", "--source", str(self.source)], home=home)

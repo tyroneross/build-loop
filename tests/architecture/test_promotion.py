@@ -61,12 +61,13 @@ def _make_run(run_id: str, violation_ids: list[str], *, severity: str = "warn") 
 
 
 def _seed_workdir(
+    monkeypatch,
     workdir: Path,
     *,
     violations_map: dict,
     runs: list[dict],
-) -> None:
-    """Write .build-loop/state.json + .episodic/architecture/known_violations.json."""
+) -> Path:
+    """Write .build-loop/state.json + canonical architecture registry."""
     bl = workdir / ".build-loop"
     bl.mkdir(parents=True, exist_ok=True)
     (bl / "architecture").mkdir(parents=True, exist_ok=True)
@@ -74,11 +75,28 @@ def _seed_workdir(
     state = {"schema_version": "1.0.0", "runs": runs}
     (bl / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
-    epi = workdir / ".episodic" / "architecture"
-    epi.mkdir(parents=True, exist_ok=True)
-    (epi / "known_violations.json").write_text(
+    memory_root = workdir.parent / "memory-store"
+    monkeypatch.setenv("BUILD_LOOP_MEMORY_STORE_ROOT", str(memory_root))
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_ROOT", raising=False)
+    monkeypatch.delenv("AGENT_MEMORY_ROOT", raising=False)
+    config_dir = memory_root / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "projects.yaml").write_text(
+        f"default: _unscoped\nprojects:\n  - path: {workdir}\n    project: build-loop-tests\n",
+        encoding="utf-8",
+    )
+    registry_path = (
+        memory_root
+        / "projects"
+        / "build-loop-tests"
+        / "architecture"
+        / "known_violations.json"
+    )
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text(
         json.dumps(_make_registry(violations_map)), encoding="utf-8"
     )
+    return registry_path
 
 
 def _capture_stdout(monkeypatch) -> io.StringIO:
@@ -135,7 +153,7 @@ def test_promotes_at_threshold(monkeypatch, tmp_path, stub_sync):
         _make_run("run02", [vid]),
         _make_run("run03", [vid]),
     ]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    registry_path = _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     buf = _capture_stdout(monkeypatch)
     rc = promote_mod.main(["--workdir", str(workdir)])
@@ -157,9 +175,7 @@ def test_promotes_at_threshold(monkeypatch, tmp_path, stub_sync):
     assert lesson["severity"] == "error"
 
     # Registry flipped.
-    reg = json.loads(
-        (workdir / ".episodic" / "architecture" / "known_violations.json").read_text()
-    )
+    reg = json.loads(registry_path.read_text())
     assert reg["violations"][vid]["promoted"] is True
     assert "promoted_at" in reg["violations"][vid]
     assert reg["violations"][vid]["lesson_id"] == lesson["id"]
@@ -183,7 +199,7 @@ def test_dry_run_no_writes(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run(f"run0{i}", [vid]) for i in range(1, 5)]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    registry_path = _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     buf = _capture_stdout(monkeypatch)
     rc = promote_mod.main(["--workdir", str(workdir), "--dry-run"])
@@ -193,9 +209,7 @@ def test_dry_run_no_writes(monkeypatch, tmp_path, stub_sync):
     # lessons.json must not exist after dry-run.
     assert not (workdir / ".build-loop" / "architecture" / "lessons.json").exists()
     # Registry must remain un-flipped.
-    reg = json.loads(
-        (workdir / ".episodic" / "architecture" / "known_violations.json").read_text()
-    )
+    reg = json.loads(registry_path.read_text())
     assert reg["violations"][vid].get("promoted") in (False, None)
     # Sync must not have been invoked.
     assert stub_sync == []
@@ -219,7 +233,7 @@ def test_skips_already_promoted(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run(f"run0{i}", [vid]) for i in range(1, 4)]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     # First run: promotes.
     buf1 = _capture_stdout(monkeypatch)
@@ -254,7 +268,7 @@ def test_below_threshold_not_promoted(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run("run01", [vid]), _make_run("run02", [vid])]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     buf = _capture_stdout(monkeypatch)
     rc = promote_mod.main(["--workdir", str(workdir)])
@@ -283,7 +297,7 @@ def test_idempotent_run(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run(f"run0{i}", [vid]) for i in range(1, 4)]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     # First run: promote.
     buf1 = _capture_stdout(monkeypatch)
@@ -323,7 +337,7 @@ def test_subject_prefix_bl(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run(f"run0{i}", [vid]) for i in range(1, 4)]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     buf = _capture_stdout(monkeypatch)
     rc = promote_mod.main(["--workdir", str(workdir)])
@@ -364,7 +378,7 @@ def test_signature_derived_from_components(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run(f"run0{i}", [vid]) for i in range(1, 4)]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     buf = _capture_stdout(monkeypatch)
     promote_mod.main(["--workdir", str(workdir)])
@@ -413,7 +427,7 @@ def test_no_sync_skips_subprocess(monkeypatch, tmp_path, stub_sync):
         }
     }
     runs = [_make_run(f"run0{i}", [vid]) for i in range(1, 4)]
-    _seed_workdir(workdir, violations_map=violations_map, runs=runs)
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=runs)
 
     buf = _capture_stdout(monkeypatch)
     promote_mod.main(["--workdir", str(workdir), "--no-sync"])
@@ -441,7 +455,7 @@ def test_empty_runs_clean_exit(monkeypatch, tmp_path, stub_sync):
             "decision_id": None,
         }
     }
-    _seed_workdir(workdir, violations_map=violations_map, runs=[])
+    _seed_workdir(monkeypatch, workdir, violations_map=violations_map, runs=[])
 
     buf = _capture_stdout(monkeypatch)
     rc = promote_mod.main(["--workdir", str(workdir)])
@@ -455,6 +469,9 @@ def test_missing_state_and_registry(monkeypatch, tmp_path, stub_sync):
     """Both inputs absent → clean envelope, no errors."""
     workdir = tmp_path / "proj"
     workdir.mkdir()
+    monkeypatch.setenv("BUILD_LOOP_MEMORY_STORE_ROOT", str(tmp_path / "memory-store"))
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_ROOT", raising=False)
+    monkeypatch.delenv("AGENT_MEMORY_ROOT", raising=False)
     buf = _capture_stdout(monkeypatch)
     rc = promote_mod.main(["--workdir", str(workdir)])
     assert rc == 0

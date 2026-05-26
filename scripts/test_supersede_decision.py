@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "supersede_decision.py"
 WRITE_DECISION = HERE / "write_decision.py"
 
-from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
+from _test_helpers import MemIsolationMixin  # noqa: E402
 
 
 def run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -111,19 +111,6 @@ class SupersedeTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(cp.returncode, 0, msg=f"seed write failed: {cp.stderr}")
         self.first_id = cp.stdout.strip()
 
-        # Also place a stub in the legacy path so supersede_decision.py's
-        # find_decision_file() pre-check can locate it (reads from
-        # workdir/.episodic/decisions/).
-        write_legacy_madr(
-            self.workdir,
-            self.first_id,
-            "2026-05-05",
-            "Use pytest for testing",
-            "build-loop",
-            "testing",
-            confidence="explicit",
-        )
-
     def tearDown(self) -> None:
         self.tmp.cleanup()
         super().tearDown()
@@ -161,8 +148,12 @@ class SupersedeTests(MemIsolationMixin, unittest.TestCase):
             msg=f"superseded_by link missing in: {history_text[:600]}",
         )
 
-        # New decision present
-        new_files = list(ddir.glob(f"{new_id}-*.md"))
+        # New decision present. Canonical filenames use canonical_id, so
+        # locate by frontmatter id rather than filename prefix.
+        new_files = [
+            path for path in ddir.glob("*.md")
+            if path.name != "INDEX.md" and f"id: '{new_id}'" in path.read_text()
+        ]
         self.assertEqual(len(new_files), 1)
         new_text = new_files[0].read_text()
         self.assertTrue(
@@ -173,10 +164,10 @@ class SupersedeTests(MemIsolationMixin, unittest.TestCase):
 
         # INDEX regenerated and references new entry
         index = (ddir / "INDEX.md").read_text()
-        self.assertIn(new_id, index)
+        self.assertIn(new_files[0].name, index)
 
         # decision_superseded event in events.jsonl (stays local to workdir)
-        events = (self.workdir / ".episodic" / "events.jsonl").read_text().splitlines()
+        events = (self.workdir / ".build-loop" / "events.jsonl").read_text().splitlines()
         kinds = [json.loads(l)["kind"] for l in events]
         self.assertIn("decision_superseded", kinds)
 

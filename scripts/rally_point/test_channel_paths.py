@@ -6,7 +6,7 @@ Coverage:
   - slug parity: identical canonical slug from a temp `git worktree` and
     the main checkout (the D1 defect — explicit temp-worktree subprocess test)
   - fallback to derive_slug_from_cwd only when NOT in a git repo
-  - app_channel_dir resolves under ~/.build-loop/apps/<slug>/ (HOME-scoped)
+  - app_channel_dir resolves under the configured apps root (HOME-scoped by default)
   - traversal-y slug raises (reuse _paths._safe_project_tag)
   - <slug>/workers sub-component path joins (OQ1)
   - lazy-create idempotent; absent root never creates outside root

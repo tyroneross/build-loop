@@ -1,0 +1,20 @@
+name: Runtime Memory Guard
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  runtime-memory-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Ensure runtime memory is not tracked
+        run: python3 scripts/check_runtime_memory_tracking.py --all

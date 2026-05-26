@@ -27,6 +27,8 @@ APPS=$(mktemp -d)
 ( cd "$REPO" && git init -q && git config user.email t@e.com \
     && git config user.name t )
 export BUILD_LOOP_APPS_ROOT="$APPS"
+export BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1
+export BUILD_LOOP_RALLY_POINT_SKIP_WATCH=1
 
 # ---- Case 1: no channel yet -> SessionStart silent, exit 0 -------------
 OUT=$(CLAUDE_PROJECT_DIR="$REPO" bash "$SS_HOOK" </dev/null 2>/dev/null)

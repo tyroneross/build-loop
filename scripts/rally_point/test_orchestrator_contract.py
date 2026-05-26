@@ -85,3 +85,13 @@ def test_orchestrator_doc_documents_surfacing_block():
     for token in ("checkpoint_read", "presence", "phase record",
                   "soft-claim"):
         assert token in text, f"orchestrator doc missing: {token!r}"
+
+
+def test_orchestrator_doc_requires_build_loop_id_before_presence():
+    text = _ORCH_DOC.read_text()
+    for token in (
+        "build_loop_id.generate_or_resume",
+        "before the first Rally Point write",
+        "build_loop_run_label",
+    ):
+        assert token in text, f"orchestrator doc missing run identity token: {token!r}"
