@@ -45,6 +45,7 @@ TRIGGER_DEMOTION_PENALTY = 5
 
 # Names containing these tokens get demoted when the matching trigger is off.
 _UI_VALIDATION_TOKENS = ("ibr", "frontend-design", "calm-precision", "ui-guidance")
+_IBR_EXPLICIT_TOKENS = ("ibr", "interface-built-right", "interface built right")
 _PROMPT_TOKENS = ("prompt-builder", "prompt_builder")
 _MIGRATION_TOKENS = ("replit-migrate", "replit_migrate")
 
@@ -318,6 +319,40 @@ def apply_trigger_demotion(
     return out
 
 
+def apply_explicit_only_policy(
+    scored: List[tuple],
+    intent: str,
+) -> List[tuple]:
+    """Suppress explicit-only bridges unless the user named them.
+
+    IBR is no longer a default UI build/validation route. It remains available
+    for direct user requests, but capability shortlist should not surface it for
+    generic UI work just because `uiTarget` is set.
+    """
+    intent_l = (intent or "").lower()
+    ibr_explicit = any(tok in intent_l for tok in _IBR_EXPLICIT_TOKENS)
+    if ibr_explicit:
+        out: List[tuple] = []
+        for score, reasons, e in scored:
+            name_l = (e.get("name") or "").lower()
+            source_l = (e.get("source_path") or "").lower()
+            if name_l == "build-loop:ibr-bridge" or "skills/ibr-bridge" in source_l:
+                out.append((score + 100, list(reasons) + ["explicit:ibr-bridge"], e))
+            else:
+                out.append((score, reasons, e))
+        return out
+
+    out: List[tuple] = []
+    for score, reasons, e in scored:
+        name_l = (e.get("name") or "").lower()
+        source_l = (e.get("source_path") or "").lower()
+        if "ibr" in name_l or "skills/ibr-bridge" in source_l:
+            out.append((score - 100, list(reasons) + ["suppress:ibr-explicit-only"], e))
+        else:
+            out.append((score, reasons, e))
+    return out
+
+
 def shortlist(
     registry: Dict[str, Any],
     phase: int,
@@ -360,6 +395,7 @@ def shortlist(
     # categories based on Phase 1 sub-routers (uiTarget, migrationSource)
     # and triggers (promptAuthoring/promptEditingExisting).
     scored = apply_plugin_surface_collapse(scored)
+    scored = apply_explicit_only_policy(scored, intent)
     if workdir is not None:
         triggers = _read_state_triggers(Path(workdir))
         scored = apply_trigger_demotion(scored, triggers)

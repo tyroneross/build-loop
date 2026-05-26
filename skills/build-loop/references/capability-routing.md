@@ -6,7 +6,7 @@
 
 ## Capability Routing
 
-Build-loop prefers installed plugins and skills over reinventing patterns. Each capability has three tiers: **preferred** (the specialized plugin) → **secondary** (another installed plugin that can partially cover) → **inline fallback** (guidance text from `fallbacks.md`, injected verbatim into subagent prompts).
+Build-loop prefers repo-owned agents and bundled skills for core loop decisions. External plugins are accelerators only when explicitly requested or when a row below names them as secondary. Each capability has three tiers: **preferred** (build-loop-owned surface) → **secondary** (another installed plugin or skill that can partially cover) → **inline fallback** (guidance text from `fallbacks.md`, injected verbatim into subagent prompts).
 
 Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` and writes the result to `.build-loop/state.json` under `availablePlugins`. All routing consults that object.
 
@@ -39,12 +39,13 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 
 | Capability | Preferred | Secondary | Inline fallback section |
 |---|---|---|---|
-| Web UI build | `ibr:scan-while-building`, `ibr:component-patterns`, `ibr:design-guidance`, `calm-precision` | `frontend-design:frontend-design` | `fallbacks.md#web-ui` |
-| Web UI validation | `ibr:design-validation`, `ibr:scan`, `compare` MCP tool | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
-| Orchestrated UI build | `/ibr:build --from=build-loop` | existing ibr skills in sequence | `fallbacks.md#web-ui` |
-| Mobile UI build | `ibr:component-patterns` (mobile-ui), `apple-dev` (if Apple), `calm-precision` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
-| Mobile UI validation | `ibr:native-testing`, `ibr:native-scan` | `showcase:capture` | `fallbacks.md#mobile-ui` |
-| Design system tokens | `ibr:design-guidance` (§Configuration), `validate_tokens` MCP tool | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
+| Web UI build | `build-loop:design-contract-specialist` (`trigger_point: phase2-design-direction`) + `templates/ui-subagent-prompt.md` | `frontend-design:frontend-design` only when explicitly requested | `fallbacks.md#web-ui` |
+| Web UI validation | `ui-validator` agent + `audit-design-rules.mjs` + browser/screenshot artifact | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
+| Orchestrated UI build | build-loop-owned design direction → implementer fan-out → ui-validator/design-contract reconciliation | explicit user-invoked design tool artifacts passed to `design-contract-specialist` | `fallbacks.md#web-ui` |
+| Mobile UI build | `build-loop:design-contract-specialist` + `apple-dev` (if Apple) + `calm-precision` rules | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
+| Mobile UI validation | built-in simulator screenshot path or `native-ax-driver` for macOS | `showcase:capture` | `fallbacks.md#mobile-ui` |
+| Design system tokens | `design-contract-specialist` reads project token/theme/component files and records the source in `.build-loop/app-contract/ui.md` | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
+| Recent design structures | `design-contract-specialist` reads `references/recent-design-structures.md` and selects by product/workflow/data fit | explicit design-tool artifacts passed as evidence | `fallbacks.md#web-ui` |
 | Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `screenshot` MCP tool | `fallbacks.md#screenshot` |
 | Web content fetching (low LLM) | `scraper-app:web-scraper` SDK | — | `fallbacks.md#web-fetch` (flags LLM cost in report) |
 | Deep debugging | `build-loop:debug-loop` + `debugger` MCP `search`/`store` | — | `fallbacks.md#debug` |

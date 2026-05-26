@@ -12,9 +12,9 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 
 ## web-ui — Web UI build / validation
 
-**Standalone mode when IBR is not installed.** Build-loop cannot compute CSS values or drive a browser, but it CAN grep the code for specific violations the IBR scan would have caught. The checks below are the minimum-viable static-analysis subset.
+**Build-loop-owned static fallback.** When no browser/simulator/native-AX path is available, build-loop cannot compute every rendered style value, but it CAN grep the code for specific UI contract and design-rule violations. The checks below are the minimum-viable static-analysis subset.
 
-> **Precedence note**: when IBR IS installed, `Skill("build-loop:ibr-bridge")` takes priority. The bridge runs the project's existing `.ibr-test.json` suite first, augments with `interact_and_verify` and `validate_tokens`, and only falls back to the grep matrix below when IBR returns `ibr_unavailable` or `no_tests`. The bridge uses headless/programmatic IBR surfaces only — never the viewer UI.
+> **Precedence note**: IBR is explicit-only. Do not route web UI builds, Review-B validation, coverage-gap generation, or Iterate re-validation through `build-loop:ibr-bridge` unless the user specifically asks for IBR / Interface Built Right / `.ibr-test.json`. The default path is `design-contract-specialist` for direction, `ui-validator` for rendered checks, and this static matrix when rendered evidence is unavailable.
 
 ### Design principles (Calm Precision, condensed from global `CLAUDE.md`)
 
@@ -51,7 +51,7 @@ When no specialized UI planning tool is available, require a `## UI Input/Output
 
 Fail Review-B if a changed UI surface lacks this contract, unless the change is copy-only and explicitly states no data surface changed.
 
-### Static grep checks (run these at Review-D Fact-Check when IBR absent)
+### Static grep checks (run these at Review-D Fact-Check when rendered evidence is unavailable)
 
 Each check returns matches = potential violation. Not all matches are real violations — some are false positives. Review output manually; flag when confidence is high.
 
@@ -105,7 +105,7 @@ After greps, verify these files exist and have the right shape:
 | Focus styles | global CSS | Explicit `:focus-visible` rule, not `outline: none` without replacement |
 | Keyboard shortcuts | Anywhere | `onKeyDown` handlers on non-button interactive elements (divs, spans with roles) |
 
-### Runtime validation (still available without IBR)
+### Runtime validation
 
 If the dev server is running, also do:
 
@@ -113,7 +113,7 @@ If the dev server is running, also do:
 2. `curl -s <url> | grep -c '<meta name="viewport"'` — must be 1 (viewport tag present, mobile-responsive)
 3. User explicit manual check: tab through interactive elements, watch console, screenshot
 
-Report any failures in Review-D with file path + line number. Flag with `⚠️ static-analysis only — install IBR for computed-CSS verification`.
+Report any failures in Review-D with file path + line number. Flag with `⚠️ static-analysis only — browser/simulator evidence unavailable`.
 
 ---
 
@@ -129,7 +129,7 @@ Mobile-specific additions:
 - **Offline**: assume it; show cached state with staleness indicator.
 - **Performance**: defer images until in viewport; avoid re-renders during scroll.
 
-Validation without IBR:
+Validation without rendered tooling:
 
 1. Run on smallest supported device (iPhone SE / small Android).
 2. Run on largest (iPad Pro / tablet).
@@ -144,12 +144,13 @@ Validation without IBR:
 
 Source-of-truth check order:
 
-1. `.ibr/design-system.json` — IBR-managed tokens
+1. `.build-loop/app-contract/ui.md` — build-loop design direction and hierarchy registry
 2. `tailwind.config.{ts,js,mjs}` → `theme.extend` → colors/spacing/typography
 3. `tokens.json` or `design-tokens.json` at project root
 4. `src/styles/tokens.css` or `globals.css` — `:root { --color-*: ... }`
 5. iOS: `Assets.xcassets/Colors/*.colorset` + `Assets.xcassets/*.appiconset`
-6. Figma export file (if present) — `design/tokens.json`
+6. Figma/design-tool export files, if present and project-approved (`design/tokens.json`, `figma/tokens.json`, etc.)
+7. `.ibr/design-system.json` only when the user explicitly requested IBR for this build
 
 If none exist: ask the user. Do not invent a palette.
 
@@ -224,11 +225,12 @@ When any of the above would materially affect the build (e.g. large refactor tou
 
 Preferred tools (in order of availability):
 
-1. `showcase:capture` slash command
-2. `ibr:screenshot`
+1. Host browser/screenshot tooling, when the host exposes it
+2. `showcase:capture` slash command, when available
 3. `npx playwright screenshot <url> <output.png>` — if Playwright installed
-4. macOS: `screencapture -i <output.png>` for desktop apps
-5. Ask the user to attach a screenshot — never fabricate one
+4. Native surfaces: `xcrun simctl io booted screenshot <output.png>` for iOS or `screencapture -i <output.png>` for desktop apps
+5. Explicit IBR screenshot command only when the user requested IBR for this build
+6. Ask the user to attach a screenshot — never fabricate one
 
 Save to `.build-loop/evals/screenshots/YYYY-MM-DD-<label>.png`. Reference paths in the scorecard.
 

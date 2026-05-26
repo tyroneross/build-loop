@@ -100,8 +100,11 @@ hygiene check as `scripts/` scales.
 | `write_run_entry.py` | Atomic Review-F writer for `state.json.runs[]` |
 | `plan_verify.py` | Deterministic plan grep-rules verifier |
 | `version_advisor.py` | Suggest semver bumps based on `release-pending.md` |
-| `ux_triage.py`, `ibr_quickpass.py` | Sub-step D Gates 7/8 |
+| `ux_triage.py` | Sub-step D Gates 7/8 UX triage and UI coverage-gap queueing |
+| `ibr_quickpass.py` | Legacy explicit-only helper for user-requested IBR suite runs |
 | `optimize_loop.py`, `optimize_doe.py`, `metric_runner.py` | Optimization runner + DOE |
+| `systemic_rca_eval.py` | Experimental scorer for system-level RCA report shape: plain-language lead, failure-map depth, system-control terminal cause, evidence, tradeoffs/impact, and prevention control |
+| `systemic_rca_doe.py` | Experimental packet builder and results scorer for the systemic RCA DOE matrix |
 | `sync_skills.py`, `check_cache_sync.py` | Native-skill drift detector + cache hygiene |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
 | `coordination_status.py` | Cheap multi-agent coordination sensor: Rally Point peers, overlaps, latest verdicts, dirty files → `clear | warn | blocked` JSON |

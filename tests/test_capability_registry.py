@@ -280,6 +280,35 @@ def test_shortlist_demotes_ibr_when_no_uitarget(real_registry: dict, tmp_path: P
     )
 
 
+def test_shortlist_suppresses_ibr_for_generic_ui_work(real_registry: dict, tmp_path: Path) -> None:
+    """IBR is explicit-only; generic UI work should surface build-loop-owned
+    design/validation surfaces instead."""
+    _make_state(tmp_path, uiTarget="web")
+    out = cs.shortlist(
+        real_registry,
+        phase=2,
+        intent="plan a web UI redesign and choose visual direction",
+        workdir=tmp_path,
+    )
+    names = {r["name"] for r in out["results"]}
+    assert "build-loop:ibr-bridge" not in names, (
+        f"ibr-bridge surfaced without explicit IBR request: {names}"
+    )
+
+
+def test_shortlist_allows_ibr_when_explicitly_requested(real_registry: dict, tmp_path: Path) -> None:
+    """Direct user requests for IBR still keep the legacy bridge reachable."""
+    _make_state(tmp_path, uiTarget="web")
+    out = cs.shortlist(
+        real_registry,
+        phase=4,
+        intent="use IBR to run the existing .ibr-test.json suite",
+        workdir=tmp_path,
+    )
+    names = {r["name"] for r in out["results"]}
+    assert "build-loop:ibr-bridge" in names
+
+
 def test_shortlist_collapses_plugin_surface_redundancy(real_registry: dict, tmp_path: Path) -> None:
     """Priority 13: ≥3 entries sharing (category, plugin_namespace) collapse to ≤2.
 

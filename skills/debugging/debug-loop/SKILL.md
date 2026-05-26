@@ -46,6 +46,8 @@ Trigger is the **verdict category**, not a numeric score — research shows LLM-
 
 **Goal**: Commit to a specific, testable hypothesis before writing any fix.
 
+Start with plain language before implementation detail. State what failed in normal words, then trace visible symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure. Do not use "agent forgot", "agent missed context", or similar actor-blame language as the terminal cause unless you also name the missing system control that allowed it.
+
 1. **State the root cause hypothesis** with evidence level:
    - **Strong**: Multiple evidence types (code, logs, reproduction) all point to this cause
    - **Moderate**: Some direct evidence plus reasonable inference
@@ -120,13 +122,18 @@ The critique agent checks 5 things:
 ### Report Contents
 
 1. Verdict: Fixed (all criteria pass + critique approved) or Unresolved (iteration limit hit)
-2. Root cause + evidence level
-3. Causal tree — confirmed branches, pruned branches with rejection evidence, multi-causal findings
-4. Fix applied — what was changed, with rationale
-5. Scorecard — final pass/fail per criterion + evidence
-6. Research used — what was searched, what was found
-7. Iteration history (if >1 iteration) — what was tried, what failed, what changed
-8. Remaining gaps — anything ⚠️ or ❓
+2. Plain-language failure: what went wrong in normal words
+3. Why it happened: symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure
+4. Technical details needed to prove the cause
+5. Tradeoffs and impact
+6. Prevention control
+7. Root cause + evidence level
+8. Causal tree — confirmed branches, pruned branches with rejection evidence, multi-causal findings
+9. Fix applied — what was changed, with rationale
+10. Scorecard — final pass/fail per criterion + evidence
+11. Research used — what was searched, what was found
+12. Iteration history (if >1 iteration) — what was tried, what failed, what changed
+13. Remaining gaps — anything ⚠️ or ❓
 
 ### After Reporting
 

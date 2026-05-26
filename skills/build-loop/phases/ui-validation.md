@@ -21,9 +21,9 @@ When `uiTarget != null`, the UI gates wire in automatically:
 1. **Phase 1 (Assess)** — mockup pre-flight scan + required UI scoring criteria
 2. **Phase 2 (Plan)** — UI input/output contract section from `references/ui-io-contract.md`, then mockup-gallery hook for major UI work (new page or ≥40% redesign): draft B&W mockups via `mockup-gallery:mockup-session-new` before any UI is written. The exception to build-loop's "actions/functions only, no plugin UI" policy — mockup drafting is itself the action.
 3. **Phase 3 (Execute)** — verbatim subagent-prompt template injection on every UI dispatch, including the plan's UI input/output contract
-4. **Phase 4 sub-step B (Validate)** — IBR-first quick pass via `ibr_quickpass.py` (runs project's existing `.ibr-test.json` suite); falls back to design-rule scanner on changed files when IBR unavailable; checks contract coverage before visual validation
-5. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project; Gate 5a UI input/output contract scan; Gate 7 UX triage scanner (interactability, performance, data-accuracy, usability) writing queue entries to `.build-loop/ux-queue/`; Gate 8 IBR coverage-gap detector drafting new tests for uncovered surfaces
-6. **Phase 5 (Iterate)** — drains the UX queue alongside Validate failures; parallel fan-out (≤4) for independent fixes; IBR `interact_and_verify` after each UI fix before re-validating
+4. **Phase 4 sub-step B (Validate)** — build-loop-owned `ui-validator` first, then design-rule scanner on changed files, contract coverage, code graders, and visual evidence capture
+5. **Phase 4 sub-step D (Fact-Check)** — Gate 5 design-rule scanner across full project; Gate 5a UI input/output contract scan; Gate 7 UX triage scanner (interactability, performance, data-accuracy, usability) writing queue entries to `.build-loop/ux-queue/`
+6. **Phase 5 (Iterate)** — drains the UX queue alongside Validate failures; parallel fan-out (≤4) for independent fixes; runs the build-loop UI re-validate hook before returning to Review-B
 
 ## UX scan dimensions (Gate 7)
 
@@ -31,16 +31,22 @@ Static portion runs via `ux_triage.py`. Agent-driven portion runs alongside via 
 
 | Dimension | Static checks | Agent augmentation |
 |---|---|---|
-| Interactability | Buttons without handlers, anchors without href/onClick, icon buttons missing aria-label, empty SwiftUI Button closures | IBR `interact_and_verify` when present (replaces grep for tappability) |
+| Interactability | Buttons without handlers, anchors without href/onClick, icon buttons missing aria-label, empty SwiftUI Button closures | `ui-validator` + runtime smoke when a route can be rendered; static grep remains the fallback |
 | Performance | N+1 fetch in forEach/map, unbounded useEffect, full-lib lodash imports | `performance-assessor` agent: profile or simulate the full app, return findings outside static scope |
 | Data accuracy beyond current scope | Hardcoded percent/dollar/year literals in JSX, "as of <date>" strings | `fact-checker` agent: walk full rendered surface, not just changed files |
 | Usability heuristics | Status badges using background color, lists without empty/error branch | LLM judge sub-prompt for hierarchy/empty-state/status-clarity (confidence ≥ medium only) |
 
 Each `blocker` or `major` finding becomes a queue entry from `templates/ux-fix-plan.md`. Minor findings → Review-F report only. `architecture_impact: true` entries pause for user confirmation in Review-F before Iterate dequeues.
 
-## IBR-first ordering (Sub-step B)
+## Build-loop designer and validator ordering
 
-When IBR is available and `uiTarget != null`, Sub-step B runs the project's existing `.ibr-test.json` suite via `scripts/ibr_quickpass.py` BEFORE any other validator. Rationale: a passing test suite the project already maintains is the strongest possible signal — much stronger than a grep finding. If the suite passes, sub-step B is green-lit. If any test fails, the failing test's assertion becomes the Iterate fix target directly. Only headless/programmatic IBR surfaces are used; the IBR viewer is never opened by build-loop. Full protocol: `Skill("build-loop:ibr-bridge")`.
+When `uiTarget != null`, build-loop owns the design route:
+
+1. Phase 2 dispatches `design-contract-specialist` with `trigger_point: phase2-design-direction` for non-trivial UI work. It reads the UI input/output contract, `references/recent-design-structures.md`, product/workflow needs, project tokens, mockups, screenshots, and local design artifacts, then chooses a fit-for-purpose direction and writes `.build-loop/app-contract/ui.md`. Recent and existing design patterns are inputs, not mandates.
+2. Phase 3 implementers receive the UI contract plus `templates/ui-subagent-prompt.md`.
+3. Phase 4-B dispatches `ui-validator` first, then runs scanners and code graders.
+
+IBR is not an automatic route. If the user explicitly asks for IBR, the bridge can be invoked manually, but build-loop's default UI path stays inside build-loop-owned agents and artifacts.
 
 ## Skills to load by platform
 
@@ -48,10 +54,10 @@ The orchestrator must load these skills before dispatching subagents:
 
 | Platform | Always | + Platform skills |
 |---|---|---|
-| SwiftUI / iOS / macOS / watchOS | `calm-precision` | `ibr:ios-design`, `ibr:apple-platform`, `ibr:macos-ui` (macOS only) |
-| React / Next.js / web | `calm-precision` | `frontend-design`, `ibr:mobile-web-ui` |
-| Vue / Svelte | `calm-precision` | `frontend-design` |
-| Native iOS guidance | `calm-precision` | `ibr:ios-design-router` (auto-classifies app archetype) |
+| SwiftUI / iOS / macOS / watchOS | `calm-precision` + `design-contract-specialist` | `apple-dev` when Apple-platform implementation/deploy details matter |
+| React / Next.js / web | `calm-precision` + `design-contract-specialist` | `frontend-design` only when explicitly requested |
+| Vue / Svelte | `calm-precision` + `design-contract-specialist` | `frontend-design` only when explicitly requested |
+| Native iOS guidance | `calm-precision` + `design-contract-specialist` | `apple-dev` for native platform conventions |
 
 Subagents themselves are also instructed to load these skills via the `templates/ui-subagent-prompt.md` preamble.
 
@@ -150,9 +156,9 @@ Per platform:
 
 | Platform | Tool |
 |---|---|
-| iOS / macOS / watchOS | Build → install on booted simulator → launch → `mcp__plugin_ibr_ibr__native_scan` |
-| Web (Next/Vite/Vue) | Start dev server → `mcp__plugin_ibr_ibr__scan` against URL |
-| Fallback | `xcrun simctl io booted screenshot <path>` (iOS), Playwright headless (web) |
+| iOS / macOS / watchOS | Build → install on booted simulator → launch → `xcrun simctl io booted screenshot <path>` or built-in native AX driver for macOS |
+| Web (Next/Vite/Vue) | Start dev server → browser/screenshot artifact via available host browser tooling |
+| Fallback | Static scanner + saved screenshot gap note in Review-G |
 
 Failure modes the visual gate is checking for:
 - Geometry rendering correctly (arcs, charts, gauges, custom paths)
@@ -249,7 +255,7 @@ Each pattern entry: `{ id, severity, description, pattern, contextRequired?, con
 
 ## Out of scope for this phase guidance
 
-- Visual regression testing (use IBR `compare` / `native_compare`)
-- Runtime accessibility audits (use IBR `design-validation`)
+- Cross-build visual regression testing
+- Runtime accessibility audits beyond the build-loop validator's route scan
 - Performance gates (sub-step B standard graders cover those)
 - Cross-browser pixel diff (separate concern)

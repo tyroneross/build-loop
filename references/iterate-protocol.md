@@ -6,9 +6,9 @@ Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on 
 
 ## Re-validate hook for UI work (by `uiTarget.kind`)
 
-- **web** → `mcp__plugin_ibr_ibr__interact_and_verify` against the route.
-- **native macOS** (running `.app`, `.swift` files in macOS target) → built-in `skills/native-ax-driver/` (`python3 .../native_driver.py preflight|scan|action`). Cursor-free — uses `AXUIElementPerformAction`, no `CGEvent`. IBR's `scan_macos` / `session_*` tools are an optional accelerator when IBR is present (`skills/ibr-bridge/SKILL.md` §"Native macOS (AX) — built-in, not bridged").
-- **iOS simulator** → `native_scan` + `idb ui tap` per `reference_idb_sim_tap.md`.
+- **web** → `ui-validator` against the affected route, or browser/screenshot tooling if a focused route can be resolved.
+- **native macOS** (running `.app`, `.swift` files in macOS target) → built-in `skills/native-ax-driver/` (`python3 .../native_driver.py preflight|scan|action`). Cursor-free — uses `AXUIElementPerformAction`, no `CGEvent`.
+- **iOS simulator** → install/launch the app, capture `xcrun simctl io booted screenshot`, and use `idb ui tap` per `reference_idb_sim_tap.md` when interaction is required.
 
 ## Backend short-circuit (Priority 21)
 
@@ -20,6 +20,8 @@ Read `state.json.architecture.backendHealth` (set during Phase 1 Assess by `back
 Log the degradation in the iterate brief — one line per skipped backend. The graceful-degradation contract is preserved either way; this step only saves wall-clock time.
 
 ## Stuck-iteration escalation cascade (always on)
+
+Every Iterate failure brief starts with a plain-language explanation before technical detail. The terminal cause must be a controllable system failure, not an actor-blame statement. "Agent forgot", "agent missed context", or "model overlooked it" is only acceptable when paired with the missing control that allowed it, such as an incomplete handoff, missing scope verifier, ambiguous owner, stale cache check, absent feedback path, or missing runtime smoke gate.
 
 At the START of every Iterate attempt, run the cascade in order. Stop at the first rule that fires:
 
@@ -45,7 +47,7 @@ Build the work list for this pass — Validate failures + queue entries, in this
 2. Blocker UX queue entries with `architecture_impact: false`.
 3. Major UX queue entries with `architecture_impact: false`.
 4. Optimization findings (Sub-step C).
-5. IBR coverage-gap drafts (`dimension: test-coverage`) — additions, processed last.
+5. UI coverage-gap queue entries (`dimension: test-coverage`) — repo-native additions, processed last.
 
 Entries with `architecture_impact: true` are deferred to Review-F for explicit user confirmation, NOT included in this pass. Do NOT defer based on patch size — code is cheap, AI agents build fast. The only deferral signal is architecture impact.
 
@@ -71,9 +73,9 @@ In either mode, each implementer dispatch (or inline pass) MUST include: (1) abs
 
 For Validate failures (no queue entry), construct an inline plan in the same shape and treat it identically.
 
-## IBR re-validate hook (UI work + IBR present)
+## UI re-validate hook
 
-After each implementer subagent reports back AND before re-entering Sub-step B, call `mcp__plugin_ibr_ibr__interact_and_verify` against the affected route(s) headlessly. For routes that fail this twice, optionally `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop (internal iterations count against build-loop's 5-cap). No IBR viewer is opened.
+After each implementer subagent reports back AND before re-entering Sub-step B, run the build-loop-owned UI re-validate path for affected route(s): `ui-validator` for web when a route is known, native AX driver for macOS, or simulator screenshot/interaction commands for iOS. If no renderable route can be resolved, record the gap in the iterate brief and fall back to the static design-rule scanner. IBR is not invoked unless the user explicitly requested it for this build.
 
 Loop back to Review sub-step B (Validate). Sub-step A usually skipped on re-runs.
 

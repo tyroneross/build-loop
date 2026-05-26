@@ -286,7 +286,7 @@ Key steps: subagent-driven-development → model assignment (Sonnet default) →
 
 Seven sub-steps run in order: A Critic → B Validate → C Optimize (opt-in) → D Fact-Check → E Simplify → F Auto-Resolve → G Report. F drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G is final-pass-only.
 
-Key steps: independent-auditor (build scope) adversarial read → IBR-first validation → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry.
+Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry.
 
 **Load `skills/build-loop/references/phase-4-review.md`** for sub-step details, gate matrices, routing rules, and the full Sub-step F Auto-Resolve protocol (all 4 verdict arms including `warn` exit-0 behavior).
 
@@ -296,7 +296,7 @@ Key steps: independent-auditor (build scope) adversarial read → IBR-first vali
 
 Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
 
-Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → IBR gaps) → fan-out up to 4 implementers → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) → IBR re-validate hook → overflow to followup/.
+Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → fan-out up to 4 implementers → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) → UI re-validate hook → overflow to followup/.
 
 **Load `skills/build-loop/references/phase-5-iterate.md`** for the full prioritized work list, status routing for all 9 implementer return values, convergence detection, and followup overflow protocol.
 
@@ -410,9 +410,10 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol
 - `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
+- `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.
 - `references/refactor-history/` — Internal assessment of the 2026-04 refactor. `ASSESSMENT.md` explains rationale, `trace-comparison.md` shows before/after flow, `STANDALONE_TEST_RUN.md` validates the model, `scenarios/01..06` contain 6 test scenarios.
 - `eval-guide.md` — How to interpret build-loop scorecards.
-- `fallbacks.md` — Degraded-but-useful behavior when bridge plugins (NavGator, claude-code-debugger, IBR) are absent.
+- `fallbacks.md` — Degraded-but-useful behavior when bridge plugins or rendered UI tooling are absent. IBR remains explicit-only through `build-loop:ibr-bridge`.
 - `phases/fact-check.md` — Detailed fact-check sub-step specification.
 
 Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>")`):

@@ -1,0 +1,364 @@
+{
+  "reports": [
+    {
+      "plain_language_failure": "Build-loop said the new plugin behavior was available, but the installed copy still ran the old instructions.",
+      "why_it_happened": "The source files changed, but the installed runtime copy was not checked before the report. The workflow lacked a cache-sync verifier.",
+      "failure_map": [
+        "User expects new plugin behavior.",
+        "Runtime still uses the old installed bundle.",
+        "Source and installed cache drifted apart.",
+        "The release path lacked a required cache-sync verifier."
+      ],
+      "system_control_failure": "Missing cache-sync verifier before claiming runtime behavior changed.",
+      "failure_classification": "cache-drift",
+      "root_cause": {
+        "description": "The workflow reported source state as runtime state without a cache-sync check."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "state",
+            "detail": "Installed cache version differs from source version."
+          },
+          {
+            "type": "code",
+            "detail": "Plugin source files contain the new behavior."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The source patch failed.",
+          "evidence": "The source files contain the intended change."
+        }
+      ],
+      "tradeoffs": "A cache verifier adds release friction but prevents false runtime claims.",
+      "impact": "Users may trust a fix that is not installed. Engineers waste time debugging source that is not running.",
+      "prevention_control": "Require a cache-sync check before reporting plugin runtime behavior."
+    },
+    {
+      "plain_language_failure": "One path worked after the change, but another path still used the old behavior.",
+      "why_it_happened": "The plan owned the changed helper but did not trace its callers. The workflow lacked a scope verifier for interface changes.",
+      "failure_map": [
+        "A user path still behaves the old way.",
+        "A downstream caller was not updated.",
+        "The plan only owned the helper file.",
+        "Modified interfaces did not require a caller-scope verifier."
+      ],
+      "system_control_failure": "Missing caller-scope verifier for modified interface work.",
+      "failure_classification": "scope-audit-gap",
+      "root_cause": {
+        "description": "The interface changed without a required audit of caller sites."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "code",
+            "detail": "The helper changed while a caller kept the old assumptions."
+          },
+          {
+            "type": "test",
+            "detail": "A focused regression test shows the second path still returns old output."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The changed helper did not run.",
+          "evidence": "The first path proves the helper ran with the new behavior."
+        }
+      ],
+      "tradeoffs": "Caller audits add planning time but reduce under-scoped fixes.",
+      "impact": "Users see inconsistent behavior across paths. Engineers may ship partial fixes.",
+      "prevention_control": "Require scope-auditor or equivalent caller grep for modified interface plans."
+    },
+    {
+      "plain_language_failure": "The tests passed, but the page still crashed when opened.",
+      "why_it_happened": "Validation stopped at unit tests and did not open the affected route. The workflow lacked a runtime smoke gate for changed user-facing routes.",
+      "failure_map": [
+        "User opens a page and sees a crash.",
+        "The component throws during live render.",
+        "The test suite mocked the render path.",
+        "Changed routes did not require runtime smoke validation."
+      ],
+      "system_control_failure": "Missing runtime smoke gate for changed user-facing route files.",
+      "failure_classification": "runtime-smoke-gap",
+      "root_cause": {
+        "description": "Static and unit checks passed while live route rendering was untested."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "test",
+            "detail": "The unit suite exits successfully."
+          },
+          {
+            "type": "log",
+            "detail": "The browser route logs a render error."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The dev server failed to start.",
+          "evidence": "Other routes respond normally."
+        }
+      ],
+      "tradeoffs": "Runtime smoke costs extra seconds but catches failures static checks miss.",
+      "impact": "Users hit a broken page even though CI looked green.",
+      "prevention_control": "Run a route-level runtime smoke check when user-facing route files change."
+    },
+    {
+      "plain_language_failure": "The new control appeared, but it had no clear loading or error behavior.",
+      "why_it_happened": "The plan named the component but did not name every input and output state. The workflow lacked a complete interface contract for the changed surface.",
+      "failure_map": [
+        "User sees a control with unclear feedback.",
+        "Loading and error states are absent.",
+        "The component plan covered layout but not state outputs.",
+        "UI work did not require full input-output contract coverage."
+      ],
+      "system_control_failure": "Missing UI input-output contract gate for changed surface states.",
+      "failure_classification": "ui-contract-gap",
+      "root_cause": {
+        "description": "The UI change was implemented without a required state and output contract."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "code",
+            "detail": "The component handles click but not loading or error state."
+          },
+          {
+            "type": "test",
+            "detail": "The UI contract checklist has no row for failure output."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The button was not wired.",
+          "evidence": "The click handler fires in the component test."
+        }
+      ],
+      "tradeoffs": "The contract gate adds planning detail but prevents polished incomplete surfaces.",
+      "impact": "Users cannot tell whether the action is working or failed.",
+      "prevention_control": "Add a UI contract gate that requires changed surfaces to name inputs, outputs, states, fallback, and validation."
+    },
+    {
+      "plain_language_failure": "A dependency looked unnecessary until its install path was traced.",
+      "why_it_happened": "The audit listed the package tree but did not trace why the package was installed. The workflow lacked a provenance check for surprising dependencies.",
+      "failure_map": [
+        "User asks why a dependency exists.",
+        "The answer only lists current packages.",
+        "Install history and importer path are not traced.",
+        "Dependency audits do not require provenance evidence."
+      ],
+      "system_control_failure": "Missing dependency-provenance check for surprising package findings.",
+      "failure_classification": "dependency-provenance-gap",
+      "root_cause": {
+        "description": "The audit stopped at inventory rather than tracing the dependency source."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "state",
+            "detail": "Package lock shows the dependency in the tree."
+          },
+          {
+            "type": "code",
+            "detail": "Importer search identifies the package owner."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The dependency was unused.",
+          "evidence": "Importer search shows a live reference."
+        }
+      ],
+      "tradeoffs": "Provenance tracing costs more than inventory but answers the actual why.",
+      "impact": "Engineers avoid removing packages that still support live code.",
+      "prevention_control": "Require dependency audits to include package owner, importer, and install-history evidence."
+    },
+    {
+      "plain_language_failure": "The build looked newly noisy even though those warnings already existed.",
+      "why_it_happened": "The criterion asked for zero warnings instead of no new warnings. The workflow lacked a baseline comparison guard.",
+      "failure_map": [
+        "User sees the run reported as noisy.",
+        "Existing warnings are counted as new failure.",
+        "Validation has no baseline from the same command.",
+        "Warning criteria did not require relative comparison."
+      ],
+      "system_control_failure": "Missing baseline-comparison guard for warning and lint criteria.",
+      "failure_classification": "warning-baseline-gap",
+      "root_cause": {
+        "description": "A pre-existing warning was treated as a new regression because no baseline was captured."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "log",
+            "detail": "Current command output contains the warning."
+          },
+          {
+            "type": "state",
+            "detail": "Baseline command output contains the same warning."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The new patch introduced the warning.",
+          "evidence": "The baseline output already contains the warning."
+        }
+      ],
+      "tradeoffs": "Baseline capture adds a command run but prevents false failures.",
+      "impact": "Teams avoid fixing unrelated warning debt during scoped builds.",
+      "prevention_control": "Add a baseline verifier for warning criteria that compares current output against a same-command baseline."
+    },
+    {
+      "plain_language_failure": "A sandbox limit looked like a code regression.",
+      "why_it_happened": "The failing command hit an environment boundary, but the report treated it as app behavior. The workflow lacked an environment classification check.",
+      "failure_map": [
+        "Validation command fails.",
+        "Failure is reported as code breakage.",
+        "Sandbox or network boundary caused the command error.",
+        "Validation did not classify environment boundaries before assigning cause."
+      ],
+      "system_control_failure": "Missing environment-boundary classification check for failed validation commands.",
+      "failure_classification": "environment-misread",
+      "root_cause": {
+        "description": "The workflow mapped a sandbox restriction to code failure without confirming the boundary."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "log",
+            "detail": "Command output reports host resolution or permission failure."
+          },
+          {
+            "type": "state",
+            "detail": "Sandbox configuration restricts that operation."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The app route returned a server error.",
+          "evidence": "The command never reached the app route."
+        }
+      ],
+      "tradeoffs": "Classifying boundaries takes a small detour but prevents false code fixes.",
+      "impact": "Engineers preserve good code and report the real validation gap.",
+      "prevention_control": "Add an environment-boundary classification check for failed validation commands."
+    },
+    {
+      "plain_language_failure": "Files changed under one workflow while another workflow was still active.",
+      "why_it_happened": "The session saw the changed files but did not coordinate ownership before editing. The workflow lacked a live peer and file-claim guard.",
+      "failure_map": [
+        "A session observes unexpected file changes.",
+        "Two workflows touch overlapping files.",
+        "Peer state is not checked before shared-file edits.",
+        "Coordination did not require live presence and file-claim verification."
+      ],
+      "system_control_failure": "Missing peer-presence and file-claim guard before overlapping edits.",
+      "failure_classification": "multi-session-coordination-gap",
+      "root_cause": {
+        "description": "Concurrent sessions edited overlapping files without a required coordination check."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "state",
+            "detail": "Rally Point presence shows another active session."
+          },
+          {
+            "type": "code",
+            "detail": "Git diff shows overlapping changed files."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The file was reverted by the test runner.",
+          "evidence": "Git history shows another session committed the path."
+        }
+      ],
+      "tradeoffs": "Coordination checks add overhead only when peers exist.",
+      "impact": "Uncoordinated edits can overwrite work or confuse validation.",
+      "prevention_control": "Check Rally Point presence and file claims before shared-file edits."
+    },
+    {
+      "plain_language_failure": "The unit test passed because the fixture skipped the real runtime path.",
+      "why_it_happened": "The fixture mocked the behavior being validated, so the test could not catch the real failure. The workflow lacked a fixture-realism check.",
+      "failure_map": [
+        "A tested feature fails at runtime.",
+        "The unit test passes.",
+        "The fixture replaces the real runtime branch.",
+        "Validation did not require a fixture-realism check for the behavior under test."
+      ],
+      "system_control_failure": "Missing fixture-realism check for tests that validate runtime behavior.",
+      "failure_classification": "test-fixture-gap",
+      "root_cause": {
+        "description": "The test verified a mock path instead of the runtime path that users exercise."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "test",
+            "detail": "The fixture stubs the service method under test."
+          },
+          {
+            "type": "trace",
+            "detail": "Runtime trace enters a different branch."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The assertion was too weak.",
+          "evidence": "The assertion would fail if the real branch were exercised."
+        }
+      ],
+      "tradeoffs": "Fixture checks may require a broader smoke test but reduce false confidence.",
+      "impact": "Users hit failures that local tests cannot see.",
+      "prevention_control": "Add a fixture-realism check that requires runtime-path confirmation when tests mock the behavior under review."
+    },
+    {
+      "plain_language_failure": "The implementer changed the requested file but did not see a required rule.",
+      "why_it_happened": "The brief named the file and task but omitted a required invariant. The workflow lacked a context-packet completeness guard.",
+      "failure_map": [
+        "A patch violates a known rule.",
+        "The implementer brief did not include the rule.",
+        "The plan depended on unstated context.",
+        "Dispatch did not require invariant and ownership completeness."
+      ],
+      "system_control_failure": "Missing context-packet completeness guard for invariants and ownership boundaries.",
+      "failure_classification": "context-packet-gap",
+      "root_cause": {
+        "description": "The implementation brief lacked the invariant needed to make the correct change."
+      },
+      "technical_details": {
+        "evidence": [
+          {
+            "type": "code",
+            "detail": "The patch changes the owned file but violates the invariant."
+          },
+          {
+            "type": "state",
+            "detail": "The dispatch brief has no invariant or ownership section."
+          }
+        ]
+      },
+      "pruned_causes": [
+        {
+          "hypothesis": "The implementer edited the wrong file.",
+          "evidence": "The changed file matches the owned-file list."
+        }
+      ],
+      "tradeoffs": "Completeness checks make briefs longer but reduce hidden-context failures.",
+      "impact": "The team gets technically scoped work that still violates project intent.",
+      "prevention_control": "Require implementer briefs to include invariants, ownership, non-owned files, and verification contract."
+    }
+  ]
+}

@@ -180,6 +180,7 @@ Full 20-step protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess 
 - Follow `Skill("build-loop:build-loop")` §Phase 2 — break work, build dependency graph, MECE-partition file ownership, define integration checkpoints.
 - **Embed cached capability shortlist into planner brief**: read `state.json.activeCapabilities["2"][-1].results[:8]` and embed as `available_capabilities:` in the planner brief. Do NOT re-run `capability_shortlist.py`.
 - **UI input/output contract gate**: if `uiTarget != null`, require the plan to include `## UI Input/Output Contract` covering inputs/outputs/data taxonomy/operation verb/component mapping/states/modality fallback/validation/security/traceability.
+- **Build-loop designer gate**: for non-trivial UI work, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase2-design-direction')` after the UI input/output contract exists and before Execute. Pass the contract text, intent packet, `recent_design_structures_path=${CLAUDE_PLUGIN_ROOT}/skills/build-loop/references/recent-design-structures.md`, project token/theme/component paths, and any mockup/screenshot/image artifacts. The specialist writes `.build-loop/app-contract/ui.md` and owns visual style direction. It should choose based on product/workflow needs, not prescriptive pattern matching; do not route to IBR unless the user explicitly requested IBR for this build.
 - **Pay-it-forward architectural gate** (load `skills/build-loop/references/pay-it-forward-arch.md`): chunks that touch a typed protocol/interface/schema/multi-surface behavior must include a `Path A vs Path B` section. Default: Path B (typed-contract extension); justify Path A via time-budget >2×, missing dep/infra, missing design decision, or empty foreclosed-future-capability list.
 - **Architecture chunk-impact fan-out**: dispatch up to 4 `architecture-scout` subagents in parallel — `task: chunk-impact, files: [<chunk N's files_touched>]`. Cache per-chunk to `.build-loop/architecture/scout-cache/chunk-<N>.json`. Use `parallel_safe_with` to refine the dependency graph. Phase 3 does NOT re-dispatch.
 - **Mockup-first gate for major UI work** (new page/screen OR ≥40% redesign): invoke `mockup-gallery:mockup-session-new`; wait for `mockup-gallery:mockup-feedback`; carry selection into Execute. Documented exception to the "no plugin UI surfaces" policy.
@@ -216,7 +217,7 @@ Full protocol in `references/single-writer-commit-protocol.md`. Implementers no 
 
 #### Phase 3 UI spot-check (between chunks)
 
-After each chunk's commit step closes and before the next chunk dispatches, fire `ui-validator` whenever `uiTouched: true`. Full protocol — `uiTouched` signal table, dispatch brief, routing on return (`pass`/`fail`/`skipped`), iteration budget, backward-compat fallback — in `references/halt-and-ask-protocol.md` §"Phase 3 UI spot-check (between chunks)".
+After each chunk's commit step closes and before the next chunk dispatches, fire `ui-validator` whenever `uiTouched: true`. Full protocol — `uiTouched` signal table, dispatch brief, routing on return (`pass`/`fail`/`skipped`), iteration budget, and render-path fallback — in `references/halt-and-ask-protocol.md` §"Phase 3 UI spot-check (between chunks)".
 
 #### Phase 3 design-contract reconciliation (between chunks)
 
@@ -242,11 +243,11 @@ Detailed protocols (including SSE-specific contract gate, plugin-tests path glob
 
 Full protocol in `references/iterate-protocol.md`. Highlights:
 
-- Diagnose root cause before fixing — don't blind retry.
+- Diagnose the system cause before fixing — start with plain-language failure, then trace to the first controllable system control that failed.
 - **Stuck-iteration escalation cascade** at the start of every Iterate attempt: evidence-gap repair → memory-first re-check → architecture impact pre-step (`Agent(subagent_type="build-loop:architecture-scout", prompt='task: iterate-subgraph, failing_files: [<files>]')` for cross-layer failures) → 2-failure parallel domain assessment → 3-failure causal-tree investigation.
-- Build the **prioritized work list** (Validate failures → blocker UX → major UX → optimization → IBR coverage gaps); architecture-impact entries defer to Review-G.
+- Build the **prioritized work list** (Validate failures → blocker UX → major UX → optimization → UI coverage gaps); architecture-impact entries defer to Review-G.
 - **Partition for fan-out**: top-level mode dispatches up to 4 `implementer` subagents in parallel; subagent mode degrades to inline-implementer.
-- Re-validate hook for UI work by `uiTarget.kind` (web → IBR `interact_and_verify`; native macOS → built-in `native-ax-driver`; iOS sim → `native_scan` + `idb ui tap`). Full table in the protocol file.
+- Re-validate hook for UI work by `uiTarget.kind` (web → `ui-validator` or browser/screenshot artifact; native macOS → built-in `native-ax-driver`; iOS sim → screenshot + `idb ui tap` when interaction is required). Full table in the protocol file.
 - Loop back to Review-B; A usually skipped on re-runs.
 - Hard stop at 5 iterations (classic) or 25 iterations (autonomous); overflow to `.build-loop/followup/`.
 - **Phase 5 autonomous iterate loop** (when `state.json.autonomous.enabled == true`): budget check + interrupt check + iterate cap on every loop entry; body drains the queue via `alignment-checker` (per-item verdict `aligned`/`misaligned`/`uncertain`); commits + advances; exits on queue-empty, finalize_and_stop, halt sentinel, iterate-cap, or concurrent-modification. Report contribution: `budget_summary` JSON via `write_run_entry.py --budget-summary-json`. Resume preserves `deadline_at` verbatim. Full procedure in `references/iterate-protocol.md` §"Phase 5 autonomous iterate loop".
@@ -315,7 +316,7 @@ After each phase (and each Review sub-step), output a brief status line:
 ```
 [Phase N: Name] ✅ Complete — key finding or decision
 [Phase 4.B: Validate] ❌ Failed: criterion X — evidence ... — routing to Iterate
-[Iterate 2/5] ❌ Failed: criterion X — root cause: Y — fixing: Z → back to Review
+[Iterate 2/5] ❌ Failed: criterion X — system cause: missing control Y — fixing: Z → back to Review
 ```
 
 Final report uses ✅/⚠️/❓ markers per criterion.

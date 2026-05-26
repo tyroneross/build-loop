@@ -8,7 +8,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Principles
 
-- Self-sufficient: works without any specific tool installed. Bridges to NavGator, IBR, etc. all have **standalone fallbacks** in `skills/build-loop/fallbacks.md` — degraded-but-useful behavior when upstream plugins are absent, not skip-silently. (As of 0.6.0 the debugger is bundled internally; see KNOWN-ISSUES "Plugin merge — 2026-05-02".)
+- Self-sufficient: works without any specific tool installed. Build-loop owns its UI design route through `design-contract-specialist`, `skills/build-loop/references/recent-design-structures.md`, `ui-validator`, and `skills/build-loop/fallbacks.md`; external design tools are explicit-only accelerators, not automatic build routes. (As of 0.6.0 the debugger is bundled internally; see KNOWN-ISSUES "Plugin merge — 2026-05-02".)
 - North star first: every build captures app/repo purpose, update intent, user value, and non-goals, then passes that intent to each subagent.
 - Beauty in the basics: core flows, real data, clear hierarchy, working controls, useful states, and accurate information matter more than extra surface area.
 - Modular by default, not by dogma: prefer high cohesion, loose coupling, stable interfaces, scalable boundaries, and MECE file/agent ownership unless a documented exception better serves the use case.
@@ -17,7 +17,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 - No false data, no mock data in production, no unverified claims
 - Diagnose before fixing, converge or escalate
 - Learn from recurring patterns — auto-draft experimental skills with A/B comparison, user keeps or removes
-- Cherry-pick from companion tools, don't embed — except when integration density justifies a merge. The companion repos (NavGator, IBR) stay independent; bridges only consume their relevant outputs/skills. claude-code-debugger was merged inline in 0.6.0 because the debugger is invoked from inside the build loop on every Review-B / Iterate failure (multiple times per build) — keeping it external created loose coupling without a benefit. Other companions remain separate.
+- Cherry-pick from companion tools, don't embed — except when integration density justifies a merge. Companion repos stay independent; build-loop consumes their artifacts only when the user or plan explicitly asks. claude-code-debugger was merged inline in 0.6.0 because the debugger is invoked from inside the build loop on every Review-B / Iterate failure (multiple times per build) — keeping it external created loose coupling without a benefit. Other companions remain separate.
 
 ## Claude Code Integration
 
@@ -69,18 +69,14 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 - `evals/` — scorecard archives
 - `issues/` — discovered issues
 - `release-pending.md` — user-created marker signaling "in-flight feature batch is complete; advise version bump." Read by Sub-step D Gate 6 (`scripts/version_advisor.py`). Empty file = use defaults; body = release notes. User deletes after the bump commit lands.
-- `ux-queue/<id>.md` — UX-impacting findings from Sub-step D Gate 7 (`scripts/ux_triage.py`) and Gate 8 (IBR coverage gaps), each with a complete fix plan from `templates/ux-fix-plan.md`. Drained by Phase 5 Iterate.
+- `ux-queue/<id>.md` — UX-impacting findings from Sub-step D Gate 7 (`scripts/ux_triage.py`) and Gate 8 (UI coverage gaps), each with a complete fix plan from `templates/ux-fix-plan.md`. Drained by Phase 5 Iterate.
 - `followup/<topic>.md` — overflow when iteration cap is reached with queue entries remaining. Becomes input to a subsequent `/build-loop:run` invocation; Plan phase is skipped for these entries.
-- `ibr-quickpass.json` — summary of IBR test-suite quick pass written by `scripts/ibr_quickpass.py`. Read by Sub-step D Gate 8 to surface untested surfaces.
 - `skills/experimental/` — auto-drafted skills from Phase 6 Learn (remove with `rm -rf`)
 - `agents/experimental/` — auto-drafted agents from Phase 6 Learn
 - `skills/active/` — auto-promoted skills (opt-in; requires `autoPromote: true` + effective sample ≥ 8)
 - `proposals/` — pending promotion/removal proposals awaiting user confirmation
 - `experiments/<name>.jsonl` — A/B tracking log per experimental artifact
 - `experiments/discarded.jsonl` — Opus-rejected drafts with reasons
-
-Project-level (NOT under `.build-loop/`):
-- `.ibr-tests/_draft/<id>.ibr-test.json` — IBR test drafts authored by Sub-step D Gate 8 for surfaces the existing suite doesn't cover. The user accepts a draft by `mv` out of `_draft/`; rejects by `rm`. Build-loop never auto-promotes.
 
 ## Native Architecture & Debugging Skills (Sourced from Canonical Repos)
 
@@ -97,7 +93,7 @@ The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are no
 
 ## Plugin Bridging Policy
 
-When build-loop integrates capabilities from other plugins, **bridge the actions and functions, not the UI surfaces**. Programmatic calls (CLI flags, MCP tools, headless modes) compose well; viewer dashboards and persistent browser sessions don't belong inside an automated loop. The IBR bridge demonstrates this — see `skills/ibr-bridge/SKILL.md` §Cherry-pick principle for the allowed/forbidden split.
+When build-loop integrates capabilities from other plugins, **bridge artifacts and explicit actions, not default orchestration**. Programmatic calls (CLI flags, MCP tools, headless modes) compose well only when the user or plan explicitly requests them; viewer dashboards and persistent browser sessions don't belong inside an automated loop. IBR is explicit-only and is no longer auto-routed into UI builds.
 
 **Documented exception**: `mockup-gallery` is invoked from Phase 2 Plan for major UI work (new pages, ≥40% redesigns) to draft black-and-white mockups before any UI is written. Mockup drafting IS the action, and the user has explicitly authorized this pattern as the only place build-loop spawns plugin UI.
 

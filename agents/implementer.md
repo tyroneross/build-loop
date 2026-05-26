@@ -99,7 +99,7 @@ Follow the plan's `proposed_fix` text. Common patterns:
 | `data-accuracy/hardcoded-stat-web` | Replace the literal with a computed/fetched value, OR replace with `—` placeholder + comment, OR remove the element. Never leave fake numbers in production code paths. |
 | `usability/status-pill-web` | Convert background-color badge to text-color status per Calm Precision (`text-red-600 font-medium` instead of `bg-red-100 text-red-700 rounded-full`). |
 | `performance/n-plus-one-web` | Hoist the fetch out of the loop; use `Promise.all` over the data array. |
-| `test-coverage` | Move the draft `.ibr-test.json` from `.ibr-tests/_draft/` to `.ibr-tests/` and adjust assertions if the draft has obvious gaps. |
+| `test-coverage` | Add or update the repo-native render/interaction test named by the queue entry, or refine the proposed test plan if the route cannot be exercised locally. Do not create or promote `.ibr-test.json` files unless the user explicitly requested IBR for this build. |
 
 When the plan is ambiguous and you have to make a judgment call, document it in your return payload's `notes` field.
 

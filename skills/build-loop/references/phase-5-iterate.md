@@ -14,11 +14,11 @@ Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux
 
 | Priority | Source | Notes |
 |---|---|---|
-| 1 | Blocking Validate failures (Sub-step B) | Test/lint/build/IBR test-suite fails |
+| 1 | Blocking Validate failures (Sub-step B) | Test/lint/build/UI validation failures |
 | 2 | Blocker UX queue entries with `architecture_impact: false` | `.build-loop/ux-queue/*.md` filtered |
 | 3 | Major UX queue entries with `architecture_impact: false` | Same source, lower severity |
 | 4 | Optimization findings (Sub-step C) | Opt-in |
-| 5 | IBR coverage-gap drafts (`dimension: test-coverage`) | Lowest — additions, not fixes |
+| 5 | UI coverage-gap queue entries (`dimension: test-coverage`) | Lowest — additions, not fixes |
 | **deferred** | Any UX entry with `architecture_impact: true` | Surfaces in Review-F for explicit user confirmation; Iterate does not pick up |
 
 The "code is cheap, AI agents build fast" framing: the orchestrator does NOT defer based on patch size. It defers only when `architecture_impact: true` (new component, new data flow, navigation graph change, schema migration, auth provider swap). Everything else is fair game for the current loop.
@@ -41,10 +41,10 @@ In both modes, each pass returns the same structured outcome (status + files_cha
 
 Results re-enter Sub-step B for re-validation. For Validate failures (no queue entry), construct an inline plan in the same shape and treat identically.
 
-**IBR re-validate hook (when uiTarget != null AND IBR available)**: After each implementer subagent reports back AND before re-entering Sub-step B Validate, the orchestrator calls `mcp__plugin_ibr_ibr__interact_and_verify` against the affected route(s) headlessly. Catches "fix introduced a new visual or interaction regression" cheaply, without burning a full Validate cycle. For routes that fail this check twice, optionally invoke `ibr iterate <url> --headless --json` for a self-contained test-fix-rescan loop — internal iterations count against build-loop's 5-iteration ceiling.
+**UI re-validate hook (when uiTarget != null)**: After each implementer subagent reports back AND before re-entering Sub-step B Validate, the orchestrator runs the build-loop-owned UI re-validate path for affected surfaces: `ui-validator` for web routes when resolvable, native AX driver for macOS, or simulator screenshot/interaction commands for iOS. Catches "fix introduced a new visual or interaction regression" cheaply, without burning a full Validate cycle. If no renderable surface can be resolved, record the gap and fall back to `audit-design-rules.mjs`. IBR is not invoked unless the user explicitly requested it for this build.
 
 Per attempt:
-1. **Diagnose root cause** — don't just retry. Reads Review's evidence.
+1. **Diagnose root cause** — don't just retry. Start the failure brief in plain language, then trace visible symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure. Actor-blame phrases such as "agent forgot" or "model missed context" are not terminal causes unless paired with the missing control that allowed them.
 2. **Stuck-iteration cascade (always on)**: at the START of EACH attempt, the orchestrator runs the cascade in order — see `agents/build-orchestrator.md` §Phase 5 for the full ladder. Summary:
    - **Evidence-gap repair (highest priority)**: if the prior gate flagged `evidence_gap: true`, invoke `Skill("build-loop:logging-tracer")` with intent `repair`. Ephemeral-by-default — Mechanism A (`DEBUG_TRACE=1` runtime gate) or Mechanism B (`git-stash` throwaway). Re-run the failed criterion; if output is now informative, proceed with new context.
    - **Memory-first re-check**: invoke `Skill("build-loop:debugging-memory")` again with the new symptom (it may have shifted shape after the prior fix attempt).
@@ -52,7 +52,7 @@ Per attempt:
    - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
 3. **Build the prioritized work list** from the table above (Validate failures + UX queue).
 4. **Partition for parallel fan-out**: group by disjoint `files_touched`; dispatch ≤4 subagents in parallel.
-5. **Execute fixes**; for UI files, run the IBR re-validate hook before continuing.
+5. **Execute fixes**; for UI files, run the UI re-validate hook before continuing.
 6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
 7. **Followup overflow**: when the iteration cap (5) is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips its own Plan phase for these entries.
 8. **Track**: attempt count, what failed, what was attempted, what changed, queue depth before/after each pass.
