@@ -1,5 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
+> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:design-preferences-evidence")`. This file remains in build-loop as a transition aid; future updates land in the plugin.
+
 # Design Preferences — Sourced from Owned Apps
 
 > Sourced from `.build-loop/design-evidence/*.md` (8 apps scanned 2026-05-26). Every claim in this file traces to a specific evidence file. The evidence files are the ground truth — when this doc and an evidence file disagree, the evidence file wins.

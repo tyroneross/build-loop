@@ -2,6 +2,8 @@
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
+> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:evidence-capture-policy")`. This file remains in build-loop as a transition aid; future updates land in the plugin.
+
 How to gather design evidence from owned apps. Routes a build-loop dispatch to the right collection method based on what's being asked.
 
 ## Two evidence types, two methods

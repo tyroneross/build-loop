@@ -114,19 +114,34 @@ What it does not decide by itself:
 
 In practice: start with Calm Precision for structure, then select the mode that fits the product. For example, Aurora Glass can layer translucent surfaces over a Calm Precision layout; Warm Craft can change warmth and texture while preserving hierarchy and action discipline; Data Narrative adds evidence/storytelling patterns while keeping decision-first labels and source traceability.
 
-## Local UI Guidance Folder
+## ui-guidance plugin (canonical home, 2026-05-27+)
 
-Primary cross-project design source:
+The cross-project design library is now a Claude Code plugin at `/Users/tyroneross/dev/git-folder/UI Guidance/` (plugin name `ui-guidance`). Prefer qualified Skill invocations over absolute paths:
 
-- `/Users/tyroneross/dev/git-folder/UI Guidance/cross-platform-design-patterns.md`
-- `/Users/tyroneross/dev/git-folder/UI Guidance/data-visualization-patterns.md`
-- `/Users/tyroneross/dev/git-folder/UI Guidance/aurora-deep.md`
-- `/Users/tyroneross/dev/git-folder/UI Guidance/aurora-glass.md`
-- `/Users/tyroneross/dev/git-folder/UI Guidance/warm-craft.md`
-- `/Users/tyroneross/dev/git-folder/UI Guidance/.mockup-gallery/selections.json`
-- `/Users/tyroneross/dev/git-folder/UI Guidance/mockups/`
+| What you need | Invocation |
+|---|---|
+| Cross-medium doctrine (UI + writing + decks + ops workflows) | `Skill("ui-guidance:universal-experience-principles")` |
+| Owned-app design preferences (typography, color, touch targets, motion, error UX) | `Skill("ui-guidance:design-preferences-evidence")` |
+| Multi-pattern token framework (mobile / tablet / web / watch resolution) | `Skill("ui-guidance:multi-pattern-tokens")` |
+| Source-read vs live-IBR-capture routing | `Skill("ui-guidance:evidence-capture-policy")` |
+| 4 design modes (Atmospheric / Glass Workspace / Warm Craft / Data Narrative) + 11 foundational rules | `Skill("ui-guidance:cross-platform-design-patterns")` |
+| Chart / KPI / table / sparkline / timeline patterns | `Skill("ui-guidance:data-visualization-patterns")` |
 
-Use when the build needs a known design mode, chart/data pattern, or recent selected mockup. Treat mockups as reference artifacts; implementation still follows build-loop design rules and the UI input/output contract.
+The two bulky reference files (`cross-platform-design-patterns/references/full.md` 569 lines, `data-visualization-patterns/references/full.md` 937 lines) load on demand via the skill body — do not paste them into implementer prompts.
+
+**Bundled in the plugin under `references/`** (organized for cross-reference, not for direct path-based access from outside the plugin):
+
+- `references/design-evidence/` — 8 owned-app evidence files
+- `references/screenshots/{speaksavvy, truepace, productpilot}/` — 16 live IBR captures (2026-05-26)
+- `references/style-modes/` — `aurora-deep.md`, `aurora-glass.md`, `warm-craft.md` catalog briefs
+- `references/tools/mockup-gallery-reviewer.html` — mockup-rating browser tool
+- `references/historical/universal-design-principles-original.md` — pre-migration 365-line original
+
+Mockup-gallery session data (`.mockup-gallery/selections.json`, `mockups/` rated HTML files) still live at the repo root for the mockup-gallery plugin's own use; the canonical guidance synthesized from those mockups lives in the skills above.
+
+### Build-loop transition shims (one release cycle)
+
+The four reference files at `skills/ui-design/references/{universal-design-principles.alt.md, design-preferences-from-owned-apps.md, design-patterns-multi.md, evidence-capture-policy.md}` are now deprecation shims pointing at the plugin. Remove after one release cycle. The plugin is the canonical source.
 
 Current pattern families visible here:
 

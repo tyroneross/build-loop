@@ -1,5 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
+> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:universal-experience-principles")`. This file remains in build-loop as a transition aid; future updates land in the plugin.
+
 # Universal Experience Principles
 
 Cross-medium doctrine for any artifact that has to communicate, guide a person through an experience, or expose a changing process. Applies to app UI, writing, images, native screens, slides, documents, spreadsheets, reports, charts, version control, deploys, sync, automation, and design handoff. Build Loop is the runtime home; the principles are not Build Loop-specific.

@@ -1,5 +1,7 @@
 # Multi-Pattern Token Framework — Feasibility Draft
 
+> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:multi-pattern-tokens")`. This file remains in build-loop as a transition aid; future updates land in the plugin.
+>
 > **Status:** DRAFT — exploration only. Not active, not loaded by ui-design. Decision pending the Feasibility verdict at the bottom.
 >
 > **Source attribution:** Adapted from Google Labs' DESIGN.md spec at <https://github.com/google-labs-code/design.md> (fetched 2026-05-26 from the raw README at `main`, 337 lines). DESIGN.md proposes a YAML-front-matter + markdown-prose hybrid: tokens are normative, prose tells agents *why* they exist. This document explores whether the same hybrid can extend to **multi-pattern** tokens — i.e., one design language expressing different concrete values per form factor (mobile / tablet / web / watch) without forking the system.
