@@ -120,14 +120,22 @@ The cross-project design library is now a Claude Code plugin at `/Users/tyronero
 
 | What you need | Invocation |
 |---|---|
-| Cross-medium doctrine (UI + writing + decks + ops workflows) | `Skill("ui-guidance:universal-experience-principles")` |
-| Owned-app design preferences (typography, color, touch targets, motion, error UX) | `Skill("ui-guidance:design-preferences-evidence")` |
-| Multi-pattern token framework (mobile / tablet / web / watch resolution) | `Skill("ui-guidance:multi-pattern-tokens")` |
-| Source-read vs live-IBR-capture routing | `Skill("ui-guidance:evidence-capture-policy")` |
-| 4 design modes (Atmospheric / Glass Workspace / Warm Craft / Data Narrative) + 11 foundational rules | `Skill("ui-guidance:cross-platform-design-patterns")` |
-| Chart / KPI / table / sparkline / timeline patterns | `Skill("ui-guidance:data-visualization-patterns")` |
+| Cross-medium doctrine (UI + writing + decks + ops workflows) | `Skill("ui-guidance:principles")` |
+| Owned-app design preferences (typography, color, touch targets, motion, error UX) | `Skill("ui-guidance:preferences")` |
+| Multi-pattern token framework (mobile / tablet / web / watch resolution) | `Skill("ui-guidance:tokens")` |
+| Source-read vs live-IBR-capture routing | `Skill("ui-guidance:evidence-policy")` |
+| 4 design modes (Atmospheric / Glass Workspace / Warm Craft / Data Narrative) | Load `references/modes/<mode>.md` directly (catalog, not skill) |
+| Chart / KPI / table / sparkline / timeline patterns | `Skill("ui-guidance:data-viz")` |
+| Wayfinding, tab/stack/drawer/sheet selection, breadcrumbs | `Skill("ui-guidance:navigation")` |
+| L1/L2/L3 ladder, luminance tiers, type scale | `Skill("ui-guidance:hierarchy")` |
+| Form factors, breakpoints, viewport-scale tokens, watch glance | `Skill("ui-guidance:responsive")` |
+| Action feedback, haptics, loading, confirmation, error UX | `Skill("ui-guidance:feedback")` |
+| Motion, transitions, stagger, prefers-reduced-motion | `Skill("ui-guidance:motion")` |
+| iOS / iPhone / iPad / SwiftUI | `Skill("ui-guidance:ios")` |
+| macOS / Mac native / menu bar / NSToolbar | `Skill("ui-guidance:macos")` |
+| Web / Next.js / React / ARIA / WCAG 2.1 AA | `Skill("ui-guidance:web")` |
 
-The two bulky reference files (`cross-platform-design-patterns/references/full.md` 569 lines, `data-visualization-patterns/references/full.md` 937 lines) load on demand via the skill body — do not paste them into implementer prompts.
+**ui-guidance v0.2.0** is a flat-but-grouped IA: 10 cross-platform topic skills + 3 platform skills + design-mode catalog. The bulky reference files (`ios/references/full.md`, `web/references/full.md`, `data-viz/references/full.md`) load on demand via the skill body — do not paste them into implementer prompts.
 
 **Bundled in the plugin under `references/`** (organized for cross-reference, not for direct path-based access from outside the plugin):
 

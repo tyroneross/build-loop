@@ -1,6 +1,6 @@
 # Multi-Pattern Token Framework — Feasibility Draft
 
-> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:multi-pattern-tokens")`. This file remains in build-loop as a transition aid; future updates land in the plugin.
+> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:tokens")`. This file remains in build-loop as a transition aid; future updates land in the plugin. *(Renamed from `multi-pattern-tokens` in ui-guidance v0.2.0.)*
 >
 > **Status:** DRAFT — exploration only. Not active, not loaded by ui-design. Decision pending the Feasibility verdict at the bottom.
 >

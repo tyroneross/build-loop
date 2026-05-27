@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:design-preferences-evidence")`. This file remains in build-loop as a transition aid; future updates land in the plugin.
+> **DEPRECATION SHIM (one release cycle).** Canonical source migrated to the `ui-guidance` plugin → load via `Skill("ui-guidance:preferences")`. This file remains in build-loop as a transition aid; future updates land in the plugin. *(Renamed from `design-preferences-evidence` in ui-guidance v0.2.0.)*
 
 # Design Preferences — Sourced from Owned Apps
 
@@ -141,7 +141,10 @@ Live IBR captures on the 4 primaries surfaced texture observations source-read c
 - **Tokens extend to haptics.** SpeakSavvy's `HapticVocabulary.swift` (`.confirm/.reward/.warn/.progress/.selection`) is a semantic layer above UIKit feedback generators, parallel to `Theme.fontDisplay` above `Font.system(...)`. Treat haptics as first-class tokens on mobile. Evidence: `speaksavvy-ios.md` §Live IBR Capture.
 - **Selection signaling is NOT consistent across primaries.** SpeakSavvy uses solid-fill on selected (filter pills, tab); TruePace uses 1pt border + glyph check on selected mode card. Both legitimate; choose per surface density and decision weight, not by a single rule. Evidence: `speaksavvy-ios.md` + `truepace.md`.
 - **Empty states diverge by intent.** SpeakSavvy floats SF Symbol + copy (first-use); TruePace renders milestone ladder (unlock-progression); ProductPilot uses text label (transient load). Match vocabulary to user reason-for-emptiness.
-- **AI-assist lives inside input when input is the primary action.** ProductPilot's sparkle "Enhance" sits inside the textarea (`productpilot.md` §Live IBR Capture). Generalizable.
+- **AI-assist lives inside input when input is the primary action.** ProductPilot's sparkle "Enhance" sat inside the textarea (`productpilot.md` §Live IBR Capture, 2026-05-03). Generalizable. (As of 2026-05-26 refresh, ProductPilot's landing has been redesigned to headline+CTA-first; the input-with-Enhance pattern moved one click deeper. Pattern still holds, citation is historical.)
 - **Brand-identity-in-chrome is universal, treatment is product-specific.** All 4 primary apps have distinct brand chrome — no two alike. System-default brand chrome is the explicit deviation.
+- **Two-speed motion on a single control.** ProductPilot primary CTA: `transition: background 0.2s, transform 0.15s` — geometry settles 50ms faster than color for snappier press feedback while color carries texture. When a control shifts both color and shape, tune per channel. (`productpilot.md` §Fresh Live IBR Capture)
+- **Error-state restraint mirrors main-app restraint.** ProductPilot 404 = 5 elements (icon, title, body, CTA, card). No illustration, no error code, no search. Empty space carries the signal. Pattern: error/empty states inherit the app's restraint discipline; do not overcompensate.
+- **Friction-removal microcopy has a stable shape:** short / two-clause / bulleted (`·`) / muted ≤12pt, placed under a CTA when account/cost/lock-in friction is the user concern. ProductPilot uses the same recipe on the landing CTA (`No account required · Free to try`) and the auth card (`No account · Groq Llama 3.3`).
 
 These supersede any prior synthesis claim that read selection-signaling or empty-state vocabulary as universal. The `evidence-capture-policy.md` reference codifies why source-read alone could not produce these observations.
