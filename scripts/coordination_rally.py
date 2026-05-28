@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,10 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import changes, channel_paths, presence, revision  # noqa: E402
-from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
+from rally_point.discovery_bridge import (  # noqa: E402
+    resolve as _bridge_resolve,
+    rust_rally_binary,
+)
 from rally_point.post import post  # noqa: E402
 
 
@@ -91,21 +95,34 @@ def rally(
 
     presence_written = False
     errors: list[str] = []
-    try:
-        presence.write_presence(
-            channel_dir,
+    if envelope.resolved_via == "rust-cli":
+        presence_written = _start_rust_session(
+            workdir=workdir,
             session_id=session_id,
             tool=tool,
             model=model,
             run_id=effective_run_id,
-            app_slug=slug,
-            phase=phase,
-            files_in_flight=owns,
-            cwd=workdir,
+            message=message,
+            owns=owns,
         )
-        presence_written = True
-    except Exception as exc:  # noqa: BLE001 - presence is fire-and-forget
-        errors.append(f"presence.write_presence failed: {exc}")
+        if not presence_written:
+            errors.append("rally start failed")
+    else:
+        try:
+            presence.write_presence(
+                channel_dir,
+                session_id=session_id,
+                tool=tool,
+                model=model,
+                run_id=effective_run_id,
+                app_slug=slug,
+                phase=phase,
+                files_in_flight=owns,
+                cwd=workdir,
+            )
+            presence_written = True
+        except Exception as exc:  # noqa: BLE001 - presence is fire-and-forget
+            errors.append(f"presence.write_presence failed: {exc}")
 
     payload = {
         "from": tool,
@@ -141,7 +158,9 @@ def rally(
     after_revision = revision.read_revision(channel_dir) if verify else None
 
     verify_result: dict[str, Any] | None = None
-    if verify:
+    if verify and envelope.resolved_via == "rust-cli":
+        verify_result = _verify_rust_post(workdir, channel_rev)
+    elif verify:
         records, _offset = changes.read_changes_since(channel_dir, 0)
         matching_records = [
             r for r in records
@@ -181,6 +200,118 @@ def rally(
         result["verify"] = verify_result
         result["posted"] = verify_result["posted"]
     return result
+
+
+def _start_rust_session(
+    *,
+    workdir: Path,
+    session_id: str,
+    tool: str,
+    model: str,
+    run_id: str,
+    message: str,
+    owns: list[str],
+) -> bool:
+    binary = rust_rally_binary(workdir)
+    if not binary:
+        return False
+    cmd = [
+        binary,
+        "start",
+        tool,
+        "--json",
+        "--session-id",
+        session_id,
+        "--model",
+        model,
+        "--run-id",
+        run_id,
+        "--intent",
+        message,
+    ]
+    for owned in owns:
+        cmd.extend(["--path", owned])
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False
+    try:
+        payload = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return False
+    return bool(payload.get("ok") is True)
+
+
+def _verify_rust_post(workdir: Path, channel_rev: int | None) -> dict[str, Any]:
+    binary = rust_rally_binary(workdir)
+    if not binary or channel_rev is None:
+        return {
+            "posted": False,
+            "protocol": "rust-cli",
+            "matching_record_count": 0,
+            "checkpoint_valid": False,
+        }
+    try:
+        replay = subprocess.run(
+            [binary, "replay", "--json"],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        checkpoint = subprocess.run(
+            [binary, "checkpoint", "status", "--json"],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return {
+            "posted": False,
+            "protocol": "rust-cli",
+            "matching_record_count": 0,
+            "checkpoint_valid": False,
+        }
+    matching = []
+    checkpoint_valid = False
+    try:
+        replay_payload = json.loads(replay.stdout)
+        events = ((replay_payload.get("data") or {}).get("events") or [])
+        matching = [
+            event for event in events
+            if event.get("local_seq") == channel_rev
+            and ((event.get("event") or {}).get("kind") == "handoff")
+        ]
+    except (ValueError, TypeError, AttributeError):
+        matching = []
+    try:
+        checkpoint_payload = json.loads(checkpoint.stdout)
+        checkpoint_valid = bool(
+            checkpoint.returncode == 0
+            and checkpoint_payload.get("ok") is True
+            and (
+                ((checkpoint_payload.get("data") or {}).get("checkpoint") or {})
+                .get("valid")
+                is True
+            )
+        )
+    except (ValueError, TypeError, AttributeError):
+        checkpoint_valid = False
+    return {
+        "posted": bool(matching),
+        "protocol": "rust-cli",
+        "matching_record_count": len(matching),
+        "checkpoint_valid": checkpoint_valid,
+    }
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -295,9 +295,64 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             with mock.patch.object(bridge.shutil, "which", return_value=str(current)):
                 self.assertEqual(bridge.rust_rally_binary(), str(current))
 
+    def test_workdir_sibling_rally_beats_path_rally(self) -> None:
+        """Build Loop should choose the Rally binary paired with the repo."""
+        path_dir = self.tmp / "bin"
+        path_rally = path_dir / "rally"
+        self._write_fake_rally(path_rally, self.tmp / "path-channel")
+
+        sibling_rally = (
+            self.workdir.parent
+            / "agent-rally-point"
+            / "target"
+            / "release"
+            / "rally"
+        )
+        self._write_fake_rally(sibling_rally, self.tmp / "sibling-channel")
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {
+                "AGENT_RALLY_BINARY",
+                "BUILD_LOOP_APPS_ROOT",
+                "BUILD_LOOP_DISABLE_SIBLING_RALLY",
+            }
+        }
+        env["PATH"] = f"{path_dir}:/usr/bin:/bin"
+        with self._patched_env(env):
+            self.assertEqual(
+                Path(str(bridge.rust_rally_binary(self.workdir))).resolve(),
+                sibling_rally.resolve(),
+            )
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _write_fake_rally(self, path: Path, channel_dir: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        setup_payload = json.dumps({
+            "ok": True,
+            "schema": "agent-rally.command.setup.v1",
+            "channel": str(channel_dir),
+        })
+        path.write_text(
+            f"#!{sys.executable}\n"
+            "import json, sys\n"
+            "args = sys.argv[1:]\n"
+            "if not args:\n"
+            "    print('usage: rally start <tool> [--session-id <id>]')\n"
+            "    print('       rally stop <tool> [--session-id <id>] [--reason <text>] [--json]')\n"
+            "    print('       rally post --kind <kind> [--payload <json>] [--subject <text>] [--json]')\n"
+            "    raise SystemExit(2)\n"
+            "if args == ['setup', '--json']:\n"
+            f"    print({setup_payload!r})\n"
+            "    raise SystemExit(0)\n"
+            "raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
 
     def _patched_env(self, env: dict[str, str]):
         """Context manager that swaps os.environ + os.environb in-process."""

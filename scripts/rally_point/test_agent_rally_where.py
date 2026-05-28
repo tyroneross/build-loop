@@ -53,6 +53,7 @@ def temp_repo(tmp_path: Path) -> Path:
 
 def _run_where(workdir: Path, *extra: str, env_apps_root: Path | None = None):
     env = os.environ.copy()
+    env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
     if env_apps_root is not None:
         env["BUILD_LOOP_APPS_ROOT"] = str(env_apps_root)
     return subprocess.run(

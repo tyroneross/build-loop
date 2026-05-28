@@ -229,6 +229,7 @@ def _post_lead_record(
     app_slug: str,
     lead: dict[str, Any],
     extra: dict[str, Any] | None = None,
+    workdir: Path | None = None,
 ) -> None:
     """Fire-and-forget durable audit record for a lead-* event."""
     _audit_log(
@@ -251,6 +252,7 @@ def _post_lead_record(
             run_id=run_id,
             app_slug=app_slug,
             payload=payload,
+            workdir=workdir,
         )
     except Exception:  # noqa: BLE001 — channel post never fails the claim
         pass
@@ -288,6 +290,7 @@ def claim_lead(
     parent_lead: str | None = None,
     max_direct_reports: int = 4,
     chunk_owners: dict[str, str] | None = None,
+    workdir: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Attempt to become lead. Race-safe via rally/lead.lock.
@@ -331,6 +334,7 @@ def claim_lead(
             run_id=run_id,
             app_slug=app_slug,
             lead=result["lead"]["lead"],
+            workdir=workdir,
         )
     return result
 
@@ -343,6 +347,7 @@ def renew_lease(
     tool: str = "unknown",
     model: str = "unknown",
     renew_every_minutes: int | None = None,
+    workdir: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Extend the current lead's lease. Only the current lead may renew.
@@ -378,6 +383,7 @@ def renew_lease(
             run_id=result["lead"].get("run_id", "unknown"),
             app_slug=app_slug,
             lead=result["lead"]["lead"],
+            workdir=workdir,
         )
     return result
 
@@ -392,6 +398,7 @@ def transfer_lead(
     app_slug: str,
     tool: str = "unknown",
     model: str = "unknown",
+    workdir: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Hand the lead from the current lead to another session.
@@ -429,6 +436,7 @@ def transfer_lead(
             lead=result["lead"]["lead"],
             extra={"from_session_id": from_session_id,
                    "to_session_id": to_session_id},
+            workdir=workdir,
         )
     return result
 
@@ -440,6 +448,7 @@ def relinquish_lead(
     app_slug: str,
     tool: str = "unknown",
     model: str = "unknown",
+    workdir: Path | None = None,
 ) -> dict[str, Any]:
     """Voluntarily give up the lead. Only the current lead may relinquish.
 
@@ -471,6 +480,7 @@ def relinquish_lead(
             run_id=result["lead"].get("run_id", "unknown"),
             app_slug=app_slug,
             lead=result["lead"]["lead"],
+            workdir=workdir,
         )
     return result
 

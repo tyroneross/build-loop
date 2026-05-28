@@ -95,6 +95,7 @@ class AgentRallyWhereTests(unittest.TestCase):
         # for the OTHER tests; pop it for this subprocess so the bridge
         # actually probes Python import.
         env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
         # Strip PATH so the real pipx-installed agent-rally-discover
         # cannot shadow the Python-import probe under test.
         env["PATH"] = "/usr/bin:/bin"
@@ -115,6 +116,7 @@ from any system-wide install.
         empty.mkdir(exist_ok=True)
         env = os.environ.copy()
         env["PYTHONPATH"] = str(empty)
+        env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
         cmd = [
             sys.executable, "-I", str(HERE / "agent_rally.py"), "where",
             "--workdir", str(self.workdir), "--json",

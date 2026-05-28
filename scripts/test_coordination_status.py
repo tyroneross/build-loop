@@ -305,6 +305,7 @@ class CoordinationStatusTests(unittest.TestCase):
         # for the OTHER tests; pop it for this subprocess so the bridge
         # actually probes Python import.
         env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
         env["PATH"] = "/usr/bin:/bin"  # strip the real pipx-installed CLI
         # Prepend so the fake wins over any real install.
         env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")
@@ -332,6 +333,7 @@ class CoordinationStatusTests(unittest.TestCase):
         empty.mkdir(exist_ok=True)
         env = os.environ.copy()
         env["PYTHONPATH"] = str(empty)
+        env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
         cmd = [
             sys.executable, "-I",
             str(HERE / "coordination_status.py"),

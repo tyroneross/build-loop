@@ -11,8 +11,9 @@ native discovery → embedded fallback chain themselves.
 Resolution order (highest → lowest priority):
 
 1. ``$AGENT_RALLY_DISCOVER`` env override (operator-controlled).
-2. ``$AGENT_RALLY_BINARY`` / ``rally`` Rust CLI / sibling
-   ``agent-rally-point/target/*/rally`` checkout (agent-rally-point >= 0.4).
+2. ``$AGENT_RALLY_BINARY`` / repo-associated sibling
+   ``agent-rally-point/target/*/rally`` checkout / ``rally`` Rust CLI
+   (agent-rally-point >= 0.4).
 3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
 4. ``agent_rally_point.discover`` Python import (sibling-repo install
@@ -204,13 +205,14 @@ def _try_path_binary(workdir: Path) -> DiscoveryEnvelope | None:
     return _invoke_discover_binary(binary, workdir, resolved_via="path-binary")
 
 
-def rust_rally_binary() -> str | None:
+def rust_rally_binary(workdir: Path | str | None = None) -> str | None:
     """Return the Rust ``rally`` binary path when available.
 
     Production installs should put ``rally`` on ``PATH`` or set
-    ``AGENT_RALLY_BINARY``. The sibling-checkout probe keeps local
-    build-loop development aligned with a freshly built adjacent
-    agent-rally-point repo before that binary has been installed.
+    ``AGENT_RALLY_BINARY``. The workdir sibling-checkout probe keeps
+    Build Loop aligned with the Rally binary that belongs to the repo
+    being coordinated, even when Build Loop is running from an installed
+    plugin cache.
 
     Stale ``rally`` binaries are skipped. During the Rust cutover it is
     common for a shell PATH to point at an older installed binary while a
@@ -219,27 +221,61 @@ def rust_rally_binary() -> str | None:
     Herdr, cmux, and other host adapters, so discovery must prefer a binary
     that actually exposes those commands.
     """
-    override = os.environ.get("AGENT_RALLY_BINARY")
-    if override and _rally_binary_supports_required_surface(override):
-        return override
+    workdir_path = Path(workdir).expanduser().resolve() if workdir else None
+    for candidate in _rally_binary_candidates(workdir_path):
+        if not _rally_binary_supports_required_surface(candidate):
+            continue
+        if workdir_path is not None and _rally_setup_payload(candidate, workdir_path) is None:
+            continue
+        return candidate
+
+    return None
+
+
+def _rally_binary_candidates(workdir: Path | None) -> list[str]:
+    """Return candidate ``rally`` paths in repo-associated priority order."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(path: Path | str | None) -> None:
+        if not path:
+            return
+        expanded = str(Path(path).expanduser())
+        if expanded not in seen:
+            seen.add(expanded)
+            candidates.append(expanded)
+
+    add(os.environ.get("AGENT_RALLY_BINARY"))
 
     if (
         not os.environ.get("BUILD_LOOP_DISABLE_SIBLING_RALLY")
         and not os.environ.get("BUILD_LOOP_APPS_ROOT")
     ):
+        for root in _repo_associated_roots(workdir):
+            for base in (root, root.parent / "agent-rally-point"):
+                add(base / "target" / "release" / "rally")
+                add(base / "target" / "debug" / "rally")
+
         repo_root = Path(__file__).resolve().parents[2]
         sibling = repo_root.parent / "agent-rally-point"
-        for candidate in (
-            sibling / "target" / "release" / "rally",
-            sibling / "target" / "debug" / "rally",
-        ):
-            if _rally_binary_supports_required_surface(str(candidate)):
-                return str(candidate)
+        add(sibling / "target" / "release" / "rally")
+        add(sibling / "target" / "debug" / "rally")
 
-    path_binary = shutil.which("rally")
-    if path_binary and _rally_binary_supports_required_surface(path_binary):
-        return path_binary
-    return None
+    add(shutil.which("rally"))
+    return candidates
+
+
+def _repo_associated_roots(workdir: Path | None) -> list[Path]:
+    if workdir is None:
+        return []
+    roots: list[Path] = []
+    for candidate in (workdir, *workdir.parents):
+        if (candidate / ".git").exists() or (candidate / "target" / "release").exists():
+            roots.append(candidate)
+            break
+    if not roots:
+        roots.append(workdir)
+    return roots
 
 
 def _rally_binary_supports_required_surface(binary: str) -> bool:
@@ -260,10 +296,7 @@ def _rally_binary_supports_required_surface(binary: str) -> bool:
     return all(fragment in help_text for fragment in REQUIRED_RALLY_HELP_FRAGMENTS)
 
 
-def _try_rust_cli(workdir: Path) -> DiscoveryEnvelope | None:
-    binary = rust_rally_binary()
-    if not binary:
-        return None
+def _rally_setup_payload(binary: str, workdir: Path) -> dict[str, Any] | None:
     try:
         proc = subprocess.run(
             [binary, "setup", "--json"],
@@ -280,7 +313,17 @@ def _try_rust_cli(workdir: Path) -> DiscoveryEnvelope | None:
         raw = json.loads(proc.stdout)
     except (ValueError, TypeError):
         return None
-    if not isinstance(raw, dict) or raw.get("ok") is not True:
+    if not isinstance(raw, dict) or raw.get("ok") is not True or not raw.get("channel"):
+        return None
+    return raw
+
+
+def _try_rust_cli(workdir: Path) -> DiscoveryEnvelope | None:
+    binary = rust_rally_binary(workdir)
+    if not binary:
+        return None
+    raw = _rally_setup_payload(binary, workdir)
+    if raw is None:
         return None
     channel_dir = raw.get("channel")
     if not channel_dir:

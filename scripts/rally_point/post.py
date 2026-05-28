@@ -41,6 +41,8 @@ Fire-and-forget like the underlying primitives. Errors are swallowed
 """
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 try:  # package import
@@ -87,6 +89,39 @@ def post(
     try:
         d = Path(channel_dir)
         d.mkdir(parents=True, exist_ok=True)
+
+        if workdir is not None:
+            try:
+                try:  # package import
+                    from .discovery_bridge import (
+                        resolve as _bridge_resolve,
+                        rust_rally_binary,
+                    )
+                except ImportError:  # script import
+                    from discovery_bridge import (  # type: ignore
+                        resolve as _bridge_resolve,
+                        rust_rally_binary,
+                    )
+
+                envelope = _bridge_resolve(workdir)
+                if (
+                    envelope.resolved_via == "rust-cli"
+                    and str(Path(envelope.channel_dir).resolve()) == str(d.resolve())
+                ):
+                    return _post_via_rust_rally(
+                        binary=rust_rally_binary(workdir),
+                        workdir=workdir,
+                        kind=kind,
+                        tool=tool,
+                        model=model,
+                        run_id=run_id,
+                        payload=payload,
+                    )
+            except Exception:
+                return None
+
+        if workdir is None and _looks_like_rust_channel(d):
+            return None
 
         # MECE validation: reject malformed handoff payloads before any write
         if kind == "handoff":
@@ -164,3 +199,139 @@ def post(
     except Exception:
         # Fire-and-forget per protocol; never raise into the caller.
         return None
+
+
+def _looks_like_rust_channel(channel_dir: Path) -> bool:
+    return (
+        (channel_dir / "rally.tail.json").exists()
+        or (channel_dir / "rally.checkpoint.json").exists()
+        or (channel_dir / "rally.lock").exists()
+    )
+
+
+def _post_via_rust_rally(
+    *,
+    binary: str | None,
+    workdir: Path,
+    kind: str,
+    tool: str,
+    model: str,
+    run_id: str,
+    payload: dict,
+) -> int | None:
+    if not binary:
+        return None
+    if kind == "handoff":
+        return _handoff_via_rust_rally(
+            binary=binary,
+            workdir=workdir,
+            tool=tool,
+            model=model,
+            run_id=run_id,
+            payload=payload,
+        )
+    subject = (
+        str((payload or {}).get("subject") or (payload or {}).get("message") or kind)
+        or kind
+    )
+    cmd = [
+        binary,
+        "post",
+        "--json",
+        "--tool",
+        tool,
+        "--model",
+        model,
+        "--run-id",
+        run_id,
+        "--kind",
+        kind,
+        "--payload",
+        json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
+        "--subject",
+        subject,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        out = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(out, dict) or out.get("ok") is not True:
+        return None
+    seq = out.get("local_seq")
+    return int(seq) if isinstance(seq, int) else 0
+
+
+def _handoff_via_rust_rally(
+    *,
+    binary: str,
+    workdir: Path,
+    tool: str,
+    model: str,
+    run_id: str,
+    payload: dict,
+) -> int | None:
+    ownership = (payload or {}).get("ownership") or {}
+    subject = (
+        str(
+            (payload or {}).get("message")
+            or ownership.get("interface_contract")
+            or "build-loop handoff"
+        )
+        or "build-loop handoff"
+    )
+    to_tool = str((payload or {}).get("to") or "peer")
+    cmd = [
+        binary,
+        "handoff",
+        "--json",
+        "--tool",
+        tool,
+        "--model",
+        model,
+        "--run-id",
+        run_id,
+        "--to",
+        to_tool,
+        "--from-tool",
+        tool,
+        "--subject",
+        subject,
+        "--notes",
+        json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
+    ]
+    owns = ownership.get("owns") if isinstance(ownership, dict) else None
+    if isinstance(owns, list) and owns:
+        cmd.append("--files")
+        cmd.extend(str(item) for item in owns if item)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        out = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(out, dict) or out.get("ok") is not True:
+        return None
+    seq = out.get("local_seq")
+    return int(seq) if isinstance(seq, int) else 0

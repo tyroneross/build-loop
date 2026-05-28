@@ -50,7 +50,10 @@ if str(HERE) not in sys.path:
 
 from rally_point import boundary as _boundary
 from rally_point import leadership, presence  # noqa: E402
-from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
+from rally_point.discovery_bridge import (  # noqa: E402
+    resolve as _bridge_resolve,
+    rust_rally_binary,
+)
 from rally_point.post import post  # noqa: E402
 
 
@@ -91,7 +94,29 @@ def _resolve_channel(workdir: str) -> tuple[str, Path]:
 # --------------------------------------------------------------------------
 
 def cmd_presence(args: argparse.Namespace) -> int:
-    slug, channel_dir = _resolve_channel(args.workdir)
+    wd = Path(args.workdir).expanduser().resolve()
+    envelope = _bridge_resolve(wd)
+    slug = envelope.app_slug
+    channel_dir = Path(envelope.channel_dir)
+    if envelope.resolved_via == "rust-cli":
+        ok = _rust_start(
+            workdir=wd,
+            session_id=args.session_id,
+            tool=args.tool,
+            model=args.model,
+            run_id=args.run_id,
+            intent=args.phase,
+            paths=_split_csv(args.files_in_flight),
+        )
+        return _emit({
+            "action": "presence-written" if ok else "presence-error",
+            "app_slug": slug,
+            "session_id": args.session_id,
+            "phase": args.phase,
+            "resolved_via": "rust-cli",
+        })
+    if envelope.resolved_via == "build-loop-internal":
+        channel_dir.mkdir(parents=True, exist_ok=True)
     presence.write_presence(
         channel_dir,
         session_id=args.session_id,
@@ -109,6 +134,94 @@ def cmd_presence(args: argparse.Namespace) -> int:
         "session_id": args.session_id,
         "phase": args.phase,
     })
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    wd = Path(args.workdir).expanduser().resolve()
+    envelope = _bridge_resolve(wd)
+    if envelope.resolved_via == "rust-cli":
+        binary = rust_rally_binary(wd)
+        if not binary:
+            return _emit({"action": "stop-error", "error": "rally binary unavailable"})
+        cmd = [
+            binary,
+            "stop",
+            args.tool,
+            "--json",
+            "--session-id",
+            args.session_id,
+            "--reason",
+            args.reason,
+        ]
+        if args.keep_claims:
+            cmd.append("--keep-claims")
+        try:
+            result = subprocess.run(cmd, cwd=str(wd), capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return _emit({"action": "stop-error", "error": str(exc)})
+        sys.stdout.write(result.stdout)
+        return result.returncode
+
+    slug, channel_dir = _resolve_channel(args.workdir)
+    removed = []
+    sessions_dir = channel_dir / "sessions"
+    for path in sessions_dir.glob(f"{args.session_id}.json"):
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except OSError:
+            pass
+    return _emit({
+        "action": "presence-stopped",
+        "app_slug": slug,
+        "session_id": args.session_id,
+        "presence_removed": removed,
+        "claims_released": [],
+        "claims_kept": True,
+        "resolved_via": "build-loop-internal",
+    })
+
+
+def _rust_start(
+    *,
+    workdir: Path,
+    session_id: str,
+    tool: str,
+    model: str,
+    run_id: str,
+    intent: str,
+    paths: list[str],
+) -> bool:
+    binary = rust_rally_binary(workdir)
+    if not binary:
+        return False
+    cmd = [
+        binary,
+        "start",
+        tool,
+        "--json",
+        "--session-id",
+        session_id,
+        "--model",
+        model,
+        "--run-id",
+        run_id,
+        "--intent",
+        intent,
+    ]
+    for path in paths:
+        cmd.extend(["--path", path])
+    try:
+        result = subprocess.run(cmd, cwd=str(workdir), capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    try:
+        payload = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return False
+    return bool(payload.get("ok") is True)
 
 
 def cmd_handoff(args: argparse.Namespace) -> int:
@@ -278,6 +391,7 @@ def cmd_lead(args: argparse.Namespace) -> int:
             model=args.model,
             app_slug=slug,
             renew_every_minutes=args.renew_every_minutes,
+            workdir=Path(args.workdir).expanduser().resolve(),
         )
         return _emit({
             "action": "lead-claim",
@@ -294,6 +408,7 @@ def cmd_lead(args: argparse.Namespace) -> int:
             tool=args.tool,
             model=args.model,
             renew_every_minutes=args.renew_every_minutes,
+            workdir=Path(args.workdir).expanduser().resolve(),
         )
         return _emit({
             "action": "lead-renew",
@@ -313,6 +428,7 @@ def cmd_lead(args: argparse.Namespace) -> int:
             app_slug=slug,
             tool=args.tool,
             model=args.model,
+            workdir=Path(args.workdir).expanduser().resolve(),
         )
         return _emit({
             "action": "lead-transfer",
@@ -329,6 +445,7 @@ def cmd_lead(args: argparse.Namespace) -> int:
             app_slug=slug,
             tool=args.tool,
             model=args.model,
+            workdir=Path(args.workdir).expanduser().resolve(),
         )
         return _emit({
             "action": "lead-relinquish",
@@ -365,6 +482,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp_presence.add_argument("--phase", default="rally-point")
     sp_presence.add_argument("--files-in-flight", default=None)
     sp_presence.set_defaults(func=cmd_presence)
+
+    sp_stop = sub.add_parser("stop", help="Stop this session and release active claims when supported.")
+    _common(sp_stop, need_run=False)
+    sp_stop.add_argument("--reason", default="agent stopped")
+    sp_stop.add_argument("--keep-claims", action="store_true")
+    sp_stop.set_defaults(func=cmd_stop)
 
     sp_handoff = sub.add_parser("handoff", help="Post a kind=handoff record.")
     _common(sp_handoff)
