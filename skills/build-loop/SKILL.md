@@ -262,9 +262,9 @@ Build-loop prefers installed plugins and skills over reinventing patterns. Each 
 
 ## Phase 1: Assess — State, Goal, and Criteria
 
-Understand current state, load memory, detect tools, map architecture, capture north star + update intent, define goal and criteria. Writes `.build-loop/intent.md` + `.build-loop/goal.md`.
+Understand current state, load memory through the automatic context bootstrap, detect tools, map architecture, capture north star + update intent, define goal and criteria. Writes `.build-loop/context-bootstrap.json`, `.build-loop/intent.md`, and `.build-loop/goal.md`.
 
-Key steps: detect plugins → set sub-routers → map architecture → load PRD if present → capture intent → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
+Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` → load PRD if present → capture intent → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 
@@ -312,7 +312,7 @@ Key steps: recurring-pattern-detector (Haiku) → filter (confidence: high OR co
 
 ## Memory — Global and Project-Scoped
 
-One consolidated long-term tree: `~/dev/git-folder/build-loop-memory/`. Project-specific durable memory lives under `projects/<slug>/...`; cross-project lessons/design/debugging/product memory lives in the matching top-level lane. Every build reads canonical indexes/folders at Phase 1 Assess; writes go to exactly one canonical lane based on scope. Legacy paths (`~/.build-loop/memory`, `.episodic/decisions`, and `build-loop-memory/decisions/<project>`) are migration/archive inputs only.
+One consolidated long-term tree: `~/dev/git-folder/build-loop-memory/`. Project-specific durable memory lives under `projects/<slug>/...`; cross-project lessons/design/debugging/product memory lives in the matching top-level lane. Every build runs `scripts/context_bootstrap.py` at Phase 1 Assess, which reads canonical root/project `MEMORY.md` and `constitution.md` files, canonical indexes/folders through `memory_facade.py`, repo-local `.build-loop/` context, Codex memory at `~/.codex/memories`, and best-effort Rally/coordination state when relevant. Writes go to exactly one canonical lane based on scope. Legacy paths (`~/.build-loop/memory`, `.episodic/decisions`, and `build-loop-memory/decisions/<project>`) are migration/archive inputs only.
 
 Routing rule: "Would this apply to a different project?" Yes → global. No → project. Ambiguous → ask the user once.
 

@@ -28,9 +28,9 @@ queries. The planned wiring is below for reference.
 
 ## Planned wiring (do NOT implement until pilot data is in)
 
-In `agents/build-orchestrator.md` Phase 1 Assess, replace the wholesale
-"load `~/.build-loop/memory/MEMORY.md` (global) and
-`.build-loop/memory/MEMORY.md` (project) if they exist" line with:
+In `agents/build-orchestrator.md` Phase 1 Assess, this now sits behind
+`scripts/context_bootstrap.py`. If the pilot graduates, replace the
+bootstrap's canonical-memory recall sub-step, not the whole context packet:
 
 ```bash
 # Build-relevant recall: the goal text is the query.

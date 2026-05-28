@@ -1,7 +1,7 @@
 ---
 name: design-contract-specialist
 description: |
-  Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill("build-loop:ui-design")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing design patterns are inputs, not mandates. After implementation it consumes deltas from `ui-validator` (`design_doc_delta`) and `architecture-scout` (`schema_delta` via the `schema-map` task), reconciles them against in-tree code, and emits the canonical app-contract artifacts plus durable design memory under `~/.build-loop/memory/projects/<slug>/{ui,data,design-contract}/`. Operates at A1 autonomy: routine reconciliation auto-commits; architectural-class decisions surface via `novel_decisions[]` for the orchestrator's halt-and-ask resolver.
+  Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill("build-loop:ui-design")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing design patterns are inputs, not mandates. After implementation it consumes deltas from `ui-validator` (`design_doc_delta`) and `architecture-scout` (`schema_delta` via the `schema-map` task), reconciles them against in-tree code, and emits the canonical app-contract artifacts plus durable design memory under `~/dev/git-folder/build-loop-memory/projects/<slug>/{ui,data,design-contract}/`. Operates at A1 autonomy: routine reconciliation auto-commits; architectural-class decisions surface via `novel_decisions[]` for the orchestrator's halt-and-ask resolver.
 
   <example>
   Context: Phase 2 planning on non-trivial UI work (`uiTarget != null`).
@@ -114,7 +114,7 @@ You read existing files (if present) and write the new state via atomic write (w
 
 ### 2. Durable design memory (via `memory_writer.write`)
 
-Write memory files to `~/.build-loop/memory/projects/<slug>/{ui,data,design-contract}/` whenever the integration surfaces a durable lesson (not transient state):
+Write memory files to `~/dev/git-folder/build-loop-memory/projects/<slug>/{ui,data,design-contract}/` through `memory_writer.py` whenever the integration surfaces a durable lesson (not transient state):
 
 - `ui/` — design-system lessons (e.g. "Primary CTA uses Tailwind `bg-indigo-600 text-white`")
 - `data/` — schema/RLS lessons (e.g. "users table requires RLS gate on every read endpoint")
@@ -153,7 +153,7 @@ Avoid prescriptive pattern locking. Do not select "dashboard", "glass", "warm", 
 
 Do not route to IBR from this mode. If a design tool is useful, consume the artifact the host provides or ask the orchestrator to capture one; the design decision remains in build-loop's app contract.
 
-The `domain` field surfaces in `~/.build-loop/memory/INDEX.jsonl` for provenance.
+The `domain` field surfaces in `~/dev/git-folder/build-loop-memory/INDEX.jsonl` for provenance.
 
 ### 3. Return envelope
 
@@ -167,7 +167,7 @@ The `domain` field surfaces in `~/.build-loop/memory/INDEX.jsonl` for provenance
     ".build-loop/app-contract/traceability.json"
   ],
   "memory_writes": [
-    {"path": "~/.build-loop/memory/projects/<slug>/ui/pattern_primary_cta_uses_indigo_600.md", "action": "write|update"}
+    {"path": "~/dev/git-folder/build-loop-memory/projects/<slug>/ui/pattern_primary_cta_uses_indigo_600.md", "action": "write|update"}
   ],
   "violations_found": [
     {"id": "v1", "kind": "type-mismatch", "where": "components/Foo.tsx:42", "severity": "minor|major", "auto_fixable": true|false}
@@ -216,8 +216,8 @@ You are dispatched at three trigger points:
 ## Memory loading (per build-loop §13)
 
 Eager on every invocation:
-- `~/.build-loop/memory/constitution.md`
-- `~/.build-loop/memory/projects/<slug>/constitution.md` if present
+- `~/dev/git-folder/build-loop-memory/constitution.md`
+- `~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md` if present
 - Existing `.build-loop/app-contract/{ui.md, data.md, traceability.json}` (when present)
 
 On-demand recall via `memory_facade.py recall --query "design contract ui hierarchy schema RLS" --kind lessons --project <slug> --limit 6` for prior design lessons on this project. Lazy-fetch full content for at most 3 candidates per invocation.

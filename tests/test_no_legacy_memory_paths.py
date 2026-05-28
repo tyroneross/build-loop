@@ -2,7 +2,7 @@
 ``<repo>/.build-loop/memory/`` path outside the explicit allowlist.
 
 After PR 2 (write cutover), orchestrator prompts and skill docs should
-direct callers to ``~/.build-loop/memory/projects/<slug>/`` exclusively.
+direct callers to ``~/dev/git-folder/build-loop-memory/projects/<slug>/`` exclusively.
 The legacy path remains a read shim in ``memory_facade.py`` (removed in
 PR 3) and a source path the migration script operates on, but it MUST
 NOT appear in user-facing prompts that direct WRITES.
@@ -105,7 +105,7 @@ def test_no_legacy_memory_path_references_outside_allowlist():
     assert not offenders, (
         "Files with legacy memory path references outside allowlist:\n"
         + "\n".join(f"  {p}:{n}: {s}" for p, n, s in offenders)
-        + "\n\nEither update to point at `~/.build-loop/memory/projects/<slug>/`, "
+        + "\n\nEither update to point at `~/dev/git-folder/build-loop-memory/projects/<slug>/`, "
           "or add the file to ALLOWLIST in tests/test_no_legacy_memory_paths.py."
     )
 
@@ -115,7 +115,7 @@ def test_orchestrator_phase1_uses_new_memory_path():
     orch = REPO_ROOT / "agents" / "build-orchestrator.md"
     text = orch.read_text(encoding="utf-8")
     # Phase 1 memory load section — look for the new path
-    assert "~/.build-loop/memory/projects/" in text or "build_loop_memory_root" in text, (
+    assert "build-loop-memory/projects/" in text or "build_loop_memory_root" in text, (
         "agents/build-orchestrator.md must reference the consolidated "
         "project memory path post-PR-2"
     )

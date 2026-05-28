@@ -43,7 +43,7 @@ Read in this order (this is the same order the hook script uses; mirror it so yo
 3. `Read("<repo>/CLAUDE.md")` — repo-level instructions
 4. `Read("<repo>/README.md")` — first 50 lines for product framing
 5. PRD location, first match: `<repo>/docs/PRD.md` → `<repo>/docs/prd.md` → `<repo>/docs/prd/*.md` → `<repo>/.build-loop/prd.md`
-6. `Read("~/.build-loop/memory/constitution.md")` if present — load rule IDs the diff plausibly touches by keyword match on filenames + diff verbs
+6. `Read("~/dev/git-folder/build-loop-memory/constitution.md")` and `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md")` if present — load rule IDs the diff plausibly touches by keyword match on filenames + diff verbs
 7. `Bash("git log --oneline -5")` — trajectory
 8. `Bash("git diff <diff_sha_range>")` — the actual diff (truncate to 200 lines for your reasoning context if larger; you may shell out for specific files via `git show <sha>:<path>` when needed)
 

@@ -20,15 +20,20 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 6. **Set sub-routers + triggers**: set sub-routers (`uiTarget`, `platform`, `migrationSource`) and triggers (`structuredWriting`, `promptAuthoring`, `promptEditingExisting`, `riskSurfaceChange`) per `references/trigger-rules.md` and `skills/build-loop/references/capability-routing.md` §Trigger Conditions. Write under `.build-loop/state.json.triggers`.
 
-7. **Auto-infer `riskSurfaceChange` from constitution overlap** (NEW 2026-05-12, plan §12.7 P4): immediately after the constitution load (memory step 0 below), run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/infer_risk_surface.py --workdir "$PWD" --json`. Merge `risk_surface_change: true` from the detector into `.build-loop/state.json.triggers.riskSurfaceChange` — never downgrade a manual `true` to `false`. Mirror `matched_rules`, `constitution_evidence`, and `generic_evidence` to `state.json.triggers.riskSurfaceEvidence` so the Phase 1 Assess brief can surface which constitution rules tripped. Closes the §11.4 Sim G gap where auth-touching diffs shipped without security-reviewer firing because the manual flag was missed. Helper failure → preserve existing trigger value and log a one-line warning; never blocks.
+7. **Auto-infer `riskSurfaceChange` from constitution overlap** (NEW 2026-05-12, plan §12.7 P4): immediately after Step 8's context bootstrap has loaded canonical constitution context, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/infer_risk_surface.py --workdir "$PWD" --json`. Merge `risk_surface_change: true` from the detector into `.build-loop/state.json.triggers.riskSurfaceChange` — never downgrade a manual `true` to `false`. Mirror `matched_rules`, `constitution_evidence`, and `generic_evidence` to `state.json.triggers.riskSurfaceEvidence` so the Phase 1 Assess brief can surface which constitution rules tripped. Closes the §11.4 Sim G gap where auth-touching diffs shipped without security-reviewer firing because the manual flag was missed. Helper failure → preserve existing trigger value and log a one-line warning; never blocks.
 
-8. **Load memory** (executable read protocol — full detail in `references/memory-systems.md` §"Read protocol — Phase 1 Assess"):
-   0. `Read("~/.build-loop/memory/constitution.md")` (global durable invariants) and `Read("~/.build-loop/memory/projects/<slug>/constitution.md")` (project overrides if present; slug from `scripts/_paths.derive_slug_from_cwd`). Constitution loads ahead of MEMORY.md because rules cited as `constitution:<rule_id>` outlive any single build and gate advisory-judge severity. Empty/absent global constitution: skip silently (judges fall back to MEMORY.md feedback entries). Cache touched rule IDs in `.build-loop/state.json.constitution.loadedRuleIds[]` so commit-auditor + promotion-reviewer can cite them at Phase 3 checkpoints without re-reading.
-   1. `Read("~/.build-loop/memory/MEMORY.md")` (global) and `Read("~/.build-loop/memory/projects/<slug>/MEMORY.md")` (project). Project overrides global on key conflict. Empty/absent files: skip silently.
-   2. `Read(".build-loop/state.json")` and inspect `runs[-3:]` for prior-build context (goals, outcomes, root_cause). Empty `runs[]`: skip.
-   3. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall --query "<goal-keywords>" --limit 10` for unified read across all four backends (runs/decisions/semantic/debugger). Inspect `reasons[]` for backend-unavailable signals; never block on them.
-   4. Invoke `Skill("build-loop:debugging-memory")` with `intent: "list-recent"` for recent debugger incidents (one-line summary). MCP unreachable → fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory`.
-   5. **Backend health check** (Priority 17): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"` and the script writes the envelope to `state.json.architecture.backendHealth`. Surface the one-line summary in the Phase 1 Assess brief so the user can see which memory backends are operational. Exits 0 even when backends are down — graceful degradation is the contract; the summary tells the user what to expect from `recall()` for the rest of the build.
+8. **Load memory** (automatic context bootstrap — full detail in `references/memory-systems.md` §"Read protocol — Phase 1 Assess"):
+   0. Run the bootstrap before planning and write its packet for downstream phases:
+      ```bash
+      python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
+        --workdir "$PWD" \
+        --query "<goal-keywords>" \
+        --output "$PWD/.build-loop/context-bootstrap.json" \
+        --json
+      ```
+   1. The packet MUST cover: canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall via `scripts/memory_facade.py`, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists.
+   2. Inspect `sources.*.reasons[]` for missing or unavailable surfaces. These are context-quality signals, not blockers. Surface high-impact gaps in the Phase 1 Assess brief.
+   3. **Backend health check** (Priority 17): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"` and the script writes the envelope to `state.json.architecture.backendHealth`. Surface the one-line summary in the Phase 1 Assess brief so the user can see which memory backends are operational. Exits 0 even when backends are down — graceful degradation is the contract; the summary tells the user what to expect from `recall()` for the rest of the build.
 
    See `references/memory-systems.md` §"Read protocol — Phase 1 Assess" for return-shape contracts and graceful-degradation behavior.
 
@@ -64,7 +69,7 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 19. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
 
-20. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
+20. **Phase 1 done**: Phase 1 produces `.build-loop/context-bootstrap.json`, `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
 
 ## Phase 4 Review (sub-steps A–G)
 

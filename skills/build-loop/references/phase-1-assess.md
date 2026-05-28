@@ -38,7 +38,17 @@
 7. **Debugger context priming** (always; debugger is bundled with build-loop): call the debugger `list` MCP tool with `{ filter: { project: "<current>" }, limit: 10 }` to summarize recent incidents in this project. One-line output; no action. If MCP unavailable, fall through to `fallbacks.md#bug-memory`.
 8. **Capture UI state** (if web/mobile): host browser/screenshot tooling or simulator/native-AX evidence when available → showcase capture → manual screenshot. Do not route to IBR unless the user explicitly requested it.
 8a. **UI input/output inventory** (if `uiTarget != null`): load `skills/build-loop/references/ui-io-contract.md` and identify every affected user input and system output before component choices are made. Classify each by structural type, content format, persistence intent, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and traceability. Mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical; the full contract is finalized in Phase 2.
-9. **Load memory**: Read `~/.build-loop/memory/MEMORY.md` (global) then `.build-loop/memory/MEMORY.md` (project). Project memory overrides global on conflict. See `skills/build-loop/references/memory.md`.
+9. **Load memory**: Run the automatic context bootstrap before planning:
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
+     --workdir "$PWD" \
+     --query "<goal-keywords>" \
+     --output "$PWD/.build-loop/context-bootstrap.json" \
+     --json
+   ```
+
+   The packet must include canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists. Missing surfaces are recorded in `sources.*.reasons[]`; they do not block Phase 1 by themselves. See `references/memory-systems.md` §"Read protocol — Phase 1 Assess".
 
 9a. **Run identity + multi-session presence (Rally Point)** (always; runs at the Phase 1 preamble before any Rally Point write):
    1. Generate or resume durable run identity: `execution = scripts/rally_point/build_loop_id.generate_or_resume(workdir="$PWD", tool="<tool-id>", session_id="<session-id>")`. This writes `state.execution.build_loop_id` and `state.execution.run_label` when missing, preserves them on resume, and updates only `current_session_id`.

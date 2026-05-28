@@ -9,7 +9,7 @@ Build-loop reads/writes four memory stores. Loaded on demand at Phase 1 Assess a
 | Store | Path | Purpose | Scope |
 |---|---|---|---|
 | Run history | `.build-loop/state.json.runs[]` | Per-build outcome + diagnostic trail. Phase 6 Learn scans this for recurring patterns. | Project-local |
-| Episodic decisions | `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/*.md` (canonical) plus legacy read fan-out from `.episodic/decisions/*.md` when present | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
+| Episodic decisions | `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/*.md` (canonical); legacy paths only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1` | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
 | Semantic facts | Postgres `agent_memory.<schema>.semantic_facts` | Embeddings + structured facts for hybrid retrieval. | Project-tagged, opt-in |
 | Debugger incidents | `claude-code-debugger` MCP `store`/`search`/`outcome` | Bug history with verdict-classifier feedback loop. | Cross-project; bundled MCP server |
 
@@ -17,30 +17,31 @@ The **memory facade** at `scripts/memory_facade.py` exposes one `recall(query, k
 
 ## Read protocol — Phase 1 Assess
 
-Mirrors the write-protocol's executable shape (fenced commands + return-shape table + graceful-degradation matrix). Each step is independently safe to run; empty results are valid; never raise on a missing backend. The orchestrator's Phase 1 imperative (5 numbered steps in `agents/build-orchestrator.md`) MUST stay in lock-step with this section — when call wiring changes, update both.
+Mirrors the write-protocol's executable shape (fenced commands + return-shape table + graceful-degradation matrix). The first operation is the automatic context bootstrap; empty results are valid; never raise on a missing backend. The orchestrator's Phase 1 imperative in `agents/build-orchestrator.md` MUST stay in lock-step with this section — when call wiring changes, update both.
 
-### 1. MEMORY.md tiers (global + project)
-
-```bash
-# Global tier (cross-project preferences and learnings)
-Read("~/.build-loop/memory/MEMORY.md")
-# Project tier (overrides global on key conflict)
-# Slug derived via scripts/_paths.derive_slug_from_cwd()
-Read("~/.build-loop/memory/projects/<slug>/MEMORY.md")
-```
-
-**Return shape**: markdown text (or empty string if absent). Project keys override global. **Degradation**: missing file → empty string, no error.
-
-### 2. Run-history priming (state.json runs[-3:])
+### 1. Automatic context bootstrap
 
 ```bash
-# Slice the last 3 prior-run entries.
-python3 -c "import json; s=json.load(open('.build-loop/state.json')); [print(r.get('run_id'), r.get('outcome'), r.get('root_cause','')) for r in s.get('runs',[])[-3:]]"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
+  --workdir "$PWD" \
+  --query "<goal-keywords>" \
+  --output "$PWD/.build-loop/context-bootstrap.json" \
+  --json
 ```
 
-**Return shape**: zero to three lines, each `<run_id> <outcome> <root_cause>`. Catches "this build follows a similar one" context before `recall()` is queried. **Degradation**: missing/empty `runs[]` → no output, continue.
+**Return shape**: JSON packet with `{ generated_at, workdir, project, query, terms, sources, agent_brief }`.
 
-### 3. Unified recall facade (one read across four backends)
+`sources` includes:
+- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `~/dev/git-folder/build-loop-memory`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. Semantic/Postgres and debugger MCP reads are opt-in via `--include-postgres` and `--include-debugger` so the default Phase 1 pass stays file-backed and fast.
+- `repo_local`: `.build-loop/feedback.md`, `.build-loop/state.json` summary including `runs[-3:]` and backend health when present, plus current `.build-loop/intent.md`, `.build-loop/goal.md`, and `.build-loop/plan.md`.
+- `codex_memory`: `~/.codex/memories/MEMORY.md` registry hits and bounded excerpts from linked `rollout_summaries/*` files.
+- `rally`: best-effort `coordination_status.py` result when coordination context exists.
+
+**Degradation**: every source carries `reasons[]`. Missing Codex memory, absent repo-local files, skipped or down Postgres, skipped or unreachable debugger MCP, or Rally errors are context-quality signals, not blockers. Surface high-impact gaps in the Assess brief.
+
+### 2. Unified recall facade (diagnostic/reference)
+
+The bootstrap calls the facade directly. Use the standalone command when debugging the canonical memory layer itself:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall \
@@ -48,17 +49,19 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall \
   --limit 10
 ```
 
-**Return shape**: JSON envelope `{ results: [...], reasons: [...], elapsed_ms: N }`. Each result row is `{ store, score, payload }`. Inspect `reasons[]` for `db_unavailable` / `mcp_unavailable` / `path_missing` signals — those are data, not failures. **Degradation**: any backend down → that backend reports a `reason`; remaining backends still return rows.
+**Return shape**: JSON envelope `{ results_by_kind: {...}, merged: [...], reasons: [...], telemetry_correlation_id: "..." }`. Inspect `reasons[]` for `db_unavailable` / `mcp_unavailable` / `path_missing` signals — those are data, not failures. **Degradation**: any backend down -> that backend reports a `reason`; remaining backends still return rows.
 
-### 4. Debugger incidents priming (recent-list)
+### 3. Debugger incidents priming (recent-list)
+
+The bootstrap includes debugger results through the facade. If the facade reports debugger unavailability and the build is debugging-heavy, also call:
 
 ```text
 Skill("build-loop:debugging-memory") with { intent: "list-recent" }
 ```
 
-**Return shape**: one-line summary `"N recent incidents in this project, top categories: [...]"`. Counts feed Phase 1's awareness of what's been failing lately. **Degradation**: MCP unreachable → fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep over `.build-loop/issues/` and `.build-loop/feedback.md`). Flag `⚠️ debugger MCP unavailable — using local grep fallback` in Review-F.
+**Return shape**: one-line summary `"N recent incidents in this project, top categories: [...]"`. Counts feed Phase 1's awareness of what's been failing lately. **Degradation**: MCP unreachable -> fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep over `.build-loop/issues/` and `.build-loop/feedback.md`). Flag debugger fallback in Review-F.
 
-### 5. Per-MCP shape (diagnostic reference; use only when step 4's fallback fired)
+### 4. Per-MCP shape (diagnostic reference; use only when step 3's fallback fired)
 
 ```text
 mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })
@@ -66,13 +69,13 @@ mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit:
 
 **Return shape**: `{ incidents: [{ id, symptom, root_cause, fix, tags, created_at }, ...] }`. Surfaced here so a diagnostic check (e.g. "is the MCP actually returning anything?") doesn't have to traverse the skill abstraction.
 
-### 6. Backend health check (Priority 17)
+### 5. Backend health check (Priority 17)
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 ```
 
-**Why this exists**: `recall()` (step 3) gracefully degrades on Postgres-down or MCP-down — the orchestrator never visibly logs which backends responded. The health-check surface makes that explicit so the Phase 1 Assess brief can tell the user whether memory is at full or partial capacity.
+**Why this exists**: `recall()` (step 2) gracefully degrades on Postgres-down or MCP-down — the orchestrator never visibly logs which backends responded. The health-check surface makes that explicit so the Phase 1 Assess brief can tell the user whether memory is at full or partial capacity.
 
 **Return shape**: stdout one-liner `runs: OK N entries | decisions: OK N entries | semantic: DOWN postgres_unavailable | debugger: DOWN mcp_unreachable`. Full JSON envelope is written to `state.json.architecture.backendHealth` (`{ runs: {ok, count}, decisions: {ok, count}, semantic: {ok, reason?}, debugger: {ok, reason?}, summary, generated_at, total_duration_ms }`).
 
@@ -84,22 +87,21 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 
 | Step | Surface | Return shape | Empty-OK | On backend down |
 |---|---|---|---|---|
-| 1 | `Read()` (filesystem) | markdown text | yes | empty string |
-| 2 | python slice over `state.json` | up to 3 lines | yes | no output |
-| 3 | `memory_facade.py recall` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
-| 4 | `Skill("build-loop:debugging-memory")` | one-line text summary | yes | grep-fallback per `fallbacks.md#bug-memory` |
-| 5 | `mcp__plugin_build-loop-debugger__list` | `{ incidents: [...] }` | yes | step 4 already covered the fallback |
-| 6 | `scripts/backend_health.py` | one-liner + JSON envelope written to `state.json.architecture.backendHealth` | n/a | per-backend `ok: false` + `reason`; other backends still probable |
+| 1 | `context_bootstrap.py` | JSON packet w/ `sources.*.reasons[]` + `agent_brief` | yes | per-source `reason`; other sources still respond |
+| 2 | `memory_facade.py recall` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
+| 3 | `Skill("build-loop:debugging-memory")` | one-line text summary | yes | grep-fallback per `fallbacks.md#bug-memory` |
+| 4 | `mcp__plugin_build-loop-debugger__list` | `{ incidents: [...] }` | yes | step 3 already covered the fallback |
+| 5 | `scripts/backend_health.py` | one-liner + JSON envelope written to `state.json.architecture.backendHealth` | n/a | per-backend `ok: false` + `reason`; other backends still probable |
 
 ### Graceful-degradation matrix
 
 | Failure mode | Step 1 | Step 2 | Step 3 | Step 4 | Step 5 |
 |---|---|---|---|---|---|
-| Postgres unavailable | n/a | n/a | `reason: db_unavailable` for semantic backend, others continue | n/a | n/a |
-| MCP server unreachable | n/a | n/a | `reason: mcp_unavailable` | grep fallback | unusable; rely on step 4 fallback |
-| `state.json` missing | n/a | no output | recall still runs other backends | n/a | n/a |
-| MEMORY.md absent | empty | n/a | recall covers semantic/decision backends | n/a | n/a |
-| All backends down | empty | empty | envelope w/ all `reasons` populated, `results: []` | grep fallback | n/a |
+| Postgres unavailable | `canonical_memory.reasons[]` records skip/down | `reason: db_unavailable` for semantic backend, others continue | n/a | n/a | `semantic.ok: false` |
+| MCP server unreachable | `canonical_memory.reasons[]` records debugger unavailable | `reason: mcp_unavailable` | grep fallback | unusable; rely on step 3 fallback | `debugger.ok: false` |
+| `state.json` missing | `repo_local.reasons[]` records missing file | recall still runs other backends | n/a | n/a | runs may still report down |
+| Codex MEMORY.md absent | `codex_memory.reasons[]` records missing registry | n/a | n/a | n/a | n/a |
+| All backends down | packet still emits with populated `reasons[]` | envelope w/ all `reasons` populated, `results: []` | grep fallback | n/a | all relevant backends `ok: false` |
 
 ## Write protocol — Phase 4 Review sub-step F
 
@@ -137,8 +139,8 @@ Both steps are required to close the memory-first gate's feedback loop. Skipping
 
 Write new memory entries to the correct tier:
 
-- **Cross-project learnings** (new tool, deployment pattern, user preference) → `~/.build-loop/memory/<type>_<slug>.md` + index in `~/.build-loop/memory/MEMORY.md`.
-- **Project-specific learnings** (design decisions, internal conventions, gotchas) → `.build-loop/memory/<type>_<slug>.md` + index in `.build-loop/memory/MEMORY.md`.
+- **Cross-project learnings** (new tool, deployment pattern, user preference) → `~/dev/git-folder/build-loop-memory/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope top-level write ...`.
+- **Project-specific learnings** (design decisions, internal conventions, gotchas) → `~/dev/git-folder/build-loop-memory/projects/<project>/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope project --project <project> write ...`.
 
 Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory.
 
@@ -149,9 +151,9 @@ Decisions live under TWO paths today (canonical + legacy). The orchestrator and 
 | Path | Status | Notes |
 |---|---|---|
 | `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
-| `<repo>/.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` | Legacy (still tracked) | Pre-cutover decisions; some projects still write here during transition. The facade's read fan-out covers it. |
+| `<repo>/.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` | Legacy migration/archive input | Pre-cutover decisions. Active reads include it only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1`. |
 
-**Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` fans out across canonical and legacy paths and merges results. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover`; consume it through the facade instead of hard-coding the lesson-file path.
+**Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` reads canonical indexes/files and, only in migration mode, legacy paths. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover`; consume it through the facade instead of hard-coding the lesson-file path.
 
 **Write path**: `scripts/write_decision.py` writes to the canonical (new) path by default. The legacy path is only written when explicitly requested by tests fixturing pre-cutover state.
 

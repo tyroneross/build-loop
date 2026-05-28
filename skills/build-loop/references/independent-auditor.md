@@ -6,7 +6,7 @@
 Single source of truth for build-loop commit/build-scope adversarial review. **Consolidated 2026-05-23** — replaces both the retired `commit-auditor` agent (chunk + build scope) and the earlier retired `sonnet-critic`. Operates on two surfaces sharing one context-gathering procedure and one verdict taxonomy:
 
 1. **Boundary-gated hook (every commit).** A PreToolUse Bash hook in `hooks/hooks.json` invokes `scripts/audit_before_commit.py` whenever the Bash tool runs a command matching `git commit`. The orchestrator cannot skip it. Manual user commits, Codex commits, IDE commits, and build-loop commits all pass through it.
-2. **Self-contextualizing.** The script gathers its own context from on-disk `.build-loop/intent.md`, `.build-loop/goal.md`, repo `CLAUDE.md` + `README.md`, the first PRD found (`docs/PRD.md` → `docs/prd.md` → `docs/prd/*.md` → `.build-loop/prd.md`), `~/.build-loop/memory/constitution.md`, and the last 5 commit subjects. No upstream packet needed.
+2. **Self-contextualizing.** The script gathers its own context from on-disk `.build-loop/intent.md`, `.build-loop/goal.md`, repo `CLAUDE.md` + `README.md`, the first PRD found (`docs/PRD.md` -> `docs/prd.md` -> `docs/prd/*.md` -> `.build-loop/prd.md`), canonical build-loop-memory constitution context, and the last 5 commit subjects. No upstream packet needed.
 3. **LLM-grade dispatched agent.** The `independent-auditor` agent (`agents/independent-auditor.md`) is dispatched at Phase 3 chunk-close (chunk advisory) and Phase 4 Review-A (build scope). Same context procedure as the hook, plus diff range — emits a structured JSON envelope. Verdict rendered in conversation by the running Claude session.
 
 ## Four-verdict taxonomy

@@ -37,12 +37,12 @@ The orchestrator brief contains:
 
 Eager:
 - The candidate artifact file
-- `~/.build-loop/memory/constitution.md` — durable invariants
-- Project constitution if present at `~/.build-loop/memory/projects/<slug>/constitution.md` (slug derived via `derive_slug_from_cwd`)
+- `~/dev/git-folder/build-loop-memory/constitution.md` — durable invariants
+- Project constitution if present at `~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md` (slug derived via `derive_slug_from_cwd`)
 - The experiment_log JSONL (sample outcomes, confound flags)
 
 Lazy (only when a candidate variance prompts it):
-- `~/.build-loop/memory/MEMORY.md` index — to find related feedback or pattern memories
+- `~/dev/git-folder/build-loop-memory/MEMORY.md` and `~/dev/git-folder/build-loop-memory/projects/<slug>/MEMORY.md` indexes — to find related feedback or pattern memories
 - Specific `feedback_*.md` / `pattern_*.md` files cited as relevant
 - `state.json.runs[-5:]` for context on what the recent build environment looked like
 

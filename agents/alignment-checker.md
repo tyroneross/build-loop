@@ -1,7 +1,7 @@
 ---
 name: alignment-checker
 description: |
-  Advisory alignment judge for autonomous-iterate-loop queue items (plan §14.4 A). For each candidate item drained from `.build-loop/ux-queue/` + `.build-loop/issues/` + `.build-loop/proposals/`, reads the build's stated intent (`intent.md`, `goal.md`, `~/.build-loop/memory/constitution.md`, optional repo `.build-loop/prd.md`) plus the item body and returns a structured verdict (`aligned | misaligned | uncertain`) with cited anchors. Never blocks: the orchestrator routes verdicts (aligned → Phase 2, misaligned → `followup/`, uncertain → notify + continue). High-frequency call — once per queue item — so this agent is Sonnet, not Opus.
+  Advisory alignment judge for autonomous-iterate-loop queue items (plan §14.4 A). For each candidate item drained from `.build-loop/ux-queue/` + `.build-loop/issues/` + `.build-loop/proposals/`, reads the build's stated intent (`intent.md`, `goal.md`, canonical build-loop-memory constitution context, optional repo `.build-loop/prd.md`) plus the item body and returns a structured verdict (`aligned | misaligned | uncertain`) with cited anchors. Never blocks: the orchestrator routes verdicts (aligned → Phase 2, misaligned → `followup/`, uncertain → notify + continue). High-frequency call — once per queue item — so this agent is Sonnet, not Opus.
 
   <example>
   Context: Autonomous loop has just drained a fresh ux-queue/uxq-0042.md from Phase 4 Gate 7. About to decide whether to schedule it for Phase 2.
@@ -41,7 +41,7 @@ Read the spec FIRST, then the item. Same anti-position-bias rationale as indepen
 
 1. `Read(workdir + "/.build-loop/intent.md")` — north star, update intent, user value, **non-goals**.
 2. `Read(workdir + "/.build-loop/goal.md")` — the current goal text.
-3. `Read("~/.build-loop/memory/constitution.md")` — global rules (must-not-violate). Phase 1 already eager-loaded; you re-read for current state.
+3. `Read("~/dev/git-folder/build-loop-memory/constitution.md")` and `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md")` — global/project rules (must-not-violate). Phase 1 already eager-loaded; you re-read for current state.
 4. `Read(workdir + "/.build-loop/prd.md")` — optional. Repo-level PRD if user dropped one. Skip silently if absent.
 5. `Read(workdir + "/prd.md")` — optional repo-root PRD. Same fallthrough.
 6. `Read(item_path)` — the candidate item itself. Read body only after anchors.

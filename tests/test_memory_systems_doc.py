@@ -78,16 +78,16 @@ def test_read_protocol_has_return_shape_table(doc_text: str) -> None:
     )
 
 
-def test_orchestrator_retains_5_step_imperative() -> None:
-    """Priority 12's 5-step Phase 1 memory imperative must remain in the orchestrator."""
+def test_orchestrator_retains_context_bootstrap_imperative() -> None:
+    """Phase 1 memory imperative must route through the bootstrap packet."""
     orch = REPO / "agents" / "build-orchestrator.md"
     text = orch.read_text(encoding="utf-8")
-    # Must still contain each of the 4 numbered imperative steps.
     for needle in (
-        "Read(\"~/.build-loop/memory/MEMORY.md\")",
-        ".build-loop/state.json",
-        "scripts/memory_facade.py recall",
-        "build-loop:debugging-memory",
+        "scripts/context_bootstrap.py",
+        ".build-loop/context-bootstrap.json",
+        ".build-loop/feedback.md",
+        "~/.codex/memories/MEMORY.md",
+        "memory_facade.py",
     ):
         assert needle in text, (
             f"Orchestrator Phase 1 memory imperative missing: {needle!r}"

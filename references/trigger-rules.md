@@ -19,7 +19,7 @@ Scan the goal text and the set of files the plan will touch, then set:
   - an external API call,
   - or handling of new user-data classes (PII, financial, health, credentials, regulated).
 
-  **Constitution auto-infer (NEW 2026-05-12, plan §12.7 P4)** — beyond the enumeration above, `riskSurfaceChange` is auto-set to `true` whenever the goal text, plan body, or planned `filesTouched` overlap any rule in `~/.build-loop/memory/constitution.md`. Run the deterministic detector once after constitution load:
+  **Constitution auto-infer (NEW 2026-05-12, plan §12.7 P4)** — beyond the enumeration above, `riskSurfaceChange` is auto-set to `true` whenever the goal text, plan body, or planned `filesTouched` overlap any rule loaded from `~/dev/git-folder/build-loop-memory/constitution.md` or the project constitution. Run the deterministic detector once after context bootstrap:
 
   ```
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/infer_risk_surface.py --workdir "$PWD" --json
