@@ -31,6 +31,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -47,10 +48,18 @@ def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in {"PYTHONPATH", "AGENT_RALLY_DISCOVER"}
+        if k not in {
+            "PYTHONPATH",
+            "AGENT_RALLY_BINARY",
+            "AGENT_RALLY_DISCOVER",
+        }
     }
     # Use a synthetic minimal PATH so we control which binaries exist.
     env["PATH"] = "/usr/bin:/bin"
+    # Keep bridge-order tests about the declared source under test; the
+    # adjacent local agent-rally-point checkout may contain an uninstalled
+    # Rust binary that would otherwise intentionally win.
+    env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
     if extra:
         env.update(extra)
     return env
@@ -204,7 +213,7 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         self.assertEqual(result["policy"], "legacy-only")
 
     def test_protocol_mismatch_returns_unavailable_no_silent_fallback(self) -> None:
-        """Canonical source reports protocol 2.0 → coordination_unavailable.
+        """Canonical source reports protocol 3.0 → coordination_unavailable.
 
         The bridge MUST NOT silently fall back to internal — that's the
         v0.12.16 defect class. Caller sees the loud envelope and decides.
@@ -213,7 +222,7 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         env_script = self._write_fake_discover_script(
             channel_dir=canonical_dir,
             app_slug="mismatch-slug",
-            protocol_version="2.0",  # outside pinned [1.0, 2.0)
+            protocol_version="3.0",  # outside pinned [1.0, 3.0)
         )
         env = _clean_env({"AGENT_RALLY_DISCOVER": str(env_script)})
         with self._patched_env(env):
@@ -239,6 +248,52 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             envelope = bridge.resolve(self.workdir)
         self.assertIsNone(envelope.coordination_unavailable)
         self.assertEqual(envelope.protocol_version, "1.5")
+
+    def test_protocol_two_zero_is_accepted_for_rust_hash_chain(self) -> None:
+        """Protocol 2.0 is the Rust hash-chain bridge band."""
+        canonical_dir = str(self.tmp / "rust-channel")
+        env_script = self._write_fake_discover_script(
+            channel_dir=canonical_dir,
+            app_slug="rust-slug",
+            protocol_version="2.0",
+            extra_payload={"channel_layout": "hash-chain"},
+        )
+        env = _clean_env({"AGENT_RALLY_DISCOVER": str(env_script)})
+        with self._patched_env(env):
+            envelope = bridge.resolve(self.workdir)
+        self.assertIsNone(envelope.coordination_unavailable)
+        self.assertEqual(envelope.protocol_version, "2.0")
+        self.assertEqual(envelope.channel_layout, "hash-chain")
+
+    def test_stale_rally_binary_is_skipped_for_current_surface(self) -> None:
+        """A stale PATH/override binary must not masquerade as Rust-ready."""
+        stale = self.tmp / "stale-rally"
+        stale.write_text(
+            "#!/bin/sh\n"
+            "echo 'usage: rally start <tool> [--session-id <id>]'\n"
+            "echo '       rally post --kind <kind> [--payload <json>]'\n"
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        stale.chmod(stale.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+        current = self.tmp / "current-rally"
+        current.write_text(
+            "#!/bin/sh\n"
+            "echo 'usage: rally start <tool> [--session-id <id>]'\n"
+            "echo '       rally stop <tool> [--session-id <id>] [--reason <text>] [--json]'\n"
+            "echo '       rally post --kind <kind> [--payload <json>] [--subject <text>] [--json]'\n"
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        current.chmod(current.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+
+        env = _clean_env({
+            "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
+            "AGENT_RALLY_BINARY": str(stale),
+        })
+        with self._patched_env(env):
+            with mock.patch.object(bridge.shutil, "which", return_value=str(current)):
+                self.assertEqual(bridge.rust_rally_binary(), str(current))
 
     # ------------------------------------------------------------------
     # Helpers
@@ -277,13 +332,13 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
     """
 
     def test_user_default_env_resolves_canonical_when_binary_installed(self) -> None:
-        """When ``agent-rally-discover`` is on the system PATH (it is in
-        this repo's test environment via pipx install of agent-rally-point),
-        the bridge resolves canonical via ``path-binary``. Skipped when
-        the binary is not present so the test is locally portable.
+        """When a native Rally Point surface is available in a user shell,
+        the bridge resolves canonical through it. Rust ``rally`` wins when
+        a sibling checkout binary is present; otherwise the Python
+        ``agent-rally-discover`` binary is accepted.
         """
-        if not shutil.which("agent-rally-discover"):
-            self.skipTest("agent-rally-discover not on PATH; α not installed")
+        if not shutil.which("agent-rally-discover") and not bridge.rust_rally_binary():
+            self.skipTest("no native Rally Point surface available")
         repo_root = HERE.parent
         cmd = [
             # Strip PYTHONPATH (env-rigging avoidance), the test-isolation
@@ -308,7 +363,7 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertEqual(result["resolved_via"], "path-binary")
+        self.assertIn(result["resolved_via"], {"rust-cli", "path-binary"})
         # Canonical apps root is ~/.agent-rally-point/apps/ per α design.
         self.assertIn(".agent-rally-point", result["channel_dir"])
 

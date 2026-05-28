@@ -11,11 +11,13 @@ native discovery → embedded fallback chain themselves.
 Resolution order (highest → lowest priority):
 
 1. ``$AGENT_RALLY_DISCOVER`` env override (operator-controlled).
-2. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
+2. ``$AGENT_RALLY_BINARY`` / ``rally`` Rust CLI / sibling
+   ``agent-rally-point/target/*/rally`` checkout (agent-rally-point >= 0.4).
+3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
-3. ``agent_rally_point.discover`` Python import (sibling-repo install
+4. ``agent_rally_point.discover`` Python import (sibling-repo install
    or local ``.venv``).
-4. Embedded fallback to ``channel_paths.app_slug`` /
+5. Embedded fallback to ``channel_paths.app_slug`` /
    ``channel_paths.app_channel_dir`` (canonical
    ``~/.agent-rally-point/apps/`` root, compatibility env overrides honored).
 
@@ -27,7 +29,7 @@ treated as native agent-rally-point (the v0.12.16 defect class — see
 ``protocol-of-record-audit`` memory note).
 
 Protocol-version compatibility: the bridge pins
-``protocol_version >= 1.0, < 2.0``. When the discover envelope reports
+``protocol_version >= 1.0, < 3.0``. When the discover envelope reports
 a version outside that range, ``resolve()`` returns
 ``coordination_unavailable: "incompatible_protocol"`` and does NOT
 fall back to internal. Loud failure beats silent skew.
@@ -58,8 +60,14 @@ CACHE_TTL_SECONDS = 60
 """Per-workdir cache lifetime. β-design value; not yet operator-tunable."""
 
 MIN_PROTOCOL_VERSION = (1, 0)
-MAX_PROTOCOL_VERSION_EXCLUSIVE = (2, 0)
+MAX_PROTOCOL_VERSION_EXCLUSIVE = (3, 0)
 """Pinned protocol-version range. Bridge refuses to operate outside this band."""
+
+REQUIRED_RALLY_HELP_FRAGMENTS = (
+    "rally stop <tool>",
+    "rally post --kind",
+)
+"""Rust CLI surface Build Loop relies on for current cross-host coordination."""
 
 
 @dataclass
@@ -77,8 +85,8 @@ class DiscoveryEnvelope:
     protocol_version: str
     last_resolved_at: str
     resolved_via: str
-    """One of ``env-override``, ``path-binary``, ``python-import``,
-    ``build-loop-internal``."""
+    """One of ``env-override``, ``rust-cli``, ``path-binary``,
+    ``python-import``, ``build-loop-internal``."""
     legacy_channel_dir: str | None = None
     """Populated during ``policy: "migration"`` so callers can mirror
     or compare reads against the legacy root."""
@@ -196,6 +204,103 @@ def _try_path_binary(workdir: Path) -> DiscoveryEnvelope | None:
     return _invoke_discover_binary(binary, workdir, resolved_via="path-binary")
 
 
+def rust_rally_binary() -> str | None:
+    """Return the Rust ``rally`` binary path when available.
+
+    Production installs should put ``rally`` on ``PATH`` or set
+    ``AGENT_RALLY_BINARY``. The sibling-checkout probe keeps local
+    build-loop development aligned with a freshly built adjacent
+    agent-rally-point repo before that binary has been installed.
+
+    Stale ``rally`` binaries are skipped. During the Rust cutover it is
+    common for a shell PATH to point at an older installed binary while a
+    sibling checkout has the current CLI. Build Loop depends on the current
+    start/stop/post surface for Claude Code, Codex, tmux/Ghostty panes,
+    Herdr, cmux, and other host adapters, so discovery must prefer a binary
+    that actually exposes those commands.
+    """
+    override = os.environ.get("AGENT_RALLY_BINARY")
+    if override and _rally_binary_supports_required_surface(override):
+        return override
+
+    if (
+        not os.environ.get("BUILD_LOOP_DISABLE_SIBLING_RALLY")
+        and not os.environ.get("BUILD_LOOP_APPS_ROOT")
+    ):
+        repo_root = Path(__file__).resolve().parents[2]
+        sibling = repo_root.parent / "agent-rally-point"
+        for candidate in (
+            sibling / "target" / "release" / "rally",
+            sibling / "target" / "debug" / "rally",
+        ):
+            if _rally_binary_supports_required_surface(str(candidate)):
+                return str(candidate)
+
+    path_binary = shutil.which("rally")
+    if path_binary and _rally_binary_supports_required_surface(path_binary):
+        return path_binary
+    return None
+
+
+def _rally_binary_supports_required_surface(binary: str) -> bool:
+    """Return True when ``binary`` exposes the current host-adapter commands."""
+    path = Path(binary).expanduser()
+    try:
+        if not path.is_file() or not os.access(path, os.X_OK):
+            return False
+        proc = subprocess.run(
+            [str(path)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return False
+    help_text = f"{proc.stdout}\n{proc.stderr}"
+    return all(fragment in help_text for fragment in REQUIRED_RALLY_HELP_FRAGMENTS)
+
+
+def _try_rust_cli(workdir: Path) -> DiscoveryEnvelope | None:
+    binary = rust_rally_binary()
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run(
+            [binary, "setup", "--json"],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict) or raw.get("ok") is not True:
+        return None
+    channel_dir = raw.get("channel")
+    if not channel_dir:
+        return None
+    channel_name = Path(str(channel_dir)).name
+    shaped = {
+        "installed": True,
+        "channel_dir": str(channel_dir),
+        "app_slug": channel_name,
+        "repo_id": channel_name if channel_name.startswith("repo_") else None,
+        "channel_layout": "hash-chain",
+        "policy": "rust-cli",
+        "protocol_version": "2.0",
+        "last_resolved_at": _utc_iso(),
+        "rally_binary": binary,
+        "setup": raw,
+    }
+    return _shape_envelope_from_discover(shaped, resolved_via="rust-cli")
+
+
 def _invoke_discover_binary(
     binary: str, workdir: Path, *, resolved_via: str
 ) -> DiscoveryEnvelope | None:
@@ -287,9 +392,9 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     ``coordination_unavailable`` and ``resolved_via`` to decide whether
     to write, mirror, or surface a degraded-mode warning.
 
-    The order is: env override → PATH binary → Python import →
-    internal fallback. The first non-``None`` source wins. Each
-    successful resolution is cached for ``CACHE_TTL_SECONDS``.
+    The order is: env override → Rust CLI → Python discover binary →
+    Python import → internal fallback. The first non-``None`` source wins.
+    Each successful resolution is cached for ``CACHE_TTL_SECONDS``.
     """
     workdir_path = Path(workdir).expanduser().resolve()
     workdir_key = str(workdir_path)
@@ -311,6 +416,7 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     # Probe each source in priority order; cache hits short-circuit.
     for source_tag, probe in (
         ("env-override", _try_env_override),
+        ("rust-cli", _try_rust_cli),
         ("path-binary", _try_path_binary),
         ("python-import", _try_python_import),
     ):

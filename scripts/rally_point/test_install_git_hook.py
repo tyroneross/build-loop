@@ -160,3 +160,14 @@ def test_post_commit_reinstall_replaces_stale_segment(repo: Path):
     assert "stale-capture-segment" not in body
     assert body.count(igh.MARKER) == 1
     assert "RALLY_POINT_TOPLEVEL" in body
+
+
+def test_capture_routes_commit_records_through_post_bridge(repo: Path):
+    """The capture hook must use the Rust-aware post bridge, not flat JSONL."""
+    assert igh.install(repo) is True
+    capture = repo / ".git" / "hooks" / ".rally-point-capture.py"
+    body = capture.read_text()
+    assert "from post import post as _post" in body
+    assert "append_change" not in body
+    assert "make_record" not in body
+    assert "bump_revision" not in body

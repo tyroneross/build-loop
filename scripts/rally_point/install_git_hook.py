@@ -153,8 +153,7 @@ MANIFEST_GLOBS = (
 
 def _main():
     try:
-        import changes as ch
-        import revision as rev
+        from post import post as _post
         # Discovery bridge: routes the hook's writes to the canonical
         # channel when policy=canonical (post-cutover state). The bridge
         # falls back to legacy on its own when discover() is unreachable,
@@ -202,22 +201,23 @@ def _main():
             or os.environ.get("APP_PULSE_RUN_ID")
             or "unknown"
         )
-        ch.append_change(chan, ch.make_record(
+        _post(
+            channel_dir=chan,
             kind="commit", tool=tool, model=model, run_id=run_id,
             app_slug=slug, payload={{"sha": sha, "files": names}},
-            revision=rev.read_revision(chan) + 1,
-        ))
+            workdir=_Path(repo),
+        )
         manifest_hits = sorted(
             n for n in names if os.path.basename(n) in MANIFEST_GLOBS
         )
         if manifest_hits:
-            ch.append_change(chan, ch.make_record(
+            _post(
+                channel_dir=chan,
                 kind="dep-change", tool=tool, model=model, run_id=run_id,
                 app_slug=slug,
                 payload={{"sha": sha, "manifests": manifest_hits}},
-                revision=rev.read_revision(chan) + 1,
-            ))
-        rev.bump_revision(chan)
+                workdir=_Path(repo),
+            )
     except Exception:
         return
 
