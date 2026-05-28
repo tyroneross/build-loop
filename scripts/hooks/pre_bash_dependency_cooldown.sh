@@ -156,6 +156,7 @@ export _BL_CMD="$CMD"
 export _BL_CHECK="$CHECK"
 export _BL_ENFORCED="$ENFORCED"
 export _BL_MECHANISM="$MECHANISM"
+export _BL_CWD="$CWD"
 
 python3 <<'PY'
 import json, os, re, subprocess, sys
@@ -175,7 +176,38 @@ mechanism = os.environ.get("_BL_MECHANISM", "")
 npm_native_active = enforced and mechanism == "hook"
 
 
+def write_deny_diagnostic(reason):
+    """Best-effort diagnostics for denied dependency installs."""
+    cwd = os.environ.get("_BL_CWD", "")
+    if not cwd:
+        return
+    try:
+        issues = os.path.join(cwd, ".build-loop", "issues")
+        os.makedirs(issues, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        path = os.path.join(issues, f"cooldown-{ts}.json")
+        payload = {
+            "schema": "build-loop.dependency_cooldown.deny.v1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "cwd": cwd,
+            "command": cmd,
+            "reason": reason,
+            "check": check,
+            "path": os.environ.get("PATH", ""),
+            "packages": globals().get("pkgs", []),
+            "enforced": enforced,
+            "allowlist_mechanism": mechanism,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+            f.write("\n")
+    except Exception:
+        return
+
+
 def emit(decision, reason="", updated=None):
+    if decision == "deny":
+        write_deny_diagnostic(reason)
     out = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

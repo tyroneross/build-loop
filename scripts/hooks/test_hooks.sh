@@ -243,6 +243,23 @@ else
     fail "Case 10: npm ci -> deny" "got: ${R}"
 fi
 
+# Case 10b: deny writes cooldown diagnostics with injector --check JSON + PATH
+DIAG_FILE=$(find "${DC_DIR}/.build-loop/issues" -name 'cooldown-*.json' -type f 2>/dev/null | head -n 1 || true)
+if [ -n "$DIAG_FILE" ] && python3 - "$DIAG_FILE" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["schema"] == "build-loop.dependency_cooldown.deny.v1"
+assert data["command"] == "npm ci"
+assert isinstance(data.get("check"), dict)
+assert "enforced" in data["check"]
+assert isinstance(data.get("path"), str) and data["path"]
+PY
+then
+    pass "Case 10b: npm ci deny -> writes cooldown diagnostics"
+else
+    fail "Case 10b: npm ci deny -> diagnostics file" "file=${DIAG_FILE:-missing}"
+fi
+
 # Case 11: not a build-loop project -> {} (scope guard)
 NONBL=$(mktemp -d)
 R=$(printf '%s' "{\"tool_input\":{\"command\":\"npm install lodash\"},\"cwd\":\"${NONBL}\"}" \
