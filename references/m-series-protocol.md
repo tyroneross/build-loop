@@ -37,6 +37,30 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/working_state_writer.py \
 
 Implementers write their own per-step working-state during the chunk per `agents/implementer.md` §"Working-state writes" — orchestrator writes are bookend events around them. Failure here is fire-and-forget; never blocks. Files are gitignored; do not commit working-state to the repo.
 
+### M2 context snapshot sidecar - resume handoff (NEW 2026-05-28)
+
+At the same M2 trigger points 2 + 3 + 4 + 6, also write a non-blocking context snapshot:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
+  --workdir "$PWD" \
+  --trigger "<agent_dispatch | agent_return | phase_transition>" \
+  --phase "<execute | review | iterate | report>" \
+  --agent "orchestrator" \
+  --run-id "$RUN_ID" \
+  --chunk-id "<chunk_id_or_empty>" \
+  --status "<dispatching | awaiting_return | phase_transition | completed>" \
+  --message "<phase/chunk one-liner>" \
+  --file "<owned-or-returned-file>" \
+  --json
+```
+
+The helper writes `.build-loop/context/current.md`, a JSON snapshot under
+`.build-loop/context/snapshots/`, and appends dispatch/return rows to
+`agent-briefs.jsonl` or `agent-returns.jsonl`. Use `--if-changed` for interval
+or heartbeat calls. Failure is fire-and-forget like working-state; never block
+the build because the snapshot is a resume/handoff aid, not the source of truth.
+
 ## M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)
 
 Complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one ledger row at dispatch time and one at return time per subagent invocation. Both rows carry the same `task_id` so wall-clock and status can be correlated post-hoc by Round 4 dispatch-pattern analysis (and any later cost study).

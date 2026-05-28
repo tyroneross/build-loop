@@ -65,7 +65,11 @@ def _time_call(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 # --- Probes ---------------------------------------------------------------
 
 def probe_global_memory(workdir: Path) -> dict[str, Any]:
-    p = Path.home() / ".build-loop" / "memory" / "MEMORY.md"
+    try:
+        from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
+        p = memory_store_root() / "MEMORY.md"
+    except Exception:  # noqa: BLE001
+        p = Path.home() / "dev" / "git-folder" / "build-loop-memory" / "MEMORY.md"
     if not p.is_file():
         return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "global MEMORY.md not present"}
     text = p.read_text(encoding="utf-8")
@@ -82,7 +86,8 @@ def probe_global_memory(workdir: Path) -> dict[str, Any]:
 def probe_project_memory(workdir: Path) -> dict[str, Any]:
     """Probe project memory at the consolidated location.
 
-    Project memory lives at ``~/.build-loop/memory/projects/<slug>/MEMORY.md``.
+    Project memory lives at
+    ``~/dev/git-folder/build-loop-memory/projects/<slug>/MEMORY.md`` by default.
     Returns ``ok`` when populated, ``graceful_degradation`` when absent
     (expected for new projects). Never returns ``error`` — that's reserved
     for parse failures.
@@ -293,8 +298,8 @@ def probe_write_run_entry(workdir: Path) -> dict[str, Any]:
 PROBES: list[tuple[str, str, str, Callable[[Path], dict[str, Any]]]] = [
     # (call_site, phase, expected verdict tier, callable)
     ("SessionStart hook → architecture freshness", "session-start", "wired", probe_session_start_hook),
-    ("Phase 1 Assess → read ~/.build-loop/memory/MEMORY.md (global)", "phase-1", "wired", probe_global_memory),
-    ("Phase 1 Assess → read ~/.build-loop/memory/projects/<slug>/MEMORY.md (project)", "phase-1", "wired", probe_project_memory),
+    ("Phase 1 Assess → read build-loop-memory/MEMORY.md (global)", "phase-1", "wired", probe_global_memory),
+    ("Phase 1 Assess → read build-loop-memory/projects/<slug>/MEMORY.md (project)", "phase-1", "wired", probe_project_memory),
     ("Phase 1 Assess → state.json.runs[-3:] tail", "phase-1", "wired", probe_runs_tail),
     ("Phase 1 Assess → architecture-scout baseline (decision artifact)", "phase-1", "wired", probe_decision_canonical),
     ("Phase 1 Assess → debugger MCP list/search", "phase-1", "best-effort", probe_debugger_mcp),

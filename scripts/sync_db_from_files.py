@@ -41,7 +41,11 @@ except Exception as exc:  # noqa: BLE001
     _DB_IMPORT_ERROR = exc
 
 
-def list_decision_files(workdir: Path, include_history: bool) -> list[Path]:
+def list_decision_files(
+    workdir: Path,
+    include_history: bool,
+    project: str | None = None,
+) -> list[Path]:
     """Find decision files to sync.
 
     Active mode reads the canonical build-loop-memory tree under
@@ -56,6 +60,21 @@ def list_decision_files(workdir: Path, include_history: bool) -> list[Path]:
     files: list[Path] = []
     root = memory_store_root().resolve()
     projects_root = project_memory_root().resolve()
+    if project:
+        decisions_dir = project_decisions_dir(project)
+        if decisions_dir.exists():
+            files.extend(
+                sorted(
+                    p for p in decisions_dir.glob("*.md")
+                    if not p.name.upper().startswith("INDEX")
+                )
+            )
+            if include_history:
+                history = decisions_dir / "_history"
+                if history.exists():
+                    files.extend(sorted(history.glob("*.md")))
+        return files
+
     if workdir in {root, projects_root}:
         if not projects_root.exists():
             return []
@@ -233,12 +252,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--rebuild", action="store_true", help="TRUNCATE semantic_facts before upserting")
     p.add_argument("--include-history", action="store_true", help="Also upsert _history/ files")
+    p.add_argument(
+        "--project",
+        default=None,
+        help="Explicit canonical project tag to sync. Defaults to resolving from --workdir.",
+    )
     args = p.parse_args(argv)
     if args.schema is None:
         args.schema = _default_schema()
 
     workdir = Path(args.workdir).resolve()
-    files = list_decision_files(workdir, args.include_history)
+    files = list_decision_files(workdir, args.include_history, project=args.project)
     if not files:
         log(f"validation: no decision files under canonical memory store for {workdir}")
         return 1

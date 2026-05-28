@@ -15,6 +15,13 @@
    - If the graph has 2+ independent / parallel-safe chunks, write `parallel_batch:` naming the chunks that will dispatch together.
    - If the graph appears parallelizable but execution must serialize, write `parallel_skipped_reason:` with the specific dependency, tool limit, or coordination constraint.
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
+3a. **Approach Lenses section**: For non-trivial architecture, workflow, dependency, UI/product, or long-lived interface decisions, add `## Approach Lenses` before the task list. Use the Phase 1 `.build-loop/state.json.approachLenses` summary and include:
+   - **Clean-sheet best approach**: the use-case-first answer if no prior implementation debt or historical decisions constrained the design.
+   - **Current-constraints approach**: the best practical answer given the repo's existing code, dependencies, tools, debt, migration risk, and delivery horizon.
+   - **Bridge/backcast**: the smallest credible migration path from current state toward the clean-sheet target.
+   - **Recommendation**: what to execute now and why. If choosing the constrained path, name the constraint that justifies not taking the clean-sheet path now.
+
+   Skip only for narrow single-file fixes, pure config changes, or decisions where the two answers are identical; in that case write `Approach Lenses: n/a - <reason>`.
 4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
 6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
@@ -28,6 +35,8 @@
 - Can subagent context be smaller? Shared reads that should be done once?
 - Missing dependencies, interface mismatches, env assumptions?
 - Changes that could conflict with each other (oscillation risk)?
+- Is the recommendation accidentally anchored to current tech debt when a cleaner use-case-first answer exists?
+- If the plan chooses the current-constraints approach, is the bridge/backcast explicit enough to prevent the compromise from becoming permanent architecture by default?
 - Define coordination checkpoints where subagents must sync
 - UI/API/data choices that add options, mocks, or complexity without user value?
 - UI plans missing input/output coverage, state coverage, modality fallbacks, validation/security layers, or schema/API traceability?

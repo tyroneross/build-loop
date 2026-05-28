@@ -18,8 +18,10 @@ Run:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -164,8 +166,11 @@ class IndexNotTouchedTests(unittest.TestCase):
         for line in src.splitlines():
             stripped = line.lstrip()
             if stripped.startswith(("import ", "from ")):
-                self.assertNotIn("memory_index", line,
-                                 f"telemetry module must not import memory_index; offending line: {line!r}")
+                imports_memory_index = re.search(r"^(import|from)\s+memory_index\b", stripped)
+                self.assertIsNone(
+                    imports_memory_index,
+                    f"telemetry module must not import memory_index; offending line: {line!r}",
+                )
 
 
 class CorrelationIdRoundtripTests(unittest.TestCase):
@@ -192,6 +197,18 @@ class CorrelationIdRoundtripTests(unittest.TestCase):
 
 
 class FireAndForgetTests(unittest.TestCase):
+    def test_non_string_ids_are_serialized_without_warning(self):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as td:
+            path = Path(td) / "TELEMETRY.jsonl"
+            seen = uuid.uuid4()
+            mt.emit_read(
+                phase="p", reader="r", query="q",
+                memory_ids_seen=[seen], telemetry_path=path,
+            )
+            rows = mt.read_rows(path)
+            self.assertEqual(rows[0]["memory_ids_seen"], [str(seen)])
+
     def test_unwritable_path_does_not_raise(self):
         # Pass a path with an impossible parent — emit must swallow + log
         bad = Path("/nonexistent-root-dir-bzzz-99/TELEMETRY.jsonl")

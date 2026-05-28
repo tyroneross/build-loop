@@ -36,7 +36,13 @@ if str(HERE) not in sys.path:
 
 from memory_facade import recall as recall_memory  # type: ignore  # noqa: E402
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
-from _paths import memory_store_root  # type: ignore  # noqa: E402
+from _paths import (  # type: ignore  # noqa: E402
+    memory_indexes_dir,
+    memory_store_root,
+    project_decisions_dir,
+    project_lessons_dir,
+    top_level_lessons_dir,
+)
 
 
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
@@ -311,34 +317,91 @@ def canonical_memory_files(
     terms: list[str],
     max_chars: int,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    candidates = [
-        memory_root / "MEMORY.md",
-        memory_root / "constitution.md",
+    candidates: list[tuple[Path, str, bool]] = [
+        (memory_root / "MEMORY.md", "file", True),
+        (memory_root / "constitution.md", "file", True),
+        (memory_indexes_dir() / "INDEX.jsonl", "file", True),
+        (top_level_lessons_dir(), "dir", True),
     ]
     if project and project != "_unscoped":
         candidates.extend(
             [
-                memory_root / "projects" / project / "MEMORY.md",
-                memory_root / "projects" / project / "constitution.md",
+                (memory_root / "projects" / project / "MEMORY.md", "file", True),
+                (memory_root / "projects" / project / "constitution.md", "file", True),
+                (project_decisions_dir(project), "dir", True),
+                (project_lessons_dir(project), "dir", True),
             ]
         )
 
     files: list[dict[str, Any]] = []
     reasons: list[str] = []
-    for path in candidates:
+    for path, kind, optional in candidates:
+        if kind == "dir":
+            if not path.is_dir():
+                files.append(
+                    {
+                        "path": short_path(path),
+                        "exists": False,
+                        "kind": kind,
+                        "optional": optional,
+                        "reason": f"missing: {path}",
+                    }
+                )
+                if not optional:
+                    reasons.append(f"missing: {path}")
+                continue
+            try:
+                entries = sorted(p.name for p in path.glob("*.md"))
+            except OSError as exc:
+                reasons.append(f"read_error: {path}: {exc}")
+                files.append(
+                    {
+                        "path": short_path(path),
+                        "exists": False,
+                        "kind": kind,
+                        "optional": optional,
+                        "reason": f"read_error: {path}: {exc}",
+                    }
+                )
+                continue
+            files.append(
+                {
+                    "path": short_path(path),
+                    "exists": True,
+                    "kind": kind,
+                    "count": len(entries),
+                    "entries_sample": entries[:8],
+                    "score": score_text("\n".join(entries), terms),
+                    "excerpt": "\n".join(entries[:8]),
+                }
+            )
+            continue
+
         text, reason = read_text(path)
         if text is None:
-            reasons.append(reason or f"missing: {path}")
-            files.append({"path": short_path(path), "exists": False, "reason": reason})
+            files.append(
+                {
+                    "path": short_path(path),
+                    "exists": False,
+                    "kind": kind,
+                    "optional": optional,
+                    "reason": reason,
+                }
+            )
+            if not optional:
+                reasons.append(reason or f"missing: {path}")
             continue
         files.append(
             {
                 "path": short_path(path),
                 "exists": True,
+                "kind": kind,
                 "score": score_text(text, terms),
                 "excerpt": excerpt(text, terms, max_chars=max_chars),
             }
         )
+    if not any(item.get("exists") for item in files):
+        reasons.append("canonical_memory_no_files_present")
     return files, reasons
 
 

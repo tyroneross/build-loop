@@ -1,6 +1,7 @@
 ---
 name: build-loop
 description: "Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', 'rewrite', 'replace') OR symptom language ('fix', 'broken', 'doesn't work', 'isn't loading', 'not displaying', 'missing', 'should show', 'needs to', 'make it', 'show this differently') OR any task touching 2+ files, adding/removing an endpoint, crossing an architectural boundary, or attached screenshots of a bug. SKIP one-line edits, pure Q&A, conversational clarifications, status checks, and trivial typos/renames."
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -262,17 +263,17 @@ Build-loop prefers installed plugins and skills over reinventing patterns. Each 
 
 ## Phase 1: Assess — State, Goal, and Criteria
 
-Understand current state, load memory through the automatic context bootstrap, detect tools, map architecture, capture north star + update intent, define goal and criteria. Writes `.build-loop/context-bootstrap.json`, `.build-loop/intent.md`, and `.build-loop/goal.md`.
+Understand current state, load memory through the automatic context bootstrap, detect tools, map architecture, capture north star + update intent, assess clean-sheet vs current-constraints approach lenses, define goal and criteria. Writes `.build-loop/context-bootstrap.json`, `.build-loop/context/current.md` via `scripts/context_snapshot.py`, `.build-loop/intent.md`, and `.build-loop/goal.md`.
 
-Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` → load PRD if present → capture intent → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
+Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 
 ## Phase 2: Plan — Steps & Optimization
 
-Break work into executable steps, build dependency graph, MECE-partition file ownership, run plan acceptance gates.
+Break work into executable steps, compare clean-sheet and current-constraints approaches, build dependency graph, MECE-partition file ownership, run plan acceptance gates.
 
-Key steps: writing-plans skill → parallel-safe identification → intent mapping → UI input/output contract section when UI is in scope → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
+Key steps: writing-plans skill → parallel-safe identification → intent mapping → `## Approach Lenses` for non-trivial recommendations → UI input/output contract section when UI is in scope → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
 
 **Load `skills/build-loop/references/phase-2-plan.md`** for the full protocol including spec-writing gate, mockup-first gate, Codex delegation, and plan acceptance steps.
 
@@ -280,7 +281,7 @@ Key steps: writing-plans skill → parallel-safe identification → intent mappi
 
 Implement the plan using parallel subagents where possible, following the single-writer git contract.
 
-Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → pass the UI input/output contract to UI implementers → single-writer git contract (implementers never commit) → C5 halt-and-ask backstop for architectural-class novel decisions.
+Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → non-blocking context snapshots at dispatch/return boundaries → pass the UI input/output contract to UI implementers → single-writer git contract (implementers never commit) with pre/post commit context snapshots → C5 halt-and-ask backstop for architectural-class novel decisions.
 
 **Load `skills/build-loop/references/phase-3-execute.md`** for the full protocol including Codex adapter, UI subagent prompt template, and coordination checkpoint policy.
 
@@ -312,7 +313,7 @@ Key steps: recurring-pattern-detector (Haiku) → filter (confidence: high OR co
 
 ## Memory — Global and Project-Scoped
 
-One consolidated long-term tree: `~/dev/git-folder/build-loop-memory/`. Project-specific durable memory lives under `projects/<slug>/...`; cross-project lessons/design/debugging/product memory lives in the matching top-level lane. Every build runs `scripts/context_bootstrap.py` at Phase 1 Assess, which reads canonical root/project `MEMORY.md` and `constitution.md` files, canonical indexes/folders through `memory_facade.py`, repo-local `.build-loop/` context, Codex memory at `~/.codex/memories`, and best-effort Rally/coordination state when relevant. Writes go to exactly one canonical lane based on scope. Legacy paths (`~/.build-loop/memory`, `.episodic/decisions`, and `build-loop-memory/decisions/<project>`) are migration/archive inputs only.
+One consolidated long-term tree: `~/dev/git-folder/build-loop-memory/`. Project-specific durable memory lives under `projects/<slug>/...`; cross-project lessons/design/debugging/product memory lives in the matching top-level lane. Every build runs `scripts/context_bootstrap.py` at Phase 1 Assess, which reads canonical root/project `MEMORY.md` and `constitution.md` files, canonical indexes/folders through `memory_facade.py`, repo-local `.build-loop/` context, Codex memory at `~/.codex/memories`, and best-effort Rally/coordination state when relevant. Live handoff state is written separately by `scripts/context_snapshot.py` under `.build-loop/context/`; snapshots are not durable memory unless Review-G promotes a reusable decision or lesson. Writes go to exactly one canonical memory lane based on scope. Legacy paths (`~/.build-loop/memory`, `.episodic/decisions`, and `build-loop-memory/decisions/<project>`) are migration/archive inputs only.
 
 Routing rule: "Would this apply to a different project?" Yes → global. No → project. Ambiguous → ask the user once.
 

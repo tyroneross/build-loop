@@ -15,12 +15,12 @@ package-state, missing-evidence, scope-split, less-invasive-shim,
 tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
 synthesis-dim-vague-value, risk-reason-invalid-value,
-scope-audit-required, parallel-decision-record.
+scope-audit-required, approach-lenses-missing, parallel-decision-record.
 
 Plan Evidence Contract (per finding):
 {
   "claim_text": str,
-  "claim_kind": "delete|orphan|zero_callers|route_removed|package_absent|package_present|numeric_count|missing_evidence|scope_split|less_invasive_shim",
+  "claim_kind": "delete|orphan|zero_callers|route_removed|package_absent|package_present|numeric_count|missing_evidence|scope_split|less_invasive_shim|approach_lenses_missing",
   "subject": {"path": str|null, "symbol": str|null, "noun": str|null},
   "verification_command": str|null,
   "evidence": {"file": str|null, "line": int|null, "snippet": str|null},
@@ -878,6 +878,58 @@ def rule_scope_audit_required(plan_path: Path, lines: list[tuple[int, str]]) -> 
     return out
 
 
+# Rule: approach-lenses-missing (2026-05-27) — WARN when a non-trivial
+# architecture/workflow/dependency/interface plan omits the clean-sheet vs
+# current-constraints comparison. WARN-only: older plans and narrow fixes should
+# stay executable, but the planner should see the missing decision surface.
+APPROACH_LENSES_PRESENT_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?Approach Lenses\b|^\s*Approach Lenses\s*:\s*n/a\b",
+    re.IGNORECASE,
+)
+APPROACH_LENSES_SIGNAL_RE = re.compile(
+    r"\b("
+    r"architecture|workflow|dependency|dependencies|interface|schema|migration|"
+    r"contract|refactor|recommendation|recommended|approach|Path A|Path B|"
+    r"modular|boundary|endpoint|API"
+    r")\b",
+    re.IGNORECASE,
+)
+TRIVIAL_PLAN_RE = re.compile(
+    r"\b(single[- ]file|one[- ]line|typo|copy edit|pure config|config only|"
+    r"trivial|narrow fix)\b",
+    re.IGNORECASE,
+)
+
+
+def rule_approach_lenses_missing(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN when a non-trivial plan lacks `## Approach Lenses`.
+
+    The verifier cannot fully know whether a plan is architectural, but it can
+    catch the common cases where a recommendation is likely being anchored to
+    current debt without naming the clean-sheet alternative."""
+    if any(APPROACH_LENSES_PRESENT_RE.search(line) for _, line in lines if line):
+        return []
+    if any(TRIVIAL_PLAN_RE.search(line) for _, line in lines if line):
+        return []
+    for lineno, line in lines:
+        if not line:
+            continue
+        if APPROACH_LENSES_SIGNAL_RE.search(line):
+            return [_finding(
+                claim_text=line.strip(),
+                claim_kind="approach_lenses_missing",
+                subject={"path": None, "symbol": None, "noun": "Approach Lenses"},
+                verification_command=None,
+                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                result="no_match",
+                marker="⚠️",
+                severity="WARN",
+                confidence="medium",
+                rule_id="approach-lenses-missing",
+            )]
+    return []
+
+
 # Rule: synthesis-dim-vague-value (2026-05-07) — flag vague values in the
 # `synthesis_dimensions:` block (defeats Opus pre-resolution of synthesis).
 SYNTHESIS_VAGUE_RE = re.compile(
@@ -1033,6 +1085,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_synthesis_dim_vague_value(plan_path, lines))
     findings.extend(rule_risk_reason_invalid_value(plan_path, lines))
     findings.extend(rule_scope_audit_required(plan_path, lines))
+    findings.extend(rule_approach_lenses_missing(plan_path, lines))
     findings.extend(rule_task_id_convention(plan_path, lines))
     findings.extend(rule_forbidden_path_conflict(plan_path, lines, repo))
     findings.extend(rule_parallel_decision_record(plan_path, lines))

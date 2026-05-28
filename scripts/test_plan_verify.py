@@ -299,5 +299,55 @@ class ParallelDecisionRecordTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class ApproachLensesMissingTests(unittest.TestCase):
+    """rule_approach_lenses_missing — clean-sheet vs constrained-path prompt."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [
+            f for f in run_all(self.plan, self.repo)
+            if f["rule_id"] == "approach-lenses-missing"
+        ]
+
+    def test_architecture_plan_without_approach_lenses_warns(self) -> None:
+        findings = self._findings(
+            "## Plan\n\n"
+            "Recommended architecture: move the API contract into a shared module.\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "WARN")
+
+    def test_approach_lenses_section_satisfies_rule(self) -> None:
+        findings = self._findings(
+            "## Approach Lenses\n\n"
+            "**Clean-sheet best approach:** shared typed contract.\n"
+            "**Current-constraints approach:** keep adapter until migration completes.\n\n"
+            "## Plan\n\n"
+            "Recommended architecture: move the API contract into a shared module.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_explicit_na_satisfies_rule(self) -> None:
+        findings = self._findings(
+            "Approach Lenses: n/a - narrow fix.\n\n"
+            "## Plan\n\n"
+            "Update the endpoint label only.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -9,12 +9,27 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Output tells you whether to `proceed_solo` or `join_active` (handle pending ACKs first).
 
 ```bash
-agent-rally-preflight --tool codex --start-ping --human
+rally codex --human
 ```
 
 The command is **host-neutral** — the same binary works for every coding tool. Substitute the `--tool` value for your host: `codex`, `cursor`, `gemini`, `claude_code`, or `other`. The JSON form (omit `--human`) is the machine-readable envelope.
 
-**Fallback:** if `agent-rally-preflight` is not on PATH (`pipx install agent-rally-point` hasn't been run yet), proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
+When you know your intent or files at session start, include them so peers can see the work immediately:
+
+```bash
+rally start codex --intent "<what you are doing>" --path "<file-or-dir>" --json
+```
+
+When you finish or hand off, close the loop:
+
+```bash
+rally stop codex --session-id "<session-id>" --reason "done" --json
+```
+
+`rally stop` removes live presence, marks the agent stopped, and releases active file claims unless `--keep-claims` is passed.
+Peers read active work from `active_peers[]` and last-known active/stopped session state from `peer_states[]`.
+
+**Fallback:** if `rally` is not on PATH, proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
 
 ## Phases
 
@@ -33,6 +48,7 @@ The command is **host-neutral** — the same binary works for every coding tool.
 - **North star first.** Understand the app/repo purpose, primary users, core workflows, and update intent before planning. Every subtask should explain how it contributes to that purpose.
 - **Beauty in the basics.** Core flows, real data, clear hierarchy, useful states, working controls, and accurate information matter more than extra surface area.
 - **Modular by default, not by dogma.** Prefer high cohesion, loose coupling, stable interfaces, and scalable boundaries unless a simpler or integrated approach better serves the use case. Document `MODULARITY EXCEPTION: <reason>` when taking that path.
+- **Two-lens recommendations.** Do not let current tech debt, prior architecture, existing dependencies, or earlier decisions silently define "best." For non-trivial architecture, workflow, dependency, or product decisions, assess the clean-sheet best approach for the use case first, then assess the best current-constraints approach given the repo's debt, tools, dependencies, migration cost, and risk. Prior decisions are evidence, not axioms.
 - **MECE work ownership.** Partition files, agents, and task groups so ownership is mutually exclusive and collectively exhaustive: no overlapping file owners, no unowned responsibilities, and one clear grouping dimension per level.
 - **Guidelines for creation, guardrails for output.** Be flexible during building. Be strict about what reaches users.
 - **No false data.** No mock data in production. No hardcoded metrics pretending to be real. No unverified claims.
@@ -52,6 +68,7 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - Read deployment policy from `.build-loop/config.json.deploymentPolicy` when present. Default: `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`.
 - Capture app/repo north star and update intent in `.build-loop/intent.md`: purpose, primary users, core jobs, user value, and non-goals.
 - Capture modular structure in `.build-loop/state.json.structure`: current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception.
+- Capture approach lenses in `.build-loop/state.json.approachLenses` for non-trivial recommendations: clean-sheet best approach, current-constraints best approach, constraints/debt that change the answer, and the bridge/backcast path from current state toward the clean-sheet target.
 - Map relevant architecture (only what the goal touches)
 - Check for prior state (`.build-loop/state.json` from interrupted builds)
 - If goal involves external frameworks or APIs: research current docs before planning
@@ -62,7 +79,15 @@ Combines situational awareness with goal definition so Plan has everything it ne
 
 Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. Rally Point presence is the single concurrent-presence source of truth — an awareness layer (never a lock), host-neutral, invoked from any host. (The legacy `session_registry.py` / `~/.build-loop/sessions/` collision mechanism was documented-dead and removed 2026-05-18 — see `KNOWN-ISSUES.md` §M4.)
 
-1. **Write presence at the Phase 1 preamble** (immediately after `run_id` is known), and refresh it at each phase-start:
+1. **Write presence and intent at the Phase 1 preamble** (immediately after `run_id` is known), and refresh it at each phase-start. Preferred Rust path:
+   ```bash
+   rally start codex --session-id "<sid>" --intent "phase=assess" --json
+   ```
+   When files are owned, include one `--path` per file or directory so Rally creates explicit file claims:
+   ```bash
+   rally start codex --session-id "<sid>" --intent "phase=execute" --path "src/app.ts" --json
+   ```
+   Embedded fallback path when the Rust `rally` binary is unavailable:
    ```python
    from pathlib import Path
    from scripts.rally_point import presence
@@ -74,7 +99,7 @@ Multiple build-loop sessions can run concurrently against the same project acros
        model="<model>", run_id="$RUN_ID", app_slug=slug,
        phase="assess", files_in_flight=[])
    ```
-   `tool` values: `claude_code | codex | gemini | other`. Resolve the channel through `discovery_bridge.resolve(...)` before every direct write; both native `agent-rally-point` discovery and the embedded `channel_paths` fallback write under `~/.agent-rally-point/apps/...` by default. Writes one file per live session at `<resolved-channel>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
+   `tool` values: `claude_code | codex | gemini | other`. Resolve the channel through `discovery_bridge.resolve(...)` before every direct write. Rust-backed channels use `rally start` / `rally stop`; embedded fallback writes one file per live session at `<resolved-channel>/sessions/<session-id>.json` (session_id, tool, model, run_id, app_slug, phase, files_in_flight, heartbeat_ts, read cursor). Fire-and-forget — never raises, never blocks.
 2. **Read active peers** at the preamble and each phase-start:
    ```python
    peers = presence.read_active_presence(channel, exclude_session="<sid>")
@@ -84,7 +109,7 @@ Multiple build-loop sessions can run concurrently against the same project acros
    - No peers / no `files_in_flight` overlap → log one line per peer (tool, run_id, phase); proceed.
    - Overlap with a peer's `files_in_flight` → surface a `soft-claim` **WARNING** (peer, overlapping files, peer phase); proceed with awareness. Interactive hosts MAY additionally ask the user to coordinate; headless hosts (Codex / cron) log + proceed. There is no SAFE-STOP sentinel and no non-zero exit.
 4. **Refresh presence** at every phase-start and whenever the phase's owned files change — re-call `write_presence` with the new `phase` + `files_in_flight` (the per-session read cursor is preserved across refreshes).
-5. **No unregister.** The last presence write stands; `reap_stale` (run opportunistically at every peer read) removes it once the heartbeat window elapses. Forgotten sessions self-heal.
+5. **Stop explicitly.** On Rust-backed channels, run `rally stop <tool> --session-id <sid> --reason "<done|handoff|blocked>" --json` when the session ends or file ownership changes materially. This clears presence, marks the session stopped in `peer_states[]`, and releases active claims. Embedded fallback still self-heals with `reap_stale` when a host exits without unregistering.
 6. **Memory writes (M5 — separate concern)** — use `scripts/memory_writer.py write` instead of writing memory files directly. The writer adds provenance frontmatter (source_repo, source_workdir, source_run_id, source_host, cross_repo_validated, applied_in_repos, created_at, last_updated_at), then atomically appends a row to `INDEX.jsonl` for sibling discovery:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
@@ -147,6 +172,11 @@ The `> 5` threshold matches the empirical inflection point measured in the synth
 - Partition files and agents MECE: every changed file has exactly one owner, every required responsibility has an owner, and each group declares `owns`, `does not own`, `interface contract`, and `integration checkpoint`
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
+- **Two-lens approach gate**: for non-trivial architecture, workflow, dependency, UI/product, or long-lived interface decisions, add a `## Approach Lenses` section before implementation tasks. It must include:
+  - **Clean-sheet best approach:** what would be recommended if prior repo decisions, tech debt, and current implementation constraints did not exist.
+  - **Current-constraints approach:** what is best given existing code, debt, dependencies, tools, team/runtime constraints, migration risk, and delivery horizon.
+  - **Bridge/backcast:** the smallest credible path from the current-constraints approach toward the clean-sheet target, including debt retired, dependencies added/removed, and decision points.
+  - **Recommendation:** which path to execute now and why. If the recommendation follows current constraints instead of the clean-sheet approach, name the constraint that justifies the compromise.
 - **UI input/output contract gate**: if `uiTarget != null`, add a `## UI Input/Output Contract` section before mockups or implementation. It must name every changed surface's inputs, outputs, data taxonomy, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and schema/API/design-system traceability.
 - **Recent design structures gate**: if `uiTarget != null`, pass `skills/build-loop/references/recent-design-structures.md` to `design-contract-specialist` after the UI input/output contract exists. The specialist chooses the structure based on product/workflow/data/platform fit; recent structures are options, not requirements.
 - **Enumerate synthesis dimensions** for any commit that involves design judgment (UI placement, copy tone, CTA tier, schema shape, dispatch contracts, etc.). Add a `synthesis_dimensions:` block to the plan listing each named decision with a concrete claimed value:

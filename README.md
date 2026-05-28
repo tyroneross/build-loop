@@ -117,7 +117,8 @@ Add to `~/.claude/settings.json`:
 
 ### Memory setup (one-time, per machine)
 
-Build-loop's advisory judges read from `~/.build-loop/memory/`. Bootstrap with templates:
+Build-loop's advisory judges read from the canonical `build-loop-memory` store
+(`~/dev/git-folder/build-loop-memory` by default). Bootstrap with templates:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
@@ -279,7 +280,7 @@ SessionStart fires an incremental scan when manifest > 24 h old. PreToolUse Edit
 116 capabilities indexed across 6 kinds (agent / skill / command / hook / mcp_tool / script) and 10 categories. Phase 1 invocation is **mandatory** — populates `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion, keeping the orchestrator below the empirical tool-selection ceiling. Phase 2 / 3 dispatchers read the cache instead of re-scoring.
 
 **Memory facade** (`scripts/memory_facade.py`)
-Unified `recall(query, kind, project, limit, skip_postgres)` over four backends — `state.json.runs[]` · episodic `.episodic/decisions/` (legacy) and `~/dev/git-folder/build-loop-memory/decisions/<project>/` (canonical) · Postgres `semantic_facts` · debugger MCP `search`. Graceful degradation throughout; CLI mirrors the API including `--skip-postgres`.
+Unified `recall(query, kind, project, limit, skip_postgres)` over four backends — `state.json.runs[]` · canonical `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/` plus migration-mode legacy decisions · Postgres `semantic_facts` · debugger MCP `search`. Graceful degradation throughout; CLI accepts both `memory_facade.py --query ...` and the compatibility form `memory_facade.py recall --query ...`, including `--skip-postgres`.
 
 **Backend health probe** (`scripts/backend_health.py`)
 Phase 1 sub-step probes each memory backend with per-backend 5 s timeout. Output: `runs: OK N | decisions: OK <legacy> + <canonical> | semantic: ok|down | debugger: ok|down`. Envelope cached at `state.json.architecture.backendHealth`. Phase 5 Iterate consumes it to short-circuit Postgres lookups when down.
@@ -345,12 +346,19 @@ Package root for Codex installs:
 - the repository root (`.`)
 
 Primary Codex surface:
-- skills from `./skills` when present
+- public entrypoint skills from `./codex-skills` when present
 - MCP config from `./.mcp.json` when present
 
 Codex adapter files:
 - `skills/build-loop/references/codex-subagents.md`
 - `skills/build-loop/templates/codex-worker-prompt.md`
+
+The full `./skills` tree still ships with the package for Claude Code and for
+Build Loop's internal references. Codex only exposes the compact public
+entrypoint set in `./codex-skills` so helper skills do not crowd the `#` picker.
+Claude Code keeps the full tree addressable for commands/orchestrator internals,
+but helper skills are marked `user-invocable: false`. Cursor and other
+AGENTS.md-style tools should follow [`docs/agent-surface-policy.md`](docs/agent-surface-policy.md).
 
 Install the package from this package root using your current Codex plugin install flow. The Codex package is additive only: Claude-specific hooks, slash commands, and agent wiring remain unchanged for Claude Code.
 
@@ -358,4 +366,18 @@ To check whether an installed Codex cache is using the current source instructio
 
 ```bash
 python3 scripts/check_cache_sync.py --host codex --source .
+```
+
+To remove stale Claude Code and Codex cache versions after a marketplace
+upgrade installs the current version:
+
+```bash
+python3 scripts/prune_plugin_cache.py --source . --apply
+```
+
+Host-specific variants are also available:
+
+```bash
+python3 scripts/prune_plugin_cache.py --source . --host codex --apply
+python3 scripts/prune_plugin_cache.py --source . --host claude --apply
 ```

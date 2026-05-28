@@ -53,9 +53,17 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 16. **Modular systems pack**: read `skills/build-loop/references/modular-systems-pack.md`. Capture module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror into `.build-loop/state.json.structure`.
 
-17. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
+17. **Approach lenses**: for non-trivial architecture, workflow, dependency, UI/product, or long-lived interface recommendations, assess and write `.build-loop/state.json.approachLenses`:
+    - `clean_sheet`: the use-case-first best approach if inherited tech debt, current implementation constraints, and prior repo decisions did not exist.
+    - `current_constraints`: the best practical approach given existing code, dependencies, tools, debt, migration cost, risk, and delivery horizon.
+    - `constraint_delta`: the specific constraints or debt that change the answer.
+    - `bridge_backcast`: the smallest credible path from current state toward the clean-sheet target, including debt retired, dependencies added/removed, and decision points.
 
-18. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
+    Prior decisions are evidence, not axioms. The goal is not to ignore current constraints; it is to prevent them from silently redefining "best."
+
+18. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
+
+19. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
     1. **Explicit user override** — if `state.json.config.modelOverrides.thinking` is set OR the plan declares `tier: thinking` in its frontmatter, route to thinking-tier regardless of count.
     2. **Auto-escalate on density** — if `count > 5` (6+ entries), the commit is synthesis-dense at the COMMIT level; route to `tier: thinking` automatically. Fan-out loses cross-dimension coherence at this density even with each individual dimension well-specified.
     3. **Default — Sonnet fan-out for speed** — `count` in 1–5 range OR `count == 0` keeps the default fan-out path. Sonnet's velocity advantage (~33% wall-clock, ~28% tokens) is real and the C3 attestation_lint, C4 synthesis-critic, and C5 halt-and-ask backstops fire post-commit to catch the residual recall gap. Use this lane when speed dominates.
@@ -67,9 +75,9 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
     Effect on Phase 3: when `synthesisDensity.escalated == true`, the orchestrator does NOT dispatch parallel implementer subagents for that plan; it executes the chunks inline at `tier: thinking`. When `escalated == false`, fan-out proceeds with the C3/C4/C5 backstops watching. The dual-mode dispatch table still applies — escalation overrides the default fan-out path on a per-plan or per-chunk basis. Skip this step cleanly when no plan file exists yet (re-evaluate at the end of Phase 2 if needed).
 
-19. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
+20. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
 
-20. **Phase 1 done**: Phase 1 produces `.build-loop/context-bootstrap.json`, `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
+21. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, approachLenses, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
 
 ## Phase 4 Review (sub-steps A–G)
 

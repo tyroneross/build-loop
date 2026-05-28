@@ -50,6 +50,20 @@
 
    The packet must include canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists. Missing surfaces are recorded in `sources.*.reasons[]`; they do not block Phase 1 by themselves. See `references/memory-systems.md` §"Read protocol — Phase 1 Assess".
 
+   Then write the first live handoff snapshot:
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
+     --workdir "$PWD" \
+     --trigger phase_transition \
+     --phase assess \
+     --message "Phase 1 context bootstrap complete" \
+     --if-changed \
+     --json
+   ```
+
+   This refreshes `.build-loop/context/current.md` for later agents. Snapshot failure is a context-quality warning, not a Phase 1 blocker.
+
 9a. **Run identity + multi-session presence (Rally Point)** (always; runs at the Phase 1 preamble before any Rally Point write):
    1. Generate or resume durable run identity: `execution = scripts/rally_point/build_loop_id.generate_or_resume(workdir="$PWD", tool="<tool-id>", session_id="<session-id>")`. This writes `state.execution.build_loop_id` and `state.execution.run_label` when missing, preserves them on resume, and updates only `current_session_id`.
    2. Resolve the channel: `slug = scripts/rally_point/channel_paths.app_slug(cwd="$PWD")` (D1: worktree/clone-independent — main checkout and every worktree share one channel). Do NOT reimplement slug derivation.
@@ -65,6 +79,12 @@
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Sub-step G Report's `## Held` section, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
 11. **Capture north star + update intent**: When `state.json.prd.core_principles` is non-empty (a PRD was loaded by step 10), use it as the strategic frame; `intent.md` cites the PRD path + revision rather than re-deriving. Otherwise use `references/intent-capability-pack.md` to identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals fresh. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
 12. **Assess modular structure**: Use `references/modular-systems-pack.md`. Identify current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror compact fields to `.build-loop/state.json.structure`.
+12a. **Capture approach lenses**: For any non-trivial architecture, workflow, dependency, UI/product, or long-lived interface recommendation, assess two separate answers before planning:
+    - **Clean-sheet best approach**: what would be best for the use case if prior repo decisions, accumulated tech debt, and current implementation constraints did not exist.
+    - **Current-constraints best approach**: what is best given the repo's existing code, dependencies, tools, debt, team/runtime constraints, migration cost, and delivery horizon.
+    - **Bridge/backcast**: the smallest credible path from current state toward the clean-sheet target, including debt retired, dependencies added/removed, and decision points.
+
+    Prior decisions are evidence, not axioms. Do not discard current constraints; isolate them so Phase 2 can decide whether they justify a compromise. Mirror the compact summary to `.build-loop/state.json.approachLenses` with `clean_sheet`, `current_constraints`, `constraint_delta`, and `bridge_backcast` fields.
 13. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
 14. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
 15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).

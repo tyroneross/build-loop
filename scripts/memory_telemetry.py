@@ -97,7 +97,7 @@ def _append_row(path: Path, row: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_suffix(path.suffix + ".lock")
-        line = json.dumps(row, separators=(",", ":")) + "\n"
+        line = json.dumps(row, separators=(",", ":"), default=str) + "\n"
         deadline = time.monotonic() + LOCK_TIMEOUT_S
         with open(lock_path, "a+") as lock_fh:
             while True:

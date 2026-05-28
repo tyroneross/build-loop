@@ -39,6 +39,25 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 
 **Degradation**: every source carries `reasons[]`. Missing Codex memory, absent repo-local files, skipped or down Postgres, skipped or unreachable debugger MCP, or Rally errors are context-quality signals, not blockers. Surface high-impact gaps in the Assess brief.
 
+### 1a. Live context snapshots (handoff/resume, not durable memory)
+
+After bootstrap, Build Loop keeps the current handoff state fresh through:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
+  --workdir "$PWD" \
+  --trigger "<manual | interval | phase_transition | agent_dispatch | agent_return | pre_commit | post_commit>" \
+  --phase "<phase>" \
+  --run-id "$RUN_ID" \
+  --message "<one-line current state>" \
+  --if-changed \
+  --json
+```
+
+**Return shape**: `{ ok, action: "written" | "skipped", snapshot_id, snapshot_path?, current_path }`.
+
+**Writes**: `.build-loop/context/current.md`, `.build-loop/context/snapshots/*.json`, and trigger-specific JSONL sidecars for agent and commit boundaries. This is session/runtime context like Bookmark's useful handoff layer, but non-blocking and repo-local. Do NOT promote every snapshot into durable memory. Only Review-G or explicit decisions write reusable facts to `build-loop-memory`.
+
 ### 2. Unified recall facade (diagnostic/reference)
 
 The bootstrap calls the facade directly. Use the standalone command when debugging the canonical memory layer itself:

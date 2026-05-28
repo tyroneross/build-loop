@@ -10,12 +10,44 @@ For each implementer return envelope with `status: fixed | partial | completed`:
 
 (For `status: "blocked"`, see `references/halt-and-ask-protocol.md` — that branch fires BEFORE the commit step and may iterate up to 3 times before producing a commit-eligible envelope.)
 
+00. **Pre-commit context snapshot** (NEW 2026-05-28 - non-blocking resume evidence): before staging, write the boundary state:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
+     --workdir "$PWD" \
+     --trigger pre_commit \
+     --phase execute \
+     --agent orchestrator \
+     --run-id "$RUN_ID" \
+     --chunk-id "<chunk_id>" \
+     --status committing \
+     --message "<commit_subject>" \
+     --file "<file-from-files_changed>" \
+     --json
+   ```
+   The helper writes `.build-loop/context/current.md`, a JSON snapshot, and a row in `.build-loop/context/commit-boundaries.jsonl`. Failure is a WARN only; do not bypass or alter the commit protocol because a snapshot failed.
+
 0. **Verify no staged residue** (NEW 2026-05-12 — closes the index-leak class seen in a prior 2026-05-11 private-app run): `git status --porcelain` and inspect the staged column (character 1 of each XY line). Implementers are contracted to leave working-tree changes only — they NEVER call `git add` (per `agents/implementer.md` Hard rule 4). Any non-space character in the staged column means an implementer violated that rule and the index is dirty before the orchestrator's own `git add`. ABORT this dispatch with: `Implementer left staged residue in the index; refusing to proceed. Files staged: <list>`. Route the offending implementer's plan back to Iterate with `additional_context: "Hard rule 4 violation — staged the index"`. Do NOT auto-clean and continue; the residue indicates the implementer's commit envelope can no longer be trusted.
 
 1. **Verify scope**: `git status --porcelain` — every modified/untracked file must appear in some implementer's `files_changed`. Files not claimed by any implementer = orchestrator-side scope-leak; investigate before committing.
 2. **Stage exactly that implementer's files**: `git add -- <files_changed_list>`. Use absolute paths to avoid relative-path ambiguity when multiple worktrees coexist.
 3. **Commit with the implementer's metadata**: `git commit -m "<commit_subject>" -m "<commit_body>"`. The pre-commit hook runs HERE (full-project tsc, lint-staged, betterer-strict — whatever the project has). If the hook fails, do NOT pass `--no-verify`; instead, capture the failure and route the implementer's plan back to Iterate with `additional_context: "<hook output>"`.
 4. **Verify commit landed**: `git log -1 --oneline` confirms the SHA. If `git status` after the commit still shows the implementer's files as modified, the commit didn't land — investigate.
+4a. **Post-commit context snapshot** (NEW 2026-05-28): after the SHA is known, write the landed boundary:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
+     --workdir "$PWD" \
+     --trigger post_commit \
+     --phase execute \
+     --agent orchestrator \
+     --run-id "$RUN_ID" \
+     --chunk-id "<chunk_id>" \
+     --status completed \
+     --message "<commit_subject>" \
+     --commit-sha "<sha>" \
+     --file "<file-from-files_changed>" \
+     --json
+   ```
+   This is the canonical handoff record for "what changed right before/after commit." It is generated runtime state under `.build-loop/context/` and is never durable memory by itself.
 5. **Attestation lint** (NEW 2026-05-07 — synthesis-decision drift catcher): immediately after the commit lands, persist the implementer's envelope to a temp path and run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/attestation_lint.py --diff "<sha>~1..<sha>" --envelope <envelope.json>` where `<sha>` is the commit just verified. The lint cross-checks every `synthesis_attestation` entry against the actual diff for the deterministic dimensions (`placement`, `cta_tier`, `visual_weight`); subjective dims (`copy_tone`, `empty_state`) return `unverifiable` and don't grade.
    - **Exit 0** — every applied claim verified or only-unverifiable-with-some-pass: proceed silently to step 6.
    - **Exit 1** — at least one entry FAILED: a synthesis claim is contradicted by the diff. Default action: revert the commit and route to Iterate with the lint output as `additional_context` (option a). Do not stop and ask the user — this is the kind of issue the loop is built to handle. Two failure modes warrant escalation: (i) Iterate has already retried this same lint failure 3 times without clearing it, in which case surface the failing entries via `AskUserQuestion` and offer all three options (revert, accept with override, amend envelope); (ii) the synthesis claim is on a dimension the user explicitly named in the original plan as load-bearing for user-visible behavior, in which case ask before reverting because reverting destroys evidence the user wants to inspect. Otherwise: revert, iterate, keep going.

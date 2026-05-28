@@ -3,8 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """install_memory.py — bootstrap the build-loop memory directory.
 
-Creates `~/.build-loop/memory/` (the canonical global memory store) and seeds
-it with template `constitution.md` + `MEMORY.md` if either is missing. Idempotent — never overwrites existing files.
+Creates the canonical build-loop-memory root (default:
+`~/dev/git-folder/build-loop-memory`) and seeds it with template
+`constitution.md` + `MEMORY.md` if either is missing. Idempotent — never
+overwrites existing files.
 
 Optional: link the directory to a private git repo so user-specific memory
 content is versioned. The build-loop public repo ships ONLY the templates;
@@ -32,7 +34,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_DEST = Path.home() / ".build-loop" / "memory"
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+try:
+    from _paths import memory_store_root  # type: ignore  # noqa: E402
+except Exception:  # noqa: BLE001
+    memory_store_root = None  # type: ignore[assignment]
+
+DEFAULT_DEST = memory_store_root() if memory_store_root is not None else Path.home() / "dev" / "git-folder" / "build-loop-memory"
 TEMPLATE_DIR_RELATIVE = "templates/memory"
 TEMPLATES = [
     ("constitution.md.template", "constitution.md"),
@@ -41,7 +52,7 @@ TEMPLATES = [
 
 
 def script_dir() -> Path:
-    return Path(__file__).resolve().parent
+    return HERE
 
 
 def template_dir() -> Path:
@@ -213,7 +224,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"  - Add lessons over time as feedback_*.md / pattern_*.md / reference_*.md")
     print("  - Optionally version this directory in a private git repo:")
     print(f"      cd {dest} && git init && git remote add origin <your-private-repo-url>")
-    print("  - Project-scoped lessons: ~/.build-loop/memory/projects/<slug>/ (filled by migration in PR 1.5)")
+    print(f"  - Project-scoped lessons: {dest / 'projects' / '<slug>'} (filled by migration when needed)")
     print("  - See docs/memory-setup.md for full setup guide")
     return 0
 
@@ -253,8 +264,8 @@ explicit aliases only.
 
 When the orchestrator loads memory at Phase 1 Assess:
 
-1. Global tier — files at the root of `~/.build-loop/memory/`
-2. Project tier — files at `~/.build-loop/memory/projects/<slug>/`
+1. Global tier — files at the root of the build-loop-memory store
+2. Project tier — files at `projects/<slug>/` under that store
 
 Later tiers OVERRIDE earlier ones on filename collision (project wins
 over global).

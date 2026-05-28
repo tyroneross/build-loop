@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """list_projects.py — enumerate project-scoped memory subdirectories.
 
-Walks ``~/.build-loop/memory/projects/`` and prints one row per project
+Walks the canonical ``build-loop-memory/projects/`` tree and prints one row per project
 subdirectory:
 
   <slug>  <md_file_count>  <last_modified_iso>
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         default=None,
-        help="Override the projects/ root (default: ~/.build-loop/memory/projects)",
+        help="Override the projects/ root (default: build-loop-memory/projects)",
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON")
     args = parser.parse_args(argv)

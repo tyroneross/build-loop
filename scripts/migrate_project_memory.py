@@ -10,8 +10,8 @@ Migrates content from per-repo legacy paths::
 
 to the consolidated global tree::
 
-    ~/.build-loop/memory/projects/<slug>/*.md
-    ~/.build-loop/memory/projects/<slug>/<subcomponent>/*.md
+    ~/dev/git-folder/build-loop-memory/projects/<slug>/*.md
+    ~/dev/git-folder/build-loop-memory/projects/<slug>/<subcomponent>/*.md
 
 PR 1.5 of the memory-consolidation series. Designed to run BETWEEN PR 1
 (read-path tolerance, already merged) and PR 2 (write cutover). The
@@ -38,7 +38,7 @@ Safety contract:
   6. **Stub at old path.** Leaves ``<repo>/.build-loop/memory/.MOVED.md``
      pointing at the new location. One-release deprecation window.
   7. **Summary markdown.** Writes
-     ``~/.build-loop/memory/_migrations/<date>-consolidation.md`` with
+     ``<build-loop-memory>/_migrations/<date>-consolidation.md`` with
      Moved / Archived / Collisions refused / Postgres reconciliation /
      Rollback command sections. C-AGENT/no_silent_self_modification
      compliance artifact.

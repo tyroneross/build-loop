@@ -1,11 +1,12 @@
 # Memory Setup
 
-Build-loop's advisory judges (`commit-auditor`, `promotion-reviewer`, `alignment-checker`) and the Phase 1 Assess memory-load step read from one consolidated tree under `~/.build-loop/memory/`:
+Build-loop's advisory judges and the Phase 1 Assess memory-load step read from
+one consolidated tree under `~/dev/git-folder/build-loop-memory/` by default:
 
 | Tier | Location | Owner | Versioning |
 |---|---|---|---|
-| Global | `~/.build-loop/memory/` (root: `constitution.md`, `MEMORY.md`, free-form lessons) | This user | **Should be in a private git repo** (your lessons live here) |
-| Project | `~/.build-loop/memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd` — basename of the git repo root, lowercased + normalized; `workers/` sub-component becomes `<slug>/workers`) | This user | Same private repo as global |
+| Global | `~/dev/git-folder/build-loop-memory/` plus top-level lanes such as `lessons/` | This user | **Should be in a private git repo** (your lessons live here) |
+| Project | `~/dev/git-folder/build-loop-memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd` — basename of the git repo root, lowercased + normalized; `workers/` sub-component becomes `<slug>/workers`) | This user | Same private repo as global |
 
 > **History** — until PR 3 of the memory-consolidation series (merged 2026-05-13), the legacy per-repo location was also read by `memory_facade._resolve_memory_dirs` as a transitional shim. As of PR 3, only the consolidated tree is read; any pre-migration content still at the legacy path is invisible. Operators with such content should run `scripts/migrate_project_memory.py --apply` (idempotent), then `scripts/cleanup_legacy_memory_stubs.py --apply` to remove the now-inert `.MOVED.md` stubs.
 
@@ -14,7 +15,7 @@ The build-loop public repo ships only the **scaffolding** — templates and the 
 ## Quick start
 
 ```bash
-# Bootstrap with templates (creates ~/.build-loop/memory/ if missing,
+# Bootstrap with templates (creates ~/dev/git-folder/build-loop-memory/ if missing,
 # seeds constitution.md + MEMORY.md from templates/memory/)
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
 
@@ -25,7 +26,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --check
 This creates:
 
 ```
-~/.build-loop/memory/
+~/dev/git-folder/build-loop-memory/
 ├── constitution.md     # template — replace with your invariants
 └── MEMORY.md           # template — index for entries you add
 ```
@@ -37,7 +38,7 @@ You have a few options for versioning the global memory. The recommended one is 
 ### Option A — Clone a private repo at install time
 
 ```bash
-# Empty / non-existent ~/.build-loop/memory/ required
+# Empty / non-existent build-loop-memory directory required
 python3 scripts/install_memory.py --link-repo git@github.com:<you>/<your-memory-repo>.git
 ```
 
@@ -47,7 +48,7 @@ The repo should contain `constitution.md` and `MEMORY.md` plus your existing les
 
 ```bash
 python3 scripts/install_memory.py
-cd ~/.build-loop/memory
+cd ~/dev/git-folder/build-loop-memory
 git init
 git add constitution.md MEMORY.md
 git commit -m "init: build-loop memory scaffolding"
@@ -55,18 +56,11 @@ git remote add origin git@github.com:<you>/<your-memory-repo>.git
 git push -u origin main
 ```
 
-### Option C — Symlink to an existing repo elsewhere
+### Option C — Override the canonical root
 
-If you already have a private memory repo (e.g. `~/dev/git-folder/build-loop-memory`):
-
-```bash
-# Move templates aside, then symlink
-mv ~/.build-loop/memory ~/.build-loop/memory.bak
-ln -s ~/dev/git-folder/build-loop-memory ~/.build-loop/memory
-# (verify constitution.md + MEMORY.md exist in the linked repo)
-```
-
-The orchestrator and scripts don't care whether `~/.build-loop/memory/` is a real directory or a symlink — they `Read()` paths through it normally.
+If your private memory repo lives somewhere else, set
+`BUILD_LOOP_MEMORY_STORE_ROOT` or pass `--dest <path>` to the setup script. The
+scripts resolve the root through `scripts/_paths.py`.
 
 ## What goes in the global store
 
@@ -110,18 +104,21 @@ Keep `MEMORY.md` under ~200 lines; entries past that get truncated when loaded i
 
 ## What about decisions?
 
-There's a separate **canonical decision store** at `~/dev/git-folder/build-loop-memory/decisions/<project>/` (your private repo). That store is project-tagged and written by `scripts/write_decision.py` — it captures the discrete "we decided X" events of any project.
+The **canonical decision store** is
+`~/dev/git-folder/build-loop-memory/projects/<project>/decisions/`. It is
+project-tagged and written by `scripts/write_decision.py` — it captures the
+discrete "we decided X" events of any project.
 
-The global `~/.build-loop/memory/` is for **cross-project lessons** — patterns and feedback that apply broadly, not project-specific decisions.
+The top-level `lessons/` lane is for **cross-project lessons** — patterns and
+feedback that apply broadly, not project-specific decisions.
 
 ```
-~/.build-loop/memory/                                # cross-project lessons (this guide; global tier)
-~/.build-loop/memory/projects/<slug>/                # project-local overrides
-~/.build-loop/memory/projects/<slug>/workers/        # sub-component memory (when present)
-~/.build-loop/memory/projects/_archive/<slug>/       # retired projects, still queryable
-~/dev/git-folder/build-loop-memory/                  # canonical project-tagged decisions (separate repo)
+~/dev/git-folder/build-loop-memory/                  # canonical root
+~/dev/git-folder/build-loop-memory/lessons/          # cross-project lessons
+~/dev/git-folder/build-loop-memory/projects/<slug>/  # project-local memory
+~/dev/git-folder/build-loop-memory/projects/_archive/<slug>/  # retired projects, still queryable
 <repo>/.build-loop/memory/                           # legacy project location — no longer read (PR 3 removed the shim); migrate via scripts/migrate_project_memory.py
-<repo>/.build-loop/.episodic/decisions/              # legacy local decision store (deprecated)
+<repo>/.episodic/decisions/                          # legacy local decision store (migration/archive)
 ```
 
 ## Constitution rules
@@ -151,7 +148,7 @@ If any of these fail, see `references/memory-systems.md` for the full backend to
 
 ## Privacy
 
-Treat `~/.build-loop/memory/` as containing potentially-sensitive context:
+Treat `~/dev/git-folder/build-loop-memory/` as containing potentially-sensitive context:
 
 - Operator preferences, project-specific decisions, client names if you write them in
 - Constitution rules may reveal architectural patterns from past projects

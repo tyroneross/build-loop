@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Test sync_db_from_files.py against a temporary test schema.
 
-- Write 3 MADR files via write_decision.py (--no-db).
+- Write 3 canonical MADR files via write_decision.py (--no-db).
 - Run sync_db_from_files.py --rebuild against test_schema_sync.
 - Verify 3 rows in semantic_facts.
 - Modify 1 MADR's title, re-run sync (no --rebuild), verify update.
@@ -26,7 +26,7 @@ SYNC = HERE / "sync_db_from_files.py"
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
 TEST_SCHEMA = "test_schema_sync"
 
-from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402
+from _test_helpers import MemIsolationMixin  # noqa: E402
 
 TAXONOMY = """---
 type: taxonomy
@@ -82,28 +82,56 @@ def teardown_schema() -> None:
     psql_exec(f"DROP SCHEMA IF EXISTS {TEST_SCHEMA} CASCADE;")
 
 
-def write_decision(workdir: Path, title: str, entity: str, tag: str = "process", _id: str | None = None) -> str:
-    """Write a decision into workdir/.episodic/decisions/ (legacy path).
-
-    Uses write_legacy_madr so files land where sync_db_from_files.py (legacy
-    mode) expects them, independent of Phase-C AGENT_MEMORY_ROOT routing.
-    Auto-increments _id based on how many *.md files already exist.
-    """
-    import datetime as _dt
-    existing = list((workdir / ".episodic" / "decisions").glob("[0-9][0-9][0-9][0-9]-*.md"))
-    if _id is None:
-        nxt = (max(int(f.name[:4]) for f in existing) + 1) if existing else 1
-        _id = f"{nxt:04d}"
-    date = _dt.date.today().isoformat()
-    p = write_legacy_madr(workdir, _id, date, title, entity, tag)
-    return _id
+def _frontmatter_value(path: Path, key: str) -> str:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{key}:"):
+            return line.split(":", 1)[1].strip().strip("'").strip('"')
+    raise AssertionError(f"{key!r} missing from {path}")
 
 
-def sync(workdir: Path, rebuild: bool = False) -> subprocess.CompletedProcess:
+def write_decision(workdir: Path, title: str, entity: str, tag: str = "process") -> tuple[str, Path, str]:
+    """Write a canonical decision through the production writer."""
+    before = set((Path(os.environ["AGENT_MEMORY_ROOT"]) / "projects" / "test-default" / "decisions").glob("*.md"))
+    cp = subprocess.run(
+        [
+            sys.executable,
+            str(WRITE),
+            "--workdir", str(workdir),
+            "--title", title,
+            "--decision", f"Decision: {title}",
+            "--context", "Sync test fixture",
+            "--tags", tag,
+            "--primary-tag", tag,
+            "--entity", entity,
+            "--confidence", "explicit",
+            "--source", "manual",
+            "--project", "test-default",
+            "--no-db",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if cp.returncode != 0:
+        raise AssertionError(cp.stderr)
+    decisions_dir = Path(os.environ["AGENT_MEMORY_ROOT"]) / "projects" / "test-default" / "decisions"
+    after = {
+        p for p in decisions_dir.glob("*.md")
+        if p.name != "INDEX.md" and not p.name.startswith("_")
+    }
+    new_files = sorted(after - before)
+    if len(new_files) != 1:
+        raise AssertionError(f"expected one new canonical decision file, got {new_files}")
+    path = new_files[0]
+    return cp.stdout.strip(), path, _frontmatter_value(path, "canonical_id")
+
+
+def sync(workdir: Path, rebuild: bool = False, project: str = "test-default") -> subprocess.CompletedProcess:
     args = [
         sys.executable, str(SYNC),
         "--workdir", str(workdir),
         "--schema", TEST_SCHEMA,
+        "--project", project,
     ]
     if rebuild:
         args.append("--rebuild")
@@ -126,7 +154,7 @@ class SyncTests(MemIsolationMixin, unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.workdir = Path(self.tmp.name)
         (self.workdir / ".semantic").mkdir(parents=True)
-        (self.workdir / ".episodic" / "decisions" / "_history").mkdir(parents=True)
+        (self.workdir / ".build-loop").mkdir(parents=True)
         (self.workdir / ".semantic" / "TAXONOMY.md").write_text(TAXONOMY)
 
     def tearDown(self) -> None:
@@ -143,19 +171,20 @@ class SyncTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(count, "3", msg=cp.stderr)
 
     def test_modified_file_updates_row(self) -> None:
-        write_decision(self.workdir, "Initial Title", "ent-x", "tooling")
-        sync(self.workdir, rebuild=True)
+        _, path, canonical_id = write_decision(self.workdir, "Initial Title", "ent-x", "tooling")
+        cp = sync(self.workdir, rebuild=True)
+        self.assertEqual(cp.returncode, 0, msg=cp.stderr)
         # Sanity: row present
+        subject = f"decision:test-default:{canonical_id}"
         old_obj = psql_exec(
-            f"SELECT object FROM {TEST_SCHEMA}.semantic_facts WHERE subject = 'decision:0001';"
+            f"SELECT object FROM {TEST_SCHEMA}.semantic_facts WHERE subject = '{subject}';"
         )
         self.assertEqual(old_obj, "Initial Title")
         # Modify the file's title (rewrite it directly)
-        f = next((self.workdir / ".episodic" / "decisions").glob("0001-*.md"))
-        text = f.read_text()
+        text = path.read_text()
         text = text.replace("title: Initial Title", "title: Updated Title")
         text = text.replace("# Initial Title", "# Updated Title")
-        f.write_text(text)
+        path.write_text(text)
         # Re-sync without --rebuild
         cp = sync(self.workdir, rebuild=False)
         self.assertEqual(cp.returncode, 0, msg=cp.stderr)
@@ -163,7 +192,7 @@ class SyncTests(MemIsolationMixin, unittest.TestCase):
         count = psql_exec(f"SELECT count(*) FROM {TEST_SCHEMA}.semantic_facts;")
         self.assertEqual(count, "1")
         new_obj = psql_exec(
-            f"SELECT object FROM {TEST_SCHEMA}.semantic_facts WHERE subject = 'decision:0001';"
+            f"SELECT object FROM {TEST_SCHEMA}.semantic_facts WHERE subject = '{subject}';"
         )
         self.assertEqual(new_obj, "Updated Title")
 

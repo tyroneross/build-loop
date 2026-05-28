@@ -76,6 +76,12 @@ from _db_url import NO_URL_REASON, resolve_db_url  # noqa: E402
 
 DEFAULT_LIMIT = 10
 KINDS = ("runs", "decisions", "lessons", "semantic", "debugger")
+KIND_ALIASES = {
+    "decision": "decisions",
+    "lesson": "lessons",
+    "semantic_facts": "semantic",
+    "debug": "debugger",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -698,9 +704,16 @@ def recall(
 # ---------------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    # Back-compat for documented calls like:
+    #   python3 scripts/memory_facade.py recall --query "..."
+    # The facade has always performed recall; the subcommand is accepted as a
+    # no-op so old orchestrator docs/scripts keep working.
+    if argv_list and argv_list[0] == "recall":
+        argv_list.pop(0)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--query", default="")
-    parser.add_argument("--kind", choices=list(KINDS), default=None)
+    parser.add_argument("--kind", choices=list(KINDS) + sorted(KIND_ALIASES), default=None)
     parser.add_argument("--project", default=None)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--workdir", default=str(REPO_ROOT_DEFAULT))
@@ -710,11 +723,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Skip the Postgres semantic backend entirely (no env-var read, no connect attempt). "
              "Use when state.json.architecture.backendHealth.semantic.ok is false.",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_list)
+    kind = KIND_ALIASES.get(args.kind, args.kind)
 
     env = recall(
         query=args.query,
-        kind=args.kind,
+        kind=kind,
         project=args.project,
         limit=args.limit,
         workdir=Path(args.workdir).resolve(),
