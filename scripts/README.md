@@ -105,7 +105,7 @@ hygiene check as `scripts/` scales.
 | `optimize_loop.py`, `optimize_doe.py`, `metric_runner.py` | Optimization runner + DOE |
 | `systemic_rca_eval.py` | Experimental scorer for system-level RCA report shape: plain-language lead, failure-map depth, system-control terminal cause, evidence, tradeoffs/impact, and prevention control |
 | `systemic_rca_doe.py` | Experimental packet builder and results scorer for the systemic RCA DOE matrix |
-| `sync_skills.py`, `check_cache_sync.py` | Native-skill drift detector + cache hygiene |
+| `sync_skills.py`, `check_cache_sync.py`, `sync_plugin_cache.py` | Native-skill drift detector + cache hygiene; committed-HEAD plugin cache sync for Claude/Codex |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
 | `coordination_status.py` | Cheap multi-agent coordination sensor: Rally Point peers, overlaps, latest verdicts, dirty files → `clear | warn | blocked` JSON |
 | `coordination_rally.py` | Lightweight Rally Point rally publisher: presence + handoff without creating a coordination file |

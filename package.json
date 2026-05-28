@@ -24,6 +24,7 @@
     "commands",
     "skills",
     "scripts/check_cache_sync.py",
+    "scripts/sync_plugin_cache.py",
     "scripts/prune_plugin_cache.py",
     "scripts/prune_codex_plugin_cache.py",
     "hooks",
@@ -49,9 +50,13 @@
     "clean": "rm -rf dist",
     "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",
     "plugin:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --apply",
+    "plugin:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host all",
+    "plugin:sync-cache:hooks": "python3 scripts/sync_plugin_cache.py --source . --host all --install-git-hooks",
     "codex:prune-cache": "python3 scripts/prune_codex_plugin_cache.py --source .",
+    "codex:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host codex",
     "codex:prune-cache:apply": "python3 scripts/prune_codex_plugin_cache.py --source . --apply",
     "claude:prune-cache": "python3 scripts/prune_plugin_cache.py --source . --host claude",
+    "claude:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host claude",
     "claude:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --host claude --apply"
   },
   "keywords": [
