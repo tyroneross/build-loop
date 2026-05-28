@@ -1,6 +1,7 @@
 ---
 name: build-loop:capabilities
 description: Invoked by Phase 1 Assess to populate `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion. Keeps the orchestrator below the empirical tool-selection ceiling. Not user-callable; orchestrator-internal.
+user-invocable: false
 model: sonnet
 tools: ["Read", "Bash"]
 ---

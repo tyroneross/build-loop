@@ -1,6 +1,7 @@
 ---
 name: optimize
-description: Use when the user says "optimize this", "make X faster", "reduce <metric>", or "speed up my app". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables.
+description: Use when the user says "optimize this", "optimization", "make X faster", "reduce <metric>", or "speed up my app". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables.
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->

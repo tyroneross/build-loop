@@ -153,6 +153,21 @@ class McpServersReferenceTests(unittest.TestCase):
             self.fail(f"mcpServers should be string-path or dict, got {type(ref).__name__}")
 
 
+class CodexManifestReferenceTests(unittest.TestCase):
+    def test_codex_skill_root_resolves(self) -> None:
+        if not CODEX_PLUGIN_JSON.is_file():
+            self.skipTest(f"{CODEX_PLUGIN_JSON} not present (no Codex plugin surface)")
+        data = load_json(CODEX_PLUGIN_JSON)
+        ref = data.get("skills")
+        if ref is None:
+            self.skipTest(".codex-plugin/plugin.json has no skills field")
+        self.assertIsInstance(ref, str, "Codex skills field should be a path string")
+        skills_path = (REPO_ROOT / ref).resolve()
+        self.assertTrue(skills_path.is_dir(), f"Codex skills path does not exist: {ref}")
+        skill_files = sorted(skills_path.glob("*/SKILL.md"))
+        self.assertTrue(skill_files, f"Codex skills path has no public SKILL.md files: {ref}")
+
+
 class SkillNameUniquenessTests(unittest.TestCase):
     def test_no_duplicate_skill_names(self) -> None:
         if not SKILLS_DIR.is_dir():

@@ -1,9 +1,10 @@
 ---
 name: knowledge
-description: Repo-local episodic memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". Owns `.episodic/`, `.semantic/`, `.procedural/` for any agent runtime — not coupled to build-loop.
+description: Canonical build-loop-memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only.
+user-invocable: true
 when_to_use: |
   - User wants to record a substantive choice with rationale
-  - User asks to regenerate `.episodic/decisions/INDEX.md` or `issues/INDEX.md`
+  - User asks to regenerate canonical decision indexes or validate decision files
   - User asks to validate frontmatter or supersession links
   - User asks to migrate `.build-loop/feedback.md` into MADR files
   - User asks to migrate playbooks to `.procedural/`
@@ -11,12 +12,12 @@ when_to_use: |
   - Auto-capture (Phase 3) and consolidation (Phase 4) are NOT yet
     implemented; this skill covers Phase 1 (manual + scripted) and
     Phase 2 (Postgres + pgvector retrieval) only.
-namespace: .episodic/, .semantic/, .procedural/ (at repo root, NOT under .build-loop/)
+namespace: ~/dev/git-folder/build-loop-memory/ (canonical), .build-loop/events.jsonl (repo-local runtime), legacy .episodic/ (migration/archive only)
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-# Knowledge — Repo-Local Episodic Memory (Phases 1 + 2)
+# Knowledge — Canonical Build-Loop Memory (Phases 1 + 2)
 
 This skill is the entrypoint for the four-memory-types framework. The
 full design lives at
@@ -27,29 +28,15 @@ and Postgres schema). Read it before making structural changes.
 ## What lives where
 
 ```
-.episodic/                 # immutable history (events, decisions, issues)
-├── events.jsonl           # append-only event stream, multi-source
-├── decisions/
-│   ├── INDEX.md           # generated; regenerate via the script
-│   ├── NNNN-YYYY-MM-DD-slug.md   # MADR per decision
-│   └── _history/          # superseded versions (recoverable)
-├── issues/
-│   ├── INDEX.md
-│   └── YYYY-MM-DD-slug.md
-└── transcript-summaries/  # per-session summaries (Phase 3 Stop hook)
+~/dev/git-folder/build-loop-memory/
+├── projects/<project>/decisions/   # canonical MADR decisions + INDEX.md
+├── projects/<project>/lessons/     # project-specific lessons
+├── lessons/                        # cross-project lessons
+├── indexes/                        # generated canonical indexes
+└── db/                             # Postgres helper material
 
-.semantic/                 # current truth (mutable, derived from episodic)
-├── MEMORY.md              # consolidated knowledge
-├── TAXONOMY.md            # controlled vocabulary — read first
-├── intent.md              # north star (renewed each build by Assess)
-├── goal.md                # current build goal + scoring criteria
-└── derived/               # auto-derived state (Phase 1.5+)
-
-.procedural/               # how-to (formalized from build-loop's debugging-memory pattern)
-├── _index.yaml
-└── <name>/
-    ├── procedure.md       # YAML frontmatter + body
-    └── incidents.jsonl    # one line per application
+<repo>/.build-loop/events.jsonl     # repo-local runtime timeline
+<repo>/.episodic/                   # legacy migration/archive input only
 ```
 
 ## Phase 1 surface — file-only operations
@@ -64,9 +51,9 @@ and Postgres schema). Read it before making structural changes.
 
 ## Phase 2 surface — DB-backed retrieval
 
-`write_decision.py` dual-writes (file canonical + DB row + embedding via
-`mcp__ollama-local__embed` model `nomic-embed-text`). DB errors do NOT
-fail the file write — the DB is regenerable from files.
+`write_decision.py` dual-writes (file canonical + best-effort DB row +
+embedding via `embed_backend`). DB errors do NOT fail the file write — the DB
+is regenerable from files.
 
 | Need | Tool |
 |---|---|
@@ -85,11 +72,11 @@ relevant prior memory rather than reading INDEX.md wholesale. See
 2. Run `write_decision.py` with the required flags. The script:
    - Allocates the next sequential ID (zero-padded 4-digit).
    - Writes the MADR to
-     `.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` using
+     `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/<canonical-id>.md` using
      `skills/knowledge/templates/madr-minimal.md` as the body
      scaffold (filled from CLI flags).
-   - Regenerates `.episodic/decisions/INDEX.md`.
-   - Appends one event to `.episodic/events.jsonl`.
+   - Regenerates the canonical decisions `INDEX.md`.
+   - Appends one event to `<repo>/.build-loop/events.jsonl`.
    - Embeds the body via local Ollama and inserts a row into
      `agent_memory.<schema>.semantic_facts` (best-effort; file
      write succeeds even if DB is down).

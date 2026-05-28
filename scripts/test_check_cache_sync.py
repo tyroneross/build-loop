@@ -33,8 +33,16 @@ def write(path: Path, text: str) -> None:
     path.write_text(text)
 
 
-def write_codex_source(root: Path, *, version: str = "1.0.0") -> None:
-    write(root / ".codex-plugin/plugin.json", json.dumps({"name": "build-loop", "version": version}))
+def write_codex_source(
+    root: Path,
+    *,
+    version: str = "1.0.0",
+    skills: str = "./skills",
+) -> None:
+    write(
+        root / ".codex-plugin/plugin.json",
+        json.dumps({"name": "build-loop", "version": version, "skills": skills}),
+    )
     write(root / "AGENTS.md", "# Agents\n")
     write(root / "README.md", "# Readme\n")
     write(root / "commands/build-loop.md", "---\ndescription: build\n---\n")
@@ -86,6 +94,51 @@ class CheckCacheSyncCodexTests(unittest.TestCase):
         result = run(["--host", "codex", "--source", str(self.source), "--cache", str(self.cache)])
         self.assertEqual(result.returncode, 1)
         self.assertIn("[MISSING IN CACHE] skills/build-loop/templates/codex-worker-prompt.md", result.stdout)
+
+    def test_codex_cache_uses_manifest_skill_root(self) -> None:
+        source = self.root / "public-source"
+        cache = self.root / "public-cache"
+        write_codex_source(source, skills="./codex-skills")
+        write(source / "codex-skills/build-loop/SKILL.md", "---\nname: build-loop\n---\npublic\n")
+        write(source / "skills/helper/SKILL.md", "---\nname: helper\n---\ninternal changed\n")
+        for path in (
+            ".codex-plugin/plugin.json",
+            "AGENTS.md",
+            "README.md",
+            "commands/build-loop.md",
+            "codex-skills/build-loop/SKILL.md",
+        ):
+            write(cache / path, (source / path).read_text())
+
+        result = run(["--host", "codex", "--source", str(source), "--cache", str(cache)])
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertNotIn("skills/helper/SKILL.md", result.stdout)
+
+    def test_codex_cache_reports_missing_manifest_skill_root_surface(self) -> None:
+        source = self.root / "missing-public-source"
+        cache = self.root / "missing-public-cache"
+        write_codex_source(source, skills="./codex-skills")
+        write(source / "codex-skills/build-loop/SKILL.md", "---\nname: build-loop\n---\npublic\n")
+        for path in (".codex-plugin/plugin.json", "AGENTS.md", "README.md", "commands/build-loop.md"):
+            write(cache / path, (source / path).read_text())
+
+        result = run(["--host", "codex", "--source", str(source), "--cache", str(cache)])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[MISSING IN CACHE] codex-skills/build-loop/SKILL.md", result.stdout)
+
+    def test_codex_cache_checks_manifest_mcp_reference(self) -> None:
+        manifest = json.loads((self.source / ".codex-plugin/plugin.json").read_text())
+        manifest["mcpServers"] = "./.mcp.json"
+        write(self.source / ".codex-plugin/plugin.json", json.dumps(manifest))
+        write(self.source / ".mcp.json", json.dumps({"mcpServers": {}}))
+        write(self.cache / ".codex-plugin/plugin.json", json.dumps(manifest))
+
+        result = run(["--host", "codex", "--source", str(self.source), "--cache", str(self.cache)])
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[MISSING IN CACHE] .mcp.json", result.stdout)
 
     def test_codex_cache_reports_stale_installed_versions(self) -> None:
         home = self.root / "home"

@@ -1,8 +1,8 @@
 ---
 name: debug-loop
-description: Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for "root cause", memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative 7-phase loop — not for known fixes or trivial issues.
+description: Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues.
 version: 1.1.0
-user-invocable: false
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->

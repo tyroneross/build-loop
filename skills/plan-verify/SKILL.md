@@ -1,6 +1,7 @@
 ---
 name: plan-verify
-description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:plan-verify`, asks to "verify the plan" or "lint the plan", or any plan markdown change touches the synthesis-density / risk_reason / modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.
+description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:plan-verify`, asks to "verify the plan" or "lint the plan", or any plan markdown change touches evidence, synthesis-density, risk_reason, or modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.
+user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -12,7 +13,8 @@ description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/bu
 Catch grep-checkable plan errors before they ship — orphan misclassifications,
 internal numeric drift, route changes without evidence, package-state
 contradictions, missing markers on factual claims, and missing parallel
-dispatch decisions. The deterministic counterpart to `plan-critic` (LLM,
+dispatch decisions. It also warns when a non-trivial plan omits the clean-sheet
+vs current-constraints approach comparison. The deterministic counterpart to `plan-critic` (LLM,
 non-deterministic checks).
 
 ## When to invoke
@@ -59,6 +61,7 @@ Args:
 | 9 | `external-call-without-budget-ceiling` | Plan introduces a new external API or LLM call without a budget / max_tokens / timeout / rate_limit keyword within 10 lines | WARN |
 | 10 | `risk-surface-change-without-threat-model` | Plan surfaces any risk-surface signal (new tool / MCP / LLM call / persistent memory / auth change / external API / user-data handling) without referencing a threat-model artifact, OWASP/ASI ID, or "threat-model: not-applicable: <reason>" anywhere in the doc | **BLOCKER** |
 | 11 | `parallel-decision-record` | A plan names multiple independent / parallel-safe chunks but omits `parallel_batch:` or `parallel_skipped_reason:` | **BLOCKER** |
+| 12 | `approach-lenses-missing` | A non-trivial architecture/workflow/dependency/interface plan omits `## Approach Lenses` or `Approach Lenses: n/a - <reason>` | WARN |
 
 Rules 8–10 ship with the `security-methodology` skill (build-loop 0.7.x). They lint the security boundary at Phase 2 the same way rules 1–4 lint the factual / orphan / package boundary. When rule 10 fires, the orchestrator's Phase 1 trigger-detector should also be flipping `triggers.riskSurfaceChange: true` — if rule 10 fires but the trigger isn't set, that's a Phase 1 detection gap worth investigating.
 

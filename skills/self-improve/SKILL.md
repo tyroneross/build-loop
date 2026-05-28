@@ -2,7 +2,7 @@
 name: build-loop:self-improve
 description: Use when Phase 6 Learn fires automatically after Report, the user runs `/build-loop:self-improve`, or asks to "scan recent runs" or "improve build-loop". Scans recent runs for recurring patterns, auto-drafts experimental skills/agents with A/B tracking.
 version: 0.1.0
-user-invocable: true
+user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->

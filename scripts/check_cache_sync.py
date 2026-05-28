@@ -8,8 +8,8 @@ in docs/manifests/scripts, resolves each path in both the source repo and the
 cache, and reports files that diverge.
 
 For Codex, checks the installed Codex plugin cache against Codex-visible source
-surfaces: .codex-plugin/plugin.json, AGENTS.md, README.md, commands/*.md, and
-skills/**/*.md/json/js/mjs/py/sh/ts.
+surfaces: .codex-plugin/plugin.json, AGENTS.md, README.md, commands/*.md, the
+manifest-declared skill root, and the manifest-declared MCP config.
 
 For Rally Point coordination work, ``--coordination-cache-parity``
 compares the installed Claude and Codex plugin caches against each other for
@@ -105,13 +105,28 @@ def find_references(source: Path) -> set[str]:
     return refs
 
 
-def find_codex_surfaces(source: Path) -> set[str]:
+def _manifest_path_ref(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    ref = value.strip()
+    if ref.startswith("./"):
+        return ref[2:]
+    return ref.lstrip("/")
+
+
+def find_codex_surfaces(source: Path, manifest: dict | None = None) -> set[str]:
     refs: set[str] = set()
     for extra in (".codex-plugin/plugin.json", "AGENTS.md", "README.md"):
         if (source / extra).exists():
             refs.add(extra)
 
-    for root_name in ("skills", "commands"):
+    skill_root = _manifest_path_ref((manifest or {}).get("skills")) or "skills"
+    root_names = [skill_root, "commands"]
+    mcp_ref = _manifest_path_ref((manifest or {}).get("mcpServers"))
+    if mcp_ref:
+        refs.add(mcp_ref)
+
+    for root_name in root_names:
         root_path = source / root_name
         if not root_path.exists():
             continue
@@ -173,14 +188,19 @@ def default_cache(source: Path, host: str, name: str, version: str, marketplace:
 
     cache_root = Path.home() / ".codex" / "plugins" / "cache"
     if marketplace:
-        return cache_root / marketplace / name / version, []
+        plugin_root = cache_root / marketplace / name
+        stale = []
+        if plugin_root.is_dir():
+            stale = [p for p in plugin_root.iterdir() if p.is_dir() and p.name != version]
+        return plugin_root / version, sorted(stale, key=lambda p: p.name, reverse=True)
 
-    exact_matches = [p for p in find_installed_versions(cache_root, name) if p.name == version]
+    installed_versions = find_installed_versions(cache_root, name)
+    stale = [p for p in installed_versions if p.name != version]
+    exact_matches = [p for p in installed_versions if p.name == version]
     if exact_matches:
-        return exact_matches[0], []
+        return exact_matches[0], sorted(stale, key=lambda p: p.name, reverse=True)
 
-    stale = find_installed_versions(cache_root, name)
-    return cache_root / CODEX_DEFAULT_MARKETPLACE / name / version, stale
+    return cache_root / CODEX_DEFAULT_MARKETPLACE / name / version, sorted(stale, key=lambda p: p.name, reverse=True)
 
 
 def check_sync(source: Path, cache: Path, refs: set[str]) -> list[dict]:
@@ -415,7 +435,7 @@ def main() -> int:
         return 1 if args.fail_on_missing_cache else 0
 
     if args.host == "codex":
-        refs = find_codex_surfaces(source)
+        refs = find_codex_surfaces(source, manifest)
     else:
         refs = find_references(source)
         # Always also check the manifest + hooks even if not referenced via ${CLAUDE_PLUGIN_ROOT}
@@ -426,7 +446,15 @@ def main() -> int:
     diffs = check_sync(source, cache, refs)
 
     if args.json:
-        print(json.dumps({"host": args.host, "plugin": name, "version": version, "source": str(source), "cache": str(cache), "diffs": diffs}, indent=2))
+        print(json.dumps({
+            "host": args.host,
+            "plugin": name,
+            "version": version,
+            "source": str(source),
+            "cache": str(cache),
+            "stale_codex_versions": [str(p) for p in stale_versions] if args.host == "codex" else [],
+            "diffs": diffs,
+        }, indent=2))
     else:
         if not diffs:
             print(f"✅ {args.host} {name}@{version}: all {len(refs)} referenced files in sync")
@@ -447,6 +475,13 @@ def main() -> int:
             print()
             print("to resync:")
             print(suggest_fix(source, cache))
+        if args.host == "codex" and stale_versions:
+            print()
+            print("stale Codex cache version(s) still installed:")
+            for stale in stale_versions:
+                print(f"   {stale}")
+            print("to prune:")
+            print("  python3 scripts/prune_codex_plugin_cache.py --source . --apply")
 
     return 1 if diffs else 0
 

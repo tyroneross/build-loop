@@ -1,6 +1,6 @@
 ---
 name: plugin-tests
-description: Static-analysis test harness for Claude Code plugins. Triggers on "test plugin", "validate plugin", "check skill resolution", "run plugin tests", "lint plugin", "verify manifest", "namesake collision", "MCP registration check". Runs Python stdlib pytest scripts that catch namesake collisions, manifest drift, MCP misregistration, trigger-phrase coverage gaps, and bridge pre-flight gaps. Routed as build-loop's 4th orchestrator mode (Build / Optimize / Research / Test).
+description: Static-analysis test harness for Claude Code plugins. Triggers on "test plugin", "validate plugin", "check skill resolution", "run plugin tests", "lint plugin", "verify manifest", "namesake collision", "MCP registration check". Runs Python stdlib pytest scripts that catch namesake collisions, manifest drift, MCP misregistration, trigger-phrase coverage gaps, bridge pre-flight gaps, agent-surface drift, and cache-prune regressions. Routed as build-loop's 4th orchestrator mode (Build / Optimize / Research / Test).
 version: 0.1.0
 user-invocable: false
 ---
@@ -29,16 +29,20 @@ This is the **static** tier — pure text/JSON validation, zero runtime dependen
 | `scripts/test_mcp_registration.py` | `.mcp.json` shape, referenced binaries exist, server-name hygiene (warns on bare names that collide across plugins) | The `debugger` bare-name collision risk between bundled and standalone (resolved in 0.8.2 by naming the bundled server `build-loop-debugger`) |
 | `scripts/test_trigger_phrases.py` | Curated (skill, phrase) coverage in skill `description:` fields | Trigger-phrase gaps after the multi-provider auth audit |
 | `scripts/test_bridge_preflight.py` | Every `*-bridge/SKILL.md` has an availability/absence check + `user-invocable: false` | api-registry-bridge missing `user-invocable: false`; bridges that hard-fail when their target plugin isn't installed |
+| `scripts/test_agent_surface_policy.py` | Codex public wrappers, Claude `user-invocable` flags, and host-neutral Cursor/AGENTS policy stay aligned | Helper skills crowding Codex/ChatGPT `#` picker while Claude internals still need the full tree |
+| `scripts/test_prune_plugin_cache.py` | Host-aware stale cache pruning for Claude Code and Codex | Old Build Loop versions staying visible after a new version is installed |
+| `scripts/test_prune_codex_plugin_cache.py` | Backward-compatible Codex-only cache pruning wrapper | Existing `codex:prune-cache` workflow breaking after host-aware pruning was added |
 
 ## How to run
 
 From the plugin repo root:
 
 ```bash
-# Run all 5
+# Run all 8
 for t in scripts/test_skill_resolution.py scripts/test_plugin_manifest.py \
          scripts/test_mcp_registration.py scripts/test_trigger_phrases.py \
-         scripts/test_bridge_preflight.py; do
+         scripts/test_bridge_preflight.py scripts/test_agent_surface_policy.py \
+         scripts/test_prune_plugin_cache.py scripts/test_prune_codex_plugin_cache.py; do
   echo "=== $t ==="
   python3 "$t"
 done

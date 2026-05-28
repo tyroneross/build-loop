@@ -1,6 +1,7 @@
 ---
 name: knowledge-review
 description: Repo-local episodic memory review surface. Use when the user asks to "review my decisions", "show review queue", "check decision rot", "list open conflicts", "find stale procedures", or runs `/knowledge:review`. Read-only — never auto-resolves.
+user-invocable: false
 when_to_use: |
   - User runs `/knowledge:review` or asks to surface review-needing items
   - User wants to see decisions older than the staleness threshold

@@ -50,6 +50,10 @@ ACCEPTED_SIBLINGS: set[str] = {
     # share a name by design: command loads the skill which holds the
     # full review-surface contract (read-only, four sections).
     "build-loop:knowledge-review",
+    # Rally Point has both a user-facing command and an internal substrate
+    # skill. The command is the supported entrypoint; the skill is hidden from
+    # user invocation and loaded only by explicit internal routing.
+    "build-loop:agent-rally-point",
 }
 
 FINDING_KEYS = (

@@ -2,7 +2,7 @@
 name: build-loop:sync-skills
 description: Use when the user asks to "check skill drift", "sync skills", or "update architecture skills", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/ and skills/debugging/, recomputes source_hash, reports drift. Read-only.
 version: 0.1.0
-user-invocable: true
+user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->

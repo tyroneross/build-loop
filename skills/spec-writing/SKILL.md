@@ -2,7 +2,7 @@
 name: spec-writing
 description: Write a build-loop-compatible plan/spec. Walks the completeness checklist before drafting; runs plan-critic on output. Triggers when build-loop Phase 2 starts OR when the user says "write a plan", "write a spec", "draft a plan for X", "spec out a feature".
 version: 0.1.0
-user-invocable: true
+user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->

@@ -1,0 +1,22 @@
+---
+description: Keep Build Loop routing focused on public entrypoints and treat helper skills as internal implementation details.
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Build Loop Surface
+
+Use these public Build Loop entrypoints first:
+
+- `build-loop` for multi-step code work
+- `debug-loop` for root-cause debugging
+- `optimize` for measurable optimization
+- `research` for pre-build investigation
+- `knowledge` for durable decisions and lessons
+
+Treat `skills/` as Build Loop's internal implementation tree. Do not load
+helper skills directly unless a public entrypoint, command file, or orchestrator
+instruction explicitly references that helper.
+
+For the full policy, read `docs/agent-surface-policy.md`.

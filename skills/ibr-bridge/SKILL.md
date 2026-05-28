@@ -18,6 +18,9 @@ Use this skill only when the user explicitly asks for IBR, Interface Built Right
 3. `ui-validator` + `audit-design-rules.mjs` + browser/simulator artifacts for validation.
 4. `ux_triage.py` and repo-native coverage-gap queue entries for Review-D and Iterate.
 
+If IBR is absent or not installed, this bridge skips with a short note and the
+default build-loop UI route remains unchanged.
+
 ## Allowed Scope When Explicitly Requested
 
 Allowed:

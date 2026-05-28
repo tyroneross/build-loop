@@ -1,6 +1,7 @@
 ---
 name: auto-decision-capture
 description: Project-scoped skill for proactive in-session decision capture. Provides Claude the signal taxonomy, confidence ladder, overwrite rules, and the three extraction prompts (SPO triplet / MADR-aligned / batch consolidation) so substantive decisions land in build-loop-memory without manual triggering. Use when the user makes a substantive choice, confirms a proposal, or implies a constraint with textual evidence.
+user-invocable: false
 when_to_use: |
   - User issues a direct verbal marker ("let's go with X", "ship it", "use Y")
   - Claude offered a choice menu and the user picked one
