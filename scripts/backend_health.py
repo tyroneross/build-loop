@@ -387,7 +387,7 @@ def probe_fts(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept for API
     schema = os.environ.get("AGENT_MEMORY_SCHEMA", "personal_memory")
     try:
         ext_rows = query("SELECT extname FROM pg_extension WHERE extname IN ('pg_trgm', 'vector')")
-        extensions = {r[0] for r in ext_rows} if ext_rows else set()
+        extensions = {r["extname"] for r in ext_rows} if ext_rows else set()
         idx_rows = query(
             "SELECT indexname, indexdef FROM pg_indexes "
             "WHERE schemaname = %s AND tablename = 'semantic_facts'",
@@ -402,7 +402,7 @@ def probe_fts(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept for API
             out["reason"] = f"query_failed:{type(exc).__name__}"
         out["duration_ms"] = int((time.monotonic() - started) * 1000)
         return out
-    idx_defs = " ".join((d or "") for _name, d in idx_rows).lower()
+    idx_defs = " ".join((r["indexdef"] or "") for r in idx_rows).lower()
     out["pg_trgm"] = "pg_trgm" in extensions
     out["pgvector"] = "vector" in extensions
     out["hnsw_on_embedding"] = "hnsw" in idx_defs and "embedding" in idx_defs
