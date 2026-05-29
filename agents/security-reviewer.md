@@ -106,9 +106,13 @@ Severity rules:
       "severity": "CRITICAL | HIGH | MEDIUM | LOW",
       "title": "<one short clause>",
       "mapped_risks": ["LLM01", "ASI06", "..."],
+      "trust_boundary": "<the boundary the issue crosses, e.g. LLM-output→shell, cross-tenant>",
+      "misuse_story": "<how an attacker exercises it — the one-sentence abuse path>",
       "evidence": "path/to/file.ts:NN-MM",
       "snippet": "<≤120 chars from the diff or file>",
-      "recommendation": "<concrete next step — what change in code / config / boundary would close this>"
+      "minimal_patch_shape": "<smallest change that closes it — validation, allowlist, sandbox, boundary>",
+      "recommendation": "<concrete next step — what change in code / config / boundary would close this>",
+      "closure_proof": "<the regression check that proves it's closed (test/assertion/probe); null until closed>"
     }
   ],
   "critical_count": 0,
@@ -121,6 +125,8 @@ Severity rules:
 ```
 
 `pass: false` if `critical_count + high_count > 0`. `pass: true` otherwise (medium and low findings are logged, not blocking).
+
+**Severity normalization (QM v0.13.0).** These `CRITICAL|HIGH|MEDIUM|LOW` values are the normalized gating scale; `review_finding_gate.py` reads them case-insensitively and treats `critical`/`high` as blocking (clears only on `closed` + `closure_proof`). The `*_count` fields above are also consumed by the gate as a fallback signal. A CRITICAL/HIGH finding therefore blocks final Review exit until closed with `closure_proof` — consistent with `independent-auditor`'s normalized findings.
 
 ## Inline rubric (fallback when `security-methodology` skill is absent)
 

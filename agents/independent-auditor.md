@@ -59,6 +59,7 @@ A single JSON object. No prose outside the JSON.
   "scope": "independent-commit",
   "diff_sha_range": "<echo of input>",
   "verdict": "yay | nay | suggest_correction | look_again",
+  "nay_reason": "spec_contradiction | approach_flawed | null",
   "confidence": 0.0,
   "context_seen": {
     "intent": true,
@@ -73,22 +74,32 @@ A single JSON object. No prose outside the JSON.
   "findings": [
     {
       "id": "f1",
-      "severity": "info | minor | major",
+      "severity": "critical | high | medium | low",
       "spec_ref": "intent:<quoted-phrase> | constitution:C-X/rule_id | prd:<section>",
       "observed": "what the diff actually does",
       "expected": "what the spec implied",
-      "suggestion": "concrete edit, ideally file:line"
+      "evidence": "file:line or diff hunk proving the observation",
+      "suggestion": "concrete edit, ideally file:line",
+      "minimal_patch_shape": "smallest change that closes the gap",
+      "closure_proof": "the check that proves it's fixed (test/assertion/command); null until closed",
+      "trust_boundary": "(security findings only) the boundary crossed",
+      "misuse_story": "(security findings only) how it is abused"
     }
   ],
+  "replan_packet": "(only when nay_reason=approach_flawed) path to .build-loop/reports/<run>/replan-packet-<n>.md",
   "missing_artifacts": ["e.g., PRD not found at any default path"],
   "policy_refs": ["intent:line-12", "constitution:C-SUPPLY/dependency_cooldown"]
 }
 ```
 
+**Severity scale (QM v0.13.0, normalized).** Emit `critical | high | medium | low` directly — this is the scale `review_finding_gate.py` gates on (`critical`/`high` block final Review exit until closed with `closure_proof`; `medium`/`low` route through the queue/follow-up). For reference, legacy maps as `major→high`, `minor→medium`, `info→low`; a secret/merge-marker/security-boundary breach is `critical`. When severity is ambiguous, grade **up** (the gate defaults ambiguous to `high`) — never under-grade to dodge the no-critical/high exit.
+
 ## Verdict semantics
 
 - **yay** — the diff aligns with on-disk intent + constitution; ship it.
-- **nay** — the diff contradicts intent or trips a constitution rule; the commit should not land in its current form. Always pair with at least one `major` finding.
+- **nay** — the diff contradicts intent or trips a constitution rule; the commit should not land in its current form. Always pair with at least one `critical` or `high` finding, and set `nay_reason`:
+  - `nay_reason: spec_contradiction` — the *implementation* is wrong but the plan is sound → orchestrator routes to **re-execute** (fix the diff against the existing plan).
+  - `nay_reason: approach_flawed` (QM v0.13.0 strategic abandonment) — the *plan/approach itself* is the problem; more patching just preserves the wrong design (the complexity-balloon smell). Write a concise re-plan packet to `.build-loop/reports/<run>/replan-packet-<n>.md` (what's wrong with the approach, the invariant it violates, the direction a sound plan should take) and set `replan_packet` to that path. The orchestrator routes this back to **Phase 2** (NOT re-execute, NOT iterate-burn). Per-run re-plan budget is **2**; on the 3rd `approach_flawed` for one run, the orchestrator escalates to the user with the packet evidence instead of looping Phase 2↔Execute.
 - **suggest_correction** — partial alignment; specific file:line edits would close the gap without abandoning the commit.
 - **look_again** — context was insufficient to judge (PRD missing, intent empty, diff too large to read in this context). Name what's missing in `missing_artifacts` and let the operator gather it.
 
@@ -99,7 +110,7 @@ You do not block. The orchestrator (or the user) decides what to do with your ve
 - Do not fall back to inventing intent. If `intent.md` is empty or missing, your verdict is `look_again` and `missing_artifacts: ["intent.md"]`.
 - Do not score the orchestrator's behavior — only the diff and its alignment with the spec on disk.
 - Do not run tests, deploy anything, or invoke other agents.
-- Do not duplicate the deterministic hook's secret-file / merge-marker scan — the hook ran already. If you spot one, cite it as a `major` finding.
+- Do not duplicate the deterministic hook's secret-file / merge-marker scan — the hook ran already. If you spot one, cite it as a `critical` finding.
 
 ## Calibration
 

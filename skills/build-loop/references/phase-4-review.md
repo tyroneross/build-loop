@@ -14,15 +14,17 @@ Review runs every time we need an evaluation (initial post-Execute, and again af
 
 Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violations before spending tokens on full validation. Uses a separate read-only agent with no incentive to sandbag.
 
-1. **Dispatch `independent-auditor`** at `scope: "build"` against the full build diff (`<pre_build_sha>..HEAD`). Consolidated 2026-05-23 — single source of truth replacing both retired `commit-auditor` (chunk + build scope) and earlier retired `sonnet-critic`. The auditor has tools=[Read, Grep, Glob, Bash] (Bash for `git diff`), no Edit/Write. For Phase 3 step 7 (per-chunk advisory), dispatch the same `independent-auditor` with `diff_sha_range: <chunk_parent_sha>..<chunk_sha>` and `reason: "chunk-advisory"`.
+0. **Quality-gate trigger profile (QM v0.13.0, single source of truth — F4)**: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/review_trigger.py --context .build-loop/state.json $(git diff --name-only origin/main..HEAD | sed 's/^/--changed-file /') --json`. The returned `{plan_failure_modes_required, independent_review_required, cross_vendor_required, comprehension_artifact_required, reasons}` is the **single source** for the thresholds used here and in Sub-step G — Phase 2 and Review-G consume this profile rather than inventing separate heuristics. Triggers cover `riskSurfaceChange`, architecture-boundary crossing, reviewability-budget breach, new dependency/runtime, auth/file/network/persistence/security/model-tool changes, and low-confidence/new-approach critic output.
+1. **Dispatch `independent-auditor`** at `scope: "build"` against the full build diff (`<pre_build_sha>..HEAD`). Consolidated 2026-05-23 — single source of truth replacing both retired `commit-auditor` (chunk + build scope) and earlier retired `sonnet-critic`. The auditor has tools=[Read, Grep, Glob, Bash] (Bash for `git diff`), no Edit/Write. For Phase 3 step 7 (per-chunk advisory), dispatch the same `independent-auditor` with `diff_sha_range: <chunk_parent_sha>..<chunk_sha>` and `reason: "chunk-advisory"`. **Cross-vendor (QM v0.13.0)**: when the profile sets `cross_vendor_required` and a peer host is reachable (rally channel / `codex exec`), fan out a second-vendor reviewer in parallel and reconcile by severity+evidence; if no peer host can execute, record `cross_vendor: untested` — never claim it ran (per host-agent-is-the-LLM, this is the host's peer, not a vendored API call).
 2. **Input**: the rubric from `.build-loop/goal.md` + the implementer's diff (`git diff HEAD~1` or the changed-file set).
-3. **Output**: JSON envelope with `verdict` ∈ {yay, nay, suggest_correction, look_again} + `findings[]`. See `agents/independent-auditor.md` for the full schema.
-4. **Routing**:
+3. **Output**: JSON envelope with `verdict` ∈ {yay, nay, suggest_correction, look_again}, `nay_reason`, normalized `findings[]` (`severity: critical|high|medium|low`). See `agents/independent-auditor.md` for the full schema.
+4. **Routing** (QM v0.13.0 normalized severities; legacy `major→high`, `minor→medium`, `info→low`):
    - `verdict: yay` → proceed to sub-step B (Validate)
-   - `verdict: nay` with `severity: major` finding → route back to Execute for fixes (strong-checkpoint; no iteration counter burn yet on critic-only failures)
-   - `verdict: suggest_correction` with `auto_fixable: true` AND `severity ≤ minor` → Auto-Resolve queue (Sub-step F)
+   - `verdict: nay, nay_reason: spec_contradiction` (paired with a `critical`/`high` finding) → route back to **Execute** for fixes (strong-checkpoint; no iteration counter burn yet on critic-only failures)
+   - `verdict: nay, nay_reason: approach_flawed` → route back to **Phase 2 re-plan** (the approach itself is wrong; consume the auditor's `replan_packet` at `.build-loop/reports/<run>/replan-packet-<n>.md`). Per-run re-plan budget **2**; the 3rd `approach_flawed` escalates to the user with the packet rather than looping Phase2↔Execute. This is distinct from re-execute.
+   - `verdict: suggest_correction` with `auto_fixable: true` AND `severity in {medium, low}` → Auto-Resolve queue (Sub-step F)
    - `verdict: look_again` → operator gathers the named `missing_artifacts` and re-runs the auditor
-   - `severity: info|minor` findings → record in `.build-loop/issues/` and proceed
+   - `severity: medium|low` findings → record in `.build-loop/issues/` and proceed; `critical|high` never proceed silently (they block the final pass — see Sub-step G no-critical/high exit gate)
 5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers.
 6. **Skip** on re-reviews after Iterate (critic already saw the diff at first pass) unless Iterate touched different files. Skip entirely for trivial chunks (single-file typo, config value).
 
@@ -173,7 +175,7 @@ This is **measurement infrastructure, not a factor** — it is present and ident
 
 Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
 
-- **Sub-step A Critic** — findings with `severity ≤ minor` AND `suggestion` naming a single `file:line` (canonical independent-auditor finding fields per `agents/independent-auditor.md`)
+- **Sub-step A Critic** — findings with normalized `severity in {medium, low}` AND `suggestion` naming a single `file:line` (canonical independent-auditor finding fields per `agents/independent-auditor.md`; QM v0.13.0 — legacy `minor→medium`, `info→low`)
 - **Sub-step D Fact-Check & Mock Scan** — non-blocking gate findings (e.g. `Plugin Cache Sync` divergence, `Version-Bump Advisor` notes when `release-pending.md` is absent, single-file documentation drift)
 - **Operator queue** — items previously deferred via the `## Held` section of a prior build's report
 
@@ -190,7 +192,7 @@ For each item:
 Cap auto-execute attempts per item at the existing Iterate ceiling (5x). After the cap, demote to `## Held` with reason `"auto-resolve cap reached after N attempts"`.
 
 **What does NOT belong in Auto-Resolve:**
-- Strong-checkpoint findings from Sub-step A — those continue routing back to Execute (no iteration counter burn).
+- Strong-checkpoint findings from Sub-step A — `nay_reason: spec_contradiction` routes back to Execute, `nay_reason: approach_flawed` routes back to Phase 2 re-plan (no iteration counter burn either way; QM v0.13.0).
 - Sub-step B Validate failures — those route to Phase 5 Iterate.
 - Anything matching deployment_policy.py heuristics — autonomy_gate delegates to deployment_policy automatically; the verdict still flows through `auto | confirm | block`, but the source-of-truth is deployment_policy for those items.
 
@@ -199,6 +201,10 @@ The auto-resolve queue is rebuilt from scratch per Phase 4 invocation. Items not
 ### Sub-step G: Report (only on final Review pass)
 
 Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes final artifacts and closes the build.
+
+**No-critical/high exit gate (QM v0.13.0 Piece 3, BLOCKING).** Before this final pass may report `pass`, collect every reviewer findings JSON produced this run (independent-auditor + security-reviewer) and run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/review_finding_gate.py --findings-json <each.json> --json`. It normalizes legacy (`major→high`, `minor→medium`, `info→low`; security `CRITICAL|HIGH|MEDIUM|LOW` case-insensitively; ambiguous→`high`) and returns `{pass, blocking_count, ...}`, exit 1 when any `critical`/`high` finding is open (not `closed` + `closure_proof`). **Exit 1 → the final pass is blocked; route the blocking findings to Phase 5 Iterate** (the fixed 5-iteration cap cannot finalize with an open critical/high). Exit 0 → proceed. Medium/low never block here — they route through the ux-queue/followup with explicit disposition; they are never silently skipped.
+
+**Comprehension artifact + simplicity metrics (QM v0.13.0 Piece 5).** When the Sub-step A trigger profile set `comprehension_artifact_required`, write `.build-loop/reports/<run>/comprehension.md` from `templates/comprehension-artifact.md` (Mermaid of the changed surface + self-grill Q&A) and add a `simplicity_metrics` block to the scorecard via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/metric_runner.py --simplicity-diff origin/main --head HEAD --json` → `{net_loc, complexity_delta?, dependency_delta, new_abstractions}`. "Fewer lines" is a win only when correctness, security, testability, and observability are preserved or improved.
 
 Final report sections, in this order:
 
