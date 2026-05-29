@@ -14,6 +14,14 @@ Add a `category` enum field to `Trip` with values `vacation | camp | conference`
 
 Render camps in the same TripCard component. The card already accepts an optional badge prop; we wire `category === 'camp'` to a "Camp" badge.
 
+## Failure Modes
+
+- **Primary invariant:** existing vacation trips continue rendering exactly as before while camp trips get the new category badge.
+- **Likely failure modes:** migration default omitted, enum value misspelled, existing TripCard badge prop bypassed.
+- **Observability signal:** failing migration, snapshot diff missing the badge, or existing trip snapshot changing unexpectedly.
+- **Proof check:** run the migration in CI and update the TripCard snapshot test with both `vacation` and `camp` categories.
+- **Rollback/containment:** revert the UI badge wiring and leave the additive defaulted column in place until a follow-up migration removes it.
+
 ## Phase 1 — Schema
 
 Add migration `0014_trip_category.sql`:
