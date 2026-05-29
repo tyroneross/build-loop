@@ -85,6 +85,39 @@ def test_append_and_read_since(chan: Path):
     assert ch.read_changes_since(chan / "nope", 0) == ([], 0)
 
 
+def test_read_normalizes_hash_chain_record(chan: Path):
+    row = {
+        "event": {
+            "id": "evt_hash_1",
+            "kind": "handoff",
+            "tool": "claude_code",
+            "model": "inherit",
+            "run_id": "run-1",
+            "app_slug": "agent-rally-point",
+            "subject": "review this",
+            "time": "2026-05-29T00:00:00Z",
+            "payload": {
+                "from_tool": "claude_code",
+                "to_tool": "codex",
+                "subject": "review this",
+                "requires_ack": True,
+            },
+        },
+        "local_seq": 7,
+        "received_at": "2026-05-29T00:00:01Z",
+    }
+    (chan / "changes.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    recs, off = ch.read_changes_since(chan, 0)
+
+    assert off > 0
+    assert len(recs) == 1
+    assert recs[0]["kind"] == "handoff"
+    assert recs[0]["tool"] == "claude_code"
+    assert recs[0]["revision"] == 7
+    assert recs[0]["payload"]["to_tool"] == "codex"
+
+
 def _writer(d: str, tag: int):
     for i in range(20):
         ch.append_change(

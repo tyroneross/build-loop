@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import json
 import os
 import time
 from pathlib import Path
 
 _REV_NAME = "revision"
+_TAIL_NAME = "rally.tail.json"
+_LOG_NAME = "changes.jsonl"
 _LOCK_TIMEOUT_S = 0.5
 _LOCK_POLL_S = 0.01
 
@@ -30,18 +33,47 @@ def _rev_path(channel_dir: Path) -> Path:
     return Path(channel_dir) / _REV_NAME
 
 
+def _hash_chain_revision(channel_dir: Path) -> int:
+    d = Path(channel_dir)
+    try:
+        tail = json.loads((d / _TAIL_NAME).read_text(encoding="utf-8"))
+        next_seq = int(tail.get("next_seq", 0))
+        if next_seq > 0:
+            return next_seq - 1
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        pass
+
+    latest = 0
+    try:
+        with open(d / _LOG_NAME, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                    seq = int(row.get("local_seq", 0))
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    continue
+                if seq > latest:
+                    latest = seq
+    except OSError:
+        return 0
+    return latest
+
+
 def read_revision(channel_dir: Path) -> int:
     """Return the current revision (0 if absent/unreadable). No lock."""
     p = _rev_path(channel_dir)
+    hash_chain_rev = _hash_chain_revision(Path(channel_dir))
     try:
         raw = p.read_text().strip()
     except (FileNotFoundError, OSError):
-        return 0
+        return hash_chain_rev
     try:
         v = int(raw)
     except (ValueError, TypeError):
-        return 0
-    return v if v >= 0 else 0
+        return hash_chain_rev
+    return max(v if v >= 0 else 0, hash_chain_rev)
 
 
 def bump_revision(channel_dir: Path) -> int:

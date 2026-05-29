@@ -63,6 +63,44 @@ def _log_path(channel_dir: Path) -> Path:
     return Path(channel_dir) / _LOG_NAME
 
 
+def _int_or_zero(value) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed >= 0 else 0
+
+
+def normalize_record(record: dict) -> dict:
+    """Return a legacy-shaped change record for both Rally log formats."""
+    if not isinstance(record, dict):
+        return record
+    event = record.get("event")
+    if not isinstance(event, dict):
+        return record
+
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+
+    normalized = {
+        "ts": event.get("time") or record.get("received_at") or record.get("ts"),
+        "kind": event.get("kind") or event.get("type") or "unknown",
+        "tool": event.get("tool") or payload.get("from_tool") or "unknown",
+        "model": event.get("model") or payload.get("model") or "unknown",
+        "run_id": event.get("run_id") or payload.get("run_id") or "unknown",
+        "app_slug": event.get("app_slug") or record.get("app_slug") or "",
+        "payload": payload,
+        "revision": _int_or_zero(record.get("local_seq") or record.get("revision")),
+    }
+    if event.get("id"):
+        normalized["event_id"] = event["id"]
+    if event.get("subject") and "subject" not in payload:
+        normalized["subject"] = event["subject"]
+    normalized["_source_format"] = "hash-chain"
+    return normalized
+
+
 def make_record(
     *,
     kind: str,
@@ -155,7 +193,7 @@ def read_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
                     break  # partial trailing line — re-read next poll
                 new_offset += len(raw)
                 try:
-                    records.append(json.loads(raw.decode("utf-8")))
+                    records.append(normalize_record(json.loads(raw.decode("utf-8"))))
                 except (ValueError, UnicodeDecodeError):
                     continue  # skip a corrupt line, keep offset advancing
     except OSError:

@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import multiprocessing as mp
 import sys
 from pathlib import Path
@@ -32,6 +33,28 @@ def chan(tmp_path: Path) -> Path:
 
 def test_missing_is_zero(chan: Path):
     assert rev.read_revision(chan) == 0
+
+
+def test_hash_chain_tail_sets_revision(chan: Path):
+    (chan / "rally.tail.json").write_text(
+        json.dumps({"next_seq": 8}),
+        encoding="utf-8",
+    )
+
+    assert rev.read_revision(chan) == 7
+
+
+def test_hash_chain_log_sets_revision_when_tail_missing(chan: Path):
+    rows = [
+        {"event": {"kind": "profile"}, "local_seq": 2},
+        {"event": {"kind": "handoff"}, "local_seq": 5},
+    ]
+    (chan / "changes.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    assert rev.read_revision(chan) == 5
 
 
 def test_bump_monotonic(chan: Path):

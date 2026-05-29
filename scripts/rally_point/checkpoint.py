@@ -58,7 +58,8 @@ _SURFACE_TOP_KEYS = (
 _SURFACE_PAYLOAD_KEYS = (
     "phase", "step", "verdict", "session_id", "to_session_id",
     "from_session_id", "lease_until", "scope", "mode", "run_id",
-    "acknowledges", "requested_action", "reason",
+    "acknowledges", "requested_action", "reason", "from_tool", "to_tool",
+    "subject", "owner_tool", "resource", "requires_ack",
 )
 _FREETEXT_CAP = 240
 

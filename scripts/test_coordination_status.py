@@ -270,6 +270,48 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(status["channel_dir"],
                          str(channel_paths.app_channel_dir(slug)))
 
+    def test_hash_chain_room_records_are_visible(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        row = {
+            "event": {
+                "id": "evt_hash_1",
+                "kind": "handoff",
+                "tool": "claude_code",
+                "model": "inherit",
+                "run_id": "run-1",
+                "app_slug": slug,
+                "time": "2026-05-29T00:00:00Z",
+                "payload": {
+                    "from_tool": "claude_code",
+                    "to_tool": "codex",
+                    "subject": "please review",
+                    "requires_ack": True,
+                },
+            },
+            "local_seq": 1,
+            "received_at": "2026-05-29T00:00:01Z",
+        }
+        (channel / "changes.jsonl").write_text(
+            json.dumps(row) + "\n",
+            encoding="utf-8",
+        )
+        (channel / "rally.tail.json").write_text(
+            json.dumps({"next_seq": 2}),
+            encoding="utf-8",
+        )
+
+        status = self._run()
+
+        self.assertEqual(status["revision"], 1)
+        self.assertEqual(status["new_changes"][0]["kind"], "handoff")
+        self.assertEqual(status["new_changes"][0]["revision"], 1)
+        self.assertEqual(status["new_changes"][0]["tool"], "claude_code")
+        self.assertEqual(
+            status["new_changes"][0]["payload"]["to_tool"],
+            "codex",
+        )
+
     def _install_fake_agent_rally_point(self, channel_dir: str, slug: str) -> str:
         """Install a fake ``agent_rally_point.discover`` into a tmp dir
         and return the PYTHONPATH that makes it importable. The fake
