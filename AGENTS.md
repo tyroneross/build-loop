@@ -35,7 +35,7 @@ Peers read active work from `active_peers[]` and last-known active/stopped sessi
 
 Concise output — say only what the user needs to decide or act; cut narration, restated context, filler; no jargon.
 
-Lead each point with the finding. Progressive disclosure: headline first, files/detail below. Number points as standalone **bold-number** paragraphs with a blank line between (plain `1.` list syntax renders compressed). Style only, never a gate.
+Lead each point with the finding. Progressive disclosure: headline first, files/detail below. Number points as standalone **bold-number** paragraphs with a blank line between (plain `1.` list syntax renders compressed). Never use the contrastive-pivot construction ("not X — it's Y", "isn't X, it's Y", "not just X but Y"); state the point directly. Style only, never a gate.
 
 ## Phases
 
