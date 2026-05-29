@@ -8,7 +8,13 @@ import statistics
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+try:
+    from complexity_detector import analyze_source
+except ImportError:  # pragma: no cover - only when imported outside scripts/
+    analyze_source = None
 
 
 @dataclass
@@ -48,6 +54,21 @@ _NUMERIC_PATTERNS = [
 ]
 
 _ALLOWED_AGGREGATES = {"last", "min", "max", "mean", "median", "p95"}
+_DEPENDENCY_FILES = {
+    "package.json",
+    "package-lock.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "requirements.in",
+    "cargo.toml",
+    "go.mod",
+}
+
+_ABSTRACTION_PATTERNS = [
+    re.compile(r"^\+\s*(?:async\s+def|def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    re.compile(r"^\+\s*(?:export\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)"),
+    re.compile(r"^\+\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>"),
+]
 
 
 def parse_numeric(output: str) -> float:
@@ -326,6 +347,140 @@ def run_guard(cmd: str, timeout: int = 300, cwd: str | None = None) -> GuardResu
         )
 
 
+def _git(args: list[str], cwd: str | None) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f"git {' '.join(args)} failed")
+    return proc.stdout
+
+
+def _diff_args(base: str, head: str) -> list[str]:
+    return [f"{base}..{head}"]
+
+
+def _changed_files(base: str, head: str, cwd: str | None) -> list[str]:
+    out = _git(["diff", "--name-only", *_diff_args(base, head)], cwd)
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _loc_delta(base: str, head: str, cwd: str | None) -> dict[str, int]:
+    out = _git(["diff", "--numstat", *_diff_args(base, head)], cwd)
+    added = 0
+    deleted = 0
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        try:
+            added += int(parts[0])
+            deleted += int(parts[1])
+        except ValueError:
+            continue
+    return {"added": added, "deleted": deleted, "net": added - deleted}
+
+
+def _dependency_delta(base: str, head: str, cwd: str | None, files: list[str]) -> dict[str, object]:
+    manifest_files = [path for path in files if Path(path).name.lower() in _DEPENDENCY_FILES]
+    added: list[str] = []
+    removed: list[str] = []
+    for path in manifest_files:
+        diff = _git(["diff", *_diff_args(base, head), "--", path], cwd)
+        for line in diff.splitlines():
+            if line.startswith("+++") or line.startswith("---"):
+                continue
+            if line.startswith("+"):
+                added.append(line[1:].strip())
+            elif line.startswith("-"):
+                removed.append(line[1:].strip())
+    return {
+        "manifest_files_changed": manifest_files,
+        "added": added,
+        "removed": removed,
+    }
+
+
+def _new_abstractions(base: str, head: str, cwd: str | None, files: list[str]) -> list[dict[str, str]]:
+    abstractions: list[dict[str, str]] = []
+    for path in files:
+        diff = _git(["diff", *_diff_args(base, head), "--", path], cwd)
+        for line in diff.splitlines():
+            if line.startswith("+++") or not line.startswith("+"):
+                continue
+            for pattern in _ABSTRACTION_PATTERNS:
+                match = pattern.match(line)
+                if match:
+                    abstractions.append({"file": path, "name": match.group(1)})
+                    break
+    return abstractions
+
+
+def _show_or_empty(rev: str, path: str, cwd: str | None) -> str:
+    proc = subprocess.run(
+        ["git", "show", f"{rev}:{path}"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout
+
+
+def _complexity_counts(source_by_file: dict[str, str]) -> dict[str, int]:
+    counts = {"high": 0, "advisory": 0, "total": 0}
+    if analyze_source is None:
+        return counts
+    for path, source in source_by_file.items():
+        if not source.strip():
+            continue
+        try:
+            hotspots = analyze_source(source, path)
+        except SyntaxError:
+            continue
+        for hotspot in hotspots:
+            severity = hotspot.get("severity")
+            if severity in ("high", "advisory"):
+                counts[severity] += 1
+            counts["total"] += 1
+    return counts
+
+
+def _complexity_delta(base: str, head: str, cwd: str | None, files: list[str]) -> dict[str, object] | None:
+    py_files = [path for path in files if path.endswith(".py")]
+    if not py_files or analyze_source is None:
+        return None
+    before_sources = {path: _show_or_empty(base, path, cwd) for path in py_files}
+    after_sources = {path: _show_or_empty(head, path, cwd) for path in py_files}
+    before = _complexity_counts(before_sources)
+    after = _complexity_counts(after_sources)
+    return {
+        "before": before,
+        "after": after,
+        "delta": {key: after[key] - before[key] for key in ("high", "advisory", "total")},
+    }
+
+
+def run_simplicity_metrics(base: str, head: str = "HEAD", cwd: str | None = None) -> dict[str, object]:
+    """Return Review-G simplicity metrics for a git diff range."""
+    files = _changed_files(base, head, cwd)
+    loc = _loc_delta(base, head, cwd)
+    return {
+        "net_loc": loc["net"],
+        "loc": loc,
+        "complexity_delta": _complexity_delta(base, head, cwd, files),
+        "dependency_delta": _dependency_delta(base, head, cwd, files),
+        "new_abstractions": _new_abstractions(base, head, cwd, files),
+        "files_changed": files,
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -339,8 +494,10 @@ def _cli() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--cmd", help="metric command to run")
     group.add_argument("--guard", help="guard command to run")
+    group.add_argument("--simplicity-diff", metavar="BASE", help="emit Review-G simplicity metrics from BASE..HEAD")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--cwd", default=None, help="working directory for the command")
+    parser.add_argument("--head", default="HEAD", help="head revision for --simplicity-diff")
     parser.add_argument("--samples", type=int, default=1, help="measured runs to aggregate")
     parser.add_argument("--warmups", type=int, default=0, help="warmup runs to discard")
     parser.add_argument(
@@ -374,7 +531,7 @@ def _cli() -> None:
         }
         print(json.dumps(output))
         sys.exit(0 if result.success else 1)
-    else:
+    if args.guard:
         result = run_guard(args.guard, timeout=args.timeout, cwd=args.cwd)
         output = {
             "passed": result.passed,
@@ -382,6 +539,9 @@ def _cli() -> None:
         }
         print(json.dumps(output))
         sys.exit(0 if result.passed else 1)
+    output = run_simplicity_metrics(args.simplicity_diff, head=args.head, cwd=args.cwd)
+    print(json.dumps(output))
+    sys.exit(0)
 
 
 if __name__ == "__main__":

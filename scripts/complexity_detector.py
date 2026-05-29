@@ -43,6 +43,7 @@ CYCLOMATIC_THRESHOLD = 10
 COGNITIVE_THRESHOLD = 12
 DEPTH_THRESHOLD = 4
 SMALL_BODY_STMT_MAX = 4
+SMALL_BODY_LINE_MAX = 8
 
 KINDS = (
     "high_complexity",
@@ -239,7 +240,9 @@ class _ModuleScanner(ast.NodeVisitor):
                 continue
             if self.call_counts.get(name, 0) != 1:
                 continue
-            if len(getattr(fn, "body", [])) > SMALL_BODY_STMT_MAX:
+            stmt_count = sum(isinstance(node, ast.stmt) for node in ast.walk(fn)) - 1
+            line_count = (getattr(fn, "end_lineno", fn.lineno) or fn.lineno) - fn.lineno + 1
+            if stmt_count > SMALL_BODY_STMT_MAX or line_count > SMALL_BODY_LINE_MAX:
                 continue
             out.append({
                 "file": self.file, "line": fn.lineno,

@@ -77,6 +77,33 @@ def test_zero_false_positives_on_controls():
     assert env["skipped"] == []
 
 
+def test_needless_indirection_ignores_long_nested_helper(tmp_path):
+    path = tmp_path / "long_helper.py"
+    path.write_text(
+        """
+def _run_once(cmd):
+    try:
+        proc = cmd()
+        output = proc.stdout
+        if not output:
+            return None
+        return output.strip()
+    except TimeoutError:
+        return "timeout"
+    except Exception as exc:
+        return str(exc)
+
+
+def run(cmd):
+    return _run_once(cmd)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    env = cd.scan([str(path)])
+    needless = [h for h in env["hotspots"] if h["kind"] == "needless_indirection"]
+    assert needless == []
+
+
 # --------------------------------------------------------------------------
 # T-06 — diff-scoped only + graceful skip
 # --------------------------------------------------------------------------
