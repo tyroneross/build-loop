@@ -127,6 +127,20 @@ any of the above. Memory citation:
 
 **Orphaned-lane absorption:** when a lane assigned to an idle peer is **local and reversible** (commits, doc/agent edits, dead-code or dead-key trims, version bumps, test updates), the live agent **absorbs it** — does the work itself, then records in the report `absorbed <peer>'s idle lane: <what> [<evidence>]`. Do **not** block a release, a finish, or "done" on an idle peer's local lane — that is the same manufactured wait as a turn-length stop (see `skills/build-loop/SKILL.md` §"Keep going until done"). Only surface/hold a lane that is genuinely **peer-exclusive**: needs the other vendor's model (true cross-vendor review), the peer's environment/credentials, or an irreversible action only that peer is authorized to take. Coordination is cooperative, not a dependency that can deadlock the live agent.
 
+## Idle-agent self-selection (rally facilitates, the agent decides)
+
+**Rally is a facilitator, not an orchestrator.** It exposes room state (`rally room` / `rally next`), file-level deconfliction (`rally check before-write --path P`), and claims/handoffs. It does **not** assign or pick work. A waiting agent runs this decision tree itself and chooses — the agent's LLM reasons over rally's surfaced state. This keeps coordination decentralized: no single point that hands out tasks (which would be a failure site and a bottleneck).
+
+When an agent is idle and `rally next` returns no actionable item, walk the tree top-down, stop at the first match:
+
+1. **Pending handoff/inject addressed to me** (by session, name, or tool) → ack and handle it.
+2. **An open blocker I can resolve** → resolve it; post the resolution.
+3. **A no-regret item is free** → pick from the project's no-regret backlog (`.build-loop/followup/`, deferred-but-safe items, the run's recorded follow-ups). For its files, run `rally check before-write --path <each>`; if clear, `claim` them, `say` what you're starting, then do it. Reversible + behavior-preserving + tests-pass only.
+4. **All coding candidates are claimed or conflicted** → do read-only research or assessment that helps and has zero file conflict (simplification scans of untouched areas, duplication/test-gap audits, docs the room needs).
+5. **Nothing fits, or the only work left is risky/deferred/peer-exclusive** → stay idle and say so; do not start risky/deferred work, do not touch another session's claimed paths.
+
+The tree is the guideline; rally supplies the facts (claims, collisions, pending items) each branch needs. Two same-tool agents running it independently land on different work because claim-first + `check before-write` makes the first claimant win and the second re-select — no central referee required.
+
 ---
 
 ## MECE Packets (every write-handoff requires all four)
