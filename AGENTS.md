@@ -33,14 +33,9 @@ Peers read active work from `active_peers[]` and last-known active/stopped sessi
 
 ## Output style
 
-Concise, token-conserving output. Report only what the user needs to decide or act.
+Concise output — say only what the user needs to decide or act; cut narration, restated context, filler; no jargon.
 
-- Lead each point with the decision or finding as a statement; cut process narration, restated context, and low-value detail.
-- Numbered/bulleted lists get a blank line between items.
-- Progressive disclosure: headline first, supporting files/details below, deepest detail last or omitted.
-- Plain language, no jargon.
-
-This is a write-time style, never a gate — fix wording in place, never halt to satisfy it.
+Lead each point with the finding. Progressive disclosure: headline first, files/detail below. Number points as standalone **bold-number** paragraphs with a blank line between (plain `1.` list syntax renders compressed). Style only, never a gate.
 
 ## Phases
 
