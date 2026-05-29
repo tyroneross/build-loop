@@ -220,7 +220,7 @@ python3 scripts/build_report_lint.py <report.md> --json
 - Exit 1 → revise the report before emitting it. The linter blocks vague verified/known claims, missing `parallel_batch` / `parallel_skipped_reason`, and missing `merge_plan` fields.
 - Exit 2 → lint outage. Record `[warn] build-report-lint skipped (<reason>)` in `## Done` and continue.
 
-Evidence contract: each verified/known claim must name `observer=... method=... artifact=...`. Multi-chunk or parallel reports must include `merge_plan:` with `clean_against`, `conflicts_with`, and `suggested_order`.
+Evidence contract: each verified/known claim carries its evidence in the compact form `✅ <claim> [<method> → <artifact>]` (e.g. `✅ auth works [pytest → ci.log]`); `@<observer>` only when the observer isn't this run's orchestrator. One line per claim — no restated context or process narration. Multi-chunk or parallel reports must include `merge_plan:` with `clean_against`, `conflicts_with`, and `suggested_order`.
 
 **Forbidden in the report**:
 - Recommendation-list headers (e.g. headers that invite operator selection of which items to execute)
@@ -228,7 +228,7 @@ Evidence contract: each verified/known claim must name `observer=... method=... 
 - Any bullet phrased as `Want me to X?` or `Should I Y?`
 - Any list that presents items as choices for the operator to pick from
 
-If a category is empty (no Held items, no Blocked items), write the header followed by `_(none)_`. Do not omit empty sections.
+If a category is empty (no Held items, no Blocked items), omit the section entirely — no header, no `_(none)_` placeholder. A reader infers "none" from absence.
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 

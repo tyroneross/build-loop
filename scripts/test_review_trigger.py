@@ -19,12 +19,10 @@ from review_trigger import build_profile  # noqa: E402
 class ReviewTriggerTests(unittest.TestCase):
     def test_empty_context_has_no_trigger(self) -> None:
         profile = build_profile({})
-        self.assertFalse(profile["plan_failure_modes_required"])
         self.assertFalse(profile["independent_review_required"])
 
-    def test_non_trivial_plan_requires_failure_modes_without_review(self) -> None:
+    def test_non_trivial_plan_does_not_trigger_independent_review(self) -> None:
         profile = build_profile({"non_trivial": True})
-        self.assertTrue(profile["plan_failure_modes_required"])
         self.assertFalse(profile["independent_review_required"])
         self.assertFalse(profile["cross_vendor_required"])
 
@@ -39,9 +37,9 @@ class ReviewTriggerTests(unittest.TestCase):
         self.assertTrue(profile["independent_review_required"])
         self.assertIn("ambiguous_risk_surface_change", profile["reasons"])
 
-    def test_large_architecture_diff_requires_comprehension_artifact(self) -> None:
+    def test_large_architecture_diff_flags_reasons_and_review(self) -> None:
         profile = build_profile({"architectureBoundaryCrossed": True, "lines_changed": 250})
-        self.assertTrue(profile["comprehension_artifact_required"])
+        self.assertTrue(profile["independent_review_required"])
         self.assertIn("large_diff", profile["reasons"])
 
     def test_cli_emits_profile_json(self) -> None:

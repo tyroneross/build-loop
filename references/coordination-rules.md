@@ -119,6 +119,14 @@ overlap + dirty files; status `blocked` → resolve unresolved verdicts before
 any of the above. Memory citation:
 `feedback_poll_channel_at_step_boundaries`, `feedback_script_first_coordination_checks`.
 
+## Peer liveness & orphaned lanes (never wait on an idle peer)
+
+**An interactive CLI peer (Codex, Cursor, a peer Claude terminal) is NOT a daemon.** It acts only within a turn its user prompts, then idles awaiting the next input — it does **not** autonomously poll this channel and resume. A handoff to such a peer therefore executes only when its user next drives that terminal; it may sit unread indefinitely. Do not model a CLI peer as a continuously-running worker.
+
+**Liveness rule:** treat a peer with no channel activity for **>10 minutes while it owns an open handoff lane** as *idle* (silent ≠ dead, but ≠ progressing). Detect via the peer's last `recorded_at` in `changes.jsonl` vs now; a clean `stop`/`relinquish` also means idle.
+
+**Orphaned-lane absorption:** when a lane assigned to an idle peer is **local and reversible** (commits, doc/agent edits, dead-code or dead-key trims, version bumps, test updates), the live agent **absorbs it** — does the work itself, then records in the report `absorbed <peer>'s idle lane: <what> [<evidence>]`. Do **not** block a release, a finish, or "done" on an idle peer's local lane — that is the same manufactured wait as a turn-length stop (see `skills/build-loop/SKILL.md` §"Keep going until done"). Only surface/hold a lane that is genuinely **peer-exclusive**: needs the other vendor's model (true cross-vendor review), the peer's environment/credentials, or an irreversible action only that peer is authorized to take. Coordination is cooperative, not a dependency that can deadlock the live agent.
+
 ---
 
 ## MECE Packets (every write-handoff requires all four)

@@ -50,14 +50,6 @@ FILE_REASON_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("runtime_integration", ("runtime", "server", "worker", "daemon")),
 )
 
-COMPREHENSION_REASONS = {
-    "architecture_boundary",
-    "reviewability_budget_breach",
-    "large_diff",
-    "high_complexity",
-}
-
-
 def _norm_key(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
 
@@ -190,17 +182,11 @@ def build_profile(context: dict[str, Any], changed_files: list[str] | None = Non
 
     reasons = sorted(set(high_risk_reasons + plan_reasons))
     high_risk = bool(high_risk_reasons)
-    comprehension = any(
-        reason in COMPREHENSION_REASONS or reason.removeprefix("ambiguous_") in COMPREHENSION_REASONS
-        for reason in high_risk_reasons
-    )
 
     return {
         "profile_version": PROFILE_VERSION,
-        "plan_failure_modes_required": bool(plan_reasons or high_risk),
         "independent_review_required": high_risk,
         "cross_vendor_required": high_risk,
-        "comprehension_artifact_required": comprehension,
         "reasons": reasons,
         "changed_files": sorted(set(files)),
     }
