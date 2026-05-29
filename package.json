@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.12.16",
+  "version": "0.13.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
