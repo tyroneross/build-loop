@@ -45,13 +45,10 @@ Phase 1 uses stdlib only. Phase 2 DB path uses `psycopg[binary]` (added
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import re
 import sys
-import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -65,6 +62,8 @@ from _paths import (  # type: ignore  # noqa: E402
     default_schema as _default_schema,
     project_decisions_dir,
 )
+from atomic_io import LockedFile as _LockedFile  # type: ignore  # noqa: E402
+from atomic_io import atomic_write_bytes  # type: ignore  # noqa: E402,F401
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
 LOCK_TIMEOUT_S = 15
@@ -179,58 +178,19 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-# ---------- atomic primitives (mirrors write_run_entry.py) ----------
+# ---------- atomic primitives ----------
+# LockedFile + atomic_write_bytes are shared via scripts/atomic_io.py. This
+# module (and its importers revoke_decision / scan_transcript_for_decisions /
+# regenerate_knowledge_index / migrate_playbooks_to_procedural) historically
+# used a 15s lock timeout, so bind that default here while reusing the shared
+# implementation. atomic_write_bytes is re-exported above for those importers.
 
 
-class LockedFile:
-    """Exclusive fcntl.flock on a sidecar lockfile. Auto-released on close."""
+class LockedFile(_LockedFile):
+    """Decision-writer lock with this module's historical 15s default."""
 
     def __init__(self, target: Path, timeout_s: float = LOCK_TIMEOUT_S) -> None:
-        self.lock_path = target.with_suffix(target.suffix + ".lock")
-        self.timeout_s = timeout_s
-        self._fd: int | None = None
-
-    def __enter__(self) -> "LockedFile":
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
-        deadline = time.monotonic() + self.timeout_s
-        while True:
-            try:
-                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return self
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    os.close(self._fd)
-                    self._fd = None
-                    raise TimeoutError(
-                        f"Could not acquire lock on {self.lock_path} within {self.timeout_s}s"
-                    )
-                time.sleep(0.05)
-
-    def __exit__(self, *exc: object) -> None:
-        if self._fd is not None:
-            try:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            finally:
-                os.close(self._fd)
-                self._fd = None
-
-
-def atomic_write_bytes(target: Path, data: bytes) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=target.name + ".tmp.", dir=str(target.parent))
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except FileNotFoundError:
-            pass
-        raise
+        super().__init__(target, timeout_s)
 
 
 # ---------- frontmatter helpers ----------

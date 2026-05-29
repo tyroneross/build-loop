@@ -35,10 +35,15 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Local sibling import — atomic primitives live in one place (scripts/atomic_io.py).
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+from atomic_io import atomic_write_bytes  # type: ignore  # noqa: E402
 
 SCHEMA_VERSION = 1
 VALID_STATUS = {
@@ -53,23 +58,6 @@ DEFAULT_JSONL_MAX_MB = 10
 
 def iso_utc() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def atomic_write_bytes(target: Path, data: bytes) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=target.name + ".tmp.", dir=str(target.parent))
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except FileNotFoundError:
-            pass
-        raise
 
 
 def append_jsonl(target: Path, row: dict) -> None:
