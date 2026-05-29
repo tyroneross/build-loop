@@ -79,12 +79,70 @@ def _normalize_base(name: str) -> str:
     return base[:64]
 
 
+def _canonical_repo_root(cwd_path: Path) -> Path | None:
+    """Return the canonical repo root for ``cwd_path`` or ``None``.
+
+    Runs ``git rev-parse --git-common-dir`` scoped to ``cwd_path``. A
+    worktree's git-common-dir points at the *canonical* repo's ``.git``
+    (shared by the main checkout + every ``git worktree``), so the parent
+    of the resolved common-dir is identical from anywhere in the repo
+    family. Returns ``None`` when ``cwd_path`` is not a git repo, the
+    invocation fails, the output is empty, or resolution raises. Never
+    raises.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(cwd_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    if not out:
+        return None
+    common = Path(out)
+    if not common.is_absolute():
+        common = cwd_path / common
+    try:
+        return common.resolve().parent
+    except (OSError, RuntimeError):
+        return None
+
+
+def canonical_workdir(cwd: Path | str | None = None) -> Path:
+    """Return the canonical repo root for ``cwd`` (worktree-independent).
+
+    All discovery resolvers (native ``rally`` binary, ``agent-rally-discover``,
+    the Python import, and the embedded fallback) must receive the SAME
+    path for two ``git worktree`` checkouts of one repo to land in one
+    channel. A worktree path keyed verbatim splits the channel. This
+    helper collapses any worktree path to the main checkout root via
+    ``git rev-parse --git-common-dir`` (the same resolution ``app_slug``
+    uses), so callers canonicalize once at the discovery entry point.
+
+    Returns the original ``cwd`` (expanded, absolute) unchanged when it is
+    not a git repo / rev-parse fails / output is empty. Never raises.
+    """
+    if cwd is None:
+        cwd = Path.cwd()
+    cwd_path = Path(os.path.expanduser(str(cwd)))
+    repo_root = _canonical_repo_root(cwd_path)
+    if repo_root is None:
+        try:
+            return cwd_path.resolve()
+        except (OSError, RuntimeError):
+            return cwd_path
+    return repo_root
+
+
 def app_slug(cwd: Path | str | None = None) -> str:
     """Return the worktree-independent app slug for ``cwd``.
 
-    1. ``git rev-parse --git-common-dir`` (cwd-scoped). Resolve to an
-       absolute path; the *parent* of the common-dir is the canonical
-       repo root; its basename is the slug base.
+    1. ``git rev-parse --git-common-dir`` (cwd-scoped, via
+       ``_canonical_repo_root``). The *parent* of the common-dir is the
+       canonical repo root; its basename is the slug base.
     2. If ``cwd`` sits under a recognised sub-component dir (today only
        ``workers/``), append ``/<sub>`` (OQ1 — same convention as memory).
     3. Each slug segment is validated via ``_safe_project_tag``.
@@ -96,25 +154,8 @@ def app_slug(cwd: Path | str | None = None) -> str:
     if cwd is None:
         cwd = Path.cwd()
     cwd_path = Path(os.path.expanduser(str(cwd)))
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            cwd=str(cwd_path),
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
-        return derive_slug_from_cwd(cwd_path)
-    if not out:
-        return derive_slug_from_cwd(cwd_path)
-
-    common = Path(out)
-    if not common.is_absolute():
-        common = (cwd_path / common)
-    try:
-        repo_root = common.resolve().parent
-    except (OSError, RuntimeError):
+    repo_root = _canonical_repo_root(cwd_path)
+    if repo_root is None:
         return derive_slug_from_cwd(cwd_path)
 
     base = _normalize_base(repo_root.name) or "_unscoped"

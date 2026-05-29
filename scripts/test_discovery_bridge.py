@@ -423,5 +423,67 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
         self.assertIn(".agent-rally-point", result["channel_dir"])
 
 
+class DiscoveryBridgeWorktreeCanonicalizationTests(unittest.TestCase):
+    """Channel-split fix: two git worktrees of one repo resolve through
+    ``bridge.resolve`` to the SAME channel_dir.
+
+    Exercised via the internal fallback (BUILD_LOOP_BRIDGE_INTERNAL_ONLY)
+    so the assertion does not depend on a native rally binary being
+    installed. The canonicalization runs at the ENTRY of resolve(), before
+    any source is selected, so the internal path is a faithful proxy: if
+    the worktree path were not collapsed, the two checkouts would key
+    different channels regardless of which resolver wins.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="bridge-wt-canon-"))
+        self.repo = self.tmp / "split-repo"
+        self.repo.mkdir()
+        self._old_apps_root = os.environ.get("BUILD_LOOP_APPS_ROOT")
+        self._old_internal = os.environ.get("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
+        os.environ["BUILD_LOOP_APPS_ROOT"] = str(self.tmp / "apps")
+        os.environ["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
+        for args in (
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "t"],
+        ):
+            subprocess.run(["git", *args], cwd=self.repo, check=True,
+                           capture_output=True)
+        (self.repo / "f.txt").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True,
+                       capture_output=True)
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        bridge.clear_cache()
+
+    def tearDown(self) -> None:
+        for key, old in (
+            ("BUILD_LOOP_APPS_ROOT", self._old_apps_root),
+            ("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", self._old_internal),
+        ):
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        bridge.clear_cache()
+
+    def test_worktree_and_main_resolve_to_same_channel(self) -> None:
+        main_env = bridge.resolve(self.repo)
+        wt = self.tmp / "wt-room"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", str(wt), "HEAD"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        bridge.clear_cache()  # avoid per-path cache masking the split
+        wt_env = bridge.resolve(wt)
+        self.assertEqual(main_env.app_slug, wt_env.app_slug)
+        self.assertEqual(main_env.channel_dir, wt_env.channel_dir)
+        self.assertEqual(main_env.app_slug, "split-repo")
+
+
 if __name__ == "__main__":
     unittest.main()
