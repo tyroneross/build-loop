@@ -44,12 +44,9 @@ Zero dependencies. Python 3.11+.
 """
 from __future__ import annotations
 
-import fcntl
 import json
-import os
 import secrets
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -58,6 +55,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from _paths import memory_indexes_dir  # type: ignore  # noqa: E402
+from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E402
 
 LOCK_TIMEOUT_S = 5
 
@@ -93,33 +91,17 @@ def _correlation_id() -> str:
 
 
 def _append_row(path: Path, row: dict[str, Any]) -> None:
-    """Atomic append with sidecar flock. Fire-and-forget — swallows errors."""
+    """Atomic append under sidecar lock. Fire-and-forget — swallows errors.
+
+    Routes through atomic_io.LockedFile (timeout_s=LOCK_TIMEOUT_S). LockedFile
+    raises TimeoutError on lock-acquisition timeout; the outer except swallows
+    it + logs, preserving the best-effort give-up-rather-than-block contract.
+    """
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = path.with_suffix(path.suffix + ".lock")
-        line = json.dumps(row, separators=(",", ":"), default=str) + "\n"
-        deadline = time.monotonic() + LOCK_TIMEOUT_S
-        with open(lock_path, "a+") as lock_fh:
-            while True:
-                try:
-                    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if time.monotonic() >= deadline:
-                        # Best-effort; give up rather than block the consumer.
-                        print(
-                            f"WARN: memory_telemetry lock timeout after {LOCK_TIMEOUT_S}s on {lock_path}",
-                            file=sys.stderr,
-                        )
-                        return
-                    time.sleep(0.02)
-            try:
-                with open(path, "a", encoding="utf-8") as fh:
-                    fh.write(line)
-                    fh.flush()
-                    os.fsync(fh.fileno())
-            finally:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        line = (json.dumps(row, separators=(",", ":"), default=str) + "\n").encode("utf-8")
+        with LockedFile(path, timeout_s=LOCK_TIMEOUT_S):
+            existing = path.read_bytes() if path.exists() else b""
+            atomic_write_bytes(path, existing + line)
     except Exception as exc:  # noqa: BLE001 — fire-and-forget by contract
         print(f"WARN: memory_telemetry append failed: {exc}", file=sys.stderr)
 

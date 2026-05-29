@@ -36,12 +36,9 @@ Stdlib only. Python 3.11+.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
-import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,6 +48,7 @@ import sys
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from _paths import top_level_lessons_dir  # type: ignore  # noqa: E402
+from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E402
 
 LOCK_TIMEOUT_S = 10
 DEFAULT_INDEX_DIR = top_level_lessons_dir()
@@ -131,27 +129,10 @@ def append_row(
         row["source_host"] = source_host
 
     log_path = _index_path(index_dir)
-    lock_path = log_path.with_suffix(log_path.suffix + ".lock")
-    line = json.dumps(row, separators=(",", ":")) + "\n"
-    deadline = time.monotonic() + LOCK_TIMEOUT_S
-    with open(lock_path, "a+") as lock_fh:
-        while True:
-            try:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"lock timeout after {LOCK_TIMEOUT_S}s on {lock_path}"
-                    )
-                time.sleep(0.05)
-        try:
-            with open(log_path, "a", encoding="utf-8") as ledger_fh:
-                ledger_fh.write(line)
-                ledger_fh.flush()
-                os.fsync(ledger_fh.fileno())
-        finally:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+    line = (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8")
+    with LockedFile(log_path, timeout_s=LOCK_TIMEOUT_S):
+        existing = log_path.read_bytes() if log_path.exists() else b""
+        atomic_write_bytes(log_path, existing + line)
     return row
 
 

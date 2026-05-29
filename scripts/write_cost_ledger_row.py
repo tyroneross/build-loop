@@ -24,14 +24,16 @@ Zero dependencies. Python 3.11+.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
-import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E402
 
 LOCK_TIMEOUT_S = 10
 DEFAULT_LEDGER_PATH = Path.home() / ".bookmark" / "cost-ledger.jsonl"
@@ -101,27 +103,10 @@ def build_row(args: argparse.Namespace) -> dict[str, Any]:
 
 def append_row(ledger_path: Path, row: dict[str, Any]) -> None:
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = ledger_path.with_suffix(ledger_path.suffix + ".lock")
-    line = json.dumps(row, separators=(",", ":")) + "\n"
-    deadline = time.monotonic() + LOCK_TIMEOUT_S
-    with open(lock_path, "a+") as lock_fh:
-        while True:
-            try:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"lock timeout after {LOCK_TIMEOUT_S}s on {lock_path}"
-                    )
-                time.sleep(0.05)
-        try:
-            with open(ledger_path, "a", encoding="utf-8") as ledger_fh:
-                ledger_fh.write(line)
-                ledger_fh.flush()
-                os.fsync(ledger_fh.fileno())
-        finally:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+    line = (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8")
+    with LockedFile(ledger_path, timeout_s=LOCK_TIMEOUT_S):
+        existing = ledger_path.read_bytes() if ledger_path.exists() else b""
+        atomic_write_bytes(ledger_path, existing + line)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
