@@ -13,15 +13,12 @@
  * - Fuzzy Match (score: 0.7-0.85) - Jaro-Winkler distance for similar strings
  * - Category Match (score: 0.6) - Group similar categories
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parallelSearch = parallelSearch;
 exports.parallelPatternMatch = parallelPatternMatch;
 exports.parallelMemoryCheck = parallelMemoryCheck;
 const storage_1 = require("./storage");
-const natural_1 = __importDefault(require("natural"));
+const string_similarity_1 = require("./string-similarity");
 const logger_1 = require("./logger");
 // ============================================================================
 // PARALLEL SEARCH
@@ -138,11 +135,11 @@ async function executeFuzzyStrategy(incidents, queryLower) {
     for (const incident of incidents) {
         if (!incident.symptom || typeof incident.symptom !== 'string')
             continue;
-        const symptomScore = natural_1.default.JaroWinklerDistance(queryLower, incident.symptom.toLowerCase());
+        const symptomScore = (0, string_similarity_1.jaroWinklerDistance)(queryLower, incident.symptom.toLowerCase());
         // Also check root cause description
         const rootCauseDesc = incident.root_cause?.description ?? '';
         const rootCauseScore = rootCauseDesc
-            ? natural_1.default.JaroWinklerDistance(queryLower, rootCauseDesc.toLowerCase())
+            ? (0, string_similarity_1.jaroWinklerDistance)(queryLower, rootCauseDesc.toLowerCase())
             : 0;
         const maxScore = Math.max(symptomScore, rootCauseScore);
         if (maxScore >= fuzzyThreshold) {

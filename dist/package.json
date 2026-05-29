@@ -20,10 +20,17 @@
     },
     "files": [
         "dist",
+        "codex-skills",
         "commands",
         "skills",
+        "scripts/check_cache_sync.py",
+        "scripts/sync_plugin_cache.py",
+        "scripts/prune_plugin_cache.py",
+        "scripts/prune_codex_plugin_cache.py",
         "hooks",
         "agents",
+        "docs/agent-surface-policy.md",
+        ".cursor",
         ".claude-plugin",
         ".codex-plugin",
         ".agents",
@@ -40,7 +47,17 @@
         "test": "node test-v1.4.0-e2e.js && node test-v1.5.0-e2e.js",
         "benchmark": "node benchmark-scoring.js",
         "mcp": "node dist/src/mcp/server.js",
-        "clean": "rm -rf dist"
+        "clean": "rm -rf dist",
+        "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",
+        "plugin:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --apply",
+        "plugin:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host all",
+        "plugin:sync-cache:hooks": "python3 scripts/sync_plugin_cache.py --source . --host all --install-git-hooks",
+        "codex:prune-cache": "python3 scripts/prune_codex_plugin_cache.py --source .",
+        "codex:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host codex",
+        "codex:prune-cache:apply": "python3 scripts/prune_codex_plugin_cache.py --source . --apply",
+        "claude:prune-cache": "python3 scripts/prune_plugin_cache.py --source . --host claude",
+        "claude:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host claude",
+        "claude:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --host claude --apply"
     },
     "keywords": [
         "build-loop",
@@ -64,11 +81,9 @@
     "homepage": "https://github.com/tyroneross/build-loop#readme",
     "dependencies": {
         "commander": "^14.0.3",
-        "natural": "^8.1.0",
         "prompts": "^2.4.2"
     },
     "devDependencies": {
-        "@types/natural": "^5.1.5",
         "@types/node": "^20.0.0",
         "@types/prompts": "^2.4.9",
         "typescript": "^5.0.0"

@@ -40,9 +40,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkMemory = checkMemory;
 exports.getFullIncident = getFullIncident;
@@ -59,7 +56,7 @@ exports.checkMemoryWithVerdict = checkMemoryWithVerdict;
 exports.checkMemoryProgressive = checkMemoryProgressive;
 exports.checkMemoryScaled = checkMemoryScaled;
 const storage_1 = require("./storage");
-const natural_1 = __importDefault(require("natural"));
+const string_similarity_1 = require("./string-similarity");
 const logger_1 = require("./logger");
 /**
  * Default retrieval configuration
@@ -347,7 +344,7 @@ async function enhancedSearch(query, options) {
  * Returns score between 0 and 1 if above threshold, 0 otherwise
  */
 function fuzzyMatch(query, text, threshold) {
-    const distance = natural_1.default.JaroWinklerDistance(query.toLowerCase(), text.toLowerCase());
+    const distance = (0, string_similarity_1.jaroWinklerDistance)(query.toLowerCase(), text.toLowerCase());
     return distance >= threshold ? distance : 0;
 }
 const storage_2 = require("./storage");

@@ -15,7 +15,7 @@ import type {
   MemoryConfig
 } from './types';
 import { loadAllIncidents, loadAllPatterns } from './storage';
-import natural from 'natural';
+import { jaroWinklerDistance } from './string-similarity';
 import { traced } from './logger';
 
 /**
@@ -396,7 +396,7 @@ export async function enhancedSearch(
  * Returns score between 0 and 1 if above threshold, 0 otherwise
  */
 function fuzzyMatch(query: string, text: string, threshold: number): number {
-  const distance = natural.JaroWinklerDistance(
+  const distance = jaroWinklerDistance(
     query.toLowerCase(),
     text.toLowerCase()
   );
