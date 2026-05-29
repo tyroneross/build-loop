@@ -401,7 +401,7 @@ ASSESS → PLAN → EXECUTE → REVIEW ─────────────�
                             └──── ITERATE (up to 5x) ←──┘ on B/D blocking failures
 ```
 
-Review sub-step A (CRITIC) is the adversarial read-only pass; strong-checkpoint findings route back to EXECUTE without consuming iteration budget. Sub-step C (OPTIMIZE) is opt-in — runs the autoresearch-pattern optimization loop only when a mechanical metric exists; dispatches `optimize-runner` for autonomous iteration, then `overfitting-reviewer` for adversarial review. Sub-step F (AUTO-RESOLVE) drains the candidate queue of non-destructive open items by invoking `python3 scripts/autonomy_gate.py` for each; items route to `## Done`, `## Held`, or `## Blocked` per gate verdict. Sub-step G (REPORT) finalizes the run; the orchestrator agent owns the `runs[]` write — see `agents/build-orchestrator.md` §G.
+The diagram is the structure; per-sub-step routing detail lives once in `references/phase-4-review.md` (A strong-checkpoint → EXECUTE with no iteration burn; C `optimize-runner` + `overfitting-reviewer`; F `autonomy_gate.py` → `## Done`/`## Held`/`## Blocked`; G final-pass scorecard). The orchestrator agent owns the `runs[]` write — see `agents/build-orchestrator.md` §G.
 
 ## References
 
