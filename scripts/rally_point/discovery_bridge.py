@@ -438,8 +438,19 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     The order is: env override → Rust CLI → Python discover binary →
     Python import → internal fallback. The first non-``None`` source wins.
     Each successful resolution is cached for ``CACHE_TTL_SECONDS``.
+
+    Channel-split fix (worktree canonicalization): ``workdir`` is collapsed
+    to the canonical repo root via ``channel_paths.canonical_workdir``
+    BEFORE any resolver runs. Two ``git worktree`` checkouts of one repo
+    pass different paths here; the native ``rally`` / ``agent-rally-discover``
+    binaries key the channel on that path verbatim, so without
+    canonicalization the worktrees split into separate (empty) channels.
+    Canonicalizing once at the entry makes every resolver — native binary
+    or embedded fallback — receive the identical main-checkout root. A
+    non-git ``workdir`` is returned unchanged, preserving the ``_unscoped``
+    behavior downstream.
     """
-    workdir_path = Path(workdir).expanduser().resolve()
+    workdir_path = channel_paths.canonical_workdir(workdir)
     workdir_key = str(workdir_path)
 
     # Test-isolation hook: ``BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1`` short-

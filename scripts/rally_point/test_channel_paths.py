@@ -59,6 +59,52 @@ def test_slug_parity_worktree_vs_main(temp_repo: Path, tmp_path: Path):
     assert main_slug == wt_slug == "my-cool-app"
 
 
+def test_channel_dir_parity_worktree_vs_main(
+    temp_repo: Path, tmp_path: Path, monkeypatch
+):
+    """Two worktrees of one repo resolve to the SAME slug AND channel_dir.
+
+    The channel-split defect: a worktree path keyed verbatim by the native
+    resolver lands in a different (empty) room. Canonicalization makes the
+    slug and the embedded-fallback channel_dir identical from either path.
+    """
+    monkeypatch.setenv(
+        "BUILD_LOOP_APPS_ROOT", str(tmp_path / ".build-loop" / "apps")
+    )
+    main_slug = ap.app_slug(cwd=temp_repo)
+    main_dir = ap.app_channel_dir(main_slug)
+
+    wt = tmp_path / "wt-parity"
+    _git(["worktree", "add", "-q", str(wt), "HEAD"], temp_repo)
+    wt_slug = ap.app_slug(cwd=wt)
+    wt_dir = ap.app_channel_dir(wt_slug)
+
+    assert main_slug == wt_slug == "my-cool-app"
+    assert main_dir == wt_dir
+
+
+def test_canonical_workdir_worktree_collapses_to_main(
+    temp_repo: Path, tmp_path: Path
+):
+    """canonical_workdir maps both the main checkout and a worktree to the
+    SAME canonical repo root (so all discovery resolvers get one path)."""
+    main_root = ap.canonical_workdir(temp_repo)
+    wt = tmp_path / "wt-canon"
+    _git(["worktree", "add", "-q", str(wt), "HEAD"], temp_repo)
+    wt_root = ap.canonical_workdir(wt)
+    assert main_root == wt_root == temp_repo.resolve()
+
+
+def test_canonical_workdir_non_git_unchanged(tmp_path: Path):
+    """Non-git path is returned unchanged (resolved), preserving _unscoped
+    behavior downstream — does not break derive_slug_from_cwd."""
+    nongit = tmp_path / "loose-canon"
+    nongit.mkdir()
+    assert ap.canonical_workdir(nongit) == nongit.resolve()
+    # And the slug path still yields _unscoped for the same dir.
+    assert ap.app_slug(cwd=nongit) == "_unscoped"
+
+
 def test_subcomponent_workers(temp_repo: Path):
     workers = temp_repo / "workers"
     workers.mkdir()
