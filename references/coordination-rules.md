@@ -141,6 +141,15 @@ When an agent is idle and `rally next` returns no actionable item, walk the tree
 
 The tree is the guideline; rally supplies the facts (claims, collisions, pending items) each branch needs. Two same-tool agents running it independently land on different work because claim-first + `check before-write` makes the first claimant win and the second re-select — no central referee required.
 
+## Coordination reliability (verify the room before trusting it)
+
+Room resolution can shift under you — a binary update, a repo-keying change, or a worktree path can move which channel you resolve to. Before concluding "no peers" or "empty room", verify it:
+
+- **Check which channel you actually resolved.** If `rally enter` / `rally room` returns a null or empty channel, your *read* is suspect, not the room. A peer you "can't see" is often in a **different room** (different repo slug, or pre/post a keying change), not absent. Confirm the channel's `repo_root` (in `rally.channel.json`) matches the repo you mean.
+- **One repo = one room** (keyed off the canonical repo root, shared by all worktrees); **different repos = different rooms**, correctly. Before declaring a peer missing, confirm you are both keyed to the same repo root — two agents in sibling repos (e.g. `build-loop` vs the spun-out `agent-rally-point`) are *supposed* to be in separate rooms.
+- **A lead that posted then went quiet is idle** (same as any interactive CLI peer — see §Peer liveness). Do not block on it; absorb local lanes, leave a relay for its return.
+- **Never hand-append the hash-chain channel files** (`changes.jsonl`) to "reach" a peer — corruption risk. If the CLI cannot post, relay out-of-band; do not edit the chain.
+
 ---
 
 ## MECE Packets (every write-handoff requires all four)
