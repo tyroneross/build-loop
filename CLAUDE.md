@@ -14,8 +14,10 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 - Modular by default, not by dogma: prefer high cohesion, loose coupling, stable interfaces, scalable boundaries, and MECE file/agent ownership unless a documented exception better serves the use case.
 - Tools loaded on demand, not pre-loaded
 - Guidelines for the creation process, guardrails for user-facing output
+- Concise output, conserve tokens — report only what the user needs to decide or act. Lead with the decision/finding; cut process narration, restated context, and low-value detail. Numbered/bulleted lists get a blank line between items. Progressive disclosure: headline first, supporting files/details below, deepest detail last or omitted. No jargon. This is a write-time style, never a gate — fix in place, never halt to satisfy it.
 - No false data, no mock data in production, no unverified claims
 - Diagnose before fixing, converge or escalate
+- Research persistent problems before retrying — when a fix doesn't hold, the same criterion fails repeatedly, or behavior contradicts your model, escalate to internet research from trusted sources (T1 official docs/issue trackers first) to find the root cause. `root-cause-investigator` carries WebSearch; use it. A documented upstream bug or library/terminal behavior often explains an "impossible" intermittent failure faster than another local iteration — and stops you layering a workaround over a known root cause.
 - Learn from recurring patterns — auto-draft experimental skills with A/B comparison, user keeps or removes
 - Cherry-pick from companion tools, don't embed — except when integration density justifies a merge. Companion repos stay independent; build-loop consumes their artifacts only when the user or plan explicitly asks. claude-code-debugger was merged inline in 0.6.0 because the debugger is invoked from inside the build loop on every Review-B / Iterate failure (multiple times per build) — keeping it external created loose coupling without a benefit. Other companions remain separate.
 

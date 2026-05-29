@@ -31,6 +31,17 @@ Peers read active work from `active_peers[]` and last-known active/stopped sessi
 
 **Fallback:** if `rally` is not on PATH, proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
 
+## Output style
+
+Concise, token-conserving output. Report only what the user needs to decide or act.
+
+- Lead each point with the decision or finding as a statement; cut process narration, restated context, and low-value detail.
+- Numbered/bulleted lists get a blank line between items.
+- Progressive disclosure: headline first, supporting files/details below, deepest detail last or omitted.
+- Plain language, no jargon.
+
+This is a write-time style, never a gate — fix wording in place, never halt to satisfy it.
+
 ## Phases
 
 | # | Phase | Purpose | Output |
@@ -54,6 +65,7 @@ Peers read active work from `active_peers[]` and last-known active/stopped sessi
 - **No false data.** No mock data in production. No hardcoded metrics pretending to be real. No unverified claims.
 - **Name every UI input and output.** For UI work, every affected surface must have an input/output contract before component choices are locked: data taxonomy, CRUD/domain operation, component mapping, states, modality fallback, validation/security, and traceability.
 - **Diagnose before fixing.** Root-cause analysis before code changes. Many errors sharing a pattern = one system problem.
+- **Research persistent problems, don't just retry.** When a fix doesn't hold, the same Iterate criterion fails 2+ times, or behavior contradicts your model, stop guessing and do internet research from trusted sources (T1 official docs and issue trackers first) before another attempt. `root-cause-investigator` carries WebSearch for exactly this. A documented upstream bug or library/terminal behavior often explains an "impossible" intermittent failure faster than another local loop — and prevents shipping a layered workaround over a known root cause. Mark confidence on what you find (✅ T1 cited / ⚠️ inferred).
 - **Converge or escalate.** If iteration isn't improving scores, stop and surface the blocker. Don't burn cycles.
 - **Keep going until done.** Once the user accepts the plan, every phase is authorized scope. Do not ask the user to confirm each phase. Issues found mid-build route to Iterate. Status updates are fine; permission requests are not. The only valid stops are: a destructive action not in the plan, a missing credential, externally-blocked work, an explicit hand-off point in the plan, a genuine scope branch the plan does not resolve, or 8 hours wall-clock without a Review pass / 5 consecutive Iterate failures on the same criterion.
 
