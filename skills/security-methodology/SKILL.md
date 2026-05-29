@@ -1,6 +1,6 @@
 ---
 name: build-loop:security-methodology
-description: Use when a build crosses a security boundary (auth, authz, secrets handling, network exposure, persistence of sensitive data) or when Phase 1 Assess flags `triggers.riskSurfaceChange: true`. Provides the threat-modeling + scoped-permission methodology for build-loop's security-reviewer agent.
+description: "Use when a build crosses a security boundary (auth, authz, secrets handling, network exposure, persistence of sensitive data) or when Phase 1 Assess flags `triggers.riskSurfaceChange: true`. Provides the threat-modeling and scoped-permission methodology for build-loop's security-reviewer agent."
 version: 0.1.0
 user-invocable: false
 ---
