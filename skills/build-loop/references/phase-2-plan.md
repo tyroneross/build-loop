@@ -22,18 +22,6 @@
    - **Recommendation**: what to execute now and why. If choosing the constrained path, name the constraint that justifies not taking the clean-sheet path now.
 
    Skip only for narrow single-file fixes, pure config changes, or decisions where the two answers are identical; in that case write `Approach Lenses: n/a - <reason>`.
-3b. **Failure Modes section** (QM v0.13.0): For any non-trivial plan, add `## Failure Modes` before the task list — move "how can this fail?" left of the code. Name:
-   - **Primary invariant**: the one property that must hold for this change to be correct.
-   - **Likely failure modes**: the concrete ways it breaks (bad input, race, partial write, dependency outage, wrong assumption).
-   - **Observability signal**: how a failure shows up (log line, metric, error, failing assertion) — what you'd grep for.
-   - **Proof check**: the deterministic check that proves the invariant holds (test, assertion, query, curl).
-   - **Rollback/containment**: how to back out or limit blast radius if it ships broken.
-
-   This is enforced: `plan_verify.py`'s `failure-mode-section-present` rule is a **BLOCKER** (exit 1) when the section is missing on a non-trivial plan. The runtime authority for whether it is required is `review_trigger.py`'s `plan_failure_modes_required`; the linter is the deterministic Phase 2 approximation. Skip only for trivial plans (single-file/typo/pure-config), matching the Approach Lenses carve-out.
-3c. **Reviewability Budget section** (QM v0.13.0): For any non-trivial plan, add `## Reviewability Budget` so each slice stays small enough to reason about and roll back:
-   - **One domain concern per slice**: a slice changes one bounded concern, with self-contained tests/validation.
-   - **Behavior-vs-refactor split**: behavior changes are separated from broad refactors unless the refactor is tiny and local.
-   - **Waiver line**: if a slice must exceed the budget, state the explicit waiver and why a smaller split is not feasible.
 4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
 6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
@@ -66,7 +54,6 @@
    - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
    - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
    - `parallel-decision-record` is a BLOCKER: plans that name independent / parallel-safe multi-chunk work must include `parallel_batch:` or `parallel_skipped_reason:`.
-   - `failure-mode-section-present` is a BLOCKER (QM v0.13.0): non-trivial plans must include a `## Failure Modes` section (see step 3b). Trivial plans (single-file/typo/pure-config) are exempt.
    - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
 9. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 8 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
 10. **Dispatch `scope-auditor` agent** (NEW 2026-05-07 — Plan→Execute boundary): pass the plan + extracted commit table (with `modifies_api` per commit). The auditor is Opus + read-only; it traces every caller-site of every modified-API symbol via project-wide grep, classifies callers as in-scope / out-of-scope, and emits a `## Caller Audit (Scope Auditor)` JSON section appended to the plan. Verdict `scope_gap_found` requires plan revision (absorb missing callers into the right commit's owned-files) before Phase 3, OR explicit acceptance in `state.json.scopeGapAccepted[]` with rationale. Skip ONLY when the plan has zero `modifies_api` entries (doc-only commits). Prevents the fan-out scope-blindness defect class — see `agents/scope-auditor.md`.

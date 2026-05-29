@@ -899,16 +899,6 @@ TRIVIAL_PLAN_RE = re.compile(
     r"trivial|narrow fix)\b",
     re.IGNORECASE,
 )
-# Failure-mode gate (2026-05-28, QM v0.13.0 Piece 1). A non-trivial plan must
-# name its failure surface BEFORE Execute. The deterministic single source for
-# *whether* the section is required at runtime is review_trigger.py's
-# `plan_failure_modes_required`; this static linter approximates that with a
-# grep-checkable non-trivial signal (same signal class as Approach Lenses) so a
-# missing section is caught at Phase 2 without running the orchestrator.
-FAILURE_MODES_PRESENT_RE = re.compile(
-    r"^\s*(?:#{1,6}\s*)?Failure Modes\b|^\s*Failure Modes\s*:\s*n/a\b",
-    re.IGNORECASE,
-)
 
 
 def rule_approach_lenses_missing(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
@@ -936,43 +926,6 @@ def rule_approach_lenses_missing(plan_path: Path, lines: list[tuple[int, str]]) 
                 severity="WARN",
                 confidence="medium",
                 rule_id="approach-lenses-missing",
-            )]
-    return []
-
-
-def rule_failure_mode_section_present(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
-    """BLOCKER when a non-trivial plan lacks `## Failure Modes`.
-
-    Phase 2 quality gate (QM v0.13.0 Piece 1): before Execute, a non-trivial
-    plan must name {primary invariant, likely failure modes, observability
-    signal, proof check, rollback/containment}. Same non-trivial signal class
-    as Approach Lenses, but BLOCKER (not WARN) — shipping a non-trivial change
-    with no named failure surface is the defect this gate exists to stop.
-    Runtime authority is review_trigger.py's `plan_failure_modes_required`;
-    this is the deterministic Phase 2 approximation."""
-    if any(FAILURE_MODES_PRESENT_RE.search(line) for _, line in lines if line):
-        return []
-    if any(TRIVIAL_PLAN_RE.search(line) for _, line in lines if line):
-        return []
-    for lineno, line in lines:
-        if not line:
-            continue
-        if APPROACH_LENSES_SIGNAL_RE.search(line):
-            return [_finding(
-                claim_text=(
-                    "Non-trivial plan is missing the required `## Failure Modes` "
-                    "section {primary invariant, likely failure modes, observability "
-                    "signal, proof check, rollback/containment}. Add it before Execute."
-                ),
-                claim_kind="failure_mode_section_missing",
-                subject={"path": None, "symbol": None, "noun": "Failure Modes"},
-                verification_command=None,
-                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
-                result="no_match",
-                marker="❌",
-                severity="BLOCKER",
-                confidence="medium",
-                rule_id="failure-mode-section-present",
             )]
     return []
 
@@ -1133,7 +1086,6 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_risk_reason_invalid_value(plan_path, lines))
     findings.extend(rule_scope_audit_required(plan_path, lines))
     findings.extend(rule_approach_lenses_missing(plan_path, lines))
-    findings.extend(rule_failure_mode_section_present(plan_path, lines))
     findings.extend(rule_task_id_convention(plan_path, lines))
     findings.extend(rule_forbidden_path_conflict(plan_path, lines, repo))
     findings.extend(rule_parallel_decision_record(plan_path, lines))

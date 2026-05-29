@@ -59,7 +59,6 @@ A single JSON object. No prose outside the JSON.
   "scope": "independent-commit",
   "diff_sha_range": "<echo of input>",
   "verdict": "yay | nay | suggest_correction | look_again",
-  "nay_reason": "spec_contradiction | approach_flawed | null",
   "confidence": 0.0,
   "context_seen": {
     "intent": true,
@@ -86,7 +85,6 @@ A single JSON object. No prose outside the JSON.
       "misuse_story": "(security findings only) how it is abused"
     }
   ],
-  "replan_packet": "(only when nay_reason=approach_flawed) path to .build-loop/reports/<run>/replan-packet-<n>.md",
   "missing_artifacts": ["e.g., PRD not found at any default path"],
   "policy_refs": ["intent:line-12", "constitution:C-SUPPLY/dependency_cooldown"]
 }
@@ -97,9 +95,7 @@ A single JSON object. No prose outside the JSON.
 ## Verdict semantics
 
 - **yay** — the diff aligns with on-disk intent + constitution; ship it.
-- **nay** — the diff contradicts intent or trips a constitution rule; the commit should not land in its current form. Always pair with at least one `critical` or `high` finding, and set `nay_reason`:
-  - `nay_reason: spec_contradiction` — the *implementation* is wrong but the plan is sound → orchestrator routes to **re-execute** (fix the diff against the existing plan).
-  - `nay_reason: approach_flawed` (QM v0.13.0 strategic abandonment) — the *plan/approach itself* is the problem; more patching just preserves the wrong design (the complexity-balloon smell). Write a concise re-plan packet to `.build-loop/reports/<run>/replan-packet-<n>.md` (what's wrong with the approach, the invariant it violates, the direction a sound plan should take) and set `replan_packet` to that path. The orchestrator routes this back to **Phase 2** (NOT re-execute, NOT iterate-burn). Per-run re-plan budget is **2**; on the 3rd `approach_flawed` for one run, the orchestrator escalates to the user with the packet evidence instead of looping Phase 2↔Execute.
+- **nay** — the diff contradicts intent or trips a constitution rule; the commit should not land in its current form. Always pair with at least one `critical` or `high` finding. The orchestrator routes a `nay` back to Execute (or, if the diff reveals the *plan* is wrong, re-plans) — that routing call is the orchestrator's, not encoded here.
 - **suggest_correction** — partial alignment; specific file:line edits would close the gap without abandoning the commit.
 - **look_again** — context was insufficient to judge (PRD missing, intent empty, diff too large to read in this context). Name what's missing in `missing_artifacts` and let the operator gather it.
 

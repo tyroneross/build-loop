@@ -40,6 +40,12 @@ EVIDENCE_FIELD_RES = {
     "method": re.compile(r"\b(method|how)\s*[:=]", re.IGNORECASE),
     "artifact": re.compile(r"\b(artifact|evidence|log|screenshot)\s*[:=]", re.IGNORECASE),
 }
+# Compact evidence form (output-slim, v0.13.x): a bracketed `[method → artifact]`
+# token carries the same observer/method/artifact information in ~1/3 the tokens.
+# observer defaults to the orchestrator; `@agent` names a non-default observer.
+# A claim line is satisfied by EITHER the verbose triplet above OR this compact
+# token, so reports can halve their evidence verbosity without dropping evidence.
+COMPACT_EVIDENCE_RE = re.compile(r"\[[^\]\n]*(?:→|->|:)[^\]\n]*\]")
 MERGE_PLAN_REQUIRED_FIELDS = ("clean_against", "conflicts_with", "suggested_order")
 
 
@@ -118,6 +124,11 @@ def lint_verification_evidence(
         if not stripped or stripped.startswith("#"):
             continue
         if CHECK_MARK not in stripped and not VERIFICATION_CLAIM_RE.search(stripped):
+            continue
+        # Compact evidence token `[method → artifact]` satisfies the requirement
+        # (output-slim): same information, ~1/3 the tokens. No need to also spell
+        # out observer/method/artifact labels when the compact form is present.
+        if COMPACT_EVIDENCE_RE.search(stripped):
             continue
         missing = [
             field

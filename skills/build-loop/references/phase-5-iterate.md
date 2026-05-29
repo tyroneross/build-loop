@@ -8,7 +8,7 @@
 
 **Goal**: Fix failures surfaced by Review *plus* drain the UX queue accumulated by Sub-step D Gates 7-8, systematically not blindly. Loops back to Review after each pass.
 
-Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux-queue/` is non-empty. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn. **QM v0.13.0 strategic-abandonment exception**: a `verdict: nay, nay_reason: approach_flawed` from Sub-step A does NOT enter Iterate — it routes back to **Phase 2 re-plan** (the approach itself is wrong), consuming the auditor's `.build-loop/reports/<run>/replan-packet-<n>.md`. Per-run re-plan budget is **2**; the 3rd `approach_flawed` escalates to the user with the packet rather than ping-ponging Phase2↔Execute.
+Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux-queue/` is non-empty. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn.
 
 **Iterate input contract (prioritized work list)**:
 
@@ -63,7 +63,7 @@ Per attempt:
 - 3+ criteria fail simultaneously after a fix → systemic issue, stop and reassess
 
 **Stop condition (QM v0.13.0 — severity-aware, replaces the blunt 5-cap for critical/high)**. The 5-iteration cap still bounds the loop, but it **cannot finalize with an open `critical` or `high` finding** (the no-critical/high exit gate in Review-G, `review_finding_gate.py`, blocks the final pass). On reaching the cap:
-- **Open `critical`/`high` remain** → do NOT silently ship as ❓ Unfixed. Escalate to the user with the blocking findings and their `closure_proof` gaps; the build does not pass until they close or the user explicitly waives. (If the same approach keeps failing, that is the `approach_flawed` smell → route to Phase 2 re-plan within the budget-2 rule above instead of burning more iterations.)
+- **Open `critical`/`high` remain** → do NOT silently ship as ❓ Unfixed. Escalate to the user with the blocking findings and their `closure_proof` gaps; the build does not pass until they close or the user explicitly waives. (If the same approach keeps failing, re-plan instead of burning more iterations.)
 - **Only `medium`/`low` remain** → proceed to Review sub-step G Report with those marked ❓ Unfixed and routed to `.build-loop/followup/<topic>.md` for a subsequent run.
 
 Log each iteration to `.build-loop/state.json`.

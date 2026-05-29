@@ -64,6 +64,8 @@ Under the do/branch/surface policy, the orchestrator does NOT prompt for:
 - Multiple-choice "A vs B vs C" branches when the implementer has a `recommended_default` with `confidence: high` or `med` (long-mode auto-picks; normal-mode surfaces the trade-off table without asking "should I?").
 - "Should I commit and push?" — pushes to feature branches are `auto` (see `deployment_policy.py` preview routing).
 - "Continue?" after a phase boundary — phases are authorized scope once the plan is accepted.
+- "Continue or hold?" on remaining work that is authorized, isolated to the agent's own lane/worktree, and determinate (e.g. the rest of a defined multi-step prune/refactor/migration item list). Run the list to completion, then report once. Output volume and turn length are never reasons to pause.
+- A posted **coordination handoff** to a peer (Codex, another session). Handoffs are *fire-and-continue*: the orchestrator keeps executing its own owned lane in parallel. Only a verifier **verdict that gates the next dependent step** is a wait — never the act of handing off, and never a handoff on a parallel-safe lane.
 - "Should I retry this iterate failure?" — iterate loops follow the existing N=5 cap.
 - Read-only inspection commands like `sed`, `cat`, `vercel logs`, `git status` — `classify_action._is_read_only()` short-circuits these to SAFE.
 

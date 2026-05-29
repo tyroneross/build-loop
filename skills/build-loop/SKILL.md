@@ -177,6 +177,8 @@ The only valid reasons to stop and surface to the user:
 - A genuine scope branch the plan does not resolve, where the choice changes user-visible outcome.
 - 8 hours wall-clock without a successful Review pass, or 5 consecutive Iterate failures on the same criterion.
 
+**Explicitly NOT stops (do not surface these):** (a) posting a coordination handoff to a peer (Codex, another session) is *fire-and-continue* — keep executing your owned lane in parallel; only a verifier verdict that gates the *next dependent step* is a wait, never the handoff itself; (b) output volume or turn length — never a stop condition; (c) "continue or hold?" on remaining work that is authorized, isolated to your own lane/worktree, and determinate is a manufactured fork — finish it, then report once. A multi-step prune/refactor/migration with a defined item list runs to completion across that list.
+
 Otherwise: pick the natural next step, note any reasonable assumption in the run record, and keep moving. One end-of-run report at the end. Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report — see Phase 4 below. See `agents/build-orchestrator.md` §Keep going until done for the orchestrator-side phrasing.
 
 ### Follow-up auto-drain at chunk boundary
