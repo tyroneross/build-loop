@@ -19,6 +19,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
@@ -159,7 +161,9 @@ def _extract_subjects(out: str) -> list[str]:
     return subjects
 
 
+@pytest.mark.live
 class RecallFilterTests(unittest.TestCase):
+    """Live recall filter test. Requires Postgres + embed backend."""
 
     @classmethod
     def setUpClass(cls) -> None:

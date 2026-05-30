@@ -30,6 +30,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
 TEST_SCHEMA = "test_schema_dedup"
@@ -109,7 +111,9 @@ NEAR_PARAPHRASE = "Use Postgres with pgvector as the memory substrate"  # ~0.95
 UNRELATED = "Schedule the marketing offsite for next week"              # ~0.36
 
 
+@pytest.mark.live
 class DedupPathTests(unittest.TestCase):
+    """Live dedup path test. Requires embed backend (MLX or Ollama) + Postgres."""
 
     @classmethod
     def setUpClass(cls) -> None:

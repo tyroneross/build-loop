@@ -20,6 +20,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
 RECALL = HERE / "recall.py"
@@ -112,7 +114,9 @@ def run_recall(query: str) -> str:
     return cp.stdout
 
 
+@pytest.mark.live
 class RecallTests(unittest.TestCase):
+    """Live recall test. Requires embed backend (MLX or Ollama) + Postgres."""
 
     @classmethod
     def setUpClass(cls) -> None:

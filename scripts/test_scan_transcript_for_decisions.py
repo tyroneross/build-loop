@@ -30,6 +30,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "scan_transcript_for_decisions.py"
@@ -104,8 +106,9 @@ def _seed_transcript(path: Path) -> None:
     path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
 
 
+@pytest.mark.live
 class ScanTranscriptLiveTests(MemIsolationMixin, unittest.TestCase):
-    """Live-ollama tests. Slow (~30-60s per LLM-touching test)."""
+    """Live-ollama tests. Slow (~30-60s per LLM-touching test). Requires Ollama + qwen3:8b-q4_K_M."""
 
     @classmethod
     def setUpClass(cls) -> None:

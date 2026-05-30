@@ -55,4 +55,10 @@ python_files = ["test_*.py"]
 addopts = "-q"
 markers = [
     "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
+    "live: test that requires a live external service (Ollama/qwen on :11434, embed/rerank daemon, Postgres); auto-skipped when the service is unreachable",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-timeout>=2.4.0",
 ]

@@ -35,6 +35,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 REPO = HERE.parent
@@ -112,8 +114,9 @@ def _extract_scan_command_from_hooks_json() -> str:
     raise AssertionError("scan_transcript_for_decisions hook not found in hooks.json")
 
 
+@pytest.mark.live
 class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
-    """Live integration test. Slow (~30-60s)."""
+    """Live integration test. Slow (~30-60s). Requires Ollama + qwen3:8b-q4_K_M."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -242,6 +245,14 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         assert the captured count.
         """
         import time
+
+        # Direct guard: skip immediately if Ollama/qwen is unreachable so the
+        # poll loop (deadline=180s) never starts.  The conftest.py live-marker
+        # skip handles the class at collection time; this line is defense-in-
+        # depth for cases where the class mark is missing or the service went
+        # down between collection and execution.
+        if not _ollama_ready():
+            pytest.skip("Ollama/qwen3:8b-q4_K_M unreachable — skipping live test")
 
         cmd = _extract_scan_command_from_hooks_json()
 

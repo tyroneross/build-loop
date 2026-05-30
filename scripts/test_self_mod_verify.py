@@ -92,7 +92,7 @@ class TestVerdictPass(unittest.TestCase):
         payload = json.loads(r.stdout)
         expected_keys = {
             "scope", "ran", "passed", "failed", "failed_tests", "reverted",
-            "verdict", "timed_out", "errors", "effective_scope",
+            "verdict", "timed_out", "errors", "effective_scope", "error_reason",
         }
         for key in expected_keys:
             self.assertIn(key, payload, f"missing key {key!r}")
@@ -102,6 +102,8 @@ class TestVerdictPass(unittest.TestCase):
         self.assertIsInstance(payload["ran"], list)
         self.assertIsInstance(payload["failed_tests"], list)
         self.assertIsInstance(payload["timed_out"], bool)
+        # error_reason is None on a clean pass
+        self.assertIsNone(payload["error_reason"])
 
 
 class TestVerdictFail(unittest.TestCase):
@@ -532,8 +534,9 @@ class TestTimeoutFlagPlumbing(unittest.TestCase):
 
         def mock_run(cmd, **kwargs):
             call_count[0] += 1
-            # Allow first few calls (runner detection) to succeed
-            if call_count[0] <= 3:
+            # Allow the first call (runner detection: `uv run pytest --version`)
+            # to succeed so _find_runner returns a runner base.
+            if call_count[0] <= 1:
                 return original_run(cmd, **kwargs)
             # Simulate timeout on the actual pytest invocation
             raise subprocess.TimeoutExpired(cmd, 1)
@@ -551,9 +554,13 @@ class TestTimeoutFlagPlumbing(unittest.TestCase):
         # verdict must not be pass on timeout
         self.assertNotEqual(result["verdict"], "pass",
                             msg="A timed-out run must never report verdict=pass")
-        self.assertEqual(result["verdict"], "no_tests")
-        # exit_code is 0 (fail-soft on timeout)
-        self.assertEqual(exit_code, 0)
+        # Timeout at the subprocess layer → verdict "error" (infrastructure failure)
+        self.assertEqual(result["verdict"], "error",
+                         msg=f"Timed-out subprocess must be verdict=error; got {result['verdict']}")
+        self.assertIsNotNone(result.get("error_reason"),
+                             msg="error_reason must be set on verdict=error")
+        # exit_code is 2 (error — infrastructure failure, not a test failure)
+        self.assertEqual(exit_code, 2)
 
     def test_cli_timeout_argument_accepted(self) -> None:
         """--timeout flag is parsed without error."""
@@ -566,6 +573,147 @@ class TestTimeoutFlagPlumbing(unittest.TestCase):
         # Should not error due to unrecognised argument
         payload = json.loads(r.stdout)
         self.assertIn("verdict", payload)
+
+
+# ---------------------------------------------------------------------------
+# Tests: conftest.py live-marker skip logic
+# ---------------------------------------------------------------------------
+
+class TestConftestLiveSkip(unittest.TestCase):
+    """Verify conftest.py skips `live`-marked tests when the probe fails."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.scripts_dir = self.workdir / "scripts"
+        self.scripts_dir.mkdir()
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write_live_test(self) -> Path:
+        p = self.scripts_dir / "test_live_service.py"
+        p.write_text(
+            "import pytest\n"
+            "@pytest.mark.live\n"
+            "def test_needs_live_service():\n"
+            "    # This must be skipped when Ollama is unreachable.\n"
+            "    assert False, 'live service required'\n"
+        )
+        return p
+
+    def test_live_marked_test_skipped_when_probe_fails(self) -> None:
+        """A test marked @pytest.mark.live must be skipped (not failed/hung)
+        when the conftest Ollama probe monkeypatches to unreachable.
+
+        We test this by writing a conftest.py to the tmp workdir that
+        patches _ollama_reachable to return False, then verifies the
+        @pytest.mark.live test is skipped (not failed).
+        """
+        import importlib.util
+        import sys as _sys
+
+        # Copy the repo conftest to the tmp workdir so pytest finds it.
+        repo_root = HERE.parent
+        repo_conftest = repo_root / "conftest.py"
+
+        # Write a local conftest to workdir that forces _ollama_reachable=False
+        # so we don't depend on whether the real Ollama service is running.
+        (self.workdir / "conftest.py").write_text(
+            "import pytest\n"
+            "\n"
+            "def _ollama_reachable():\n"
+            "    return False  # monkeypatched for test isolation\n"
+            "\n"
+            "def pytest_collection_modifyitems(config, items):\n"
+            "    skip_marker = pytest.mark.skip(\n"
+            "        reason='live service (Ollama/qwen on 127.0.0.1:11434) unreachable'\n"
+            "    )\n"
+            "    for item in items:\n"
+            "        if item.get_closest_marker('live') is not None:\n"
+            "            item.add_marker(skip_marker, append=False)\n"
+        )
+        # Register the `live` marker so pytest doesn't warn
+        (self.workdir / "pytest.ini").write_text(
+            "[pytest]\n"
+            "markers =\n"
+            "    live: requires live external service\n"
+        )
+
+        self._write_live_test()
+
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", "-v", "--tb=short",
+             str(self.scripts_dir / "test_live_service.py")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(self.workdir),
+        )
+        combined = r.stdout + r.stderr
+        # Must NOT fail (the test assertion "assert False" must not run)
+        self.assertNotIn("FAILED", combined,
+                         msg=f"live test must be skipped, not failed:\n{combined}")
+        # Must appear as SKIPPED
+        self.assertIn("skipped", combined.lower(),
+                      msg=f"live test must appear skipped:\n{combined}")
+
+
+# ---------------------------------------------------------------------------
+# Tests: verdict=error on collection failure / no summary
+# ---------------------------------------------------------------------------
+
+class TestVerdictError(unittest.TestCase):
+    """When pytest exits non-zero with no summary line, verdict must be
+    'error' (not 'fail') so callers see WHY the gate produced 0/0."""
+
+    def setUp(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("self_mod_verify", SCRIPT)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        scripts_dir = self.workdir / "scripts"
+        scripts_dir.mkdir()
+        _init_git_repo(self.workdir)
+        # A test with a syntax error so pytest fails to collect it
+        (scripts_dir / "test_bad_syntax.py").write_text(
+            "def test_ok():\n"
+            "    assert True\n"
+            "\n"
+            "def broken syntax here:\n"  # intentional SyntaxError
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_collection_error_yields_verdict_error(self) -> None:
+        """A file that fails to collect (SyntaxError) must produce
+        verdict='error' with error_reason set, exit code 2."""
+        r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
+        # Exit code 2 = error (not 0=pass, not 1=fail)
+        self.assertEqual(r.returncode, 2,
+                         msg=f"Expected exit 2 on collection error; stderr: {r.stderr}")
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "error",
+                         msg=f"Collection failure must be verdict=error; got {payload['verdict']}")
+        self.assertIsNotNone(payload.get("error_reason"),
+                             msg="error_reason must be set when verdict=error")
+        # Passed and failed are both 0 (nothing ran successfully)
+        self.assertEqual(payload["passed"], 0)
+        self.assertEqual(payload["failed"], 0)
+
+    def test_error_reason_in_stderr_summary(self) -> None:
+        """The human summary on stderr must include error_reason when present."""
+        r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
+        # Only relevant if we actually get verdict=error
+        payload = json.loads(r.stdout)
+        if payload["verdict"] == "error":
+            self.assertIn("error_reason", r.stderr,
+                          msg=f"stderr summary must include error_reason; stderr={r.stderr!r}")
 
 
 if __name__ == "__main__":

@@ -36,8 +36,8 @@ from pathlib import Path
 try:
     import numpy as np
 except ImportError:
-    sys.stderr.write("test_optimize_doe.py requires numpy; skipping\n")
-    sys.exit(0)
+    import pytest
+    pytest.skip("test_optimize_doe.py requires numpy", allow_module_level=True)
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "optimize_doe.py"
