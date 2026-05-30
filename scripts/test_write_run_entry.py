@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE / "write_run_entry.py"
+SCRIPT = HERE / "write_run_entry" / "__main__.py"
 RUN_ID_RE = re.compile(r"^run_\d{8}T\d{6}Z_[0-9a-f]{8}$")
 
 

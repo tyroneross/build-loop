@@ -282,9 +282,9 @@ def probe_procedural_governance(workdir: Path) -> dict[str, Any]:
 
 
 def probe_write_run_entry(workdir: Path) -> dict[str, Any]:
-    script = workdir / "scripts" / "write_run_entry.py"
+    script = workdir / "scripts" / "write_run_entry" / "__main__.py"
     if not script.is_file():
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "write_run_entry.py absent"}
+        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "write_run_entry/__main__.py absent"}
     return {
         "invoked": True,
         "result_count": 1,

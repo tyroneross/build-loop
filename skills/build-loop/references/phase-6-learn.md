@@ -22,7 +22,7 @@ Quick flow:
 
    **Promotion-reviewer dispatch protocol** (per advisory-judge design, plan §12 / `agents/promotion-reviewer.md`):
    - For each eligible candidate, dispatch `Agent(subagent_type="build-loop:promotion-reviewer", ...)` with brief fields: `artifact_path`, `experiment_log`, `sample_size`, `target_metric`, `triggering_run_id`, `recent_judge_decisions`.
-   - Append the returned verdict object to the run's `judge_decisions[]` via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py --judge-decisions-json <verdict.json>` (combined with other Phase 4 verdicts if any).
+   - Append the returned verdict object to the run's `judge_decisions[]` via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py --judge-decisions-json <verdict.json>` (combined with other Phase 4 verdicts if any).
    - Compose the user-facing notification body from the verdict's `variances[]` and `meta_guidance`. Fire `PushNotification` if available; fall back to `TaskCreate` with subject `"[BUILD-LOOP] Promotion candidate <name>: <verdict> — review needed"`.
    - Write a marker file at `.build-loop/proposals/<name>.pending.md` with the verdict + how-to-confirm so the user can resume context later (TTL 14 days; lapsed candidates auto-archive to `.build-loop/proposals/<name>.lapsed.md`).
    - **Do not move the artifact.** The user-invoked `/build-loop:promote-experiment <name>` command performs the move after reading the pending verdict.

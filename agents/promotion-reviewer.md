@@ -118,4 +118,4 @@ A single JSON object matching the §12.5 variance verdict envelope. No prose out
 
 ## Memory-write side effect (single exception)
 
-You write **only one thing**: the verdict object itself, which the orchestrator passes to `scripts/write_run_entry.py --judge-decisions-json`. You do not call any writer directly.
+You write **only one thing**: the verdict object itself, which the orchestrator passes to `scripts/write_run_entry/__main__.py --judge-decisions-json`. You do not call any writer directly.

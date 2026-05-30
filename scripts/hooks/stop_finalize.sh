@@ -106,7 +106,7 @@ if [ -z "$PLUGIN_ROOT" ]; then
     PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 fi
 
-WRITE_ENTRY="${PLUGIN_ROOT}/scripts/write_run_entry.py"
+WRITE_ENTRY="${PLUGIN_ROOT}/scripts/write_run_entry/__main__.py"
 RUN_ENTRY_STATUS="skipped"
 RUN_ID=""
 
@@ -116,7 +116,7 @@ if [ -f "$WRITE_ENTRY" ]; then
     if [ -n "$RUN_ID" ]; then
         RUN_ENTRY_STATUS="written:${RUN_ID}"
     else
-        RUN_ENTRY_STATUS="write_run_entry.py returned empty (check stderr for details)"
+        RUN_ENTRY_STATUS="write_run_entry/__main__.py returned empty (check stderr for details)"
     fi
 else
     # Minimal inline fallback: append {run_id, date, session_id} to runs[]
@@ -166,7 +166,7 @@ finally:
     lock_fd.close()
 PY
 ) || RUN_ENTRY_STATUS="inline_fallback_error"
-    RUN_ENTRY_STATUS="${RUN_ENTRY_STATUS} (write_run_entry.py absent; full schema requires it)"
+    RUN_ENTRY_STATUS="${RUN_ENTRY_STATUS} (write_run_entry/__main__.py absent; full schema requires it)"
 fi
 
 # Step 5: check scorecard for failed F-criteria not held
