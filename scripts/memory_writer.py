@@ -226,6 +226,20 @@ def _detect_git_remote(workdir: Path) -> str | None:
     return None
 
 
+def _detect_git_head(workdir: Path) -> str | None:
+    """Return the full sha of HEAD in workdir, or None if unavailable."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(workdir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Core API
 # ---------------------------------------------------------------------------
@@ -276,6 +290,7 @@ def write(
         "source_workdir": workdir_abs,
         "source_run_id": run_id,
         "source_host": host,
+        "as_of_commit": _detect_git_head(Path(workdir_abs)),  # repo HEAD at write time
         "cross_repo_validated": existing_fm.get("cross_repo_validated", False),
         "applied_in_repos": list(existing_fm.get("applied_in_repos", []) or []),
         "created_at": existing_fm.get("created_at", now),

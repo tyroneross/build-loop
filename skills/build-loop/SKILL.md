@@ -353,6 +353,8 @@ One consolidated long-term tree: `~/dev/git-folder/build-loop-memory/`. Project-
 
 Routing rule: "Would this apply to a different project?" Yes → global. No → project. Ambiguous → ask the user once.
 
+Append-only memory contract: (1) steering answers from `AskUserQuestion` append to `build-loop-memory/projects/<slug>/decisions/` immediately via `auto-decision-capture` — do not let them die in context; (2) every run appends a milestone at Review-G via `scripts/append_milestone.py` — the permanent progress record, never rewritten; (3) Phase 1 flags staleness when the latest milestone predates HEAD (`scripts/memory_staleness_check.py`). Full write protocol in `references/memory.md`.
+
 **Load `skills/build-loop/references/memory.md`** for the full routing rule, write timing, read timing, and memory type taxonomy.
 
 ## Resume Protocol (`--resume` argument)

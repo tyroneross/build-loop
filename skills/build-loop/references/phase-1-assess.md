@@ -40,6 +40,15 @@
 
    Write the result to `.build-loop/state.json.assess.staleContext`. For each path in `docs[]` where the doc is flagged stale, surface it as `[STALE CONTEXT] <path>` in the Assess summary so the agent notes drift before relying on a handoff/orchestration/continuation doc. The user should never have to ask "is this still relevant?" Script failure → log one warning line; never blocks Assess.
 
+0c. **Memory-staleness triage** (fail-soft, proactive drift notice): run
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_staleness_check.py" \
+     --workdir "$PWD" --json
+   ```
+
+   Write the result to `.build-loop/state.json.assess.memoryStaleness`. When `stale: true`, surface `[MEMORY STALE] <slug> N commits behind HEAD — append a milestone/decision` in the Assess summary. Log the finding and continue — do NOT stop. The run should append a milestone or decision entry during Phase 6 Learn (or inline if the goal is memory-focused). Script failure → log one warning line; never blocks Assess.
+
 1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
 2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
