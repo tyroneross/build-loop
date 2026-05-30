@@ -51,29 +51,58 @@ without a parseable timestamp sink to the bottom in stable order).
 
 Stdlib only at import. Postgres backend imports psycopg lazily inside the
 function so unavailable systems don't crash the import.
+
+Implementation is split across sub-modules for maintainability:
+  memory_facade_common.py    — shared helpers (_parse_iso, _q_match, _read_jsonl)
+  memory_facade_runs.py      — Backend 1: state.json runs
+  memory_facade_lessons.py   — Backend 2.5: free-form lesson files
+  memory_facade_decisions.py — Backend 2: decision indexes + .md files
+  memory_facade_semantic.py  — Backend 3: Postgres semantic_facts
+  memory_facade_debugger.py  — Backend 4: debugger MCP CLI
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import re
-import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
-
-# Shared DB-URL resolver. `_db_url` is stdlib-only (os, pathlib) so this
-# import keeps memory_facade stdlib-only-at-import (it must NOT import
-# `db.py`, which pulls psycopg at module top).
+# ---------------------------------------------------------------------------
+# Path setup (same as before — scripts/ dir on sys.path for _db_url etc.)
+# ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
-from _db_url import NO_URL_REASON, resolve_db_url  # noqa: E402
 
+REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
+
+# ---------------------------------------------------------------------------
+# Re-export from sub-modules — public API is FROZEN; all imports keep working.
+# ---------------------------------------------------------------------------
+from memory_facade_common import (  # noqa: E402
+    DECISION_FRONTMATTER_RE,
+    _LESSON_FRONTMATTER_RE,
+    _parse_iso,
+    _q_match,
+    _read_jsonl,
+)
+from memory_facade_runs import read_runs  # noqa: E402
+from memory_facade_lessons import (  # noqa: E402
+    _resolve_memory_dirs,
+    read_lessons,
+)
+from memory_facade_decisions import (  # noqa: E402
+    _indexed_decisions,
+    _resolve_decision_dirs,
+    read_decisions,
+)
+from memory_facade_semantic import read_semantic  # noqa: E402
+from memory_facade_debugger import read_debugger_impl  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 DEFAULT_LIMIT = 10
 KINDS = ("runs", "decisions", "lessons", "semantic", "debugger")
 KIND_ALIASES = {
@@ -83,541 +112,98 @@ KIND_ALIASES = {
     "debug": "debugger",
 }
 
-
 # ---------------------------------------------------------------------------
-# Helpers
+# Debugger test-injection seam.
+# Lives here (on the facade) so tests can ``monkeypatch.setattr(mf, ...)``
+# against this module, then call ``mf.read_debugger(...)`` and see the same
+# state without any circular import.
 # ---------------------------------------------------------------------------
-
-def _parse_iso(ts: Any) -> Optional[float]:
-    """Best-effort parse of an ISO-8601 timestamp into a float (Unix seconds)."""
-    if ts is None:
-        return None
-    if isinstance(ts, (int, float)):
-        # Heuristic: bare ms vs s.
-        return ts / 1000.0 if ts > 1e12 else float(ts)
-    if not isinstance(ts, str):
-        return None
-    s = ts.strip().rstrip("Z")
-    try:
-        # datetime.fromisoformat handles most shapes; fall back on failure.
-        return datetime.fromisoformat(s).replace(tzinfo=timezone.utc).timestamp()
-    except (ValueError, AttributeError):
-        try:
-            return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
-        except (ValueError, AttributeError):
-            return None
-
-
-def _q_match(text: str, query: str) -> bool:
-    """Case-insensitive substring match. Empty query matches everything."""
-    if not query:
-        return True
-    return query.lower() in (text or "").lower()
-
-
-# ---------------------------------------------------------------------------
-# Backend 1: state.json.runs[]
-# ---------------------------------------------------------------------------
-
-def read_runs(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    state_path = workdir / ".build-loop" / "state.json"
-    reasons: List[str] = []
-    if not state_path.is_file():
-        return [], reasons
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        reasons.append(f"runs_read_error: {e}")
-        return [], reasons
-    runs = state.get("runs") or []
-    out: List[Dict[str, Any]] = []
-    for r in runs:
-        text = " ".join([
-            str(r.get("goal", "")),
-            str(r.get("outcome", "")),
-            " ".join(r.get("filesTouched", []) or []),
-        ])
-        if not _q_match(text, query):
-            continue
-        ts = _parse_iso(r.get("date"))
-        out.append({
-            "_kind": "runs",
-            "_recency_ts": ts,
-            "run_id": r.get("run_id"),
-            "goal": r.get("goal"),
-            "outcome": r.get("outcome"),
-            "date": r.get("date"),
-            "files_touched": r.get("filesTouched", []),
-        })
-    out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
-    return out[:limit], reasons
-
-
-# ---------------------------------------------------------------------------
-# Backend 2: canonical decision indexes + project decisions/*.md
-# ---------------------------------------------------------------------------
-
-DECISION_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-
-
-def _resolve_decision_dirs(workdir: Path) -> List[Path]:
-    """Return active decision directories for this project.
-
-    Normal reads use ``build-loop-memory/projects/<project>/decisions``.
-    Legacy ``.episodic`` and pre-cutover ``decisions/<project>`` paths are
-    migration/diagnostic inputs only; enable them with
-    ``BUILD_LOOP_MEMORY_MIGRATION_MODE=1``.
-    """
-    dirs: List[Path] = []
-    try:
-        from _paths import decisions_root, project_decisions_dir  # type: ignore  # noqa: PLC0415
-        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
-        proj = resolve_project(workdir)
-        if proj:
-            canonical_dir = project_decisions_dir(proj)
-            if canonical_dir.is_dir():
-                dirs.append(canonical_dir)
-            if os.environ.get("BUILD_LOOP_MEMORY_MIGRATION_MODE") == "1":
-                legacy_global = decisions_root() / proj
-                if legacy_global.is_dir() and legacy_global not in dirs:
-                    dirs.append(legacy_global)
-    except Exception:  # noqa: BLE001 — best-effort path resolution
-        pass
-    if os.environ.get("BUILD_LOOP_MEMORY_MIGRATION_MODE") == "1":
-        legacy = workdir / ".episodic" / "decisions"
-        if legacy.is_dir() and legacy not in dirs:
-            dirs.append(legacy)
-    return dirs
-
-
-# ---------------------------------------------------------------------------
-# Backend 2.5: lessons — free-form feedback/pattern/reference/decision_* files
-# in build-loop-memory/lessons/ plus projects/<slug>/lessons/.
-#
-# Distinct from `decisions` (Backend 2) — decisions are the project-tagged
-# sequence-numbered store written by write_decision.py. Lessons are the
-# free-form taxonomized markdown files written by hand or by memory_writer.py.
-# Both backends read the same physical filesystem in some cases but apply
-# different filename / frontmatter conventions.
-# ---------------------------------------------------------------------------
-
-
-def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
-    """Return ``[(dir, scope), ...]`` for canonical lesson memory.
-
-    Order matters: top-level lessons first, project lessons second, so
-    project entries override global entries with the same filename.
-    """
-    out: List[Tuple[Path, str]] = []
-    try:
-        from _paths import (  # type: ignore  # noqa: PLC0415
-            project_lessons_dir,
-            top_level_lessons_dir,
-        )
-        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
-    except Exception:  # noqa: BLE001 — best-effort
-        return out
-
-    global_dir = top_level_lessons_dir()
-    if global_dir.is_dir():
-        out.append((global_dir, "global"))
-
-    proj = resolve_project(workdir)
-    if proj and proj != "_unscoped":
-        try:
-            project_dir = project_lessons_dir(proj)
-        except ValueError:
-            project_dir = None  # type: ignore[assignment]
-        if project_dir is not None and project_dir.is_dir():
-            out.append((project_dir, "project"))
-
-    return out
-
-
-# Lessons frontmatter pattern — same shape as decisions.
-_LESSON_FRONTMATTER_RE = DECISION_FRONTMATTER_RE
-
-
-def read_lessons(
-    workdir: Path, query: str, limit: int
-) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read free-form lessons across global + project tiers.
-
-    Dedup rule: same filename across tiers — later-listed tier wins
-    (project > global per ``_resolve_memory_dirs`` order). The result
-    entry carries ``_scope`` ("global" | "project") so callers can see
-    which tier won.
-
-    Filename convention: ``feedback_*.md``, ``pattern_*.md``, ``reference_*.md``,
-    ``decision_*.md`` (the free-form variant), plus operator-named files like
-    ``gotcha_*.md`` or ``lesson_*.md``. ``MEMORY.md``, ``constitution.md``, and
-    ``INDEX.jsonl`` are skipped (they're indexes, not lessons).
-    """
-    reasons: List[str] = []
-    dirs = _resolve_memory_dirs(workdir)
-    if not dirs:
-        return [], reasons
-
-    # Walk in order; later overrides earlier on filename collision.
-    by_name: Dict[str, Dict[str, Any]] = {}
-    for mem_dir, scope in dirs:
-        for p in sorted(mem_dir.glob("*.md")):
-            name = p.name
-            # Skip indexes / scaffolding files
-            if name in {"MEMORY.md", "constitution.md", "README.md"}:
-                continue
-            try:
-                text = p.read_text(encoding="utf-8")
-            except OSError as e:
-                reasons.append(f"lesson_read_error: {p.name} {e}")
-                continue
-            title = ""
-            ts_raw: Optional[str] = None
-            mtype = ""
-            m = _LESSON_FRONTMATTER_RE.match(text)
-            if m:
-                for line in m.group(1).splitlines():
-                    s = line.strip()
-                    if s.startswith("name:"):
-                        title = s.split(":", 1)[1].strip().strip('"').strip("'")
-                    elif s.startswith("description:"):
-                        # description is the relevance hook
-                        if not title:
-                            title = s.split(":", 1)[1].strip().strip('"').strip("'")
-                    elif s.startswith("type:") or s.startswith("metadata:"):
-                        # type lives inside metadata block; capture if present
-                        pass
-                    elif s.startswith("- type:") or (s.startswith("type:") and "metadata" not in s):
-                        mtype = s.split(":", 1)[1].strip().strip('"').strip("'")
-            if not _q_match(text + " " + title + " " + name, query):
-                continue
-            # Best-effort recency from mtime (no created_at field yet on legacy entries).
-            try:
-                ts = p.stat().st_mtime
-            except OSError:
-                ts = None
-            entry = {
-                "_kind": "lessons",
-                "_scope": scope,
-                "_recency_ts": ts,
-                "id": p.stem,
-                "name": name,
-                "title": title or p.stem,
-                "metadata_type": mtype,
-                "path": str(p),
-            }
-            # Later tier wins (project > global).
-            by_name[name] = entry
-
-    out = list(by_name.values())
-    out.sort(key=lambda x: x.get("_recency_ts") or 0, reverse=True)
-    return out[:limit], reasons
-
-
-def _read_jsonl(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
-    rows: List[Dict[str, Any]] = []
-    reasons: List[str] = []
-    if not path.is_file():
-        return rows, reasons
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as e:
-        return rows, [f"index_read_error: {path.name} {e}"]
-    for lineno, line in enumerate(lines, start=1):
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError as e:
-            reasons.append(f"index_parse_error: {path.name}:{lineno} {e}")
-            continue
-        if isinstance(item, dict):
-            rows.append(item)
-    return rows, reasons
-
-
-def _indexed_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read generated build-loop-memory index rows first."""
-    try:
-        from _paths import memory_indexes_dir  # type: ignore  # noqa: PLC0415
-        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return [], []
-
-    rows, reasons = _read_jsonl(memory_indexes_dir() / "INDEX.jsonl")
-    if not rows:
-        return [], reasons
-    project = resolve_project(workdir)
-    out: List[Dict[str, Any]] = []
-    for row in rows:
-        if str(row.get("type") or "") != "decision":
-            continue
-        row_project = str(row.get("project") or "_unscoped")
-        if project and project != "_unscoped" and row_project != project:
-            continue
-        searchable = " ".join(
-            str(row.get(k) or "")
-            for k in ("id", "canonical_id", "title", "status", "legacy_id", "legacy_path")
-        )
-        tags = row.get("tags") or []
-        if isinstance(tags, list):
-            searchable += " " + " ".join(str(t) for t in tags)
-        if not _q_match(searchable, query):
-            continue
-        out.append(
-            {
-                "_kind": "decisions",
-                "_source": "index",
-                "_recency_ts": _parse_iso(row.get("updated") or row.get("date") or row.get("created")),
-                "id": row.get("id") or row.get("canonical_id"),
-                "canonical_id": row.get("canonical_id") or row.get("id"),
-                "legacy_id": row.get("legacy_id"),
-                "title": row.get("title") or "",
-                "primary_tag": "",
-                "project": row_project,
-                "path": row.get("canonical_path") or "",
-                "summary": row.get("title") or "",
-            }
-        )
-    out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
-    return out[:limit], reasons
-
-
-def read_decisions(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    reasons: List[str] = []
-    indexed, index_reasons = _indexed_decisions(workdir, query, limit)
-    reasons.extend(index_reasons)
-    dec_dirs = _resolve_decision_dirs(workdir)
-    if not dec_dirs:
-        return indexed, reasons
-    out: List[Dict[str, Any]] = []
-    seen_ids: set[str] = {
-        str(item.get("canonical_id") or item.get("id"))
-        for item in indexed
-        if item.get("canonical_id") or item.get("id")
-    }
-    for dec_dir in dec_dirs:
-        for p in sorted(dec_dir.glob("*.md")):
-            stem = p.stem
-            # Skip browseable index files; only NNNN-... shape decisions count.
-            if stem.upper().startswith("INDEX") or stem.startswith("_"):
-                continue
-            if stem in seen_ids:
-                continue
-            try:
-                text = p.read_text(encoding="utf-8")
-            except OSError as e:
-                reasons.append(f"decision_read_error: {p.name} {e}")
-                continue
-            m = DECISION_FRONTMATTER_RE.match(text)
-            title = ""
-            ts_raw: Optional[str] = None
-            primary_tag = ""
-            canonical_id = stem
-            legacy_id = None
-            if m:
-                for line in m.group(1).splitlines():
-                    if line.startswith("title:"):
-                        title = line.split(":", 1)[1].strip().strip('"').strip("'")
-                    elif line.startswith("date:"):
-                        ts_raw = line.split(":", 1)[1].strip().strip('"').strip("'")
-                    elif line.startswith("primary_tag:"):
-                        primary_tag = line.split(":", 1)[1].strip().strip('"').strip("'")
-                    elif line.startswith("canonical_id:"):
-                        canonical_id = line.split(":", 1)[1].strip().strip('"').strip("'")
-                    elif line.startswith("id:"):
-                        legacy_id = line.split(":", 1)[1].strip().strip('"').strip("'")
-            if not _q_match(text + " " + title, query):
-                continue
-            body = text[m.end():] if m else text
-            summary_lines = [
-                ln.strip() for ln in body.splitlines()
-                if ln.strip() and not ln.strip().startswith("#")
-            ]
-            summary = summary_lines[0][:240] if summary_lines else ""
-            try:
-                rel_path = str(p.relative_to(workdir))
-            except ValueError:
-                # File lives outside workdir (global store) — record absolute.
-                rel_path = str(p)
-            out.append({
-                "_kind": "decisions",
-                "_source": "file",
-                "_recency_ts": _parse_iso(ts_raw),
-                "id": canonical_id or stem,
-                "canonical_id": canonical_id or stem,
-                "legacy_id": legacy_id,
-                "title": title,
-                "primary_tag": primary_tag,
-                "path": rel_path,
-                "summary": summary,
-            })
-            seen_ids.add(canonical_id or stem)
-    out.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
-    merged = indexed + out
-    merged.sort(key=lambda x: x["_recency_ts"] or 0, reverse=True)
-    return merged[:limit], reasons
-
-
-# ---------------------------------------------------------------------------
-# Backend 3: agent_memory.<schema>.semantic_facts (Postgres)
-# ---------------------------------------------------------------------------
-
-def read_semantic(
-    workdir: Path,
-    query: str,
-    limit: int,
-    project: Optional[str],
-    skip_postgres: bool = False,
-) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read semantic_facts from Postgres.
-
-    `skip_postgres=True` (Priority 21): bypass the backend entirely without
-    even attempting a connection. Reason recorded as `skipped_postgres`
-    (distinct from `db_unavailable: ...` so the consumer can tell whether
-    the skip was intentional vs the backend genuinely down). Used by the
-    Phase 5 Iterate Backend Short-circuit when `state.json.architecture.
-    backendHealth.semantic.ok == false` — saves the 3-second connect_timeout
-    on every recall during the iterate cycle.
-    """
-    reasons: List[str] = []
-    if skip_postgres:
-        reasons.append("skipped_postgres")
-        return [], reasons
-    db_url = resolve_db_url()
-    if not db_url:
-        reasons.append(f"db_unavailable: {NO_URL_REASON}")
-        return [], reasons
-    try:
-        # Lazy import — many environments don't have psycopg.
-        import psycopg  # type: ignore  # noqa: PLC0415
-    except ImportError:
-        reasons.append("db_unavailable: psycopg not installed")
-        return [], reasons
-
-    schema = os.environ.get("AGENT_MEMORY_SCHEMA", "personal_memory")
-    if not re.match(r"^[a-z][a-z0-9_]*$", schema):
-        reasons.append(f"db_unavailable: unsafe schema {schema!r}")
-        return [], reasons
-
-    out: List[Dict[str, Any]] = []
-    try:
-        with psycopg.connect(db_url, connect_timeout=3) as conn:  # type: ignore
-            with conn.cursor() as cur:
-                where = ["status = 'active'"]
-                params: List[Any] = []
-                if project:
-                    where.append("project = %s")
-                    params.append(project)
-                if query:
-                    where.append("(subject ILIKE %s OR predicate ILIKE %s OR object ILIKE %s)")
-                    params.extend([f"%{query}%"] * 3)
-                sql = (
-                    f'SELECT id, subject, predicate, object, project, '
-                    f'confidence, last_accessed FROM {schema}.semantic_facts '
-                    f'WHERE {" AND ".join(where)} '
-                    f'ORDER BY last_accessed DESC LIMIT %s'
-                )
-                params.append(limit)
-                cur.execute(sql, params)
-                rows = cur.fetchall()
-                for r in rows:
-                    fact_id, subject, predicate, obj, proj, conf, last = r
-                    out.append({
-                        "_kind": "semantic",
-                        "_recency_ts": _parse_iso(last) or (
-                            last.timestamp() if hasattr(last, "timestamp") else None
-                        ),
-                        "id": fact_id,
-                        "subject": subject,
-                        "predicate": predicate,
-                        "object": obj,
-                        "project": proj,
-                        "confidence": conf,
-                        "last_accessed": str(last) if last else None,
-                    })
-    except Exception as e:  # noqa: BLE001 — graceful degradation contract
-        reasons.append(f"db_unavailable: {type(e).__name__}: {e}")
-        return [], reasons
-    return out, reasons
-
-
-# ---------------------------------------------------------------------------
-# Backend 4: build-loop debugger MCP (claude-code-debugger)
-# ---------------------------------------------------------------------------
-
-def read_debugger(
-    workdir: Path,
-    query: str,
-    limit: int,
-    project: Optional[str],
-) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Best-effort MCP read.
-
-    The MCP server is bundled at `dist/src/mcp/server.js` (relative to the
-    plugin root). We do NOT spawn the server from here — that's the
-    orchestrator's job. Instead we attempt to invoke the CLI mode of the
-    same package if it's installed; otherwise we return an empty list with
-    a `mcp_unavailable` reason. Tests inject a mock at
-    `_DEBUGGER_RUNNER_OVERRIDE`.
-    """
-    reasons: List[str] = []
-    runner = _DEBUGGER_RUNNER_OVERRIDE
-    if runner is None:
-        # Probe for the npx-based CLI.
-        try:
-            proc = subprocess.run(
-                ["npx", "--no-install", "@tyroneross/claude-code-debugger",
-                 "search", "--query", query or "*",
-                 "--limit", str(limit), "--json"],
-                capture_output=True, text=True, timeout=5,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            reasons.append(f"mcp_unavailable: {type(e).__name__}: {e}")
-            return [], reasons
-        if proc.returncode != 0:
-            reasons.append(f"mcp_unavailable: cli rc={proc.returncode}")
-            return [], reasons
-        out_text = proc.stdout
-    else:
-        out_text = runner(query=query, limit=limit, project=project)
-
-    try:
-        payload = json.loads(out_text) if out_text else {"incidents": []}
-    except json.JSONDecodeError as e:
-        reasons.append(f"mcp_unavailable: bad json: {e}")
-        return [], reasons
-    incidents = payload.get("incidents") or payload.get("results") or []
-    out: List[Dict[str, Any]] = []
-    for inc in incidents[:limit]:
-        out.append({
-            "_kind": "debugger",
-            "_recency_ts": _parse_iso(inc.get("created_at") or inc.get("date")),
-            "id": inc.get("id") or inc.get("incident_id"),
-            "symptom": inc.get("symptom"),
-            "root_cause": inc.get("root_cause"),
-            "fix": inc.get("fix"),
-            "project": inc.get("project"),
-        })
-    return out, reasons
-
-
-# Test-injection seam.
 _DEBUGGER_RUNNER_OVERRIDE: Optional[Any] = None
 
 
 def set_debugger_runner(fn: Optional[Any]) -> None:
     """Inject a callable used by `read_debugger` instead of the npx CLI.
 
-    Tests pass `lambda query, limit, project: '{"incidents":[...]}'`.
+    Tests pass ``lambda query, limit, project: '{"incidents":[...]}'``.
     """
     global _DEBUGGER_RUNNER_OVERRIDE
     _DEBUGGER_RUNNER_OVERRIDE = fn
 
 
+def read_debugger(
+    workdir: Path,
+    query: str,
+    limit: int,
+    project: Optional[str],
+) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Best-effort MCP read.
+
+    The MCP server is bundled at ``dist/src/mcp/server.js`` (relative to the
+    plugin root). We do NOT spawn the server from here — that is the
+    orchestrator's job. Instead we attempt to invoke the CLI mode of the same
+    package if it's installed; otherwise we return an empty list with a
+    ``mcp_unavailable`` reason. Tests inject a mock at
+    ``_DEBUGGER_RUNNER_OVERRIDE``.
+    """
+    return read_debugger_impl(
+        workdir=workdir,
+        query=query,
+        limit=limit,
+        project=project,
+        runner=_DEBUGGER_RUNNER_OVERRIDE,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Top-level: recall()
 # ---------------------------------------------------------------------------
+
+def _emit_telemetry(merged: List[Dict[str, Any]], query: str) -> Optional[str]:
+    """Fire-and-forget telemetry emit.  Returns correlation_id or None."""
+    try:
+        try:
+            from scripts import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
+        except ImportError:
+            import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
+        seen_ids = [r.get("id") or r.get("slug") or r.get("path") or "" for r in merged]
+        return _mt.emit_read(
+            phase="unknown",
+            reader="memory_facade.recall",
+            query=query,
+            memory_ids_seen=[s for s in seen_ids if s],
+            effect=None,
+            reason="",
+        )
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
+        print(f"WARN: memory_telemetry emit_read failed: {exc}", file=sys.stderr)
+        return None
+
+
+def _fan_out(
+    workdir: Path,
+    query: str,
+    limit: int,
+    kind: Optional[str],
+    project: Optional[str],
+    skip_postgres: bool,
+) -> tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
+    """Invoke each backend if its kind is requested; collect results + reasons."""
+    _backends = {
+        "runs":      lambda: read_runs(workdir, query, limit),
+        "decisions": lambda: read_decisions(workdir, query, limit),
+        "lessons":   lambda: read_lessons(workdir, query, limit),
+        "semantic":  lambda: read_semantic(workdir, query, limit, project, skip_postgres=skip_postgres),
+        "debugger":  lambda: read_debugger(workdir, query, limit, project),
+    }
+    results: Dict[str, List[Dict[str, Any]]] = {k: [] for k in KINDS}
+    reasons: List[str] = []
+    for k in KINDS:
+        if kind not in (None, k):
+            continue
+        results[k], r = _backends[k]()
+        reasons.extend(r)
+    return results, reasons
+
 
 def recall(
     query: str = "",
@@ -629,64 +215,22 @@ def recall(
 ) -> Dict[str, Any]:
     """Unified read across the four memory backends. See module docstring.
 
-    `skip_postgres=True` (Priority 21): the Postgres-backed semantic backend
+    ``skip_postgres=True`` (Priority 21): the Postgres-backed semantic backend
     is bypassed entirely. Used by Phase 5 Iterate's Backend Short-circuit
-    step when `state.json.architecture.backendHealth.semantic.ok == false`.
-    The `reasons[]` envelope marks the skip as `skipped_postgres` (distinct
-    from `db_unavailable: ...`) so consumers can tell intentional skip
+    step when ``state.json.architecture.backendHealth.semantic.ok == false``.
+    The ``reasons[]`` envelope marks the skip as ``skipped_postgres`` (distinct
+    from ``db_unavailable: ...``) so consumers can tell intentional skip
     from genuine backend-down.
     """
     if kind is not None and kind not in KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {KINDS}")
     workdir = (workdir or Path.cwd()).resolve()
-    results: Dict[str, List[Dict[str, Any]]] = {k: [] for k in KINDS}
-    reasons: List[str] = []
+    results, reasons = _fan_out(workdir, query, limit, kind, project, skip_postgres)
 
-    if kind in (None, "runs"):
-        results["runs"], r = read_runs(workdir, query, limit)
-        reasons.extend(r)
-    if kind in (None, "decisions"):
-        results["decisions"], r = read_decisions(workdir, query, limit)
-        reasons.extend(r)
-    if kind in (None, "lessons"):
-        results["lessons"], r = read_lessons(workdir, query, limit)
-        reasons.extend(r)
-    if kind in (None, "semantic"):
-        results["semantic"], r = read_semantic(
-            workdir, query, limit, project, skip_postgres=skip_postgres,
-        )
-        reasons.extend(r)
-    if kind in (None, "debugger"):
-        results["debugger"], r = read_debugger(workdir, query, limit, project)
-        reasons.extend(r)
-
-    # Merge: sort by recency desc, falling back to stable per-kind order.
     merged: List[Dict[str, Any]] = []
     for k in KINDS:
         merged.extend(results[k])
     merged.sort(key=lambda x: (x.get("_recency_ts") or 0), reverse=True)
-
-    # M5 + Step 8: emit memory-read telemetry (separate file from M5
-    # INDEX.jsonl; preserves discovery schema untouched). Fire-and-forget.
-    # `correlation_id` is returned so the caller can later emit a follow-up
-    # memory-effect row once the consumer acts on the result.
-    correlation_id: Optional[str] = None
-    try:
-        try:
-            from scripts import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
-        except ImportError:
-            import memory_telemetry as _mt  # type: ignore  # noqa: PLC0415
-        seen_ids = [r.get("id") or r.get("slug") or r.get("path") or "" for r in merged]
-        correlation_id = _mt.emit_read(
-            phase="unknown",  # facade has no phase context; callers may emit follow-up rows
-            reader="memory_facade.recall",
-            query=query,
-            memory_ids_seen=[s for s in seen_ids if s],
-            effect=None,  # consumer reports effect via emit_effect(correlation_id, ...)
-            reason="",
-        )
-    except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
-        print(f"WARN: memory_telemetry emit_read failed: {exc}", file=sys.stderr)
 
     return {
         "query": query,
@@ -695,7 +239,7 @@ def recall(
         "results_by_kind": results,
         "merged": merged[: limit * len(KINDS)],
         "reasons": reasons,
-        "telemetry_correlation_id": correlation_id,
+        "telemetry_correlation_id": _emit_telemetry(merged, query),
     }
 
 
@@ -705,10 +249,7 @@ def recall(
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
-    # Back-compat for documented calls like:
-    #   python3 scripts/memory_facade.py recall --query "..."
-    # The facade has always performed recall; the subcommand is accepted as a
-    # no-op so old orchestrator docs/scripts keep working.
+    # Back-compat: ``python3 scripts/memory_facade.py recall --query "..."``
     if argv_list and argv_list[0] == "recall":
         argv_list.pop(0)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -720,7 +261,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--skip-postgres",
         action="store_true",
-        help="Skip the Postgres semantic backend entirely (no env-var read, no connect attempt). "
+        help="Skip the Postgres semantic backend entirely. "
              "Use when state.json.architecture.backendHealth.semantic.ok is false.",
     )
     args = parser.parse_args(argv_list)
