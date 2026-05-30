@@ -144,6 +144,44 @@ When swapping providers, the dispatch-pattern A/B test should be re-run because:
 
 When introducing a new provider to a project, prefer Mode B for the first 2-3 builds to establish a quality baseline, then enable Mode A once the new Code-tier model has shown stable tool-use behavior.
 
+## Cheapest-viable-tier dispatch (tier-DOWN)
+
+**Rule: never run a bounded mechanical task at a higher tier than it needs. The cheapest tier that satisfies the task contract wins. Tier-down is as important as tier-up.**
+
+Before every subagent or workflow dispatch, classify the task against the three-bucket decision tree:
+
+| Task shape | Tier |
+|---|---|
+| Pure recognition, extraction, classification, mechanical sweep — "find X", "list/grep Y", "scan for Z", "extract these fields", "run detector + summarize its JSON", "does this match the pattern". No rule-application, no cross-file reasoning. | **Pattern / Haiku** |
+| Apply a known rule or spec to bounded input. Scoped implementation per owned-files. Adversarial critique vs a rubric. The "how" when the "what" is settled. | **Code / Sonnet** (default) |
+| Synthesis, cross-file architectural decisions, ambiguous spec, user-trust prose. | **Thinking / Opus** — only via the existing escalation triggers; never the default. |
+
+The asymmetry this fixes: the system previously only escalated up (Sonnet→Opus). Adding the down direction (Sonnet→Haiku for bounded mechanical work) reclaims the cost headroom on recognition-class tasks. Both directions are now symmetric: escalate when the task complexity exceeds the tier; down-tier when the task complexity is below it.
+
+For `model: inherit` agents (fact-checker, fix-critique, root-cause-investigator), the **caller** passes the cheapest-viable tier — the agent inherits whatever the caller assigned, not a system default.
+
+### Fast workflow agents (dynamic-workflow / fan-out)
+
+When fanning out bounded agents via the Workflow tool, a dynamic-workflow, or a rallyflow mini-loop, assign each fan-out agent the cheapest tier its task warrants — **do not default every agent to Sonnet**:
+
+- **Recognition/extraction/scan-and-summarize** → `opts.model: "haiku"` (Pattern tier)
+- **Apply rules or reason across files** → Sonnet (Code tier)
+- **Single synthesis agent** (aggregates fan-out results, makes a cross-agent judgment) → Opus (Thinking tier) only when synthesis dimensions exceed the Code-tier contract
+
+**Measured signal**: a 10-agent bounded recognition fan-out ran 689K tokens at Sonnet. Haiku is roughly an order of magnitude cheaper per token for this class of work. Fan-out breadth multiplies token cost linearly — picking the floor tier per agent, not the tier default, is the single highest-leverage cost lever in the system.
+
+Concrete dispatch pattern:
+
+```
+Agent({
+  subagent_type: "build-loop:implementer",
+  model: "haiku",          // recognition task — scan for mock-data patterns
+  prompt: "Scan files X..Z for hardcoded test data. Return a JSON list of findings."
+})
+```
+
+Reserve Sonnet for agents that apply rules or produce structured edits; Opus for the single agent that synthesizes across all fan-out results.
+
 ## Round-3 evidence (2026-05-07) — preserved for context
 
 | Mode | Wall-clock | Tokens | Notes |

@@ -464,7 +464,7 @@ Contextual material loaded on demand (not at skill invocation):
 Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>")`):
 
 - `build-loop:research` · `build-loop:optimize` · `build-loop:self-improve` — callable modes
-- `build-loop:model-tiering` — reference for model selection
+- `build-loop:model-tiering` — reference for model selection; includes the cheapest-viable-tier dispatch rule (recognition→Haiku, application→Sonnet, synthesis→Opus) and the fast-workflow/fan-out Haiku default for bounded tasks (`references/model-tier-mapping.md`)
 - `build-loop:architecture-{scan,impact,trace,rules,dead,review}` — native architecture skills sourced from NavGator (provenance + drift-detection via `build-loop:sync-skills`)
 - `build-loop:debugging-memory` · `build-loop:debug-loop` · `build-loop:logging-tracer` — bundled debugger primitives (orchestrator owns when-to-fire, these own the procedural detail)
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
