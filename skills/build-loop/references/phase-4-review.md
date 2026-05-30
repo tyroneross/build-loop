@@ -177,10 +177,11 @@ This is **measurement infrastructure, not a factor** — it is present and ident
 
 ### Sub-step F: Auto-Resolve (drain non-destructive open items)
 
-Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from three sources:
+Drain the candidate auto-resolve queue before writing the final scorecard. Items in the queue come from four sources:
 
 - **Sub-step A Critic** — findings with normalized `severity in {medium, low}` AND `suggestion` naming a single `file:line` (canonical independent-auditor finding fields per `agents/independent-auditor.md`; QM v0.13.0 — legacy `minor→medium`, `info→low`)
 - **Sub-step D Fact-Check & Mock Scan** — non-blocking gate findings (e.g. `Plugin Cache Sync` divergence, `Version-Bump Advisor` notes when `release-pending.md` is absent, single-file documentation drift)
+- **Quality / performance findings this run** (C-HEAL / self_heal_safe_issues) — any quality or performance issue surfaced by this run's self-review, fact-check, simplify, or efficiency scan whose fix classifies SAFE. Auto-fix them in-pass; do NOT defer to followup, do NOT surface. RISKY/DECISION findings from this same path still route to `## Held` / report as usual.
 - **Operator queue** — items previously deferred via the `## Held` section of a prior build's report
 
 For each item:

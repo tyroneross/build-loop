@@ -221,6 +221,8 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 
 **C-FLOW/no_ask_at_chunk_boundary** — The phrasing "want me to keep going?" / "should I continue with X next?" at a chunk boundary is a workflow violation when the items are same-shape and same-intent. Referenced from `skills/build-loop/SKILL.md`.
 
+**C-HEAL/self_heal_safe_issues** — When build-loop encounters an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure; OR a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — it ROOT-CAUSES and FIXES it, then continues. Classify the fix via `scripts/classify_action.py`: SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue; RISKY → isolate to worktree-branch + log + continue main + surface in report; DECISION/PRODUCTION → surface/escalate. Banned anti-pattern: bypassing a fixable error — `--no-verify`, xfail-ing a test, commenting out failing code, `|| true` on a real failure — when a SAFE root-cause fix exists. Workarounds allowed only when the fix classifies RISKY/DECISION/PRODUCTION or is genuinely infeasible; record both the workaround and the issue.
+
 ---
 
 ## Quick-reference cross-index

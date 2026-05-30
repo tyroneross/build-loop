@@ -183,6 +183,14 @@ The only valid reasons to stop and surface to the user:
 
 Otherwise: pick the natural next step, note any reasonable assumption in the run record, and keep moving. One end-of-run report at the end. Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report — see Phase 4 below. See `agents/build-orchestrator.md` §Keep going until done for the orchestrator-side phrasing.
 
+### Self-heal — auto-fix SAFE issues (C-HEAL / self_heal_safe_issues)
+
+When build-loop encounters, during any run: (a) an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure; OR (b) a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — it ROOT-CAUSES and FIXES it, then continues. Route: produce the fix, classify it via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue — no surface, no ask. RISKY → isolate to worktree-branch + log + continue main + surface in report. DECISION/PRODUCTION → surface/escalate.
+
+**Banned anti-pattern:** bypassing a fixable error and continuing or surfacing — `--no-verify` / `git commit -n`, skipping or xfail-ing a failing test, commenting out failing code, swapping in mock data, `|| true` to swallow a real failure — when a SAFE root-cause fix exists. A workaround is allowed ONLY when the root-cause fix classifies RISKY/DECISION/PRODUCTION or is genuinely infeasible (missing credential, external blocker); then record BOTH the workaround and the surfaced issue.
+
+**Guardrails:** only SAFE auto-applies. Verify after every auto-fix (re-run the failed action). A fix that fails verification routes to the existing Iterate / stuck-cascade (5-fail cap). A fix that would balloon complexity routes to re-plan, not skip. Existing iterate caps provide loop-protection.
+
 ### Follow-up auto-drain at chunk boundary
 
 A chunk boundary is not a checkpoint. When the orchestrator (or any session under the build-loop skill) is about to write a final report containing a "still-to-do" / "deferred" / "next pass" list of same-shape, same-intent items, route those items through the follow-up queue instead of writing them to the user as prose questions:

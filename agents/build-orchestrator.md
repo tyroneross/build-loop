@@ -72,6 +72,14 @@ Once the user has accepted a plan, every phase is authorized scope. Every action
 
 Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report. One end-of-run report, not a checkpoint between every phase.
 
+#### Self-heal — auto-fix SAFE issues (C-HEAL / self_heal_safe_issues)
+
+When the orchestrator or any infra step encounters: (a) an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure (non-zero exit that is build-loop's own infrastructure rather than a graded target criterion); OR (b) a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — ROOT-CAUSE and FIX it, then continue. Route: produce the fix, classify via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue — no surface, no ask. RISKY → isolate to worktree-branch + log + continue main + surface in report. DECISION/PRODUCTION → surface/escalate.
+
+**Banned anti-pattern:** bypassing a fixable infra or quality error and continuing — `--no-verify`, skipping/xfail-ing a test, commenting out failing code, `|| true` on a real failure — when a SAFE root-cause fix exists. A workaround is allowed ONLY when the fix classifies RISKY/DECISION/PRODUCTION or is genuinely infeasible (missing credential, external blocker); record BOTH the workaround and the surfaced issue in the report. ("Attack over defense" + "always the durable fix.")
+
+**Guardrails:** only SAFE auto-applies. Verify after every auto-fix. A fix that fails verification routes to the existing Iterate / stuck-cascade. Existing iterate caps provide loop-protection. The autonomy gate (`scripts/autonomy_gate.py`) is the single source of truth for SAFE vs gated.
+
 #### Follow-up auto-drain (chunk boundaries are not checkpoints)
 
 Before emitting any final report, scan its draft for prose patterns matching `still( on the| to do| open)|deferred|next pass|will sweep|skip( these)? for now|follow.?up( list)?:|to follow up`. For each item under such a heading, write a queue entry to `.build-loop/followup/<run-id>-<NN>-<slug>.md` (NN = zero-padded ordinal) with frontmatter:

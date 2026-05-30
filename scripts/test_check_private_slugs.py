@@ -193,6 +193,42 @@ def test_self_exemption_in_linked_worktree(repo: Path, tmp_path: Path):
     assert res.returncode == 0, res.stderr
 
 
+# --- Binary-file safety: non-UTF-8 staged content must not crash ------
+#
+# Regression for: `git show :<path>` with `text=True` raised
+# UnicodeDecodeError on binary blobs (e.g. .map, images, .db),
+# aborting the commit with no recourse except --no-verify.
+
+def test_staged_binary_file_does_not_raise(repo: Path):
+    """Staging a file containing non-UTF-8 bytes must not raise and must
+    return a clean (no-leak) result — binaries cannot contain text slugs.
+    """
+    # Write raw non-UTF-8 bytes that would crash str.decode("utf-8").
+    binary_path = repo / "asset.bin"
+    binary_path.write_bytes(b"\xa2\xff\x00binary\xfe\xed")
+    _git(["add", "asset.bin"], repo)
+
+    # _staged_content must return None (binary skip), never raise.
+    result = cps._staged_content(repo, "asset.bin")
+    assert result is None, f"expected None for binary blob, got {result!r}"
+
+
+def test_staged_binary_file_commit_does_not_block(repo: Path):
+    """End-to-end: a commit that stages only a binary file must exit 0
+    (no slug found, no crash).  This is the exact failure path from the
+    bug report.
+    """
+    binary_path = repo / "asset2.bin"
+    binary_path.write_bytes(b"\xa2\xff\x00binary\xfe\xed")
+    _git(["add", "asset2.bin"], repo)
+
+    # Run as subprocess (same as the pre-commit hook does).
+    res = _run(repo)   # default: scan staged files only
+    assert res.returncode == 0, (
+        f"checker crashed or blocked on binary file:\n{res.stderr}"
+    )
+
+
 # --- SEC-006: unreadable tracked file fails CLOSED in CI mode ---------
 
 def test_unreadable_tracked_file_fails_closed_in_all_mode(repo: Path,

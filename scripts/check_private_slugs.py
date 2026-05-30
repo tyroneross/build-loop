@@ -145,13 +145,20 @@ def _all_tracked(root: Path) -> list[str]:
 
 
 def _staged_content(root: Path, path: str) -> str | None:
-    """Return the staged (index) blob of `path`, or None if unreadable."""
+    """Return the staged (index) blob of `path`, or None if unreadable/binary.
+
+    Capture as bytes then decode; NUL bytes signal a binary blob — slug
+    patterns are text-only so binaries are irrelevant and safe to skip.
+    """
     r = subprocess.run(
-        ["git", "show", f":{path}"], cwd=root, capture_output=True, text=True,
+        ["git", "show", f":{path}"], cwd=root, capture_output=True,
     )
     if r.returncode != 0:
         return None
-    return r.stdout
+    text = r.stdout.decode("utf-8", errors="replace")
+    if "\x00" in text:  # binary file — no text slug can contain NUL
+        return None
+    return text
 
 
 def _disk_content(root: Path, path: str) -> str | None:
