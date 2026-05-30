@@ -215,6 +215,14 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 
 ---
 
+## C-FLOW rules
+
+**C-FLOW/no_ask_to_commit** — Completed, validated, build-loop-authorized work commits automatically; pausing to ask the user whether to commit is a workflow violation. Only push/deploy verdicts of `confirm` or `block` from `autonomy_gate.py` / `deployment_policy.py` stop the loop; routine commit advancement does not require confirmation.
+
+**C-FLOW/no_ask_at_chunk_boundary** — The phrasing "want me to keep going?" / "should I continue with X next?" at a chunk boundary is a workflow violation when the items are same-shape and same-intent. Referenced from `skills/build-loop/SKILL.md`.
+
+---
+
 ## Quick-reference cross-index
 
 | Rule | Canonical implementation |

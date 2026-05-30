@@ -165,6 +165,8 @@ Before starting the loop, assess whether the task warrants it. If the task is a 
 
 Once the user accepts the plan, every phase is authorized scope. The orchestrator does not stop and ask the user between phases. Status updates are fine. Permission requests are not.
 
+Completed, validated, authorized work commits automatically. Asking "should I commit?" or "want me to commit this?" is a workflow violation — committing validated work is a non-gated action (`scripts/autonomy_gate.py` classifies a plain `git commit` as `auto`, exit 0). This applies in both interactive and autonomous mode. The only commit-adjacent stops are autonomy-gate verdicts of `confirm` or `block` on a *push or deploy* command — never on the commit itself.
+
 Issues found mid-build (failing tests, attestation drift, critic flags, discoverability gaps) route to Iterate. That is the loop's job. The default is to fix and continue.
 
 The only valid reasons to stop and surface to the user:

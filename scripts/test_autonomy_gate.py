@@ -288,6 +288,49 @@ class AutonomyGateWarnTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, msg=f"Expected exit 1, got {result.returncode}")
 
 
+class AutonomyGateCommitAutoTests(unittest.TestCase):
+    """Regression: git commit must always classify as auto (exit 0).
+
+    This pins the contract so that a future confirmFor change cannot silently
+    start gating plain commits.  Committing validated work is non-gated by
+    design — the only commit-adjacent stops are push/deploy verdicts.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _assert_auto(self, command: str) -> None:
+        result = run(self.workdir, "single-writer commit", command)
+        data = envelope(result)
+        self.assertEqual(
+            data["action"],
+            "auto",
+            msg=f"Expected auto for {command!r}, got {data['action']!r}. Full: {data}",
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"Expected exit 0 for {command!r}, got {result.returncode}",
+        )
+
+    def test_plain_git_commit(self) -> None:
+        self._assert_auto('git commit -m "feat: add foo"')
+
+    def test_git_commit_with_sign_off(self) -> None:
+        self._assert_auto('git commit -s -m "fix: correct bar"')
+
+    def test_git_commit_amend(self) -> None:
+        # --amend is still a local-only mutation — not a push or deploy
+        self._assert_auto("git commit --amend --no-edit")
+
+    def test_git_commit_no_edit(self) -> None:
+        self._assert_auto('git commit --no-edit -m "chore: bump version"')
+
+
 class AutonomyGateSelfTestTests(unittest.TestCase):
     """Verify --self-test exits 0."""
 
