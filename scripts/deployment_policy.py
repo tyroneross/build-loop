@@ -16,7 +16,7 @@ Repo override:
       "preview": "auto",
       "testflight": "auto",
       "production": "confirm",
-      "unknown": "confirm",
+      "unknown": "auto",
       "protectedBranches": ["main", "master", "release"]
     }
   }

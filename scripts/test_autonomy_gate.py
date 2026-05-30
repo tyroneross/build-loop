@@ -83,8 +83,25 @@ class AutonomyGateDefaultsTests(unittest.TestCase):
     def test_drop_table(self) -> None:
         self._assert_confirm("DROP TABLE users")
 
-    def test_rm_rf_root(self) -> None:
-        self._assert_confirm("rm -rf /")
+    def test_rm_rf_non_catastrophic_confirms(self) -> None:
+        # A delete of a real path confirms (archive is the auto alternative).
+        self._assert_confirm("rm -rf ./build-output")
+
+    def _assert_block(self, command: str) -> None:
+        result = run(self.workdir, "test", command)
+        data = envelope(result)
+        self.assertEqual(
+            data["action"], "block",
+            msg=f"Expected block for {command!r}, got {data['action']!r}. Full: {data}",
+        )
+        self.assertEqual(result.returncode, 2, msg=f"Expected exit 2 for {command!r}, got {result.returncode}")
+
+    def test_rm_rf_root_blocks(self) -> None:
+        # Catastrophic-never: auto-refused (block), not confirmed.
+        self._assert_block("rm -rf /")
+
+    def test_rm_rf_home_blocks(self) -> None:
+        self._assert_block("rm -rf ~")
 
 
 class AutonomyGateAutoTests(unittest.TestCase):

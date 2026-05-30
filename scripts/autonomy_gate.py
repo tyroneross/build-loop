@@ -3,21 +3,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """Classify arbitrary build-loop actions against a generalized autonomy policy.
 
+Policy: the ONLY confirmation gate is production pushes/deploys/publishes/migrations.
+Everything else auto-executes. Catastrophic-never commands (filesystem nukes,
+force-pushes to protected branches) are auto-REFUSED (blocked) — the loop logs and
+continues, never prompts.
+
 Precedence (highest to lowest):
   1. deployment_policy.py  — push/deploy/release commands route there first
   2. Repo blockFor         — hard-block patterns from .build-loop/config.json
   3. Repo confirmFor       — require-confirm patterns from .build-loop/config.json
-  4. Repo warnFor          — warn-only patterns from .build-loop/config.json (NEW)
-  5. Default confirmFor    — 7 built-in confirm patterns (see DEFAULT_CONFIRM_FOR)
-  6. Default warnFor       — empty by default (NEW)
-  7. Default blockFor      — empty by default
+  4. Repo warnFor          — warn-only patterns from .build-loop/config.json
+  5. Default confirmFor    — production-push class only (see DEFAULT_CONFIRM_FOR)
+  6. Default warnFor       — empty by default
+  7. Default blockFor      — catastrophic-never commands (see DEFAULT_BLOCK_FOR)
   8. auto                  — no pattern matched; safe to execute
 
 Exit codes (mirror deployment_policy.py exit semantics via --require-auto):
   0 — auto    (safe to execute)
-  0 — warn    (safe to execute, but flagged for match-rate tracking) [NEW]
-  1 — confirm (operator must approve)
-  2 — block   (do not execute under any circumstance)
+  0 — warn    (safe to execute, but flagged for match-rate tracking)
+  1 — confirm (operator must approve; production push/deploy/publish/migration only)
+  2 — block   (auto-refused; do not execute under any circumstance)
 
 Repo override schema (.build-loop/config.json):
   {
@@ -31,7 +36,7 @@ Repo override schema (.build-loop/config.json):
   }
 
   confirmFor, warnFor, and blockFor REPLACE defaults, not extend.
-  Copy the 7 defaults into your config if you want to extend.
+  Copy the defaults into your config if you want to extend.
   When a command matches both confirmFor and warnFor, confirmFor wins (stricter
   verdict on tie).
 """
@@ -49,19 +54,40 @@ from typing import Any
 # Default patterns
 # ---------------------------------------------------------------------------
 
+# Confirmation fires ONLY for production pushes (routed to deployment_policy at
+# step 1) and destructive DATA deletion. Archive (reversible) is auto; the
+# irreversible delete/purge confirms. Catastrophic-never commands are BLOCKED
+# (auto-refused) below, not confirmed. No gate exists for code size or complexity.
 DEFAULT_CONFIRM_FOR: list[str] = [
+    # Production pushes / releases / deploys. The common command shapes route to
+    # deployment_policy at step 1; these are belt-and-suspenders for prod impact.
     "npm publish*",
-    "git push --force*",
-    "git push * main",
-    "git push * master",
     "production deploy*",
+    "* deploy * --prod*",
+    "gh release create*",
+    # Destructive DATA deletion. Archive (reversible) is auto; the purge confirms.
     "DROP TABLE*",
-    "rm -rf /*",
+    "DROP DATABASE*",
+    "TRUNCATE *",
+    "git push * --delete *",
+    "git push --delete *",
+    "rm -rf *",
 ]
 
 DEFAULT_WARN_FOR: list[str] = []  # empty by default; operators add patterns to observe match-rate before promoting to confirmFor
 
-DEFAULT_BLOCK_FOR: list[str] = []
+# Catastrophic-never: auto-REFUSED (the loop logs and continues, never prompts).
+# Checked BEFORE confirmFor so a root/home nuke blocks rather than matching the
+# `rm -rf *` confirm pattern.
+DEFAULT_BLOCK_FOR: list[str] = [
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME*",
+    "git push --force * main",
+    "git push --force * master",
+    "git push -f * main",
+    "git push -f * master",
+]
 
 # ---------------------------------------------------------------------------
 # Config loading
@@ -294,10 +320,12 @@ def classify(
     effective_block = repo_block if repo_block is not None else DEFAULT_BLOCK_FOR
     effective_confirm = repo_confirm if repo_confirm is not None else DEFAULT_CONFIRM_FOR
 
-    # Step 2: repo blockFor
+    # Step 2: blockFor (repo override OR default) — block wins over confirm/warn,
+    # so a root/home nuke is refused before it can match the `rm -rf *` confirm.
     matched = _matches_any(command, effective_block)
-    if matched and repo_block is not None:
-        return _envelope("block", matched, "config", "matched repo blockFor pattern", action_label, command, flags)
+    if matched:
+        src = "config" if repo_block is not None else "default"
+        return _envelope("block", matched, src, f"matched {src} blockFor pattern", action_label, command, flags)
 
     # Step 3: repo confirmFor (only when config exists and has confirmFor)
     # confirmFor wins over warnFor on a tie — check confirmFor first.
@@ -324,11 +352,7 @@ def classify(
         if matched:
             return _envelope("warn", matched, "default", "matched default warnFor pattern", action_label, command, flags)
 
-    # Step 7: default blockFor (only when repo has NOT overridden blockFor)
-    if repo_block is None:
-        matched = _matches_any(command, DEFAULT_BLOCK_FOR)
-        if matched:
-            return _envelope("block", matched, "default", "matched default blockFor pattern", action_label, command, flags)
+    # (default blockFor handled at Step 2 — block always wins over confirm/warn)
 
     # Step 8: auto
     source = config_source if config_source == "config" else "default"
@@ -395,21 +419,29 @@ def _run_self_tests() -> bool:
 
     tmp = Path(tempfile.mkdtemp())
 
-    # --- Default confirmFor patterns ---
+    # --- Default confirmFor patterns (prod publish/deploy + destructive delete) ---
     for pattern, cmd in [
         ("npm publish*", "npm publish"),
-        ("git push --force*", "git push --force origin main"),
-        ("git push * main", "git push origin main"),
-        ("git push * master", "git push origin master"),
         ("production deploy*", "production deploy v1.0"),
         ("DROP TABLE*", "DROP TABLE users"),
-        ("rm -rf /*", "rm -rf /"),
+        ("DROP DATABASE*", "DROP DATABASE app"),
+        ("TRUNCATE *", "TRUNCATE logs"),
+        ("rm -rf *", "rm -rf ./build-output"),
     ]:
         env = classify(tmp, "test", cmd)
         check(
             f"default confirmFor:{cmd}",
             env["action"] == "confirm",
             f"expected confirm, got {env['action']}",
+        )
+
+    # --- Default blockFor: catastrophic-never (auto-refused, checked before confirm) ---
+    for cmd in ["rm -rf /", "rm -rf ~"]:
+        env = classify(tmp, "test", cmd)
+        check(
+            f"default blockFor:{cmd}",
+            env["action"] == "block",
+            f"expected block, got {env['action']}",
         )
 
     # --- Auto for benign commands ---

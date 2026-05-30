@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""self_mod_verify.py — safety gate for any self-modification of build-loop's own code.
+"""self_mod_verify.py — correctness gate for any self-modification of build-loop's own code.
 
 Runs the test suite, parses pass/fail, and optionally auto-reverts changed files
 if the suite fails.  This is the load-bearing guardrail that prevents a self-
 simplification from being committed when it breaks existing behaviour.
+
+The gate measures correctness via tests only.  It does NOT special-case which
+files were changed (gate files, test files, self-improvement scripts, etc.) —
+those run the same way as any other change.  Oversight moves to post-hoc review
+and end-of-run readback; it does not live here.
 
 CLI::
 
@@ -20,23 +25,21 @@ CLI::
 Output JSON::
 
     {
-      "scope":              "full" | "changed" | "auto",
-      "effective_scope":    "full" | "changed" | "broad",   # resolved from auto
-      "ran":                [str, ...],     # test files that were discovered and run
-      "passed":             int,
-      "failed":             int,
-      "failed_tests":       [str, ...],    # short names of failing tests
-      "reverted":           bool,
-      "verdict":            "pass" | "fail" | "no_tests" | "needs_human",
-      "meta_modification":  bool,          # true when gate/test files were changed
-      "meta_files":         [str, ...],    # which changed files triggered meta flag
-      "timed_out":          bool,
-      "errors":             [str, ...]
+      "scope":           "full" | "changed" | "auto",
+      "effective_scope": "full" | "changed" | "broad",   # resolved from auto
+      "ran":             [str, ...],     # test files that were discovered and run
+      "passed":          int,
+      "failed":          int,
+      "failed_tests":    [str, ...],    # short names of failing tests
+      "reverted":        bool,
+      "verdict":         "pass" | "fail" | "no_tests",
+      "timed_out":       bool,
+      "errors":          [str, ...]
     }
 
 Exit codes:
   0  — verdict "pass" or "no_tests"
-  1  — verdict "fail" or "needs_human"
+  1  — verdict "fail"
 
 Fail-soft on infrastructure errors (no pytest, unreadable output):
   verdict = "no_tests", exit 0.  A missing test suite never blocks a deploy;
@@ -46,102 +49,18 @@ Scope selection:
   full     — whole scripts/ test suite (slow on large repos; raises timeout to 900s)
   changed  — only the mapped test files for --changed-files
   auto     — recommended default:
-               meta files present  → needs_human  (runs mapped tests for info)
                1–3 source files    → changed  (mapped tests only)
-               4+ files OR core paths present → broad  (mapped + area tests)
-
-Meta-modification detection:
-  Any change to the gate itself, the test files that gate the gate, or the
-  self-improvement/autonomy control surface triggers verdict=needs_human
-  regardless of whether tests pass.  This closes the reward-hacking hole where
-  a self-mod edits its own tests to fabricate a green signal.
+               4+ files OR a core/orchestration-path file → broad  (mapped + area tests)
+               else                → changed
 """
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
-
-
-# ---------------------------------------------------------------------------
-# Meta-path definitions (relative to workdir/scripts, or repo-root globs)
-# ---------------------------------------------------------------------------
-
-# Patterns relative to the *repo root* (unix-style, forward slashes).
-# fnmatch is applied after normalising the changed-file path to a relative
-# forward-slash string.
-_META_PATTERNS: list[str] = [
-    # The gate itself
-    "scripts/self_mod_verify.py",
-    # Test files (editing tests that gate you = fabricating green signal)
-    "scripts/test_*.py",
-    # Classifier and autonomy control surfaces
-    "scripts/classify_action.py",
-    "scripts/autonomy_gate.py",
-    "scripts/self_review.py",
-    # Self-improvement loop scripts
-    "scripts/self_review_run.sh",
-    "scripts/install_self_review.py",
-    # Permission / auth-adjacent files
-    "scripts/deployment_policy.py",
-    "scripts/audit_before_commit.py",
-]
-
-
-def classify_self_mod(changed_files: list[str], workdir: Path | None = None) -> dict:
-    """Classify a list of changed files for meta-modification risk.
-
-    Args:
-        changed_files: paths as strings (absolute or relative to workdir).
-        workdir: repo root used to normalise relative paths.  Defaults to cwd.
-
-    Returns:
-        {
-          "meta_modification": bool,
-          "meta_files": [str, ...],   # subset of changed_files that matched
-          "reason": str
-        }
-    """
-    if workdir is None:
-        workdir = Path.cwd()
-
-    meta_files: list[str] = []
-
-    for raw in changed_files:
-        p = Path(raw)
-        if not p.is_absolute():
-            p = workdir / p
-        try:
-            rel = p.resolve().relative_to(workdir.resolve())
-        except ValueError:
-            # File outside workdir — can't match patterns; treat as non-meta
-            continue
-        # Normalise to forward-slash for fnmatch
-        rel_str = rel.as_posix()
-        for pattern in _META_PATTERNS:
-            if fnmatch.fnmatch(rel_str, pattern):
-                meta_files.append(raw)
-                break  # one match is enough per file
-
-    if meta_files:
-        return {
-            "meta_modification": True,
-            "meta_files": meta_files,
-            "reason": (
-                f"Changed files touch the gate, test suite, or self-improvement "
-                f"control surface: {meta_files}.  Human review required — "
-                f"auto-apply is blocked regardless of test outcome."
-            ),
-        }
-    return {
-        "meta_modification": False,
-        "meta_files": [],
-        "reason": "No meta-paths detected in changed files.",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -335,22 +254,18 @@ def _all_script_tests(workdir: Path) -> list[str]:
 def _resolve_auto_scope(
     workdir: Path,
     changed_files: list[str],
-    meta_info: dict,
 ) -> tuple[str, list[str]]:
     """Resolve 'auto' scope to an effective scope + test file list.
 
-    Returns (effective_scope, test_files) where effective_scope is one of
-    "changed", "broad", or "full" (never "auto").
-    """
-    if meta_info["meta_modification"]:
-        # Run mapped tests for information, but verdict will be needs_human anyway
-        test_files = _tests_for_changed(workdir, changed_files)
-        return "changed", test_files
+    Rules (file-count / core-path only — no file-identity special-casing):
+      1–3 source files and no core-path file → changed (mapped tests only)
+      4+ files OR a core/orchestration-path file → broad (mapped + area tests)
 
-    # Count non-meta source files
+    Returns (effective_scope, test_files) where effective_scope is one of
+    "changed" or "broad" (never "auto" or "full").
+    """
     n = len(changed_files)
 
-    # Check for core-path files
     has_core = False
     for raw in changed_files:
         p = Path(raw)
@@ -446,9 +361,6 @@ def verify(
     errors: list[str] = []
     reverted = False
 
-    # --- Meta-modification check ---
-    meta_info = classify_self_mod(changed_files, workdir)
-
     # --- Runner discovery ---
     runner_result = _find_runner(workdir)
     if runner_result is None:
@@ -461,16 +373,9 @@ def verify(
             "failed_tests": [],
             "reverted": False,
             "verdict": "no_tests",
-            "meta_modification": meta_info["meta_modification"],
-            "meta_files": meta_info["meta_files"],
             "timed_out": False,
             "errors": ["pytest not available (uv run pytest and python3 -m pytest both failed)"],
         }
-        # needs_human overrides no_tests even when pytest is unavailable
-        if meta_info["meta_modification"]:
-            result["verdict"] = "needs_human"
-            result["errors"].append(meta_info["reason"])
-            return result, 1
         return result, 0
 
     runner_base, has_xdist = runner_result
@@ -478,7 +383,7 @@ def verify(
     # --- Scope resolution ---
     effective_scope = scope
     if scope == "auto":
-        effective_scope, test_files = _resolve_auto_scope(workdir, changed_files, meta_info)
+        effective_scope, test_files = _resolve_auto_scope(workdir, changed_files)
     elif scope == "changed":
         test_files = _tests_for_changed(workdir, changed_files)
     else:  # full
@@ -497,15 +402,9 @@ def verify(
             "failed_tests": [],
             "reverted": False,
             "verdict": "no_tests",
-            "meta_modification": meta_info["meta_modification"],
-            "meta_files": meta_info["meta_files"],
             "timed_out": False,
             "errors": errors,
         }
-        if meta_info["meta_modification"]:
-            result["verdict"] = "needs_human"
-            errors.append(meta_info["reason"])
-            return result, 1
         return result, 0
 
     # --- Build pytest command ---
@@ -536,15 +435,9 @@ def verify(
             "failed_tests": [],
             "reverted": False,
             "verdict": "no_tests",
-            "meta_modification": meta_info["meta_modification"],
-            "meta_files": meta_info["meta_files"],
             "timed_out": True,
             "errors": errors,
         }
-        if meta_info["meta_modification"]:
-            result["verdict"] = "needs_human"
-            errors.append(meta_info["reason"])
-            return result, 1
         return result, 0
     except (FileNotFoundError, OSError) as exc:
         errors.append(f"pytest runner error: {exc}")
@@ -557,41 +450,26 @@ def verify(
             "failed_tests": [],
             "reverted": False,
             "verdict": "no_tests",
-            "meta_modification": meta_info["meta_modification"],
-            "meta_files": meta_info["meta_files"],
             "timed_out": False,
             "errors": errors,
         }
-        if meta_info["meta_modification"]:
-            result["verdict"] = "needs_human"
-            errors.append(meta_info["reason"])
-            return result, 1
         return result, 0
 
     passed, failed, failed_tests = _parse_pytest_output(r.stdout, r.stderr)
 
-    # --- Determine base verdict from test results ---
+    # --- Determine verdict from test results only ---
     if r.returncode == 0 and failed == 0:
-        test_verdict = "pass"
+        verdict = "pass"
         exit_code = 0
     elif r.returncode == 5:
         # pytest exit 5 = no tests collected
-        test_verdict = "no_tests"
+        verdict = "no_tests"
         exit_code = 0
     else:
-        test_verdict = "fail"
+        verdict = "fail"
         exit_code = 1
-        # Auto-revert if requested (only on fail, not on needs_human)
-        if auto_revert and not meta_info["meta_modification"]:
+        if auto_revert:
             reverted = _revert_files(workdir, changed_files, errors)
-
-    # --- Meta overrides verdict: tests still ran and are reported, but verdict=needs_human ---
-    if meta_info["meta_modification"]:
-        verdict = "needs_human"
-        exit_code = 1
-        errors.append(meta_info["reason"])
-    else:
-        verdict = test_verdict
 
     result = {
         "scope": scope,
@@ -602,8 +480,6 @@ def verify(
         "failed_tests": failed_tests,
         "reverted": reverted,
         "verdict": verdict,
-        "meta_modification": meta_info["meta_modification"],
-        "meta_files": meta_info["meta_files"],
         "timed_out": timed_out,
         "errors": errors,
     }
@@ -644,7 +520,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--auto-revert",
         action="store_true",
-        help="If the suite fails (not needs_human), revert --changed-files via git restore",
+        help="If the suite fails, revert --changed-files via git restore",
     )
     p.add_argument(
         "--timeout",
@@ -679,7 +555,6 @@ def main(argv: list[str] | None = None) -> int:
         f"passed={result['passed']} failed={result['failed']} "
         f"reverted={result['reverted']} scope={result['scope']} "
         f"effective_scope={result['effective_scope']} "
-        f"meta_modification={result['meta_modification']} "
         f"timed_out={result['timed_out']}",
         file=sys.stderr,
     )

@@ -160,17 +160,12 @@ python3 scripts/self_mod_verify.py \
 `--scope auto` runs mapped tests for small changes and broader tests for multi-file/core changes (practical default). Use `--scope full` for the slow exhaustive option (900s, parallel when pytest-xdist is present).
 
 `verdict: pass` → the self-modification may commit.
-`verdict: fail` → the gate AUTO-REVERTS the change and writes the finding to `.build-loop/proposals/needs-human/`. The change is NEVER committed. Never retry a failed gate verdict without human review.
-`verdict: needs_human` / `meta_modification: true` → see §"Meta-modifications (always human-gated)" immediately below. STOP — queue to `.build-loop/proposals/needs-human/`, never auto-apply, even if tests passed.
+`verdict: fail` → the gate AUTO-REVERTS the change and writes the finding to `.build-loop/proposals/failed-gate/`. The change is NEVER committed. Do not retry a failed gate verdict without diagnosing the root cause.
+
+**Self-modifications execute — they do not stop the loop.** A self-modification that is part of the accepted plan (including edits to the gate, tests, or the self-improvement loop) executes behind the test-suite gate: `self_mod_verify.py --scope auto --auto-revert` must return `verdict: pass` (tests are the oracle; a failed gate auto-reverts the change). Build-loop never halts a planned self-modification for human approval. Oversight is post-hoc, not a gate: (a) self-modifying runs trigger an ADDITIONAL adversarial review (independent-auditor at build scope; the periodic deep self-review re-audits recent self-modifications) — non-blocking; (b) the end-of-run readback reports every self-modification and the additional-review findings so the human sees results at the end. The loop stays on task and reports once, at the end.
 
 **Step 4 — SAFE-only auto-apply:**
-Only changes that `classify_action.py` classifies as SAFE auto-apply through this path. Structural or architectural self-modifications — new phase, changed dispatch contract, agent-role change, new mandatory gate — surface as DECISION and are never auto-applied. They are queued to `.build-loop/proposals/needs-human/` for explicit user action.
-
-### Meta-modifications (always human-gated)
-
-**Meta-modifications are always human-gated.** A self-modification that touches the gate's own inputs or control surfaces — test files, `self_mod_verify.py`, `classify_action.py`, `autonomy_gate.py`, `self_review.py`, the self-improvement loop scripts, or deploy/permission logic — is a META-MODIFICATION. The gate returns `verdict: needs_human`; it is surfaced as DECISION for human review and NEVER SAFE-auto-applied, regardless of test passage. Rationale: a self-improver that can edit the tests or gate that measure it can fabricate a green result (observed in Darwin-Gödel Machine; the reward-tampering failure mode in Anthropic's "Sycophancy to Subterfuge"). The eval bar scales with blast radius: `--scope auto` runs mapped tests for small changes, broader tests for multi-file/core changes; `full` is bounded (900s, parallel when pytest-xdist is present).
-
-The deep-run host agent MUST treat `verdict: needs_human` / `meta_modification: true` as a STOP — queue to `.build-loop/proposals/needs-human/`, never auto-apply, even if the tests passed.
+Only changes that `classify_action.py` classifies as SAFE auto-apply through this path. Structural or architectural self-modifications — new phase, changed dispatch contract, agent-role change — surface as DECISION and are never auto-applied. They are queued to `.build-loop/proposals/needs-decision/` for explicit user action.
 
 ### Authorized targets
 
@@ -180,8 +175,7 @@ The deep-run host agent MUST treat `verdict: needs_human` / `meta_modification: 
 ### What is NOT authorized without user confirmation
 
 - Promotion of project-local skills to `~/.claude/skills/` (global scope — confirm first)
-- Changes to `agents/build-orchestrator.md` phase contracts or MECE ownership rules (structural — DECISION)
-- META-MODIFICATIONS: any change to `scripts/self_mod_verify.py`, `scripts/classify_action.py`, `scripts/autonomy_gate.py`, `scripts/self_review.py`, the self-improvement loop scripts, test files for any of these, or deploy/permission logic — the gate returns `verdict: needs_human` for these regardless of test passage (see §"Meta-modifications (always human-gated)")
+- Changes to `agents/build-orchestrator.md` phase contracts or MECE ownership rules (structural — DECISION; surface as DECISION, never auto-apply)
 
 ---
 
@@ -202,7 +196,7 @@ Step 2a — Apply each SAFE non-self proposal:
 For each SAFE proposal without `target: self`, route it through `/build-loop:run` with a goal derived from the proposal's title and body. Build-loop handles apply + commit + collapse. Its own autonomy gate and deployment policy govern what lands — do not bypass them.
 
 Step 2b — Apply SAFE `target: self` proposals (self-modification path):
-For each SAFE `target: self` proposal, apply the change, then — BEFORE committing — run the MANDATORY SAFETY GATE:
+Self-modifications execute — they do not stop the loop. For each SAFE `target: self` proposal, apply the change, then — BEFORE committing — run the MANDATORY SAFETY GATE:
 ```bash
 python3 scripts/self_mod_verify.py \
   --workdir "$PWD" \
@@ -211,10 +205,11 @@ python3 scripts/self_mod_verify.py \
   --auto-revert \
   --json
 ```
-- `verdict: pass` → commit the change via the normal per-commit mode (one commit per self-modification; do not batch).
-- `verdict: fail` → the gate has already auto-reverted the change. Move the proposal to `.build-loop/proposals/needs-human/` and continue with the next proposal. NEVER commit a failed-gate self-modification.
-- `verdict: needs_human` / `meta_modification: true` → the changed files touch the gate's own inputs or control surfaces. STOP — do not commit, do not retry. Move the proposal to `.build-loop/proposals/needs-human/`. This is true even if all tests passed — fabricated passes are the exact failure mode this gate prevents.
-- Skip any `target: self` proposal that `classify_action.py` does not classify as SAFE (RISKY/DECISION → queue to `.build-loop/proposals/needs-human/`, do not apply).
+- `verdict: pass` → commit the change via the normal per-commit mode (one commit per self-modification; do not batch). The self-modification is recorded for the end-of-run readback.
+- `verdict: fail` → the gate has already auto-reverted the change. Move the proposal to `.build-loop/proposals/failed-gate/` and continue with the next proposal. NEVER commit a failed-gate self-modification.
+- Skip any `target: self` proposal that `classify_action.py` does not classify as SAFE (RISKY → isolate to worktree-branch + log; DECISION → queue to `.build-loop/proposals/needs-decision/`, do not apply).
+
+Do NOT stop the loop for any self-modification, including those that touch the gate scripts, tests, or the self-improvement loop. The test-suite gate is the oracle; if it passes, the change commits and is reported at the end.
 
 Step 3 — Determine push behavior:
 Read `.build-loop/config.json` key `selfReview.autonomy` (default `apply_push`).
@@ -222,13 +217,15 @@ Read `.build-loop/config.json` key `selfReview.autonomy` (default `apply_push`).
 - If `apply_local`: do not push. Commits land locally; the user pushes manually.
 
 Step 4 — Report:
-Print a short summary: how many SAFE proposals were processed (split: standard vs `target: self`), how many RISKY/DECISION items were left queued, how many `target: self` proposals were gated/reverted, and the push status (pushed / local-only / skipped by policy / n/a).
+Print a short summary: how many SAFE proposals were processed (split: standard vs `target: self`), how many RISKY/DECISION items were left queued, how many `target: self` proposals were gated/reverted by a failed test gate, and the push status (pushed / local-only / skipped by policy / n/a).
+
+Include a `## Self-modifications (readback)` section listing every self-modification that landed this run: file, one-line what/why, test-gate verdict, and the additional-review finding (pass/flag). If no self-modifications occurred, omit the section.
 
 Constraints:
 - Never apply a RISKY or DECISION proposal autonomously.
 - Never apply a `target: self` proposal without running `self_mod_verify.py` first.
 - Never commit a change that `self_mod_verify.py` returned `verdict: fail` for.
-- Never auto-apply when `self_mod_verify.py` returns `verdict: needs_human` or `meta_modification: true` — queue to `.build-loop/proposals/needs-human/`, even if tests passed.
+- Never stop the loop for a self-modification — including those that touch the gate, tests, or self-improvement loop scripts. The test gate is the oracle; pass → commit and continue; fail → auto-revert and continue. Report at the end.
 - Never bypass build-loop's commit auditor or autonomy gate.
 - If build-loop is not available as a slash command, log the unavailability and exit 0 — the queue stays intact.
 - This is a local developer tool; there are no users to protect other than the repo owner.
