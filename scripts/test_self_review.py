@@ -324,5 +324,161 @@ class TestJsonOutputShape(unittest.TestCase):
         self.assertEqual(payload["window_days"], 30)
 
 
+class TestSelfSimplificationScan(unittest.TestCase):
+    """Self-recursive deep mode produces self_simplification[] findings and target:self proposals."""
+
+    def _make_self_recursive_dir(self, tmp: Path) -> Path:
+        """Create a minimal directory that looks like the build-loop repo itself."""
+        plugin_dir = tmp / ".claude-plugin"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.json").write_text(
+            json.dumps({"name": "build-loop", "version": "0.0.0-test"})
+        )
+        scripts_dir = tmp / "scripts"
+        scripts_dir.mkdir()
+        # Canary file that _is_self_recursive checks for
+        (scripts_dir / "self_review.py").write_text("# placeholder\n")
+        # A deliberately complex Python file (many branches → should trigger hotspot)
+        messy = scripts_dir / "messy.py"
+        messy.write_text(_MESSY_PYTHON)
+        # Seed .build-loop/state.json so the script doesn't trip on missing state
+        build_dir = tmp / ".build-loop"
+        build_dir.mkdir()
+        (build_dir / "state.json").write_text(json.dumps({"runs": []}))
+        return tmp
+
+    def test_deep_self_recursive_produces_self_simplification(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._make_self_recursive_dir(tmp)
+            result = _run(
+                ["--mode", "deep", "--workdir", str(tmp), "--dry-run", "--json"]
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIn("self_simplification", payload,
+                          "self_simplification key must always be present")
+            findings = payload["self_simplification"]
+            self.assertIsInstance(findings, list)
+            # The messy.py file should produce at least one finding
+            self.assertGreater(
+                len(findings),
+                0,
+                msg=(
+                    "Expected ≥1 self_simplification finding from messy.py "
+                    f"(got {findings}; errors: {payload.get('errors')})"
+                ),
+            )
+            # Each finding must have the standard shape
+            for f in findings:
+                for key in ("kind", "signal", "evidence", "suggested_action", "severity"):
+                    self.assertIn(key, f, f"finding missing key {key!r}: {f}")
+
+    def test_deep_self_recursive_enqueues_target_self_proposals(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._make_self_recursive_dir(tmp)
+            result = _run(["--mode", "deep", "--workdir", str(tmp), "--json"])
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            # At least one queued proposal should have target: self in its frontmatter
+            queued = payload.get("queued") or []
+            target_self_found = False
+            for qp in queued:
+                p = Path(qp)
+                if p.exists():
+                    content = p.read_text()
+                    if "target: self" in content:
+                        target_self_found = True
+                        break
+            self.assertTrue(
+                target_self_found,
+                msg=(
+                    "Expected at least one queued proposal with 'target: self' "
+                    f"in its frontmatter. queued={queued}"
+                ),
+            )
+
+    def test_non_self_recursive_no_self_simplification(self) -> None:
+        """A plain project workdir must not produce any self_simplification findings."""
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            # Plain project: has .build-loop/state.json but NOT the plugin canary
+            build_dir = tmp / ".build-loop"
+            build_dir.mkdir()
+            _seed_state(
+                build_dir,
+                [
+                    {
+                        "run_id": "run_plain_00",
+                        "date": "2026-05-29T00:00:00Z",
+                        "goal": "plain project",
+                        "outcome": "fail",
+                        "phases": {
+                            "execute": {"status": "fail", "failed_criteria": ["tests pass"]}
+                        },
+                        "filesTouched": [],
+                        "diagnosticCommands": [],
+                        "manualInterventions": [],
+                        "active_experimental_artifacts": [],
+                    }
+                    for _ in range(3)
+                ],
+            )
+            result = _run(["--mode", "deep", "--workdir", str(tmp), "--dry-run", "--json"])
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIn("self_simplification", payload)
+            self.assertEqual(
+                payload["self_simplification"],
+                [],
+                msg="Non-self-recursive dir must produce empty self_simplification[]",
+            )
+
+    def test_light_mode_no_self_simplification(self) -> None:
+        """Even a self-recursive dir in light mode must not run the scan."""
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._make_self_recursive_dir(tmp)
+            result = _run(["--mode", "light", "--workdir", str(tmp), "--dry-run", "--json"])
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIn("self_simplification", payload)
+            self.assertEqual(
+                payload["self_simplification"],
+                [],
+                msg="Light mode must never run self-simplification scan",
+            )
+
+
+# A deliberately messy Python file designed to trigger complexity_detector hotspots.
+# Uses deeply nested branches (deep_nesting) and a redundant multipass loop.
+_MESSY_PYTHON = '''\
+def messy_function(items, other):
+    """Intentionally complex function for test triggering."""
+    result = []
+    for item in items:
+        if item:
+            if item > 0:
+                if item > 10:
+                    if item > 100:
+                        if item > 1000:
+                            result.append(item * 2)
+                        else:
+                            result.append(item)
+                    else:
+                        result.append(item + 1)
+                else:
+                    result.append(item - 1)
+            else:
+                result.append(0)
+    # Redundant second pass over same iterable
+    for item in items:
+        if item < 0:
+            result.append(abs(item))
+    return result
+'''
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

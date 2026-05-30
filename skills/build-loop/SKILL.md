@@ -183,13 +183,19 @@ The only valid reasons to stop and surface to the user:
 
 Otherwise: pick the natural next step, note any reasonable assumption in the run record, and keep moving. One end-of-run report at the end. Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report — see Phase 4 below. See `agents/build-orchestrator.md` §Keep going until done for the orchestrator-side phrasing.
 
-### Self-heal — auto-fix SAFE issues (C-HEAL / self_heal_safe_issues)
+### Self-heal — reactive fix + proactive self-simplification (C-HEAL / self_heal_safe_issues)
 
-When build-loop encounters, during any run: (a) an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure; OR (b) a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — it ROOT-CAUSES and FIXES it, then continues. Route: produce the fix, classify it via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue — no surface, no ask. RISKY → isolate to worktree-branch + log + continue main + surface in report. DECISION/PRODUCTION → surface/escalate.
+Self-heal is **both reactive and proactive**. It is not only triggered by errors.
+
+**Reactive arm:** when build-loop encounters, during any run: (a) an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure; OR (b) a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — it ROOT-CAUSES and FIXES it, then continues. Route: produce the fix, classify it via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue — no surface, no ask. RISKY → isolate to worktree-branch + log + continue main + surface in report. DECISION/PRODUCTION → surface/escalate.
+
+**Proactive arm:** during deep self-review runs (and any build where `selfRecursive.enabled == true`), the self-review/self-heal loop ALSO proactively simplifies build-loop's own code to prevent issues, streamline work, and improve quality — reducing complexity, splitting oversized files, removing dead or duplicated logic, and adding missing tests. This arm is driven by `self_review.py`'s `self_simplification[]` findings (deep mode, self-recursive). See `references/self-review.md` for the full protocol including the SELF-MODIFICATION SAFETY GATE that is MANDATORY for any change to build-loop's own code.
+
+**New-skill and new-script authoring:** the self-review/self-heal loop MAY author new skills AND new scripts when doing so prevents a class of issue or streamlines work. New scripts REQUIRE a colocated `test_<name>.py` — no untested script lands. New skills follow the Skill-on-Demand lifecycle (keep/promote/drop) documented below.
 
 **Banned anti-pattern:** bypassing a fixable error and continuing or surfacing — `--no-verify` / `git commit -n`, skipping or xfail-ing a failing test, commenting out failing code, swapping in mock data, `|| true` to swallow a real failure — when a SAFE root-cause fix exists. A workaround is allowed ONLY when the root-cause fix classifies RISKY/DECISION/PRODUCTION or is genuinely infeasible (missing credential, external blocker); then record BOTH the workaround and the surfaced issue.
 
-**Guardrails:** only SAFE auto-applies. Verify after every auto-fix (re-run the failed action). A fix that fails verification routes to the existing Iterate / stuck-cascade (5-fail cap). A fix that would balloon complexity routes to re-plan, not skip. Existing iterate caps provide loop-protection.
+**Guardrails:** only SAFE auto-applies. Verify after every auto-fix (re-run the failed action). A fix that fails verification routes to the existing Iterate / stuck-cascade (5-fail cap). A fix that would balloon complexity routes to re-plan, not skip. Existing iterate caps provide loop-protection. For self-modifications of build-loop's own repo, the SELF-MODIFICATION SAFETY GATE in `references/self-review.md` §"Self-modification of the restricted repo" is MANDATORY and non-negotiable — it runs before every self-modification commit and auto-reverts on failure.
 
 ### Follow-up auto-drain at chunk boundary
 
@@ -386,6 +392,8 @@ Build-loop can author new skills mid-flow when a repeated task pattern emerges a
    - Promote — move to `~/.claude/skills/`, confirm with user.
    - Drop — delete and note in `.build-loop/feedback.md` why it didn't earn its keep.
 5. Record the decision through `scripts/memory_writer.py` into `build-loop-memory/lessons/` or `build-loop-memory/projects/<slug>/lessons/` as a `pattern` entry.
+
+**Self-review/self-heal loop extension:** the self-review/self-heal loop (proactive arm of C-HEAL) MAY author new skills AND new scripts when doing so prevents a class of issue or streamlines repeated work. New skills start project-local and follow this same keep/promote/drop lifecycle. Promotion to the build-loop plugin repo or `~/.claude/skills/` still requires user confirmation (global scope is consequential). New scripts MUST have a colocated `test_<name>.py` — no untested script lands. When the authoring happens inside a self-recursive build (editing build-loop itself), every new or modified file passes through the SELF-MODIFICATION SAFETY GATE in `references/self-review.md` §"Self-modification of the restricted repo" before commit.
 
 **Never proliferate skills**. A skill that isn't used twice across builds should be dropped. Prefer extending an existing skill over creating a new one.
 

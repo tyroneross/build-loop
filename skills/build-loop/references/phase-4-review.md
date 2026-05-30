@@ -161,6 +161,8 @@ Applied edits flow through the existing single-writer Phase 3 commit contract â€
 
 Preserve: public API surface, test coverage, observability (logging/tracing), documented behavior, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION: <reason>`. For **plugin work**: also re-run `plugin-dev/scripts/hook-linter.sh` against any touched `hooks.json` and `grep` the manifest for `../` or bare paths.
 
+**Self-recursive builds:** when `selfRecursive.enabled == true` (the build is editing build-loop itself), Sub-step E also consumes `self_review.py`'s `self_simplification[]` findings as an additional hotspot source. Any simplification applied to build-loop's own code from this list MUST pass `python3 scripts/self_mod_verify.py --scope full --auto-revert --json` (`verdict: pass`) before it is committed. A `verdict: fail` auto-reverts the change; it does not route to Iterate â€” move it to `.build-loop/proposals/needs-human/` instead.
+
 **Report.** Log one line: `[Simplify] N hotspots, M applied, K advised`; record applied/advised counts in the Sub-step G report. An applied rewrite that later fails a re-validate routes like any Sub-step B failure (Phase 5 Iterate, existing 5x cap).
 
 #### Sub-step E telemetry

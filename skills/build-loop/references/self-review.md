@@ -62,6 +62,7 @@ Returns JSON to stdout:
   "window_days": 7,
   "mined": {"corrections": [], "rituals": [], "sequences": []},
   "efficiency_findings": [],
+  "self_simplification": [],
   "digest_path": ".build-loop/self-review/2026-05-29-deep.md",
   "queued": [".build-loop/proposals/self-review-foo.md"],
   "errors": [],
@@ -69,7 +70,21 @@ Returns JSON to stdout:
 }
 ```
 
-Deep mode digests include an `## Apply plan` section that separates SAFE-to-auto-apply items from RISKY-to-surface items.
+**`self_simplification[]`** (deep mode, self-recursive only): a list of proactive simplification findings for build-loop's own code. Each entry has the shape:
+
+```json
+{
+  "target": "self",
+  "file": "<relative path>",
+  "finding": "<one-line description>",
+  "classify_hint": "SAFE|RISKY|DECISION",
+  "proposed_action": "<what to do>"
+}
+```
+
+`target: self` marks a proposal as targeting build-loop's own code (plugin repo or `build-loop-memory`). These proposals are subject to the SELF-MODIFICATION SAFETY GATE (see §"Self-modification of the restricted repo" below) — they are never processed by the standard reactive-fix path.
+
+Deep mode digests include an `## Apply plan` section that separates SAFE-to-auto-apply items from RISKY-to-surface items. When `self_simplification[]` is non-empty, the digest also includes a `## Self-simplification proposals` section listing each `target: self` finding.
 
 ### Scheduling layer (launchd)
 
@@ -114,6 +129,53 @@ The queue accumulates across skipped deep runs. On the next successful headless 
 
 ---
 
+---
+
+## Self-modification of the restricted repo
+
+The self-review/self-heal loop is authorized to write to the restricted repo — build-loop's own plugin repo and the `build-loop-memory` durable repo (lessons and skills). This is normally a guarded action because it edits the running runtime.
+
+**The SELF-MODIFICATION SAFETY GATE is MANDATORY and non-negotiable for ANY change to build-loop's own code.** It is the load-bearing safety for this authorization.
+
+### Gate protocol (every self-modification commit must pass all steps)
+
+**Step 1 — Bundle first (reversibility):**
+```bash
+git bundle create .build-loop/bundles/pre-selfmod-$(date +%Y%m%dT%H%M%S).bundle --all
+```
+Always bundle before any self-modification. This is the rollback point.
+
+**Step 2 — Self-recursive / per-commit mode:**
+Self-modifications use the existing per-commit mode machinery (one commit at a time, reviewed before the next). `selfRecursive.enabled` is `true` when the working directory IS build-loop's own repo. Do not batch multiple self-modification commits without a gate pass between each.
+
+**Step 3 — Verify gate (MANDATORY before commit):**
+```bash
+python3 scripts/self_mod_verify.py \
+  --workdir "$PWD" \
+  --scope full \
+  --changed-files <space-separated file list> \
+  --auto-revert \
+  --json
+```
+`verdict: pass` → the self-modification may commit.
+`verdict: fail` → the gate AUTO-REVERTS the change and writes the finding to `.build-loop/proposals/needs-human/`. The change is NEVER committed. Never retry a failed gate verdict without human review.
+
+**Step 4 — SAFE-only auto-apply:**
+Only changes that `classify_action.py` classifies as SAFE auto-apply through this path. Structural or architectural self-modifications — new phase, changed dispatch contract, agent-role change, new mandatory gate — surface as DECISION and are never auto-applied. They are queued to `.build-loop/proposals/needs-human/` for explicit user action.
+
+### Authorized targets
+
+- Build-loop's own plugin repo (files under the build-loop working directory when `selfRecursive.enabled`)
+- `build-loop-memory` durable repo: lessons, skills, and project-scoped memory entries written via `scripts/memory_writer.py`
+
+### What is NOT authorized without user confirmation
+
+- Promotion of project-local skills to `~/.claude/skills/` (global scope — confirm first)
+- Changes to `agents/build-orchestrator.md` phase contracts or MECE ownership rules (structural — DECISION)
+- Changes to `scripts/self_mod_verify.py` or `scripts/classify_action.py` themselves (gate self-modification — DECISION)
+
+---
+
 ## APPLY PROMPT
 
 This is the exact prompt text fed to `claude -p` by `scripts/self_review_run.sh` for deep auto-apply. Do not paraphrase — the wrapper reads this file and extracts the block between the `BEGIN_APPLY_PROMPT` and `END_APPLY_PROMPT` markers.
@@ -125,9 +187,24 @@ Step 1 — Read the context:
 - Read `.build-loop/self-review/last-deep.json` (the data-gatherer output).
 - For each path listed in `queued[]`, read the proposal file. Take only proposals where `classify_hint: SAFE`.
 - Skip any proposal where `classify_hint` is `RISKY` or `DECISION` — leave those files untouched.
+- Separately, collect every entry in `self_simplification[]` where `classify_hint: SAFE` AND `target: self`. These are proactive self-simplifications of build-loop's own code and require the SELF-MODIFICATION SAFETY GATE in Step 2b.
 
-Step 2 — Apply each SAFE proposal:
-For each SAFE proposal, route it through `/build-loop:run` with a goal derived from the proposal's title and body. Build-loop handles apply + commit + collapse. Its own autonomy gate and deployment policy govern what lands — do not bypass them.
+Step 2a — Apply each SAFE non-self proposal:
+For each SAFE proposal without `target: self`, route it through `/build-loop:run` with a goal derived from the proposal's title and body. Build-loop handles apply + commit + collapse. Its own autonomy gate and deployment policy govern what lands — do not bypass them.
+
+Step 2b — Apply SAFE `target: self` proposals (self-modification path):
+For each SAFE `target: self` proposal, apply the change, then — BEFORE committing — run the MANDATORY SAFETY GATE:
+```bash
+python3 scripts/self_mod_verify.py \
+  --workdir "$PWD" \
+  --scope full \
+  --changed-files <the files you changed> \
+  --auto-revert \
+  --json
+```
+- `verdict: pass` → commit the change via the normal per-commit mode (one commit per self-modification; do not batch).
+- `verdict: fail` → the gate has already auto-reverted the change. Move the proposal to `.build-loop/proposals/needs-human/` and continue with the next proposal. NEVER commit a failed-gate self-modification.
+- Skip any `target: self` proposal that `classify_action.py` does not classify as SAFE (RISKY/DECISION → queue to `.build-loop/proposals/needs-human/`, do not apply).
 
 Step 3 — Determine push behavior:
 Read `.build-loop/config.json` key `selfReview.autonomy` (default `apply_push`).
@@ -135,10 +212,12 @@ Read `.build-loop/config.json` key `selfReview.autonomy` (default `apply_push`).
 - If `apply_local`: do not push. Commits land locally; the user pushes manually.
 
 Step 4 — Report:
-Print a short summary: how many SAFE proposals were processed, how many RISKY/DECISION items were left queued, and the push status (pushed / local-only / skipped by policy / n/a).
+Print a short summary: how many SAFE proposals were processed (split: standard vs `target: self`), how many RISKY/DECISION items were left queued, how many `target: self` proposals were gated/reverted, and the push status (pushed / local-only / skipped by policy / n/a).
 
 Constraints:
 - Never apply a RISKY or DECISION proposal autonomously.
+- Never apply a `target: self` proposal without running `self_mod_verify.py` first.
+- Never commit a change that `self_mod_verify.py` returned `verdict: fail` for.
 - Never bypass build-loop's commit auditor or autonomy gate.
 - If build-loop is not available as a slash command, log the unavailability and exit 0 — the queue stays intact.
 - This is a local developer tool; there are no users to protect other than the repo owner.

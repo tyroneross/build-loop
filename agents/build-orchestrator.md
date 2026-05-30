@@ -72,13 +72,19 @@ Once the user has accepted a plan, every phase is authorized scope. Every action
 
 Drain non-destructive open items via Sub-step F Auto-Resolve before the end-of-run report. One end-of-run report, not a checkpoint between every phase.
 
-#### Self-heal — auto-fix SAFE issues (C-HEAL / self_heal_safe_issues)
+#### Self-heal — reactive fix + proactive self-simplification (C-HEAL / self_heal_safe_issues)
 
-When the orchestrator or any infra step encounters: (a) an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure (non-zero exit that is build-loop's own infrastructure rather than a graded target criterion); OR (b) a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — ROOT-CAUSE and FIX it, then continue. Route: produce the fix, classify via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue — no surface, no ask. RISKY → isolate to worktree-branch + log + continue main + surface in report. DECISION/PRODUCTION → surface/escalate.
+Self-heal is **both reactive and proactive**. It is not only triggered by errors.
+
+**Reactive arm:** when the orchestrator or any infra step encounters: (a) an error or crash from its own tooling, a hook, a script, a Bash command, or a build/test/lint failure (non-zero exit that is build-loop's own infrastructure rather than a graded target criterion); OR (b) a quality or performance issue surfaced by any Review sub-step, self-review, fact-check, simplify, or efficiency scan — ROOT-CAUSE and FIX it, then continue. Route: produce the fix, classify via `scripts/classify_action.py`. SAFE → apply, verify (re-run the failed action and relevant tests), commit, continue — no surface, no ask. RISKY → isolate to worktree-branch + log + continue main + surface in report. DECISION/PRODUCTION → surface/escalate.
+
+**Proactive arm:** during deep self-review runs (and any build where `selfRecursive.enabled == true`), the self-review/self-heal loop ALSO proactively simplifies build-loop's own code to prevent issues, streamline work, and improve quality — reducing complexity, splitting oversized files, removing dead or duplicated logic, and adding missing tests. Driven by `self_review.py`'s `self_simplification[]` findings (deep mode, self-recursive). The proactive arm MAY also author new skills and new scripts when doing so prevents a class of issue; new scripts require a colocated `test_<name>.py`.
+
+**MANDATORY SAFETY GATE for self-modifications:** any change to build-loop's own code (plugin repo or `build-loop-memory` durable repo) MUST pass the SELF-MODIFICATION SAFETY GATE before commit — `python3 scripts/self_mod_verify.py --scope full --auto-revert` returns `verdict: pass`; on `verdict: fail` the gate auto-reverts and queues the change as needs-human. Full gate protocol in `skills/build-loop/references/self-review.md` §"Self-modification of the restricted repo". Structural/architectural self-modifications (new phase, changed contract, agent-role change) surface as DECISION, never auto-apply.
 
 **Banned anti-pattern:** bypassing a fixable infra or quality error and continuing — `--no-verify`, skipping/xfail-ing a test, commenting out failing code, `|| true` on a real failure — when a SAFE root-cause fix exists. A workaround is allowed ONLY when the fix classifies RISKY/DECISION/PRODUCTION or is genuinely infeasible (missing credential, external blocker); record BOTH the workaround and the surfaced issue in the report. ("Attack over defense" + "always the durable fix.")
 
-**Guardrails:** only SAFE auto-applies. Verify after every auto-fix. A fix that fails verification routes to the existing Iterate / stuck-cascade. Existing iterate caps provide loop-protection. The autonomy gate (`scripts/autonomy_gate.py`) is the single source of truth for SAFE vs gated.
+**Guardrails:** only SAFE auto-applies. Verify after every auto-fix. A fix that fails verification routes to the existing Iterate / stuck-cascade. Existing iterate caps provide loop-protection. The autonomy gate (`scripts/autonomy_gate.py`) is the single source of truth for SAFE vs gated for target-project work; `self_mod_verify.py` is the MANDATORY additional gate for self-modifications of build-loop's own repo.
 
 #### Follow-up auto-drain (chunk boundaries are not checkpoints)
 

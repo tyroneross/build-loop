@@ -31,11 +31,25 @@ Output JSON shape:
       },
       ...
     ],
+    "self_simplification": [
+      {
+        "kind": str,
+        "signal": str,
+        "evidence": str,
+        "suggested_action": str,
+        "severity": "HIGH"|"MEDIUM"|"LOW"
+      },
+      ...
+    ],
     "digest_path": str | null,
     "queued": [str, ...],
     "errors": [str, ...],
     "dry_run": bool
   }
+
+  ``self_simplification`` is only populated when the workdir IS the build-loop
+  repo itself (self-recursive) AND mode == "deep".  It is always present as a
+  list (possibly empty) in the output.
 """
 from __future__ import annotations
 
@@ -62,6 +76,10 @@ _ITERATION_THRESHOLD = 3   # run with >= N iterate_attempt counts
 
 # Proposal cap for light mode
 _LIGHT_MODE_CAP = 10
+
+# Self-simplification scan thresholds
+_OVERSIZED_LINE_THRESHOLD = 600   # files > N lines → suggest split
+_BUILD_LOOP_PLUGIN_NAME = "build-loop"
 
 # Slug-safe characters
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -400,6 +418,233 @@ def _scan_churn(
     return findings
 
 
+# ---------------------------------------------------------------------------
+# Self-simplification scan (self-recursive deep mode only)
+# ---------------------------------------------------------------------------
+
+def _is_self_recursive(workdir: Path) -> bool:
+    """Return True if workdir IS the build-loop repo itself.
+
+    Two checks (either passing is sufficient to avoid false-negatives):
+      1. .build-loop/state.json has selfRecursive.enabled == true
+      2. .claude-plugin/plugin.json exists with name == "build-loop"
+         AND scripts/self_review.py exists (canary)
+
+    Fail-soft: any parse error → False.
+    """
+    # Check 1: explicit flag in state.json
+    state_path = workdir / ".build-loop" / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+            if isinstance(state, dict):
+                sr = state.get("selfRecursive") or {}
+                if isinstance(sr, dict) and sr.get("enabled") is True:
+                    return True
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Check 2: plugin.json canary
+    plugin_json = workdir / ".claude-plugin" / "plugin.json"
+    if not plugin_json.exists():
+        return False
+    try:
+        data = json.loads(plugin_json.read_text())
+        if not isinstance(data, dict):
+            return False
+        name = data.get("name", "")
+        if name != _BUILD_LOOP_PLUGIN_NAME:
+            return False
+    except (json.JSONDecodeError, OSError):
+        return False
+    # Canary: scripts/self_review.py must exist
+    return (workdir / "scripts" / "self_review.py").exists()
+
+
+def _get_changed_python_files(workdir: Path, window_days: int, errors: list[str]) -> list[str]:
+    """Return Python files changed in the last window_days via git.
+
+    Falls back to scripts/*.py if git is unavailable or returns nothing.
+    """
+    since_date = (
+        dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=window_days)
+    ).strftime("%Y-%m-%d")
+    try:
+        out = subprocess.check_output(
+            [
+                "git", "-C", str(workdir),
+                "diff", "--name-only",
+                f"--since={since_date}",
+                "HEAD~1", "HEAD",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15,
+        )
+        files = [
+            str(workdir / f.strip())
+            for f in out.splitlines()
+            if f.strip().endswith(".py") and f.strip()
+        ]
+        if files:
+            return files
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: use git log --name-only across the window
+    try:
+        out = subprocess.check_output(
+            [
+                "git", "-C", str(workdir),
+                "log", f"--since={since_date}",
+                "--name-only", "--pretty=format:",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=20,
+        )
+        seen: set[str] = set()
+        files = []
+        for line in out.splitlines():
+            line = line.strip()
+            if line.endswith(".py") and line not in seen:
+                p = workdir / line
+                if p.exists():
+                    seen.add(line)
+                    files.append(str(p))
+        if files:
+            return files
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Final fallback: scan all scripts/*.py
+    scripts_dir = workdir / "scripts"
+    if scripts_dir.is_dir():
+        return [str(f) for f in sorted(scripts_dir.glob("*.py"))]
+    return []
+
+
+def _run_complexity_detector(
+    workdir: Path,
+    py_files: list[str],
+    errors: list[str],
+) -> list[dict[str, Any]]:
+    """Invoke complexity_detector.py on py_files; return hotspots list.
+
+    Fail-soft: any error returns [].
+    """
+    detector = HERE / "complexity_detector.py"
+    if not detector.exists():
+        errors.append(f"complexity_detector absent: {detector}")
+        return []
+    if not py_files:
+        return []
+    try:
+        result = subprocess.run(
+            [sys.executable, str(detector), "--changed-files"] + py_files + ["--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        errors.append(f"complexity_detector error: {exc}")
+        return []
+    if result.returncode not in (0, 2):
+        errors.append(
+            f"complexity_detector exited {result.returncode}: "
+            + (result.stderr or result.stdout or "")[:300]
+        )
+        return []
+    try:
+        data = json.loads(result.stdout)
+        return data.get("hotspots") or []
+    except (json.JSONDecodeError, ValueError) as exc:
+        errors.append(f"complexity_detector parse error: {exc}")
+        return []
+
+
+def _scan_self_simplification(
+    workdir: Path,
+    window_days: int,
+    errors: list[str],
+) -> list[dict[str, Any]]:
+    """Gather self-simplification findings when self-recursive + deep mode.
+
+    Detects:
+      - High-severity hotspots from complexity_detector (deep_nesting,
+        accidental_quadratic, high_complexity, redundant_multipass)
+      - Oversized files (>_OVERSIZED_LINE_THRESHOLD lines) → suggest split
+      - Missing tests (scripts/foo.py with no scripts/test_foo.py)
+    """
+    findings: list[dict[str, Any]] = []
+
+    py_files = _get_changed_python_files(workdir, window_days, errors)
+
+    # --- Complexity hotspots ---
+    hotspots = _run_complexity_detector(workdir, py_files, errors)
+    # Only surface "high" severity (not "advisory") to avoid noise
+    high_hotspots = [h for h in hotspots if h.get("severity") == "high"]
+    for h in high_hotspots:
+        kind = h.get("kind", "complexity")
+        file_ = h.get("file", "?")
+        line = h.get("line", "?")
+        reason = h.get("reason", "")
+        # Map kind to severity tier
+        severity = "HIGH" if kind in ("accidental_quadratic", "high_complexity") else "MEDIUM"
+        findings.append({
+            "kind": f"self_complexity_{kind}",
+            "signal": f"{Path(file_).name}:{line} — {kind}",
+            "evidence": f"file={file_!r} line={line} reason={reason!r}",
+            "suggested_action": (
+                f"Simplify '{Path(file_).name}' at line {line}: {reason}. "
+                "The host LLM should refactor after self_mod_verify confirms tests pass."
+            ),
+            "severity": severity,
+        })
+
+    # --- Oversized files ---
+    scripts_dir = workdir / "scripts"
+    if scripts_dir.is_dir():
+        for f in sorted(scripts_dir.glob("*.py")):
+            if f.name.startswith("test_"):
+                continue
+            try:
+                line_count = f.read_text(encoding="utf-8", errors="replace").count("\n")
+            except OSError:
+                continue
+            if line_count > _OVERSIZED_LINE_THRESHOLD:
+                findings.append({
+                    "kind": "self_oversized_file",
+                    "signal": f"{f.name} is {line_count} lines (>{_OVERSIZED_LINE_THRESHOLD})",
+                    "evidence": f"file={str(f)!r} lines={line_count}",
+                    "suggested_action": (
+                        f"Split '{f.name}' into focused modules. "
+                        "Large files increase cognitive load and diff noise."
+                    ),
+                    "severity": "MEDIUM",
+                })
+
+    # --- Missing tests ---
+    if scripts_dir.is_dir():
+        for f in sorted(scripts_dir.glob("*.py")):
+            if f.name.startswith("test_") or f.name.startswith("_"):
+                continue
+            test_candidate = scripts_dir / f"test_{f.name}"
+            if not test_candidate.exists():
+                findings.append({
+                    "kind": "self_missing_test",
+                    "signal": f"No test file for {f.name}",
+                    "evidence": f"script={str(f)!r} expected_test={str(test_candidate)!r}",
+                    "suggested_action": (
+                        f"Add 'scripts/test_{f.name}' with at least one smoke test "
+                        "covering the main entry point."
+                    ),
+                    "severity": "LOW",
+                })
+
+    return findings
+
+
 def _rank_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Sort by severity descending."""
     order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
@@ -579,6 +824,7 @@ def _make_frontmatter(
     severity: str,
     classify_hint: str,
     created_ts: str,
+    target: str | None = None,
 ) -> str:
     lines = [
         "---",
@@ -587,9 +833,10 @@ def _make_frontmatter(
         f"severity: {severity}",
         f"classify_hint: {classify_hint}",
         f"created_ts: {created_ts}",
-        "---",
-        "",
     ]
+    if target is not None:
+        lines.append(f"target: {target}")
+    lines += ["---", ""]
     return "\n".join(lines)
 
 
@@ -599,6 +846,7 @@ def _write_proposals(
     date_str: str,
     mode: str,
     efficiency_findings: list[dict[str, Any]],
+    self_simplification: list[dict[str, Any]],
     mined: dict[str, Any],
     workdir: Path,
     created_ts: str,
@@ -608,7 +856,8 @@ def _write_proposals(
     proposals_dir.mkdir(parents=True, exist_ok=True)
     paths: list[str] = []
 
-    # Combine: efficiency_findings first (already ranked), then mined corrections
+    # Combine: efficiency_findings first (already ranked), then mined corrections,
+    # then self_simplification items (with target=self marker).
     items: list[dict[str, Any]] = list(efficiency_findings)
     for c in mined.get("corrections") or []:
         items.append({
@@ -633,6 +882,10 @@ def _write_proposals(
             "severity": "LOW",
             "_mined_data": r,
         })
+    # Self-simplification findings get target=self so deep-apply knows to pass them
+    # through self_mod_verify before committing.
+    for s in self_simplification:
+        items.append({**s, "_target": "self"})
 
     if cap is not None:
         items = items[:cap]
@@ -644,13 +897,16 @@ def _write_proposals(
         slug = _slug(f"{kind}-{signal_text}", 40)
         filename = f"self-review-{date_str}-{idx:02d}-{slug}.md"
         path = proposals_dir / filename
-        hint = _try_classify_action(workdir, item)
+        # Self-simplification items are SAFE (no schema/runtime risk) by definition
+        is_self = item.get("_target") == "self"
+        hint = "SAFE" if is_self else _try_classify_action(workdir, item)
 
         frontmatter = _make_frontmatter(
             mode=mode,
             severity=severity,
             classify_hint=hint,
             created_ts=created_ts,
+            target="self" if is_self else None,
         )
         body_lines = [
             f"## Finding: {item.get('signal', '')}",
@@ -661,7 +917,7 @@ def _write_proposals(
             "",
             "### Evidence",
             "",
-            f"```",
+            "```",
             item.get("evidence", ""),
             "```",
             "",
@@ -670,6 +926,18 @@ def _write_proposals(
             item.get("suggested_action", ""),
             "",
         ]
+        if is_self:
+            body_lines += [
+                "### Self-modification gate",
+                "",
+                "This proposal modifies build-loop's own code. Before committing, run:",
+                "```",
+                "python3 scripts/self_mod_verify.py --workdir . --scope full "
+                "--auto-revert --json",
+                "```",
+                "Commit ONLY if verdict == \"pass\".",
+                "",
+            ]
         # Include mined data if present
         mined_data = item.get("_mined_data")
         if mined_data:
@@ -678,7 +946,7 @@ def _write_proposals(
                 "",
                 "```json",
                 json.dumps(
-                    {k: v for k, v in mined_data.items() if k != "_mined_data"},
+                    {k: v for k, v in mined_data.items() if k not in ("_mined_data", "_target")},
                     indent=2,
                 ),
                 "```",
@@ -720,6 +988,11 @@ def run(argv: list[str]) -> int:
     efficiency_findings.extend(_scan_churn(workdir, window_days, errors))
     efficiency_findings = _rank_findings(efficiency_findings)
 
+    # Step 2b: Self-simplification scan (self-recursive + deep mode only)
+    self_simplification: list[dict[str, Any]] = []
+    if is_deep and _is_self_recursive(workdir):
+        self_simplification = _scan_self_simplification(workdir, window_days, errors)
+
     # Step 3 + 4: Write digest + enqueue proposals (unless --dry-run)
     digest_path: str | None = None
     queued_paths: list[str] = []
@@ -734,6 +1007,7 @@ def run(argv: list[str]) -> int:
                 date_str=date_str,
                 mode=mode,
                 efficiency_findings=efficiency_findings,
+                self_simplification=self_simplification,
                 mined=mined,
                 workdir=workdir,
                 created_ts=created_ts,
@@ -772,6 +1046,7 @@ def run(argv: list[str]) -> int:
             "sequences": mined.get("sequences") or [],
         },
         "efficiency_findings": efficiency_findings,
+        "self_simplification": self_simplification,
         "digest_path": digest_path,
         "queued": queued_paths,
         "errors": errors,
@@ -789,6 +1064,7 @@ def run(argv: list[str]) -> int:
     print(
         f"self_review: mode={mode} window={window_days}d "
         f"efficiency_findings={n_findings} mined={n_mined} "
+        f"self_simplification={len(self_simplification)} "
         f"queued={len(queued_paths)} errors={len(errors)} "
         f"dry_run={dry_run}",
         file=sys.stderr,
