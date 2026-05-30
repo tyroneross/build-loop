@@ -18,7 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-WRITE = HERE / "write_decision.py"
+WRITE = HERE / "write_decision" / "__main__.py"
 INDEX = HERE / "regenerate_knowledge_index.py"
 
 from _test_helpers import MemIsolationMixin, write_legacy_madr  # noqa: E402

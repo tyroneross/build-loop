@@ -112,7 +112,7 @@ vocabulary mismatch is the dominant retrieval failure mode.
 ## How to capture (live, during the session)
 
 ```bash
-python3 scripts/write_decision.py \
+python3 scripts/write_decision/__main__.py \
   --workdir "$PWD" \
   --title "<one-line title>" \
   --decision "<one-sentence decision>" \

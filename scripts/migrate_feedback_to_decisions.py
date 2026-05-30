@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
 
     written = 0
     skipped = 0
-    write_decision_path = HERE / "write_decision.py"
+    write_decision_path = HERE / "write_decision" / "__main__.py"
 
     db_flag = "--db" if args.db else "--no-db"
 

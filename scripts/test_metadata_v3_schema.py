@@ -41,7 +41,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-WRITE = HERE / "write_decision.py"
+WRITE = HERE / "write_decision" / "__main__.py"
 VALIDATE = HERE / "validate_knowledge.py"
 
 from _test_helpers import MemIsolationMixin  # noqa: E402

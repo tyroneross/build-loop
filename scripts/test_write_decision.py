@@ -26,7 +26,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE / "write_decision.py"
+SCRIPT = HERE / "write_decision" / "__main__.py"
 
 sys.path.insert(0, str(HERE))
 from _test_helpers import MemIsolationMixin  # noqa: E402

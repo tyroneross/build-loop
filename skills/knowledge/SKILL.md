@@ -43,7 +43,7 @@ and Postgres schema). Read it before making structural changes.
 
 | Need | Tool |
 |---|---|
-| Write a decision (file only) | `python3 scripts/write_decision.py …` |
+| Write a decision (file only) | `python3 scripts/write_decision/__main__.py …` |
 | Validate frontmatter + links | `python3 scripts/validate_knowledge.py …` |
 | Regenerate INDEX files | `python3 scripts/regenerate_knowledge_index.py …` |
 | Migrate `feedback.md` to MADR | `python3 scripts/migrate_feedback_to_decisions.py …` |

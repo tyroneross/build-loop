@@ -76,7 +76,7 @@ DEFAULT_LLM_MODEL = "qwen3:8b-q4_K_M"
 DEFAULT_EMBED_MODEL = "mxbai-embed-large"
 DEFAULT_LLM_TIMEOUT_S = 120
 DEDUP_THRESHOLD = 0.85
-WRITE_DECISION_SCRIPT = HERE / "write_decision.py"
+WRITE_DECISION_SCRIPT = HERE / "write_decision" / "__main__.py"
 
 # Wall-clock budget contract: the script self-imposes a tighter budget
 # than the Claude Code hook timeout (60s). Default 25s leaves plenty of

@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-WRITE_DECISION = HERE / "write_decision.py"
+WRITE_DECISION = HERE / "write_decision" / "__main__.py"
 sys.path.insert(0, str(HERE))
 
 from _paths import project_decisions_dir  # type: ignore  # noqa: E402

@@ -21,7 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-WRITE = HERE / "write_decision.py"
+WRITE = HERE / "write_decision" / "__main__.py"
 SYNC = HERE / "sync_db_from_files.py"
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
 TEST_SCHEMA = "test_schema_sync"

@@ -59,7 +59,7 @@
       ],
       "forbidden_parent_imports": [
         "scripts/_paths.py",
-        "scripts/write_decision.py",
+        "scripts/write_decision/__main__.py",
         "scripts/memory_facade.py",
         "scripts/sync_db_from_files.py",
         "scripts/scan_transcript_for_decisions.py",
@@ -102,7 +102,7 @@
         "python3 scripts/coordination_watch.py --workdir <repo> --session-id <id> --tool <tool> --jsonl"
       ],
       "forbidden_parent_imports": [
-        "scripts/write_decision.py",
+        "scripts/write_decision/__main__.py",
         "scripts/memory_facade.py",
         "scripts/sync_db_from_files.py",
         "scripts/scan_transcript_for_decisions.py",

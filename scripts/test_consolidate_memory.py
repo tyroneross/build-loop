@@ -27,7 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "consolidate_memory.py"
-WRITE_SCRIPT = HERE / "write_decision.py"
+WRITE_SCRIPT = HERE / "write_decision" / "__main__.py"
 SCHEMA_TEST = "build_loop_memory_test"
 
 

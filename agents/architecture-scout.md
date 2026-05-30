@@ -67,7 +67,7 @@ If your findings exceed the budget, truncate the `findings[]` array and add `"_t
     CONNECTIONS=$(jq '.connection_count // .connections_count // 0' .build-loop/architecture/index.json)
     VIOLATIONS=$(jq '.violations | length' .episodic/architecture/known_violations.json 2>/dev/null || echo 0)
 
-    python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/scripts/write_decision.py" \
+    python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/scripts/write_decision/__main__.py" \
       --workdir "$PWD" \
       --title "Architecture baseline scan: ${COMPONENTS} components, ${CONNECTIONS} connections" \
       --decision "Baseline captured at ${SCAN_TS}; ACP path .build-loop/architecture/acp.json recorded for downstream phase use." \

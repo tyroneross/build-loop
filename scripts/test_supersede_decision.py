@@ -27,7 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 SCRIPT = HERE / "supersede_decision.py"
-WRITE_DECISION = HERE / "write_decision.py"
+WRITE_DECISION = HERE / "write_decision" / "__main__.py"
 
 from _test_helpers import MemIsolationMixin  # noqa: E402
 

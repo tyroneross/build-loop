@@ -207,7 +207,7 @@ def run_write_decision(args: list[str], env: dict | None = None) -> subprocess.C
     If ``env`` is None the current process environment (already patched by
     ``MemIsolationMixin.setUp``) is inherited.
     """
-    script = HERE / "write_decision.py"
+    script = HERE / "write_decision" / "__main__.py"
     return subprocess.run(
         [sys.executable, str(script)] + args,
         capture_output=True,

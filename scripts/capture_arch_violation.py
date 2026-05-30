@@ -141,7 +141,7 @@ def _confidence_for_severity(severity: str) -> str:
 
 def _resolve_write_decision_script() -> Path | None:
     """Return path to write_decision.py if it exists alongside this script."""
-    candidate = Path(__file__).resolve().parent / "write_decision.py"
+    candidate = Path(__file__).resolve().parent / "write_decision" / "__main__.py"
     return candidate if candidate.exists() else None
 
 
