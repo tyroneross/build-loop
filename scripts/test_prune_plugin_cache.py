@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,17 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "prune_plugin_cache.py"
+
+
+def env_without_plugin_roots(**overrides: str) -> dict[str, str]:
+    """A copy of the ambient env with the host plugin-root vars cleared, so a test
+    controls in-use detection explicitly and an ambient CLAUDE_PLUGIN_ROOT (the
+    test may run inside a live Claude Code session) can't leak into the result."""
+    env = dict(os.environ)
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env.pop("CODEX_PLUGIN_ROOT", None)
+    env.update(overrides)
+    return env
 
 
 def write(path: Path, text: str) -> None:
@@ -33,11 +45,12 @@ def write_cache(cache_root: Path, host: str, marketplace: str, name: str, versio
     return root
 
 
-def run(args: list[str]) -> subprocess.CompletedProcess:
+def run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT)] + args,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -141,6 +154,83 @@ class PrunePluginCacheTests(unittest.TestCase):
         self.assertFalse(symlink_entry.exists())
         self.assertTrue(source_target.exists())
         self.assertTrue((source_target / ".claude-plugin/plugin.json").exists())
+
+    def test_in_use_version_from_env_is_protected(self) -> None:
+        # The version a live session is loaded from must survive a prune even
+        # though the manifest now points at a newer keep_version.
+        env = env_without_plugin_roots(CLAUDE_PLUGIN_ROOT=str(self.claude_old))
+        result = run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--apply",
+            "--json",
+        ], env=env)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        data = json.loads(result.stdout)
+        self.assertIn("1.0.0", data["protected"])
+        self.assertNotIn(str(self.claude_old.resolve()), data["stale"])
+        self.assertTrue(self.claude_old.exists())
+        self.assertTrue(self.claude_current.exists())
+
+    def test_in_use_symlink_version_is_protected(self) -> None:
+        # Mirrors the real incident: the in-use version dir is a symlink to a
+        # working tree (local-dev override). It must NOT be unlinked, and the
+        # path is matched by cache name (unresolved), not the symlink target.
+        source_target = self.root / "live-source"
+        write_source(source_target, version="1.2.0")
+        in_use = self.claude_cache / "rosslabs-ai-toolkit" / "build-loop" / "1.1.0-dev"
+        in_use.parent.mkdir(parents=True, exist_ok=True)
+        in_use.symlink_to(source_target, target_is_directory=True)
+        env = env_without_plugin_roots(CLAUDE_PLUGIN_ROOT=str(in_use))
+
+        result = run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--apply",
+        ], env=env)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertTrue(in_use.is_symlink())
+        self.assertTrue(source_target.exists())
+        # the genuinely-stale old version is still pruned
+        self.assertFalse(self.claude_old.exists())
+
+    def test_protect_flag_preserves_named_version(self) -> None:
+        env = env_without_plugin_roots()  # in-use detection finds nothing
+        result = run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--protect", "1.0.0",
+            "--apply",
+            "--json",
+        ], env=env)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        data = json.loads(result.stdout)
+        self.assertIn("1.0.0", data["protected"])
+        self.assertTrue(self.claude_old.exists())
+
+    def test_no_detect_in_use_allows_pruning_env_version(self) -> None:
+        # Escape hatch / back-compat: with detection off, even the env-pointed
+        # in-use version is treated as stale.
+        env = env_without_plugin_roots(CLAUDE_PLUGIN_ROOT=str(self.claude_old))
+        result = run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--no-detect-in-use",
+            "--apply",
+            "--json",
+        ], env=env)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["protected"], [])
+        self.assertFalse(self.claude_old.exists())
 
 
 if __name__ == "__main__":

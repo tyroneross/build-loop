@@ -16,12 +16,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 from typing import Any, Literal
 
 Host = Literal["codex", "claude"]
+
+# Env vars a live host sets to the plugin's active cache version dir
+# (.../cache/<marketplace>/<plugin>/<version>). The version dir a running
+# session is loaded from MUST never be pruned — deleting it removes the
+# session's plugin root and every one of its hooks fails mid-run with
+# "Plugin directory does not exist".
+IN_USE_ENV_VARS: tuple[str, ...] = ("CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT")
 
 HOST_CONFIG: dict[Host, dict[str, str]] = {
     "codex": {
@@ -83,18 +91,45 @@ def iter_version_dirs(
     return sorted(versions)
 
 
+def detect_in_use_versions(*, plugin_name: str) -> set[str]:
+    """Cache version dir name(s) a live host session is currently loaded from.
+
+    Read from the host plugin-root env vars. The path is intentionally NOT
+    resolved: an in-use version dir may itself be a symlink (e.g. a local-dev
+    override pointing at a working tree), and we must protect its *cache* name,
+    not the symlink target's name. Only a path whose parent is this plugin's
+    cache dir counts, so an unrelated env value can't over-protect.
+    """
+    names: set[str] = set()
+    for var in IN_USE_ENV_VARS:
+        root = os.environ.get(var)
+        if not root:
+            continue
+        p = Path(root)
+        if p.parent.name == plugin_name:
+            names.add(p.name)
+    return names
+
+
 def classify_versions(
     *,
     version_dirs: list[Path],
     host: Host,
     plugin_name: str,
     keep_version: str,
+    protected_names: frozenset[str] = frozenset(),
 ) -> tuple[list[Path], list[Path], list[Path]]:
     keep: list[Path] = []
     stale: list[Path] = []
     skipped: list[Path] = []
 
     for version_dir in version_dirs:
+        # In-use / explicitly-protected dirs are kept by NAME, before any manifest
+        # check — a live session's root may be a symlink whose manifest reads a
+        # different version, but deleting it still breaks that session's hooks.
+        if version_dir.name in protected_names:
+            keep.append(version_dir)
+            continue
         cached_manifest = load_cached_manifest(version_dir, host)
         if cached_manifest is None or cached_manifest.get("name") != plugin_name:
             skipped.append(version_dir)
@@ -122,11 +157,16 @@ def prune_host(
     marketplace: str | None,
     plugin_override: str | None,
     keep_version_override: str | None,
+    protect: list[str] | None,
+    detect_in_use: bool,
     apply: bool,
 ) -> tuple[dict[str, Any], int]:
     manifest = load_manifest(source, host)
     plugin_name = plugin_override or manifest["name"]
     keep_version = keep_version_override or manifest["version"]
+    protected_names: set[str] = set(protect or [])
+    if detect_in_use:
+        protected_names.update(detect_in_use_versions(plugin_name=plugin_name))
     version_dirs = iter_version_dirs(
         cache_root=cache_root,
         plugin_name=plugin_name,
@@ -137,6 +177,7 @@ def prune_host(
         host=host,
         plugin_name=plugin_name,
         keep_version=keep_version,
+        protected_names=frozenset(protected_names),
     )
 
     deleted: list[Path] = []
@@ -153,6 +194,7 @@ def prune_host(
         "host": host,
         "plugin": plugin_name,
         "keep_version": keep_version,
+        "protected": sorted(protected_names),
         "cache_root": str(cache_root),
         "marketplace": marketplace,
         "dry_run": not apply,
@@ -170,6 +212,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--host", choices=["codex", "claude", "all"], default="all")
     p.add_argument("--plugin", default=None, help="Plugin name override. Defaults to host manifest name.")
     p.add_argument("--keep-version", default=None, help="Version to keep. Defaults to host manifest version.")
+    p.add_argument(
+        "--protect",
+        action="append",
+        default=None,
+        metavar="VERSION",
+        help="Cache version dir name to never prune (repeatable). Use for a version "
+        "an active session is running but the manifest no longer points at.",
+    )
+    p.add_argument(
+        "--no-detect-in-use",
+        action="store_true",
+        help="Disable auto-protecting the version dir the running host session is "
+        "loaded from (read from CLAUDE_PLUGIN_ROOT / CODEX_PLUGIN_ROOT).",
+    )
     p.add_argument("--marketplace", default=None, help="Optional marketplace name for the selected host(s).")
     p.add_argument("--codex-marketplace", default=None, help="Optional Codex marketplace name.")
     p.add_argument("--claude-marketplace", default=None, help="Optional Claude marketplace name.")
@@ -213,6 +269,9 @@ def print_human(reports: list[dict[str, Any]]) -> None:
         print(f"cache root: {report['cache_root']}")
         if report["marketplace"]:
             print(f"marketplace: {report['marketplace']}")
+        protected_extra = [v for v in report.get("protected", []) if v != report["keep_version"]]
+        if protected_extra:
+            print(f"protected (in-use/explicit): {', '.join(protected_extra)}")
         if not report["stale"]:
             print("No stale cache versions found.")
         else:
@@ -244,6 +303,8 @@ def main() -> int:
                 marketplace=marketplace_for(args, host),
                 plugin_override=args.plugin,
                 keep_version_override=args.keep_version,
+                protect=args.protect,
+                detect_in_use=not args.no_detect_in_use,
                 apply=args.apply,
             )
             reports.append(report)
