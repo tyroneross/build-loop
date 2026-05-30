@@ -13,7 +13,7 @@ Behavior:
         - Compute stable ID: ``sha256(rule_id + sorted(components) + message)[:12]``.
         - If ID already in registry, skip (dedup); update ``last_seen`` and
           increment ``last_seen_count``.
-        - If new, add to registry and invoke ``scripts/write_decision.py``
+        - If new, add to registry and invoke ``scripts/write_decision/__main__.py``
           to log a decision (unless ``--dry-run``).
     Atomic registry writes (temp + os.replace).
 
@@ -156,7 +156,7 @@ def _invoke_write_decision(
     first_seen: str,
     workdir: Path,
 ) -> str | None:
-    """Invoke scripts/write_decision.py for a new violation.
+    """Invoke scripts/write_decision/__main__.py for a new violation.
 
     Returns the decision_id on success, ``None`` on graceful failure
     (missing script, non-zero exit). Never raises.

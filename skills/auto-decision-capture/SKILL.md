@@ -11,7 +11,7 @@ when_to_use: |
   - Topic-coherent inference can be drawn with quotable evidence (tier 3)
 namespace: build-loop-memory/projects/<project>/decisions/
 companion_scripts:
-  - scripts/write_decision.py — atomic writer (file + INDEX + events.jsonl + DB)
+  - scripts/write_decision/__main__.py — atomic writer (file + INDEX + events.jsonl + DB)
   - scripts/scan_transcript_for_decisions.py — Stop-hook batch sweep (tier 3)
   - scripts/supersede_decision.py — explicit replacement
   - scripts/revoke_decision.py — explicit withdrawal
@@ -53,7 +53,7 @@ without a concrete signal.
 **Note on agent-style language (build-orchestrator subagents, implementer subagents).** Task-execution language ("I'll add X", "extending Y", "default to Z") is just as much a decision signal as user-conversational language ("let's use Y"). Earlier versions of this skill under-captured agent decisions because the patterns were tuned only for user-Claude back-and-forth. The three middle rows above (Implementation declarative / Tradeoff / Threshold) are the explicit fix. **If you are reasoning as a subagent and you make any of those moves, capture it.**
 
 **Tier 1 + 2 (explicit + confirmed) live captures during the session.**
-Use `scripts/write_decision.py` directly with `--confidence explicit` or
+Use `scripts/write_decision/__main__.py` directly with `--confidence explicit` or
 `--confidence confirmed`. Set `--source auto-explicit` or
 `--source auto-confirmed` so the capture is distinguishable from manual
 human entries.
