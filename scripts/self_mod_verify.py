@@ -146,21 +146,28 @@ def _find_runner(workdir: Path) -> list[str] | None:
 def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
     """Map changed implementation files to their test counterparts.
 
-    ``scripts/foo.py`` → ``test_foo.py``. A package file
-    ``scripts/<pkg>/X.py`` → ``test_<pkg>.py`` (the capability's test), so
-    folder-per-capability packages stay gate-able. Test files are searched in
-    both ``scripts/`` and ``tests/``. Files already named ``test_*.py`` are
+    ``foo.py`` → ``test_foo.py``. A package file ``.../<pkg>/X.py`` →
+    ``test_<pkg>.py`` (the capability's test). Tests are searched RECURSIVELY
+    under both ``scripts/`` and ``tests/``, so nested suites (e.g.
+    ``tests/architecture/test_scanner.py``) and folder-per-capability packages
+    anywhere in the tree stay gate-able. Files already named ``test_*.py`` are
     included directly.
     """
-    scripts_dir = workdir / "scripts"
-    tests_dir = workdir / "tests"
     discovered: list[str] = []
     seen: set[str] = set()
 
-    def _add(candidate: Path) -> None:
-        if candidate.exists() and str(candidate) not in seen:
-            discovered.append(str(candidate))
-            seen.add(str(candidate))
+    # Index every test file by basename, recursively under scripts/ and tests/.
+    test_index: dict[str, list[Path]] = {}
+    for root in (workdir / "scripts", workdir / "tests"):
+        if root.is_dir():
+            for tf in root.rglob("test_*.py"):
+                test_index.setdefault(tf.name, []).append(tf)
+
+    def _add_by_name(name: str) -> None:
+        for tf in test_index.get(name, []):
+            if str(tf) not in seen:
+                discovered.append(str(tf))
+                seen.add(str(tf))
 
     for raw in changed_files:
         p = Path(raw)
@@ -168,27 +175,18 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
             p = workdir / p
         p = p.resolve()
 
-        name = p.name
-        if name.startswith("test_"):
-            # It IS a test file — include directly if it exists
+        if p.name.startswith("test_"):
             if p.exists() and str(p) not in seen:
                 discovered.append(str(p))
                 seen.add(str(p))
             continue
 
-        # Candidate test base names: the file's own stem, plus — when the file
-        # lives in a package folder under scripts/ — the package name.
-        candidates = {f"test_{name}"}
-        try:
-            rel = p.relative_to(scripts_dir)
-            if len(rel.parts) > 1:  # scripts/<pkg>/<file>.py
-                candidates.add(f"test_{rel.parts[0]}.py")
-        except ValueError:
-            pass
-
-        for cand in candidates:
-            _add(scripts_dir / cand)
-            _add(tests_dir / cand)
+        # The file's own name, plus — for a package file — its containing
+        # capability folder name.
+        _add_by_name(f"test_{p.name}")           # foo.py → test_foo.py
+        parent = p.parent.name
+        if parent and parent not in ("scripts", "tests", "src"):
+            _add_by_name(f"test_{parent}.py")    # <pkg>/X.py → test_<pkg>.py
 
     return discovered
 
