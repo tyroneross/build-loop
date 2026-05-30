@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from memory_facade_common import _parse_iso, _q_match
+from .common import _parse_iso, _q_match
 
 
 def read_runs(workdir: Path, query: str, limit: int) -> Tuple[List[Dict[str, Any]], List[str]]:

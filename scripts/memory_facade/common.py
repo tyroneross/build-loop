@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared helpers for memory_facade sub-modules.
 
-Stdlib only. Imported by every memory_facade_*.py module.
+Stdlib only. Imported by every memory_facade/*.py module via relative import.
 """
 from __future__ import annotations
 

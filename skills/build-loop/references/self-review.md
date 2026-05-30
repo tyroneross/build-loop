@@ -47,9 +47,9 @@ Cadence values map to launchd `StartCalendarInterval`. `daily` → every day at 
 
 ## How it works
 
-### Data-gathering layer (scripts/self_review.py — frozen)
+### Data-gathering layer (scripts/self_review/ package — frozen CLI)
 
-`python3 scripts/self_review.py --mode {light|deep} [--workdir <repo>] [--days N] [--dry-run] --json`
+`python3 scripts/self_review/__main__.py --mode {light|deep} [--workdir <repo>] [--days N] [--dry-run] --json`
 
 Always exits 0. Writes:
 - `.build-loop/self-review/<UTCdate>-<mode>.md` — human digest

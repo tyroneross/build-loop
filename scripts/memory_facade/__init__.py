@@ -14,51 +14,24 @@ function:
 
     recall(query, kind=None, project=None, limit=10) -> RecallEnvelope
 
-`kind` filters by store name: "runs" | "decisions" | "semantic" | "debugger"
-(or None for all). `project` filters semantic_facts by project label. `limit`
-is per-store cap (the merged result returns up to `4 * limit`).
+`kind` filters by store name: "runs" | "decisions" | "lessons" | "semantic" |
+"debugger" (or None for all). `project` filters semantic_facts by project
+label. `limit` is per-store cap (the merged result returns up to
+`5 * limit`).
 
 Each backend degrades gracefully:
   - state.json runs   → returns [] silently if file missing.
   - canonical files   → returns [] silently if dir/index missing or empty.
   - Postgres          → returns [] AND records reason="db_unavailable" when
-                        no DB URL is configured (BUILD_LOOP_DATABASE_URL /
-                        DATABASE_URL / connection.env all unset), psycopg is
-                        missing, or the connection fails. Never raises.
+                        no DB URL is configured, psycopg is missing, or the
+                        connection fails. Never raises.
   - debugger MCP      → returns [] AND records reason="mcp_unavailable" when
-                        the MCP server is not running. Detection is via the
-                        bundled `dist/src/mcp/server.js` reachability check;
-                        we never spawn it from here.
+                        the MCP server is not running.
 
-Output envelope:
-
-    {
-      "query": "<echo>",
-      "kind_filter": null | "runs" | ...,
-      "project": null | "<resolved>",
-      "results_by_kind": {
-        "runs":      [{ ...run_entry... }],
-        "decisions": [{ id, title, path, summary, ... }],
-        "semantic":  [{ ...row... }],
-        "debugger":  [{ ...incident... }]
-      },
-      "merged":   [...top-N by recency, mixed kinds...],
-      "reasons":  ["db_unavailable: psycopg not installed", ...]
-    }
-
-`merged` is sorted by `_recency_ts` descending (best-effort timestamps; rows
-without a parseable timestamp sink to the bottom in stable order).
-
-Stdlib only at import. Postgres backend imports psycopg lazily inside the
-function so unavailable systems don't crash the import.
-
-Implementation is split across sub-modules for maintainability:
-  memory_facade_common.py    — shared helpers (_parse_iso, _q_match, _read_jsonl)
-  memory_facade_runs.py      — Backend 1: state.json runs
-  memory_facade_lessons.py   — Backend 2.5: free-form lesson files
-  memory_facade_decisions.py — Backend 2: decision indexes + .md files
-  memory_facade_semantic.py  — Backend 3: Postgres semantic_facts
-  memory_facade_debugger.py  — Backend 4: debugger MCP CLI
+Public API (frozen — all consumers import these directly):
+  recall, read_runs, read_lessons, read_decisions, read_semantic, read_debugger,
+  set_debugger_runner, main, KINDS, KIND_ALIASES, DEFAULT_LIMIT,
+  DECISION_FRONTMATTER_RE, _parse_iso, _q_match, _read_jsonl
 """
 from __future__ import annotations
 
@@ -69,36 +42,38 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
-# Path setup (same as before — scripts/ dir on sys.path for _db_url etc.)
+# Path setup — ensure scripts/ is on sys.path so helpers like _db_url,
+# _paths, project_resolver are importable by sub-modules.
 # ---------------------------------------------------------------------------
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent        # scripts/memory_facade/
+_SCRIPTS_DIR = _HERE.parent                    # scripts/
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
+REPO_ROOT_DEFAULT = _SCRIPTS_DIR.parent
 
 # ---------------------------------------------------------------------------
 # Re-export from sub-modules — public API is FROZEN; all imports keep working.
 # ---------------------------------------------------------------------------
-from memory_facade_common import (  # noqa: E402
+from .common import (  # noqa: E402
     DECISION_FRONTMATTER_RE,
     _LESSON_FRONTMATTER_RE,
     _parse_iso,
     _q_match,
     _read_jsonl,
 )
-from memory_facade_runs import read_runs  # noqa: E402
-from memory_facade_lessons import (  # noqa: E402
+from .runs import read_runs  # noqa: E402
+from .lessons import (  # noqa: E402
     _resolve_memory_dirs,
     read_lessons,
 )
-from memory_facade_decisions import (  # noqa: E402
+from .decisions import (  # noqa: E402
     _indexed_decisions,
     _resolve_decision_dirs,
     read_decisions,
 )
-from memory_facade_semantic import read_semantic  # noqa: E402
-from memory_facade_debugger import read_debugger_impl  # noqa: E402
+from .semantic import read_semantic  # noqa: E402
+from .debugger import read_debugger_impl  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants

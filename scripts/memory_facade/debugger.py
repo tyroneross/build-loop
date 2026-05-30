@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from memory_facade_common import _parse_iso
+from .common import _parse_iso
 
 
 def _run_npx(query: str, limit: int) -> Tuple[Optional[str], List[str]]:

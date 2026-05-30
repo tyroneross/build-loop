@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from memory_facade_common import (
+from .common import (
     DECISION_FRONTMATTER_RE,
     _parse_iso,
     _q_match,

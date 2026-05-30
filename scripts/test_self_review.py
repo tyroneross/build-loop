@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE / "self_review.py"
+SCRIPT = HERE / "self_review" / "__main__.py"
 
 
 def _run(args: list[str], workdir: str | None = None) -> subprocess.CompletedProcess:
@@ -336,8 +336,10 @@ class TestSelfSimplificationScan(unittest.TestCase):
         )
         scripts_dir = tmp / "scripts"
         scripts_dir.mkdir()
-        # Canary file that _is_self_recursive checks for
-        (scripts_dir / "self_review.py").write_text("# placeholder\n")
+        # Canary file that _is_self_recursive checks for (new package form)
+        sr_pkg = scripts_dir / "self_review"
+        sr_pkg.mkdir()
+        (sr_pkg / "__main__.py").write_text("# placeholder\n")
         # A deliberately complex Python file (many branches → should trigger hotspot)
         messy = scripts_dir / "messy.py"
         messy.write_text(_MESSY_PYTHON)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""self_review_gather.py — transcript mining helpers for self_review.py.
+"""gather.py — transcript mining helpers for the self_review package.
 
 Invokes transcript-pattern-miner.py as a subprocess and returns the parsed
 corrections / rituals / sequences dict.  No LLM calls, no network, stdlib only.
@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-HERE = Path(__file__).resolve().parent
+# scripts/ directory — one level above this package
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -74,7 +75,7 @@ def run_miner(
     Returns dict with keys: corrections, rituals, sequences.
     Fail-soft: any subprocess error is recorded in errors[] and empty results returned.
     """
-    miner = HERE / "transcript-pattern-miner.py"
+    miner = _SCRIPTS_DIR / "transcript-pattern-miner.py"
     empty: dict[str, Any] = {"corrections": [], "rituals": [], "sequences": []}
 
     if not miner.exists():

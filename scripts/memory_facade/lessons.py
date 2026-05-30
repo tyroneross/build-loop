@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from memory_facade_common import _LESSON_FRONTMATTER_RE, _q_match
+from .common import _LESSON_FRONTMATTER_RE, _q_match
 
 
 def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:

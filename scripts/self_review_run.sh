@@ -56,7 +56,7 @@ log "starting"
 # ---------------------------------------------------------------------------
 # 4. Run the gatherer
 # ---------------------------------------------------------------------------
-GATHER_JSON="$( python3 scripts/self_review.py --mode "$MODE" --workdir "$REPO" --json 2>>"$RUN_LOG" || true )"
+GATHER_JSON="$( python3 scripts/self_review/__main__.py --mode "$MODE" --workdir "$REPO" --json 2>>"$RUN_LOG" || true )"
 
 if [[ -z "$GATHER_JSON" ]]; then
     log "gatherer produced no output; skipping"

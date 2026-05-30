@@ -16,12 +16,13 @@ Run `python3 scripts/install_self_review.py uninstall --json` in the current rep
 Run `python3 scripts/install_self_review.py status --json` in the current repo and report loaded/not-loaded state for both scheduled jobs.
 {{else}}
 Determine mode from ARGUMENTS: if it contains "deep" use `deep`, otherwise use `light`.
-Run `python3 scripts/self_review.py --mode <mode> --workdir . --json` and display the digest path and queued proposal count. If mode is deep, also describe the queued proposals and their classify_hint values.
+Determine mode from ARGUMENTS: if it contains "deep" use `deep`, otherwise use `light`.
+Run `python3 scripts/self_review/__main__.py --mode <mode> --workdir . --json` and display the digest path and queued proposal count. If mode is deep, also describe the queued proposals and their classify_hint values.
 {{/contains}}
 {{/contains}}
 {{/contains}}
 {{else}}
-Run `python3 scripts/self_review.py --mode light --workdir . --json` and display the digest path and queued proposal count.
+Run `python3 scripts/self_review/__main__.py --mode light --workdir . --json` and display the digest path and queued proposal count.
 {{/if}}
 
 ---

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""self_review.py — deterministic data-gatherer for build-loop periodic self-review.
+"""self_review/__main__.py — deterministic data-gatherer for build-loop periodic self-review.
 
 Mines recent activity for issues + efficiency signals, writes a human digest,
 and enqueues candidate improvement items.  Does NO LLM calls and applies NO
 code changes.  The host LLM (invoked separately by the cron wrapper) does the
 reasoning and applying.
 
-Frozen CLI (chunk G depends on this exactly):
-  python3 scripts/self_review.py --mode {light|deep} [--workdir <repo>]
-                                 [--days N] [--dry-run] --json
+Canonical invocation:
+  python3 scripts/self_review/__main__.py --mode {light|deep} [--workdir <repo>]
+                                          [--days N] [--dry-run] --json
+
+Also runnable as:
+  python3 -m self_review --mode {light|deep} ...   (with scripts/ on sys.path)
 
 Output JSON shape:
   {
@@ -60,10 +63,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from self_review_gather import run_miner
-from self_review_efficiency import scan_state, scan_churn
-from self_review_selfscan import is_self_recursive, scan_self_simplification
-from self_review_output import render_digest, write_proposals
+# When run directly (`python3 scripts/self_review/__main__.py`), sys.path[0]
+# is the package directory, so flat sibling imports work.  When imported via
+# `python3 -m self_review` with scripts/ on sys.path, __init__.py has already
+# inserted the package dir.
+from gather import run_miner
+from efficiency import scan_state, scan_churn
+from selfscan import is_self_recursive, scan_self_simplification
+from output import render_digest, write_proposals
 
 # Proposal cap for light mode
 _LIGHT_MODE_CAP = 10

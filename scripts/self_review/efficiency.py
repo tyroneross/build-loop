@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""self_review_efficiency.py — state.json + git-churn efficiency scan for self_review.py.
+"""efficiency.py — state.json + git-churn efficiency scan for the self_review package.
 
 No LLM calls, no network, stdlib only.
 """
@@ -14,7 +14,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-# Heuristic thresholds (duplicated from self_review.py constants for module isolation)
+# Heuristic thresholds
 _CHURN_THRESHOLD = 5
 _FAILURE_THRESHOLD = 2
 _ITERATION_THRESHOLD = 3

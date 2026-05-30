@@ -6,16 +6,14 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-_HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+from .common import _parse_iso
 
-from _db_url import NO_URL_REASON, resolve_db_url  # noqa: E402
-from memory_facade_common import _parse_iso
+# _db_url lives in scripts/ (the parent of this package); importable because
+# __init__.py inserts scripts/ into sys.path before any sub-module is loaded.
+from _db_url import NO_URL_REASON, resolve_db_url  # type: ignore  # noqa: E402
 
 
 def read_semantic(

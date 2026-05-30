@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""self_review_selfscan.py — self-simplification scan for self_review.py.
+"""selfscan.py — self-simplification scan for the self_review package.
 
 Runs only when workdir IS the build-loop repo (self-recursive) AND mode == "deep".
 No LLM calls, no network, stdlib only.
@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-HERE = Path(__file__).resolve().parent
+# scripts/ directory — one level above this package
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 
 _OVERSIZED_LINE_THRESHOLD = 600
 _BUILD_LOOP_PLUGIN_NAME = "build-loop"
@@ -39,7 +40,7 @@ def _check_state_flag(workdir: Path) -> bool:
 
 
 def _check_plugin_canary(workdir: Path) -> bool:
-    """Return True if plugin.json matches build-loop AND scripts/self_review.py exists."""
+    """Return True if plugin.json matches build-loop AND the self_review package exists."""
     plugin_json = workdir / ".claude-plugin" / "plugin.json"
     if not plugin_json.exists():
         return False
@@ -51,7 +52,12 @@ def _check_plugin_canary(workdir: Path) -> bool:
             return False
     except (json.JSONDecodeError, OSError):
         return False
-    return (workdir / "scripts" / "self_review.py").exists()
+    # Accept either the new package form or the legacy flat file (backwards-compat).
+    scripts_dir = workdir / "scripts"
+    return (
+        (scripts_dir / "self_review" / "__main__.py").exists()
+        or (scripts_dir / "self_review.py").exists()
+    )
 
 
 def is_self_recursive(workdir: Path) -> bool:
@@ -60,7 +66,7 @@ def is_self_recursive(workdir: Path) -> bool:
     Two checks (either passing is sufficient to avoid false-negatives):
       1. .build-loop/state.json has selfRecursive.enabled == true
       2. .claude-plugin/plugin.json exists with name == "build-loop"
-         AND scripts/self_review.py exists (canary)
+         AND scripts/self_review/__main__.py exists (canary)
 
     Fail-soft: any parse error → False.
     """
@@ -160,7 +166,7 @@ def run_complexity_detector(
 
     Fail-soft: any error returns [].
     """
-    detector = HERE / "complexity_detector.py"
+    detector = _SCRIPTS_DIR / "complexity_detector.py"
     if not detector.exists():
         errors.append(f"complexity_detector absent: {detector}")
         return []
