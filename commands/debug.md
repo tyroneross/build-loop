@@ -1,5 +1,5 @@
 ---
-description: "Deep iterative debugging — causal-tree investigation, fix, verify, critique. Up to 5 iterations."
+description: "(Advanced override — `/build-loop:run` auto-routes here on symptom language; use this to force debug mode.) Deep iterative debugging — causal-tree investigation, fix, verify, critique. Up to 5 iterations."
 argument-hint: "<symptom>"
 ---
 

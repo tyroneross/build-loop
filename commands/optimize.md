@@ -1,6 +1,6 @@
 ---
 name: optimize
-description: "Run autonomous metric-driven optimization. Detects available targets or accepts a specific one."
+description: "(Advanced override — `/build-loop:run` auto-routes here; use this only to force the mode.) Run autonomous metric-driven optimization. Detects available targets or accepts a specific one."
 argument-hint: "[target]"
 ---
 

@@ -14,13 +14,29 @@ A 5-phase development loop (+1 optional): assess state and criteria, plan, execu
 
 ## Routing
 
-Build-loop supports three modes, routed by the orchestrator:
+`/build-loop:run <any task>` is the single entry for all coding work — build, fix, optimize, research, debug, or test. The orchestrator classifies intent automatically and routes to the right mode; no flag or command choice required.
 
-- **Build** (default): Full 5-phase loop plus optional Learn for implementation tasks
-- **Optimize**: Autoresearch-pattern optimization for measurable metrics (`/build-loop:optimize`)
-- **Research**: Pre-decision analysis that produces a research packet (`/build-loop:research`)
+Internal modes:
 
-The orchestrator classifies intent automatically. Users can override with the standalone commands.
+- **Build** (default): Full 5-phase loop plus optional Learn — triggered by implementation, fix, refactor, migrate, or update language
+- **Optimize**: Metric-driven optimization loop — triggered by "speed up", "reduce", "improve" + a mechanical metric (`/build-loop:optimize` as a direct override)
+- **Research**: Pre-decision analysis, outputs a research packet, no commits — triggered by "research", "evaluate", "compare", "should I" (`/build-loop:research` as a direct override)
+- **Debug**: Deep iterative root-cause investigation — triggered by symptom language; also auto-invoked inside the loop on Review-B failures (`/build-loop:debug` as a direct override)
+- **Test**: Static plugin-test suite — triggered by "test plugin", "validate plugin" (`/build-loop:test` as a direct override)
+
+The standalone commands are advanced overrides for forcing a specific mode. Normal usage only needs `/build-loop:run`.
+
+### Parallelism config
+
+Fan-out width is machine-aware. The cap is `effective_max_implementers(workdir)` from `scripts/parallelism.py`: `min(config.parallelism.maxImplementers, cpu_count−2, hard ceiling 12)`, defaulting to 8 when no config is present.
+
+To raise the cap toward the hard ceiling, set in `.build-loop/config.json`:
+
+```json
+{ "parallelism": { "maxImplementers": 8 } }
+```
+
+Values above 12 are clamped. Values above `cpu_count−2` are clamped to `cpu_count−2` to leave headroom for the orchestrator and host OS.
 
 ## Autonomous Mode (Queue-Drain Loop)
 
@@ -317,7 +333,7 @@ Key steps: independent-auditor (build scope) adversarial read → build-loop-own
 
 Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
 
-Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → fan-out up to 4 implementers → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) → UI re-validate hook → overflow to followup/.
+Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → fan-out up to `effective_max` implementers (see `scripts/parallelism.py effective_max_implementers(workdir)` — default 8; `min(config.parallelism.maxImplementers, cpu_count−2, hard ceiling 12)`) → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) → UI re-validate hook → overflow to followup/.
 
 **Load `skills/build-loop/references/phase-5-iterate.md`** for the full prioritized work list, status routing for all 9 implementer return values, convergence detection, and followup overflow protocol.
 

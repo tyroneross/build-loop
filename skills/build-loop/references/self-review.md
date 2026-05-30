@@ -152,16 +152,25 @@ Self-modifications use the existing per-commit mode machinery (one commit at a t
 ```bash
 python3 scripts/self_mod_verify.py \
   --workdir "$PWD" \
-  --scope full \
+  --scope auto \
   --changed-files <space-separated file list> \
   --auto-revert \
   --json
 ```
+`--scope auto` runs mapped tests for small changes and broader tests for multi-file/core changes (practical default). Use `--scope full` for the slow exhaustive option (900s, parallel when pytest-xdist is present).
+
 `verdict: pass` → the self-modification may commit.
 `verdict: fail` → the gate AUTO-REVERTS the change and writes the finding to `.build-loop/proposals/needs-human/`. The change is NEVER committed. Never retry a failed gate verdict without human review.
+`verdict: needs_human` / `meta_modification: true` → see §"Meta-modifications (always human-gated)" immediately below. STOP — queue to `.build-loop/proposals/needs-human/`, never auto-apply, even if tests passed.
 
 **Step 4 — SAFE-only auto-apply:**
 Only changes that `classify_action.py` classifies as SAFE auto-apply through this path. Structural or architectural self-modifications — new phase, changed dispatch contract, agent-role change, new mandatory gate — surface as DECISION and are never auto-applied. They are queued to `.build-loop/proposals/needs-human/` for explicit user action.
+
+### Meta-modifications (always human-gated)
+
+**Meta-modifications are always human-gated.** A self-modification that touches the gate's own inputs or control surfaces — test files, `self_mod_verify.py`, `classify_action.py`, `autonomy_gate.py`, `self_review.py`, the self-improvement loop scripts, or deploy/permission logic — is a META-MODIFICATION. The gate returns `verdict: needs_human`; it is surfaced as DECISION for human review and NEVER SAFE-auto-applied, regardless of test passage. Rationale: a self-improver that can edit the tests or gate that measure it can fabricate a green result (observed in Darwin-Gödel Machine; the reward-tampering failure mode in Anthropic's "Sycophancy to Subterfuge"). The eval bar scales with blast radius: `--scope auto` runs mapped tests for small changes, broader tests for multi-file/core changes; `full` is bounded (900s, parallel when pytest-xdist is present).
+
+The deep-run host agent MUST treat `verdict: needs_human` / `meta_modification: true` as a STOP — queue to `.build-loop/proposals/needs-human/`, never auto-apply, even if the tests passed.
 
 ### Authorized targets
 
@@ -172,7 +181,7 @@ Only changes that `classify_action.py` classifies as SAFE auto-apply through thi
 
 - Promotion of project-local skills to `~/.claude/skills/` (global scope — confirm first)
 - Changes to `agents/build-orchestrator.md` phase contracts or MECE ownership rules (structural — DECISION)
-- Changes to `scripts/self_mod_verify.py` or `scripts/classify_action.py` themselves (gate self-modification — DECISION)
+- META-MODIFICATIONS: any change to `scripts/self_mod_verify.py`, `scripts/classify_action.py`, `scripts/autonomy_gate.py`, `scripts/self_review.py`, the self-improvement loop scripts, test files for any of these, or deploy/permission logic — the gate returns `verdict: needs_human` for these regardless of test passage (see §"Meta-modifications (always human-gated)")
 
 ---
 
@@ -197,13 +206,14 @@ For each SAFE `target: self` proposal, apply the change, then — BEFORE committ
 ```bash
 python3 scripts/self_mod_verify.py \
   --workdir "$PWD" \
-  --scope full \
+  --scope auto \
   --changed-files <the files you changed> \
   --auto-revert \
   --json
 ```
 - `verdict: pass` → commit the change via the normal per-commit mode (one commit per self-modification; do not batch).
 - `verdict: fail` → the gate has already auto-reverted the change. Move the proposal to `.build-loop/proposals/needs-human/` and continue with the next proposal. NEVER commit a failed-gate self-modification.
+- `verdict: needs_human` / `meta_modification: true` → the changed files touch the gate's own inputs or control surfaces. STOP — do not commit, do not retry. Move the proposal to `.build-loop/proposals/needs-human/`. This is true even if all tests passed — fabricated passes are the exact failure mode this gate prevents.
 - Skip any `target: self` proposal that `classify_action.py` does not classify as SAFE (RISKY/DECISION → queue to `.build-loop/proposals/needs-human/`, do not apply).
 
 Step 3 — Determine push behavior:
@@ -218,6 +228,7 @@ Constraints:
 - Never apply a RISKY or DECISION proposal autonomously.
 - Never apply a `target: self` proposal without running `self_mod_verify.py` first.
 - Never commit a change that `self_mod_verify.py` returned `verdict: fail` for.
+- Never auto-apply when `self_mod_verify.py` returns `verdict: needs_human` or `meta_modification: true` — queue to `.build-loop/proposals/needs-human/`, even if tests passed.
 - Never bypass build-loop's commit auditor or autonomy gate.
 - If build-loop is not available as a slash command, log the unavailability and exit 0 — the queue stays intact.
 - This is a local developer tool; there are no users to protect other than the repo owner.

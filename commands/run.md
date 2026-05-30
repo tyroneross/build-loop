@@ -1,5 +1,5 @@
 ---
-description: "Orchestrated development loop: assess → plan → execute → review → iterate. Use --parallel to explicitly authorize Codex subagents/workers."
+description: "The single entry for any coding task — build, fix, refactor, optimize, research, or test. Auto-routes to the right mode; you don't pick."
 argument-hint: "[--parallel] [goal description]"
 ---
 

@@ -1,5 +1,5 @@
 ---
-description: "Run build-loop's plugin-tests static-analysis suite against the current repo (skill resolution, manifest, MCP, triggers, bridges, agent surfaces, cache pruning)"
+description: "(Advanced override — `/build-loop:run` auto-routes here on 'test plugin'/'validate plugin' language; use this to force the mode.) Run build-loop's plugin-tests static-analysis suite against the current repo (skill resolution, manifest, MCP, triggers, bridges, agent surfaces, cache pruning)"
 allowed-tools: Bash, Read
 argument-hint: "[--strict] [<test-name>]"
 ---

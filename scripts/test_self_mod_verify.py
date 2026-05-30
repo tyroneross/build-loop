@@ -59,6 +59,10 @@ def _write_failing_test(scripts_dir: Path, name: str = "test_fail.py") -> Path:
     return p
 
 
+# ---------------------------------------------------------------------------
+# Original tests (preserved)
+# ---------------------------------------------------------------------------
+
 class TestVerdictPass(unittest.TestCase):
     """A repo with only a passing test → verdict pass, exit 0."""
 
@@ -85,10 +89,17 @@ class TestVerdictPass(unittest.TestCase):
     def test_json_shape_complete(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
         payload = json.loads(r.stdout)
-        for key in ("scope", "ran", "passed", "failed", "failed_tests", "reverted", "verdict"):
+        for key in (
+            "scope", "ran", "passed", "failed", "failed_tests", "reverted",
+            "verdict", "meta_modification", "meta_files", "timed_out", "errors",
+            "effective_scope",
+        ):
             self.assertIn(key, payload, f"missing key {key!r}")
         self.assertIsInstance(payload["ran"], list)
         self.assertIsInstance(payload["failed_tests"], list)
+        self.assertIsInstance(payload["meta_modification"], bool)
+        self.assertIsInstance(payload["meta_files"], list)
+        self.assertIsInstance(payload["timed_out"], bool)
 
 
 class TestVerdictFail(unittest.TestCase):
@@ -273,6 +284,377 @@ class TestNoPytest(unittest.TestCase):
         payload = json.loads(r.stdout)
         self.assertEqual(payload["verdict"], "no_tests")
         self.assertEqual(payload["ran"], [])
+
+
+# ---------------------------------------------------------------------------
+# New tests: meta-modification detection
+# ---------------------------------------------------------------------------
+
+class TestClassifySelfMod(unittest.TestCase):
+    """Unit tests for classify_self_mod()."""
+
+    def setUp(self) -> None:
+        # Import directly to unit-test the function
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("self_mod_verify", SCRIPT)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_test_file_is_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/test_foo.py"], self.workdir
+        )
+        self.assertTrue(result["meta_modification"])
+        self.assertIn("scripts/test_foo.py", result["meta_files"])
+
+    def test_self_mod_verify_is_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/self_mod_verify.py"], self.workdir
+        )
+        self.assertTrue(result["meta_modification"])
+
+    def test_autonomy_gate_is_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/autonomy_gate.py"], self.workdir
+        )
+        self.assertTrue(result["meta_modification"])
+
+    def test_classify_action_is_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/classify_action.py"], self.workdir
+        )
+        self.assertTrue(result["meta_modification"])
+
+    def test_install_self_review_is_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/install_self_review.py"], self.workdir
+        )
+        self.assertTrue(result["meta_modification"])
+
+    def test_normal_source_file_not_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/memory_writer.py"], self.workdir
+        )
+        self.assertFalse(result["meta_modification"])
+        self.assertEqual(result["meta_files"], [])
+
+    def test_empty_list_not_meta(self) -> None:
+        result = self.mod.classify_self_mod([], self.workdir)
+        self.assertFalse(result["meta_modification"])
+
+    def test_mixed_list_detects_meta(self) -> None:
+        result = self.mod.classify_self_mod(
+            ["scripts/memory_writer.py", "scripts/test_memory_writer.py"],
+            self.workdir,
+        )
+        self.assertTrue(result["meta_modification"])
+        self.assertIn("scripts/test_memory_writer.py", result["meta_files"])
+        self.assertNotIn("scripts/memory_writer.py", result["meta_files"])
+
+
+class TestMetaModCLI(unittest.TestCase):
+    """CLI-level tests: meta files → needs_human verdict + exit 1."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        scripts_dir = self.workdir / "scripts"
+        scripts_dir.mkdir()
+        _write_passing_test(scripts_dir)
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_changed_test_file_gives_needs_human(self) -> None:
+        """Changing a test_*.py file triggers needs_human, even if tests pass."""
+        scripts_dir = self.workdir / "scripts"
+        test_file = scripts_dir / "test_foo.py"
+        test_file.write_text("def test_ok(): assert True\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(test_file),
+            "--json",
+        ])
+        self.assertEqual(r.returncode, 1, msg=f"stderr: {r.stderr}\nstdout: {r.stdout}")
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "needs_human")
+        self.assertTrue(payload["meta_modification"])
+        self.assertTrue(len(payload["meta_files"]) > 0)
+
+    def test_changed_self_mod_verify_gives_needs_human(self) -> None:
+        """Editing the gate script itself triggers needs_human."""
+        # Use temp workdir so we don't accidentally trigger the real full suite
+        scripts_dir = self.workdir / "scripts"
+        # Write a minimal passing test so there is something to run
+        _write_passing_test(scripts_dir, "test_self_mod_verify.py")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", "scripts/self_mod_verify.py",
+            "--json",
+        ])
+        self.assertEqual(r.returncode, 1, msg=f"stderr: {r.stderr}\nstdout: {r.stdout}")
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "needs_human")
+        self.assertTrue(payload["meta_modification"])
+
+    def test_meta_verdict_needs_human_even_when_tests_pass(self) -> None:
+        """Tests run and pass, but verdict is still needs_human for meta files."""
+        # Use a temp workdir with passing tests, changed file = a test file
+        scripts_dir = self.workdir / "scripts"
+        passing_test = scripts_dir / "test_passing.py"
+        passing_test.write_text("def test_pass(): assert 1 == 1\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(passing_test),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "needs_human",
+                         msg="Even when all tests pass, meta file edit must yield needs_human")
+        self.assertEqual(r.returncode, 1)
+
+    def test_normal_changed_file_not_needs_human(self) -> None:
+        """A regular source file change does not trigger needs_human."""
+        scripts_dir = self.workdir / "scripts"
+        normal_file = self.workdir / "scripts" / "normal_module.py"
+        normal_file.write_text("X = 1\n")
+        # Also write its test so scope=auto has something to run
+        (scripts_dir / "test_normal_module.py").write_text(
+            "def test_ok(): assert 1 == 1\n"
+        )
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(normal_file),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertNotEqual(payload["verdict"], "needs_human",
+                            msg=f"Normal file should not trigger needs_human: {payload}")
+        self.assertFalse(payload["meta_modification"])
+
+
+# ---------------------------------------------------------------------------
+# New tests: --scope auto
+# ---------------------------------------------------------------------------
+
+class TestScopeAuto(unittest.TestCase):
+    """Tests for --scope auto blast-radius selection."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.scripts_dir = self.workdir / "scripts"
+        self.scripts_dir.mkdir()
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_one_source_file_uses_changed_scope(self) -> None:
+        """1 non-meta source file → effective_scope = changed."""
+        impl = self.scripts_dir / "impl.py"
+        impl.write_text("pass\n")
+        _write_passing_test(self.scripts_dir, "test_impl.py")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(impl),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["scope"], "auto")
+        self.assertEqual(payload["effective_scope"], "changed")
+        self.assertFalse(payload["meta_modification"])
+
+    def test_meta_file_gives_needs_human_regardless(self) -> None:
+        """Meta file → needs_human even with auto scope."""
+        test_file = self.scripts_dir / "test_meta_check.py"
+        test_file.write_text("def test_ok(): pass\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(test_file),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "needs_human")
+        self.assertEqual(r.returncode, 1)
+
+    def test_five_files_uses_broad_scope(self) -> None:
+        """5+ source files → effective_scope = broad."""
+        changed = []
+        for i in range(5):
+            f = self.scripts_dir / f"module_{i}.py"
+            f.write_text("pass\n")
+            changed.append(str(f))
+        _write_passing_test(self.scripts_dir, "test_module_0.py")
+
+        r = _run(
+            ["--workdir", str(self.workdir), "--scope", "auto", "--json"]
+            + ["--changed-files"] + changed
+        )
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["scope"], "auto")
+        self.assertEqual(payload["effective_scope"], "broad")
+
+
+# ---------------------------------------------------------------------------
+# New tests: JSON stdout purity
+# ---------------------------------------------------------------------------
+
+class TestJsonStdoutPurity(unittest.TestCase):
+    """--json stdout must parse as pure JSON with no leading human text."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        scripts_dir = self.workdir / "scripts"
+        scripts_dir.mkdir()
+        _write_passing_test(scripts_dir)
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_stdout_is_valid_json(self) -> None:
+        r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
+        try:
+            payload = json.loads(r.stdout)
+        except json.JSONDecodeError as exc:
+            self.fail(f"stdout is not valid JSON: {exc}\nstdout={r.stdout!r}")
+        self.assertIsInstance(payload, dict)
+
+    def test_stderr_contains_human_summary(self) -> None:
+        r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
+        self.assertIn("verdict=", r.stderr,
+                      msg="Human summary should appear on stderr, not stdout")
+
+    def test_stdout_does_not_contain_human_prefix(self) -> None:
+        r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
+        # Ensure stdout starts with '{' (JSON object), not human text
+        stripped = r.stdout.strip()
+        self.assertTrue(
+            stripped.startswith("{"),
+            msg=f"stdout should start with '{{', got: {stripped[:80]!r}",
+        )
+
+    def test_json_parses_even_on_needs_human_verdict(self) -> None:
+        """needs_human path also emits pure JSON to stdout."""
+        scripts_dir = self.workdir / "scripts"
+        test_file = scripts_dir / "test_something.py"
+        test_file.write_text("def test_ok(): pass\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(test_file),
+            "--json",
+        ])
+        try:
+            payload = json.loads(r.stdout)
+        except json.JSONDecodeError as exc:
+            self.fail(f"needs_human stdout not valid JSON: {exc}\nstdout={r.stdout!r}")
+        self.assertEqual(payload["verdict"], "needs_human")
+
+
+# ---------------------------------------------------------------------------
+# New tests: timeout flag plumbing
+# ---------------------------------------------------------------------------
+
+class TestTimeoutFlagPlumbing(unittest.TestCase):
+    """Verify timed_out flag is set and verdict is not falsely pass on timeout."""
+
+    def setUp(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("self_mod_verify", SCRIPT)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        scripts_dir = self.workdir / "scripts"
+        scripts_dir.mkdir()
+        # Write a test that will time out when timeout=0 is passed to subprocess
+        # We can't reliably force a 0s timeout in subprocess, so we unit-test
+        # the flag plumbing by monkey-patching subprocess.run
+        _write_passing_test(scripts_dir)
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_timeout_result_has_timed_out_false_on_fast_run(self) -> None:
+        """Normal fast run sets timed_out=False."""
+        result, exit_code = self.mod.verify(
+            workdir=self.workdir,
+            scope="full",
+            changed_files=[],
+            auto_revert=False,
+            timeout=300,
+        )
+        self.assertFalse(result["timed_out"])
+
+    def test_timeout_flag_plumbing_unit(self) -> None:
+        """Simulate TimeoutExpired and verify timed_out=True, verdict=no_tests."""
+        import unittest.mock as mock
+
+        original_run = subprocess.run
+
+        call_count = [0]
+
+        def mock_run(cmd, **kwargs):
+            call_count[0] += 1
+            # Allow first few calls (runner detection) to succeed
+            if call_count[0] <= 3:
+                return original_run(cmd, **kwargs)
+            # Simulate timeout on the actual pytest invocation
+            raise subprocess.TimeoutExpired(cmd, 1)
+
+        with mock.patch("subprocess.run", side_effect=mock_run):
+            result, exit_code = self.mod.verify(
+                workdir=self.workdir,
+                scope="full",
+                changed_files=[],
+                auto_revert=False,
+                timeout=1,
+            )
+
+        self.assertTrue(result["timed_out"], msg=f"timed_out should be True; result={result}")
+        # verdict must not be pass on timeout
+        self.assertNotEqual(result["verdict"], "pass",
+                            msg="A timed-out run must never report verdict=pass")
+        self.assertEqual(result["verdict"], "no_tests")
+        # exit_code depends on meta; for non-meta it's 0 (fail-soft)
+        self.assertEqual(exit_code, 0)
+
+    def test_cli_timeout_argument_accepted(self) -> None:
+        """--timeout flag is parsed without error."""
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "full",
+            "--timeout", "600",
+            "--json",
+        ])
+        # Should not error due to unrecognised argument
+        payload = json.loads(r.stdout)
+        self.assertIn("verdict", payload)
 
 
 if __name__ == "__main__":

@@ -133,6 +133,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --check
 
 ## Usage
 
+`/build-loop:run` is the one command for any coding task — build, fix, refactor, optimize, research, or test. The orchestrator reads your goal, classifies intent, and routes to the right mode. You don't choose the mode.
+
 ```
 /build-loop:run [goal description]
 ```
@@ -143,16 +145,17 @@ Examples:
 /build-loop:run add user notification system with email and push
 /build-loop:run refactor auth middleware to use JWT
 /build-loop:run migrate database from SQLite to PostgreSQL
+/build-loop:run tests pass locally but fail in CI
 /build-loop:run --parallel add billing settings
 ```
 
 Skip the loop for single-file edits, config changes, or fixes under ~20 lines.
 
-### Debugging
+### Advanced / direct-mode commands
 
-```
-/build-loop:debug <symptom>
-```
+These commands force a specific mode. Normal usage only needs `/build-loop:run`.
+
+**`/build-loop:debug <symptom>`** — force debug mode directly. `/build-loop:run` auto-routes to this on symptom language ("broken", "doesn't work", "failing", etc.), so you usually don't need it. Useful when you want to skip the full loop and go straight to causal-tree investigation.
 
 Examples:
 
@@ -163,6 +166,12 @@ Examples:
 ```
 
 Runs deep iterative root-cause investigation (causal-tree analysis, fix, verify, critique — up to 5 iterations). The build orchestrator also auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate retries (attempts 2 and 3) — you don't have to call it manually during a build.
+
+**`/build-loop:optimize [target]`** — force optimize mode. Auto-routed from `/build-loop:run` on metric-improvement language.
+
+**`/build-loop:research [topic]`** — force research mode. Auto-routed from `/build-loop:run` on evaluation/comparison language.
+
+**`/build-loop:test [--strict] [test-name]`** — force plugin-test static analysis. Auto-routed from `/build-loop:run` on "test plugin"/"validate plugin" language.
 
 Quick incident-memory lookup: `/build-loop:debugger`. Multi-domain assessment: `/build-loop:assess`. Memory stats: `/build-loop:debugger-status`.
 
