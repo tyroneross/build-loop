@@ -146,7 +146,9 @@ When introducing a new provider to a project, prefer Mode B for the first 2-3 bu
 
 ## Dynamic tier assignment (guide, not a fixed rule)
 
-The orchestrator **judges each subtask's complexity at dispatch time** and assigns the tier that fits. This is adaptive, not a fixed table. Quality comes first — prefer the tier that does the work right; then prefer the cheapest tier that still satisfies that quality bar.
+The orchestrator **judges each subtask's complexity at dispatch time** and assigns the tier that fits. This is adaptive, not a fixed table.
+
+**Priority order: accuracy > speed > cost.** Pick the tier that does the work CORRECTLY first — never trade accuracy for a cheaper or faster model. Among accuracy-equivalent options, prefer the faster path (spawn Opus subagents to accelerate complex work; fan out in parallel). Optimize cost only after accuracy and speed are both satisfied — cost is the last lever, never the first. This is why every subagent's output is verified (accuracy) and why Opus subagents are used freely on hard tasks (speed on complexity beats pinching tier cost).
 
 **Tier assignment guide:**
 
