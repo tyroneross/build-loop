@@ -4,6 +4,18 @@ Orchestrated 5-phase development loop (+1 optional) for significant multi-step c
 
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
+## Autonomy gate — the three things that confirm (governing rule, highest priority)
+
+Once a plan is accepted, the loop does not stop to ask. Exactly three actions require human confirmation; everything else auto-executes:
+
+1. **Production push** — a deploy/publish/migration that reaches live users (production deploy, `npm publish`, `gh release`, prod DB migration). Preview/testflight/staging deploys are auto.
+2. **Destructive delete** — archive is auto (reversible); an irreversible purge/drop requires confirmation. Prefer archiving over deleting. Build artifacts (node_modules, dist, caches) are regenerable and delete freely.
+3. **Major user-impacting decision** — a product/platform-direction choice the plan marks `user_impact: major`. Implementation-tradeoff DECISIONs do NOT surface.
+
+Action classification: SAFE → execute on main; RISKY → isolate to branch + log + continue main; DECISION → auto-pick `recommended_default` and log (unless `user_impact: major`); PRODUCTION → confirm (gate 1). Catastrophic-never commands (`rm -rf /`, `rm -rf ~`, force-push to a protected branch) are auto-refused — the loop logs and continues, does not ask.
+
+There is NO gate for code size or complexity. Genuine inability to proceed (missing credential, external blocker) is logged, worked around with available tasks, and reported in the readback — not a stop-and-ask. Oversight is the end-of-run readback, not a mid-run halt.
+
 ## Session-start preflight
 
 Run this once at the start of every session, **before any other action**, to learn the coordination state of this repo (active peers, pending ACKs addressed to you, north-star paths, memory locations, guardrails) and to write a presence record so other tools can see you. Output tells you whether to `proceed_solo` or `join_active` (handle pending ACKs first).
@@ -79,6 +91,7 @@ These run parameters apply on any host — pass them on the invocation (`--flag`
 - **No false data.** No mock data in production. No hardcoded metrics pretending to be real. No unverified claims.
 - **Name every UI input and output.** For UI work, every affected surface must have an input/output contract before component choices are locked: data taxonomy, CRUD/domain operation, component mapping, states, modality fallback, validation/security, and traceability.
 - **Diagnose before fixing.** Root-cause analysis before code changes. Many errors sharing a pattern = one system problem.
+- **C-RCA / root_cause_before_done — investigate every open issue to root cause before "done," verified by a second subagent.** Before any completion claim, investigate EVERY open issue — failed tests, loose ends, errors, warnings, minor issues — none left unaddressed. For each, reach the ROOT CAUSE, not a surface patch. Use debugging skills (debug-loop / root-cause-investigator / systematic-debugging) and/or a 5-whys / causal-tree analysis to find the true cause AND its full span (does the same root cause affect other sites? fix all of them). The fix MUST address the root cause — a surface/symptom patch is a violation. The root-cause identification, fix, and non-regression MUST be verified by an independent subagent before "done." Pairs with C-HEAL (reactive self-heal) and the verify-every-subagent rule.
 - **Research persistent problems, don't just retry.** When a fix doesn't hold, the same Iterate criterion fails 2+ times, or behavior contradicts your model, stop guessing and do internet research from trusted sources (T1 official docs and issue trackers first) before another attempt. `root-cause-investigator` carries WebSearch for exactly this. A documented upstream bug or library/terminal behavior often explains an "impossible" intermittent failure faster than another local loop — and prevents shipping a layered workaround over a known root cause. Mark confidence on what you find (✅ T1 cited / ⚠️ inferred).
 - **Converge or escalate.** If iteration isn't improving scores, stop and surface the blocker. Don't burn cycles.
 - **Keep going until done.** Once the user accepts the plan, every phase is authorized scope. Do not ask the user to confirm each phase. Issues found mid-build route to Iterate. Status updates are fine; permission requests are not. Completed, validated, authorized work commits automatically — asking "should I commit?" or "want me to commit this?" is a workflow violation. `git commit` is classified `auto` by the autonomy gate (exit 0); it is never a permission-gated action. The only commit-adjacent stops are autonomy-gate `confirm`/`block` verdicts on a *push or deploy* command. The only valid stops are: a destructive action not in the plan, a missing credential, externally-blocked work, an explicit hand-off point in the plan, a genuine scope branch the plan does not resolve, or 8 hours wall-clock without a Review pass / 5 consecutive Iterate failures on the same criterion. **NOT stops:** posting a coordination handoff to a peer is *fire-and-continue* (work your owned lane in parallel; only a verifier verdict gating the *next* step is a wait); output volume / turn length is never a stop; "continue or hold?" on authorized, lane-isolated, determinate remaining work is a manufactured fork — finish it. A multi-step prune/refactor/migration with a defined item list runs to completion across that list.
@@ -93,6 +106,9 @@ Combines situational awareness with goal definition so Plan has everything it ne
 **Understand state:**
 - Detect project type and tooling (language, framework, test runner, linter, build system)
 - Read deployment policy from `.build-loop/config.json.deploymentPolicy` when present. Default: `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`.
+- **Credential preflight** (fail-soft, names only — no values): scan referenced env keys against `.env`/`env` and surface each gap as `[CREDENTIAL REQUIRED] <name>` in the Assess summary and end-of-run readback. A missing credential is logged, worked around with available tasks, and reported — never a stop-and-ask.
+- **Stale-context triage** (fail-soft): check handoff/orchestration/continuation docs against git history. Flag each drifted doc as `[STALE CONTEXT] <path>` so the agent does not plan from stale state.
+- **Memory-staleness triage** (fail-soft): compare the project's milestone log against HEAD. When stale, surface `[MEMORY STALE] <slug> N commits behind HEAD` and continue — do not stop.
 - Capture app/repo north star and update intent in `.build-loop/intent.md`: purpose, primary users, core jobs, user value, and non-goals.
 - Capture modular structure in `.build-loop/state.json.structure`: current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception.
 - Capture approach lenses in `.build-loop/state.json.approachLenses` for non-trivial recommendations: clean-sheet best approach, current-constraints best approach, constraints/debt that change the answer, and the bridge/backcast path from current state toward the clean-sheet target.
@@ -248,6 +264,7 @@ Full provider substitution table (Thinking / Code / Pattern → each host's mode
    - Exit 1 → revise the plan to clear each BLOCKER (or document an explicit override with rationale).
    - Exit 2 → verifier error; log and continue with step 2 only.
 2. **`plan-critic` (non-deterministic)** — invoke the equivalent reviewer in your tool of choice with the plan + the JSON from step 1. Looks for: less-invasive alternatives considered, MECE quality of phase splits, marker adequacy across long passages, headline drift across sections. Findings cap at WARN — surface but do not auto-block.
+3. **Gaps readback (mandatory)** — run both steps above BEFORE presenting any plan. Prepend `✓ Plan gaps-checked: none` when both pass clean, or `⚠ Plan gaps: <N> — <each finding, marked resolved/surfaced>` when findings exist. The host is never asked "anything missing?" — the gaps-check result is always shown first.
 
 Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrator.md`, this file) together when the gate evolves — phase-asymmetric updates have caused silent skips before.
 
@@ -335,6 +352,10 @@ The default Simplify pass covers both dead-code removal and logic/architecture s
 - **`## Self-modifications (readback)`** (self-recursive runs only, omit otherwise): one row per self-modification attempted this run — file, what/why, gate verdict, additional-review finding. This is how the human stays informed without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. Append run entry to `.build-loop/state.json.runs[]` with `run_id`, phase statuses, files touched, diagnostic commands, manual interventions, active experimental artifacts.
+
+**Milestone append (every run, append-only)**: immediately after the run entry is written, append a milestone record to `build-loop-memory/projects/<slug>/milestones.jsonl` — one line: what shipped + commit. This log is never rewritten; it is the permanent progress record. Phase 1's memory-staleness triage compares the latest milestone against HEAD and flags gaps before planning begins. Principle: append-only log + a pointer, never full-state rewritten in place.
+
+**Steering-decision capture (mandatory bridge)**: immediately after any host equivalent of a steering confirmation (architecture direction, library/dependency choice, platform, product direction, license, or any `user_impact: major` decision), append the answer as a DECISION record to `build-loop-memory/projects/<slug>/decisions/`. Root cause closed: steering answers that live only in context are lost when the session ends; every such answer is a durable decision and must be persisted immediately.
 
 Before any push/deploy, classify the exact command with `scripts/deployment_policy.py` when available. Follow the returned action: `auto` may run after Review passes; `confirm` requires explicit user confirmation in chat; `block` must not run. Defaults allow preview deploys and Xcode/App Store Connect/TestFlight upload/export flows, while production deploys, releases, publishes, protected-branch pushes, and unknown targets require confirmation.
 

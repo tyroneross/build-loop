@@ -96,6 +96,16 @@ Self-heal is **both reactive and proactive**. It is not only triggered by errors
 
 **Guardrails:** only SAFE auto-applies. Verify after every auto-fix. A fix that fails verification routes to the existing Iterate / stuck-cascade. Existing iterate caps provide loop-protection. The autonomy gate (`scripts/autonomy_gate.py`) is the single source of truth for SAFE vs gated for target-project work; `self_mod_verify.py` is the MANDATORY additional gate for self-modifications of build-loop's own repo.
 
+#### Root cause before done — mandatory investigation + second-subagent verification (C-RCA / root_cause_before_done)
+
+**Investigate every open issue to root cause before declaring done — verified by a second subagent.** Before any "done"/completion claim, investigate EVERY open issue — failed tests, loose ends, errors, warnings, minor issues — none are left unaddressed. For each, reach the ROOT CAUSE, not a surface patch.
+
+**Guidance (how — operator's choice):** use the debugging skills (`build-loop:debug-loop` / `root-cause-investigator` / `systematic-debugging`) and/or a detailed **5-whys / causal-tree** analysis to determine the true cause AND how far it spans (does the same root cause affect other sites? — fix all of them, not just the reported one).
+
+**Binding rule (non-negotiable):** the fix MUST address the root cause — a surface/symptom patch is a violation — AND MUST be **verified by another, independent subagent** (confirms the root cause was correctly identified, the fix resolves it, and introduces no regression) before "done." The investigation-before-done and the second-subagent verification are mandatory; the specific technique is the operator's choice.
+
+This rule fires before any completion/report claim and before "done" on any chunk — it is a gate, not an advisory. The second-subagent verification reuses existing surfaces (`independent-auditor` at build scope, `fix-critique`, or a dispatched verifier); no new agent is introduced. C-RCA pairs with C-HEAL (which reactively fixes SAFE errors) — C-HEAL handles what to do when an error surfaces; C-RCA mandates that the root cause is known, the fix is durable, and a peer has confirmed both before the run closes. It also enforces the standing "attack over defense / always the durable fix / fix everything" preferences as a gate before completion.
+
 #### Follow-up auto-drain (chunk boundaries are not checkpoints)
 
 Before emitting any final report, scan its draft for prose patterns matching `still( on the| to do| open)|deferred|next pass|will sweep|skip( these)? for now|follow.?up( list)?:|to follow up`. For each item under such a heading, write a queue entry to `.build-loop/followup/<run-id>-<NN>-<slug>.md` (NN = zero-padded ordinal) with frontmatter:

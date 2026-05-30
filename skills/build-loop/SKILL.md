@@ -215,6 +215,10 @@ Self-heal is **both reactive and proactive**. It is not only triggered by errors
 
 **Guardrails:** only SAFE auto-applies. Verify after every auto-fix (re-run the failed action). A fix that fails verification routes to the existing Iterate / stuck-cascade (5-fail cap). A fix that would balloon complexity routes to re-plan, not skip. Existing iterate caps provide loop-protection. For self-modifications of build-loop's own repo, the SELF-MODIFICATION SAFETY GATE in `references/self-review.md` §"Self-modification of the restricted repo" is MANDATORY and non-negotiable — it runs before every self-modification commit and auto-reverts on failure. The gate returning `fail` is not a stop — it is an auto-revert; the loop continues with the next item.
 
+### Root cause before done (C-RCA / root_cause_before_done)
+
+**Investigate every open issue to root cause before declaring done — verified by a second subagent.** Before any "done"/completion claim, investigate EVERY open issue — failed tests, loose ends, errors, warnings, minor issues — none are left unaddressed. For each, reach the ROOT CAUSE, not a surface patch. Use the debugging skills (`build-loop:debug-loop` / `root-cause-investigator` / `systematic-debugging`) and/or a **5-whys / causal-tree** analysis to determine the true cause and its blast radius (same root cause at other sites → fix all of them). The fix MUST address the root cause — a surface patch is a violation — AND MUST be verified by another, independent subagent before "done." The second-subagent check reuses `independent-auditor`, `fix-critique`, or a dispatched verifier — no new agent required.
+
 ### Follow-up auto-drain at chunk boundary
 
 A chunk boundary is not a checkpoint. When the orchestrator (or any session under the build-loop skill) is about to write a final report containing a "still-to-do" / "deferred" / "next pass" list of same-shape, same-intent items, route those items through the follow-up queue instead of writing them to the user as prose questions:
