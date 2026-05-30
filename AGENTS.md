@@ -290,7 +290,7 @@ Blocking gates route to Iterate. Queue entries flow into Phase 5's prioritized w
 
 **Sub-step E — Simplify**: trim the diff — inline single-use helpers, delete dead branches, remove validation for upstream-guaranteed invariants. Preserve public API, tests, observability, and modular boundaries that protect user value, scalability, accuracy, security, testability, or stable interfaces. If an integrated simplification is better, document `MODULARITY EXCEPTION`.
 
-*Deep mode (opt-in)*: the light pass above is the default and unchanged. An opt-in flag (`deepSimplify` in `.build-loop/config.json`) adds one consolidated, diff-scoped pass over changed Python files only. A zero-dependency stdlib-AST detector (`scripts/complexity_detector.py`) emits ranked hotspots (high complexity, deep nesting, accidental O(n^2), redundant multi-pass, needless single-call-site indirection). For each high-severity hotspot the running agent proposes a simpler rewrite. APPLY only if it is a clear win AND the existing test subset for the touched files still passes AND public signatures + observable behavior are unchanged (reuse the existing Validate + independent-auditor gates — no new safety machinery, no perf gate, no benchmark). Ambiguous or uncertain rewrites are emitted as advisory variances, never applied. With the flag off, none of this runs.
+The default Simplify pass covers both dead-code removal and logic/architecture simplification: flatten deep nesting, apply DRY, eliminate accidental O(n²) patterns, remove redundant multi-pass sequences, and cut needless indirection — wherever the result is a clear behavior-preserving win. `scripts/complexity_detector.py` is a Python-specific AST accelerator that emits ranked hotspots (high complexity, deep nesting, accidental O(n²), redundant multi-pass, needless single-call-site indirection); the running agent reasons over the diff language-agnostically and applies the same logic to any file type without it. APPLY a simplification only when all three hold: it is a clear win, the existing test subset for the touched files still passes, and public signatures + observable behavior are unchanged (reuse the existing Validate + independent-auditor gates — no new safety machinery, no perf gate, no benchmark). Ambiguous or uncertain rewrites are emitted as advisory variances, never applied.
 
 **Sub-step F — Report** (only on final Review pass):
 - **Scorecard** with final pass/fail per criterion + evidence
@@ -359,6 +359,32 @@ Build loop stores state in `.build-loop/` within the project directory:
 ```
 
 This directory is created on first use. Add `.build-loop/` to your project's `.gitignore`.
+
+### Phase D: Closeout
+
+Runs by default at the end of every run (after Phase 6 Learn if it ran, otherwise immediately after Review sub-step F Report). Automated, not operator-discipline-dependent — skipping it leaves ghost-peer signals and locked worktrees that mislead the next run.
+
+**Mandatory sequence:**
+
+1. Reap this session's presence: `scripts/rally_point/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
+2. Stop coordination watchers: SIGTERM any `coordination_watch.py --interval N` processes started during this run (PIDs tracked in `state.json.runs[N].watcherPids[]`).
+3. **Collapse branches and worktrees (merge winner first, then collapse):** for solo-on-main runs the work is already on `main` — nothing to merge. For multi-worktree runs, merge the winning/validated line(s) to `main` via the normal single-writer commit flow before calling collapse. Then run:
+   ```bash
+   python3 ${RUNTIME_PLUGIN_ROOT}/scripts/collapse_run.py --workdir "$PWD" --run-id latest --json
+   ```
+   The script normalizes `dispatchedWorktrees[]` + `riskyBranches[]` + `createdRefs[]` into one ref list, creates a `git bundle ... --all` under `.build-loop/bundles/` (reversibility), then per ref: MERGED → delete branch + remove worktree folder; UNMERGED+`review_hold` → keep branch ref, remove worktree folder (→ `kept_for_review`); UNMERGED+no-hold → keep branch ref, remove worktree folder (→ `surfaced_unmerged`). Output: `{run_id, bundle_path, deleted[], kept_for_review[], surfaced_unmerged[], errors[], dry_run}`. Fail-soft — errors logged, closeout continues.
+4. Archive the coordination file: move `.build-loop/coordination/<this-coord-file>.md` to `.build-loop/coordination/archived/`.
+5. Optional `changes.jsonl` rotation: `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)`.
+6. Final post: `post(kind="phase", payload={"phase": "run-closeout", ...})` signals to the channel that this run is done.
+7. Write `state.json.runs[N].closeout_status`.
+
+**`## Branch hygiene` report block** — every run's final report includes:
+```
+## Branch hygiene
+created N · merged-to-main M (deleted) · kept-for-review R: [<branch-name>, ...]
+· surfaced-unmerged U: [<branch-name>, ...] (ask keep/discard) · bundle: <path>
+```
+When a run created zero refs: `Branch hygiene: clean — no run-created branches/worktrees; on main.`
 
 ## Post-Build
 

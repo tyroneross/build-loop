@@ -205,7 +205,7 @@ Plugin version bumps in the RossLabs ecosystem update **three** files in lockste
 
 1. **Reap this run's session presence:** `scripts/rally_point/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
 2. **Stop watchers:** SIGTERM any `coordination_watch.py --interval N` processes started during the run.
-3. **Force-remove dispatch worktrees:** `git worktree remove -f -f <path>` + `git branch -D worktree-agent-<id>` for any `Agent(isolation="worktree", ...)` dispatch. The double `-f` is required if the worktree was locked by the agent process.
+3. **Collapse branches and worktrees:** merge the winning/validated line(s) to `main` first (solo-on-main runs skip this — work is already on main), then call `scripts/collapse_run.py` as described in `agents/build-orchestrator.md` §"Phase D: Closeout" step 4. That step is the single source of truth for the collapse invocation, ordering, and JSON-to-report wiring.
 4. **Archive the coord file:** `mv .build-loop/coordination/<this-coord-file>.md .build-loop/coordination/archived/`. Not deletion — preserves the durable record while clearing the active queue.
 5. **Optional changes.jsonl rotation:** `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)` rotates when either threshold is exceeded.
 6. **Final post:** `post(kind="phase", payload={"phase": "run-closeout", ...})` signals to channel that this run is done; future readers know to skip its presence/changes when scoping.
@@ -225,7 +225,7 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 | MECE packets enforcement | `scripts/brief_mece_validator.py` + `agents/build-orchestrator.md` dispatch wrappers |
 | Release-surface verification | `scripts/verify_release_surface.py` |
 | Three-file lockstep enforcement | `scripts/test_plugin_manifest.py` `VersionShapeTests` |
-| Closeout hygiene | `scripts/rally_point/lifecycle.py` + `agents/build-orchestrator.md` Phase D |
+| Closeout hygiene | `scripts/rally_point/lifecycle.py` + `scripts/collapse_run.py` + `agents/build-orchestrator.md` Phase D |
 | Coord-file shape | `references/coordination-file-template.md` |
 
 ---

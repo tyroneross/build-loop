@@ -25,4 +25,5 @@
 
    Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, accurate data, and an explicit input/output contract.
 7. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
+7a. **Simplify as you go**: remove dead code AND prefer the clearest, equal-or-better-performing logic/architecture — never just deletion; preserve behavior + correctness.
 8. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing

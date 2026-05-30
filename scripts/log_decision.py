@@ -3,11 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Append a decision entry to .build-loop/state.json runs[].
 
-Single helper used by Mechanism B (auto-pick) and Mechanism A (risky-to-branch).
-Writes to two list fields on the current run:
+Single helper used by Mechanism B (auto-pick), Mechanism A (risky-to-branch),
+and the worktree/branch creation ledger.
+Writes to three list fields on the current run:
 
   runs[N].autonomousDefaults[]  — auto-picked decisions with trade-off rationale
   runs[N].riskyBranches[]       — work isolated to a branch for later review
+  runs[N].createdRefs[]         — worktrees and branches created by this run
 
 Schema for autonomousDefaults[N]:
   {
@@ -33,12 +35,24 @@ Schema for riskyBranches[N]:
     "ts": iso8601
   }
 
-The script is idempotent on (decision_id) for autonomousDefaults and on (hash)
-for riskyBranches — calling twice with the same key is a no-op.
+Schema for createdRefs[N]:
+  {
+    "kind": "worktree" | "branch",  # what was created
+    "path": str | null,             # filesystem path (worktree only; warn if absent for kind=worktree)
+    "branch": str,                  # branch name (required)
+    "merge_target": str,            # branch to merge back into (default "main")
+    "review_hold": bool,            # true if this ref should not be merged without human review
+    "created_ts": iso8601           # when created
+  }
+
+The script is idempotent on (decision_id) for autonomousDefaults, on (hash)
+for riskyBranches, and on (branch) for createdRefs — calling twice with the
+same key is a no-op.
 
 CLI:
   log_decision.py --workdir . --kind autonomous_default --payload-json /path/to/payload.json
   log_decision.py --workdir . --kind risky_branch --payload-json /path/to/payload.json
+  log_decision.py --workdir . --kind created_ref --payload-json /path/to/payload.json
 
 Exit codes:
   0 — wrote (or no-op idempotent)
@@ -53,10 +67,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_VALID_KINDS = {"autonomous_default", "risky_branch"}
+_VALID_KINDS = {"autonomous_default", "risky_branch", "created_ref"}
 _REQUIRED_DEFAULT_FIELDS = {"decision_id", "phase", "chosen", "options", "confidence"}
 _REQUIRED_BRANCH_FIELDS = {"branch", "hash"}
+_REQUIRED_CREATED_REF_FIELDS = {"kind", "branch"}
 _VALID_CONFIDENCE = {"high", "med", "low"}
+_VALID_REF_KINDS = {"worktree", "branch"}
 
 
 def _now() -> str:
@@ -85,6 +101,13 @@ def _validate_payload(kind: str, payload: dict[str, Any]) -> str | None:
         missing = _REQUIRED_BRANCH_FIELDS - set(payload.keys())
         if missing:
             return f"risky_branch missing required fields: {sorted(missing)}"
+    elif kind == "created_ref":
+        missing = _REQUIRED_CREATED_REF_FIELDS - set(payload.keys())
+        if missing:
+            return f"created_ref missing required fields: {sorted(missing)}"
+        ref_kind = payload.get("kind")
+        if ref_kind not in _VALID_REF_KINDS:
+            return f"created_ref kind must be one of {sorted(_VALID_REF_KINDS)}, got {ref_kind!r}"
     else:
         return f"unknown kind: {kind!r}"
 
@@ -201,6 +224,41 @@ def log_risky_branch(workdir: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def log_created_ref(workdir: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Append a createdRefs entry. Returns the appended entry (or existing on idempotent path).
+
+    Idempotent on (branch) — calling twice with the same branch is a no-op.
+    When kind=="worktree" and path is absent, a warning is printed to stderr
+    but the write is not blocked.
+    """
+    err = _validate_payload("created_ref", payload)
+    if err:
+        raise SystemExit(f"invalid payload: {err}")
+
+    if payload.get("kind") == "worktree" and not payload.get("path"):
+        print(
+            "warning: created_ref kind=worktree without path field — ref recorded without path",
+            file=sys.stderr,
+        )
+
+    state, path = _load_state(workdir)
+    run = _current_run(state)
+    run.setdefault("createdRefs", [])
+
+    entry = {
+        "kind": payload["kind"],
+        "path": payload.get("path"),
+        "branch": payload["branch"],
+        "merge_target": payload.get("merge_target", "main"),
+        "review_hold": bool(payload.get("review_hold", False)),
+        "created_ts": payload.get("created_ts") or _now(),
+    }
+    _append_idempotent(run["createdRefs"], entry, dedupe_key="branch")
+
+    path.write_text(json.dumps(state, indent=2) + "\n")
+    return entry
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--workdir", default=".")
@@ -223,8 +281,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.kind == "autonomous_default":
             entry = log_autonomous_default(workdir, payload)
-        else:
+        elif args.kind == "risky_branch":
             entry = log_risky_branch(workdir, payload)
+        else:
+            entry = log_created_ref(workdir, payload)
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         return 1
