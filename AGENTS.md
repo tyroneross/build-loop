@@ -185,6 +185,18 @@ Write the verdict to `.build-loop/state.json.synthesisDensity` as `{count, escal
 
 The `> 5` threshold matches the empirical inflection point measured in the synthesis-decision A/B experiment (2026-05-07): below that, code-tier implementer recall is poor but non-zero and the Phase 4.5 backstops materially help; at 6+ dimensions, depth dominates.
 
+**Dynamic tier assignment (guide, not a fixed rule):** the orchestrator judges each subtask's complexity at dispatch time and assigns the tier that fits. Both escalation directions are active on every dispatch decision.
+
+**Priority order: accuracy > speed > cost.** Pick the tier that does the work CORRECTLY first — never trade accuracy for a cheaper or faster model. Among accuracy-equivalent options, prefer the faster path (spawn Thinking-tier subagents to accelerate complex work; fan out in parallel where the host supports it). Optimize cost only after accuracy and speed are both satisfied.
+
+**Prefer the Code tier** (the workhorse: Sonnet on Claude, GPT-5 Codex on Codex, Gemini 2.5 Flash on Gemini) for the bulk of work. Down-tier to **Pattern** (Haiku / GPT-5 Mini / Flash Lite) only for genuinely trivial mechanical/recognition tasks — pure pattern-match, no judgment, no gradient. When in doubt, use Code tier.
+
+**Thinking-tier subagents are allowed to accelerate complex subtasks** — cross-file reasoning, novel design, ambiguous spec, hard refactor. Thinking tier is not reserved for the top-level orchestrator. On Codex this maps to GPT-5 Thinking workers; spawn them only under the existing Codex permission gate (explicit `--parallel` / delegation authorization).
+
+**Verify every subagent's output before accepting it.** The cheaper the tier, the stronger the check. This per-subagent verification is the safety net that makes dynamic (and occasionally cheaper) assignment safe. Verification ties to build-loop's existing surfaces: verify-scope / verify-landed (Phase 3 commit step), independent-auditor (Phase 4 Review-A), and the implementer return envelope (`status: blocked | partial` routes to Iterate before output is accepted). No subagent output is trusted unchecked.
+
+Full provider substitution table (Thinking / Code / Pattern → each host's models): `references/model-tier-mapping.md` §"Dynamic tier assignment".
+
 **Eval methodology:**
 - Binary pass/fail only. No Likert scales, no partial credit.
 - One evaluator per dimension. No multi-dimension "God Evaluator."
