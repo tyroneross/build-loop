@@ -146,16 +146,24 @@ def _find_runner(workdir: Path) -> list[str] | None:
 def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
     """Map changed implementation files to their test counterparts.
 
-    ``scripts/foo.py`` → ``scripts/test_foo.py`` when it exists.
-    Files already named ``test_*.py`` are included directly.
+    ``scripts/foo.py`` → ``test_foo.py``. A package file
+    ``scripts/<pkg>/X.py`` → ``test_<pkg>.py`` (the capability's test), so
+    folder-per-capability packages stay gate-able. Test files are searched in
+    both ``scripts/`` and ``tests/``. Files already named ``test_*.py`` are
+    included directly.
     """
     scripts_dir = workdir / "scripts"
+    tests_dir = workdir / "tests"
     discovered: list[str] = []
     seen: set[str] = set()
 
+    def _add(candidate: Path) -> None:
+        if candidate.exists() and str(candidate) not in seen:
+            discovered.append(str(candidate))
+            seen.add(str(candidate))
+
     for raw in changed_files:
         p = Path(raw)
-        # Normalise to absolute
         if not p.is_absolute():
             p = workdir / p
         p = p.resolve()
@@ -166,12 +174,21 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
             if p.exists() and str(p) not in seen:
                 discovered.append(str(p))
                 seen.add(str(p))
-        else:
-            # Map scripts/foo.py → scripts/test_foo.py
-            candidate = scripts_dir / f"test_{name}"
-            if candidate.exists() and str(candidate) not in seen:
-                discovered.append(str(candidate))
-                seen.add(str(candidate))
+            continue
+
+        # Candidate test base names: the file's own stem, plus — when the file
+        # lives in a package folder under scripts/ — the package name.
+        candidates = {f"test_{name}"}
+        try:
+            rel = p.relative_to(scripts_dir)
+            if len(rel.parts) > 1:  # scripts/<pkg>/<file>.py
+                candidates.add(f"test_{rel.parts[0]}.py")
+        except ValueError:
+            pass
+
+        for cand in candidates:
+            _add(scripts_dir / cand)
+            _add(tests_dir / cand)
 
     return discovered
 
