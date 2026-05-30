@@ -16,8 +16,17 @@ If authorization is absent, keep the work local in the lead Codex session. Still
 |---|---|---|
 | Codebase question | `explorer` | The answer can be read-only, bounded, and returned as facts with file paths. |
 | Implementation slice | `worker` | The write set is disjoint from other workers and the interface contract is clear. |
-| Critic/review | lead session, or `explorer` if authorized | The review is read-only and does not block the immediate next local step. |
+| Phase 4 review passes | lead session inline, or `explorer` if authorized | See the enumerated passes below — the lead owns these whether or not delegation is allowed. |
 | Final integration | lead session | The lead must own merge, validation, and final judgment. |
+
+**Phase 4 review is not one pass — it is a set.** Whether run inline (default) or via an authorized `explorer`, the lead must cover all of these every non-trivial build; do not skip a pass just because Codex lacks a dedicated agent file for it:
+
+- **Adversarial audit (independent-auditor)** — read the diff against intent/goal/PRD/constitution; verdict `yay`/`nay`/`suggest_correction`/`look_again`. Advisory at chunk close, gating at build scope.
+- **Fact-check** — trace every rendered metric (%, $, score, count) to its source; flag absolute claims. *Blocking* when a rendered number is unverifiable.
+- **Mock-data scan** — production paths only; lorem/faker/hardcoded/`Math.random()`-in-display. *Blocking* when it renders to the user.
+- **Security review** — only when Assess flagged a risk-surface change (auth, network, persistence, secrets, external input); OWASP LLM/Agentic/Web top-10. *Blocking* on critical/high (feeds the exit gate).
+
+The first row's "read-only, does not block" applies to the adversarial-audit *critic* pass; the fact-check, mock-scan, and security passes CAN block and route to Iterate.
 
 ## Permission Gate
 

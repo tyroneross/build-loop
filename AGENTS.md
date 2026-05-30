@@ -44,9 +44,27 @@ Lead each point with the finding. Progressive disclosure: headline first, files/
 | 1 | **Assess** | Understand state (project type, architecture, tools, prior state) AND define goal + 3-5 scoring criteria with pass/fail conditions | State summary + `.build-loop/goal.md` |
 | 2 | **Plan** | Break work into tasks with dependency order, identify parallel-safe groups | Plan with dependency graph |
 | 3 | **Execute** | Build it — dispatch parallel work for independent file groups | Working implementation |
-| 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report — six ordered sub-steps, single exit point | Scorecard + evidence; routes to Iterate on failure |
+| 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report — seven ordered sub-steps, single exit point | Scorecard + evidence; routes to Iterate on failure |
 | 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) | Updated scorecard |
 | 6 | **Learn** (optional) | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking; auto-promote on metric wins when enabled | Experimental artifacts + synthesis |
+
+## Run Modes
+
+These run parameters apply on any host — pass them on the invocation (`--flag`) or honor the equivalent intent when the user states it in prose. Default is autonomous, 2h budget.
+
+| Mode / flag | Effect |
+|---|---|
+| default | Autonomous queue-drain loop: Phase 5 Iterate self-replenishes from `.build-loop/{ux-queue,issues,followup}/`, alignment-checks each item against intent, executes the aligned subset, batches commits. 2h wall-clock budget. |
+| `--long` (or goal keywords `overnight`, `long-running`, `large-scale`, `multi-day`) | Same loop, 8h budget. |
+| `--budget 30m \| 4h \| 30s` | Custom wall-clock budget; overrides `--long`. `budget_check.py` routes `continue \| checkin \| finalize_and_stop` at each iterate entry, commit, and phase boundary. |
+| `--autonomous=false` | Classic single pass — run Phases 1–6 once; queue items become `followup/` instead of being drained. |
+| `--resume <run-id \| latest>` | Re-enter a crashed/killed build mid-flight. Reuses the original `deadline_at` (a 2h budget that died at 1h59m does NOT get a fresh 2h — `resume_resolver.py` owns this). Reads existing `intent.md`/`plan.md`; jumps to remaining chunks. On a normal dispatch with an incomplete prior run detected, offer resume vs fresh before Phase 1. |
+
+**Iteration caps:** classic = 5 per build; autonomous = 25 per build (3 same-verdict per item). Stop conditions: cap reached, budget exhausted, a drained item classifying `confirm`/`block`, 5 consecutive same-criterion failures, or an item whose intent anchor no longer resolves.
+
+**Per-commit mode** (self-recursive builds — when the working dir IS the runtime, e.g. editing build-loop itself): plan once, then run one orchestrator pass per commit so each commit reviews and lands cleanly before the next starts. Auto-on for self-recursive; force with `--per-commit` / `--no-per-commit`.
+
+**Budget-aware behavior is host-neutral** — without programmatic budget tracking, treat the budget as a soft wall-clock target: check in at ~50%, finalize before the deadline rather than starting new chunks.
 
 ## Core Principles
 
@@ -256,9 +274,9 @@ The `synthesis_attestation` map MUST have one entry per dimension named in the p
 
 ### Phase 4: Review
 
-Six ordered sub-steps; intermediate failures route to Iterate, final pass writes Report artifacts.
+Seven ordered sub-steps; intermediate failures route to Iterate, final pass writes Report artifacts.
 
-**Sub-step A — Critic (adversarial read-only)**: dispatch a read-only reviewer against the diff. Catch scope drift, missed edge cases, rubric violations before spending tokens on full validation. Strong-checkpoint findings route back to Execute (no iteration burn); guidance findings are logged.
+**Sub-step A — Critic (adversarial read-only)**: perform a read-only adversarial review of the diff — inline in the lead session, or via an authorized explorer when delegation is permitted. This is the independent-auditor pass: render one of four verdicts (`yay` approve / `nay` reject / `suggest_correction` / `look_again`) gathering context from intent, goal, PRD, constitution. Catch scope drift, missed edge cases, rubric violations before spending tokens on full validation. **When Assess flagged a risk-surface change** (new auth, network, persistence, secrets, or external-input surface), also run a security review in this sub-step against OWASP LLM/Agentic/Web top-10 — its critical/high findings feed the no-critical/high exit gate and are blocking. Strong-checkpoint findings route back to Execute (no iteration burn); guidance findings are logged.
 
 **Sub-step A.5 — Synthesis-decision backstops (post-implementer-commit, runs before B):**
 
@@ -295,7 +313,9 @@ Blocking gates route to Iterate. Queue entries flow into Phase 5's prioritized w
 
 The default Simplify pass covers both dead-code removal and logic/architecture simplification: flatten deep nesting, apply DRY, eliminate accidental O(n²) patterns, remove redundant multi-pass sequences, and cut needless indirection — wherever the result is a clear behavior-preserving win. `scripts/complexity_detector.py` is a Python-specific AST accelerator that emits ranked hotspots (high complexity, deep nesting, accidental O(n²), redundant multi-pass, needless single-call-site indirection); the running agent reasons over the diff language-agnostically and applies the same logic to any file type without it. APPLY a simplification only when all three hold: it is a clear win, the existing test subset for the touched files still passes, and public signatures + observable behavior are unchanged (reuse the existing Validate + independent-auditor gates — no new safety machinery, no perf gate, no benchmark). Ambiguous or uncertain rewrites are emitted as advisory variances, never applied.
 
-**Sub-step F — Report** (only on final Review pass):
+**Sub-step F — Auto-Resolve**: before writing the report, drain non-destructive open items instead of listing them as questions. Classify each remaining item with `scripts/autonomy_gate.py` (or the action classifier) and route by verdict: `auto` → fix now and continue; `warn` → apply and note (exit 0, never blocks); `confirm` → surface once to the user (production/irreversible only); `block` → do not run. Same-shape, same-intent follow-ups go to `.build-loop/followup/` and re-enter Iterate, not into the report as "should I keep going?" prose. The report lists only genuinely held (`confirm`/`block`) items.
+
+**Sub-step G — Report** (only on final Review pass):
 - **Scorecard** with final pass/fail per criterion + evidence
 - **Verified** (working with evidence), **Unknown** (untested), **Unfixed** (post-cap)
 - **Discovered issues**: pre-existing problems from assessment
@@ -326,13 +346,13 @@ For each fix:
 - If a criterion fails 3 times with the same root cause: escalate to user
 - If fixing one criterion breaks another: stop, reassess approach
 - If score doesn't improve after 2 consecutive iterations: change strategy, don't repeat
-- **Hard stop at 5 iterations.** Proceed to Review sub-step F with remaining ❓ Unfixed.
+- **Hard stop at 5 iterations.** Proceed to Review sub-step G (Report) with remaining ❓ Unfixed.
 
 Log iteration state to `.build-loop/state.json`.
 
 ### Phase 6: Learn (optional)
 
-Runs after Review sub-step F on every build unless disabled or `runs[]` has fewer than 3 entries.
+Runs after Review sub-step G (Report) on every build unless disabled or `runs[]` has fewer than 3 entries.
 
 - **Detect**: pattern detector scans `state.json.runs[]` for recurring `phase_failure` + `manual_intervention` signals.
 - **Draft**: for each kept pattern, architect agent writes experimental SKILL.md with A/B Experiment section (sample target 8 non-confounded runs).
@@ -366,7 +386,7 @@ This directory is created on first use. Add `.build-loop/` to your project's `.g
 
 ### Phase D: Closeout
 
-Runs by default at the end of every run (after Phase 6 Learn if it ran, otherwise immediately after Review sub-step F Report). Automated, not operator-discipline-dependent — skipping it leaves ghost-peer signals and locked worktrees that mislead the next run.
+Runs by default at the end of every run (after Phase 6 Learn if it ran, otherwise immediately after Review sub-step G Report). Automated, not operator-discipline-dependent — skipping it leaves ghost-peer signals and locked worktrees that mislead the next run.
 
 **Mandatory sequence:**
 
