@@ -111,6 +111,28 @@ def detect_in_use_versions(*, plugin_name: str) -> set[str]:
     return names
 
 
+def installed_pinned_versions(*, plugin_name: str, host: Host) -> set[str]:
+    """Cache version dir names the host has pinned for this plugin across ALL
+    scopes/projects, read from its installed_plugins.json. These belong to other
+    projects or concurrent sessions and must never be pruned — deleting a pinned
+    version breaks that install on next load. Complements detect_in_use_versions
+    (this process only) for safe automated/session-start pruning."""
+    registry = (Path.home() / HOST_CONFIG[host]["cache"]).parent / "installed_plugins.json"
+    names: set[str] = set()
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return names
+    for key, entries in (data.get("plugins") or {}).items():
+        if key.split("@", 1)[0] != plugin_name:
+            continue
+        for entry in entries or []:
+            install_path = entry.get("installPath")
+            if install_path:
+                names.add(Path(install_path).name)
+    return names
+
+
 def classify_versions(
     *,
     version_dirs: list[Path],
@@ -159,6 +181,7 @@ def prune_host(
     keep_version_override: str | None,
     protect: list[str] | None,
     detect_in_use: bool,
+    protect_installed: bool,
     apply: bool,
 ) -> tuple[dict[str, Any], int]:
     manifest = load_manifest(source, host)
@@ -167,6 +190,8 @@ def prune_host(
     protected_names: set[str] = set(protect or [])
     if detect_in_use:
         protected_names.update(detect_in_use_versions(plugin_name=plugin_name))
+    if protect_installed:
+        protected_names.update(installed_pinned_versions(plugin_name=plugin_name, host=host))
     version_dirs = iter_version_dirs(
         cache_root=cache_root,
         plugin_name=plugin_name,
@@ -225,6 +250,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable auto-protecting the version dir the running host session is "
         "loaded from (read from CLAUDE_PLUGIN_ROOT / CODEX_PLUGIN_ROOT).",
+    )
+    p.add_argument(
+        "--protect-installed",
+        action="store_true",
+        help="Protect every cache version pinned in the host's installed_plugins.json "
+        "(all scopes/projects), not just this process's in-use dir. Use for "
+        "automated/session-start pruning so concurrent or other-project installs "
+        "are never deleted.",
     )
     p.add_argument("--marketplace", default=None, help="Optional marketplace name for the selected host(s).")
     p.add_argument("--codex-marketplace", default=None, help="Optional Codex marketplace name.")
@@ -305,6 +338,7 @@ def main() -> int:
                 keep_version_override=args.keep_version,
                 protect=args.protect,
                 detect_in_use=not args.no_detect_in_use,
+                protect_installed=args.protect_installed,
                 apply=args.apply,
             )
             reports.append(report)
