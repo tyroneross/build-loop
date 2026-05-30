@@ -22,6 +22,24 @@
 
    Helper errors (`grep -v`/`awk` non-zero) are NOT a failure — empty output means clean. Any non-empty line surfaces in the assess report for Phase 2 to reason about.
 
+0a. **Credential preflight** (fail-soft, names only — no values ever surfaced): run
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/credential_preflight.py" \
+     --workdir "$PWD" --json
+   ```
+
+   Write the result to `.build-loop/state.json.assess.credentialPreflight`. If `missing[]` is non-empty, surface each name as `[CREDENTIAL REQUIRED] <name>` in the Assess summary and repeat verbatim in the end-of-run readback. A missing credential is a "genuine inability to proceed" under the autonomy policy: log it, continue all work that does not require the key, and surface it in the readback — do NOT stop-and-ask. Script failure (non-zero exit / bad JSON) → log one warning line; never blocks Assess.
+
+0b. **Stale-context triage** (fail-soft, proactive drift notice): run
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stale_context_check.py" \
+     --workdir "$PWD" --json
+   ```
+
+   Write the result to `.build-loop/state.json.assess.staleContext`. For each path in `docs[]` where the doc is flagged stale, surface it as `[STALE CONTEXT] <path>` in the Assess summary so the agent notes drift before relying on a handoff/orchestration/continuation doc. The user should never have to ask "is this still relevant?" Script failure → log one warning line; never blocks Assess.
+
 1. **Detect available plugins and personal skills**: Run `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs`. Write the JSON result into `.build-loop/state.json` under `availablePlugins`. All subsequent routing consults this object.
 2. **Detect project type**: web app, API, library, mobile, CLI, monorepo, **Claude Code plugin**, one-shot new app, existing-app iteration. A plugin is detected by the presence of `.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`, `commands/*.md`, `agents/*.md`, or `.mcp.json`. If detected, mark the build as "plugin work" in state.json and plan to load the `plugin-dev:*` skills before any manifest/hook/skill/agent/MCP/command/**scripts/** edits. **Any change to a file referenced via `${CLAUDE_PLUGIN_ROOT}/...` counts as plugin work** — this includes `scripts/*.py`, `references/*`, or anything else the plugin manifests, agents, or skills invoke at runtime. These files live in `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at run time; editing only the source repo without syncing the cache leaves the runtime invocation broken (Lessons §5 + §5a in `plugin-hygiene-lessons.md`).
 3. **Set sub-routers**: `uiTarget` (web / mobile / null), `platform` (web / apple / react-native / null), `migrationSource` (replit / lovable / bolt / v0 / null). See the Capability Routing §Sub-routers rules.
@@ -31,6 +49,8 @@
    - If `.navgator/architecture/index.json` exists → invoke `Skill("build-loop:architecture-scan")` to refresh data, then `Skill("build-loop:architecture-impact")` on up to 5 highest-risk components for blast-radius. Output goes to `.build-loop/state.json.architecture.{scan,impact}`. Phase 2 Plan consults this for scoping. Flags high-fan-in hotspots, 2-hop dependents, layer-crossing risks, and prompts-in-scope when `triggers.promptAuthoring` is true.
    - Else if `gator:*` is available → use those commands.
    - Else → Explore agents → file reading.
+5a. **Architecture portable handoff** (read on resume; write on fresh scan): after the architecture baseline above, the scan result must also be written to `.build-loop/architecture/handoff.md` as a self-contained snapshot — component map, key connections, runtime topology, LLM use-cases, and data flows — that a FRESH session can consume WITHOUT re-scanning. On a resumed or fresh session, Phase 1 reads `.build-loop/architecture/handoff.md` if it exists and its `updated_at` timestamp is within the staleness threshold (default: same as stale-context check), and skips the full re-scan. The format and field schema are specified in `agents/build-orchestrator.md` (architecture-scout section); this step only wires the read/write reference. Write failure → log one warning; never blocks.
+
 6. **Observability baseline** (informational, no changes): run a stack-appropriate grep to classify the project's logging level (well-instrumented / print-only / silent) and write to `.build-loop/state.json.observability.level`. The orchestrator handles this inline — `Skill("build-loop:logging-tracer")` is reactive only and is loaded later if Review-B / Iterate hits a silent failure.
 6b. **Attribution-layers detection** (informational, advisory only — never blocks, never pauses): run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/detect_attribution_layers.py --workdir "$PWD"` when the repo has a GitHub origin remote. Write the result to `.build-loop/state.json.attribution`. When `should_advise: true`, surface the returned `advisory` line in the Phase 1 Assess report under `## Notes from judges`. Phase 2 Plan queues an automatic chunk to run `scripts/attribution_stamp.py` when the build scope is ≥ S; smaller scopes only surface the advisory and let the user run it manually. Per `feedback_advisory_checks_are_automated`: this routes to the run report, never to AskUserQuestion or `## Held`. Helper failure → treat as `should_advise: false` and log a one-line warning. The full procedure for stamping is in `skills/attribution-standard/SKILL.md`.
 

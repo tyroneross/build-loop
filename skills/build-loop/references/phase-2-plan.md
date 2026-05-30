@@ -46,16 +46,23 @@
 
 **Plan acceptance gate** — required before "Output: Plan file":
 
-8. **Run `plan-verify`** (deterministic, grep-checkable rules):
+**Readback discipline**: build-loop runs `plan-verify` and `plan-critic` automatically and prefixes every plan presentation with a one-line gaps-readback. The user should never have to ask "anything missing?" — the answer is always shown first.
+
+Readback format (one line, mandatory, before the plan body):
+- `✓ Plan gaps-checked (plan-verify + plan-critic): none` — when both passes are clean.
+- `⚠ Plan gaps: <N> — <comma-separated list of findings>` — when findings exist, with each item marked `resolved` or `surfaced` (resolved = fixed in this plan revision; surfaced = carried as open for user awareness).
+
+8. **Run `plan-verify`** (deterministic, grep-checkable rules; now includes `no-stop-language` rule):
    ```bash
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan.md> --repo "$PWD" --json
    ```
-   - Exit 0 → proceed to step 8.
+   - Exit 0 → proceed to step 9.
    - Exit 1 → revise the plan to address each BLOCKER, or document an explicit override in `.build-loop/state.json.planVerifyOverride[]` with rationale before proceeding.
    - Exit 2 → treat as verifier outage; log and proceed with `plan-critic` alone plus a state.json warning.
    - `parallel-decision-record` is a BLOCKER: plans that name independent / parallel-safe multi-chunk work must include `parallel_batch:` or `parallel_skipped_reason:`.
    - Full rule list and contract: `${CLAUDE_PLUGIN_ROOT}/skills/plan-verify/SKILL.md`.
 9. **Dispatch `plan-critic` agent** (non-deterministic checks): pass the plan + the JSON from step 8 so the critic doesn't re-derive deterministic findings. Critic surfaces alternatives-considered, MECE scope, marker adequacy, headline drift. Severity capped at WARN — does not block.
-10. **Dispatch `scope-auditor` agent** (NEW 2026-05-07 — Plan→Execute boundary): pass the plan + extracted commit table (with `modifies_api` per commit). The auditor is Opus + read-only; it traces every caller-site of every modified-API symbol via project-wide grep, classifies callers as in-scope / out-of-scope, and emits a `## Caller Audit (Scope Auditor)` JSON section appended to the plan. Verdict `scope_gap_found` requires plan revision (absorb missing callers into the right commit's owned-files) before Phase 3, OR explicit acceptance in `state.json.scopeGapAccepted[]` with rationale. Skip ONLY when the plan has zero `modifies_api` entries (doc-only commits). Prevents the fan-out scope-blindness defect class — see `agents/scope-auditor.md`.
+10. **Emit gaps-readback** using the combined output of steps 8–9. Populate the one-line readback prefix before presenting the plan. Both passes must complete before the plan is shown to the user — never present a plan without the readback line.
+11. **Dispatch `scope-auditor` agent** (Plan→Execute boundary): pass the plan + extracted commit table (with `modifies_api` per commit). The auditor is Opus + read-only; it traces every caller-site of every modified-API symbol via project-wide grep, classifies callers as in-scope / out-of-scope, and emits a `## Caller Audit (Scope Auditor)` JSON section appended to the plan. Verdict `scope_gap_found` requires plan revision (absorb missing callers into the right commit's owned-files) before Phase 3, OR explicit acceptance in `state.json.scopeGapAccepted[]` with rationale. Skip ONLY when the plan has zero `modifies_api` entries (doc-only commits). Prevents the fan-out scope-blindness defect class — see `agents/scope-auditor.md`.
 
-**Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, plan-critic findings, and scope-auditor caller audit.
+**Output**: Plan file with dependency graph, integration points, optimization notes, plan-verify JSON, plan-critic findings, gaps-readback line, and scope-auditor caller audit.

@@ -90,6 +90,37 @@ If your findings exceed the budget, truncate the `findings[]` array and add `"_t
 
 5. `summary` ≤ 200 words: count + layers + top risk component name. Cite the decision id from step 4.
 6. `follow_up`: which components a Plan-phase chunk should treat as risky.
+7. **Write portable handoff artifact** `.build-loop/architecture/handoff.md`. This file is a self-contained markdown snapshot — no external state required to interpret it — readable by humans and by a fresh agent session. Write it unconditionally on every `baseline` run; overwrite the previous version. The `task: handoff` variant (when explicitly dispatched) produces the same artifact without re-running the full ACP refresh — it reads from the existing `acp.json` and `baseline.json` caches.
+
+   Required sections (use these exact headings):
+
+   ```markdown
+   # Architecture Handoff
+   _Generated: <ISO timestamp> | Components: N | Connections: M_
+
+   ## Component Map
+   | Name | Path | Role |
+   |------|------|------|
+   | ... | ... | one-line role |
+
+   ## Key Connections / Data Flows
+   <!-- Each row: source → target : flow description -->
+
+   ## Runtime Topology
+   <!-- Deployment units, process boundaries, external services. -->
+
+   ## LLM Use-Cases
+   <!-- Each LLM call site: component, model_class, purpose. -->
+
+   ## Porting Notes
+   <!-- What a fresh session or port to another version needs to know:
+        pinned deps, non-obvious config, env vars, build order constraints,
+        known violations still open. Keep to facts, not opinions. -->
+   ```
+
+   Keep the file ≤ 400 lines. Truncate the Component Map table to the 20 highest blast-radius components when the project exceeds that count; note `(truncated — full list in acp.json)` below the table.
+
+   **Fresh / resumed session behavior**: when the orchestrator's Phase 1 detects `handoff.md` exists AND its mtime is within the last 24 hours (or within the `architecture.staleness_threshold_hours` config value when set), it reads `handoff.md` and skips dispatching a full baseline scout. The session still dispatches `chunk-impact` scouts as needed. When `handoff.md` is absent, stale, or the orchestrator passes `force_baseline: true`, run the full baseline and overwrite.
 
 ### `chunk-impact` (Phase 2 Plan, parallel fan-out)
 

@@ -98,6 +98,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/stop_finalize.sh",
             "timeout": 30000
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; exit 0",
+            "timeout": 5000
           }
         ]
       }

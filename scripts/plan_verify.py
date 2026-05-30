@@ -15,7 +15,8 @@ package-state, missing-evidence, scope-split, less-invasive-shim,
 tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
 synthesis-dim-vague-value, risk-reason-invalid-value,
-scope-audit-required, approach-lenses-missing, parallel-decision-record.
+scope-audit-required, approach-lenses-missing, parallel-decision-record,
+no-stop-language.
 
 Plan Evidence Contract (per finding):
 {
@@ -1063,6 +1064,86 @@ def rule_parallel_decision_record(
 
 
 # ---------------------------------------------------------------------------
+# Rule: no-stop-language (2026-05-30) — WARN when a plan step contains
+# phrasing that would halt the build loop to wait for human input.
+#
+# build-loop's autonomy policy (v0.19.0): the loop NEVER stops except for
+# three gates: (a) production push/deploy/publish/migration, (b) destructive
+# delete/drop/purge, (c) major user-impacting decision. All other stop/halt/
+# ask language in plan steps is a bug in the plan, not an intentional gate.
+#
+# Exemption: if the same step text contains a production-push, destructive-
+# delete, or major-decision keyword the finding is suppressed, because those
+# are the three legitimate gates. Keep the exemption simple — a single-word
+# set match is enough and avoids NLP over-engineering.
+#
+# Severity: WARN (advisory — surfaces in plan-verify findings, does not
+# hard-block; consistent with the repo's advisory-lint pattern for style
+# issues that don't contradict ground truth).
+# ---------------------------------------------------------------------------
+
+# Phrases that signal an unintentional stop-the-loop step.
+_STOP_PHRASES: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in [
+    r"\bhalt\b",
+    r"\bpause\s+(?:and\s+)?confirm(?:ation)?\b",
+    r"\bpause\s+for\s+(?:user\s+)?confirm(?:ation)?\b",
+    r"\bwait\s+for\s+(?:the\s+)?(?:user|approval)\b",
+    r"\bask\s+(?:the\s+)?user\b",
+    r"\bask\s+for\s+(?:user\s+)?confirm(?:ation)?\b",
+    r"\bstop\s+and\s+confirm\b",
+    r"\bblock\s+until\b",
+    r"\bmanual\s+approval\b",
+    r"\bhuman\s+approval\b",
+    r"\brequires?\s+confirm(?:ation)?\b",
+    r"\bconfirm\s+before\b",
+]]
+
+# Keywords whose presence in the same step text exempts the finding.
+# Covers the three legitimate gates: production push, destructive delete,
+# major user-impacting decision.
+_STOP_EXEMPT_RE = re.compile(
+    r"\b(?:production|deploy(?:ment)?|publish|migrate|migration|"
+    r"delete|drop\s+table|purge|"
+    r"user_impact|platform\s+decision)\b",
+    re.IGNORECASE,
+)
+
+
+def rule_no_stop_language(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN: a plan step contains stop/halt/ask phrasing that contradicts
+    build-loop's autonomy policy. Exempt when the same line also contains a
+    production-push, destructive-delete, or major-decision keyword — those are
+    the three legitimate gates where confirmation IS required."""
+    out: list[dict[str, Any]] = []
+    for lineno, line in lines:
+        if not line:
+            continue
+        # Check each stop phrase independently so the finding names the match.
+        for pat in _STOP_PHRASES:
+            m = pat.search(line)
+            if not m:
+                continue
+            # Exempt: legitimate gate keyword also present in this line.
+            if _STOP_EXEMPT_RE.search(line):
+                break  # one exemption covers all phrases on this line
+            matched_text = m.group(0)
+            out.append(_finding(
+                claim_text=line.strip(),
+                claim_kind="no_stop_language",
+                subject={"path": None, "symbol": None, "noun": "stop_phrase"},
+                verification_command=None,
+                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                result="match",
+                marker="⚠️",
+                severity="WARN",
+                confidence="high",
+                rule_id="no-stop-language",
+            ))
+            break  # one finding per line (the first matching phrase is enough)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -1089,6 +1170,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_task_id_convention(plan_path, lines))
     findings.extend(rule_forbidden_path_conflict(plan_path, lines, repo))
     findings.extend(rule_parallel_decision_record(plan_path, lines))
+    findings.extend(rule_no_stop_language(plan_path, lines))
     return findings
 
 

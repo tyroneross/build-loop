@@ -349,5 +349,56 @@ class ApproachLensesMissingTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class NoStopLanguageTests(unittest.TestCase):
+    """rule_no_stop_language — catches stop/halt/ask phrasing that violates build-loop autonomy policy."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [f for f in run_all(self.plan, self.repo) if f["rule_id"] == "no-stop-language"]
+
+    def test_pause_for_user_confirmation_is_flagged(self) -> None:
+        """Plain stop phrasing with no exempt keyword → WARN."""
+        findings = self._findings(
+            "## Phase 2\n\nPause for user confirmation before proceeding.\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "WARN")
+        self.assertIn("pause", findings[0]["claim_text"].lower())
+
+    def test_confirm_before_production_deploy_is_not_flagged(self) -> None:
+        """Production-push exemption: 'production' keyword suppresses the finding."""
+        findings = self._findings(
+            "## Deploy\n\nConfirm before production deploy to avoid downtime.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_delete_table_after_confirming_is_not_flagged(self) -> None:
+        """Destructive-delete exemption: 'delete' keyword suppresses the finding."""
+        findings = self._findings(
+            "## Cleanup\n\nAsk the user before we delete the staging table.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_clean_step_is_silent(self) -> None:
+        """No stop phrasing → no finding."""
+        findings = self._findings(
+            "## Phase 1\n\nRun the migration script and verify the output.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
