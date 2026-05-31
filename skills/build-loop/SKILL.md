@@ -464,6 +464,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-5-iterate.md` — Full Phase 5 Iterate protocol
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol
 - `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
+- `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
 - `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.
 - `../ui-design/references/universal-design-principles.md` — Cross-medium communication and experience doctrine for app UI, writing, images, decks, docs, reports, spreadsheets, PDFs, and other information artifacts.
