@@ -242,3 +242,151 @@ def render_text(roster: dict[str, Any]) -> str:
     for agent in roster["agents"]:
         emit(agent, 0)
     return "\n".join(lines)
+
+
+def render_named(roster: dict[str, Any]) -> str:
+    """Render the roster grouped by app with per-tool sequence numbers.
+
+    Layout:
+      [app-slug]
+        Claude 01 ★  session-id  · task · seen Xs ago · subagents …
+          └─ Claude 02  child-id  · task · seen Xs ago
+        Codex  01  other-id  · task · seen Xs ago
+
+    Numbering: per-tool, 1-based, assigned by ascending session_id within
+    the full flat set (deterministic, matches build_roster sort order).
+
+    Lead marker (★): agents with no ``parent`` (root nodes in the tree) are
+    treated as the lead/orchestrator for their app group.  No dedicated
+    ``is_lead`` field exists in the presence schema; the root-node heuristic
+    is the best available proxy.  When multiple root agents share an app, all
+    receive ★.
+
+    Subagent nesting: uses the ``children`` list built by ``build_roster``
+    from the ``parent`` field — full nesting is available and used.
+    """
+    lines: list[str] = []
+    gen = time.strftime("%H:%M:%S", time.localtime(roster["generated_ts"]))
+    lines.append(
+        f"Rally roster (named) @ {gen}  ·  live={roster['live_count']} "
+        f"stale={roster['stale_count']} (window {roster['stale_secs']}s)"
+    )
+
+    all_agents = roster["agents"]
+    if not all_agents:
+        lines.append("  (no live agents)")
+        return "\n".join(lines)
+
+    # Build flat list (roots + all children, depth-first) to assign tool
+    # sequence numbers before grouping.
+    flat_all: list[dict] = []
+
+    def _collect(agent: dict) -> None:
+        flat_all.append(agent)
+        for child in agent.get("children") or []:
+            _collect(child)
+
+    for agent in all_agents:
+        _collect(agent)
+
+    # Per-tool counter: assign sequence numbers sorted by session_id
+    # (same deterministic key used by build_roster).
+    tool_agents: dict[str, list[dict]] = {}
+    for a in flat_all:
+        tool_agents.setdefault(a["tool"], []).append(a)
+    for agents in tool_agents.values():
+        agents.sort(key=lambda a: a["session_id"] or "")
+
+    seq_num: dict[str, int] = {}  # session_id -> sequence number for its tool
+    for agents in tool_agents.values():
+        for i, a in enumerate(agents, start=1):
+            seq_num[a["session_id"] or ""] = i
+
+    def _tool_label(agent: dict) -> str:
+        tool = agent["tool"]
+        n = seq_num.get(agent["session_id"] or "", 0)
+        # Friendly short name: capitalise first word of underscore/hyphen tool.
+        friendly = tool.replace("_", " ").replace("-", " ").split()[0].capitalize()
+        return f"{friendly} {n:02d}"
+
+    # Group top-level agents by app (build_roster already sorts roots by app
+    # then session_id, so insertion order gives stable grouping).
+    groups: dict[str, list[dict]] = {}
+    for agent in all_agents:
+        groups.setdefault(agent["app"], []).append(agent)
+
+    def emit_named(agent: dict, *, depth: int, is_lead: bool) -> None:
+        label = _tool_label(agent)
+        lead_mark = " ★" if is_lead else "  "  # ★ or two spaces
+        model = agent["model"]
+        toolmodel = (f"{agent['tool']}/{model}"
+                     if model and model != "unknown" else agent["tool"])
+        task = agent["task"] or agent["phase"] or "-"
+        sid = agent["session_id"] or "?"
+        age = f"seen {_fmt_age(agent['age_secs'])} ago"
+        sub = _fmt_spawned(agent)
+
+        indent = "  " + "  " * depth + ("└─ " if depth else "")
+        lines.append(
+            f"{indent}{label}{lead_mark}  {sid}  "
+            f"· {toolmodel} · {task} · {age} · subagents {sub}"
+        )
+        for child in agent.get("children") or []:
+            emit_named(child, depth=depth + 1, is_lead=False)
+
+    for app_name, root_agents in groups.items():
+        lines.append(f"\n[{app_name}]")
+        for agent in root_agents:
+            # Root agents (no parent) are the lead proxy within each group.
+            emit_named(agent, depth=0, is_lead=True)
+
+    return "\n".join(lines)
+
+
+def _main() -> None:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="roster",
+        description="Rally Point roster — cross-channel live agent view.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "named", "json"],
+        default="text",
+        help="Output format: text (tree, default), named (grouped by app with "
+             "per-tool sequence numbers), or json.",
+    )
+    parser.add_argument(
+        "--app", default=None,
+        help="Filter to one app/channel slug (default: all channels).",
+    )
+    parser.add_argument(
+        "--stale-secs", type=int, default=DEFAULT_STALE_SECS,
+        metavar="SECS",
+        help=f"Liveness window in seconds (default {DEFAULT_STALE_SECS}).",
+    )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="Include stale sessions (default: live only).",
+    )
+    args = parser.parse_args()
+
+    data = build_roster(
+        app=args.app,
+        stale_secs=args.stale_secs,
+        include_stale=args.all,
+    )
+
+    fmt = args.format
+    if fmt == "json":
+        sys.stdout.write(json.dumps(data, indent=2) + "\n")
+    elif fmt == "named":
+        sys.stdout.write(render_named(data) + "\n")
+    else:
+        sys.stdout.write(render_text(data) + "\n")
+
+
+if __name__ == "__main__":
+    _main()
