@@ -483,5 +483,6 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
 - `build-loop:ui-design` — build-loop-owned UI design direction skill loaded before non-trivial UI implementation; `design-contract-specialist` writes the resulting `.build-loop/app-contract/ui.md`.
+- `build-loop:telemetry` — OpenTelemetry-first observability guidance (LLM/agent → Phoenix/Langfuse + OpenInference/OpenLLMetry; web/server → OTel SDK + Sentry; mobile/iOS → Embrace/OTel-swift over Firebase). Loaded in Phase 1 when a build touches a server/LLM/mobile app with no telemetry, or Phase 2 when adding a service/LLM path; encodes the user's decided OTel + GenAI-semconv stack.
 
 <!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->
