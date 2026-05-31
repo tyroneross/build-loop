@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -47,6 +48,25 @@ def _change_revisions(status: dict[str, Any]) -> list[int]:
     return [int(c.get("revision", 0)) for c in status.get("new_changes", [])]
 
 
+def _is_orphaned(initial_ppid: int, current_ppid: int) -> bool:
+    """True when the watcher's owning session has exited.
+
+    A per-session coordination watcher whose parent is gone is garbage: on
+    macOS/Linux an orphan is reparented (to launchd/init, pid 1), so a changed
+    parent pid means the owner died. Such watchers must self-exit so they cannot
+    accumulate across sessions and churn git (build-loop-memory
+    lessons/2026-05-31-coordination-process-leak.md: ~112 leaked, blocking
+    git via index.lock). This only stops a dead-owner monitor — it never
+    refuses a write or coordination signal (rally never-block charter).
+
+    A watcher launched detached (initial ppid already <= 1, e.g. a launchd
+    service) has no owning session to outlive, so it never trips.
+    """
+    if initial_ppid <= 1:
+        return False
+    return current_ppid != initial_ppid
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--interval", type=float, default=3.0)
@@ -81,11 +101,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    initial_ppid = os.getppid()
     last_sig = None
     if args.baseline_current:
         last_sig = _signature(coordination_status.build_status(args))
     count = 0
     while True:
+        if _is_orphaned(initial_ppid, os.getppid()):
+            return 0
         status = coordination_status.build_status(args)
         sig = _signature(status)
         if sig != last_sig:
