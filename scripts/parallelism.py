@@ -89,6 +89,33 @@ def plan_batches(items: list, batch_size: int) -> list[list]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+def partition_overlap(assignments: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Find files claimed by more than one parallel agent (a MECE violation).
+
+    Parallel implementers must own DISJOINT file sets — two writers on the same
+    file race on the working tree, and (without per-agent worktree isolation) on
+    HEAD/index. `brief_mece_validator.py` checks a single brief *has* the six
+    ownership fields; this checks that the fields are *mutually exclusive* across
+    the whole fan-out, BEFORE dispatch.
+
+    *assignments* maps agent label -> list of owned paths/globs. Returns a map of
+    each overlapping path -> the sorted list of agents that claimed it. Empty dict
+    means the partition is clean (safe to fan out in a shared worktree). Comparison
+    is by normalized path string; glob semantics are intentionally not expanded —
+    overlapping globs should be made explicit before dispatch.
+    """
+    claims: dict[str, list[str]] = {}
+    for agent, paths in assignments.items():
+        for raw in paths:
+            key = str(raw).strip().strip("/")
+            if not key:
+                continue
+            claims.setdefault(key, [])
+            if agent not in claims[key]:
+                claims[key].append(agent)
+    return {path: sorted(agents) for path, agents in claims.items() if len(agents) > 1}
+
+
 def describe(workdir: Path) -> dict:
     """Return a diagnostic snapshot for reporting / --describe CLI."""
     cpu = os.cpu_count() or 4
@@ -119,12 +146,24 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Emit full diagnostic dict instead of bare integer.")
     p.add_argument("--json", action="store_true",
                    help="Force JSON output (implied when --describe is set).")
+    p.add_argument("--check-partition", metavar="JSON",
+                   help=("Validate a parallel-dispatch partition is MECE. Arg is a path "
+                         "(or '-' for stdin) to a JSON object {agent: [owned_paths]}. "
+                         "Exit 0 if disjoint; exit 1 + overlap report if any file is "
+                         "claimed by >1 agent."))
     return p
 
 
 def main(argv: list[str] | None = None) -> None:
     args = _build_parser().parse_args(argv)
     workdir = args.workdir.resolve()
+
+    if args.check_partition:
+        raw = sys.stdin.read() if args.check_partition == "-" else Path(args.check_partition).read_text(encoding="utf-8")
+        assignments = json.loads(raw)
+        overlaps = partition_overlap(assignments)
+        print(json.dumps({"mece": not overlaps, "overlaps": overlaps}, indent=2))
+        sys.exit(1 if overlaps else 0)
 
     if args.describe:
         print(json.dumps(describe(workdir), indent=2))

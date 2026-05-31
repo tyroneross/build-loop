@@ -20,6 +20,7 @@ from parallelism import (
     HARD_CEILING,
     effective_max_implementers,
     plan_batches,
+    partition_overlap,
     describe,
 )
 
@@ -192,3 +193,34 @@ class TestDescribe:
 
     def test_hard_ceiling_constant(self, tmp_workdir: Path) -> None:
         assert describe(tmp_workdir)["hard_ceiling"] == HARD_CEILING
+
+
+# ---------------------------------------------------------------------------
+# partition_overlap — MECE non-overlap check for parallel dispatch
+# ---------------------------------------------------------------------------
+
+class TestPartitionOverlap:
+    def test_disjoint_partition_is_clean(self) -> None:
+        assignments = {"A": ["src/a.ts", "src/b.ts"], "B": ["src/c.ts"]}
+        assert partition_overlap(assignments) == {}
+
+    def test_overlapping_file_reported_with_all_claimants(self) -> None:
+        assignments = {"A": ["src/shared.ts"], "B": ["src/shared.ts"], "C": ["src/c.ts"]}
+        overlaps = partition_overlap(assignments)
+        assert overlaps == {"src/shared.ts": ["A", "B"]}
+
+    def test_trailing_slash_and_whitespace_normalized(self) -> None:
+        assignments = {"A": ["scripts/x.py/"], "B": [" scripts/x.py "]}
+        assert partition_overlap(assignments) == {"scripts/x.py": ["A", "B"]}
+
+    def test_empty_paths_ignored(self) -> None:
+        assignments = {"A": ["", "  "], "B": ["src/c.ts"]}
+        assert partition_overlap(assignments) == {}
+
+    def test_same_agent_listing_a_path_twice_is_not_an_overlap(self) -> None:
+        assignments = {"A": ["src/a.ts", "src/a.ts"]}
+        assert partition_overlap(assignments) == {}
+
+    def test_three_way_overlap_sorted(self) -> None:
+        assignments = {"C": ["f"], "A": ["f"], "B": ["f"]}
+        assert partition_overlap(assignments) == {"f": ["A", "B", "C"]}
