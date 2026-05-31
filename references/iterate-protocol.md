@@ -4,6 +4,10 @@
 
 Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on demand at Phase 5.
 
+## End-of-run continuation gate
+
+After the followup drain, a second iterate cycle drains `.build-loop/issues/` then `.build-loop/backlog/` — but **only** when `session_prefs.continue_from_queues == "always"` (checked via `scripts/context_bootstrap.py:should_continue_into_queues`). Unset / "ask" / "never" → no continuation.
+
 ## Re-validate hook for UI work (by `uiTarget.kind`)
 
 - **web** → `ui-validator` against the affected route, or browser/screenshot tooling if a focused route can be resolved.

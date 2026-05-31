@@ -48,6 +48,8 @@ from _paths import (  # type: ignore  # noqa: E402
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
 DEFAULT_LIMIT = 6
 DEFAULT_MAX_EXCERPT_CHARS = 1600
+QUEUE_NAMES = ("issues", "backlog", "ux-queue", "followup", "proposals")
+SESSION_PREFS_VALID = ("ask", "always", "never")
 REPO_LOCAL_FILES = (
     ".build-loop/feedback.md",
     ".build-loop/state.json",
@@ -179,6 +181,224 @@ def load_state_summary(state_path: Path) -> tuple[dict[str, Any] | None, str | N
     }
     present = {k: v for k, v in summary.items() if v not in (None, [], {})}
     return present, None
+
+
+def _frontmatter_title(path: Path) -> str:
+    """Return the title/name from a file's frontmatter, or the stem as fallback.
+
+    Reads only the first 40 lines to keep queue surfacing cheap.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[:40]
+    except OSError:
+        return path.stem
+    in_fm = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "---":
+            if not in_fm:
+                in_fm = True
+                continue
+            else:
+                break  # end of frontmatter
+        if in_fm:
+            m = re.match(r"^(title|name)\s*:\s*(.+)$", stripped, re.IGNORECASE)
+            if m:
+                return m.group(2).strip().strip('"').strip("'")
+    return path.stem
+
+
+def queue_context(workdir: Path) -> dict[str, Any]:
+    """Count .md files in each .build-loop/<queue>/ dir and extract top-3 titles.
+
+    Missing dirs → count 0, empty top. Never raises.
+    """
+    bl = workdir / ".build-loop"
+    result: dict[str, Any] = {}
+    for qname in QUEUE_NAMES:
+        qdir = bl / qname
+        if not qdir.is_dir():
+            result[qname] = {"count": 0, "top": []}
+            continue
+        try:
+            items = sorted(qdir.glob("*.md"))
+        except OSError:
+            result[qname] = {"count": 0, "top": []}
+            continue
+        top = [
+            {"title": _frontmatter_title(p), "file": p.name}
+            for p in items[:3]
+        ]
+        result[qname] = {"count": len(items), "top": top}
+    return result
+
+
+def lessons_progressive_context(
+    query: str,
+    project: str,
+    workdir: Path,
+    limit: int = 5,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Run incremental ingest then FTS query from lessons_index.
+
+    Returns (results, reasons). Degrades to ([], reasons) on any failure.
+    Always safe: never raises; never hard-fails bootstrap.
+    """
+    reasons: list[str] = []
+    try:
+        import lessons_index as _li  # type: ignore  # noqa: PLC0415
+    except ImportError as exc:
+        reasons.append(f"lessons_index_import_failed: {exc}")
+        return [], reasons
+
+    try:
+        # query() scopes to (project OR '_unscoped'), so BOTH lanes must be
+        # ingested: top-level cross-project lessons (stored as _unscoped) AND
+        # the project's own lane. A single project-or-None ingest covers only
+        # one, leaving the other half of the query scope unpopulated.
+        _li.ingest(project=None)        # top-level lanes -> stored as _unscoped
+        _li.ingest(project=project)     # projects/<project>/ lanes (incl. literal _unscoped)
+    except Exception as exc:  # noqa: BLE001
+        reasons.append(f"lessons_index_ingest_error: {exc}")
+
+    try:
+        # Pass the literal project so query scopes to (project OR _unscoped);
+        # project=None would broaden to ALL projects (not current-work-scoped).
+        raw = _li.query(goal_text=query or workdir.name, project=project, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        reasons.append(f"lessons_index_query_error: {exc}")
+        return [], reasons
+
+    if not raw:
+        reasons.append("lessons_index_empty_or_no_match")
+        return [], reasons
+
+    results = [
+        {
+            "name": r.get("name", ""),
+            "description": r.get("description", ""),
+            "snippet": r.get("snippet", ""),
+            "score": r.get("score", 0.0),
+            "source_path": r.get("source_path", ""),
+        }
+        for r in raw
+    ]
+    return results, reasons
+
+
+def read_session_prefs(workdir: Path) -> dict[str, Any]:
+    """Read session_prefs from state.json and config.json (config overrides).
+
+    Returns a dict with keys: continue_from_queues, set_at, source.
+    Default (absent) = {continue_from_queues: "ask", source: "default"}.
+    Config override (.build-loop/config.json sessionPrefs.continueFromQueues) →
+    source "config". State.json session_prefs → source as stored.
+    """
+    default: dict[str, Any] = {
+        "continue_from_queues": "ask",
+        "set_at": None,
+        "source": "default",
+    }
+
+    # 1. Load state.json session_prefs.
+    state_path = workdir / ".build-loop" / "state.json"
+    state_prefs: dict[str, Any] | None = None
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            sp = state.get("session_prefs")
+            if isinstance(sp, dict) and sp.get("continue_from_queues") in SESSION_PREFS_VALID:
+                state_prefs = {
+                    "continue_from_queues": sp["continue_from_queues"],
+                    "set_at": sp.get("set_at"),
+                    "source": sp.get("source", "asked"),
+                }
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 2. Load config.json override.
+    config_path = workdir / ".build-loop" / "config.json"
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            val = (cfg.get("sessionPrefs") or {}).get("continueFromQueues")
+            if val in SESSION_PREFS_VALID:
+                return {
+                    "continue_from_queues": val,
+                    "set_at": None,
+                    "source": "config",
+                }
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return state_prefs if state_prefs is not None else default
+
+
+def write_session_prefs(
+    workdir: Path,
+    continue_from_queues: str,
+    source: str = "asked",
+) -> None:
+    """Persist session_prefs into state.json.
+
+    Reads state.json, merges session_prefs, writes back atomically.
+    Creates .build-loop/state.json (with skeleton) if absent.
+    Never raises — errors are silently swallowed so bootstrap stays live.
+    """
+    if continue_from_queues not in SESSION_PREFS_VALID:
+        return
+    bl = workdir / ".build-loop"
+    bl.mkdir(parents=True, exist_ok=True)
+    state_path = bl / "state.json"
+
+    try:
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                state = {}
+        else:
+            state = {"runs": [], "schema_version": "1.0.0"}
+
+        state["session_prefs"] = {
+            "continue_from_queues": continue_from_queues,
+            "set_at": utc_now(),
+            "source": source,
+        }
+        tmp = state_path.with_name(f".{state_path.name}.tmp")
+        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, state_path)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+def should_continue_into_queues(workdir: Path) -> bool:
+    """Return True iff session_prefs.continue_from_queues == "always".
+
+    "ask" / "never" / unset → False.  The gate is strict: only an explicit
+    opt-in ("always") triggers end-of-run continuation into issues + backlog.
+    """
+    return read_session_prefs(workdir)["continue_from_queues"] == "always"
+
+
+def pending_queue_items(workdir: Path) -> dict[str, Any]:
+    """Return per-queue counts for issues and backlog only.
+
+    Used by the end-of-run continuation check to decide whether there is
+    actually anything to drain before entering the extra iterate cycle.
+    Returns {"issues": int, "backlog": int} — never raises.
+    """
+    bl = workdir / ".build-loop"
+    result: dict[str, Any] = {}
+    for qname in ("issues", "backlog"):
+        qdir = bl / qname
+        if not qdir.is_dir():
+            result[qname] = 0
+            continue
+        try:
+            result[qname] = len(list(qdir.glob("*.md")))
+        except OSError:
+            result[qname] = 0
+    return result
 
 
 def repo_local_context(workdir: Path, terms: list[str], max_chars: int) -> dict[str, Any]:
@@ -590,6 +810,7 @@ def agent_brief(packet: dict[str, Any]) -> str:
     repo = packet["sources"]["repo_local"]
     codex = packet["sources"]["codex_memory"]
     rally = packet["sources"]["rally"]
+    queues = packet.get("queues", {})
     lines = [
         "## Relevant Memory Context",
         f"- Project: {packet['project']} ({packet['workdir']})",
@@ -599,6 +820,33 @@ def agent_brief(packet: dict[str, Any]) -> str:
         f"- Codex memory: {len(codex.get('registry_hits') or [])} registry hits; {len(codex.get('rollout_hits') or [])} rollout summaries.",
         f"- Rally/coordination: {'checked' if rally.get('checked') else 'skipped'}; reasons={rally.get('reasons') or []}",
     ]
+
+    # Queue summary line — only when at least one queue has items.
+    queue_parts = []
+    for qname in QUEUE_NAMES:
+        q = queues.get(qname, {})
+        n = q.get("count", 0)
+        if n:
+            queue_parts.append(f"#{qname}={n}")
+    if queue_parts:
+        top_titles: list[str] = []
+        for qname in QUEUE_NAMES:
+            q = queues.get(qname, {})
+            for item in q.get("top", [])[:1]:
+                top_titles.append(item.get("title", ""))
+        top_str = "; ".join(t for t in top_titles[:3] if t)
+        lines.append(f"- Queues: {' '.join(queue_parts)}{' — top: ' + top_str if top_str else ''}")
+
+    # Progressive lessons — top 3 names when present.
+    lessons = packet.get("lessons_progressive", [])
+    if lessons:
+        lines.append("")
+        lines.append("### Progressive Lessons")
+        for lesson in lessons[:3]:
+            desc = lesson.get("description") or lesson.get("snippet") or ""
+            desc_short = (desc[:80] + "…") if len(desc) > 80 else desc
+            lines.append(f"- {lesson['name']}: {desc_short}")
+
     if codex.get("registry_hits"):
         lines.append("")
         lines.append("### Top Codex Memory Hits")
@@ -627,12 +875,19 @@ def build_packet(
         os.environ.get("CODEX_MEMORY_ROOT", str(DEFAULT_CODEX_MEMORY_ROOT))
     )
 
+    lessons, lesson_reasons = lessons_progressive_context(
+        query=query, project=project, workdir=workdir, limit=5
+    )
+
     packet: dict[str, Any] = {
         "generated_at": utc_now(),
         "workdir": str(workdir),
         "project": project,
         "query": query,
         "terms": terms,
+        "queues": queue_context(workdir),
+        "lessons_progressive": lessons,
+        "session_prefs": read_session_prefs(workdir),
         "sources": {
             "canonical_memory": canonical_memory_context(
                 workdir=workdir,
@@ -661,6 +916,9 @@ def build_packet(
             "rally": rally_context(workdir=workdir, include_rally=include_rally),
         },
     }
+    # Merge lesson reasons into canonical_memory reasons for surfacing.
+    if lesson_reasons:
+        packet["sources"]["canonical_memory"].setdefault("reasons", []).extend(lesson_reasons)
     packet["agent_brief"] = agent_brief(packet)
     return packet
 

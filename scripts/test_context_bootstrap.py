@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import context_bootstrap as cb  # noqa: E402
+from project_resolver import resolve_project as cb_resolve_project  # noqa: E402
 
 
 class EnvIsolationMixin:
@@ -184,6 +185,349 @@ class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
         loaded = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(loaded["query"], "memory bootstrap")
         self.assertFalse((out.parent / ".context-bootstrap.json.tmp").exists())
+
+
+class QueueContextTests(EnvIsolationMixin, unittest.TestCase):
+    def _make_md(self, path: Path, title: str, body: str = "") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"---\ntitle: {title}\n---\n{body}\n", encoding="utf-8")
+
+    def test_queue_count_and_top_titles(self) -> None:
+        bl = self.workdir / ".build-loop"
+        issues_dir = bl / "issues"
+        backlog_dir = bl / "backlog"
+        self._make_md(issues_dir / "iss1.md", "Fix login bug")
+        self._make_md(issues_dir / "iss2.md", "Fix nav crash")
+        self._make_md(backlog_dir / "bk1.md", "Add dark mode")
+
+        result = cb.queue_context(self.workdir)
+
+        self.assertEqual(result["issues"]["count"], 2)
+        self.assertEqual(result["backlog"]["count"], 1)
+        self.assertEqual(result["ux-queue"]["count"], 0)
+        self.assertEqual(result["followup"]["count"], 0)
+        self.assertEqual(result["proposals"]["count"], 0)
+
+        issue_titles = [item["title"] for item in result["issues"]["top"]]
+        self.assertIn("Fix login bug", issue_titles)
+        backlog_titles = [item["title"] for item in result["backlog"]["top"]]
+        self.assertIn("Add dark mode", backlog_titles)
+
+    def test_missing_queue_dir_returns_zero(self) -> None:
+        result = cb.queue_context(self.workdir)
+        for qname in cb.QUEUE_NAMES:
+            self.assertEqual(result[qname]["count"], 0)
+            self.assertEqual(result[qname]["top"], [])
+
+    def test_frontmatter_title_uses_name_fallback(self) -> None:
+        """Files using 'name:' key in frontmatter also work."""
+        md = self.workdir / ".build-loop" / "backlog" / "item.md"
+        md.parent.mkdir(parents=True, exist_ok=True)
+        md.write_text("---\nname: My backlog item\n---\nBody.\n", encoding="utf-8")
+        result = cb.queue_context(self.workdir)
+        self.assertEqual(result["backlog"]["top"][0]["title"], "My backlog item")
+
+    def test_top_capped_at_three(self) -> None:
+        issues_dir = self.workdir / ".build-loop" / "issues"
+        for i in range(5):
+            self._make_md(issues_dir / f"iss{i}.md", f"Issue {i}")
+        result = cb.queue_context(self.workdir)
+        self.assertEqual(result["issues"]["count"], 5)
+        self.assertEqual(len(result["issues"]["top"]), 3)
+
+    def test_queues_in_build_packet(self) -> None:
+        bl = self.workdir / ".build-loop"
+        (bl / "issues").mkdir(parents=True, exist_ok=True)
+        (bl / "issues" / "iss1.md").write_text(
+            "---\ntitle: Test issue\n---\nBody.\n", encoding="utf-8"
+        )
+        packet = cb.build_packet(
+            workdir=self.workdir,
+            query="test",
+            codex_memory_root=self.codex_root,
+            include_postgres=False,
+            include_rally=False,
+        )
+        self.assertIn("queues", packet)
+        self.assertEqual(packet["queues"]["issues"]["count"], 1)
+        self.assertEqual(packet["queues"]["issues"]["top"][0]["title"], "Test issue")
+        # Queue summary in agent_brief
+        self.assertIn("#issues=1", packet["agent_brief"])
+
+
+class LessonsProgressiveTests(EnvIsolationMixin, unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        os.environ["EMBED_BACKEND_UNAVAILABLE"] = "1"
+
+    def tearDown(self) -> None:
+        os.environ.pop("EMBED_BACKEND_UNAVAILABLE", None)
+        super().tearDown()
+
+    def _make_lesson(self, name: str, description: str, body: str) -> None:
+        lessons_dir = self.memroot / "lessons"
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        md = lessons_dir / f"{name}.md"
+        md.write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n{body}\n",
+            encoding="utf-8",
+        )
+
+    def test_lessons_progressive_returns_results(self) -> None:
+        # Positive-path proof (FTS-only, no embedding backend): a top-level
+        # lesson MUST be retrieved for a matching query. This is the headline
+        # progressive-disclosure contract, not just graceful degradation.
+        self._make_lesson(
+            "context_bootstrap_lesson",
+            "Always run context bootstrap in Phase 1",
+            "When Phase 1 starts, run context_bootstrap.py to load memory.",
+        )
+        results, reasons = cb.lessons_progressive_context(
+            query="context bootstrap phase 1",
+            project="_unscoped",
+            workdir=self.workdir,
+            limit=5,
+        )
+        names = [r["name"] for r in results]
+        self.assertIn(
+            "context_bootstrap_lesson", names,
+            f"positive retrieval failed: expected the lesson, got {names} ({reasons})",
+        )
+        for r in results:
+            for key in ("name", "description", "snippet", "score", "source_path"):
+                self.assertIn(key, r)
+
+    def test_lessons_progressive_covers_project_and_top_level(self) -> None:
+        # Regression guard for the ingest-coverage bug: a named-project session
+        # must retrieve BOTH the project's own lesson AND a cross-project
+        # top-level lesson in one call (query scopes to project OR _unscoped,
+        # so ingest must populate both lanes).
+        proj = cb_resolve_project(self.workdir)
+        # top-level (cross-project) lesson
+        self._make_lesson(
+            "global_rollback",
+            "Keep a rollback path on every deploy",
+            "Always retain a rollback target before deploying.",
+        )
+        # project-scoped lesson under projects/<proj>/lessons
+        proj_lessons = self.memroot / "projects" / proj / "lessons"
+        proj_lessons.mkdir(parents=True, exist_ok=True)
+        (proj_lessons / "proj_caching.md").write_text(
+            "---\nname: proj_caching\ndescription: Cache the rollback manifest per deploy\n---\n"
+            "Persist the rollback manifest in the project cache.\n",
+            encoding="utf-8",
+        )
+        results, reasons = cb.lessons_progressive_context(
+            query="rollback deploy cache", project=proj, workdir=self.workdir, limit=10,
+        )
+        names = [r["name"] for r in results]
+        self.assertIn("global_rollback", names,
+                      f"top-level lesson missing: {names} ({reasons})")
+        self.assertIn("proj_caching", names,
+                      f"project lesson missing: {names} ({reasons})")
+
+    def test_lessons_progressive_in_packet(self) -> None:
+        self._make_lesson(
+            "memory_lesson",
+            "Load memory before planning",
+            "Memory context is crucial for correct planning.",
+        )
+        packet = cb.build_packet(
+            workdir=self.workdir,
+            query="memory load planning",
+            codex_memory_root=self.codex_root,
+            include_postgres=False,
+            include_rally=False,
+        )
+        self.assertIn("lessons_progressive", packet)
+        self.assertIsInstance(packet["lessons_progressive"], list)
+
+    def test_lessons_degrade_when_import_fails(self) -> None:
+        """If lessons_index is not importable, results must be [] with a reason."""
+        import importlib
+        import unittest.mock as mock
+        # Patch the import inside the function.
+        with mock.patch.dict("sys.modules", {"lessons_index": None}):
+            results, reasons = cb.lessons_progressive_context(
+                query="test",
+                project="_unscoped",
+                workdir=self.workdir,
+                limit=5,
+            )
+        self.assertEqual(results, [])
+        self.assertTrue(any("lessons_index" in r for r in reasons))
+
+    def test_lessons_degrade_gracefully_on_empty_index(self) -> None:
+        """When no memory files exist, results should be [] without crashing."""
+        results, reasons = cb.lessons_progressive_context(
+            query="anything",
+            project="_unscoped",
+            workdir=self.workdir,
+            limit=5,
+        )
+        self.assertIsInstance(results, list)
+        self.assertIsInstance(reasons, list)
+
+
+class SessionPrefsTests(EnvIsolationMixin, unittest.TestCase):
+    def test_default_when_absent(self) -> None:
+        prefs = cb.read_session_prefs(self.workdir)
+        self.assertEqual(prefs["continue_from_queues"], "ask")
+        self.assertEqual(prefs["source"], "default")
+
+    def test_write_then_read_roundtrip(self) -> None:
+        (self.workdir / ".build-loop").mkdir(parents=True, exist_ok=True)
+        cb.write_session_prefs(self.workdir, "always", source="asked")
+        prefs = cb.read_session_prefs(self.workdir)
+        self.assertEqual(prefs["continue_from_queues"], "always")
+        self.assertEqual(prefs["source"], "asked")
+        self.assertIsNotNone(prefs["set_at"])
+
+    def test_write_never_roundtrip(self) -> None:
+        (self.workdir / ".build-loop").mkdir(parents=True, exist_ok=True)
+        cb.write_session_prefs(self.workdir, "never")
+        prefs = cb.read_session_prefs(self.workdir)
+        self.assertEqual(prefs["continue_from_queues"], "never")
+
+    def test_config_override_wins_over_state(self) -> None:
+        bl = self.workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        # Write state with "never"
+        cb.write_session_prefs(self.workdir, "never", source="asked")
+        # Write config with "always"
+        config = bl / "config.json"
+        config.write_text(
+            json.dumps({"sessionPrefs": {"continueFromQueues": "always"}}),
+            encoding="utf-8",
+        )
+        prefs = cb.read_session_prefs(self.workdir)
+        self.assertEqual(prefs["continue_from_queues"], "always")
+        self.assertEqual(prefs["source"], "config")
+
+    def test_invalid_value_ignored_falls_to_default(self) -> None:
+        bl = self.workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        # Bad value in state.json
+        (bl / "state.json").write_text(
+            json.dumps({"session_prefs": {"continue_from_queues": "badvalue"}}),
+            encoding="utf-8",
+        )
+        prefs = cb.read_session_prefs(self.workdir)
+        self.assertEqual(prefs["continue_from_queues"], "ask")
+        self.assertEqual(prefs["source"], "default")
+
+    def test_write_invalid_value_is_noop(self) -> None:
+        """write_session_prefs with invalid value must not corrupt state.json."""
+        bl = self.workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        existing = {"runs": [], "schema_version": "1.0.0"}
+        (bl / "state.json").write_text(json.dumps(existing), encoding="utf-8")
+        cb.write_session_prefs(self.workdir, "invalid_option")
+        # State should be unchanged (no session_prefs key written).
+        state = json.loads((bl / "state.json").read_text(encoding="utf-8"))
+        self.assertNotIn("session_prefs", state)
+
+    def test_session_prefs_in_packet(self) -> None:
+        packet = cb.build_packet(
+            workdir=self.workdir,
+            query="test",
+            codex_memory_root=self.codex_root,
+            include_postgres=False,
+            include_rally=False,
+        )
+        self.assertIn("session_prefs", packet)
+        self.assertIn(packet["session_prefs"]["continue_from_queues"], cb.SESSION_PREFS_VALID)
+
+    def test_write_creates_state_json_if_absent(self) -> None:
+        bl = self.workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        self.assertFalse((bl / "state.json").exists())
+        cb.write_session_prefs(self.workdir, "always")
+        self.assertTrue((bl / "state.json").exists())
+        state = json.loads((bl / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["session_prefs"]["continue_from_queues"], "always")
+
+    def test_config_invalid_json_falls_to_state(self) -> None:
+        bl = self.workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        cb.write_session_prefs(self.workdir, "never", source="asked")
+        (bl / "config.json").write_text("{ not valid json", encoding="utf-8")
+        prefs = cb.read_session_prefs(self.workdir)
+        # Config failed to parse → fall through to state.json value
+        self.assertEqual(prefs["continue_from_queues"], "never")
+        self.assertEqual(prefs["source"], "asked")
+
+
+class ContinuationGateTests(EnvIsolationMixin, unittest.TestCase):
+    """Tests for should_continue_into_queues and pending_queue_items."""
+
+    def _write_prefs(self, value: str) -> None:
+        (self.workdir / ".build-loop").mkdir(parents=True, exist_ok=True)
+        cb.write_session_prefs(self.workdir, value, source="asked")
+
+    # --- should_continue_into_queues ---
+
+    def test_always_returns_true(self) -> None:
+        self._write_prefs("always")
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
+
+    def test_ask_returns_false(self) -> None:
+        self._write_prefs("ask")
+        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+
+    def test_never_returns_false(self) -> None:
+        self._write_prefs("never")
+        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+
+    def test_unset_returns_false(self) -> None:
+        # No .build-loop dir at all → default "ask" → False
+        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+
+    # --- pending_queue_items ---
+
+    def _make_issue(self, name: str) -> None:
+        d = self.workdir / ".build-loop" / "issues"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(f"---\ntitle: {name}\n---\n", encoding="utf-8")
+
+    def _make_backlog(self, name: str) -> None:
+        d = self.workdir / ".build-loop" / "backlog"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(f"---\ntitle: {name}\n---\n", encoding="utf-8")
+
+    def test_pending_counts_issues_and_backlog(self) -> None:
+        self._make_issue("iss1.md")
+        self._make_issue("iss2.md")
+        self._make_backlog("bk1.md")
+        counts = cb.pending_queue_items(self.workdir)
+        self.assertEqual(counts["issues"], 2)
+        self.assertEqual(counts["backlog"], 1)
+
+    def test_pending_zero_when_dirs_absent(self) -> None:
+        counts = cb.pending_queue_items(self.workdir)
+        self.assertEqual(counts["issues"], 0)
+        self.assertEqual(counts["backlog"], 0)
+
+    def test_pending_keys_are_exactly_issues_and_backlog(self) -> None:
+        counts = cb.pending_queue_items(self.workdir)
+        self.assertEqual(set(counts.keys()), {"issues", "backlog"})
+
+    # --- integration: gate + counts together ---
+
+    def test_gate_true_and_pending_work_detected(self) -> None:
+        """Simulates the end-of-run continuation check: always + items present."""
+        self._write_prefs("always")
+        self._make_issue("critical.md")
+        self._make_backlog("nice-to-have.md")
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
+        counts = cb.pending_queue_items(self.workdir)
+        self.assertGreater(counts["issues"] + counts["backlog"], 0)
+
+    def test_gate_false_with_never_even_when_items_present(self) -> None:
+        self._write_prefs("never")
+        self._make_issue("critical.md")
+        # Gate should still be False — items don't matter
+        self.assertFalse(cb.should_continue_into_queues(self.workdir))
 
 
 if __name__ == "__main__":
