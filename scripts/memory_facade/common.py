@@ -37,10 +37,23 @@ def _parse_iso(ts: Any) -> Optional[float]:
 
 
 def _q_match(text: str, query: str) -> bool:
-    """Case-insensitive substring match. Empty query matches everything."""
+    """Case-insensitive token-OR match. Empty query matches everything.
+
+    A query is split into whitespace tokens; the text matches if it contains
+    ANY token. The previous full-phrase substring test (`query in text`) silently
+    dropped every result for realistic multi-word goal queries — a natural-language
+    goal like "background snapshot handoff context" never appears verbatim in a
+    decision's id+title+tags, so canonical recall returned 0 on every real run
+    (audit 2026-05-31). Token-OR is the minimal fix that makes recall actually
+    surface stored decisions/lessons; the merge layer ranks/dedups downstream.
+    """
     if not query:
         return True
-    return query.lower() in (text or "").lower()
+    haystack = (text or "").lower()
+    tokens = [t for t in query.lower().split() if t]
+    if not tokens:
+        return True
+    return any(t in haystack for t in tokens)
 
 
 def _read_jsonl(path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
