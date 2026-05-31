@@ -400,5 +400,76 @@ class NoStopLanguageTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class ReadsDependencyTests(unittest.TestCase):
+    """rule_reads-from-dependency — Phase 1/2 gate for unmet read dependencies."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [f for f in run_all(self.plan, self.repo) if f["rule_id"] == "reads-from-dependency"]
+
+    def test_code_plan_missing_section_is_blocker(self) -> None:
+        """A plan that names a code path but omits Depends-on (reads-from) → BLOCKER."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Edit `scripts/report_generator.py` to read security findings.\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "BLOCKER")
+        self.assertIn("reads_from_missing", findings[0]["claim_kind"])
+
+    def test_unverified_entry_in_section_is_blocker(self) -> None:
+        """A Depends-on section with an `unverified` entry on a code plan → BLOCKER."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Edit `scripts/report_generator.py` to read security findings.\n\n"
+            "## Depends-on (reads-from)\n\n"
+            "- `state.json.runs[].security_findings[]` — unverified\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "BLOCKER")
+        self.assertIn("reads_from_unverified", findings[0]["claim_kind"])
+
+    def test_all_verified_entries_pass(self) -> None:
+        """A Depends-on section with all entries `verified` → no findings."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Edit `scripts/report_generator.py` to read security findings.\n\n"
+            "## Depends-on (reads-from)\n\n"
+            "- `state.json.runs[].security_findings[]` — verified\n"
+            "- `.build-loop/goal.md` — verified\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_doc_only_plan_exempt(self) -> None:
+        """A plan with no code paths is exempt even without the section."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Update the README and CLAUDE.md to document the new feature.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_override_silences_rule(self) -> None:
+        """Explicit override suppresses the rule even on a code-shipping plan."""
+        findings = self._findings(
+            "override: reads-from-dependency\n\n"
+            "## Plan\n\n"
+            "Edit `scripts/report_generator.py` to read security findings.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

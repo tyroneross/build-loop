@@ -1,5 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
+override: reads-from-dependency — pre-dates the reads-from section requirement; fixture demonstrates other rules only
+
 # Travel Planner — Summer Camp Listings
 
 > Clean plan from another project. False-positive control fixture for `plan_verify.py`.

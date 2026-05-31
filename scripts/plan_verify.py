@@ -16,7 +16,7 @@ tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
 synthesis-dim-vague-value, risk-reason-invalid-value,
 scope-audit-required, approach-lenses-missing, parallel-decision-record,
-no-stop-language.
+no-stop-language, reads-from-dependency.
 
 Plan Evidence Contract (per finding):
 {
@@ -1145,6 +1145,135 @@ def rule_no_stop_language(plan_path: Path, lines: list[tuple[int, str]]) -> list
 
 
 # ---------------------------------------------------------------------------
+# Rule: reads-from-dependency (2026-05-31) — BLOCKER when a code-shipping
+# plan is missing a `## Depends-on (reads-from)` section, or when any entry
+# in that section is marked `unverified`.
+#
+# Motivation: a build shipped code reading `state.json.runs[].security_findings[]`
+# — a path nothing writes — so the feature was silently inert. The gap
+# surfaced only as a report footnote. An unmet read-dependency must be a
+# BLOCKING unknown, not a footnote.
+#
+# A plan "ships code" when it mentions at least one file path that looks like
+# source code (contains a code extension or a `scripts/` / `src/` / `agents/`
+# prefix). Doc-only and UI-only plans that name no code paths are exempt.
+#
+# The `## Depends-on (reads-from)` section format (per phase-2-plan.md):
+#   ## Depends-on (reads-from)
+#   - `<data-path-or-contract>` — verified
+#   - `<data-path-or-contract>` — unverified
+#
+# Any entry that ends in `unverified` (case-insensitive, after the last `—`
+# or `-`) triggers a BLOCKER. An explicit override line
+# `override: reads-from-dependency` silences the entire rule.
+# ---------------------------------------------------------------------------
+
+# Heading matcher — accepts optional leading `##` and any common markdown
+# heading style for the section.
+_READS_FROM_HEADING_RE = re.compile(
+    r"^\s*#{1,4}\s+Depends-on\s+\(reads-from\)",
+    re.IGNORECASE,
+)
+
+# A plan "ships code" when it names at least one source-code-looking path.
+# We deliberately keep this narrow to avoid flagging pure-doc or pure-config
+# plans that never touch code.
+_CODE_PATH_RE = re.compile(
+    r"(?:^|[\s`(])"
+    r"((?:scripts|src|agents|skills|packages)/[\w./-]+\.\w+"
+    r"|[\w./-]+\.(?:py|ts|tsx|js|jsx|swift|rb|go|sh)\b)",
+    re.IGNORECASE,
+)
+
+# An entry in the section is `unverified` when its status token matches.
+# Matches lines like:  - `path.json.runs[]` — unverified
+#                      - state.json.runs[].field - unverified
+_UNVERIFIED_ENTRY_RE = re.compile(
+    r"(?:—|-)\s*unverified\s*$",
+    re.IGNORECASE,
+)
+
+_READS_FROM_OVERRIDE_RE = re.compile(
+    r"override\s*:\s*reads-from-dependency",
+    re.IGNORECASE,
+)
+
+
+def rule_reads_from_dependency(
+    plan_path: Path, lines: list[tuple[int, str]]
+) -> list[dict[str, Any]]:
+    """BLOCKER: code-shipping plan missing `## Depends-on (reads-from)` section,
+    or any entry in that section is marked `unverified`.
+
+    Exempt when:
+    - The plan names no source-code paths (doc/config/UI-only plans).
+    - An explicit `override: reads-from-dependency` line appears in the plan.
+    """
+    # Explicit override silences the rule.
+    if any(_READS_FROM_OVERRIDE_RE.search(line) for _, line in lines if line):
+        return []
+
+    # Does the plan ship code?
+    ships_code = any(_CODE_PATH_RE.search(line) for _, line in lines if line)
+    if not ships_code:
+        return []
+
+    # Find the section heading.
+    section_lineno: int | None = None
+    for lineno, line in lines:
+        if line and _READS_FROM_HEADING_RE.match(line):
+            section_lineno = lineno
+            break
+
+    if section_lineno is None:
+        # Section is missing entirely on a code-shipping plan.
+        return [_finding(
+            claim_text=(
+                "Plan ships code but has no `## Depends-on (reads-from)` section. "
+                "Add the section listing every data path / contract the new code reads, "
+                "each with status `verified` or `unverified`."
+            ),
+            claim_kind="reads_from_missing",
+            subject={"path": None, "symbol": None, "noun": "Depends-on (reads-from)"},
+            verification_command=None,
+            evidence={"file": str(plan_path), "line": 1, "snippet": ""},
+            result="no_match",
+            marker="❌",
+            severity="BLOCKER",
+            confidence="high",
+            rule_id="reads-from-dependency",
+        )]
+
+    # Section exists — scan its entries for `unverified` status.
+    out: list[dict[str, Any]] = []
+    in_section = False
+    for lineno, line in lines:
+        if not line:
+            continue
+        if lineno == section_lineno:
+            in_section = True
+            continue
+        if in_section:
+            # Section ends at the next heading of depth ≤ 4.
+            if re.match(r"^\s*#{1,4}\s+\S", line):
+                break
+            if _UNVERIFIED_ENTRY_RE.search(line):
+                out.append(_finding(
+                    claim_text=line.strip(),
+                    claim_kind="reads_from_unverified",
+                    subject={"path": None, "symbol": None, "noun": "reads-from entry"},
+                    verification_command=None,
+                    evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                    result="no_match",
+                    marker="❌",
+                    severity="BLOCKER",
+                    confidence="high",
+                    rule_id="reads-from-dependency",
+                ))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -1172,6 +1301,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_forbidden_path_conflict(plan_path, lines, repo))
     findings.extend(rule_parallel_decision_record(plan_path, lines))
     findings.extend(rule_no_stop_language(plan_path, lines))
+    findings.extend(rule_reads_from_dependency(plan_path, lines))
     return findings
 
 
