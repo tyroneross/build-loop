@@ -53,6 +53,7 @@ from validators import (  # type: ignore  # noqa: E402
     load_budget_summary,
     load_judge_decisions,
     load_security_findings,
+    review_completeness_error,
     validate_entry,
 )
 
@@ -64,6 +65,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--workdir", required=True, help="Project root containing .build-loop/")
     p.add_argument("--goal", required=True, help="Short goal text for this build")
     p.add_argument("--outcome", required=True, choices=sorted(VALID_OUTCOMES))
+    p.add_argument(
+        "--scope",
+        choices=["build", "chunk", "none"],
+        default="none",
+        help=(
+            "Review scope of this run. 'build' enables the review-completeness gate: "
+            "a pass that touched code must carry a real independent-auditor verdict "
+            "in judge_decisions[] (exit 3 if absent). Default 'none' = no gate."
+        ),
+    )
     p.add_argument("--phases-json", default="{}", help="Per-phase status dict as JSON string")
     p.add_argument("--files-touched", default="", help="Comma-separated list of files touched")
     p.add_argument(
@@ -234,6 +245,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         log(f"validation error: {e}")
         return 1
+
+    # Review-completeness gate (scope=build): a pass that touched code must carry a
+    # real independent-auditor verdict. Fails the run entry (exit 3) so the
+    # orchestrator re-dispatches the auditor before Report rather than recording an
+    # inline-only/empty auditor record on shipped code.
+    gate_error = review_completeness_error(entry, args.scope)
+    if gate_error is not None:
+        log(f"review-completeness gate: {gate_error}")
+        return 3
 
     try:
         append_run_entry(state_path, entry)

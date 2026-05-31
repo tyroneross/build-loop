@@ -22,7 +22,17 @@ REQUIRED_FIELDS: dict[str, type | tuple[type, ...]] = {
 }
 VALID_OUTCOMES = {"pass", "fail", "partial"}
 VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+# Promotion-reviewer-style verdicts plus the independent-auditor's own vocabulary
+# (yay/nay/suggest/look-again — see scripts/audit_record_verdict.py). The two judge
+# families write into the same judge_decisions[] list, so both must validate.
 VALID_JUDGE_VERDICTS = {"approve", "rethink", "new_approach"}
+VALID_AUDITOR_VERDICTS = {
+    "yay", "nay", "suggest", "suggest_correction", "look-again", "look_again",
+}
+ALL_JUDGE_VERDICTS = VALID_JUDGE_VERDICTS | VALID_AUDITOR_VERDICTS
+# judge_id substring that identifies the independent commit auditor (covers both the
+# dispatched "independent-auditor" agent and the "independent-auditor-hook" record).
+AUDITOR_JUDGE_MARKER = "independent-auditor"
 VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned"}
 VALID_BUDGET_MODES = {"default", "long", "custom"}
 
@@ -47,6 +57,48 @@ def validate_entry(entry: dict) -> None:
             )
     if entry["outcome"] not in VALID_OUTCOMES:
         raise ValueError(f"outcome must be one of {sorted(VALID_OUTCOMES)}, got {entry['outcome']!r}")
+
+
+def auditor_present(judge_decisions: object) -> bool:
+    """True when judge_decisions[] carries a real independent-auditor verdict.
+
+    Matches both the dispatched `independent-auditor` agent and the
+    `independent-auditor-hook` record. An empty list, None, or a list of only
+    other judges (an inline self-audit substituting for a real dispatch) is False.
+    """
+    if not isinstance(judge_decisions, list):
+        return False
+    for item in judge_decisions:
+        if isinstance(item, dict) and AUDITOR_JUDGE_MARKER in str(item.get("judge_id", "")):
+            return True
+    return False
+
+
+def review_completeness_error(entry: dict, scope: str) -> str | None:
+    """Return an error message when a build-scope code-touching pass lacks the auditor.
+
+    The gap this closes (bl-enforce-independent-auditor-dispatch): an orchestrator
+    can substitute inline self-reasoning for a real `independent-auditor` dispatch,
+    and nothing fails — an empty/inline-only auditor record reaches Report-G on
+    shipped code. Rule: a `pass` outcome on a `scope=build` run that touched files
+    MUST carry a real independent-auditor verdict. Returns None when satisfied or
+    when the rule does not apply (non-build scope, no files, non-pass outcome).
+    """
+    if scope != "build":
+        return None
+    if entry.get("outcome") != "pass":
+        return None
+    if not entry.get("filesTouched"):
+        return None
+    if not auditor_present(entry.get("judge_decisions")):
+        return (
+            "review incomplete: a build-scope run that touched code cannot record "
+            "outcome=pass without a real independent-auditor verdict in "
+            "judge_decisions[] (inline self-audit is not a substitute). Re-dispatch "
+            "the independent-auditor at build scope before Report. "
+            "See bl-enforce-independent-auditor-dispatch."
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -175,9 +227,9 @@ def _validate_judge_decision(i: int, item: Any) -> None:
     if not isinstance(item.get("judge_id"), str):
         raise ValueError(f"judge_decisions[{i}].judge_id must be a string")
     verdict = item.get("verdict")
-    if not isinstance(verdict, str) or verdict not in VALID_JUDGE_VERDICTS:
+    if not isinstance(verdict, str) or verdict not in ALL_JUDGE_VERDICTS:
         raise ValueError(
-            f"judge_decisions[{i}].verdict must be one of {sorted(VALID_JUDGE_VERDICTS)}, got {verdict!r}"
+            f"judge_decisions[{i}].verdict must be one of {sorted(ALL_JUDGE_VERDICTS)}, got {verdict!r}"
         )
     if "spec_alignment" in item:
         sa = item["spec_alignment"]

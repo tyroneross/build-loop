@@ -140,5 +140,77 @@ class WriteRunEntryTests(unittest.TestCase):
         self.assertFalse((self.experiments / "ghost.jsonl").exists())
 
 
+class ReviewCompletenessGateTests(unittest.TestCase):
+    """scope=build review-completeness gate (bl-enforce-independent-auditor-dispatch)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.state = self.workdir / ".build-loop" / "state.json"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _judge_file(self, decisions: list) -> str:
+        p = self.workdir / "judges.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(decisions))
+        return str(p)
+
+    def _args(self, **overrides: str) -> list[str]:
+        args = {
+            "--workdir": str(self.workdir),
+            "--goal": "ship a code change",
+            "--outcome": "pass",
+            "--phases-json": "{}",
+        }
+        args.update(overrides)
+        flat: list[str] = []
+        for k, v in args.items():
+            flat.extend([k, v])
+        return flat
+
+    def test_build_scope_code_pass_without_auditor_exits_3(self) -> None:
+        result = run(self._args(**{"--scope": "build", "--files-touched": "src/x.py"}))
+        self.assertEqual(result.returncode, 3, msg=result.stderr)
+        self.assertIn("independent-auditor", result.stderr)
+        self.assertFalse(self.state.exists(), "no entry should be written when the gate fails")
+
+    def test_build_scope_with_auditor_verdict_passes(self) -> None:
+        jf = self._judge_file([{"judge_id": "independent-auditor", "verdict": "yay"}])
+        result = run(self._args(**{
+            "--scope": "build", "--files-touched": "src/x.py", "--judge-decisions-json": jf,
+        }))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_auditor_hook_verdict_also_satisfies(self) -> None:
+        jf = self._judge_file([{"judge_id": "independent-auditor-hook", "verdict": "suggest"}])
+        result = run(self._args(**{
+            "--scope": "build", "--files-touched": "src/x.py", "--judge-decisions-json": jf,
+        }))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_other_judge_only_does_not_satisfy(self) -> None:
+        jf = self._judge_file([{"judge_id": "plan-critic", "verdict": "approve"}])
+        result = run(self._args(**{
+            "--scope": "build", "--files-touched": "src/x.py", "--judge-decisions-json": jf,
+        }))
+        self.assertEqual(result.returncode, 3, msg=result.stderr)
+
+    def test_build_scope_no_files_no_gate(self) -> None:
+        result = run(self._args(**{"--scope": "build"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_build_scope_partial_outcome_no_gate(self) -> None:
+        result = run(self._args(**{
+            "--scope": "build", "--files-touched": "src/x.py", "--outcome": "partial",
+        }))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_scope_none_no_gate_even_with_code(self) -> None:
+        result = run(self._args(**{"--files-touched": "src/x.py"}))  # default scope=none
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
