@@ -489,47 +489,42 @@ def verify_placement(record: dict[str, Any], files: dict[str, FileDiff],
         anchor_pat = re.compile(rf"<\s*{re.escape(anchor)}\b", re.IGNORECASE)
     else:
         anchor_pat = re.compile(re.escape(anchor), re.IGNORECASE)
-    anchor_pre_line: int | None = None
-    anchor_pre_snippet: str | None = None
-    for pre_ln, _post_ln, txt in target.context_lines:
-        if anchor_pat.search(txt):
-            anchor_pre_line = pre_ln
-            anchor_pre_snippet = txt.strip()
-            break
-    if anchor_pre_line is None:
-        for pre_ln, txt in target.removed_lines:
+
+    def _find_in(pairs: list[tuple]) -> tuple[int, str] | None:
+        """Return (line_no, snippet) for the first matching line, or None."""
+        for row in pairs:
+            txt = row[-1]  # last element is always the text for all three line types
             if anchor_pat.search(txt):
-                anchor_pre_line = pre_ln
-                anchor_pre_snippet = txt.strip()
-                break
-    if anchor_pre_line is None:
-        # Anchor may be NEW (added in same diff) — accept if it appears in added lines
-        # AND there are added lines after it (handled below via post-image search).
-        for post_ln, txt in target.added_lines:
-            if anchor_pat.search(txt):
-                anchor_pre_line = post_ln
-                anchor_pre_snippet = txt.strip()
-                break
-    if anchor_pre_line is None:
+                return row[0], txt.strip()
+        return None
+
+    # Search context → removed → added (added = anchor is new in this diff)
+    found = (
+        _find_in(target.context_lines)
+        or _find_in(target.removed_lines)
+        or _find_in(target.added_lines)
+    )
+    if found is None:
         return {
             "status": "fail",
             "reason": f"anchor `<{anchor}>` not found in {target.path} pre-image or diff context",
             "evidence": {"file": target.path, "line": None, "snippet": None},
         }
+    anchor_pre_line, anchor_pre_snippet = found
 
-    # Find the anchor's POST-image line (use context line that contained it,
-    # else assume same as pre).
+    # Find the anchor's POST-image line (context gives both; added gives it directly).
     anchor_post_line: int | None = None
-    for pre_ln, post_ln, txt in target.context_lines:
-        if anchor_pat.search(txt):
-            anchor_post_line = post_ln
-            break
-    if anchor_post_line is None:
-        # If anchor was added, it has a post line directly.
-        for post_ln, txt in target.added_lines:
+    ctx_found = _find_in(target.context_lines)
+    if ctx_found:
+        # context_lines are (pre_ln, post_ln, txt) — post_ln is index 1
+        for pre_ln, post_ln, txt in target.context_lines:
             if anchor_pat.search(txt):
                 anchor_post_line = post_ln
                 break
+    if anchor_post_line is None:
+        add_found = _find_in(target.added_lines)
+        if add_found:
+            anchor_post_line = add_found[0]
     if anchor_post_line is None:
         anchor_post_line = anchor_pre_line  # best-effort fallback
 
@@ -1239,14 +1234,13 @@ def _has_synthesis_dimensions(plan_path: "Path") -> bool:
     when running in an isolated environment).
     """
     try:
-        import sys as _sys
         _scripts_dir = str(plan_path.parent.parent / "scripts")
-        if _scripts_dir not in _sys.path:
-            _sys.path.insert(0, _scripts_dir)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
         # Also try the scripts dir relative to this file's location.
         _own_scripts = str(Path(__file__).parent)
-        if _own_scripts not in _sys.path:
-            _sys.path.insert(0, _own_scripts)
+        if _own_scripts not in sys.path:
+            sys.path.insert(0, _own_scripts)
         from plan_verify import count_synthesis_dimensions  # type: ignore[import]
         return count_synthesis_dimensions(plan_path) > 0
     except (ImportError, Exception):

@@ -79,13 +79,7 @@ CONFLICT_MARKER = re.compile(r"^[+ ](<<<<<<<|=======|>>>>>>>)( |$)", re.MULTILIN
 
 def _run(cmd: list[str], cwd: Path | None = None) -> str:
     try:
-        r = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd else None,
-            capture_output=True,
-            text=True,
-            timeout=4,
-        )
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=4)
         return r.stdout
     except (subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
         return ""
@@ -251,7 +245,8 @@ def _library_context(diff_body: str) -> str:
                     tag += f" · latest {row[1]}"
                 if row[2]:
                     tag += f" · DEPRECATED: {row[2][:80]}"
-                age = staleness.get(pkg, {}).get("age_days") if isinstance(staleness.get(pkg), dict) else None
+                pkg_staleness = staleness.get(pkg)
+                age = pkg_staleness.get("age_days") if isinstance(pkg_staleness, dict) else None
                 if isinstance(age, (int, float)) and age > 7:
                     tag += f" · cache stale {age}d"
                 lines.append(f"- {tag}")
@@ -354,11 +349,7 @@ def _record_runs_judge_entry(root: Path, commit_hash: str, status: str, brief: s
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         os.replace(tmp, state_path)
     except OSError:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+        tmp.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -381,8 +372,7 @@ def _emit_packet(root: Path) -> int:
     intent = _read_optional(root / ".build-loop" / "intent.md", MAX_TEXT_CHARS)
     goal = _read_optional(root / ".build-loop" / "goal.md", MAX_TEXT_CHARS)
     claude_md = _read_optional(root / "CLAUDE.md", MAX_TEXT_CHARS)
-    readme_full = _read_optional(root / "README.md")
-    readme_head = "\n".join(readme_full.splitlines()[:README_HEAD_LINES]) if readme_full else ""
+    readme_head = "\n".join(_read_optional(root / "README.md").splitlines()[:README_HEAD_LINES])
     prd_path, prd_body = _find_prd(root)
     constitution = _read_optional(Path.home() / ".build-loop" / "memory" / "constitution.md")
     trajectory = _run(["git", "log", "--oneline", "-5"]).strip()
