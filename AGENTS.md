@@ -118,6 +118,40 @@ Combines situational awareness with goal definition so Plan has everything it ne
 - If web/mobile UI: capture current visual state for before/after comparison, then load `skills/build-loop/references/ui-io-contract.md` and inventory the affected user inputs and system outputs before planning
 - **Supply-chain dependency cooldown**: if a JS project (`package.json`), run `scripts/inject_dependency_cooldown.py --workdir <repo>` to idempotently write the 7-day publish-age config using each PM's native key: npm ≥ 11.10.0 → `.npmrc` `min-release-age` (DAYS); pnpm → `pnpm-workspace.yaml` `minimumReleaseAge` (MINUTES) + `.npmrc` `minimum-release-age` for 10.x; yarn ≥ 4.10 → `.yarnrc.yml` `npmMinimalAgeGate` (numeric MINUTES). npm has no native exclude (npm/cli#8994), so on npm the user-authored allowlist (`.build-loop/config.json` → `dependencyCooldown.allowlist`, default `["@tyroneross/*"]`) is enforced by the PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`), which stays engaged even with native config; pnpm/yarn carry the exclude natively so the hook stands down once enforced. `--check` verifies the PM actually recognizes the key (no false `enforced:true`). Constitution rule: `C-SUPPLY/dependency_cooldown`. Older npm (< 11.10.0) falls back to the hook's `--before=<7d ago>` date-pin. pip/cargo not covered in v1.
 
+**Memory bootstrap + queue surfacing (session start — before planning):**
+
+Run once at the Phase 1 preamble, immediately after `run_id` is known and before the architecture baseline or any planning:
+
+1. **Identify the repo**: `project_resolver.resolve_project(Path("$PWD"))` → project slug (git remote or dir name).
+2. **Run bootstrap**:
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
+     --workdir "$PWD" --query "<goal-keywords>" \
+     --output "$PWD/.build-loop/context-bootstrap.json" --json
+   ```
+   The packet covers: canonical `build-loop-memory` root/project `MEMORY.md` + `constitution.md`, indexed recall via `memory_facade.py`, repo-local `.build-loop/{feedback,state,goal,intent,plan}` files, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, best-effort Rally/coordination state, **queue counts + top items** (`queues.{issues,backlog,ux-queue,followup,proposals}.{count,top[]}`), **progressive lessons** (`lessons_progressive[]` — SQLite FTS5, scoped to current work, zero external deps; degrades gracefully when DB absent), and `session_prefs`.
+3. **Surface + ask once** (immediately after reading the packet):
+   - Read `packet.agent_brief` for the one-liner summary, then check each queue: if any `queues.*.count > 0`, emit `#issues=N #backlog=M …` plus the top item titles from `queues.*.top[0].title`.
+   - Surface `lessons_progressive[].name` (up to 3) as ambient context so planning reflects recent learnings.
+   - Check `session_prefs.continue_from_queues`:
+     - `"always"` → include queue work in the plan without asking.
+     - `"never"` → skip queue work without asking.
+     - `"ask"` (default) AND first Assess of this run AND any queue count > 0 → ask the user ONCE: *"Tackle queue items now / after current task / not this session?"* Persist their answer: call `write_session_prefs(workdir, value, source="asked")` from `scripts/context_bootstrap.py` — this writes `state.json.session_prefs.{continue_from_queues, set_at, source}`.
+     - When `session_prefs.source == "config"` (set in `.build-loop/config.json` → `sessionPrefs.continueFromQueues`), do NOT ask — the repo has a standing preference.
+   - User task instructions always take priority over queue work.
+
+**End-of-run continuation gate (after followup drain, before closing):**
+
+After the main build's followup drain completes (or `.build-loop/followup/` was empty), run:
+
+```python
+from scripts.context_bootstrap import should_continue_into_queues, pending_queue_items
+should_continue = should_continue_into_queues(workdir)   # True iff session_prefs == "always"
+pending        = pending_queue_items(workdir)             # {"issues": N, "backlog": M}
+```
+
+Proceed only when BOTH `should_continue is True` AND `pending["issues"] + pending["backlog"] > 0`. When both are true, enter one additional Phase 5 iterate cycle targeting `.build-loop/issues/` then `.build-loop/backlog/` (issues first). Use the same iterate machinery: alignment-checker per item, scope-auditor, independent-auditor post-fix; same iterate-cap and stop conditions. Items classified `PRODUCTION` or `DECISION` → surface in report, do not auto-execute. When either condition is false, the run ends — do NOT ask again (the preference was already captured at session start).
+
 **Multi-session presence (Rally Point — cross-host: Claude Code, Codex, Gemini CLI, others):**
 
 Multiple build-loop sessions can run concurrently against the same project across terminals and coding hosts. Rally Point presence is the single concurrent-presence source of truth — an awareness layer (never a lock), host-neutral, invoked from any host. (The legacy `session_registry.py` / `~/.build-loop/sessions/` collision mechanism was documented-dead and removed 2026-05-18 — see `KNOWN-ISSUES.md` §M4.)
@@ -410,9 +444,11 @@ Build loop stores state in `.build-loop/` within the project directory:
 │   └── <id>.md
 ├── followup/            # Overflow when iteration cap hit; input to subsequent build
 │   └── <topic>.md
+├── backlog/             # Deferred-but-wanted work (drained by end-of-run continuation)
+│   └── <id>.md          # frontmatter: title, created, classify, effort, status
 ├── evals/               # Scorecard archives
 │   └── YYYY-MM-DD-*.md
-└── issues/              # Discovered issues
+└── issues/              # Discovered issues (drained by end-of-run continuation)
 ```
 
 This directory is created on first use. Add `.build-loop/` to your project's `.gitignore`.
