@@ -160,7 +160,7 @@ def test_pattern_outcomes(
     }
     for agg in aggs:
         for inv in agg.test_invocations:
-            outcome, ev_quote = classify_outcome(agg, inv)
+            outcome, ev_quote, directional = classify_outcome(agg, inv)
             cat = inv["category"]
             cat_counts[cat]["count"] += 1
             cat_counts[cat][outcome] += 1
@@ -171,6 +171,9 @@ def test_pattern_outcomes(
                 "test_category": cat,
                 "pattern_subtype": inv["subtype"],
                 "outcome_class": outcome,
+                # Trap 3: soft-signal-only outcomes are directional — do not treat
+                # these counts as hard metrics driving decisions.
+                "directional_only": directional,
                 "evidence_quote": ev_quote[:300],
                 "project": inv["proj"],
             })

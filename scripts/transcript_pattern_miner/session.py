@@ -444,34 +444,44 @@ def _detect_bash_test_category(
 def classify_outcome(
     agg: SessionAggregate,
     invocation: dict[str, Any],
-) -> tuple[str, str]:
+) -> tuple[str, str, bool]:
     """
-    Combine implicit acceptance + tool-result inference for one test invocation.
-    Returns (outcome_class, evidence_quote).
+    Combine strict tool-result status + soft user signals for one test invocation.
+    Returns (outcome_class, evidence_quote, directional_only).
+
     Classes: POSITIVE | MIXED | REWORK | NO_SIGNAL.
+
+    Trap 3 guard — soft signals are DIRECTIONAL only:
+    - When outcome is derived purely from next-user-message text (no is_error basis),
+      directional_only=True is returned so callers can label the row accordingly.
+    - When outcome is grounded in tool_result.is_error (the strict signal), it is NOT
+      directional.  This prevents soft correction/acceptance text from being treated as
+      a hard metric.
     """
     idx = invocation["event_idx"]
     tool_use_id = invocation.get("tool_use_id")
     events = agg.events
     if idx >= len(events):
-        return "NO_SIGNAL", ""
+        return "NO_SIGNAL", "", False
 
     tool_result_err = _find_tool_result_error(events, idx, tool_use_id)
     rework, accept, evidence = _scan_next_user_signals(events, idx)
 
     if tool_result_err is True and rework:
-        return "REWORK", evidence or "tool errored + user corrected"
+        return "REWORK", evidence or "tool errored + user corrected", False
     if tool_result_err is True and not accept:
-        return "REWORK", evidence or "tool returned is_error=true"
+        return "REWORK", evidence or "tool returned is_error=true", False
     if rework:
-        return "REWORK", evidence
+        # Only user-text evidence — directional
+        return "REWORK", evidence, True
     if tool_result_err is False and accept:
-        return "POSITIVE", evidence
+        return "POSITIVE", evidence, False
     if accept:
-        return "POSITIVE", evidence
+        # Only user-text evidence — directional
+        return "POSITIVE", evidence, True
     if tool_result_err is False and not rework and not accept:
-        return "MIXED", "tool ok, no follow-up signal"
-    return "NO_SIGNAL", ""
+        return "MIXED", "tool ok, no follow-up signal", False
+    return "NO_SIGNAL", "", False
 
 
 def _find_tool_result_error(
@@ -522,13 +532,26 @@ def _scan_next_user_signals(
 # ---------------------------------------------------------------------------
 
 def process_session_file(path: Path, cutoff: dt.datetime | None) -> SessionAggregate | None:
-    """Stream a session JSONL and return an aggregate, or None if outside the window."""
+    """Stream a session JSONL and return an aggregate, or None if outside the window.
+
+    Trap 2 guard — content dedup: resumed/sidechain transcripts re-log records that
+    already appeared in an earlier session file.  We dedup by the record's `uuid` field
+    (unique per Claude Code message) so duplicated records never inflate counts.
+    Records without a `uuid` field are processed unconditionally (they cannot be
+    distinguished and are rare; the main duplication vector always carries a uuid).
+    """
     sess_id = path.stem
     agg = SessionAggregate(sess_id)
     has_any = False
     in_window = cutoff is None
+    seen_uuids: set[str] = set()
 
     for obj in iter_jsonl(path):
+        uid = obj.get("uuid")
+        if uid:
+            if uid in seen_uuids:
+                continue
+            seen_uuids.add(uid)
         t = obj.get("type")
         ts = parse_ts(obj.get("timestamp"))
         if ts is not None:

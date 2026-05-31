@@ -190,7 +190,9 @@ def _render_test_outcomes(
             "> Outcome inference combines (a) tool_result is_error status when the test was a tool call "
             "and (b) implicit acceptance/correction signals on the next 1-3 user messages. "
             "MIXED = tool succeeded but no follow-up user signal (could be silent acceptance OR session ended). "
-            "NO_SIGNAL = neither tool-result nor next-user signal was conclusive."
+            "NO_SIGNAL = neither tool-result nor next-user signal was conclusive. "
+            "REWORK/POSITIVE rows where the only evidence is user-text (no is_error basis) are marked "
+            "`directional_only=true` in .outcomes.jsonl — treat those counts as directional, not hard metrics."
         )
     lines.append("")
 

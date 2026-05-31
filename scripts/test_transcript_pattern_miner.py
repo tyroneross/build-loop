@@ -407,3 +407,130 @@ class TestOutcomesJsonl:
             assert "test_category" in row
             assert "outcome_class" in row
             assert "session_id" in row
+
+    def test_directional_only_field_present(self, fixture_run):
+        """Trap 3: every outcomes row must carry directional_only (bool)."""
+        path = fixture_run / ".outcomes.jsonl"
+        if not (path.exists() and path.stat().st_size > 0):
+            pytest.skip("no outcomes rows written")
+        rows = [json.loads(line) for line in path.read_text().strip().splitlines()]
+        for row in rows:
+            assert "directional_only" in row, f"missing directional_only in row: {row}"
+            assert isinstance(row["directional_only"], bool), (
+                f"directional_only must be bool, got {type(row['directional_only'])!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Trap-guard unit tests (do NOT depend on fixture_run)
+# ---------------------------------------------------------------------------
+
+class TestTrap1StrictFailureClassification:
+    """Trap 1: tool_result containing error-like text in valid output must NOT be a failure."""
+
+    def test_tool_result_with_error_text_in_output_not_counted_as_failure(self, tmp_path):
+        """A tool_result whose content contains 'error' / 'FAIL' / 'warning' but has
+        is_error=False (i.e. the tool succeeded) must classify as MIXED or POSITIVE,
+        never REWORK."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from transcript_pattern_miner.session import (
+            SessionAggregate, classify_outcome, _record_tool_results,
+            _process_assistant_tool_use_item,
+        )
+        from transcript_pattern_miner.io_cache import parse_ts
+
+        # Build a minimal aggregate with one Bash tool call whose result
+        # contains "error" and "FAIL" text but is_error=False.
+        agg = SessionAggregate("trap1-test")
+        ts = parse_ts("2026-01-15T10:00:00Z")
+
+        # Assistant issues a Bash tool call
+        tool_item = {
+            "type": "tool_use",
+            "id": "tool-abc-1",
+            "name": "Bash",
+            "input": {"command": "pytest scripts/ -q"},
+        }
+        _process_assistant_tool_use_item(agg, tool_item, ts, "project-x")
+
+        # User returns tool result: content has "error" text but is_error=False
+        result_content = [
+            {
+                "type": "tool_result",
+                "tool_use_id": "tool-abc-1",
+                "content": "IBR scan complete. No error found. FAIL rate: 0%. 37 warnings suppressed.",
+                "is_error": False,
+            }
+        ]
+        _record_tool_results(agg, result_content, ts, "project-x")
+
+        # The pytest invocation is in test_invocations (B_runner category)
+        assert agg.test_invocations, "expected a B_runner test invocation to be recorded"
+        inv = agg.test_invocations[0]
+
+        outcome, evidence, directional = classify_outcome(agg, inv)
+
+        assert outcome != "REWORK", (
+            f"Trap 1 violation: tool_result containing 'error'/'FAIL' text but "
+            f"is_error=False was classified as REWORK (got: {outcome!r}, evidence: {evidence!r}). "
+            "Failure classification must be based on is_error flag, not text content."
+        )
+        # MIXED is the correct outcome: tool ok, no follow-up user signal
+        assert outcome in ("MIXED", "POSITIVE", "NO_SIGNAL"), (
+            f"Expected MIXED/POSITIVE/NO_SIGNAL, got {outcome!r}"
+        )
+
+
+class TestTrap2DeduplicationPreventsInflation:
+    """Trap 2: duplicated transcript records (resumed sessions) must not inflate counts."""
+
+    def test_duplicated_uuid_records_not_double_counted(self, tmp_path):
+        """Writing the same record twice (same uuid) in one JSONL file must produce
+        the same aggregate counts as writing it once."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from transcript_pattern_miner.session import process_session_file
+        import json as _json
+
+        cwd = "/Users/tyroneross/dev/git-folder/some-project/src"
+        sid = "dedup-test-session"
+
+        # A tool_use + correction record with a uuid
+        asst_record = {
+            "type": "assistant", "uuid": "uuid-asst-001", "parentUuid": None,
+            "timestamp": "2026-01-15T10:00:00.000Z", "sessionId": sid, "cwd": cwd,
+            "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "I will use pip."}
+            ]},
+        }
+        user_correction = {
+            "type": "user", "uuid": "uuid-user-001", "parentUuid": None,
+            "timestamp": "2026-01-15T10:01:00.000Z", "sessionId": sid, "cwd": cwd,
+            "message": {"role": "user", "content": "no, actually you should use uv not pip"},
+        }
+
+        def _write(path, records):
+            with path.open("w") as f:
+                for r in records:
+                    f.write(_json.dumps(r) + "\n")
+
+        # File with records once
+        once_path = tmp_path / "once.jsonl"
+        _write(once_path, [asst_record, user_correction])
+
+        # File with records duplicated (simulates resume replay)
+        dup_path = tmp_path / "dup.jsonl"
+        _write(dup_path, [asst_record, user_correction, asst_record, user_correction])
+
+        agg_once = process_session_file(once_path, None)
+        agg_dup = process_session_file(dup_path, None)
+
+        assert agg_once is not None
+        assert agg_dup is not None
+
+        # User messages should be the same count regardless of duplication
+        assert len(agg_once.user_messages) == len(agg_dup.user_messages), (
+            f"Trap 2 violation: duplicated records inflated user_messages count. "
+            f"once={len(agg_once.user_messages)}, dup={len(agg_dup.user_messages)}"
+        )
