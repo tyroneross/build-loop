@@ -35,9 +35,11 @@ Run top-down; stop at the first rung that resolves. **Never skip to "ask the hum
 ## Reversible vs irreversible — classify before every decision (takes seconds)
 
 - **Two-way door (reversible):** move fast, correct later. Almost all code, refactors, doc edits, experiments. → decide+act. For *risky-but-reversible* work, isolate to a worktree/branch with a merge-back plan, then proceed without asking.
-- **One-way door (irreversible / high blast-radius):** production deploy/publish, destructive data delete, public release, a stated-constraint violation. → rung 6. Slow down, confirm.
+- **One-way door (irreversible / high blast-radius):** destructive data delete with no backup, a deploy that immediately affects external users, leaking a secret, a stated-constraint violation. → rung 6. Slow down, confirm.
 
 Applying the wrong process to either type is the real failure mode — one-way-door caution on a two-way-door task trains the user to expect overhead on routine work.
+
+**Reversibility is context-dependent — judge the actual undo cost, don't pattern-match the verb.** A "release" or "publish" is *not* automatically one-way. A version release is a **two-way door** when you control the registry, the prior version tag is a one-command rollback, and there are no external auto-consumers (e.g. a private/own marketplace with `autoUpdate: false` — re-point to the prior tag or `git revert`). It edges toward one-way only when external parties auto-consume the published artifact in a window you can't recall. Ask "what does undoing this actually cost?" — if the answer is "revert a commit / re-point a tag," it's two-way; act.
 
 ## Token / effort posture — gauge it, default to the user's signal
 
