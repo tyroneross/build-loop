@@ -21,8 +21,10 @@ from typing import Any
 
 try:  # package import
     from . import channel_paths
+    from .leadership import is_lease_valid, read_lead
 except ImportError:  # script import
     import channel_paths  # type: ignore
+    from leadership import is_lease_valid, read_lead  # type: ignore
 
 _SESSIONS_DIR = "sessions"
 DEFAULT_STALE_SECS = 120
@@ -256,11 +258,16 @@ def render_named(roster: dict[str, Any]) -> str:
     Numbering: per-tool, 1-based, assigned by ascending session_id within
     the full flat set (deterministic, matches build_roster sort order).
 
-    Lead marker (★): agents with no ``parent`` (root nodes in the tree) are
-    treated as the lead/orchestrator for their app group.  No dedicated
-    ``is_lead`` field exists in the presence schema; the root-node heuristic
-    is the best available proxy.  When multiple root agents share an app, all
-    receive ★.
+    Lead marker (★) — two-tier resolution, per app group:
+      1. Authoritative: read ``<apps_root>/<app>/rally/lead.json`` via
+         ``leadership.read_lead`` + ``is_lease_valid``.  If the file exists
+         and the lease has NOT expired, exactly the session recorded as
+         ``lead.session_id`` receives ★ — regardless of tree position.
+      2. Orchestrator heuristic (fallback, used only when no valid lead.json
+         exists for the app): mark ★ only agents that have actually spawned
+         or are leading others — those with live ``children`` or
+         ``spawned_total > 0``.  A plain independent session with neither
+         gets no marker.
 
     Subagent nesting: uses the ``children`` list built by ``build_roster``
     from the ``parent`` field — full nesting is available and used.
@@ -334,11 +341,33 @@ def render_named(roster: dict[str, Any]) -> str:
         for child in agent.get("children") or []:
             emit_named(child, depth=depth + 1, is_lead=False)
 
+    apps_root_path = channel_paths.apps_root()
+
     for app_name, root_agents in groups.items():
         lines.append(f"\n[{app_name}]")
+
+        # Resolve the designated lead session_id for this app (authoritative).
+        # Falls back to None when lead.json is absent or the lease has expired.
+        designated_lead_sid: str | None = None
+        try:
+            channel_dir = apps_root_path / app_name
+            if is_lease_valid(channel_dir):
+                doc = read_lead(channel_dir)
+                if doc and isinstance(doc.get("lead"), dict):
+                    designated_lead_sid = doc["lead"].get("session_id") or None
+        except Exception:  # noqa: BLE001 — never let roster rendering fail
+            pass
+
+        def _is_lead(agent: dict) -> bool:
+            sid = agent.get("session_id") or ""
+            if designated_lead_sid is not None:
+                # Authoritative: exactly the designated session_id.
+                return sid == designated_lead_sid
+            # Orchestrator heuristic: agent has live children OR has spawned.
+            return bool(agent.get("children")) or agent.get("spawned_total", 0) > 0
+
         for agent in root_agents:
-            # Root agents (no parent) are the lead proxy within each group.
-            emit_named(agent, depth=0, is_lead=True)
+            emit_named(agent, depth=0, is_lead=_is_lead(agent))
 
     return "\n".join(lines)
 
