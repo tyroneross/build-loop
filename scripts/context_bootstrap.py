@@ -433,7 +433,14 @@ def repo_local_context(workdir: Path, terms: list[str], max_chars: int) -> dict[
     coord_dir = workdir / ".build-loop" / "coordination"
     coordination_files: list[dict[str, Any]] = []
     if coord_dir.is_dir():
-        for path in sorted(coord_dir.glob("*.md"))[:8]:
+        # Most-RECENT 8 coordination files, not alphabetical-first. Alphabetical
+        # order loaded stale files and starved the freshest signal (audit 2026-05-31).
+        def _mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                return 0.0
+        for path in sorted(coord_dir.glob("*.md"), key=_mtime, reverse=True)[:8]:
             text, reason = read_text(path)
             if text is None:
                 reasons.append(reason or f"read_error: {path}")
@@ -802,7 +809,38 @@ def rally_context(workdir: Path, include_rally: bool) -> dict[str, Any]:
             "status": None,
             "reasons": [f"coordination_status_json_error: {exc}"],
         }
+    # Strip the raw dirty-file list (often dozens of paths) — it's pure noise in a
+    # MEMORY packet and belongs in the diff, not here (audit 2026-05-31). Keep a count.
+    if isinstance(status, dict) and isinstance(status.get("dirty_files"), list):
+        status["dirty_files_count"] = len(status["dirty_files"])
+        status.pop("dirty_files", None)
     return {"checked": True, "status": status, "reasons": reasons}
+
+
+def staleness_context(workdir: Path, timeout: float = 5.0) -> dict[str, Any]:
+    """Capture the freshness probes' signals so they reach the packet + brief.
+
+    memory_staleness_check.py ([MEMORY OK] / [STALE …]) and stale_context_check.py
+    both produce a usable freshness signal but previously never entered the packet —
+    the agent had to run them as separate shell commands (audit 2026-05-31). Fail-soft:
+    a probe error or timeout never blocks bootstrap.
+    """
+    out: dict[str, Any] = {}
+    for key, name in (("memory", "memory_staleness_check.py"),
+                      ("context", "stale_context_check.py")):
+        script = HERE / name
+        if not script.exists():
+            out[key] = None
+            continue
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(script), "--workdir", str(workdir)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            out[key] = ((proc.stdout or proc.stderr or "").strip()[:300]) or None
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            out[key] = f"error: {exc}"
+    return out
 
 
 def agent_brief(packet: dict[str, Any]) -> str:
@@ -820,6 +858,12 @@ def agent_brief(packet: dict[str, Any]) -> str:
         f"- Codex memory: {len(codex.get('registry_hits') or [])} registry hits; {len(codex.get('rollout_hits') or [])} rollout summaries.",
         f"- Rally/coordination: {'checked' if rally.get('checked') else 'skipped'}; reasons={rally.get('reasons') or []}",
     ]
+
+    staleness = packet.get("staleness") or {}
+    if staleness.get("memory") or staleness.get("context"):
+        lines.append(
+            f"- Staleness: {staleness.get('memory') or 'memory:?'} | {staleness.get('context') or 'context:ok'}"
+        )
 
     # Queue summary line — only when at least one queue has items.
     queue_parts = []
@@ -888,6 +932,7 @@ def build_packet(
         "queues": queue_context(workdir),
         "lessons_progressive": lessons,
         "session_prefs": read_session_prefs(workdir),
+        "staleness": staleness_context(workdir),
         "sources": {
             "canonical_memory": canonical_memory_context(
                 workdir=workdir,
