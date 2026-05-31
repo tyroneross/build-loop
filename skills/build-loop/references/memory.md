@@ -30,6 +30,22 @@ Build-loop maintains one canonical long-term memory store at `~/dev/git-folder/b
 - **No** → project canonical lane (`build-loop-memory/projects/<slug>/...`). Design tokens, internal APIs, project-specific gotchas, per-repo conventions.
 - **Ambiguous** → ask the user once, then save. Don't guess.
 
+### Artifact lanes & segmentation (issues / backlog / lessons)
+
+Three work/knowledge artifact types, each with a clear WRITE → READ → TRACK lane. **Every lane is repo-segmented; the segmentation is mechanical, not discretionary** — so work on repo X never reads or writes repo Y's items.
+
+| Artifact | Write (where) | Read / Track | Lifetime |
+|---|---|---|---|
+| **issues** | `<repo>/.build-loop/issues/<id>.md` — current-run bugs | Phase 5 Iterate drains them; repo-local so inherently scoped | short-lived (resolve → delete) |
+| **backlog** | durable: `build-loop-memory/projects/<slug>/backlog.md` (slug folder = repo scope); active: `<repo>/.build-loop/backlog/<id>.md` | read before planning self-work; Phase 5 drains active items | long-lived |
+| **lessons** | `projects/<slug>/lessons/` (project) OR top-level `lessons/` (cross-project, stored `_unscoped`) — via `memory_writer.py` | `context_bootstrap` recall scopes to `(slug OR _unscoped)` — never other projects | durable |
+
+**Segmentation contract (binding):**
+- The **slug folder** (`projects/<slug>/`) is the repo key; the **`repo` + `branch` frontmatter** on each issue/backlog item is the explicit scope tag (template: `templates/backlog-item.md`). Both must agree.
+- When working repo X on branch B, **read and write only** items where `repo == X` (and `branch == B` or unscoped). A cross-repo item discovered mid-work is recorded in **its** repo's scope, **never** the current repo's tracker.
+- **No shared/freeform cross-repo trackers.** (The retired `OPEN-ITEMS.md` was exactly this anti-pattern — one file that accreted rows from atomize-ai, local-smartz, etc. into build-loop's scope. Replaced by the slug-segmented `projects/<slug>/backlog.md`.)
+- Reads are already enforced: `context_bootstrap` queue reads are repo-local `.build-loop/`, and lessons recall passes the resolved `project` so the query scopes to `(project OR _unscoped)` — `project=None` (all-projects) is never used for current-work context.
+
 ### When to write memory
 
 - User states a preference or convention: save immediately.
