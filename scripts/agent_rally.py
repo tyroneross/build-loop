@@ -41,6 +41,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import boundary as _boundary
-from rally_point import leadership, presence  # noqa: E402
+from rally_point import leadership, presence, roster as _roster  # noqa: E402
 from rally_point.discovery_bridge import (  # noqa: E402
     resolve as _bridge_resolve,
     rust_rally_binary,
@@ -117,6 +118,11 @@ def cmd_presence(args: argparse.Namespace) -> int:
         })
     if envelope.resolved_via == "build-loop-internal":
         channel_dir.mkdir(parents=True, exist_ok=True)
+    cwd = (
+        Path(args.cwd).expanduser().resolve()
+        if getattr(args, "cwd", None)
+        else Path(args.workdir).expanduser().resolve()
+    )
     presence.write_presence(
         channel_dir,
         session_id=args.session_id,
@@ -126,13 +132,21 @@ def cmd_presence(args: argparse.Namespace) -> int:
         app_slug=slug,
         phase=args.phase,
         files_in_flight=_split_csv(args.files_in_flight),
-        cwd=Path(args.workdir).expanduser().resolve(),
+        cwd=cwd,
+        task=getattr(args, "task", None),
+        parent=getattr(args, "parent", None),
+        spawned=getattr(args, "spawned", None),
+        pid=getattr(args, "pid", None),
+        host=getattr(args, "host", None),
     )
     return _emit({
         "action": "presence-written",
         "app_slug": slug,
         "session_id": args.session_id,
         "phase": args.phase,
+        "task": getattr(args, "task", None) or args.phase,
+        "parent": getattr(args, "parent", None),
+        "spawned": presence.parse_spawned(getattr(args, "spawned", None)),
     })
 
 
@@ -369,6 +383,43 @@ def cmd_boundary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_roster(args: argparse.Namespace) -> int:
+    """Cross-channel live agent roster.
+
+    Walks every ``<apps_root>/*/sessions/*.json`` (all repos at once;
+    ``--app`` filters to one), keeps sessions heartbeating within
+    ``--stale-secs`` (default 120; ``--all`` keeps stale too), and builds
+    the parent/child tree from ``parent`` links + self-reported
+    ``spawned`` fan-out. ``--json`` emits the structured roster;
+    ``--watch N`` re-renders every N seconds.
+    """
+    def _once() -> dict[str, Any]:
+        return _roster.build_roster(
+            app=args.app,
+            stale_secs=args.stale_secs,
+            include_stale=args.all,
+        )
+
+    if args.watch and args.watch > 0 and not args.json:
+        try:
+            while True:
+                sys.stdout.write("\033[2J\033[H")  # clear screen + home
+                sys.stdout.write(_roster.render_text(_once()))
+                sys.stdout.write(
+                    f"\n\n(watching every {args.watch}s — Ctrl-C to stop)\n"
+                )
+                sys.stdout.flush()
+                time.sleep(args.watch)
+        except KeyboardInterrupt:
+            return 0
+
+    data = _once()
+    if args.json:
+        return _emit(data)
+    sys.stdout.write(_roster.render_text(data) + "\n")
+    return 0
+
+
 def cmd_lead(args: argparse.Namespace) -> int:
     slug, channel_dir = _resolve_channel(args.workdir)
     op = args.lead_op
@@ -481,7 +532,47 @@ def build_parser() -> argparse.ArgumentParser:
     _common(sp_presence)
     sp_presence.add_argument("--phase", default="rally-point")
     sp_presence.add_argument("--files-in-flight", default=None)
+    # Roster enrichment (all optional/additive — see `roster`).
+    sp_presence.add_argument(
+        "--cwd", default=None,
+        help="Working dir this agent runs from (default: --workdir).")
+    sp_presence.add_argument(
+        "--pid", type=int, default=None,
+        help="OS pid (default: this process).")
+    sp_presence.add_argument(
+        "--host", default=None,
+        help="Hostname (default: socket.gethostname()).")
+    sp_presence.add_argument(
+        "--task", default=None,
+        help="Fuller free-text task (falls back to --phase for display).")
+    sp_presence.add_argument(
+        "--parent", default=None,
+        help="session_id of the agent that spawned this one (None=top-level).")
+    sp_presence.add_argument(
+        "--spawned", default=None,
+        help="Self-reported fan-out as type:count CSV, "
+             "e.g. coder:2,workflow:21,independent-auditor:1.")
     sp_presence.set_defaults(func=cmd_presence)
+
+    sp_roster = sub.add_parser(
+        "roster",
+        help="Cross-channel live agent roster (who/where/what/subagents).",
+    )
+    sp_roster.add_argument(
+        "--app", default=None,
+        help="Filter to one app/channel slug (default: all channels).")
+    sp_roster.add_argument(
+        "--stale-secs", type=int, default=_roster.DEFAULT_STALE_SECS,
+        help=f"Liveness window (default {_roster.DEFAULT_STALE_SECS}s).")
+    sp_roster.add_argument(
+        "--all", action="store_true",
+        help="Include stale sessions (default: live only).")
+    sp_roster.add_argument(
+        "--watch", type=int, default=0, metavar="SECS",
+        help="Re-render every SECS seconds (real-time view).")
+    sp_roster.add_argument("--json", action="store_true",
+                           help="Emit the structured roster as JSON.")
+    sp_roster.set_defaults(func=cmd_roster)
 
     sp_stop = sub.add_parser("stop", help="Stop this session and release active claims when supported.")
     _common(sp_stop, need_run=False)

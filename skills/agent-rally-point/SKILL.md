@@ -67,10 +67,56 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/boundary.py --repo "${CLAUDE_P
 
 Use `/agent-rally-point status` for the same sensor from Claude Code.
 
+## Roster — who is running, where, doing what, with how many subagents
+
+`roster` answers the cross-channel "who's live right now" question in one
+command. It walks **every** `<apps_root>/*/sessions/*.json` (all repos at
+once), keeps sessions whose `last_seen` is within the stale window, and
+builds a parent/child tree from each record's `parent` link plus the
+self-reported `spawned` fan-out.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py roster              # live tree, all channels
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py roster --app ptyd   # one channel
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py roster --json       # structured (array of agent objects w/ children + spawned)
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py roster --stale-secs 300 --all   # widen window, keep stale
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py roster --watch 5    # re-render every 5s
+```
+
+Each row: `session_id · app · host:cwd · tool/model · task · last-seen(age) ·
+subagents (Σtotal by-type + live nested count)`. Children that posted their
+own presence nest under the parent; subagents that did not post presence are
+reflected by the parent's `spawned` totals.
+
+### Convention — populate the roster on every presence write
+
+So the roster is useful, agents **must** enrich their `presence` calls. These
+fields are additive and backward-compatible (existing callers keep working):
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py presence \
+  --session-id "$SESSION_ID" --tool claude_code --model opus \
+  --cwd "$PWD" \
+  --task "what this agent is actually doing right now" \
+  --parent "$SPAWNING_SESSION_ID" \
+  --spawned "coder:2,workflow:21,independent-auditor:1"
+```
+
+- `--cwd` / `--pid` / `--host` — where it runs (default cwd / this pid / this host).
+- `--task` — fuller free text (falls back to `--phase` for display).
+- `--parent <session_id>` — links a subagent to its spawning agent; omit for top-level.
+- `--spawned <type:count,…>` — the fan-out an agent self-reports.
+- Every `presence` call rewrites `last_seen` (presence IS the heartbeat) — re-post
+  periodically so the agent stays in the live window (default 120s).
+
+Top-level orchestrators should post `--spawned` reflecting their dispatched
+subagents; each dispatched subagent that can post should set `--parent` to the
+orchestrator's `session_id`.
+
 ## Validation
 
 ```bash
-uv run pytest scripts/test_build_loop_id.py scripts/rally_point/test_boundary.py scripts/rally_point/test_orchestrator_contract.py
+uv run pytest scripts/test_build_loop_id.py scripts/rally_point/test_boundary.py scripts/rally_point/test_orchestrator_contract.py scripts/test_agent_rally_roster.py
 python3 scripts/agent_rally.py boundary --repo "$PWD" --check --json
 ```
 

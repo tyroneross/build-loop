@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -126,6 +127,45 @@ def _atomic_write(path: Path, obj: dict) -> None:
     os.replace(str(tmp), str(path))
 
 
+def parse_spawned(value: str | dict | None) -> dict:
+    """Parse a ``--spawned`` spec (``type:count,type:count``) to a dict.
+
+    Accepts the raw CSV string an agent self-reports for its fan-out
+    (e.g. ``coder:2,workflow:21,independent-auditor:1``) and returns
+    ``{"coder": 2, "workflow": 21, "independent-auditor": 1}``. A bare
+    type with no count defaults to 1 (``coder`` -> ``{"coder": 1}``).
+    Already-parsed dicts pass through (coerced to int counts). Malformed
+    fragments are skipped — fire-and-forget, never raises.
+    """
+    if isinstance(value, dict):
+        out: dict[str, int] = {}
+        for k, v in value.items():
+            try:
+                out[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+    if not value:
+        return {}
+    out = {}
+    for frag in str(value).split(","):
+        frag = frag.strip()
+        if not frag:
+            continue
+        if ":" in frag:
+            name, _, count = frag.partition(":")
+            name = name.strip()
+            try:
+                n = int(count.strip())
+            except ValueError:
+                n = 1
+        else:
+            name, n = frag, 1
+        if name:
+            out[name] = out.get(name, 0) + n
+    return out
+
+
 def write_presence(
     channel_dir: Path,
     *,
@@ -137,6 +177,11 @@ def write_presence(
     phase: str,
     files_in_flight: list | None = None,
     cwd: Path | None = None,
+    task: str | None = None,
+    parent: str | None = None,
+    spawned: str | dict | None = None,
+    pid: int | None = None,
+    host: str | None = None,
 ) -> None:
     """Write/refresh presence (overwrite-in-place). Preserves the cursor.
 
@@ -145,6 +190,13 @@ def write_presence(
     (``branch_name``, ``branch_head_sha``, ``branch_merge_status``,
     ``branch_merge_status_checked_ts``) are computed via
     ``_compute_branch_status``; any git failure yields ``"unknown"``.
+
+    Roster fields (all optional, additive — existing callers unaffected):
+    ``task`` (fuller free-text, falls back to ``phase`` for display),
+    ``parent`` (the session_id that spawned this one; ``None`` for
+    top-level), ``spawned`` (self-reported fan-out, ``type:count`` CSV
+    or dict), ``pid``/``host`` (where it runs; default to this process).
+    Every call writes ``last_seen`` (epoch) — presence is the heartbeat.
 
     Fire-and-forget: never raises, never blocks the host action.
     """
@@ -156,6 +208,7 @@ def write_presence(
         except (FileNotFoundError, OSError, ValueError):
             pass
         branch = _compute_branch_status(cwd if cwd is not None else Path.cwd())
+        now = time.time()
         rec = {
             "session_id": session_id,
             "tool": tool or "unknown",
@@ -163,13 +216,19 @@ def write_presence(
             "run_id": run_id or "unknown",
             "app_slug": app_slug,
             "phase": phase,
+            "task": task or phase,
+            "parent": parent or None,
+            "spawned": parse_spawned(spawned),
             "files_in_flight": list(files_in_flight or []),
-            "heartbeat_ts": time.time(),
+            "heartbeat_ts": now,
+            "last_seen": now,
+            "pid": int(pid) if pid is not None else os.getpid(),
+            "host": host or socket.gethostname(),
             "cursor": cursor,
             "branch_name": branch["branch_name"],
             "branch_head_sha": branch["branch_head_sha"],
             "branch_merge_status": branch["branch_merge_status"],
-            "branch_merge_status_checked_ts": time.time(),
+            "branch_merge_status_checked_ts": now,
             "cwd": str(cwd) if cwd is not None else str(Path.cwd()),
         }
         # Top-level run-instance identity (orthogonal to runtime identity).
