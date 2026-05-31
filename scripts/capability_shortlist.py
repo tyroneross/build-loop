@@ -21,7 +21,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
 SHORTLIST_CAP = 8
@@ -68,50 +68,54 @@ STOP_WORDS = frozenset({
     "those", "into", "onto", "than", "then", "but", "are", "was",
     "were", "have", "has", "had", "you", "your", "our", "their",
     "via", "out", "all", "any", "some", "more", "less",
-    "find", "show", "show", "make", "use", "uses", "used",
+    "find", "show", "make", "use", "uses", "used",
     "issues", "issue", "things", "thing", "stuff",
 })
 
 
-def tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> list[str]:
     return [
         t.lower() for t in TOKEN_RE.findall(text or "")
         if t.lower() not in STOP_WORDS
     ]
 
 
-def ensure_registry(workdir: Path) -> Dict[str, Any]:
+_EMPTY_REGISTRY: dict[str, Any] = {"entries": [], "total": 0}
+
+
+def _try_load_registry(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def ensure_registry(workdir: Path) -> dict[str, Any]:
     """Read the registry; rebuild it if missing or unreadable."""
     reg_path = workdir / ".build-loop" / "capability-registry.json"
     if reg_path.is_file():
-        try:
-            return json.loads(reg_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            pass
+        result = _try_load_registry(reg_path)
+        if result is not None:
+            return result
     builder = workdir / "scripts" / "build_capability_registry.py"
     if not builder.is_file():
-        return {"entries": [], "total": 0}
+        return _EMPTY_REGISTRY
     subprocess.run(
         [sys.executable, str(builder), "--workdir", str(workdir)],
         check=False,
         capture_output=True,
     )
-    if reg_path.is_file():
-        try:
-            return json.loads(reg_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {"entries": [], "total": 0}
-    return {"entries": [], "total": 0}
+    return _try_load_registry(reg_path) or _EMPTY_REGISTRY
 
 
 def score_entry(
-    entry: Dict[str, Any],
-    intent_tokens: List[str],
-    primary: List[str],
-    secondary: List[str],
-) -> tuple[int, List[str]]:
+    entry: dict[str, Any],
+    intent_tokens: list[str],
+    primary: list[str],
+    secondary: list[str],
+) -> tuple[int, list[str]]:
     score = 0
-    reasons: List[str] = []
+    reasons: list[str] = []
     haystack = " ".join([
         entry.get("name", ""),
         entry.get("description", ""),
@@ -181,8 +185,8 @@ def _plugin_namespace(entry: Dict[str, Any]) -> str:
 
 
 def apply_plugin_surface_collapse(
-    scored: List[tuple],
-) -> List[tuple]:
+    scored: list[tuple],
+) -> list[tuple]:
     """Collapse plugin-surface redundancy.
 
     When ≥3 entries share the same `(category, plugin_namespace)`, keep at
@@ -192,7 +196,7 @@ def apply_plugin_surface_collapse(
     the input is preserved for kept entries.
     """
     # Group by (category, namespace).
-    groups: Dict[tuple, List[int]] = {}
+    groups: dict[tuple, list[int]] = {}
     for idx, (_score, _reasons, e) in enumerate(scored):
         key = (e.get("category", ""), _plugin_namespace(e))
         groups.setdefault(key, []).append(idx)
@@ -216,13 +220,13 @@ def apply_plugin_surface_collapse(
     return [t for i, t in enumerate(scored) if i not in drop_indices]
 
 
-def _infer_triggers_from_repo(workdir: Path) -> Dict[str, Any]:
+def _infer_triggers_from_repo(workdir: Path) -> dict[str, Any]:
     """Best-effort heuristics when state.json doesn't have trigger fields.
 
     Looks at on-disk file extensions and config files.
     Returns dict with `uiTarget`, `migrationSource`, `promptAuthoring`.
     """
-    inferred: Dict[str, Any] = {
+    inferred: dict[str, Any] = {
         "uiTarget": None,
         "migrationSource": None,
         "promptAuthoring": False,
@@ -244,10 +248,10 @@ def _infer_triggers_from_repo(workdir: Path) -> Dict[str, Any]:
     return inferred
 
 
-def _read_state_triggers(workdir: Path) -> Dict[str, Any]:
+def _read_state_triggers(workdir: Path) -> dict[str, Any]:
     """Read .build-loop/state.json triggers + sub-routers; fall back to heuristic."""
     state_path = workdir / ".build-loop" / "state.json"
-    state: Dict[str, Any] = {}
+    state: dict[str, Any] = {}
     try:
         if state_path.is_file():
             state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -275,9 +279,9 @@ def _read_state_triggers(workdir: Path) -> Dict[str, Any]:
 
 
 def apply_trigger_demotion(
-    scored: List[tuple],
-    triggers: Dict[str, Any],
-) -> List[tuple]:
+    scored: list[tuple],
+    triggers: dict[str, Any],
+) -> list[tuple]:
     """Demote off-topic entries based on phase-1 sub-routers and triggers.
 
     Penalty subtracted (TRIGGER_DEMOTION_PENALTY); reason appended. Order is
@@ -296,12 +300,12 @@ def apply_trigger_demotion(
     )
     migration_off = triggers.get("migrationSource") is None
 
-    out: List[tuple] = []
+    out: list[tuple] = []
     for score, reasons, e in scored:
         cat = (e.get("category") or "").lower()
         name_l = (e.get("name") or "").lower()
         penalty = 0
-        notes: List[str] = []
+        notes: list[str] = []
         if ui_off and (cat == "ui-validation"
                        or any(tok in name_l for tok in _UI_VALIDATION_TOKENS)):
             penalty += TRIGGER_DEMOTION_PENALTY
@@ -320,9 +324,9 @@ def apply_trigger_demotion(
 
 
 def apply_explicit_only_policy(
-    scored: List[tuple],
+    scored: list[tuple],
     intent: str,
-) -> List[tuple]:
+) -> list[tuple]:
     """Suppress explicit-only bridges unless the user named them.
 
     IBR is no longer a default UI build/validation route. It remains available
@@ -332,7 +336,7 @@ def apply_explicit_only_policy(
     intent_l = (intent or "").lower()
     ibr_explicit = any(tok in intent_l for tok in _IBR_EXPLICIT_TOKENS)
     if ibr_explicit:
-        out: List[tuple] = []
+        out: list[tuple] = []
         for score, reasons, e in scored:
             name_l = (e.get("name") or "").lower()
             source_l = (e.get("source_path") or "").lower()
@@ -342,7 +346,7 @@ def apply_explicit_only_policy(
                 out.append((score, reasons, e))
         return out
 
-    out: List[tuple] = []
+    out: list[tuple] = []
     for score, reasons, e in scored:
         name_l = (e.get("name") or "").lower()
         source_l = (e.get("source_path") or "").lower()
@@ -354,28 +358,28 @@ def apply_explicit_only_policy(
 
 
 def shortlist(
-    registry: Dict[str, Any],
+    registry: dict[str, Any],
     phase: int,
     intent: str,
-    kinds: Optional[Sequence[str]] = None,
-    workdir: Optional[Path] = None,
-) -> Dict[str, Any]:
+    kinds: list[str] | None = None,
+    workdir: Path | None = None,
+) -> dict[str, Any]:
     """Score and shortlist registry entries against (phase, intent).
 
     `workdir` defaults to the repo root; passed through to trigger reads
     so synthetic test fixtures can override.
     """
-    entries: List[Dict[str, Any]] = list(registry.get("entries", []) or [])
+    entries: list[dict[str, Any]] = list(registry.get("entries", []) or [])
     if kinds:
         kinds_set = set(kinds)
         entries = [e for e in entries if e.get("kind") in kinds_set]
 
     intent_tokens = tokenize(intent)
     pc = PHASE_CATEGORIES.get(phase, {"primary": [], "secondary": []})
-    primary = pc.get("primary", []) or []
-    secondary = pc.get("secondary", []) or []
+    primary: list[str] = pc.get("primary") or []
+    secondary: list[str] = pc.get("secondary") or []
 
-    scored: List[tuple[int, List[str], Dict[str, Any]]] = []
+    scored: list[tuple[int, list[str], dict[str, Any]]] = []
     for e in entries:
         s, reasons = score_entry(e, intent_tokens, primary, secondary)
         if s > 0:
@@ -421,7 +425,7 @@ def shortlist(
     }
 
 
-def cache_into_state(workdir: Path, result: Dict[str, Any]) -> None:
+def cache_into_state(workdir: Path, result: dict[str, Any]) -> None:
     """Cache a compact summary under `state.json.activeCapabilities`.
 
     Shape (P16): phase-keyed dict
@@ -463,14 +467,12 @@ def cache_into_state(workdir: Path, result: Dict[str, Any]) -> None:
 
     cap = state.get("activeCapabilities")
     if isinstance(cap, list):
-        # Migrating from legacy flat-list shape: regroup into phase-keyed dict.
-        new_cap: Dict[str, List[Dict[str, Any]]] = {}
+        # Migrate legacy flat-list → phase-keyed dict on first write.
+        migrated: dict[str, list[dict[str, Any]]] = {}
         for old_entry in cap:
-            if not isinstance(old_entry, dict):
-                continue
-            old_phase = str(old_entry.get("phase", "?"))
-            new_cap.setdefault(old_phase, []).append(old_entry)
-        cap = new_cap
+            if isinstance(old_entry, dict):
+                migrated.setdefault(str(old_entry.get("phase", "?")), []).append(old_entry)
+        cap = migrated
     elif not isinstance(cap, dict):
         cap = {}
 
@@ -486,10 +488,10 @@ def cache_into_state(workdir: Path, result: Dict[str, Any]) -> None:
 
 
 def read_active_capabilities(
-    state: Dict[str, Any],
+    state: dict[str, Any],
     phase: int,
-    fallback_phase: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    fallback_phase: int | None = None,
+) -> list[dict[str, Any]]:
     """Return the most-recent shortlist results[] for `phase`.
 
     Tolerates both the new phase-keyed dict shape and the legacy flat-list
@@ -504,31 +506,24 @@ def read_active_capabilities(
     if not cap:
         return []
     if isinstance(cap, dict):
-        bucket = cap.get(str(phase)) or []
-        if not bucket and fallback_phase is not None:
-            bucket = cap.get(str(fallback_phase)) or []
-        if not bucket:
-            return []
-        latest = bucket[-1]
-        return list(latest.get("results") or [])
+        phases_to_try = [str(phase)] + ([str(fallback_phase)] if fallback_phase is not None else [])
+        for key in phases_to_try:
+            bucket = cap.get(key) or []
+            if bucket:
+                return list(bucket[-1].get("results") or [])
+        return []
     if isinstance(cap, list):
         # Legacy flat-list shape — pick the most recent matching phase entry.
-        for entry in reversed(cap):
-            if not isinstance(entry, dict):
-                continue
-            if entry.get("phase") == phase:
-                return list(entry.get("results") or [])
-        if fallback_phase is not None:
+        phases_to_try_int = [phase] + ([fallback_phase] if fallback_phase is not None else [])
+        for want in phases_to_try_int:
             for entry in reversed(cap):
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("phase") == fallback_phase:
+                if isinstance(entry, dict) and entry.get("phase") == want:
                     return list(entry.get("results") or [])
         return []
     return []
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", type=int, required=True, choices=range(1, 7))
     parser.add_argument("--intent", required=True)

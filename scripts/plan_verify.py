@@ -955,8 +955,9 @@ def iter_synthesis_dimension_entries(lines: list[tuple[int, str]]):
             j = i + 1
             while j < n:
                 lj, lline = lines[j]
-                if lline == "":
-                    j += 1; continue
+                if not lline:
+                    j += 1
+                    continue
                 if not re.match(r"^[ \t]+\S", lline):
                     break
                 yield lj, lline
@@ -1352,9 +1353,8 @@ def summarize(findings: list[dict[str, Any]]) -> dict[str, Any]:
     by_rule: dict[str, dict[str, int]] = {}
     for f in findings:
         sev = f["severity"]
-        by_severity[sev] = by_severity.get(sev, 0) + 1
-        rid = f["rule_id"]
-        by_rule.setdefault(rid, {"BLOCKER": 0, "WARN": 0, "INFO": 0})[sev] += 1
+        by_severity[sev] += 1
+        by_rule.setdefault(f["rule_id"], {"BLOCKER": 0, "WARN": 0, "INFO": 0})[sev] += 1
     return {"by_severity": by_severity, "by_rule_id": by_rule, "total": len(findings)}
 
 
