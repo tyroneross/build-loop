@@ -152,9 +152,9 @@ Room resolution can shift under you — a binary update, a repo-keying change, o
 
 ---
 
-## MECE Packets (every write-handoff requires all four)
+## MECE Packets (every write-handoff requires all six)
 
-**Every implementation handoff to a peer MUST spell out four elements: `owns / does-not-own / interface-contract / integration-checkpoint`.** Anything less is "informational handoff" — produces drift, two writers on the same file, ambiguous "done" definitions.
+**Every implementation handoff to a peer MUST spell out six elements: `owns / does-not-own / interface-contract / integration-checkpoint / allowed-tools / denied-tools`.** Anything less is "informational handoff" — produces drift, two writers on the same file, ambiguous "done" definitions.
 
 | Element | What it answers | Example |
 |---|---|---|
@@ -162,6 +162,10 @@ Room resolution can shift under you — a binary update, a repo-keying change, o
 | **Does not own** | Which files/scopes must the peer NOT touch? | any agent body; any coord-file content |
 | **Interface contract** | What shape does the deliverable take? (schema, format, exit code, location) | CLI `--json` returns `{status, latest_verdicts, ...}`; exit 0 clear / 1 warn / 2 blocked |
 | **Integration checkpoint** | How does Claude verify the handoff landed and how does it plug back in? | regression test passes; orchestrator parses returned JSON; entry appears in coord file |
+| **Allowed tools** | Which tools may the peer use? (empty list = no restriction) | `["Bash", "Read", "Edit"]` or `[]` |
+| **Denied tools** | Which tools must the peer NOT use? (empty list = no restriction) | `["WebSearch"]` or `[]` |
+
+Both `allowed-tools` and `denied-tools` MUST be present on every `kind=handoff` post; either MAY be an empty list. An empty `allowed_tools` is a valid explicit "no lateral limits" declaration — only a missing or non-list field is rejected by `mece_gate.validate_handoff`. These fields are the G2 lateral-limits feature (`feat(rally): tool-level lateral limits on handoff packets`, 2026-05-22).
 
 **Enforcement:** `python3 scripts/brief_mece_validator.py --brief-file <path> --json`. Exit 0 → all four present. Exit 1 → at least one missing; orchestrator surfaces a `[warn]` and may still dispatch (C-FLOW pattern — non-blocking lint). The orchestrator wires this lint into every `Agent(subagent_type=..., ...)` dispatch site for peer-handoff briefs.
 

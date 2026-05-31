@@ -314,14 +314,22 @@ def bootstrap(
     }
     if action == "bootstrapped":
         payload["ownership"] = {
+            # No chunks claimed at bootstrap time; owns stays empty.
+            # mece_gate allows empty owns when does_not_own is non-empty —
+            # the sentinel below makes the "nothing owned yet" intent explicit.
             "owns": [],
-            "does_not_own": [],
+            "does_not_own": ["all-files (no chunks assigned at bootstrap; assign via subsequent handoffs)"],
             "interface_contract": (
                 f"Coordination bootstrapped by {tool} for topic '{topic}'. "
                 "No chunks claimed yet; peers ack by reading coord file and "
                 "posting kind=feedback step=coord-protocol verdict=PASS."
             ),
             "integration_checkpoint": str(target),
+            # G2 lateral limits (required by mece_gate since 2026-05-22).
+            # Bootstrap is a coordination-open signal, not a delegation:
+            # no tool restrictions apply at this stage.
+            "allowed_tools": [],
+            "denied_tools": [],
         }
     channel_rev = post(
         channel_dir=channel_dir,

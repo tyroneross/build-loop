@@ -75,6 +75,8 @@ Per-run amendments: {{ANY_RUN_SPECIFIC_OPERATING_AMENDMENTS_OR_NONE}}
 - **Does not own**: {{FILE_OR_SCOPE_LIST}}
 - **Interface contract**: {{DELIVERABLE_SHAPE — schema, format, CLI exit codes, return-envelope fields}}
 - **Integration checkpoint**: {{HOW_VERIFIER_CONFIRMS — test command, grep pattern, file existence, fresh-session load}}
+- **Allowed tools**: {{LIST_OR_EMPTY — tools the peer MAY use; [] = no restriction}}
+- **Denied tools**: {{LIST_OR_EMPTY — tools the peer must NOT use; [] = no restriction}}
 
 ### {{NEXT_PIECE_ID}} — {{NEXT_PIECE_TITLE}}
 
@@ -82,6 +84,8 @@ Per-run amendments: {{ANY_RUN_SPECIFIC_OPERATING_AMENDMENTS_OR_NONE}}
 - **Does not own**: ...
 - **Interface contract**: ...
 - **Integration checkpoint**: ...
+- **Allowed tools**: []
+- **Denied tools**: []
 
 <!-- TEMPLATE NOTE: Continue for every piece. Enforce via `python3 scripts/brief_mece_validator.py --brief-file <packet-as-tmpfile>` before dispatching that piece to an implementer. -->
 

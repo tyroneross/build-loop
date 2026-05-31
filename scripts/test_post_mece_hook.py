@@ -35,6 +35,10 @@ def _good_ownership() -> dict:
         "does_not_own": ["scripts/rally_point/rally.py"],
         "interface_contract": "post() returns new revision int on success",
         "integration_checkpoint": "test_post_mece_hook.py exit 0",
+        # G2 lateral-limit fields (required by mece_gate since 2026-05-22).
+        # Empty lists are valid explicit "no tool boundary" declarations.
+        "allowed_tools": [],
+        "denied_tools": [],
     }
 
 
