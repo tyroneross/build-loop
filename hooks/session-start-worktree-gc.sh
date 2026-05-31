@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Worktree GC: REPORT stale-merged worktrees, AUTO-PRUNE Git-proven orphans.
-# Set BUILDLOOP_GC_ACT=1 to also remove merged worktrees + branches (conservative).
-# Locked/dirty worktrees are never removed in either mode.
+# Worktree GC: remove merged+clean stale worktrees/branches, AUTO-PRUNE orphans.
+# ACT mode (bundle-first removal of merged worktrees + branches) is ON by default
+# so cross-run residue self-heals (intent.md A5); set BUILDLOOP_GC_ACT=0 to opt out
+# (report-only). Locked, dirty, or unmerged worktrees are never removed either way.
 cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null || exit 0
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 R=".build-loop/worktree-gc-last.txt"
@@ -23,7 +24,7 @@ _bundle_done=0
         [ -f "$path/.git" ] && grep -q locked "$path/.git" 2>/dev/null && locked=locked
         echo "  $path  branch=$branch  merged=yes  dirty=$dirty  $locked"
 
-        if [ "${BUILDLOOP_GC_ACT:-0}" = "1" ] && [ "$dirty" = "0" ] && [ "$locked" = "unlocked" ]; then
+        if [ "${BUILDLOOP_GC_ACT:-1}" = "1" ] && [ "$dirty" = "0" ] && [ "$locked" = "unlocked" ]; then
           # Reversibility: one bundle per run, created before first removal.
           if [ "$_bundle_done" = "0" ]; then
             mkdir -p ".build-loop/bundles"
@@ -41,7 +42,7 @@ _bundle_done=0
 } > "$R" 2>&1
 
 # Rewrite report to split REPORT-ONLY from Auto-removed sections cleanly.
-if [ "${BUILDLOOP_GC_ACT:-0}" = "1" ] && grep -q 'ACT:removed' "$R" 2>/dev/null; then
+if [ "${BUILDLOOP_GC_ACT:-1}" = "1" ] && grep -q 'ACT:removed' "$R" 2>/dev/null; then
   tmp=$(mktemp)
   awk '
     /^## Stale candidates/ { in_stale=1 }
