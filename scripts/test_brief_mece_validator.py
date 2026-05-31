@@ -24,6 +24,8 @@ class BriefMeceValidatorTests(unittest.TestCase):
             "- **Does not own**: agents/build-orchestrator.md\n"
             "- **Interface contract**: validate_brief returns JSON-ready dict\n"
             "- **Integration checkpoint**: test file passes\n"
+            "- **Allowed tools**: []\n"
+            "- **Denied tools**: []\n"
         )
 
         self.assertTrue(result["valid"])
@@ -35,6 +37,8 @@ class BriefMeceValidatorTests(unittest.TestCase):
             "### does-not-own\nagents/y.md\n"
             "### interface-contract\nCLI exits 0/1\n"
             "### integration-checkpoint\norchestrator can parse JSON\n"
+            "### allowed-tools\n[]\n"
+            "### denied-tools\n[]\n"
         )
 
         self.assertTrue(result["valid"])
@@ -46,7 +50,23 @@ class BriefMeceValidatorTests(unittest.TestCase):
         )
 
         self.assertFalse(result["valid"])
-        self.assertEqual(result["missing"], ["does-not-own", "interface-contract"])
+        self.assertEqual(
+            result["missing"],
+            ["does-not-own", "interface-contract", "allowed-tools", "denied-tools"],
+        )
+
+    def test_rejects_four_field_brief_missing_tool_limits(self):
+        """A previously-valid 4-field brief is now rejected for missing allowed/denied-tools."""
+        result = bmv.validate_brief(
+            "- **Owns** (Claude): scripts/foo.py\n"
+            "- **Does not own**: agents/bar.md\n"
+            "- **Interface contract**: returns exit 0 on success\n"
+            "- **Integration checkpoint**: pytest passes\n"
+        )
+
+        self.assertFalse(result["valid"])
+        self.assertIn("allowed-tools", result["missing"])
+        self.assertIn("denied-tools", result["missing"])
 
     def test_empty_brief_warns_and_fails(self):
         result = bmv.validate_brief("")

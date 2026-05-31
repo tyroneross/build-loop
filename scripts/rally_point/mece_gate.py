@@ -3,10 +3,11 @@
 """MECE ownership validator for handoff payloads.
 
 Thin adapter between post.py and the runtime ownership contract.
-Validates that kind=handoff payloads carry all four MECE ownership
-fields in their ``payload.ownership`` dict before the post is accepted.
+Validates that kind=handoff payloads carry all six required MECE handoff
+fields (four ownership + two lateral-limit, below) in their
+``payload.ownership`` dict before the post is accepted.
 
-The four required fields:
+The four ownership fields:
   - owns                  (list)
   - does_not_own          (list)
   - interface_contract    (str, non-empty)

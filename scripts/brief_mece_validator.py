@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Validate peer handoff briefs for the four MECE ownership fields."""
+"""Validate peer handoff briefs for the six MECE ownership fields."""
 from __future__ import annotations
 
 import argparse
@@ -41,15 +41,32 @@ MECE_FIELDS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
             r"integration\s*[-_ ]?checkpoint(?:\*\*)?\s*(?:\(|:|-|$)"
         ),
     ),
+    (
+        "allowed_tools",
+        "allowed-tools",
+        re.compile(
+            r"(?im)^\s*(?:#{1,6}\s*)?(?:[-*]\s*)?(?:\*\*)?"
+            r"allowed[-_ ]?tools(?:\*\*)?\s*(?:\(|:|-|$)"
+        ),
+    ),
+    (
+        "denied_tools",
+        "denied-tools",
+        re.compile(
+            r"(?im)^\s*(?:#{1,6}\s*)?(?:[-*]\s*)?(?:\*\*)?"
+            r"denied[-_ ]?tools(?:\*\*)?\s*(?:\(|:|-|$)"
+        ),
+    ),
 )
 
 
 def validate_brief(brief: str) -> dict[str, Any]:
     """Return MECE validation for a handoff brief.
 
-    A valid peer-handoff packet names all four ownership elements: owns,
-    does-not-own, interface-contract, and integration-checkpoint. The validator
-    accepts markdown headings, bold bullet labels, or explicit colon fields.
+    A valid peer-handoff packet names all six ownership elements: owns,
+    does-not-own, interface-contract, integration-checkpoint, allowed-tools,
+    and denied-tools. The validator accepts markdown headings, bold bullet
+    labels, or explicit colon fields.
     """
     text = brief or ""
     present: list[str] = []

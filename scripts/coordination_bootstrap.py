@@ -154,7 +154,7 @@ def _render_template(
 
 def _resolve_template_path(workdir: Path, override: Path | None) -> Path:
     if override is not None:
-        p = override.expanduser()
+        p = Path(override).expanduser()  # accept str or Path
         return p if p.is_absolute() else (workdir / p)
     # Prefer workdir-local template (a worktree copy of the repo).
     local = workdir / DEFAULT_TEMPLATE_REL
