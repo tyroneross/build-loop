@@ -10,14 +10,14 @@
       "segment": "2026-05-30.jsonl"
     },
     {
-      "count": 2,
+      "count": 13,
       "engagement": "2026-05-31",
       "first_seq": 3,
       "first_ts": "2026-05-31T02:30:57Z",
-      "last_seq": 4,
-      "last_ts": "2026-05-31T02:30:57Z",
+      "last_seq": 15,
+      "last_ts": "2026-05-31T05:13:59Z",
       "segment": "2026-05-31.jsonl"
     }
   ],
-  "updated_at": "2026-05-31T02:30:57Z"
+  "updated_at": "2026-05-31T05:17:54Z"
 }
