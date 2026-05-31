@@ -8,7 +8,16 @@
       "last_seq": 2,
       "last_ts": "2026-05-29 12:35:25.280349 +00:00:00",
       "segment": "2026-05-30.jsonl"
+    },
+    {
+      "count": 2,
+      "engagement": "2026-05-31",
+      "first_seq": 3,
+      "first_ts": "2026-05-31T02:30:57Z",
+      "last_seq": 4,
+      "last_ts": "2026-05-31T02:30:57Z",
+      "segment": "2026-05-31.jsonl"
     }
   ],
-  "updated_at": "2026-05-30T08:10:08Z"
+  "updated_at": "2026-05-31T02:30:57Z"
 }
