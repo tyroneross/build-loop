@@ -71,7 +71,8 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 - `state.json` — iteration state, phase progress, compact intent/structure summaries, **`runs[]`** for self-improvement scanning
 - `feedback.md` — post-build lessons
 - `evals/` — scorecard archives
-- `issues/` — discovered issues
+- `issues/` — discovered issues (current-run bugs; short-lived)
+- `backlog/<id>.md` — deferred-but-wanted work items, longer-lived than issues. Each item uses `templates/backlog-item.md` frontmatter: `title`, `created`, `source`, `classify` (SAFE|RISKY|DECISION|PRODUCTION), `effort` (XS|S|M|L|XL), `status` (open|in-progress|done). Drained by Phase 5 Iterate alongside `issues/` and `ux-queue/`.
 - `release-pending.md` — user-created marker signaling "in-flight feature batch is complete; advise version bump." Read by Sub-step D Gate 6 (`scripts/version_advisor.py`). Empty file = use defaults; body = release notes. User deletes after the bump commit lands.
 - `ux-queue/<id>.md` — UX-impacting findings from Sub-step D Gate 7 (`scripts/ux_triage.py`) and Gate 8 (UI coverage gaps), each with a complete fix plan from `templates/ux-fix-plan.md`. Drained by Phase 5 Iterate.
 - `followup/<topic>.md` — overflow when iteration cap is reached with queue entries remaining. Becomes input to a subsequent `/build-loop:run` invocation; Plan phase is skipped for these entries.

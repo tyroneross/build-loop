@@ -111,7 +111,7 @@ When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-d
 
 **Body — drain the queue:**
 
-1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`).
+1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/backlog/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`). Backlog items (longer-lived deferred work) are treated identically to issues during draining — same alignment-checker routing, same per-item cap.
 2. **For each item (sequential — alignment-check is per-item):**
    a. Dispatch `Agent(subagent_type="build-loop:alignment-checker", prompt=<brief>)` with `item_path`, `item_kind`, `workdir`, `current_task_id` (null when §15.2 working-state not yet shipped on this branch — graceful degradation per the agent's own contract), and the last 5 verdicts for consistency cross-checking.
    b. Parse the JSON verdict (the agent returns exactly one JSON object, no fence). Append to `state.runs[].alignment_verdicts[]` (one row per item, capped at 200 per run).
