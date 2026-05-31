@@ -44,6 +44,19 @@ def _mlx_importable() -> bool:
         return False
 
 
+def _embed_daemon_up() -> bool:
+    """True if the embed daemon (127.0.0.1:8766) is reachable. When it is,
+    _probe_daemon() returns a DaemonBackend BEFORE EMBED_BACKEND/MLX_FORCE_FAIL
+    is evaluated, so the in-process MLX->Ollama fallback path is bypassed and
+    fallback_reason() stays None — fallback-specific tests can't run."""
+    import socket
+    try:
+        socket.create_connection(("127.0.0.1", 8766), timeout=0.5).close()
+        return True
+    except OSError:
+        return False
+
+
 def _l2(v):
     n = math.sqrt(sum(x * x for x in v)) or 1.0
     return [x / n for x in v]
@@ -111,6 +124,7 @@ class EmbedBackendTests(unittest.TestCase):
             self.assertIsInstance(v[0], float)
 
     @unittest.skipUnless(_ollama_up(), "ollama not reachable")
+    @unittest.skipIf(_embed_daemon_up(), "embed daemon active — bypasses in-process fallback path")
     def test_fallback_when_mlx_forced_to_fail(self) -> None:
         eb = _fresh_module({"EMBED_BACKEND": "mlx", "MLX_FORCE_FAIL": "1"})
         v = eb.embed("hello world")
@@ -161,6 +175,7 @@ class EmbedBackendTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             eb.embed("")
 
+    @unittest.skipUnless(_ollama_up(), "ollama not reachable")
     def test_invalid_arg_type_raises(self) -> None:
         # No env-dependent backend touched; should fail before backend init.
         eb = _fresh_module({"EMBED_BACKEND": "ollama"})  # safest backend init

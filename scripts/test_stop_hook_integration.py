@@ -281,15 +281,18 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         # Phase C: decision files land in <AGENT_MEMORY_ROOT>/decisions/<project>/.
         # We don't know the project tag (derived from workdir basename), so
         # scan all per-project subdirs in the isolated memroot.
-        decisions_root = Path(self._memroot.name) / "decisions"
+        # write_decision routes to projects/<project>/decisions/ post-cutover;
+        # scan the projects/ root so rglob descends into every per-project lane.
+        decisions_root = Path(self._memroot.name) / "projects"
         deadline = time.monotonic() + 180
         review_files: list = []
         trusted_files: list = []
         while time.monotonic() < deadline:
             review_files = list(decisions_root.rglob("_review/*.md"))
             trusted_files = [
-                f for f in decisions_root.rglob("[0-9][0-9][0-9][0-9]-*.md")
+                f for f in decisions_root.rglob("*.md")
                 if f.is_file() and "_review" not in f.parts and "_history" not in f.parts
+                and f.name != "INDEX.md" and not f.name.startswith("_")
             ]
             if (len(review_files) + len(trusted_files)) >= 1:
                 break
@@ -346,7 +349,9 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
         # No files should be produced in the isolated memroot.
-        decisions_root = Path(self._memroot.name) / "decisions"
+        # write_decision routes to projects/<project>/decisions/ post-cutover;
+        # scan the projects/ root so rglob descends into every per-project lane.
+        decisions_root = Path(self._memroot.name) / "projects"
         review = list(decisions_root.rglob("_review/*.md")) if decisions_root.exists() else []
         self.assertEqual(review, [])
 

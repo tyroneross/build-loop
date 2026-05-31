@@ -55,6 +55,20 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True)
 
 
+def _first_decision_file(ddir: Path) -> Path:
+    """Return the first non-INDEX, non-history decision file in *ddir*.
+
+    Canonical filenames changed from ``<id>-<date>-<slug>.md`` to
+    ``decision-project-<project>-<slug>-<date>-<seq>.md`` in the
+    2026-05-26 memory-store cutover.  This helper works with both shapes.
+    """
+    candidates = [
+        p for p in ddir.glob("*.md")
+        if p.name != "INDEX.md" and not p.name.startswith("_")
+    ]
+    return next(iter(candidates))
+
+
 def write(workdir: Path, **kw) -> subprocess.CompletedProcess:
     args = [
         sys.executable, str(WRITE),
@@ -106,9 +120,9 @@ class V2SchemaTests(MemIsolationMixin, unittest.TestCase):
         r = write(self.workdir, entity="build-loop:foo")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
         # File routing uses resolve_project(workdir) which returns "_unscoped"
-        # (no projects.yaml in tmpdir). The frontmatter project field is derived
-        # from the entity prefix "build-loop:foo" → "build-loop".
-        f = next(self._decisions_dir("_unscoped").glob("0001-*.md"))
+        # (no projects.yaml in tmpdir). The frontmatter project field reflects
+        # the routing project (_unscoped) after the 2026-05-26 memory-store cutover.
+        f = _first_decision_file(self._decisions_dir("_unscoped"))
         fm = parse_fm(f.read_text())
         # All 9 v2 fields must be present.
         for k in (
@@ -117,7 +131,7 @@ class V2SchemaTests(MemIsolationMixin, unittest.TestCase):
         ):
             self.assertIn(k, fm, msg=f"missing v2 field {k}")
         # Defaults specifically.
-        self.assertEqual(fm["project"], "build-loop")  # derived from entity prefix
+        self.assertEqual(fm["project"], "_unscoped")  # routing project (no projects.yaml)
         self.assertEqual(fm["tool"], "manual")  # source=manual maps to tool=manual
         self.assertEqual(fm["model"], "claude-opus-4-7")
         self.assertEqual(fm["task_category"], "unknown")
@@ -141,7 +155,7 @@ class V2SchemaTests(MemIsolationMixin, unittest.TestCase):
             closing_commit="abc123",
         )
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next(self._decisions_dir("foo").glob("0001-*.md"))
+        f = _first_decision_file(self._decisions_dir("foo"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["project"], "foo")
         self.assertEqual(fm["tool"], "codex")
@@ -151,7 +165,7 @@ class V2SchemaTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(fm["files_touched"], ["src/a.ts", "src/b.ts"])
         self.assertEqual(fm["closing_commit"], "abc123")
         # Event line mirrors v2 fields.
-        events_path = self.workdir / ".episodic" / "events.jsonl"
+        events_path = self.workdir / ".build-loop" / "events.jsonl"
         events = [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
         self.assertEqual(len(events), 1)
         ev = events[0]

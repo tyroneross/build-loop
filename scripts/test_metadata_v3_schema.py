@@ -76,6 +76,30 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True)
 
 
+def _first_decision_file(ddir: Path) -> Path:
+    """Return the first non-INDEX, non-history decision file in *ddir*.
+
+    Canonical filenames changed from ``<id>-<date>-<slug>.md`` to
+    ``decision-project-<project>-<slug>-<date>-<seq>.md`` in the
+    2026-05-26 memory-store cutover.  This helper works with both shapes.
+    """
+    candidates = [
+        p for p in ddir.glob("*.md")
+        if p.name != "INDEX.md" and not p.name.startswith("_")
+    ]
+    return next(iter(candidates))
+
+
+def _decision_file_by_id(ddir: Path, decision_id: str) -> Path:
+    """Return the decision file whose frontmatter ``id`` matches *decision_id*."""
+    for p in ddir.glob("*.md"):
+        if p.name == "INDEX.md" or p.name.startswith("_"):
+            continue
+        if f"id: '{decision_id}'" in p.read_text():
+            return p
+    raise FileNotFoundError(f"no decision file with id={decision_id!r} in {ddir}")
+
+
 def write(workdir: Path, **kw) -> subprocess.CompletedProcess:
     args = [
         sys.executable, str(WRITE),
@@ -127,7 +151,7 @@ class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
     def test_defaults_populate_v3_fields_manual_source(self) -> None:
         r = write(self.workdir, entity="build-loop:foo", source="manual")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
+        f = _first_decision_file(self._decisions_dir("test-v3"))
         fm = parse_fm(f.read_text())
         # All 7 v3 fields present.
         for k in (
@@ -147,14 +171,14 @@ class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
     def test_defaults_confidence_source_for_auto_source(self) -> None:
         r = write(self.workdir, entity="build-loop:foo", source="auto-explicit")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
+        f = _first_decision_file(self._decisions_dir("test-v3"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["confidence_source"], "ai_inference")
 
     def test_defaults_confidence_source_for_migration_source(self) -> None:
         r = write(self.workdir, entity="build-loop:foo", source="migration")
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
+        f = _first_decision_file(self._decisions_dir("test-v3"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["confidence_source"], "external_import")
 
@@ -172,7 +196,7 @@ class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
             embedding_model_version="mxbai-embed-large-v1",
         )
         self.assertEqual(r.returncode, 0, msg=r.stderr)
-        f = next(self._decisions_dir("test-v3").glob("0001-*.md"))
+        f = _first_decision_file(self._decisions_dir("test-v3"))
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["domain"], "search")
         self.assertEqual(fm["goal"], "reliability")
@@ -182,7 +206,7 @@ class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(fm["embedding_model_version"], "mxbai-embed-large-v1")
         self.assertIsNone(fm["causal_parent_id"])
         # Event line carries v3 fields too.
-        events_path = self.workdir / ".episodic" / "events.jsonl"
+        events_path = self.workdir / ".build-loop" / "events.jsonl"
         events = [json.loads(l) for l in events_path.read_text().splitlines() if l.strip()]
         self.assertEqual(len(events), 1)
         ev = events[0]
@@ -203,7 +227,7 @@ class V3SchemaTests(MemIsolationMixin, unittest.TestCase):
             causal_parent_id=first_id,
         )
         self.assertEqual(r2.returncode, 0, msg=r2.stderr)
-        f = next(self._decisions_dir("test-v3").glob(f"{r2.stdout.strip()}-*.md"))
+        f = _decision_file_by_id(self._decisions_dir("test-v3"), r2.stdout.strip())
         fm = parse_fm(f.read_text())
         self.assertEqual(fm["causal_parent_id"], first_id)
 
