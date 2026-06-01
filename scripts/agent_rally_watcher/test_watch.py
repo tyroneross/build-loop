@@ -296,5 +296,105 @@ def test_hook_race_regression_new_guard_catches_what_legacy_missed(monkeypatch):
     assert rc == 0
 
 
+# ---- C3 acceptance: end-to-end live spawn under env -u --------------------
+#
+# This test does NOT monkeypatch. It spawns a real `coordination_watch.py`
+# subprocess (the exact path session_probe uses), points --parent-pid at a
+# definitely-dead PID, and asserts the child exits cleanly within one poll
+# interval plus slack. This is the live regression test for the
+# build-loop-memory lessons/2026-05-31-coordination-process-leak.md leak
+# class — what 14 orphans on this machine were doing instead of exiting.
+
+import subprocess as _sub
+
+
+def _find_coordination_watch_script() -> Path:
+    """Locate scripts/coordination_watch.py from the test's location.
+
+    We are at scripts/agent_rally_watcher/test_watch.py; the wrapper is at
+    scripts/coordination_watch.py.
+    """
+    here = Path(__file__).resolve().parent
+    return here.parent / "coordination_watch.py"
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="POSIX-only: this test uses os.kill semantics")
+def test_end_to_end_hook_race_reproduction(tmp_path):
+    """Reproduce the exact production path: spawn coordination_watch.py with
+    Popen(start_new_session=True), point --parent-pid at an already-dead
+    pid, and assert the watcher exits 0 within (interval + slack).
+
+    Runs under env -u BUILDLOOP_AUTONOMY_GATE_BYPASS, env -u RALLY_TOOL,
+    env -u RALLY_SESSION_ID so the test reflects the same env shape a
+    real hook-spawned watcher sees, not a rigged subset
+    (feedback_smoke_test_environment_rigging.md).
+    """
+    script = _find_coordination_watch_script()
+    assert script.exists(), f"coordination_watch.py not at {script}"
+
+    # Pick an unused PID: spawn a tiny short-lived process and use its PID
+    # AFTER it dies. (Reusing a high random number is unreliable since the
+    # OS may have assigned it.)
+    dead_proc = _sub.Popen([sys.executable, "-c", "pass"])
+    dead_proc.wait(timeout=5.0)
+    dead_pid = dead_proc.pid
+    # OS may recycle pids; double-check it's actually gone right now.
+    try:
+        os.kill(dead_pid, 0)
+        pytest.skip(f"pid {dead_pid} got reused immediately; rerun")
+    except ProcessLookupError:
+        pass
+
+    # Clean env mirroring `env -u <agent-id-vars>` (mandatory per goal #1.d).
+    clean_env = {
+        k: v for k, v in os.environ.items()
+        if k not in (
+            "BUILDLOOP_AUTONOMY_GATE_BYPASS",
+            "BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS",
+            "RALLY_TOOL",
+            "RALLY_SESSION_ID",
+        )
+    }
+
+    # Use --workdir tmp_path so the watcher has a benign target to scan.
+    log_path = tmp_path / "watcher.log"
+    proc = _sub.Popen(
+        [
+            sys.executable, str(script),
+            "--workdir", str(tmp_path),
+            "--session-id", "e2e-hook-race",
+            "--tool", "claude_code",
+            "--baseline-current",
+            "--jsonl",
+            "--parent-pid", str(dead_pid),
+            "--interval", "0.5",
+        ],
+        stdout=open(log_path, "w"),
+        stderr=_sub.STDOUT,
+        stdin=_sub.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+        env=clean_env,
+    )
+
+    # Expect exit well within (interval=0.5s + import overhead + slack).
+    # Generous 5s budget: covers cold Python start on macOS Python 3.13/3.14.
+    try:
+        rc = proc.wait(timeout=5.0)
+    except _sub.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=1.0)
+        log_text = log_path.read_text() if log_path.exists() else "<empty>"
+        pytest.fail(
+            "watcher did NOT self-exit within 5s with dead --parent-pid; "
+            f"orphan leak guard regressed. Log:\n{log_text}"
+        )
+    assert rc == 0, (
+        f"watcher exited with rc={rc}; expected 0 (clean orphan exit). "
+        f"Log: {log_path.read_text() if log_path.exists() else '<empty>'}"
+    )
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
