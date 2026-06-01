@@ -148,6 +148,26 @@ def project_lessons_dir(project: str) -> Path:
     return project_root(project) / "lessons"
 
 
+def project_raw_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/raw`` for verbatim source material."""
+    return project_root(project) / "raw"
+
+
+def project_raw_documents_dir(project: str) -> Path:
+    """Return ``<project_raw_dir(project)>/documents``."""
+    return project_raw_dir(project) / "documents"
+
+
+def project_raw_files_dir(project: str) -> Path:
+    """Return ``<project_raw_dir(project)>/files``."""
+    return project_raw_dir(project) / "files"
+
+
+def project_raw_artifacts_dir(project: str) -> Path:
+    """Return ``<project_raw_dir(project)>/artifacts``."""
+    return project_raw_dir(project) / "artifacts"
+
+
 def project_debugging_dir(project: str) -> Path:
     """Return ``<project_root(project)>/debugging``."""
     return project_root(project) / "debugging"

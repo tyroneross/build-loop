@@ -191,6 +191,8 @@ Once the user accepts the plan, every phase is authorized scope. The orchestrato
 
 Completed, validated, authorized work commits automatically. Asking "should I commit?" or "want me to commit this?" is a workflow violation — committing validated work is a non-gated action (`scripts/autonomy_gate.py` classifies a plain `git commit` as `auto`, exit 0). This applies in both interactive and autonomous mode. The only commit-adjacent stops are autonomy-gate verdicts of `confirm` or `block` on a *push or deploy* command — never on the commit itself.
 
+When build-loop manages a commit or push, official authorship stays human or service-owned. Do not set the git author, committer, GitHub author, push actor, release actor, or equivalent platform actor to `Claude Code`, `Codex`, or any other agent identity. Agent involvement can be recorded in commit-body notes, `.build-loop` run context, judge decisions, or other auxiliary metadata, but those records must not replace the official author or actor fields.
+
 Issues found mid-build (failing tests, attestation drift, critic flags, discoverability gaps) route to Iterate. That is the loop's job. The default is to fix and continue.
 
 The only valid reasons to stop and surface to the user:

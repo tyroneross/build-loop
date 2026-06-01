@@ -39,9 +39,10 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 try:
-    from _paths import memory_store_root  # type: ignore  # noqa: E402
+    from _paths import _safe_project_relpath, memory_store_root  # type: ignore  # noqa: E402
 except Exception:  # noqa: BLE001
     memory_store_root = None  # type: ignore[assignment]
+    _safe_project_relpath = None  # type: ignore[assignment]
 
 DEFAULT_DEST = memory_store_root() if memory_store_root is not None else Path.home() / "dev" / "git-folder" / "build-loop-memory"
 TEMPLATE_DIR_RELATIVE = "templates/memory"
@@ -49,6 +50,38 @@ TEMPLATES = [
     ("constitution.md.template", "constitution.md"),
     ("MEMORY.md.template", "MEMORY.md"),
 ]
+PROJECT_RAW_SUBDIRS = (
+    "documents",
+    "data",
+    "db",
+    "runtime",
+    "agent-artifacts",
+    "artifacts",
+    "files",
+)
+PROJECT_TOPIC_DIRS = frozenset({
+    "apps",
+    "assets",
+    "architecture",
+    "context",
+    "decisions",
+    "docs",
+    "features",
+    "formats",
+    "indexes",
+    "lessons",
+    "plugins",
+    "product",
+    "prompts",
+    "raw",
+    "research",
+    "semantic",
+    "skills",
+    "sources",
+    "testing",
+    "tradeoffs",
+})
+KEEP_FILENAME = ".gitkeep"
 
 
 def script_dir() -> Path:
@@ -93,13 +126,16 @@ def report(dest: Path) -> dict:
             # Count .md files at top level of the project subdir (sub-component
             # dirs like workers/ contribute their own row).
             md_count = sum(1 for _ in sub.glob("*.md"))
+            raw_status = _raw_status(sub)
             per_project.append({
                 "slug": sub.name,
                 "md_files": md_count,
+                "raw_exists": raw_status["exists"],
+                "raw_missing": raw_status["missing"],
             })
             # Sub-components (e.g. workers/) — surface as <slug>/<sub>
             for nested in sorted(sub.iterdir()):
-                if nested.is_dir() and not nested.name.startswith("_"):
+                if nested.is_dir() and not nested.name.startswith("_") and nested.name not in PROJECT_TOPIC_DIRS:
                     nested_count = sum(1 for _ in nested.glob("*.md"))
                     if nested_count:
                         per_project.append({
@@ -110,6 +146,16 @@ def report(dest: Path) -> dict:
     return status
 
 
+def _raw_status(project_dir: Path) -> dict:
+    """Return raw-lane presence for a project directory."""
+    raw = project_dir / "raw"
+    missing = [
+        name for name in PROJECT_RAW_SUBDIRS
+        if not (raw / name).is_dir()
+    ]
+    return {"exists": raw.is_dir() and not missing, "missing": missing}
+
+
 def seed_template(src: Path, dest: Path, force: bool = False) -> tuple[bool, str]:
     """Copy a template if the destination doesn't exist (or force=True). Returns (wrote, reason)."""
     if dest.exists() and not force:
@@ -118,6 +164,25 @@ def seed_template(src: Path, dest: Path, force: bool = False) -> tuple[bool, str
         return False, f"template missing: {src}"
     shutil.copy2(src, dest)
     return True, "seeded"
+
+
+def _project_relpath(project: str) -> Path:
+    if _safe_project_relpath is None:
+        raise ValueError("_paths._safe_project_relpath unavailable")
+    return _safe_project_relpath(project)
+
+
+def ensure_project_scaffold(dest: Path, project: str) -> Path:
+    """Create the per-project raw-source scaffold and return the project dir."""
+    project_dir = dest / "projects" / _project_relpath(project)
+    raw_dir = project_dir / "raw"
+    for subdir in PROJECT_RAW_SUBDIRS:
+        leaf = raw_dir / subdir
+        leaf.mkdir(parents=True, exist_ok=True)
+        keep = leaf / KEEP_FILENAME
+        if not keep.exists():
+            keep.write_text("", encoding="utf-8")
+    return project_dir
 
 
 def link_private_repo(dest: Path, repo_url: str) -> tuple[bool, str]:
@@ -153,6 +218,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                         "Skips template seeding — the repo provides content.")
     p.add_argument("--force", action="store_true",
                    help="Overwrite existing template files (dangerous; use only on fresh install)")
+    p.add_argument("--ensure-project", action="append", default=[],
+                   help="Create projects/<slug>/raw/ lane folders with .gitkeep files. "
+                        "May be passed more than once.")
     args = p.parse_args(argv)
 
     dest = Path(args.dest).expanduser().resolve()
@@ -171,7 +239,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"  {projects_present} projects/ subtree")
         if status.get("projects"):
             for entry in status["projects"]:
-                print(f"    - {entry['slug']}: {entry['md_files']} file(s)")
+                if "raw_exists" not in entry:
+                    raw = "raw n/a"
+                else:
+                    raw = "raw ok" if entry.get("raw_exists") else (
+                        "raw missing: " + ",".join(entry.get("raw_missing") or [])
+                    )
+                print(f"    - {entry['slug']}: {entry['md_files']} file(s), {raw}")
         elif status.get("projects_dir_exists"):
             print("    (no project subdirs yet — populated by migration script in PR 1.5)")
         return 0
@@ -218,6 +292,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         print("  – skipped: projects/README.md (already exists)")
 
+    for project in args.ensure_project:
+        try:
+            project_dir = ensure_project_scaffold(dest, project)
+        except ValueError as exc:
+            print(f"install_memory: invalid project tag {project!r}: {exc}", file=sys.stderr)
+            return 2
+        print(f"  ✓ ensured: {project_dir.relative_to(dest)}/raw/")
+
     print()
     print("Done. Next steps:")
     print(f"  - Edit {dest / 'constitution.md'} with your invariants")
@@ -225,6 +307,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print("  - Optionally version this directory in a private git repo:")
     print(f"      cd {dest} && git init && git remote add origin <your-private-repo-url>")
     print(f"  - Project-scoped lessons: {dest / 'projects' / '<slug>'} (filled by migration when needed)")
+    print(f"  - Raw source files: {dest / 'projects' / '<slug>' / 'raw'}")
     print("  - See docs/memory-setup.md for full setup guide")
     return 0
 
@@ -238,6 +321,13 @@ projects/
 ├── build-loop/
 │   ├── MEMORY.md             # project-specific index (optional)
 │   ├── constitution.md       # project-specific overrides (optional)
+│   ├── raw/                  # verbatim source material
+│   │   ├── documents/        # PDFs, docs, notes, exported pages
+│   │   ├── data/             # JSON, YAML, TOML, CSV, XML
+│   │   ├── db/               # schemas, migrations, SQL
+│   │   ├── agent-artifacts/  # .build-loop/.claude/.codex/.navgator context
+│   │   ├── files/            # reusable source files copied for reference
+│   │   └── artifacts/        # screenshots, traces, exports
 │   └── feedback_*.md / pattern_*.md / reference_*.md
 ├── example-project/
 │   └── workers/              # sub-component memory (deliberate hierarchy)
@@ -269,6 +359,12 @@ When the orchestrator loads memory at Phase 1 Assess:
 
 Later tiers OVERRIDE earlier ones on filename collision (project wins
 over global).
+
+Raw source material belongs under `projects/<slug>/raw/` and stays verbatim.
+Use `documents/` for human-readable source documents, `data/` for structured
+data/config, `db/` for schemas and migrations, `agent-artifacts/` for local
+agent context, `files/` for reusable source files, and `artifacts/` for
+screenshots, traces, and exports.
 
 Historical: a legacy per-repo tier (`<repo>/.build-loop/memory/`) was
 read during the PR 1/2 transition. PR 3 (2026-05-13) removed that
