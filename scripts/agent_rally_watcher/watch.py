@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import sys
@@ -18,6 +19,49 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import coordination_status  # noqa: E402
+
+# Backstop lifetime: even if PID-based liveness ever fails (race condition,
+# initial_ppid<=1 carve-out, OS oddity), the watcher self-exits after this
+# many seconds. Default 4h, overridable via env so ops can tune without a
+# redeploy. The race this guards against is documented in
+# build-loop-memory/lessons/2026-05-31-coordination-process-leak.md.
+_DEFAULT_MAX_LIFETIME_SECONDS = 14400.0
+_ENV_MAX_LIFETIME = "BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS"
+
+
+def _env_max_lifetime() -> float:
+    """Read env-var default for max-lifetime; fall back on parse error."""
+    raw = os.environ.get(_ENV_MAX_LIFETIME)
+    if raw is None:
+        return _DEFAULT_MAX_LIFETIME_SECONDS
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_LIFETIME_SECONDS
+
+
+def _is_parent_alive(parent_pid: int) -> bool:
+    """True iff the explicit parent PID is still running.
+
+    Used when ``--parent-pid`` is supplied (the launcher captured its own pid
+    BEFORE detaching, closing the race where ``os.getppid()`` would already
+    read 1 because the launcher exited during child Python startup). A
+    cross-uid parent appears as ``EPERM`` from ``os.kill(pid, 0)`` — that is
+    'alive but not ours', so treat it as alive (we cannot signal it but it
+    exists). Any ``ProcessLookupError`` means the parent is gone.
+    """
+    if parent_pid <= 1:
+        return True  # never trip on detached/launchd-owned watchers
+    try:
+        os.kill(parent_pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by another uid
+    except OSError as exc:
+        # ESRCH = no such process (parent died)
+        return exc.errno != errno.ESRCH
 
 
 def _signature(status: dict[str, Any]) -> dict[str, Any]:
@@ -96,17 +140,57 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Exit 0 after emitting a changed state; useful for wake-on-change wrappers.",
     )
+    p.add_argument(
+        "--parent-pid",
+        type=int,
+        default=None,
+        help=(
+            "Explicit PID of the spawning session to liveness-check each loop. "
+            "Closes the race where os.getppid() reads 1 because the hook "
+            "exited before this child's main started. The launcher captures "
+            "its own pid via os.getpid() BEFORE Popen and passes it here. "
+            "When omitted, the legacy _is_orphaned(getppid()) check is used "
+            "(rally watch / build-orchestrator --interval N path)."
+        ),
+    )
+    p.add_argument(
+        "--max-lifetime-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Absolute lifetime backstop. The watcher self-exits after this "
+            "many seconds even if every other liveness check says alive. "
+            "Defaults to the BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS env var "
+            f"or {_DEFAULT_MAX_LIFETIME_SECONDS:g}s (4h)."
+        ),
+    )
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     initial_ppid = os.getppid()
+    parent_pid = args.parent_pid
+    max_lifetime = (
+        args.max_lifetime_seconds
+        if args.max_lifetime_seconds is not None
+        else _env_max_lifetime()
+    )
+    start_monotonic = time.monotonic()
     last_sig = None
     if args.baseline_current:
         last_sig = _signature(coordination_status.build_status(args))
     count = 0
     while True:
+        # Liveness checks (cheapest-first), each strong enough to stand alone.
+        # PRIMARY: explicit launcher PID (closes the hook-exit race).
+        if parent_pid is not None and not _is_parent_alive(parent_pid):
+            return 0
+        # BACKSTOP: absolute lifetime cap, OS-time-independent (monotonic).
+        if time.monotonic() - start_monotonic >= max_lifetime:
+            return 0
+        # LEGACY GUARD: defense-in-depth, preserved for callers that don't
+        # pass --parent-pid (rally watch, --interval N orchestrator path).
         if _is_orphaned(initial_ppid, os.getppid()):
             return 0
         status = coordination_status.build_status(args)
