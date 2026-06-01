@@ -335,7 +335,7 @@ class CoordinationStatusTests(unittest.TestCase):
     def test_resolved_via_delegates_when_agent_rally_point_installed(self):
         """Delegation: when ``agent_rally_point.discover`` is importable
         AND returns ``installed=true``, the status envelope reports
-        ``resolved_via: "agent-rally-point"`` and uses the discovered
+        ``resolved_via: "python-import"`` and uses the discovered
         channel_dir verbatim — not the build-loop-internal value.
         """
         fake_channel = str(self.tmp / "fake_channel")
@@ -360,7 +360,7 @@ class CoordinationStatusTests(unittest.TestCase):
         r = subprocess.run(cmd, capture_output=True, text=True,
                            check=True, env=env)
         status = json.loads(r.stdout)
-        self.assertEqual(status["resolved_via"], "agent-rally-point")
+        self.assertEqual(status["resolved_via"], "python-import")
         self.assertEqual(status["channel_dir"], fake_channel)
         self.assertEqual(status["app_slug"], fake_slug)
 

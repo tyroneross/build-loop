@@ -57,6 +57,21 @@ def test_hash_chain_log_sets_revision_when_tail_missing(chan: Path):
     assert rev.read_revision(chan) == 5
 
 
+def test_repo_local_rally_log_sets_revision(chan: Path):
+    log_dir = chan / "log"
+    log_dir.mkdir()
+    rows = [
+        {"seq": 5, "event_type": "presence", "payload": {"tool": "codex"}},
+        {"seq": 9, "event_type": "handoff", "payload": {"tool": "claude_code"}},
+    ]
+    (log_dir / "easy-terminal.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    assert rev.read_revision(chan) == 9
+
+
 def test_bump_monotonic(chan: Path):
     assert rev.bump_revision(chan) == 1
     assert rev.bump_revision(chan) == 2

@@ -44,12 +44,7 @@ def _resolve_channel_dir(workdir: Path) -> tuple[str, Path, str]:
     envelope.
     """
     envelope = _bridge_resolve(workdir)
-    resolved_via = (
-        "agent-rally-point"
-        if envelope.resolved_via != "build-loop-internal"
-        else "build-loop-internal"
-    )
-    return envelope.app_slug, Path(envelope.channel_dir), resolved_via
+    return envelope.app_slug, Path(envelope.channel_dir), envelope.resolved_via
 
 VERDICT_RE = re.compile(
     r"^###\s+(?P<stamp>\d{4}-\d{2}-\d{2}.*?)\s+—\s+"

@@ -25,6 +25,7 @@ from pathlib import Path
 _REV_NAME = "revision"
 _TAIL_NAME = "rally.tail.json"
 _LOG_NAME = "changes.jsonl"
+_NATIVE_LOG_DIR = "log"
 _LOCK_TIMEOUT_S = 0.5
 _LOCK_POLL_S = 0.01
 
@@ -57,7 +58,26 @@ def _hash_chain_revision(channel_dir: Path) -> int:
                 if seq > latest:
                     latest = seq
     except OSError:
-        return 0
+        pass
+
+    try:
+        for path in (d / _NATIVE_LOG_DIR).glob("*.jsonl"):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        try:
+                            row = json.loads(line)
+                            seq = int(row.get("seq", 0))
+                        except (ValueError, TypeError, json.JSONDecodeError):
+                            continue
+                        if seq > latest:
+                            latest = seq
+            except OSError:
+                continue
+    except OSError:
+        pass
     return latest
 
 

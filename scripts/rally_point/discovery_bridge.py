@@ -14,11 +14,13 @@ Resolution order (highest → lowest priority):
 2. ``$AGENT_RALLY_BINARY`` / repo-associated sibling
    ``agent-rally-point/target/*/rally`` checkout / ``rally`` Rust CLI
    (agent-rally-point >= 0.4).
-3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
+3. Repo-local native ``rally enter/say/whoami`` CLI backed by
+   ``<repo>/.rally``.
+4. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
-4. ``agent_rally_point.discover`` Python import (sibling-repo install
+5. ``agent_rally_point.discover`` Python import (sibling-repo install
    or local ``.venv``).
-5. Embedded fallback to ``channel_paths.app_slug`` /
+6. Embedded fallback to ``channel_paths.app_slug`` /
    ``channel_paths.app_channel_dir`` (canonical
    ``~/.agent-rally-point/apps/`` root, compatibility env overrides honored).
 
@@ -70,6 +72,13 @@ REQUIRED_RALLY_HELP_FRAGMENTS = (
 )
 """Rust CLI surface Build Loop relies on for current cross-host coordination."""
 
+REQUIRED_REPO_LOCAL_RALLY_HELP_FRAGMENTS = (
+    "rally enter --tool",
+    "rally say <kind>",
+    "rally whoami",
+)
+"""Older native Rally surface backed by a repo-local ``.rally`` ledger."""
+
 
 @dataclass
 class DiscoveryEnvelope:
@@ -86,8 +95,8 @@ class DiscoveryEnvelope:
     protocol_version: str
     last_resolved_at: str
     resolved_via: str
-    """One of ``env-override``, ``rust-cli``, ``path-binary``,
-    ``python-import``, ``build-loop-internal``."""
+    """One of ``env-override``, ``rust-cli``, ``repo-local-rally-cli``,
+    ``path-binary``, ``python-import``, ``build-loop-internal``."""
     legacy_channel_dir: str | None = None
     """Populated during ``policy: "migration"`` so callers can mirror
     or compare reads against the legacy root."""
@@ -232,6 +241,21 @@ def rust_rally_binary(workdir: Path | str | None = None) -> str | None:
     return None
 
 
+def repo_local_rally_binary(workdir: Path | str | None = None) -> str | None:
+    """Return a native repo-local ``rally`` binary when available.
+
+    This is the older but still live ``enter/say/whoami`` surface used by
+    repos with a source-of-truth ``.rally`` directory. It is intentionally
+    separate from ``rust_rally_binary()``, whose callers require the newer
+    ``setup/start/post`` surface.
+    """
+    workdir_path = Path(workdir).expanduser().resolve() if workdir else None
+    for candidate in _rally_binary_candidates(workdir_path):
+        if _rally_binary_supports_repo_local_surface(candidate):
+            return candidate
+    return None
+
+
 def _rally_binary_candidates(workdir: Path | None) -> list[str]:
     """Return candidate ``rally`` paths in repo-associated priority order."""
     candidates: list[str] = []
@@ -296,6 +320,27 @@ def _rally_binary_supports_required_surface(binary: str) -> bool:
     return all(fragment in help_text for fragment in REQUIRED_RALLY_HELP_FRAGMENTS)
 
 
+def _rally_binary_supports_repo_local_surface(binary: str) -> bool:
+    """Return True when ``binary`` exposes the repo-local enter/say API."""
+    path = Path(binary).expanduser()
+    try:
+        if not path.is_file() or not os.access(path, os.X_OK):
+            return False
+        proc = subprocess.run(
+            [str(path)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return False
+    help_text = f"{proc.stdout}\n{proc.stderr}"
+    return all(
+        fragment in help_text
+        for fragment in REQUIRED_REPO_LOCAL_RALLY_HELP_FRAGMENTS
+    )
+
+
 def _rally_setup_payload(binary: str, workdir: Path) -> dict[str, Any] | None:
     try:
         proc = subprocess.run(
@@ -342,6 +387,50 @@ def _try_rust_cli(workdir: Path) -> DiscoveryEnvelope | None:
         "setup": raw,
     }
     return _shape_envelope_from_discover(shaped, resolved_via="rust-cli")
+
+
+def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
+    binary = repo_local_rally_binary(workdir)
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run(
+            [binary, "whoami", "--json"],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict) or raw.get("ok") is not True:
+        return None
+    whoami = ((raw.get("data") or {}).get("whoami") or {})
+    repo_root = whoami.get("repo_root") or str(workdir)
+    channel_dir = Path(str(repo_root)).expanduser().resolve() / ".rally"
+    repo_id = whoami.get("repo_id") or channel_dir.parent.name
+    shaped = {
+        "installed": True,
+        "channel_dir": str(channel_dir),
+        "app_slug": str(repo_id),
+        "repo_id": str(repo_id),
+        "channel_layout": "repo-local-rally",
+        "policy": "repo-local",
+        "protocol_version": "1.0",
+        "last_resolved_at": _utc_iso(),
+        "rally_binary": binary,
+        "whoami": raw,
+    }
+    return _shape_envelope_from_discover(
+        shaped,
+        resolved_via="repo-local-rally-cli",
+    )
 
 
 def _invoke_discover_binary(
@@ -471,6 +560,7 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     for source_tag, probe in (
         ("env-override", _try_env_override),
         ("rust-cli", _try_rust_cli),
+        ("repo-local-rally-cli", _try_repo_local_rally_cli),
         ("path-binary", _try_path_binary),
         ("python-import", _try_python_import),
     ):

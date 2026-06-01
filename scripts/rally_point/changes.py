@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 _LOG_NAME = "changes.jsonl"
+_NATIVE_LOG_DIR = "log"
 
 # Known kinds (D7: this is advisory — unknown kinds warn but are kept).
 # Added 2026-05-20 for coordination dogfood: "feedback" (verifier verdicts:
@@ -75,6 +76,8 @@ def normalize_record(record: dict) -> dict:
     """Return a legacy-shaped change record for both Rally log formats."""
     if not isinstance(record, dict):
         return record
+    if "event_type" in record and isinstance(record.get("payload"), dict):
+        return _normalize_repo_local_record(record)
     event = record.get("event")
     if not isinstance(event, dict):
         return record
@@ -98,6 +101,41 @@ def normalize_record(record: dict) -> dict:
     if event.get("subject") and "subject" not in payload:
         normalized["subject"] = event["subject"]
     normalized["_source_format"] = "hash-chain"
+    return normalized
+
+
+def _normalize_repo_local_record(record: dict) -> dict:
+    """Normalize native repo-local ``.rally/log/*.jsonl`` rows.
+
+    Native Rally stores rows as ``{seq, occurred_at, event_type, payload}``
+    where ``payload`` is a Rally fact. Build-loop status consumers expect
+    the older ``changes.jsonl`` shape, so map only the stable fact fields.
+    """
+    fact = record.get("payload") or {}
+    if not isinstance(fact, dict):
+        fact = {}
+    payload = {
+        "subject": fact.get("subject"),
+        "scope": fact.get("scope"),
+        "status": fact.get("status"),
+        "reason": fact.get("summary"),
+        "from_tool": fact.get("tool"),
+        "to_tool": fact.get("target"),
+        "run_id": fact.get("run_id"),
+    }
+    normalized = {
+        "ts": record.get("occurred_at") or fact.get("created_at") or record.get("ts"),
+        "kind": record.get("event_type") or fact.get("kind") or "unknown",
+        "tool": fact.get("tool") or "unknown",
+        "model": fact.get("model") or "unknown",
+        "run_id": fact.get("run_id") or "unknown",
+        "app_slug": record.get("engagement") or "",
+        "payload": {k: v for k, v in payload.items() if v is not None},
+        "revision": _int_or_zero(record.get("seq") or fact.get("seq")),
+        "event_id": fact.get("event_id"),
+        "subject": fact.get("subject"),
+        "_source_format": "repo-local-rally",
+    }
     return normalized
 
 
@@ -176,6 +214,11 @@ def read_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
     log. A trailing partial line (writer mid-append) is left for the
     next poll: the returned offset only advances past complete lines.
     """
+    d = Path(channel_dir)
+    native_log_dir = d / _NATIVE_LOG_DIR
+    if native_log_dir.is_dir():
+        return _read_repo_local_changes_since(d, offset)
+
     p = _log_path(channel_dir)
     try:
         size = p.stat().st_size
@@ -199,3 +242,37 @@ def read_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
     except OSError:
         return [], offset
     return records, new_offset
+
+
+def _read_repo_local_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
+    """Return normalized rows from native repo-local ``.rally/log`` files.
+
+    ``offset`` is interpreted as the last seen sequence number for this
+    layout. The returned offset is the highest complete sequence observed.
+    """
+    records: list = []
+    latest_seq = _int_or_zero(offset)
+    try:
+        paths = sorted((Path(channel_dir) / _NATIVE_LOG_DIR).glob("*.jsonl"))
+    except OSError:
+        return [], latest_seq
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    normalized = normalize_record(raw)
+                    seq = _int_or_zero(normalized.get("revision"))
+                    if seq > latest_seq:
+                        latest_seq = seq
+                    if seq > _int_or_zero(offset):
+                        records.append(normalized)
+        except OSError:
+            continue
+    records.sort(key=lambda r: _int_or_zero(r.get("revision")))
+    return records, latest_seq

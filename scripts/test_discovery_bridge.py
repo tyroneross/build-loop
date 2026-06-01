@@ -326,6 +326,37 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
                 sibling_rally.resolve(),
             )
 
+    def test_repo_local_enter_say_rally_resolves_to_dot_rally(self) -> None:
+        """Older native Rally uses repo-local .rally and must beat fallback."""
+        rally = self.tmp / "bin" / "rally"
+        self._write_fake_repo_local_rally(rally)
+
+        env = _clean_env({
+            "PATH": f"{rally.parent}:/usr/bin:/bin",
+            "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
+        })
+        with self._patched_env(env):
+            envelope = bridge.resolve(self.workdir)
+
+        self.assertEqual(envelope.resolved_via, "repo-local-rally-cli")
+        self.assertEqual(
+            Path(envelope.channel_dir).resolve(),
+            (self.workdir / ".rally").resolve(),
+        )
+        self.assertEqual(envelope.policy, "repo-local")
+
+    def test_repo_local_binary_is_not_returned_as_setup_rust_binary(self) -> None:
+        rally = self.tmp / "bin" / "rally"
+        self._write_fake_repo_local_rally(rally)
+
+        env = _clean_env({
+            "PATH": f"{rally.parent}:/usr/bin:/bin",
+            "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
+        })
+        with self._patched_env(env):
+            self.assertIsNone(bridge.rust_rally_binary(self.workdir))
+            self.assertEqual(bridge.repo_local_rally_binary(self.workdir), str(rally))
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -348,6 +379,29 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             "    raise SystemExit(2)\n"
             "if args == ['setup', '--json']:\n"
             f"    print({setup_payload!r})\n"
+            "    raise SystemExit(0)\n"
+            "raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+
+    def _write_fake_repo_local_rally(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"#!{sys.executable}\n"
+            "import json, pathlib, sys\n"
+            "args = sys.argv[1:]\n"
+            "if not args:\n"
+            "    print('Usage: rally enter --tool <tool>')\n"
+            "    print('       rally say <kind> --tool <tool> --subject <subject>')\n"
+            "    print('       rally whoami [--tool <id>] [--json]')\n"
+            "    raise SystemExit(0)\n"
+            "repo = pathlib.Path.cwd()\n"
+            "if args == ['whoami', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'data': {'whoami': {\n"
+            "        'repo_root': str(repo), 'repo_id': repo.name,\n"
+            "        'worktree': str(repo), 'cwd': str(repo),\n"
+            "        'build_id': 'test-local'}}}))\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(2)\n",
             encoding="utf-8",

@@ -94,11 +94,13 @@ def post(
             try:
                 try:  # package import
                     from .discovery_bridge import (
+                        repo_local_rally_binary,
                         resolve as _bridge_resolve,
                         rust_rally_binary,
                     )
                 except ImportError:  # script import
                     from discovery_bridge import (  # type: ignore
+                        repo_local_rally_binary,
                         resolve as _bridge_resolve,
                         rust_rally_binary,
                     )
@@ -114,6 +116,18 @@ def post(
                         kind=kind,
                         tool=tool,
                         model=model,
+                        run_id=run_id,
+                        payload=payload,
+                    )
+                if (
+                    envelope.resolved_via == "repo-local-rally-cli"
+                    and str(Path(envelope.channel_dir).resolve()) == str(d.resolve())
+                ):
+                    return _post_via_repo_local_rally(
+                        binary=repo_local_rally_binary(workdir),
+                        workdir=workdir,
+                        kind=kind,
+                        tool=tool,
                         run_id=run_id,
                         payload=payload,
                     )
@@ -207,6 +221,137 @@ def _looks_like_rust_channel(channel_dir: Path) -> bool:
         or (channel_dir / "rally.checkpoint.json").exists()
         or (channel_dir / "rally.lock").exists()
     )
+
+
+def _post_via_repo_local_rally(
+    *,
+    binary: str | None,
+    workdir: Path,
+    kind: str,
+    tool: str,
+    run_id: str,
+    payload: dict,
+) -> int | None:
+    if not binary:
+        return None
+    native_kind = _native_kind(kind)
+    subject = _native_subject(kind, payload)
+    cmd = [
+        binary,
+        "say",
+        native_kind,
+        "--json",
+        "--tool",
+        tool,
+        "--subject",
+        subject,
+    ]
+    if run_id:
+        cmd.extend(["--run", run_id])
+    summary = (payload or {}).get("summary") or (payload or {}).get("reason")
+    if summary:
+        cmd.extend(["--summary", str(summary)])
+    target = (payload or {}).get("to") or (payload or {}).get("to_tool")
+    if target:
+        cmd.extend(["--to", str(target)])
+    status = (payload or {}).get("status") or (payload or {}).get("verdict")
+    if status:
+        cmd.extend(["--status", str(status)])
+    severity = (payload or {}).get("severity")
+    if severity:
+        cmd.extend(["--severity", str(severity)])
+    for path in _payload_paths(payload):
+        cmd.extend(["--path", path])
+    evidence = json.dumps(payload or {}, sort_keys=True, separators=(",", ":"))
+    cmd.extend(["--evidence", evidence])
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        out = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(out, dict) or out.get("ok") is not True:
+        return None
+    return _native_seq(out)
+
+
+def _native_kind(kind: str) -> str:
+    supported = {
+        "claim",
+        "release",
+        "blocker",
+        "resolve",
+        "decision",
+        "artifact",
+        "handoff",
+        "risk",
+        "lesson",
+        "session",
+        "wake",
+        "standby",
+        "presence",
+        "backlog-item",
+        "mission",
+    }
+    if kind in supported:
+        return kind
+    if kind == "phase":
+        return "presence"
+    if kind in {"feedback", "message", "dep-change", "arch-scan-complete"}:
+        return "artifact"
+    if kind == "escalation":
+        return "risk"
+    return "artifact"
+
+
+def _native_subject(kind: str, payload: dict) -> str:
+    payload = payload or {}
+    subject = payload.get("subject") or payload.get("message")
+    if subject:
+        return str(subject)
+    if kind == "phase" and payload.get("phase"):
+        return f"phase: {payload['phase']}"
+    return kind
+
+
+def _payload_paths(payload: dict) -> list[str]:
+    payload = payload or {}
+    out: list[str] = []
+    for key in ("path", "paths", "scope", "files"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            out.append(value)
+        elif isinstance(value, list):
+            out.extend(str(item) for item in value if item)
+    ownership = payload.get("ownership")
+    if isinstance(ownership, dict):
+        owns = ownership.get("owns")
+        if isinstance(owns, list):
+            out.extend(str(item) for item in owns if item)
+    return out
+
+
+def _native_seq(out: dict) -> int | None:
+    try:
+        seq = (((out.get("data") or {}).get("say") or {}).get("fact") or {}).get("seq")
+        if seq:
+            return int(seq)
+        verified_seq = ((out.get("data") or {}).get("verified") or {}).get("seq")
+        if verified_seq:
+            return int(verified_seq)
+    except (TypeError, ValueError):
+        return None
+    return 0
 
 
 def _post_via_rust_rally(

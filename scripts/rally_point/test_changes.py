@@ -118,6 +118,60 @@ def test_read_normalizes_hash_chain_record(chan: Path):
     assert recs[0]["payload"]["to_tool"] == "codex"
 
 
+def test_read_normalizes_repo_local_rally_log(chan: Path):
+    log_dir = chan / "log"
+    log_dir.mkdir()
+    row = {
+        "seq": 42,
+        "occurred_at": "2026-06-01T20:41:07Z",
+        "event_type": "handoff",
+        "engagement": "easy-terminal",
+        "payload": {
+            "kind": "handoff",
+            "tool": "claude_code:redesign-coord",
+            "target": "codex",
+            "subject": "Workbench glass redesign LANDED",
+            "summary": "ready for review",
+            "status": "done",
+            "scope": ["file:Sources/App.swift"],
+            "event_id": "fact_123",
+        },
+    }
+    (log_dir / "easy-terminal.jsonl").write_text(
+        json.dumps(row) + "\n",
+        encoding="utf-8",
+    )
+
+    recs, off = ch.read_changes_since(chan, 0)
+
+    assert off == 42
+    assert len(recs) == 1
+    assert recs[0]["kind"] == "handoff"
+    assert recs[0]["tool"] == "claude_code:redesign-coord"
+    assert recs[0]["revision"] == 42
+    assert recs[0]["app_slug"] == "easy-terminal"
+    assert recs[0]["payload"]["to_tool"] == "codex"
+    assert recs[0]["payload"]["subject"] == "Workbench glass redesign LANDED"
+
+
+def test_repo_local_rally_log_offset_is_sequence(chan: Path):
+    log_dir = chan / "log"
+    log_dir.mkdir()
+    rows = [
+        {"seq": 1, "event_type": "presence", "payload": {"tool": "a"}},
+        {"seq": 3, "event_type": "risk", "payload": {"tool": "b"}},
+    ]
+    (log_dir / "room.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    recs, off = ch.read_changes_since(chan, 1)
+
+    assert off == 3
+    assert [r["revision"] for r in recs] == [3]
+
+
 def _writer(d: str, tag: int):
     for i in range(20):
         ch.append_change(

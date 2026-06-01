@@ -34,6 +34,7 @@ if str(HERE) not in sys.path:
 
 from rally_point import changes, channel_paths, presence, revision  # noqa: E402
 from rally_point.discovery_bridge import (  # noqa: E402
+    repo_local_rally_binary,
     resolve as _bridge_resolve,
     rust_rally_binary,
 )
@@ -95,7 +96,17 @@ def rally(
 
     presence_written = False
     errors: list[str] = []
-    if envelope.resolved_via == "rust-cli":
+    if envelope.resolved_via == "repo-local-rally-cli":
+        presence_written = _enter_repo_local_session(
+            workdir=workdir,
+            session_id=session_id,
+            tool=tool,
+            message=message,
+            owns=owns,
+        )
+        if not presence_written:
+            errors.append("rally enter failed")
+    elif envelope.resolved_via == "rust-cli":
         presence_written = _start_rust_session(
             workdir=workdir,
             session_id=session_id,
@@ -144,21 +155,53 @@ def rally(
             "denied_tools": [],
         },
     }
-    before_revision = revision.read_revision(channel_dir) if verify else None
-    channel_rev = post(
-        channel_dir=channel_dir,
-        kind="handoff",
-        tool=tool,
-        model=model,
-        run_id=effective_run_id,
-        app_slug=slug,
-        payload=payload,
-        workdir=workdir,
-    )
-    after_revision = revision.read_revision(channel_dir) if verify else None
+    if envelope.resolved_via == "repo-local-rally-cli":
+        before_revision = revision.read_revision(channel_dir) if verify else None
+        channel_rev = _handoff_via_repo_local_rally(
+            workdir=workdir,
+            tool=tool,
+            run_id=effective_run_id,
+            payload=payload,
+            message=message,
+        )
+        after_revision = revision.read_revision(channel_dir) if verify else None
+    else:
+        before_revision = revision.read_revision(channel_dir) if verify else None
+        channel_rev = post(
+            channel_dir=channel_dir,
+            kind="handoff",
+            tool=tool,
+            model=model,
+            run_id=effective_run_id,
+            app_slug=slug,
+            payload=payload,
+            workdir=workdir,
+        )
+        after_revision = revision.read_revision(channel_dir) if verify else None
 
     verify_result: dict[str, Any] | None = None
-    if verify and envelope.resolved_via == "rust-cli":
+    if verify and envelope.resolved_via == "repo-local-rally-cli":
+        records, _offset = changes.read_changes_since(channel_dir, 0)
+        matching_records = [
+            r for r in records
+            if r.get("revision") == channel_rev
+            and r.get("kind") == "handoff"
+            and r.get("tool") == tool
+        ]
+        verify_result = {
+            "posted": bool(
+                channel_rev is not None
+                and before_revision is not None
+                and after_revision is not None
+                and after_revision > before_revision
+                and matching_records
+            ),
+            "protocol": "repo-local-rally-cli",
+            "before_revision": before_revision,
+            "after_revision": after_revision,
+            "matching_record_count": len(matching_records),
+        }
+    elif verify and envelope.resolved_via == "rust-cli":
         verify_result = _verify_rust_post(workdir, channel_rev)
     elif verify:
         records, _offset = changes.read_changes_since(channel_dir, 0)
@@ -188,6 +231,7 @@ def rally(
         "workdir": str(workdir),
         "app_slug": slug,
         "channel_dir": str(channel_dir),
+        "resolved_via": envelope.resolved_via,
         "channel_revision": channel_rev,
         "session_id": session_id,
         "run_id": effective_run_id,
@@ -200,6 +244,113 @@ def rally(
         result["verify"] = verify_result
         result["posted"] = verify_result["posted"]
     return result
+
+
+def _enter_repo_local_session(
+    *,
+    workdir: Path,
+    session_id: str,
+    tool: str,
+    message: str,
+    owns: list[str],
+) -> bool:
+    binary = repo_local_rally_binary(workdir)
+    if not binary:
+        return False
+    cmd = [
+        binary,
+        "enter",
+        "--json",
+        "--tool",
+        tool,
+        "--session-id",
+        session_id,
+    ]
+    for owned in owns:
+        cmd.extend(["--path", owned])
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False
+    try:
+        payload = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return False
+    return bool(payload.get("ok") is True)
+
+
+def _handoff_via_repo_local_rally(
+    *,
+    workdir: Path,
+    tool: str,
+    run_id: str,
+    payload: dict[str, Any],
+    message: str,
+) -> int | None:
+    binary = repo_local_rally_binary(workdir)
+    if not binary:
+        return None
+    ownership = payload.get("ownership") or {}
+    subject = message or ownership.get("interface_contract") or "build-loop handoff"
+    cmd = [
+        binary,
+        "say",
+        "handoff",
+        "--json",
+        "--tool",
+        tool,
+        "--subject",
+        str(subject),
+        "--to",
+        str(payload.get("to") or "peer"),
+        "--summary",
+        str(payload.get("summary") or message),
+        "--status",
+        "done",
+        "--run",
+        run_id,
+        "--evidence",
+        json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
+    ]
+    owns = ownership.get("owns") if isinstance(ownership, dict) else None
+    if isinstance(owns, list):
+        for owned in owns:
+            if owned:
+                cmd.extend(["--path", str(owned)])
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        out = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(out, dict) or out.get("ok") is not True:
+        return None
+    try:
+        seq = (((out.get("data") or {}).get("say") or {}).get("fact") or {}).get("seq")
+        if seq:
+            return int(seq)
+        verified_seq = ((out.get("data") or {}).get("verified") or {}).get("seq")
+        return int(verified_seq) if verified_seq else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 def _start_rust_session(
