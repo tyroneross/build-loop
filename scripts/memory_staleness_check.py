@@ -26,6 +26,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import memory_update_ledger as mul  # type: ignore  # noqa: E402
+
 DEFAULT_COMMITS_THRESHOLD = 5
 DEFAULT_MEMORY_ROOT = Path.home() / "dev" / "git-folder" / "build-loop-memory"
 
@@ -97,6 +103,19 @@ def _last_milestone_commit(milestones_path: Path) -> str | None:
     return obj.get("commit") or None
 
 
+def _baseline_candidates(memory_root: Path, slug: str) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    latest_update = mul.latest_project_update(memory_root, slug, require_commit=True)
+    if latest_update and latest_update.get("source_commit"):
+        candidates.append(("updates_ledger", str(latest_update["source_commit"])))
+
+    milestones_path = memory_root / "projects" / slug / "milestones.jsonl"
+    milestone_commit = _last_milestone_commit(milestones_path)
+    if milestone_commit and ("milestones", milestone_commit) not in candidates:
+        candidates.append(("milestones", milestone_commit))
+    return candidates
+
+
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
@@ -120,38 +139,46 @@ def check(
             "reason": "workdir is not a git repository",
         }
 
-    milestones_path = memory_root / "projects" / slug / "milestones.jsonl"
-
-    memory_as_of_commit = _last_milestone_commit(milestones_path)
+    baselines = _baseline_candidates(memory_root, slug)
 
     # --- no baseline yet ---
-    if memory_as_of_commit is None:
+    if not baselines:
         return {
             "slug": slug,
             "memory_as_of_commit": None,
             "repo_head": _repo_head(workdir),
             "commits_stale": 0,
             "stale": False,
-            "reason": "no milestone baseline yet",
+            "reason": "no milestone baseline yet; no update ledger baseline yet",
         }
 
     repo_head = _repo_head(workdir)
     if repo_head is None:
         return {
             "slug": slug,
-            "memory_as_of_commit": memory_as_of_commit,
+            "memory_as_of_commit": baselines[0][1],
+            "baseline_source": baselines[0][0],
             "repo_head": None,
             "commits_stale": 0,
             "stale": False,
             "reason": "could not read repo HEAD",
         }
 
-    commits_stale = _commits_since(workdir, memory_as_of_commit)
+    baseline_source = baselines[0][0]
+    memory_as_of_commit = baselines[0][1]
+    commits_stale: int | None = None
+    for candidate_source, candidate_commit in baselines:
+        candidate_count = _commits_since(workdir, candidate_commit)
+        if candidate_count is not None:
+            baseline_source = candidate_source
+            memory_as_of_commit = candidate_commit
+            commits_stale = candidate_count
+            break
     if commits_stale is None:
-        # commit sha not in repo history (detached, shallow, or bad sha)
         return {
             "slug": slug,
             "memory_as_of_commit": memory_as_of_commit,
+            "baseline_source": baseline_source,
             "repo_head": repo_head,
             "commits_stale": 0,
             "stale": False,
@@ -162,12 +189,13 @@ def check(
     message = (
         f"{slug} memory is {commits_stale} commits behind HEAD — append a milestone/decision"
         if stale
-        else f"{slug} memory current ({commits_stale} commits since last milestone)"
+        else f"{slug} memory current ({commits_stale} commits since last {baseline_source})"
     )
 
     return {
         "slug": slug,
         "memory_as_of_commit": memory_as_of_commit,
+        "baseline_source": baseline_source,
         "repo_head": repo_head,
         "commits_stale": commits_stale,
         "stale": stale,

@@ -42,6 +42,7 @@ if str(_HERE) not in sys.path:
 
 from _paths import derive_slug_from_cwd, project_root, _safe_project_tag  # type: ignore  # noqa: E402
 from atomic_io import LockedFile  # type: ignore  # noqa: E402
+import memory_update_ledger as mul  # type: ignore  # noqa: E402
 
 DEFAULT_MEMORY_ROOT = "~/dev/git-folder/build-loop-memory"
 MILESTONES_FILENAME = "milestones.jsonl"
@@ -181,6 +182,24 @@ def main(argv: list[str] | None = None) -> int:
                 f.write(line + "\n")
                 f.flush()
                 os.fsync(f.fileno())
+
+        try:
+            mul.append_update(
+                memory_root=memory_root,
+                project=slug,
+                lane="milestones",
+                action="append",
+                path=milestone_path,
+                writer="append_milestone.py",
+                run_id=args.run_id,
+                source_workdir=workdir,
+                source_commit=commit,
+                memory_id=f"{slug}:milestone",
+                summary=args.summary,
+                metadata={"repo": repo_name},
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARN: memory_update_ledger append failed: {exc}", file=sys.stderr)
 
         _output({
             "appended": True,

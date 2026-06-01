@@ -100,6 +100,14 @@ def test_appends_one_line(tmp_path):
     assert "ts" in record
     assert "run_id" in record
 
+    ledger = mem / "indexes" / "updates.jsonl"
+    ledger_rows = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+    assert len(ledger_rows) == 1
+    assert ledger_rows[0]["project"] == "myrepo"
+    assert ledger_rows[0]["lane"] == "milestones"
+    assert ledger_rows[0]["action"] == "append"
+    assert ledger_rows[0]["source_commit"] == expected_sha
+
 
 def test_second_new_summary_appends(tmp_path):
     """Second call with different summary appends a second line."""
@@ -127,6 +135,9 @@ def test_idempotent_same_commit_and_summary(tmp_path):
     log_path = _milestones_path(mem, "myrepo")
     lines = [l for l in log_path.read_text().splitlines() if l.strip()]
     assert len(lines) == 1  # still just one line
+    ledger = mem / "indexes" / "updates.jsonl"
+    ledger_rows = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+    assert len(ledger_rows) == 1
 
 
 def test_creates_project_dir_if_missing(tmp_path):

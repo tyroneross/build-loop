@@ -28,7 +28,9 @@ This creates:
 ```
 ~/dev/git-folder/build-loop-memory/
 ├── constitution.md     # template — replace with your invariants
-└── MEMORY.md           # template — index for entries you add
+├── MEMORY.md           # template — index for entries you add
+└── indexes/
+    └── updates.jsonl   # created on first memory mutation; global update ledger
 ```
 
 ## Linking to a private repo
@@ -61,6 +63,20 @@ git push -u origin main
 If your private memory repo lives somewhere else, set
 `BUILD_LOOP_MEMORY_STORE_ROOT` or pass `--dest <path>` to the setup script. The
 scripts resolve the root through `scripts/_paths.py`.
+
+### Option D — Use a repo-local ignored store
+
+For experiments or repos that should carry their own local memory without a
+separate private repo, set the root to an ignored path such as:
+
+```bash
+export BUILD_LOOP_MEMORY_STORE_ROOT="$PWD/.build-loop/memory"
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --dest "$BUILD_LOOP_MEMORY_STORE_ROOT"
+```
+
+This is supported because build-loop owns the writer scripts and schema, while
+the memory root is just data. Keep `.build-loop/` ignored if the contents should
+not be committed.
 
 ## What goes in the global store
 
@@ -115,10 +131,32 @@ feedback that apply broadly, not project-specific decisions.
 ```
 ~/dev/git-folder/build-loop-memory/                  # canonical root
 ~/dev/git-folder/build-loop-memory/lessons/          # cross-project lessons
+~/dev/git-folder/build-loop-memory/indexes/updates.jsonl  # global update ledger
 ~/dev/git-folder/build-loop-memory/projects/<slug>/  # project-local memory
 ~/dev/git-folder/build-loop-memory/projects/_archive/<slug>/  # retired projects, still queryable
 <repo>/.build-loop/memory/                           # legacy project location — no longer read (PR 3 removed the shim); migrate via scripts/migrate_project_memory.py
 <repo>/.episodic/decisions/                          # legacy local decision store (migration/archive)
+```
+
+## Global update ledger
+
+Build-loop records every canonical memory mutation in
+`<memory-root>/indexes/updates.jsonl`. The ledger is append-only JSONL and is
+written by the plugin scripts:
+
+- `scripts/memory_writer.py` for lessons and provenance updates
+- `scripts/write_decision.py` for project decisions and supersession
+- `scripts/append_milestone.py` for run-level milestones
+
+Minimum useful fields are `ts`, `project`, `lane`, `action`, `path`, `writer`,
+and `source_commit` when the update is tied to a repo HEAD. Freshness checks use
+the latest project ledger row with `source_commit`; if no row exists, they fall
+back to `projects/<slug>/milestones.jsonl`.
+
+Read recent updates:
+
+```bash
+python3 scripts/memory_update_ledger.py tail --project build-loop --limit 20
 ```
 
 ## Constitution rules

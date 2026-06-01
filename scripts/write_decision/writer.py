@@ -43,6 +43,7 @@ from schema import (
     validate_v3,
 )
 from taxonomy import load_taxonomy, validate_tags
+import memory_update_ledger as mul  # type: ignore
 
 
 def _validate_inputs(
@@ -400,6 +401,7 @@ def _do_write(
         "notes": args.notes,
     }
     body_text = render_madr(fm, body)
+    history_path: Path | None = None
 
     try:
         # 4) Write the new MADR atomically
@@ -430,6 +432,50 @@ def _do_write(
     except (OSError, TimeoutError) as e:
         log(f"filesystem error: {e}")
         return 2
+
+    try:
+        memory_root = mul.infer_memory_root_for_path(new_path, fallback=decisions_dir)
+        source_commit = fm.get("closing_commit") or None
+        related_runs = fm.get("related_runs") or []
+        run_id = related_runs[0] if related_runs else None
+        if history_path is not None and auto_supersede_id is not None:
+            mul.append_update(
+                memory_root=memory_root,
+                project=v2["project"],
+                lane="decisions",
+                action="supersede",
+                path=history_path,
+                writer="write_decision.py",
+                run_id=run_id,
+                source_workdir=workdir,
+                source_commit=source_commit,
+                memory_id=auto_supersede_id,
+                summary=f"Superseded decision {auto_supersede_id} with {new_id}",
+                metadata={"superseded_by": new_id, "canonical_id": canonical_id},
+            )
+        mul.append_update(
+            memory_root=memory_root,
+            project=v2["project"],
+            lane="decisions",
+            action="write",
+            path=new_path,
+            writer="write_decision.py",
+            run_id=run_id,
+            source_workdir=workdir,
+            source_commit=source_commit,
+            memory_id=new_id,
+            summary=args.title,
+            metadata={
+                "canonical_id": canonical_id,
+                "confidence": args.confidence,
+                "entity": args.entity,
+                "primary_tag": args.primary_tag,
+                "status": args.status,
+                "supersedes": auto_supersede_id,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        log(f"WARN: memory_update_ledger append failed: {exc}")
 
     # 8) DB write to the post-cutover schema (default: personal_memory).
     # The Phase B dual-write block was removed at Phase C cutover (2026-05-05).

@@ -112,6 +112,21 @@ class WriteTests(unittest.TestCase):
         self.assertEqual(rows[0]["action"], "write")
         self.assertEqual(rows[0]["file"], "lesson.md")
 
+    def test_write_appends_to_global_update_ledger(self):
+        mw.write(
+            self.tmp, "lesson.md", body="x",
+            name="l", description="d", type_="pattern",
+            run_id="r", workdir=str(self.tmp), host="codex",
+        )
+        ledger = self.tmp / "indexes" / "updates.jsonl"
+        self.assertTrue(ledger.exists())
+        rows = [json.loads(l) for l in ledger.read_text().strip().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["action"], "write")
+        self.assertEqual(rows[0]["path"], "lesson.md")
+        self.assertEqual(rows[0]["writer"], "memory_writer.py")
+        self.assertEqual(rows[0]["source_host"], "codex")
+
     def test_write_update_preserves_created_at_and_applied(self):
         # Initial write.
         fm1 = mw.write(
@@ -179,6 +194,9 @@ class MarkAppliedTests(unittest.TestCase):
         entry = fm["applied_in_repos"][0]
         self.assertEqual(entry["repo"], "other.git")
         self.assertEqual(entry["run_id"], "r2")
+        ledger = self.tmp / "indexes" / "updates.jsonl"
+        rows = [json.loads(l) for l in ledger.read_text().strip().splitlines()]
+        self.assertEqual(rows[-1]["action"], "mark-applied")
 
     def test_mark_applied_flips_cross_repo_validated(self):
         fm = mw.mark_applied(

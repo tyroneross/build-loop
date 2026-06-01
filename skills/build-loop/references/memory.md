@@ -67,6 +67,7 @@ Multiple build-loop sessions can run concurrently. Two scripts own the cross-ses
 
 - `scripts/memory_writer.py` — canonical WRITER. Adds provenance frontmatter and appends to the index in one atomic operation.
 - `scripts/memory_index.py` — append-only discovery log in the selected canonical lane.
+- `scripts/memory_update_ledger.py` — global append-only audit/freshness log for the whole configured memory root.
 
 ### Provenance frontmatter (every memory file)
 
@@ -100,7 +101,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
   --body-file /tmp/memory-body.md
 ```
 
-The writer auto-detects `source_repo` from the workdir's git remote, appends a row to `INDEX.jsonl`, and (on update) preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits.
+The writer auto-detects `source_repo` from the workdir's git remote, appends a row to the lane-local `INDEX.jsonl`, appends a row to the global update ledger at `indexes/updates.jsonl`, and (on update) preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits.
 
 ### Reader side — surface peer writes via INDEX.jsonl
 
@@ -117,6 +118,56 @@ For each row:
 1. Read the underlying memory file.
 2. If `source_workdir` ≠ this `$PWD` AND `source_repo` ≠ this repo's git remote — tag `[CROSS-REPO — requires scrutiny]` in the phase brief.
 3. Surface to the user with the memory's `description` field as the hook.
+
+### Store side — global update ledger
+
+Every canonical memory mutation should also append one JSONL row to:
+
+```
+<memory-root>/indexes/updates.jsonl
+```
+
+This is the store-wide ledger. It is not a replacement for lane-local `INDEX.jsonl`; the two logs have different jobs:
+
+| Log | Scope | Primary job |
+|---|---|---|
+| `<lane>/INDEX.jsonl` | One memory lane | Peer discovery inside that lane |
+| `indexes/updates.jsonl` | Whole memory root | Audit trail, freshness baseline, repair inventory |
+
+Row schema:
+
+```json
+{
+  "ts": "2026-06-01T12:00:00Z",
+  "schema_version": 1,
+  "event_id": "<sha256-prefix>",
+  "project": "build-loop",
+  "lane": "decisions",
+  "action": "write",
+  "path": "projects/build-loop/decisions/0001-example.md",
+  "writer": "write_decision.py",
+  "run_id": "run_...",
+  "source_repo": "<git remote or omitted>",
+  "source_workdir": "<absolute workdir or omitted>",
+  "source_commit": "<repo HEAD represented by this memory update>",
+  "source_host": "codex",
+  "memory_id": "0001",
+  "summary": "Short human hook",
+  "sha256": "<content hash when available>",
+  "metadata": {}
+}
+```
+
+`memory_writer.py`, `write_decision.py`, and `append_milestone.py` emit this ledger row automatically. Direct writes to memory files should be treated as legacy or repair work because they bypass provenance, discovery, and freshness.
+
+CLI:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_update_ledger.py tail \
+  --project "$PROJECT_SLUG" \
+  --limit 20 \
+  --json
+```
 
 ### Trust gradient — mark-applied flow
 
@@ -150,6 +201,7 @@ Run once after this version of build-loop is installed; the migration completes 
 
 - `memory_writer.py write` — atomic tmpfile + os.replace; the memory file IS the lock.
 - `memory_index.py append` — `fcntl.flock(LOCK_EX)` on `INDEX.jsonl.lock`; multi-writer safe across hosts.
+- `memory_update_ledger.py append` — `fcntl.flock(LOCK_EX)` on `updates.jsonl.lock`; append-only and multi-writer safe.
 
 ## Append-only milestones (anti-rewrite-drift)
 
@@ -199,7 +251,13 @@ Decisions use the existing `decisions/` lane (also append-only files, one file p
 
 ### Staleness detection
 
-The sibling `memory_staleness_check.py` (not owned by this chunk) reads the latest milestone's `commit` field and compares it against `git rev-parse HEAD` in the project workdir. If HEAD has moved past the last milestone commit, the project's memory is potentially stale and Phase 1 Assess should flag it.
+`memory_staleness_check.py` now prefers the latest `source_commit` in `indexes/updates.jsonl` for the current project, then falls back to the latest milestone's `commit` field. It compares that baseline against `git rev-parse HEAD` in the project workdir. If HEAD has moved past the last memory update by the configured commit threshold, the project's memory is potentially stale and Phase 1 Assess should flag it.
+
+Impact:
+
+- A decision, lesson, migration, mark-applied, or milestone can refresh the memory baseline when it records `source_commit`.
+- Older memory stores without `indexes/updates.jsonl` keep working because milestone fallback is unchanged.
+- A stale warning means "no durable memory update has been recorded for this project at or near HEAD"; it does not prove every individual memory file is stale.
 
 ### Concurrency
 
