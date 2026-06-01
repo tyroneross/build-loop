@@ -26,8 +26,11 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -141,6 +144,158 @@ def _run_status_subprocess(
     return {}
 
 
+# Match watch.py's default lifetime (single source of truth at the CLI layer).
+# Kept local for clarity in the persisted pid-file metadata.
+_WATCHER_DEFAULT_MAX_LIFETIME_SECONDS = 14400.0  # 4h
+
+
+def _watcher_max_lifetime() -> float:
+    """Return the configured watcher max-lifetime, env-overridable.
+
+    Matches the parsing rules in watch._env_max_lifetime so launcher and
+    watcher agree on the value persisted in the pid file.
+    """
+    raw = os.environ.get("BUILD_LOOP_WATCHER_MAX_LIFETIME_SECONDS")
+    if raw is None:
+        return _WATCHER_DEFAULT_MAX_LIFETIME_SECONDS
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return _WATCHER_DEFAULT_MAX_LIFETIME_SECONDS
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True iff signalable pid is alive. EPERM means alive (other uid)."""
+    if pid <= 1:
+        # Treat <=1 as 'unknown but do not act'; the reaper relies on
+        # parent_pid being a real session pid, never 0/1.
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        return exc.errno != errno.ESRCH
+
+
+def _terminate_watcher(pid: int) -> tuple[bool, bool]:
+    """SIGTERM with brief grace, then SIGKILL. Returns (sigtermed, sigkilled).
+
+    Errors swallowed (best-effort; rally never-block charter). Caller decides
+    whether to delete the pid file afterward.
+    """
+    sigtermed = False
+    sigkilled = False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        sigtermed = True
+    except (ProcessLookupError, PermissionError):
+        return (False, False)
+    except OSError:
+        return (False, False)
+    # Brief grace; the watcher polls every 3s by default but a SIGTERM
+    # interrupts the sleep on POSIX.
+    deadline = time.monotonic() + 0.2
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return (sigtermed, sigkilled)
+        time.sleep(0.02)
+    # Still alive after grace → SIGKILL.
+    try:
+        os.kill(pid, signal.SIGKILL)
+        sigkilled = True
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    return (sigtermed, sigkilled)
+
+
+def _reap_stale_watchers(
+    pid_dir: Path, now: float, max_lifetime: float
+) -> dict[str, int]:
+    """Sweep ``pid_dir/*.json`` and reap watchers whose owner is gone, whose
+    own pid is dead, or whose started_at is older than ``max_lifetime``.
+
+    For each file:
+        * If process at ``pid`` is dead → delete json (and matching .log).
+        * If recorded ``parent_pid`` is set and dead → SIGTERM → 0.2s grace
+          → SIGKILL → delete json + log.
+        * If ``now - started_at > max_lifetime`` → same SIGTERM/SIGKILL/delete.
+        * Otherwise leave the file alone.
+
+    Returns ``{"scanned": N, "deleted_files": N, "sigtermed": N, "sigkilled": N}``.
+    All exceptions swallowed; the reaper must NEVER block coordination
+    (build-loop-memory feedback_close_out_stops_the_watcher.md / rally
+    never-block charter).
+    """
+    stats = {"scanned": 0, "deleted_files": 0, "sigtermed": 0, "sigkilled": 0}
+    if not pid_dir.exists():
+        return stats
+    try:
+        entries = sorted(pid_dir.glob("*.json"))
+    except OSError:
+        return stats
+    for entry in entries:
+        stats["scanned"] += 1
+        try:
+            meta = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # Unreadable record: delete it so it stops accumulating.
+            _safe_delete_watcher_files(entry)
+            stats["deleted_files"] += 1
+            continue
+
+        pid = int(meta.get("pid", 0) or 0)
+        parent_pid = meta.get("parent_pid")
+        started_at = float(meta.get("started_at", 0) or 0)
+
+        should_terminate = False
+        reason = ""
+        # (A) Watcher process itself dead → just delete the file.
+        if pid > 0 and not _pid_alive(pid):
+            _safe_delete_watcher_files(entry)
+            stats["deleted_files"] += 1
+            continue
+        # (B) Parent (launcher) dead → terminate watcher.
+        if parent_pid is not None:
+            try:
+                parent_pid_int = int(parent_pid)
+            except (TypeError, ValueError):
+                parent_pid_int = 0
+            if parent_pid_int > 1 and not _pid_alive(parent_pid_int):
+                should_terminate = True
+                reason = "parent-dead"
+        # (C) Over absolute lifetime → terminate watcher.
+        if (
+            not should_terminate
+            and started_at > 0
+            and (now - started_at) > max_lifetime
+        ):
+            should_terminate = True
+            reason = "over-lifetime"
+
+        if should_terminate and pid > 0:
+            sigtermed, sigkilled = _terminate_watcher(pid)
+            if sigtermed:
+                stats["sigtermed"] += 1
+            if sigkilled:
+                stats["sigkilled"] += 1
+            _safe_delete_watcher_files(entry)
+            stats["deleted_files"] += 1
+    return stats
+
+
+def _safe_delete_watcher_files(pid_file: Path) -> None:
+    """Delete ``pid_file`` and its sibling ``.log``; swallow errors."""
+    for path in (pid_file, pid_file.with_suffix(".log")):
+        try:
+            path.unlink()
+        except (FileNotFoundError, OSError):
+            pass
+
+
 def _launch_watcher(
     workdir: str,
     session_id: str,
@@ -148,6 +303,7 @@ def _launch_watcher(
     slug: str,
     watcher_launcher: Any | None,
     errors: list,
+    parent_pid: int | None = None,
 ) -> str | None:
     """Launch coordination_watch.py detached in the background.
 
@@ -155,11 +311,25 @@ def _launch_watcher(
     Uses ``watcher_launcher`` callable when provided (for test injection).
     Default uses ``subprocess`` with nohup + detach so the hook returns fast.
 
+    ``parent_pid`` (optional, default ``os.getpid()``) is captured BEFORE the
+    Popen call and threaded to the child via ``--parent-pid``. This closes
+    the race where the hook process exits during child Python startup and the
+    watcher's ``os.getppid()`` already reads 1 by the time main runs
+    (build-loop-memory lessons/2026-05-31-coordination-process-leak.md fix
+    iteration 2). The pid file persists ``parent_pid``, ``started_at``, and
+    ``max_lifetime_seconds`` so the reaper can audit dead-parent / over-age
+    watchers on the next SessionStart.
+
     Watcher PID files live under ``<channel_dir>/watchers/`` — the
     channel dir is resolved via the discovery bridge so canonical/legacy
     policy is honoured (no direct ``channel_paths.apps_root()`` write).
     """
     watch_script = _SCRIPTS_DIR / "coordination_watch.py"
+    # Capture launcher PID BEFORE any subprocess work. Once we Popen with
+    # start_new_session=True the child is reparented to init the moment we
+    # exit — by then our pid is gone, so capture must happen here.
+    effective_parent_pid = parent_pid if parent_pid is not None else os.getpid()
+    max_lifetime = _watcher_max_lifetime()
     try:
         envelope = _bridge_resolve(Path(workdir))
         pid_dir = Path(envelope.channel_dir) / "watchers"
@@ -178,13 +348,49 @@ def _launch_watcher(
                 session_id=session_id,
                 tool=tool,
                 watch_script=str(watch_script),
+                parent_pid=effective_parent_pid,
+                max_lifetime_seconds=max_lifetime,
             )
             pid_dir.mkdir(parents=True, exist_ok=True)
             pid_file.write_text(
-                json.dumps({"session_id": session_id, "tool": tool, "pid": pid}),
+                json.dumps({
+                    "session_id": session_id,
+                    "tool": tool,
+                    "pid": pid,
+                    "parent_pid": effective_parent_pid,
+                    "started_at": time.time(),
+                    "max_lifetime_seconds": max_lifetime,
+                }),
                 encoding="utf-8",
             )
             return str(pid_file)
+        except TypeError:
+            # Backward-compat: tests written before C2 take only the
+            # original kwargs. Retry without the new kwargs and persist the
+            # metadata anyway so reap-stale audits the file correctly.
+            try:
+                pid = watcher_launcher(
+                    workdir=workdir,
+                    session_id=session_id,
+                    tool=tool,
+                    watch_script=str(watch_script),
+                )
+                pid_dir.mkdir(parents=True, exist_ok=True)
+                pid_file.write_text(
+                    json.dumps({
+                        "session_id": session_id,
+                        "tool": tool,
+                        "pid": pid,
+                        "parent_pid": effective_parent_pid,
+                        "started_at": time.time(),
+                        "max_lifetime_seconds": max_lifetime,
+                    }),
+                    encoding="utf-8",
+                )
+                return str(pid_file)
+            except Exception as exc:
+                errors.append(f"watcher launcher failed: {exc}")
+                return None
         except Exception as exc:
             errors.append(f"watcher launcher failed: {exc}")
             return None
@@ -205,6 +411,8 @@ def _launch_watcher(
                 "--tool", tool,
                 "--baseline-current",
                 "--jsonl",
+                "--parent-pid", str(effective_parent_pid),
+                "--max-lifetime-seconds", str(max_lifetime),
             ],
             stdout=open(str(log_path), "w"),
             stderr=subprocess.STDOUT,
@@ -217,8 +425,10 @@ def _launch_watcher(
                 "session_id": session_id,
                 "tool": tool,
                 "pid": proc.pid,
+                "parent_pid": effective_parent_pid,
                 "log": str(log_path),
                 "started_at": time.time(),
+                "max_lifetime_seconds": max_lifetime,
             }),
             encoding="utf-8",
         )
@@ -371,10 +581,26 @@ def probe(
     active_peers = status_envelope.get("active_peers", [])
 
     # ------------------------------------------------------------------
-    # Step 7: Optionally launch background watcher
+    # Step 7: Optionally reap stale watchers, then launch background watcher.
+    # Reaping happens BEFORE launching so a leak from a prior session is
+    # cleaned up before this session adds its own watcher to the directory.
+    # Best-effort: a reaper failure never blocks the new watcher.
     # ------------------------------------------------------------------
     watcher_started = False
     if start_watch:
+        try:
+            envelope_for_pid = _bridge_resolve(workdir_path)
+            pid_dir = Path(envelope_for_pid.channel_dir) / "watchers"
+        except Exception:
+            pid_dir = Path(channel_paths.apps_root()) / slug / "watchers"
+        try:
+            _reap_stale_watchers(
+                pid_dir=pid_dir,
+                now=now,
+                max_lifetime=_watcher_max_lifetime(),
+            )
+        except Exception as exc:
+            errors.append(f"reap-stale failed: {exc}")
         pid_file = _launch_watcher(
             workdir=str(workdir_path),
             session_id=session_id,

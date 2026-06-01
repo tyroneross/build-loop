@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -469,6 +470,250 @@ class CLITests(unittest.TestCase):
         required_keys = {"status", "active_peers", "session_id", "slug", "errors"}
         missing = required_keys - set(envelope.keys())
         self.assertFalse(missing, f"Missing envelope keys: {missing}")
+
+
+# ---------------------------------------------------------------------------
+# C2: parent-pid capture + reap-stale on launch
+#
+# Root cause: per-session watchers spawned via Popen(start_new_session=True)
+# are reparented to launchd when the hook process exits. The launcher captures
+# its own PID BEFORE Popen and threads it to the watcher; the next
+# SessionStart's reap-stale sweeps any prior watcher whose parent or own
+# process is gone, or whose lifetime exceeds the configured ceiling.
+# ---------------------------------------------------------------------------
+
+class _CapturingWatcherLauncher:
+    """Records all kwargs the launcher passes through (incl. parent_pid)."""
+
+    def __init__(self, pid: int = 99100):
+        self.pid = pid
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return self.pid
+
+
+class LaunchWatcherPersistsParentPidTests(unittest.TestCase):
+    """The watcher_launcher injection point sees parent_pid and the pid file
+    persists parent_pid + started_at + max_lifetime_seconds for the reaper."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="probe-c2-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _run_launch(self, parent_pid=None):
+        errors: list[str] = []
+        launcher = _CapturingWatcherLauncher()
+        with patch.object(sp, "_bridge_resolve") as mock_resolve:
+            # Force the apps_root fallback path so the pid_dir lives in our
+            # tmpdir for assertion.
+            mock_resolve.side_effect = RuntimeError("forced fallback")
+            with patch.object(sp.channel_paths, "apps_root",
+                              return_value=str(self.tmpdir)):
+                pid_file = sp._launch_watcher(
+                    workdir=str(self.tmpdir),
+                    session_id="sess-c2",
+                    tool="claude_code",
+                    slug="test-slug",
+                    watcher_launcher=launcher,
+                    errors=errors,
+                    parent_pid=parent_pid,
+                )
+        return pid_file, launcher, errors
+
+    def test_default_parent_pid_is_os_getpid(self):
+        pid_file, launcher, errors = self._run_launch(parent_pid=None)
+        self.assertIsNotNone(pid_file)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(launcher.calls), 1)
+        self.assertEqual(launcher.calls[0]["parent_pid"], os.getpid())
+
+    def test_explicit_parent_pid_is_passed_through(self):
+        pid_file, launcher, _ = self._run_launch(parent_pid=42424)
+        self.assertEqual(launcher.calls[0]["parent_pid"], 42424)
+
+    def test_pid_file_persists_metadata_for_reaper(self):
+        pid_file, _, _ = self._run_launch(parent_pid=99001)
+        meta = json.loads(Path(pid_file).read_text())
+        # All four reaper-required keys present.
+        for k in ("session_id", "pid", "parent_pid", "started_at",
+                  "max_lifetime_seconds"):
+            self.assertIn(k, meta, f"pid file missing {k}")
+        self.assertEqual(meta["parent_pid"], 99001)
+        self.assertEqual(meta["pid"], 99100)
+        self.assertGreater(meta["started_at"], 0)
+        self.assertGreater(meta["max_lifetime_seconds"], 0)
+
+
+class ReapStaleWatchersTests(unittest.TestCase):
+    """The reaper deletes dead-pid files and SIGTERMs over-age or
+    parent-gone watchers. Live in-window watchers untouched."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="reap-c2-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_pid_file(self, name, **meta):
+        full = {
+            "session_id": name,
+            "tool": "claude_code",
+            "pid": 0,
+            "parent_pid": None,
+            "started_at": time.time(),
+            "max_lifetime_seconds": 14400.0,
+            **meta,
+        }
+        path = self.tmpdir / f"{name}.json"
+        path.write_text(json.dumps(full))
+        # Matching log file the reaper should delete with the json.
+        log = self.tmpdir / f"{name}.log"
+        log.write_text("")
+        return path, log
+
+    def test_returns_empty_stats_when_dir_missing(self):
+        missing = self.tmpdir / "nope"
+        stats = sp._reap_stale_watchers(missing, now=time.time(),
+                                        max_lifetime=10.0)
+        self.assertEqual(stats["scanned"], 0)
+        self.assertEqual(stats["deleted_files"], 0)
+
+    def test_deletes_dead_pid_file(self):
+        # Pid 987654321 is definitely dead.
+        path, log = self._write_pid_file("dead", pid=987654321)
+        stats = sp._reap_stale_watchers(self.tmpdir, now=time.time(),
+                                        max_lifetime=14400.0)
+        self.assertEqual(stats["scanned"], 1)
+        self.assertEqual(stats["deleted_files"], 1)
+        self.assertFalse(path.exists())
+        self.assertFalse(log.exists())
+
+    def test_unreadable_pid_file_is_deleted(self):
+        path = self.tmpdir / "garbage.json"
+        path.write_text("not-json{{{")
+        stats = sp._reap_stale_watchers(self.tmpdir, now=time.time(),
+                                        max_lifetime=14400.0)
+        self.assertEqual(stats["deleted_files"], 1)
+        self.assertFalse(path.exists())
+
+    def test_leaves_live_in_window_watcher_alone(self):
+        # Use our own pid (alive) + recent started_at + live parent.
+        path, _ = self._write_pid_file(
+            "live", pid=os.getpid(), parent_pid=os.getpid(),
+            started_at=time.time() - 5.0,
+        )
+        stats = sp._reap_stale_watchers(self.tmpdir, now=time.time(),
+                                        max_lifetime=14400.0)
+        self.assertEqual(stats["scanned"], 1)
+        self.assertEqual(stats["deleted_files"], 0)
+        self.assertEqual(stats["sigtermed"], 0)
+        self.assertTrue(path.exists())
+
+    def test_terminates_over_lifetime_running_watcher(self):
+        # Start a real subprocess we can SIGTERM (sleep so it's alive).
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            # started_at far in the past, max_lifetime 1s.
+            path, log = self._write_pid_file(
+                "overage", pid=proc.pid, parent_pid=os.getpid(),
+                started_at=time.time() - 3600.0,
+                max_lifetime_seconds=1.0,
+            )
+            stats = sp._reap_stale_watchers(
+                self.tmpdir, now=time.time(), max_lifetime=1.0,
+            )
+            self.assertEqual(stats["scanned"], 1)
+            self.assertEqual(stats["deleted_files"], 1)
+            self.assertGreaterEqual(stats["sigtermed"], 1)
+            # Process should be gone now.
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                self.fail("reaper did not actually terminate the watcher")
+            self.assertFalse(path.exists())
+            self.assertFalse(log.exists())
+        finally:
+            # Defensive: kill if still alive.
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=1.0)
+
+    def test_terminates_watcher_when_parent_pid_is_dead(self):
+        proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            # parent_pid points at a definitely-dead PID; watcher pid alive.
+            path, _ = self._write_pid_file(
+                "parent-gone", pid=proc.pid, parent_pid=987654321,
+                started_at=time.time() - 5.0,
+                max_lifetime_seconds=14400.0,
+            )
+            stats = sp._reap_stale_watchers(
+                self.tmpdir, now=time.time(), max_lifetime=14400.0,
+            )
+            self.assertEqual(stats["deleted_files"], 1)
+            self.assertGreaterEqual(stats["sigtermed"], 1)
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                self.fail("reaper did not terminate dead-parent watcher")
+            self.assertFalse(path.exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=1.0)
+
+
+class ProbeRunsReaperBeforeLaunchTests(unittest.TestCase):
+    """probe() with start_watch=True must call _reap_stale_watchers BEFORE
+    _launch_watcher so pre-existing leaks are cleaned before this session
+    adds its own pid file."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="probe-reaper-"))
+        # Force discovery bridge into a known fallback path.
+        self._patches = []
+
+    def tearDown(self):
+        for p in self._patches:
+            p.stop()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_reaper_called_before_launcher(self):
+        order: list[str] = []
+        original_reap = sp._reap_stale_watchers
+        original_launch = sp._launch_watcher
+
+        def spy_reap(*args, **kwargs):
+            order.append("reap")
+            return original_reap(*args, **kwargs)
+
+        def spy_launch(*args, **kwargs):
+            order.append("launch")
+            return original_launch(*args, **kwargs)
+
+        with patch.object(sp, "_reap_stale_watchers", side_effect=spy_reap), \
+                patch.object(sp, "_launch_watcher", side_effect=spy_launch):
+            launcher = _CapturingWatcherLauncher()
+            sp.probe(
+                workdir=str(self.tmpdir),
+                tool="claude_code",
+                mode="hook",
+                start_watch=True,
+                model="test",
+                watcher_launcher=launcher,
+            )
+        self.assertEqual(order[:2], ["reap", "launch"],
+                         f"Expected reap-then-launch, got {order}")
 
 
 if __name__ == "__main__":
