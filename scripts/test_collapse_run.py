@@ -79,6 +79,19 @@ def _write_state(repo: Path, run: dict) -> None:
     state_path.write_text(json.dumps({"runs": [run]}, indent=2))
 
 
+def _read_state(repo: Path) -> dict:
+    return json.loads((repo / ".build-loop" / "state.json").read_text())
+
+
+def _ledger_ref(repo: Path, branch: str) -> dict:
+    state = _read_state(repo)
+    refs = state["runs"][0].get("createdRefs", [])
+    for ref in refs:
+        if ref.get("branch") == branch:
+            return ref
+    raise AssertionError(f"missing ledger ref for {branch}")
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -106,6 +119,10 @@ class TestMergedBranch:
         # Branch should no longer exist
         branches = _git(repo, "branch", "--list", "feat-merged").stdout.strip()
         assert branches == ""
+        ref = _ledger_ref(repo, "feat-merged")
+        assert ref["status"] == "closed"
+        assert ref["closed_ts"]
+        assert "merged into main" in ref["close_reason"]
 
     def test_merged_branch_with_worktree_deleted(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
@@ -123,6 +140,7 @@ class TestMergedBranch:
 
         assert any(d["branch"] == "feat-wt" for d in result["deleted"])
         assert result["kept_for_review"] == []
+        assert _ledger_ref(repo, "feat-wt")["status"] == "closed"
 
     def test_merged_with_real_worktree(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
@@ -143,6 +161,9 @@ class TestMergedBranch:
 
         assert any(d["branch"] == "feat-live-wt" for d in result["deleted"])
         assert not wt.exists(), "worktree folder should have been removed"
+        ref = _ledger_ref(repo, "feat-live-wt")
+        assert ref["status"] == "closed"
+        assert ref["closed_ts"]
 
 
 class TestUnmergedReviewHold:
@@ -171,6 +192,10 @@ class TestUnmergedReviewHold:
 
         # Worktree folder removed
         assert not wt.exists(), "worktree folder should be removed for review_hold branch"
+        ref = _ledger_ref(repo, "risky-branch")
+        assert ref["status"] == "kept_for_review"
+        assert ref["closed_ts"] is None
+        assert "review_hold" in ref["close_reason"]
 
 
 class TestUnmergedNoReviewHold:
@@ -199,6 +224,10 @@ class TestUnmergedNoReviewHold:
 
         # Worktree folder removed
         assert not wt.exists(), "worktree folder should be removed even for surfaced branch"
+        ref = _ledger_ref(repo, "dispatch-wt")
+        assert ref["status"] == "surfaced_unmerged"
+        assert ref["closed_ts"] is None
+        assert "operator disposition" in ref["close_reason"]
 
 
 class TestBundle:
@@ -245,12 +274,10 @@ class TestIdempotent:
         assert len(result1["deleted"]) == 1
         assert result1["errors"] == []
 
-        # Second run: branch no longer exists; should classify as "can't classify" → error, exit 0
+        # Second run: closed ledger rows are skipped, so closeout is idempotent.
         result2 = collapse_run.collapse(repo, run_id="latest")
         assert result2["deleted"] == []
-        # The branch is gone → _is_ancestor returns None → recorded in errors
-        assert len(result2["errors"]) == 1
-        assert "feat-idem" in result2["errors"][0]
+        assert result2["errors"] == []
 
 
 class TestFailSoft:
@@ -270,6 +297,7 @@ class TestFailSoft:
         assert len(result["errors"]) == 1
         assert "ghost-branch-does-not-exist" in result["errors"][0]
         assert result["deleted"] == []
+        assert _ledger_ref(repo, "ghost-branch-does-not-exist")["status"] == "error"
 
 
 class TestDryRun:
@@ -304,6 +332,7 @@ class TestDryRun:
 
         # No bundle created in dry-run
         assert result["bundle_path"] is None
+        assert _read_state(repo)["runs"][0]["createdRefs"][0].get("status") is None
 
 
 class TestMainNeverDeleted:

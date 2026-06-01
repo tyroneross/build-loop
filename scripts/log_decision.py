@@ -41,8 +41,14 @@ Schema for createdRefs[N]:
     "path": str | null,             # filesystem path (worktree only; warn if absent for kind=worktree)
     "branch": str,                  # branch name (required)
     "merge_target": str,            # branch to merge back into (default "main")
+    "purpose": str,                 # what this ref/worktree is doing
+    "close_criteria": [str],        # criteria that must be true before close
+    "status": str,                  # open | closed | kept_for_review | surfaced_unmerged | error
+    "close_reason": str | null,     # why the latest status was set
     "review_hold": bool,            # true if this ref should not be merged without human review
-    "created_ts": iso8601           # when created
+    "created_ts": iso8601,          # when created
+    "closed_ts": iso8601 | null,    # set when status == closed
+    "last_status_ts": iso8601       # status update time
   }
 
 The script is idempotent on (decision_id) for autonomousDefaults, on (hash)
@@ -73,6 +79,7 @@ _REQUIRED_BRANCH_FIELDS = {"branch", "hash"}
 _REQUIRED_CREATED_REF_FIELDS = {"kind", "branch"}
 _VALID_CONFIDENCE = {"high", "med", "low"}
 _VALID_REF_KINDS = {"worktree", "branch"}
+_VALID_REF_STATUSES = {"open", "closed", "kept_for_review", "surfaced_unmerged", "error"}
 
 
 def _now() -> str:
@@ -108,10 +115,37 @@ def _validate_payload(kind: str, payload: dict[str, Any]) -> str | None:
         ref_kind = payload.get("kind")
         if ref_kind not in _VALID_REF_KINDS:
             return f"created_ref kind must be one of {sorted(_VALID_REF_KINDS)}, got {ref_kind!r}"
+        status = payload.get("status", "open")
+        if status not in _VALID_REF_STATUSES:
+            return f"created_ref status must be one of {sorted(_VALID_REF_STATUSES)}, got {status!r}"
+        close_criteria = payload.get("close_criteria")
+        if close_criteria is not None and (
+            not isinstance(close_criteria, list)
+            or not all(isinstance(item, str) and item.strip() for item in close_criteria)
+        ):
+            return "close_criteria must be a list of non-empty strings"
     else:
         return f"unknown kind: {kind!r}"
 
     return None
+
+
+def _default_close_criteria(
+    branch: str,
+    merge_target: str,
+    kind: str,
+    review_hold: bool,
+) -> list[str]:
+    criteria = [
+        f"{branch} is merged into {merge_target}",
+    ]
+    if kind == "worktree":
+        criteria.append("worktree folder is removed from .build-loop/worktrees")
+    if review_hold:
+        criteria.append("human review disposition is recorded before branch deletion")
+    else:
+        criteria.append("branch is deleted after merge")
+    return criteria
 
 
 def _load_state(workdir: Path) -> tuple[dict[str, Any], Path]:
@@ -244,14 +278,30 @@ def log_created_ref(workdir: Path, payload: dict[str, Any]) -> dict[str, Any]:
     state, path = _load_state(workdir)
     run = _current_run(state)
     run.setdefault("createdRefs", [])
+    merge_target = payload.get("merge_target", "main")
+    review_hold = bool(payload.get("review_hold", False))
+    status = payload.get("status", "open")
+    now = _now()
 
     entry = {
         "kind": payload["kind"],
         "path": payload.get("path"),
         "branch": payload["branch"],
-        "merge_target": payload.get("merge_target", "main"),
-        "review_hold": bool(payload.get("review_hold", False)),
-        "created_ts": payload.get("created_ts") or _now(),
+        "merge_target": merge_target,
+        "purpose": payload.get("purpose") or payload.get("summary", ""),
+        "close_criteria": payload.get("close_criteria")
+        or _default_close_criteria(
+            payload["branch"],
+            merge_target,
+            payload["kind"],
+            review_hold,
+        ),
+        "status": status,
+        "close_reason": payload.get("close_reason"),
+        "review_hold": review_hold,
+        "created_ts": payload.get("created_ts") or now,
+        "closed_ts": payload.get("closed_ts"),
+        "last_status_ts": payload.get("last_status_ts") or now,
     }
     _append_idempotent(run["createdRefs"], entry, dedupe_key="branch")
 

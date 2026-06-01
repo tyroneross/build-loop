@@ -168,7 +168,29 @@ def test_create_guarded_worktree_records_created_ref(tmp_path: Path) -> None:
     assert ref["path"] == result["path"]
     assert ref["review_hold"] is False
     assert ref["merge_target"] == "main"
+    assert ref["purpose"] == "isolated worktree for recorded-slug"
+    assert ref["status"] == "open"
+    assert ref["close_reason"] is None
+    assert ref["closed_ts"] is None
+    assert ref["close_criteria"]
     assert ref["created_ts"]
+    assert ref["last_status_ts"]
+
+
+def test_create_guarded_worktree_records_custom_lifecycle(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    result = worktree_guard.create_guarded_worktree(
+        tmp_path,
+        "custom-ledger",
+        purpose="verify isolated ledger behavior",
+        close_criteria=["tests pass", "merged into main", "worktree removed"],
+    )
+
+    assert result["error"] is None, result["error"]
+    state = _read_state(tmp_path)
+    ref = state["runs"][0]["createdRefs"][0]
+    assert ref["purpose"] == "verify isolated ledger behavior"
+    assert ref["close_criteria"] == ["tests pass", "merged into main", "worktree removed"]
 
 
 def test_create_guarded_worktree_no_record_skips_state(tmp_path: Path) -> None:
@@ -212,7 +234,13 @@ def test_log_created_ref_appends(workdir: Path) -> None:
     assert entry["branch"] == "bl/my-slug"
     assert entry["merge_target"] == "main"
     assert entry["review_hold"] is False
+    assert entry["purpose"] == ""
+    assert entry["status"] == "open"
+    assert entry["close_reason"] is None
+    assert entry["closed_ts"] is None
+    assert entry["close_criteria"]
     assert entry["created_ts"]
+    assert entry["last_status_ts"]
 
     state = _read_state(workdir)
     assert len(state["runs"][0]["createdRefs"]) == 1
@@ -255,6 +283,22 @@ def test_log_created_ref_invalid_kind_raises(workdir: Path) -> None:
         log_decision.log_created_ref(workdir, {"kind": "tag", "branch": "bl/x"})
 
 
+def test_log_created_ref_invalid_status_raises(workdir: Path) -> None:
+    with pytest.raises(SystemExit, match="status must be one of"):
+        log_decision.log_created_ref(
+            workdir,
+            {"kind": "branch", "branch": "bl/x", "status": "half-open"},
+        )
+
+
+def test_log_created_ref_invalid_close_criteria_raises(workdir: Path) -> None:
+    with pytest.raises(SystemExit, match="close_criteria"):
+        log_decision.log_created_ref(
+            workdir,
+            {"kind": "branch", "branch": "bl/x", "close_criteria": ["ok", ""]},
+        )
+
+
 def test_log_created_ref_branch_kind_no_path(workdir: Path) -> None:
     """kind=branch without path should succeed (path is only required/warned for worktree)."""
     entry = log_decision.log_created_ref(workdir, {"kind": "branch", "branch": "bl/feature"})
@@ -285,6 +329,7 @@ def test_log_created_ref_review_hold_true(workdir: Path) -> None:
         {"kind": "branch", "branch": "bl/risky", "review_hold": True},
     )
     assert entry["review_hold"] is True
+    assert "human review disposition" in " ".join(entry["close_criteria"])
 
 
 def test_log_created_ref_cli(workdir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

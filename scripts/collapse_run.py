@@ -44,6 +44,10 @@ def _now_utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _git(workdir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(workdir), *args],
@@ -132,6 +136,11 @@ def _load_state(workdir: Path) -> dict[str, Any]:
     return data
 
 
+def _write_state(workdir: Path, state: dict[str, Any]) -> None:
+    state_path = workdir / ".build-loop" / "state.json"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
 def _pick_run(state: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     runs = state.get("runs")
     if not isinstance(runs, list) or not runs:
@@ -148,7 +157,90 @@ def _pick_run(state: dict[str, Any], run_id: str) -> dict[str, Any] | None:
 # Ref normalization
 # ---------------------------------------------------------------------------
 
-def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
+def _default_close_criteria(
+    branch: str,
+    merge_target: str,
+    kind: str,
+    review_hold: bool,
+) -> list[str]:
+    criteria = [f"{branch} is merged into {merge_target}"]
+    if kind == "worktree":
+        criteria.append("worktree folder is removed from .build-loop/worktrees")
+    if review_hold:
+        criteria.append("human review disposition is recorded before branch deletion")
+    else:
+        criteria.append("branch is deleted after merge")
+    return criteria
+
+
+def _ensure_ledger_ref(run: dict[str, Any], ref: dict[str, Any]) -> dict[str, Any]:
+    created_refs = run.setdefault("createdRefs", [])
+    for entry in created_refs:
+        if isinstance(entry, dict) and entry.get("branch") == ref["branch"]:
+            return entry
+
+    kind = "worktree" if ref.get("path") else "branch"
+    entry = {
+        "kind": kind,
+        "path": ref.get("path"),
+        "branch": ref["branch"],
+        "merge_target": ref.get("merge_target", "main"),
+        "purpose": ref.get("summary", ""),
+        "close_criteria": _default_close_criteria(
+            ref["branch"],
+            ref.get("merge_target", "main"),
+            kind,
+            bool(ref.get("review_hold", False)),
+        ),
+        "status": "open",
+        "close_reason": None,
+        "review_hold": bool(ref.get("review_hold", False)),
+        "created_ts": _now_iso(),
+        "closed_ts": None,
+        "last_status_ts": _now_iso(),
+    }
+    created_refs.append(entry)
+    return entry
+
+
+def _mark_ref_status(
+    run: dict[str, Any],
+    ref: dict[str, Any],
+    status: str,
+    reason: str,
+) -> dict[str, Any]:
+    entry = _ensure_ledger_ref(run, ref)
+    now = _now_iso()
+    entry.setdefault("kind", "worktree" if ref.get("path") else "branch")
+    if ref.get("path") and not entry.get("path"):
+        entry["path"] = ref["path"]
+    entry.setdefault("merge_target", ref.get("merge_target", "main"))
+    entry.setdefault("purpose", ref.get("summary", ""))
+    entry.setdefault(
+        "close_criteria",
+        _default_close_criteria(
+            ref["branch"],
+            entry.get("merge_target", "main"),
+            entry.get("kind", "branch"),
+            bool(entry.get("review_hold", False)),
+        ),
+    )
+    entry.setdefault("review_hold", bool(ref.get("review_hold", False)))
+    entry["status"] = status
+    entry["close_reason"] = reason
+    entry["last_status_ts"] = now
+    if status == "closed":
+        entry["closed_ts"] = now
+    else:
+        entry.setdefault("closed_ts", None)
+    return {
+        "branch": ref["branch"],
+        "status": status,
+        "reason": reason,
+    }
+
+
+def _normalize_refs(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     """Merge the three registries into one unified ref list, deduped by branch name.
 
     Each entry has:
@@ -161,9 +253,23 @@ def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
 
     skipped_protected: list[str] = []
+    closed_branches = {
+        entry.get("branch")
+        for entry in run.get("createdRefs") or []
+        if isinstance(entry, dict) and entry.get("status") == "closed"
+    }
 
-    def _add(branch: str, path: str | None, review_hold: bool, summary: str, source: str) -> None:
+    def _add(
+        branch: str,
+        path: str | None,
+        review_hold: bool,
+        summary: str,
+        source: str,
+        merge_target: str = "main",
+    ) -> None:
         if not branch:
+            return
+        if branch in closed_branches:
             return
         if branch == "main":
             skipped_protected.append(f"skipped protected branch in {source}: main")
@@ -175,6 +281,7 @@ def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
                 "review_hold": review_hold,
                 "summary": summary,
                 "source": source,
+                "merge_target": merge_target,
             }
         else:
             # Later registries can upgrade review_hold (risky overrides dispatched)
@@ -182,6 +289,8 @@ def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
                 seen[branch]["review_hold"] = True
             if path and not seen[branch]["path"]:
                 seen[branch]["path"] = path
+            if merge_target and not seen[branch].get("merge_target"):
+                seen[branch]["merge_target"] = merge_target
 
     # dispatchedWorktrees[] — work already integrated, so review_hold=False
     for entry in run.get("dispatchedWorktrees") or []:
@@ -193,6 +302,7 @@ def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
             review_hold=False,
             summary="dispatch worktree (already integrated)",
             source="dispatchedWorktrees",
+            merge_target=entry.get("merge_target", "main"),
         )
 
     # riskyBranches[] — always review_hold=True
@@ -205,6 +315,7 @@ def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
             review_hold=True,
             summary=entry.get("summary", "risky branch"),
             source="riskyBranches",
+            merge_target=entry.get("merge_target", "main"),
         )
 
     # createdRefs[] — use their own review_hold flag
@@ -215,8 +326,9 @@ def _normalize_refs(run: dict[str, Any]) -> list[dict[str, Any]]:
             branch=entry.get("branch", ""),
             path=entry.get("path"),
             review_hold=bool(entry.get("review_hold", False)),
-            summary=entry.get("summary", ""),
+            summary=entry.get("purpose") or entry.get("summary", ""),
             source="createdRefs",
+            merge_target=entry.get("merge_target", "main"),
         )
 
     return [v for v in seen.values() if v["branch"]], skipped_protected
@@ -273,6 +385,7 @@ def collapse(
         "surfaced_unmerged": [],
         "errors": list(skipped_notes),
         "dry_run": dry_run,
+        "ledger_updated": [],
     }
 
     if not refs:
@@ -301,14 +414,33 @@ def collapse(
         # (main itself is already filtered out during normalization)
         if current_branch and branch == current_branch:
             result["errors"].append(f"skipped currently-checked-out branch: {branch}")
+            if not dry_run and run:
+                result["ledger_updated"].append(
+                    _mark_ref_status(
+                        run,
+                        ref,
+                        "error",
+                        "skipped because branch is checked out in the main worktree",
+                    )
+                )
             continue
 
         # Classify against main
-        is_merged = _is_ancestor(workdir, branch, "main")
+        merge_target = ref.get("merge_target", "main")
+        is_merged = _is_ancestor(workdir, branch, merge_target)
 
         if is_merged is None:
             # Branch likely doesn't exist (already deleted = idempotent) or unknown error
             result["errors"].append(f"could not classify {branch} (may not exist)")
+            if not dry_run and run:
+                result["ledger_updated"].append(
+                    _mark_ref_status(
+                        run,
+                        ref,
+                        "error",
+                        f"could not classify branch against {merge_target}",
+                    )
+                )
             continue
 
         if dry_run:
@@ -338,13 +470,37 @@ def collapse(
                 wt_err = _remove_worktree(workdir, path)
                 if wt_err:
                     result["errors"].append(f"worktree remove failed for {branch}: {wt_err}")
+                    result["ledger_updated"].append(
+                        _mark_ref_status(
+                            run,
+                            ref,
+                            "error",
+                            f"worktree remove failed: {wt_err}",
+                        )
+                    )
                     continue
 
             br_err = _delete_branch(workdir, branch)
             if br_err:
                 result["errors"].append(f"branch delete failed for {branch}: {br_err}")
+                result["ledger_updated"].append(
+                    _mark_ref_status(
+                        run,
+                        ref,
+                        "error",
+                        f"branch delete failed: {br_err}",
+                    )
+                )
             else:
                 result["deleted"].append({"branch": branch, "path": path})
+                result["ledger_updated"].append(
+                    _mark_ref_status(
+                        run,
+                        ref,
+                        "closed",
+                        f"merged into {merge_target}; branch/worktree cleaned up",
+                    )
+                )
 
         elif review_hold:
             # Keep branch, remove worktree folder only
@@ -352,11 +508,28 @@ def collapse(
                 wt_err = _remove_worktree(workdir, path)
                 if wt_err:
                     result["errors"].append(f"worktree remove failed for {branch}: {wt_err}")
+                    result["ledger_updated"].append(
+                        _mark_ref_status(
+                            run,
+                            ref,
+                            "error",
+                            f"worktree remove failed: {wt_err}",
+                        )
+                    )
+                    continue
             result["kept_for_review"].append({
                 "branch": branch,
                 "path": path,
                 "summary": ref["summary"],
             })
+            result["ledger_updated"].append(
+                _mark_ref_status(
+                    run,
+                    ref,
+                    "kept_for_review",
+                    "unmerged review_hold branch kept; worktree folder removed",
+                )
+            )
 
         else:
             # UNMERGED + no review_hold: remove worktree, surface branch
@@ -365,8 +538,27 @@ def collapse(
                 wt_err = _remove_worktree(workdir, path)
                 if wt_err:
                     result["errors"].append(f"worktree remove failed for {branch}: {wt_err}")
+                    result["ledger_updated"].append(
+                        _mark_ref_status(
+                            run,
+                            ref,
+                            "error",
+                            f"worktree remove failed: {wt_err}",
+                        )
+                    )
+                    continue
             result["surfaced_unmerged"].append({"branch": branch, "path": path})
+            result["ledger_updated"].append(
+                _mark_ref_status(
+                    run,
+                    ref,
+                    "surfaced_unmerged",
+                    "unmerged branch surfaced for operator disposition; worktree folder removed",
+                )
+            )
 
+    if result["ledger_updated"] and not dry_run:
+        _write_state(workdir, state)
     return result
 
 

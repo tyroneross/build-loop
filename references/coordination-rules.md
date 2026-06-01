@@ -203,13 +203,13 @@ Plugin version bumps in the RossLabs ecosystem update **three** files in lockste
 
 ## Closeout hygiene
 
-**A coordination run is not complete until all live processes, presence records, worktrees, and active coord files are explicitly cleaned up.** Stale heartbeats in the resolved Rally Point channel's `sessions/` directory and locked worktrees in `.claude/worktrees/` mislead the next run's peer-detection — Rally Point may report "active peer" for a dead process; `git worktree list` may show locked entries that block branch operations.
+**A coordination run is not complete until all live processes, presence records, worktrees, and active coord files are explicitly cleaned up.** Stale heartbeats in the resolved Rally Point channel's `sessions/` directory and locked worktrees under `.build-loop/worktrees/` mislead the next run's peer-detection — Rally Point may report "active peer" for a dead process; `git worktree list` may show locked entries that block branch operations.
 
 **Phase D closeout protocol (orchestrator runs by default at end of every run):**
 
 1. **Reap this run's session presence:** `scripts/rally_point/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
 2. **Stop watchers:** SIGTERM any `coordination_watch.py --interval N` processes started during the run.
-3. **Collapse branches and worktrees:** merge the winning/validated line(s) to `main` first (solo-on-main runs skip this — work is already on main), then call `scripts/collapse_run.py` as described in `agents/build-orchestrator.md` §"Phase D: Closeout" step 4. That step is the single source of truth for the collapse invocation, ordering, and JSON-to-report wiring.
+3. **Collapse branches and worktrees:** merge the winning/validated line(s) to `main` first (solo-on-main runs skip this — work is already on main), then call `scripts/collapse_run.py` as described in `agents/build-orchestrator.md` §"Phase D: Closeout" step 4. That step is the single source of truth for the collapse invocation, ordering, JSON-to-report wiring, and `createdRefs[]` lifecycle status updates.
 4. **Archive the coord file:** `mv .build-loop/coordination/<this-coord-file>.md .build-loop/coordination/archived/`. Not deletion — preserves the durable record while clearing the active queue.
 5. **Optional changes.jsonl rotation:** `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)` rotates when either threshold is exceeded.
 6. **Final post:** `post(kind="phase", payload={"phase": "run-closeout", ...})` signals to channel that this run is done; future readers know to skip its presence/changes when scoping.

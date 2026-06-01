@@ -24,7 +24,7 @@ canonical_worktree_path(workdir, slug) -> Path
 canonical_branch_name(slug, chunk=None) -> str
     Return a bl/-prefixed sanitized branch name.
 
-create_guarded_worktree(workdir, slug, *, branch=None, base="main", chunk=None, record=True) -> dict
+create_guarded_worktree(workdir, slug, *, branch=None, base="main", chunk=None, record=True, purpose=None, close_criteria=None) -> dict
     Create a worktree under the canonical root and (optionally) log it to state.json.
     Returns {"path": str, "branch": str, "created": bool, "error": str|null}.
 
@@ -96,6 +96,8 @@ def create_guarded_worktree(
     base: str = "main",
     chunk: str | None = None,
     record: bool = True,
+    purpose: str | None = None,
+    close_criteria: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a git worktree under the canonical root and optionally record it.
 
@@ -113,6 +115,10 @@ def create_guarded_worktree(
         Optional chunk suffix appended to the default branch name.
     record : bool
         When True, calls log_decision.log_created_ref() to persist the ref in state.json.
+    purpose : str | None
+        Human-readable reason this isolated branch/worktree exists.
+    close_criteria : list[str] | None
+        Concrete criteria that make the branch/worktree eligible to close.
 
     Returns
     -------
@@ -159,14 +165,18 @@ def create_guarded_worktree(
             ld = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(ld)  # type: ignore[arg-type]
             try:
+                payload = {
+                    "kind": "worktree",
+                    "path": str(wt_path),
+                    "branch": wt_branch,
+                    "review_hold": False,
+                    "purpose": purpose or f"isolated worktree for {slug}",
+                }
+                if close_criteria:
+                    payload["close_criteria"] = close_criteria
                 ld.log_created_ref(
                     workdir,
-                    {
-                        "kind": "worktree",
-                        "path": str(wt_path),
-                        "branch": wt_branch,
-                        "review_hold": False,
-                    },
+                    payload,
                 )
             except SystemExit as exc:
                 # log failure is non-fatal; worktree was already created
@@ -187,6 +197,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip writing to state.json (default: record)",
     )
     parser.add_argument(
+        "--purpose",
+        default=None,
+        help="Human-readable reason this branch/worktree exists.",
+    )
+    parser.add_argument(
+        "--close-criterion",
+        action="append",
+        default=None,
+        help="Repeatable close criterion for the lifecycle ledger.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output result as JSON (default: human-readable)",
@@ -200,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         base=args.base,
         chunk=args.chunk,
         record=not args.no_record,
+        purpose=args.purpose,
+        close_criteria=args.close_criterion,
     )
 
     if args.json:

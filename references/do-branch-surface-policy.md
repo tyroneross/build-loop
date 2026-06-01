@@ -32,11 +32,11 @@ Reasons (3)–(6) override mode — they always surface regardless of long-mode.
 
 When `classify_action.py` returns `RISKY`:
 
-1. Create (or reuse) a worktree at `.claude/worktrees/risky-<chunk_id>-<short-hash>` using the existing isolation infra (see `CLAUDE.md` §"Concurrent dispatch isolation"). Pass `isolation: "worktree"` to the Agent dispatch.
+1. Create (or reuse) a worktree at `.build-loop/worktrees/risky-<chunk_id>-<short-hash>` using `scripts/worktree_guard.py`; build-loop worktrees stay inside the parent repo, never as sibling folders above it. Pass `isolation: "worktree"` to the Agent dispatch.
 2. Dispatch the implementer with the worktree as its working directory.
-3. On successful envelope return: orchestrator commits in the worktree, pushes the branch (feature-branch push is `auto` per `deployment_policy.py`), and writes a `riskyBranches[]` entry via `scripts/log_decision.py --kind risky_branch`.
+3. On successful envelope return: orchestrator commits in the worktree, pushes the branch (feature-branch push is `auto` per `deployment_policy.py`), and writes ledger entries through `scripts/log_decision.py` (`createdRefs[]` for lifecycle status and `riskyBranches[]` for review-held work).
 4. The main worktree's `HEAD` is unaffected; orchestrator continues to the next chunk on main.
-5. The Phase 4 Report surfaces `## Risky work (branched for your review)` as the **first** section, listing each `riskyBranches[N]` entry with branch link, summary, trade-offs, and the `matched_rule` that triggered isolation. The operator merges or discards each branch at their pace.
+5. The Phase 4 Report surfaces `## Risky work (branched for your review)` as the **first** section, listing each `riskyBranches[N]` entry with branch link, summary, trade-offs, and the `matched_rule` that triggered isolation. `createdRefs[]` remains the durable open/closed ledger: purpose, merge target, close criteria, status, and close reason/timestamp.
 
 **Why branches, not prompts.** A migration touch, a Dockerfile change, or an irreversible non-production action is recoverable — you can delete the branch. Asking the operator on each one stalls the loop; isolating them to a branch preserves auditability without blocking forward progress.
 

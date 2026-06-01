@@ -56,20 +56,22 @@ def repo(tmp_path: Path) -> Path:
     r.mkdir()
     _git(r, "init", "-q", "-b", "main")
     _commit(r, "base")
+    wt_root = r / ".build-loop" / "worktrees"
+    wt_root.mkdir(parents=True)
 
     # merged + clean worktree -> ACT should remove it
     _git(r, "branch", "merged-clean")
-    _git(r, "worktree", "add", "-q", str(tmp_path / "wt-merged"), "merged-clean")
+    _git(r, "worktree", "add", "-q", str(wt_root / "wt-merged"), "merged-clean")
     # (branch tip == main tip -> ancestor of main -> "merged")
 
     # unmerged worktree -> never removed
-    _git(r, "worktree", "add", "-q", "-b", "unmerged", str(tmp_path / "wt-unmerged"))
-    _commit(tmp_path / "wt-unmerged", "ahead")  # diverges from main
+    _git(r, "worktree", "add", "-q", "-b", "unmerged", str(wt_root / "wt-unmerged"))
+    _commit(wt_root / "wt-unmerged", "ahead")  # diverges from main
 
     # merged but dirty worktree -> never removed
     _git(r, "branch", "merged-dirty")
-    _git(r, "worktree", "add", "-q", str(tmp_path / "wt-dirty"), "merged-dirty")
-    (tmp_path / "wt-dirty" / "scratch").write_text("uncommitted")
+    _git(r, "worktree", "add", "-q", str(wt_root / "wt-dirty"), "merged-dirty")
+    (wt_root / "wt-dirty" / "scratch").write_text("uncommitted")
     return r
 
 
