@@ -254,6 +254,13 @@ def generate_or_resume(
         update ONLY ``current_session_id`` to the new ``session_id``,
         persist state.json, return the execution block.
 
+    CONTRACT: the production build-loop run entry (Phase 1 Assess preamble in
+    ``agents/build-orchestrator.md`` + ``skills/build-loop/references/phase-1-assess.md``)
+    MUST pass ``provision_worktree=True`` so every run is isolated. The ``False``
+    default exists ONLY for identity-only callers (status checks, tests, demos)
+    that legitimately must not provision a worktree. See
+    ``docs/SPEC-run-worktree-isolation.md``.
+
     When ``provision_worktree=True``:
       - Fresh-generate: create ``.build-loop/worktrees/run-<short>/`` on
         ``bl/run-<short>`` off ``base`` (default ``main``); persist the
