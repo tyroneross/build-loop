@@ -132,6 +132,35 @@ def test_f4_slug_workers_subcomponent(patched_env, tmp_path):
     assert derive_slug_from_cwd(nested) == "ddc/workers"
 
 
+def test_f4_slug_worktree_collapses_to_canonical(patched_env, tmp_path):
+    """F4e — a `git worktree` of a repo shares the MAIN checkout's slug.
+
+    Regression for bl-memory-slug-worktree-fragmentation: a worktree's `.git`
+    is a file pointing at the canonical repo's gitdir, so a basename-only slug
+    gave every worktree (e.g. an `isolation: "worktree"` dispatch) its own split
+    memory project. The fix follows `git rev-parse --git-common-dir`.
+    """
+    import subprocess
+
+    from _paths import derive_slug_from_cwd  # type: ignore
+
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "--allow-empty", "-qm", "init"],
+        cwd=repo, check=True,
+    )
+    wt = tmp_path / "wt-feature"
+    subprocess.run(["git", "worktree", "add", "-q", str(wt)], cwd=repo, check=True)
+
+    main_slug = derive_slug_from_cwd(repo)
+    wt_slug = derive_slug_from_cwd(wt)
+    assert main_slug == "myrepo"
+    assert wt_slug == main_slug  # collapses — not "wt-feature"
+
+
 def test_f4_slug_normalizes_uppercase_and_chars(patched_env, tmp_path):
     """F4e — uppercase and unsafe chars normalize; matches _safe_project_tag."""
     from _paths import derive_slug_from_cwd  # type: ignore

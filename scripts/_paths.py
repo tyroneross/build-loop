@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -314,6 +315,41 @@ def archive_memory_dir(project: str) -> Path:
     return project_memory_root() / candidate_rel
 
 
+def _canonical_repo_root(cwd_path: Path) -> Path | None:
+    """Return the canonical (worktree-independent) repo root for ``cwd_path``.
+
+    Runs ``git rev-parse --git-common-dir`` scoped to ``cwd_path``. A worktree's
+    git-common-dir points at the *canonical* repo's ``.git`` (shared by the main
+    checkout + every ``git worktree``), so the parent of the resolved common-dir
+    is identical from anywhere in the repo family. Returns ``None`` when the
+    invocation fails, output is empty, or resolution raises. Never raises.
+
+    DRY note: ``rally_point/channel_paths.py`` carries a sibling copy used for the
+    channel slug. ``_paths`` is the lower-level module (``channel_paths`` imports
+    FROM it), so the two cannot share without a circular import; consolidating is
+    tracked as a follow-up. Behaviour is identical.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(cwd_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    if not out:
+        return None
+    common = Path(out)
+    if not common.is_absolute():
+        common = cwd_path / common
+    try:
+        return common.resolve().parent
+    except (OSError, RuntimeError):
+        return None
+
+
 def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
     """Derive the project slug from a working directory.
 
@@ -365,8 +401,20 @@ def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
     if repo_root is None:
         return "_unscoped"
 
-    # Slug base from repo basename
-    base = repo_root.name.lower()
+    # Slug base from the CANONICAL repo root so every `git worktree` of one repo
+    # shares a single memory project (else each worktree — e.g. an
+    # `isolation: "worktree"` build-orchestrator dispatch — gets its own split
+    # project). A worktree's `.git` is a FILE pointing at the main repo's gitdir;
+    # the main checkout's `.git` is a DIR. Only shell out to git for the worktree
+    # case so the common main-checkout path stays subprocess-free. Mirrors the
+    # channel slug's D1 fix in `rally_point/channel_paths.py`.
+    base_root = repo_root
+    if (repo_root / ".git").is_file():
+        canonical = _canonical_repo_root(cwd_resolved)
+        if canonical is not None:
+            base_root = canonical
+
+    base = base_root.name.lower()
     base = re.sub(r"[^a-z0-9._-]", "-", base)
     base = re.sub(r"-{2,}", "-", base).strip("-")
     base = base[:64] or "_unscoped"
