@@ -27,14 +27,23 @@ State persistence (``<workdir>/.build-loop/state.json``)::
     state.execution.started_by_session_id    (str, immutable post-generation)
     state.execution.current_session_id       (str, mutable on resume)
     state.execution.run_label                (str, human-readable)
+    state.execution.run_worktree_path        (str, abs path; set when isolation provisioned)
+    state.execution.run_worktree_branch      (str, e.g. "bl/run-<id>"; set when isolation provisioned)
 
 API
 ---
 
-``generate_or_resume(workdir, tool, session_id)`` — Phase 1 Assess entry
-point. Reads state, generates a fresh id when absent (collision-guarded),
-or preserves the existing id and refreshes ``current_session_id`` on
-resume. Returns the full execution block as a dict.
+``generate_or_resume(workdir, tool, session_id, *, provision_worktree, base)``
+    — Phase 1 Assess entry point. Reads state, generates a fresh id when
+    absent (collision-guarded), or preserves the existing id and refreshes
+    ``current_session_id`` on resume. When ``provision_worktree=True`` and
+    this is a FRESH generate, also creates a dedicated git worktree under
+    ``.build-loop/worktrees/run-<short>/`` on branch ``bl/run-<short>`` and
+    records the path in ``state.execution.run_worktree_path``. On resume,
+    the existing worktree path is preserved without re-creating. Raises
+    :class:`RunWorktreeProvisionError` when provisioning is requested but
+    fails — the orchestrator MUST abort rather than fall back to the
+    canonical checkout.
 
 ``rally_fields_for(workdir)`` — writer-time entry point. Returns the
 three top-level fields ready to merge into a rally record. Returns an
@@ -144,12 +153,94 @@ def _run_label(tool: str, build_loop_id: str, started_at_iso: str) -> str:
     return f"{tool or 'unknown'}#{suffix} {started_at_iso}"
 
 
+class RunWorktreeProvisionError(RuntimeError):
+    """Raised when run-worktree isolation is requested but cannot be provisioned.
+
+    Fail-closed by design: the orchestrator MUST abort the run rather than
+    silently fall back to the canonical checkout (which is the very class of
+    leak this feature exists to prevent — see SPEC-run-worktree-isolation.md).
+    """
+
+
+def _short_run_suffix(build_loop_id: str) -> str:
+    """Return the 6-digit numeric suffix of a build_loop_id (for short slugs)."""
+    try:
+        return build_loop_id.rsplit("-", 1)[-1]
+    except Exception:
+        return "000000"
+
+
+def _provision_run_worktree(
+    workdir_path: Path,
+    build_loop_id: str,
+    base: str,
+) -> tuple[str, str]:
+    """Create a guarded run worktree at ``.build-loop/worktrees/run-<short>/``.
+
+    Returns ``(absolute_path, branch_name)``. Raises
+    :class:`RunWorktreeProvisionError` on any failure — the run MUST abort
+    rather than continue in the canonical checkout.
+
+    Uses ``scripts/worktree_guard.create_guarded_worktree`` so the resulting
+    worktree obeys the same canonical-root and branch-prefix rules as every
+    other build-loop worktree. ``record=False`` keeps this provisioning step
+    out of ``runs[N].createdRefs[]`` (no runs entry exists yet at Phase 1
+    Assess preamble — write_run_entry fires at Review-G); the path is
+    persisted to ``state.execution`` instead and ``collapse_run.py`` knows to
+    merge it into the closeout ref set.
+    """
+    # Late, narrow import — keeps the build_loop_id module free of the
+    # worktree_guard dependency for callers that don't request provisioning
+    # (e.g. test fixtures that only exercise rally identity).
+    import importlib.util
+    import sys as _sys
+
+    here = Path(__file__).resolve().parent
+    scripts_dir = here.parent  # rally_point/ → scripts/
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+    spec = importlib.util.spec_from_file_location(
+        "worktree_guard", scripts_dir / "worktree_guard.py"
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover — defensive
+        raise RunWorktreeProvisionError(
+            "could not import worktree_guard.py from scripts/"
+        )
+    wg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wg)  # type: ignore[arg-type]
+
+    short = _short_run_suffix(build_loop_id)
+    slug = f"run-{short}"
+    branch = f"bl/run-{short}"
+    result = wg.create_guarded_worktree(
+        workdir=workdir_path,
+        slug=slug,
+        branch=branch,
+        base=base,
+        record=False,  # not in runs[].createdRefs[] yet — see docstring above
+        purpose=f"build-loop run-entry isolation for {build_loop_id}",
+        close_criteria=[
+            f"{branch} is merged into {base} (or surfaced for operator)",
+            "worktree folder is removed from .build-loop/worktrees",
+            f"build_loop_id {build_loop_id} run reached closeout",
+        ],
+    )
+    if not result.get("created"):
+        raise RunWorktreeProvisionError(
+            f"create_guarded_worktree failed for run {build_loop_id}: "
+            f"{result.get('error') or 'unknown error'}"
+        )
+    return str(Path(result["path"]).resolve()), str(result["branch"])
+
+
 def generate_or_resume(
     workdir: Path | str,
     *,
     tool: str,
     session_id: str,
     now: _dt.datetime | None = None,
+    provision_worktree: bool = False,
+    base: str = "main",
 ) -> dict[str, Any]:
     """Return the execution block for ``workdir``.
 
@@ -163,9 +254,22 @@ def generate_or_resume(
         update ONLY ``current_session_id`` to the new ``session_id``,
         persist state.json, return the execution block.
 
+    When ``provision_worktree=True``:
+      - Fresh-generate: create ``.build-loop/worktrees/run-<short>/`` on
+        ``bl/run-<short>`` off ``base`` (default ``main``); persist the
+        absolute path to ``state.execution.run_worktree_path`` and the
+        branch to ``state.execution.run_worktree_branch``. Raises
+        :class:`RunWorktreeProvisionError` on failure (fail-closed).
+      - Resume: preserve the existing path verbatim — never re-create.
+        When ``run_worktree_path`` is missing but the run is resumed
+        (existing build_loop_id), this is a state-corruption case; we
+        leave the field unset and let the orchestrator decide (the
+        contract is "fresh-generate provisions, resume preserves").
+
     Fire-and-forget on persistence: if the state write fails the
     in-memory dict is still returned so the caller can attach rally
-    fields for this run.
+    fields for this run. Worktree provisioning, by contrast, is
+    fail-closed.
     """
     workdir_path = Path(workdir)
     state = _read_state(workdir_path)
@@ -199,6 +303,23 @@ def generate_or_resume(
         )
     except OSError:
         pass
+
+    # Run-entry worktree provisioning (Phase 1a — SPEC-run-worktree-isolation).
+    # Fail-closed: any failure aborts the run rather than leaking work to the
+    # canonical checkout. State is still persisted (with execution.build_loop_id
+    # set) so the orchestrator's diagnostics see what happened.
+    if provision_worktree:
+        try:
+            wt_path, wt_branch = _provision_run_worktree(
+                workdir_path, build_loop_id, base
+            )
+            execution["run_worktree_path"] = wt_path
+            execution["run_worktree_branch"] = wt_branch
+        except RunWorktreeProvisionError:
+            state["execution"] = execution
+            _atomic_write_state(workdir_path, state)
+            raise
+
     state["execution"] = execution
     _atomic_write_state(workdir_path, state)
     return execution
