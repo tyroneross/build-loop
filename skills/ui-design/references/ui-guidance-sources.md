@@ -105,6 +105,7 @@ What it controls:
 - Disclosure depth, loading/empty/error states, and copy clarity.
 - Motion restraint and reduced-motion compliance.
 - Functional integrity: no fake buttons, no real-looking mock data, real handlers for interactive UI.
+- Perceptual-science traceability: every Calm Precision rule should map to a named foundation such as Gestalt, Fitts' Law, Hick's Law, Cognitive Load, Signal-to-Noise Ratio, Affordance Theory, Temporal Gestalt, Dual-Coding, Pragmatic Inference, Attentional Cascade, the Cooperative Principle, Fault Tolerance, or Information Scent/Density. This is what lets design-contract output defend choices as evidence-backed rather than taste-based.
 
 What it does not decide by itself:
 

@@ -37,6 +37,8 @@ Test every criterion from Assess with evidence.
 
 **UI input/output contract validation** (`uiTarget != null`): read the plan's `## UI Input/Output Contract` section and compare it to changed UI files before visual validation. Confirm every user input and system output in the changed surface has a data taxonomy, operation/domain verb, component mapping, state coverage, modality fallback when relevant, validation/security layer, and schema/API/design-system trace. Missing coverage is a Validate failure unless the change is copy-only and the contract explicitly says no data surface changed.
 
+**Calm Precision core-consideration validation** (`uiTarget != null`): check `.build-loop/app-contract/ui.md` or the implementer return envelope for the relevant Calm Precision principles, foundations, and implementation effects. Missing consideration is a Validate failure for non-trivial UI work, because Calm Precision is a design gate, not a passive reference.
+
 **Code-based graders first** (fast, deterministic):
 ```
 test suite           → pass/fail

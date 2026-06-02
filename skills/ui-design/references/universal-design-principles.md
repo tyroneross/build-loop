@@ -183,6 +183,60 @@ mapping, states, validation/security ownership, and traceability. Calm Precision
 is the default structural doctrine. Selected structures and style modes are
 allowed only after product, workflow, data shape, platform, and risk are known.
 
+#### Calm Precision Principles And Foundations
+
+Calm Precision has two layers:
+
+1. **Principles**: what the interface must do.
+2. **Perceptual-science foundations**: why the rule holds.
+
+Use the foundations as audit anchors. A UI choice should be defensible by a
+named law, theory, or perceptual model rather than by taste.
+
+Rows 1-13 mirror Calm Precision 6.4.1; row 14 is the current 6.4.2 Task Economy
+extension.
+
+| # | Principle | Foundation | Audit question |
+|---|---|---|---|
+| 1 | Group, Don't Isolate | Gestalt Proximity + Common Region | Are related elements visually grouped before they are separated? |
+| 2 | Size = Importance | Fitts' Law | Does target size match action importance and input precision? |
+| 3 | Three-Line Hierarchy + Page Cascade | Cognitive Load + Information Scent + Attentional Cascade | Can the eye recover L1 to L4 order in one pass? |
+| 4 | Progressive Disclosure | Hick's Law | Are secondary choices hidden until they are useful? |
+| 5 | Text Over Decoration | Signal-to-Noise Ratio | Does the element communicate through words, weight, and hierarchy before decoration? |
+| 6 | Content Over Chrome | Information Density | Does content earn most of the surface area? |
+| 7 | Natural Language | Mental Models | Does the copy match the user's vocabulary and expected task model? |
+| 8 | Rhythm & Alignment | Gestalt Continuity | Do spacing, baselines, and alignment preserve visual flow? |
+| 9 | Functional Integrity | Affordance Theory + Data Integrity | Does every interactive-looking element work against real data or a clearly labeled non-production state? |
+| 10 | Content Resilience + Error Strategy | Fault Tolerance + Dual-Coding + Cooperative Principle | Does the UI handle missing, malformed, or failed data with honest recovery copy? |
+| 11 | Mobile-First Structure | Responsive Design | Does the base layout work on mobile before breakpoints add complexity? |
+| 12 | Purposeful Motion | Temporal Gestalt + Affordance Theory | Does motion explain state, origin, confirmation, or relationship? |
+| 13 | Voice Calibration | Mental Models + Pragmatic Inference | Does minimal copy imply the right action and state? |
+| 14 | Task Economy | Cognitive Load | Is there one primary action per screen and no unvalidated UI? |
+
+Named foundations to apply when explaining or reviewing a UI decision:
+
+- **Gestalt**: proximity, common region, and continuity explain grouping,
+  alignment, and visual relationship.
+- **Fitts' Law**: target size and distance drive speed; use it for buttons,
+  touch targets, and action placement.
+- **Hick's Law**: visible choice count increases decision time; use it for
+  progressive disclosure. Do not call this Higgs; Higgs belongs to physics.
+- **Cognitive Load**: working memory is limited; use it for hierarchy, Task
+  Economy, and reducing competing primaries.
+- **Signal-to-Noise Ratio**: decoration must improve comprehension or be cut.
+- **Affordance Theory**: appearance must match interactivity.
+- **Temporal Gestalt**: motion communicates relationship across time.
+- **Dual-Coding Theory**: pair text and visual encoding; never rely on color
+  alone.
+- **Pragmatic Inference**: users infer meaning from short labels and minimal
+  copy.
+- **Attentional Cascade**: users read through predictable priority levels.
+- **Cooperative Principle**: empty, error, and limitation copy should be honest,
+  relevant, and actionable.
+- **Fault Tolerance**: variable or missing data should degrade into clarity.
+- **Information Scent and Density**: the interface should make the useful path
+  obvious and keep content dominant over chrome.
+
 UI continuity should keep the user oriented inside the same work surface where
 possible: side drawers for contextual detail, bottom sheets for mobile tasks,
 inline expansion for local detail, persistent navigation for route changes,

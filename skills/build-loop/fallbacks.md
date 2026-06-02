@@ -26,7 +26,7 @@ Each section is self-contained. Keep prose tight: the goal is "capture the conce
 - **Spacing**: 8pt grid. Use 4/8/16/24/32/48/64 px increments.
 - **Signal**: Status = text color only, no background badges. Color + weight for hierarchy, not boxes.
 - **Content ≥ Chrome**: ≥70% content ratio on any page.
-- **Disclosure (Hick)**: show less, reveal on demand. Advanced options behind expand/more.
+- **Disclosure (Hick's Law)**: show less, reveal on demand. Advanced options behind expand/more.
 - **Nav selected state**: text-gray-900, font-medium, 2px bottom border. Never background pills.
 - **Integrity**: no fake/placeholder buttons. Backend exists before UI.
 - **Primary action**: one core hero/primary action by default. Add multiple primary actions only when users genuinely need parallel choices.

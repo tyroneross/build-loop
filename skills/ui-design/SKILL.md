@@ -19,10 +19,11 @@ Use this skill when `uiTarget != null` and the work is not copy-only:
 1. Load the UI input/output contract from the plan.
 2. Load `references/universal-design-principles.md` when the surface presents information, contains charts/tables/reports, creates document/deck/image-like outputs, or needs continuity, wayfinding, process visibility, or graceful degradation.
 3. Apply Calm Precision as the structural foundation: hierarchy, grouping, disclosure, action weight, touch targets, motion restraint, copy clarity, and functional integrity.
-4. Load project-local visual evidence: current screens, screenshots, tokens, components, selected mockups, and existing `.build-loop/app-contract/ui.md`.
-5. Select only the guidance sources needed for the surface from `references/ui-guidance-sources.md`.
-6. Choose the design direction from product fit: user job, workflow frequency, data shape, information density, platform, accessibility risk, and error cost.
-7. Have `design-contract-specialist` write the decision to `.build-loop/app-contract/ui.md`.
+4. Run a Calm Precision core-consideration pass before selecting style: name the principles most relevant to the surface, the perceptual foundation behind each one, and the concrete implication for this build.
+5. Load project-local visual evidence: current screens, screenshots, tokens, components, selected mockups, and existing `.build-loop/app-contract/ui.md`.
+6. Select only the guidance sources needed for the surface from `references/ui-guidance-sources.md`.
+7. Choose the design direction from product fit: user job, workflow frequency, data shape, information density, platform, accessibility risk, error cost, and the Calm Precision core-consideration pass.
+8. Have `design-contract-specialist` write the decision to `.build-loop/app-contract/ui.md`.
 
 ## Design Layers
 
@@ -30,12 +31,12 @@ Think in layers, not competing design systems:
 
 1. **Product contract** — the UI input/output contract, user job, platform, data shape, and risk.
 2. **Universal communication and experience design** — answer-first structure, one primary focus, continuity, wayfinding, process visibility, graceful degradation, MECE grouping, hierarchy, source integrity, native primitives, accessibility, and visual QA across UI, writing, images, decks, docs, operational workflows, and data artifacts.
-3. **Calm Precision foundation** — the baseline rules for cognitive predictability and implementation discipline.
+3. **Calm Precision core considerations** — the baseline rules and perceptual-science foundations that every design direction must satisfy or explicitly except.
 4. **Project surface** — existing tokens, components, brand, screenshots, and selected mockups.
 5. **Structure or style mode** — recent design structures such as Conversational Command Surface, Bento Operating Dashboard, Pipeline Wizard, Outcome Ledger, Pyramid Detail, Glass Workspace, Warm Craft, Data Narrative, native mobile, or AI Artifact Canvas.
 6. **Validation evidence** — `ui-validator`, design-rule scanner, browser/simulator screenshots, and contract traceability.
 
-Calm Precision is not just one optional theme. It stays active underneath every selected mode. A Glass, Warm Craft, Aurora, Data Narrative, or native mobile direction can change surface treatment, density, and mood, but it must not override Calm Precision's hierarchy, accessibility, motion, interaction, and real-data rules unless the app contract records an explicit exception.
+Calm Precision is not just one optional theme or reference. It is a core design gate. Every non-trivial UI decision should be checked against the relevant Calm Precision principles before selecting structure, style mode, token treatment, motion, or interaction behavior. A Glass, Warm Craft, Aurora, Data Narrative, or native mobile direction can change surface treatment, density, and mood, but it must not override Calm Precision's hierarchy, accessibility, motion, interaction, and real-data rules unless the app contract records an explicit exception.
 
 ## Source Priority
 
@@ -58,6 +59,7 @@ The design decision must be written into `.build-loop/app-contract/ui.md` before
 - `selected_structure` and why it fits.
 - At least one rejected structure and why it was rejected.
 - Source refs used, with absolute paths when outside the repo.
+- `calm_precision_core_considerations`: relevant principles, perceptual foundations, implications for the surface, and any explicit exceptions.
 - Density, hierarchy, surface model, typography roles, token source, action hierarchy, visual non-goals, and validation implications.
 
 Implementers should read the app contract and UI input/output contract, not the whole guidance corpus.
@@ -66,7 +68,7 @@ Implementers should read the app contract and UI input/output contract, not the 
 
 - Do not route to IBR unless the user explicitly asks for IBR, Interface Built Right, or an IBR-specific artifact.
 - Do not force recent structures. They are options, not requirements.
-- Do not treat Calm Precision as a surface style that excludes other modes. Use it as the shared baseline under the selected mode.
+- Do not treat Calm Precision as a citation, theme, or surface style. Use it as the shared baseline and decision gate under the selected mode.
 - Do not load broad vault/research folders into implementation prompts. Select one to three relevant sources and synthesize them.
 - Do not introduce mock data, fake affordances, arbitrary palettes, or decorative visual complexity that does not serve the workflow.
 - If a major UI build lacks enough visual evidence, ask the orchestrator for mockup/screenshot/design-tool artifacts; keep the final design decision in `.build-loop/app-contract/ui.md`.
