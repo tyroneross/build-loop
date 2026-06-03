@@ -33,6 +33,8 @@
         "scripts/sync_plugin_cache.py",
         "scripts/prune_plugin_cache.py",
         "scripts/prune_codex_plugin_cache.py",
+        "!scripts/**/__pycache__",
+        "!scripts/**/*.pyc",
         "hooks",
         "agents",
         "docs/agent-surface-policy.md",
