@@ -3,8 +3,8 @@
 /**
  * Debugger MCP Tool Definitions
  *
- * 8 tools for debugging memory: search, store, detail, status, list, patterns, outcome, read_logs.
- * Each calls existing programmatic APIs from storage.ts and retrieval.ts.
+ * 11 tools: 8 debugging-memory tools plus 3 build-loop-memory context tools.
+ * Debugging tools call storage.ts/retrieval.ts; build-loop-memory tools call the host-neutral CLI.
  * Responses are formatted as concise text for LLM consumption.
  */
 
@@ -23,6 +23,12 @@ import { readProjectLogs } from '../log-reader';
 import type { Incident, VerdictOutcome } from '../types';
 import type { LogSource, LogSeverity } from '../log-reader';
 import { traced } from '../logger';
+import { execFile } from 'child_process';
+import { existsSync } from 'fs';
+import * as path from 'path';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 // --- Console safety ---
 
@@ -48,6 +54,97 @@ function textResponse(text: string) {
 
 function errorResponse(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
+}
+
+// --- build-loop-memory CLI bridge ---
+
+function optionalString(args: Record<string, unknown>, key: string): string | undefined {
+  const value = args[key];
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') {
+    throw new Error(`${key} must be a string`);
+  }
+  return value;
+}
+
+function requiredString(args: Record<string, unknown>, key: string): string {
+  const value = optionalString(args, key);
+  if (!value) {
+    throw new Error(`${key} is required`);
+  }
+  return value;
+}
+
+function optionalInt(args: Record<string, unknown>, key: string, fallback: number): number {
+  const value = args[key];
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+  return value;
+}
+
+function optionalBoolean(args: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = args[key];
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== 'boolean') {
+    throw new Error(`${key} must be a boolean`);
+  }
+  return value;
+}
+
+function absoluteWorkdir(args: Record<string, unknown>): string {
+  const workdir = optionalString(args, 'workdir') || process.cwd();
+  if (!path.isAbsolute(workdir)) {
+    throw new Error(`workdir must be an absolute path, got: ${workdir}`);
+  }
+  return workdir;
+}
+
+function resolveBlmCli(): string {
+  const candidates = [
+    process.env.BLM_CLI_PATH,
+    process.env.CLAUDE_PLUGIN_ROOT
+      ? path.join(process.env.CLAUDE_PLUGIN_ROOT, 'scripts', 'blm.py')
+      : undefined,
+    path.join(process.cwd(), 'scripts', 'blm.py'),
+    path.resolve(__dirname, '..', '..', 'scripts', 'blm.py'),
+    path.resolve(__dirname, '..', '..', '..', 'scripts', 'blm.py'),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(`build-loop-memory CLI not found; checked: ${candidates.join(', ')}`);
+}
+
+async function runBlmJson(args: string[]): Promise<unknown> {
+  const python = process.env.PYTHON || process.env.PYTHON3 || 'python3';
+  const script = resolveBlmCli();
+  const env = {
+    ...process.env,
+    // Keep MCP-triggered expansion on the fast, no-model path unless the
+    // operator explicitly opts into embeddings for this server process.
+    EMBED_BACKEND_UNAVAILABLE: process.env.EMBED_BACKEND_UNAVAILABLE || '1',
+  };
+  const result = await execFileAsync(python, [script, ...args], {
+    encoding: 'utf8',
+    env,
+    maxBuffer: 5 * 1024 * 1024,
+    timeout: 15000,
+  });
+  try {
+    return JSON.parse(String(result.stdout));
+  } catch (err) {
+    const stderr = String(result.stderr || '').trim();
+    throw new Error(`blm returned invalid JSON${stderr ? `: ${stderr}` : ''}`);
+  }
+}
+
+function jsonTextResponse(data: unknown) {
+  return textResponse(JSON.stringify(data, null, 2));
 }
 
 // --- Tool definitions ---
@@ -289,6 +386,107 @@ export const TOOLS = [
       openWorldHint: false,
     },
   },
+  {
+    name: 'build_loop_memory_status',
+    description:
+      'Show build-loop-memory project mapping, CURRENT paths, CLI commands, and optional API endpoints for a workdir.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        workdir: {
+          type: 'string',
+          description: 'Absolute project working directory. Defaults to the MCP server cwd.',
+        },
+        project: {
+          type: 'string',
+          description: 'Optional explicit build-loop-memory project slug.',
+        },
+      },
+    },
+    annotations: {
+      title: 'Build Loop Memory Status',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: 'build_loop_memory_context',
+    description:
+      'Return immediate build-loop-memory context for a workdir. Defaults to no CURRENT writes; set write=true to refresh CURRENT files.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        workdir: {
+          type: 'string',
+          description: 'Absolute project working directory. Defaults to the MCP server cwd.',
+        },
+        query: {
+          type: 'string',
+          description: 'Goal or task text used to rank relevant context.',
+        },
+        project: {
+          type: 'string',
+          description: 'Optional explicit build-loop-memory project slug.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['fast', 'expand'],
+          description: 'fast returns L0 hot context; expand also searches the lessons index.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum recent decisions/lessons to include. Default: 5.',
+        },
+        write: {
+          type: 'boolean',
+          description: 'When true, refresh CURRENT.json/CURRENT.md via the canonical writer.',
+        },
+      },
+    },
+    annotations: {
+      title: 'Build Loop Memory Context',
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: 'build_loop_memory_open',
+    description:
+      'Open a build-loop-memory evidence item by id or safe memory-store path after reading context.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Evidence id such as context:CONTEXT, or a safe path under the memory store.',
+        },
+        workdir: {
+          type: 'string',
+          description: 'Absolute project working directory. Defaults to the MCP server cwd.',
+        },
+        project: {
+          type: 'string',
+          description: 'Optional explicit build-loop-memory project slug.',
+        },
+        max_chars: {
+          type: 'number',
+          description: 'Maximum characters to return. Default: 8000.',
+        },
+      },
+      required: ['id'],
+    },
+    annotations: {
+      title: 'Build Loop Memory Open',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
 ];
 
 // --- Tool handlers ---
@@ -318,6 +516,12 @@ export async function handleToolCall(
           return await traced('mcp:outcome', args, () => handleOutcome(args));
         case 'read_logs':
           return await traced('mcp:read_logs', args, () => handleReadLogs(args));
+        case 'build_loop_memory_status':
+          return await traced('mcp:build_loop_memory_status', args, () => handleBuildLoopMemoryStatus(args));
+        case 'build_loop_memory_context':
+          return await traced('mcp:build_loop_memory_context', args, () => handleBuildLoopMemoryContext(args));
+        case 'build_loop_memory_open':
+          return await traced('mcp:build_loop_memory_open', args, () => handleBuildLoopMemoryOpen(args));
         default:
           return errorResponse(`Unknown tool: ${name}`);
       }
@@ -372,6 +576,71 @@ async function handleSearch(
   lines.push('Next: after landing the fix, call `outcome` with worked|failed|modified to improve future verdicts.');
 
   return textResponse(lines.join('\n'));
+}
+
+async function handleBuildLoopMemoryStatus(
+  args: Record<string, unknown>
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  const cliArgs = [
+    'status',
+    '--workdir',
+    absoluteWorkdir(args),
+    '--json',
+  ];
+  const project = optionalString(args, 'project');
+  if (project) {
+    cliArgs.push('--project', project);
+  }
+  return jsonTextResponse(await runBlmJson(cliArgs));
+}
+
+async function handleBuildLoopMemoryContext(
+  args: Record<string, unknown>
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  const mode = optionalString(args, 'mode') || 'fast';
+  if (!['fast', 'expand'].includes(mode)) {
+    throw new Error('mode must be fast or expand');
+  }
+  const cliArgs = [
+    'context',
+    '--workdir',
+    absoluteWorkdir(args),
+    '--query',
+    optionalString(args, 'query') || '',
+    '--mode',
+    mode,
+    '--limit',
+    String(optionalInt(args, 'limit', 5)),
+    '--json',
+  ];
+  const project = optionalString(args, 'project');
+  if (project) {
+    cliArgs.push('--project', project);
+  }
+  if (!optionalBoolean(args, 'write', false)) {
+    cliArgs.push('--no-write');
+  }
+  return jsonTextResponse(await runBlmJson(cliArgs));
+}
+
+async function handleBuildLoopMemoryOpen(
+  args: Record<string, unknown>
+): Promise<{ content: Array<{ type: string; text: string }> }> {
+  const cliArgs = [
+    'open',
+    '--id',
+    requiredString(args, 'id'),
+    '--workdir',
+    absoluteWorkdir(args),
+    '--max-chars',
+    String(optionalInt(args, 'max_chars', 8000)),
+    '--json',
+  ];
+  const project = optionalString(args, 'project');
+  if (project) {
+    cliArgs.push('--project', project);
+  }
+  return jsonTextResponse(await runBlmJson(cliArgs));
 }
 
 async function handleStore(
