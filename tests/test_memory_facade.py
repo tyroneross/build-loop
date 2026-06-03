@@ -12,6 +12,7 @@ a stub callable.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import memory_facade as mf  # type: ignore  # noqa: E402
+from semantic_index import upsert_fact  # type: ignore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +139,31 @@ def test_semantic_backend_unavailable_without_env(workdir: Path) -> None:
     out, reasons = mf.read_semantic(workdir, query="x", limit=5, project=None)
     assert out == []
     assert any("BUILD_LOOP_DATABASE_URL" in r for r in reasons)
+
+
+def test_semantic_backend_reads_local_sqlite_first(
+    workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SQLite semantic facts are returned without a Postgres URL."""
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    db_path = memory_root / "indexes" / "semantic_facts.sqlite"
+    upsert_fact(
+        subject="fact:sqlite",
+        predicate="captures",
+        object_text="architecture adapter lesson",
+        project="build-loop",
+        confidence=0.75,
+        db_path=db_path,
+    )
+    monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    out, reasons = mf.read_semantic(workdir, query="adapter", limit=5, project="build-loop")
+
+    assert reasons == []
+    assert len(out) == 1
+    assert out[0]["backend"] == "sqlite"
+    assert out[0]["subject"] == "fact:sqlite"
 
 
 def test_semantic_backend_unavailable_when_psycopg_missing(

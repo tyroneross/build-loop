@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Backend 3: agent_memory.<schema>.semantic_facts (Postgres) reader."""
+"""Backend 3: local SQLite semantic index, with optional Postgres fallback."""
 from __future__ import annotations
 
 import os
@@ -14,6 +14,7 @@ from .common import _parse_iso
 # _db_url lives in scripts/ (the parent of this package); importable because
 # __init__.py inserts scripts/ into sys.path before any sub-module is loaded.
 from _db_url import NO_URL_REASON, resolve_db_url  # type: ignore  # noqa: E402
+from semantic_index import query_facts  # type: ignore  # noqa: E402
 
 
 def read_semantic(
@@ -23,13 +24,21 @@ def read_semantic(
     project: Optional[str],
     skip_postgres: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Read semantic_facts from Postgres.
+    """Read semantic facts from the local SQLite index, then Postgres fallback.
 
-    ``skip_postgres=True``: bypass entirely; records reason ``skipped_postgres``
-    (distinct from ``db_unavailable: ...``) so consumers can tell intentional
-    skip from genuine backend-down.
+    ``skip_postgres=True``: bypass only Postgres; records reason
+    ``skipped_postgres`` (distinct from ``db_unavailable: ...``) so consumers
+    can tell intentional skip from genuine backend-down. Local SQLite remains
+    available because it is the default fresh-install backend.
     """
     reasons: List[str] = []
+    sqlite_out = query_facts(query=query, limit=limit, project=project)
+    if sqlite_out:
+        if skip_postgres:
+            reasons.append("skipped_postgres")
+        return sqlite_out, reasons
+    reasons.append("sqlite_semantic_empty")
+
     if skip_postgres:
         reasons.append("skipped_postgres")
         return [], reasons

@@ -49,6 +49,8 @@ _HERE = Path(__file__).resolve().parent        # scripts/memory_facade/
 _SCRIPTS_DIR = _HERE.parent                    # scripts/
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+if __name__ == "__main__" and not __package__:
+    __package__ = _HERE.name
 
 REPO_ROOT_DEFAULT = _SCRIPTS_DIR.parent
 
