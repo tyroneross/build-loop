@@ -93,12 +93,38 @@ def _py_imports(source: str) -> List[Tuple[str, int]]:
         tree = ast.parse(source)
     except SyntaxError:
         return out
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            _py_import_node(node, out)
-        elif isinstance(node, ast.ImportFrom):
-            _py_import_from_node(node, out)
+    _walk_py_imports(tree, out)
     return out
+
+
+def _is_type_checking_test(node: ast.AST) -> bool:
+    """Return true for guards that are false at runtime but visible to type checkers."""
+    if isinstance(node, ast.Name):
+        return node.id == "TYPE_CHECKING"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "TYPE_CHECKING"
+    if isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            return any(_is_type_checking_test(value) for value in node.values)
+        if isinstance(node.op, ast.Or):
+            return all(_is_type_checking_test(value) for value in node.values)
+    return False
+
+
+def _walk_py_imports(node: ast.AST, out: List[Tuple[str, int]]) -> None:
+    """Collect runtime imports, skipping imports guarded by ``TYPE_CHECKING``."""
+    if isinstance(node, ast.Import):
+        _py_import_node(node, out)
+        return
+    if isinstance(node, ast.ImportFrom):
+        _py_import_from_node(node, out)
+        return
+    if isinstance(node, ast.If) and _is_type_checking_test(node.test):
+        for child in node.orelse:
+            _walk_py_imports(child, out)
+        return
+    for child in ast.iter_child_nodes(node):
+        _walk_py_imports(child, out)
 
 
 # ---------------------------------------------------------------------------
