@@ -75,6 +75,12 @@ You read existing files (if present) and write the new state via atomic write (w
 - `.build-loop/app-contract/ui.md` — the UI contract. Sections:
   - `## Overview` (auto-derived: app slug, last-updated timestamp, scope summary)
   - `## Design Direction` (Phase 2 designer output: product/workflow rationale, style intent, density, surface model, typography roles, token source, primary/secondary action hierarchy, visual non-goals)
+  - `## Calm Precision Core Considerations` (required for non-trivial UI work). Per row:
+    - `principle` (e.g. Progressive Disclosure, Functional Integrity, Task Economy)
+    - `foundation` (e.g. Hick's Law, Affordance Theory, Cognitive Load)
+    - `surface_implication` (what this means for the current screen/component)
+    - `decision_effect` (selected, rejected, constrained, or exception)
+    - `evidence_or_exception` (source evidence, validation implication, or named exception)
   - `## User flows` (transcribed from in-tree UI files; one flow per primary user journey; ≤200 words each)
   - `## Design Hierarchy Registry` (THE registry). Per-tier rows:
     - `tier_id` (project-defined; e.g. `cta-primary`, `nav-primary`, `text-heading-1`)
@@ -145,9 +151,10 @@ When `trigger_point == "phase2-design-direction"`, act as build-loop's designer 
 
 1. Load `Skill("build-loop:ui-design")`, then read the UI input/output contract, intent packet, existing app-contract files, `recent_design_structures_path`, `ui_design_source_map_path`, project token/theme/component files, and any `design_tool_artifacts` passed by the orchestrator.
 2. Classify artifacts by role: `layout-reference`, `visual-reference`, `token-source`, `content-reference`, `screenshot-evidence`, or `inspiration-only`.
-3. Choose the minimum sufficient design direction based on what is being built: user job, workflow frequency, information density, data shape, device/platform constraints, risk of error, accessibility needs, and expected usage context. When using a recent design structure, record the selected structure, rejected alternative, source refs, and validation implications.
-4. Write or update `.build-loop/app-contract/ui.md` with `## Design Direction` and a seed `## Design Hierarchy Registry` before implementers are dispatched.
-5. If artifacts conflict, resolve by user/product fit first: explicit user requirement → current product/workflow need → project design system/tokens → approved mockup/screenshot → app-contract history → build-loop UI rules. If the choice still changes product feel or workflow efficiency materially, return `status: "blocked"` with `novel_decisions[]`.
+3. Run the Calm Precision core-consideration pass before selecting a structure: identify the principles that govern the surface, the perceptual foundations behind them, the implementation implication, and any exception that would need to be recorded.
+4. Choose the minimum sufficient design direction based on what is being built: user job, workflow frequency, information density, data shape, device/platform constraints, risk of error, accessibility needs, expected usage context, and the Calm Precision core-consideration pass. When using a recent design structure, record the selected structure, rejected alternative, source refs, and validation implications.
+5. Write or update `.build-loop/app-contract/ui.md` with `## Design Direction`, `## Calm Precision Core Considerations`, and a seed `## Design Hierarchy Registry` before implementers are dispatched.
+6. If artifacts conflict, resolve by user/product fit first: explicit user requirement → current product/workflow need → project design system/tokens → approved mockup/screenshot → app-contract history → build-loop UI rules. If the choice still changes product feel or workflow efficiency materially, return `status: "blocked"` with `novel_decisions[]`.
 
 Avoid prescriptive pattern locking. Do not select "dashboard", "glass", "warm", "native", "editor", or any other named pattern because it exists in guidance. Select it only if the concrete surface benefits from that mode, and record the reason plus at least one rejected alternative.
 

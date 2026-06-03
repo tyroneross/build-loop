@@ -1,8 +1,8 @@
 /**
  * Debugger MCP Tool Definitions
  *
- * 8 tools for debugging memory: search, store, detail, status, list, patterns, outcome, read_logs.
- * Each calls existing programmatic APIs from storage.ts and retrieval.ts.
+ * 11 tools: 8 debugging-memory tools plus 3 build-loop-memory context tools.
+ * Debugging tools call storage.ts/retrieval.ts; build-loop-memory tools call the host-neutral CLI.
  * Responses are formatted as concise text for LLM consumption.
  */
 export declare const TOOLS: ({
@@ -32,6 +32,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required: string[];
     };
@@ -93,6 +99,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required: string[];
     };
@@ -130,6 +142,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required: string[];
     };
@@ -164,6 +182,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required?: undefined;
     };
@@ -204,6 +228,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required?: undefined;
     };
@@ -241,6 +271,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required?: undefined;
     };
@@ -285,6 +321,12 @@ export declare const TOOLS: ({
             until?: undefined;
             level?: undefined;
             keyword?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
         };
         required: string[];
     };
@@ -342,6 +384,169 @@ export declare const TOOLS: ({
             incident_id?: undefined;
             result?: undefined;
             notes?: undefined;
+            workdir?: undefined;
+            project?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
+        };
+        required: string[];
+    };
+    annotations: {
+        title: string;
+        readOnlyHint: boolean;
+        destructiveHint: boolean;
+        idempotentHint: boolean;
+        openWorldHint: boolean;
+    };
+} | {
+    name: string;
+    description: string;
+    inputSchema: {
+        type: "object";
+        properties: {
+            workdir: {
+                type: string;
+                description: string;
+            };
+            project: {
+                type: string;
+                description: string;
+            };
+            symptom?: undefined;
+            root_cause?: undefined;
+            category?: undefined;
+            fix?: undefined;
+            tags?: undefined;
+            files_changed?: undefined;
+            file?: undefined;
+            id?: undefined;
+            limit?: undefined;
+            incident_id?: undefined;
+            result?: undefined;
+            notes?: undefined;
+            source?: undefined;
+            path?: undefined;
+            since?: undefined;
+            until?: undefined;
+            level?: undefined;
+            keyword?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
+            max_chars?: undefined;
+        };
+        required?: undefined;
+    };
+    annotations: {
+        title: string;
+        readOnlyHint: boolean;
+        destructiveHint: boolean;
+        idempotentHint: boolean;
+        openWorldHint: boolean;
+    };
+} | {
+    name: string;
+    description: string;
+    inputSchema: {
+        type: "object";
+        properties: {
+            workdir: {
+                type: string;
+                description: string;
+            };
+            query: {
+                type: string;
+                description: string;
+            };
+            project: {
+                type: string;
+                description: string;
+            };
+            mode: {
+                type: string;
+                enum: string[];
+                description: string;
+            };
+            limit: {
+                type: string;
+                description: string;
+            };
+            write: {
+                type: string;
+                description: string;
+            };
+            symptom?: undefined;
+            root_cause?: undefined;
+            category?: undefined;
+            fix?: undefined;
+            tags?: undefined;
+            files_changed?: undefined;
+            file?: undefined;
+            id?: undefined;
+            incident_id?: undefined;
+            result?: undefined;
+            notes?: undefined;
+            source?: undefined;
+            path?: undefined;
+            since?: undefined;
+            until?: undefined;
+            level?: undefined;
+            keyword?: undefined;
+            max_chars?: undefined;
+        };
+        required?: undefined;
+    };
+    annotations: {
+        title: string;
+        readOnlyHint: boolean;
+        destructiveHint: boolean;
+        idempotentHint: boolean;
+        openWorldHint: boolean;
+    };
+} | {
+    name: string;
+    description: string;
+    inputSchema: {
+        type: "object";
+        properties: {
+            id: {
+                type: string;
+                description: string;
+            };
+            workdir: {
+                type: string;
+                description: string;
+            };
+            project: {
+                type: string;
+                description: string;
+            };
+            max_chars: {
+                type: string;
+                description: string;
+            };
+            symptom?: undefined;
+            root_cause?: undefined;
+            category?: undefined;
+            fix?: undefined;
+            tags?: undefined;
+            files_changed?: undefined;
+            file?: undefined;
+            limit?: undefined;
+            incident_id?: undefined;
+            result?: undefined;
+            notes?: undefined;
+            source?: undefined;
+            path?: undefined;
+            since?: undefined;
+            until?: undefined;
+            level?: undefined;
+            keyword?: undefined;
+            query?: undefined;
+            mode?: undefined;
+            write?: undefined;
         };
         required: string[];
     };

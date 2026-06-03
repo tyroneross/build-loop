@@ -17,7 +17,9 @@ Load these skills and follow them. Not optional.
 
 If a skill is unavailable, proceed but note it in your output.
 
-Calm Precision is the structural baseline: hierarchy, grouping, action weight, disclosure, motion, accessibility, copy clarity, and functional integrity. The app contract decides the selected structure and surface treatment on top of that baseline.
+Calm Precision is the structural baseline and a required design consideration gate: hierarchy, grouping, action weight, disclosure, motion, accessibility, copy clarity, functional integrity, and their perceptual-science foundations. The app contract decides the selected structure and surface treatment on top of that baseline.
+
+Before editing UI, identify which Calm Precision principles are relevant to this change and how they constrain the implementation. Do not treat Calm Precision as background reference or taste language. If `.build-loop/app-contract/ui.md` contains `## Calm Precision Core Considerations`, apply that section as binding guidance. If the section is missing for non-trivial UI work, still run the consideration pass locally and report it in your return envelope as `CALM PRECISION CHECK: <principles> -> <implementation effect>`.
 
 ## UI input/output contract
 
