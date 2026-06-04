@@ -396,3 +396,24 @@ pins it. The overwrite path then stops firing.
 Consolidation (`scripts/consolidate_memory.py`) is the related batch
 script for promoting candidate JSONL entries into
 `semantic_facts`.
+
+## Corrections + lessons (companion stack)
+
+This skill captures **decisions** inline during a session. The companion
+correction-aware capture stack — `scripts/scan_corrections/` (tier-1
+deterministic Stop hook), `scripts/surface_pending_lessons.py` (tier-3
+host-agent surface), and `scripts/bridge_lesson_to_harness.py` (store
+mirror) — captures **corrections, preferences, and lessons** at session
+boundaries, with no Ollama dependency. Full design:
+`skills/build-loop/references/correction-aware-capture.md`.
+
+When the user corrects an action you just took ("revert that", "don't do
+X", "use Y instead of Z"), the tier-1 scanner writes a raw candidate to
+`.build-loop/pending-lessons/`. At the next SessionStart, the host coding
+agent — you — reads `surface_pending_lessons.py` output, classifies each
+candidate, and promotes via `scripts/memory_writer.py --type lesson|feedback`
+(global lane: `build-loop-memory/lessons/`; project lane:
+`build-loop-memory/projects/<slug>/lessons/`). The two paths are
+complementary: this skill catches what you can see during the turn; the
+companion catches what the deterministic scanner can find at the end of
+the session.
