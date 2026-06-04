@@ -22,6 +22,11 @@ from typing import Any
 
 from retrospective.sections import SECTION_KEYS, SECTION_TITLES
 
+# scripts/ is already on sys.path (the `retrospective` package import above
+# requires it), so `_paths` — the canonical, env-overridable build-loop-memory
+# resolver shared with memory_writer/recall — imports the same way.
+from _paths import build_loop_memory_root  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Rendering helpers.
@@ -171,13 +176,17 @@ def promote_durable(
 ) -> dict[str, Any]:
     """Best-effort durable promotion to build-loop-memory.
 
-    Default ``memory_root`` is ``~/dev/git-folder/build-loop-memory``. When the
-    directory is unreachable (not present, not writable), returns
-    ``{"durable_path": None, "status": "skipped", "reason": <str>}``.
+    Default ``memory_root`` resolves via ``_paths.build_loop_memory_root()``,
+    which honors ``$BUILD_LOOP_MEMORY_ROOT`` / ``$BUILD_LOOP_MEMORY_STORE_ROOT``
+    / ``$AGENT_MEMORY_ROOT`` and falls back to ``~/dev/git-folder/build-loop-memory``.
+    Routing through the shared resolver (instead of a hardcoded path) lets tests
+    and sandboxes redirect durable writes via env — production behavior is
+    unchanged. When the directory is unreachable (not present, not writable),
+    returns ``{"durable_path": None, "status": "skipped", "reason": <str>}``.
     """
     try:
         if memory_root is None:
-            memory_root = Path.home() / "dev" / "git-folder" / "build-loop-memory"
+            memory_root = build_loop_memory_root()
         slug = repo or workdir.name
         date = _today_iso()
         outdir = memory_root / "projects" / slug / "retrospectives" / date
