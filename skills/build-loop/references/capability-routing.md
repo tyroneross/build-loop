@@ -42,8 +42,10 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Web UI build | `build-loop:ui-design` + `build-loop:design-contract-specialist` (`trigger_point: phase2-design-direction`) + `calm-precision` + `templates/ui-subagent-prompt.md` | `frontend-design:frontend-design` only when explicitly requested | `fallbacks.md#web-ui` |
 | Web UI validation | `ui-validator` agent + `audit-design-rules.mjs` + browser/screenshot artifact | `showcase:capture` for visual evidence | `fallbacks.md#web-ui` |
 | Orchestrated UI build | `build-loop:ui-design` → build-loop-owned design direction → implementer fan-out → ui-validator/design-contract reconciliation | explicit user-invoked design tool artifacts passed to `design-contract-specialist` | `fallbacks.md#web-ui` |
-| Mobile UI build | `build-loop:ui-design` + `build-loop:design-contract-specialist` + `calm-precision` + `apple-dev` (if Apple) | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
-| Mobile UI validation | built-in simulator screenshot path or `native-ax-driver` for macOS | `showcase:capture` | `fallbacks.md#mobile-ui` |
+| Mobile UI build (`uiTarget: "mobile"` — iOS/watchOS sim) | `build-loop:ui-design` + `build-loop:design-contract-specialist` + `calm-precision` + `apple-dev` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
+| Mobile UI validation (iOS sim) | `xcrun simctl io booted screenshot` for static; `idb ui tap` for interaction | `showcase:capture` | `fallbacks.md#mobile-ui` |
+| macOS desktop UI build (`uiTarget: "macos"`) | `build-loop:ui-design` + `build-loop:design-contract-specialist` + `calm-precision` + `apple-dev` | — | `fallbacks.md#mobile-ui` + `fallbacks.md#apple-dev` |
+| macOS desktop UI validation | IBR `scan_macos` when `availablePlugins.ibr == true`; else `native-ax-driver` against the running `.app` (pid-anchored). NEVER `xcrun simctl` (no macOS simulator). NEVER `nm`/`strings` as substitute. | `showcase:capture` for screenshot evidence | `fallbacks.md#mobile-ui` |
 | Design system tokens | `design-contract-specialist` reads project token/theme/component files and records the source in `.build-loop/app-contract/ui.md` | — | `fallbacks.md#design-tokens` (reads consumer project's token files — never hardcodes) |
 | Recent design structures | `design-contract-specialist` reads `references/recent-design-structures.md` and selects by product/workflow/data fit | explicit design-tool artifacts passed as evidence | `fallbacks.md#web-ui` |
 | Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `screenshot` MCP tool | `fallbacks.md#screenshot` |
@@ -67,7 +69,14 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 
 ### Sub-routers (set during Phase 1)
 
-**UI target**: if consumer project has `ios/`, `*.swift`, `Package.swift`, or `*.xcodeproj` → `uiTarget: "mobile"`, `platform: "apple"`. Else if `app.json` (Expo) or `App.tsx` with `react-native` → `uiTarget: "mobile"`, `platform: "react-native"`. Else → `uiTarget: "web"`, `platform: "web"`.
+**UI target**: prefer the most specific match — order matters.
+
+1. **macOS desktop (`uiTarget: "macos"`, `platform: "apple"`)** — `*.xcodeproj` or `Package.swift` is present AND any of: (a) project has NO `ios/` directory AND has `Sources/` / `App/` with `*.swift`; (b) Xcode project's `SUPPORTED_PLATFORMS` / deployment target indicates macOS; (c) repo grep shows `import AppKit` or `import SwiftUI` paired with `WindowGroup`/`Window` (macOS scene types) and no `UIKit` import. macOS has no simulator; validation routes to `native-ax-driver` or IBR `scan_macos`, never to `xcrun simctl`.
+2. **iOS/watchOS mobile (`uiTarget: "mobile"`, `platform: "apple"`)** — `ios/` directory present, OR `*.xcodeproj`/`Package.swift` with `UIKit` import / `iOS` deployment target. Validation uses the iOS simulator screenshot path.
+3. **React Native mobile (`uiTarget: "mobile"`, `platform: "react-native"`)** — `app.json` (Expo) or `App.tsx` with `react-native` import.
+4. **Web (`uiTarget: "web"`, `platform: "web"`)** — fallback for everything else with a UI surface.
+
+Tie-breaker: if signals are mixed (an Apple project with both `ios/` and a macOS target), set `uiTarget: "mobile"` and surface a one-line note in Assess; the build can override via `state.json.uiTarget` if the goal targets the macOS surface.
 
 **Migration source**: if `.replit` / `replit.nix` present → `migrationSource: "replit"`. Lovable / Bolt / v0 export markers (e.g. `lovable.config`, `bolt.config`, `v0.dev` in comments) → corresponding source. `replit-migrate` skills generalize — load `migration-scan` for any of the above, override hints as needed.
 
