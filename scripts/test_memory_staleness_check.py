@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import memory_staleness_check as msc
+import memory_update_ledger as mul
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +130,49 @@ def test_stale_after_six_commits(tmp_path: Path) -> None:
     assert result["stale"] is True
     assert result["commits_stale"] == 6
     assert result["memory_as_of_commit"] == sha
+    assert result["baseline_source"] == "milestones"
     assert "6 commits behind HEAD" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# Test: update ledger at HEAD beats older milestone baseline
+# ---------------------------------------------------------------------------
+
+def test_update_ledger_refreshes_staleness_baseline(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    mem = tmp_path / "memory"
+    _init_repo(repo)
+
+    old_sha = _head_sha(repo)
+    _write_milestone(mem, "repo", old_sha)
+    _add_commits(repo, 6)
+    fresh_sha = _head_sha(repo)
+
+    decision_path = mem / "projects" / "repo" / "decisions" / "0001-test.md"
+    decision_path.parent.mkdir(parents=True, exist_ok=True)
+    decision_path.write_text("body\n")
+    mul.append_update(
+        memory_root=mem,
+        project="repo",
+        lane="decisions",
+        action="write",
+        path=decision_path,
+        writer="test",
+        source_workdir=repo,
+        source_commit=fresh_sha,
+    )
+
+    result = msc.check(
+        workdir=repo,
+        slug="repo",
+        memory_root=mem,
+        commits_threshold=5,
+    )
+
+    assert result["stale"] is False
+    assert result["commits_stale"] == 0
+    assert result["memory_as_of_commit"] == fresh_sha
+    assert result["baseline_source"] == "updates_ledger"
 
 
 # ---------------------------------------------------------------------------

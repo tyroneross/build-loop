@@ -150,6 +150,14 @@ class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(events[0]["decision_id"], "0001")
         self.assertEqual(events[0]["confidence"], "explicit")
 
+        ledger = Path(self._memroot.name) / "indexes" / "updates.jsonl"
+        ledger_rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+        self.assertEqual(len(ledger_rows), 1)
+        self.assertEqual(ledger_rows[0]["project"], "test-default")
+        self.assertEqual(ledger_rows[0]["lane"], "decisions")
+        self.assertEqual(ledger_rows[0]["action"], "write")
+        self.assertEqual(ledger_rows[0]["memory_id"], "0001")
+
     def test_id_allocator_sequences_correctly(self) -> None:
         for i, title in enumerate(["First", "Second", "Third"], start=1):
             r = run(self._base_args(**{
@@ -244,6 +252,11 @@ class WriteDecisionTests(MemIsolationMixin, unittest.TestCase):
         kinds = [e["kind"] for e in events]
         self.assertIn("decision_accepted", kinds)
         self.assertIn("decision_superseded", kinds)
+
+        ledger = Path(self._memroot.name) / "indexes" / "updates.jsonl"
+        ledger_rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+        actions = [row["action"] for row in ledger_rows]
+        self.assertIn("supersede", actions)
 
     def test_equal_confidence_requires_explicit_supersedes(self) -> None:
         r1 = run(self._base_args(**{

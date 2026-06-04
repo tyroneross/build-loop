@@ -60,6 +60,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import memory_index as mi  # noqa: E402
+import memory_update_ledger as mul  # noqa: E402
 
 from _paths import (  # type: ignore  # noqa: E402
     project_lessons_dir,
@@ -329,6 +330,26 @@ def write(
     except Exception as exc:  # never block the write on index failure
         print(f"WARN: memory_index append failed: {exc}", file=sys.stderr)
 
+    # Global store audit/freshness ledger. Fire-and-forget: the memory file is
+    # canonical, and ledger repair is possible from on-disk files.
+    try:
+        memory_root = mul.infer_memory_root_for_path(path, fallback=memory_dir)
+        mul.append_update(
+            memory_root=memory_root,
+            action=action,
+            path=path,
+            writer="memory_writer.py",
+            run_id=run_id,
+            source_repo=fm.get("source_repo"),
+            source_workdir=workdir_abs,
+            source_commit=fm.get("as_of_commit"),
+            source_host=host,
+            memory_id=name,
+            summary=description,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: memory_update_ledger append failed: {exc}", file=sys.stderr)
+
     # M5 + Step 8: emit memory-write telemetry to TELEMETRY.jsonl (separate file
     # from INDEX.jsonl; preserves M5 discovery schema untouched). Fire-and-forget.
     try:
@@ -399,6 +420,22 @@ def mark_applied(
     fm["last_updated_at"] = iso_utc()
 
     _atomic_write_text(path, _emit_frontmatter(fm) + "\n" + body.lstrip("\n"))
+    try:
+        memory_root = mul.infer_memory_root_for_path(path, fallback=memory_dir)
+        mul.append_update(
+            memory_root=memory_root,
+            action="mark-applied",
+            path=path,
+            writer="memory_writer.py",
+            run_id=applying_run_id,
+            source_repo=applying_repo,
+            source_workdir=applying_workdir_abs,
+            memory_id=str(fm.get("name") or Path(file_rel).stem),
+            summary=f"Marked {file_rel} as applied",
+            metadata={"cross_repo_validated": cross_validated},
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: memory_update_ledger append failed: {exc}", file=sys.stderr)
     return fm
 
 
@@ -478,6 +515,22 @@ def migrate(
         if not dry_run:
             try:
                 _atomic_write_text(path, content)
+                try:
+                    memory_root = mul.infer_memory_root_for_path(path, fallback=memory_dir)
+                    mul.append_update(
+                        memory_root=memory_root,
+                        action="migrate",
+                        path=path,
+                        writer="memory_writer.py",
+                        run_id=run_id,
+                        source_repo=new_fm.get("source_repo"),
+                        source_workdir=workdir_abs,
+                        source_host=host,
+                        memory_id=str(new_fm.get("name") or path.stem),
+                        summary="Backfilled memory provenance frontmatter",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"WARN: memory_update_ledger append failed: {exc}", file=sys.stderr)
             except OSError as exc:
                 summary["errors"].append({"file": str(path), "error": str(exc)})
                 continue
