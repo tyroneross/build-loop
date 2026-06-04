@@ -129,8 +129,17 @@ def _emit_import_edges(
     ext: str,
 ) -> None:
     """In-tree ``imports`` edges + fallback external ``uses-package`` edges."""
-    for spec_str, line in imports:
-        target_rel = resolver(spec_str, rel, rel_files_set)
+    resolved_imports = [
+        (spec_str, line, resolver(spec_str, rel, rel_files_set))
+        for spec_str, line in imports
+    ]
+    for spec_str, line, target_rel in resolved_imports:
+        if target_rel and _has_resolved_more_specific_same_line(
+            spec_str,
+            line,
+            resolved_imports,
+        ):
+            continue
         if target_rel:
             target_id = file_map.get(target_rel)
             target_comp = by_id.get(target_id or "")
@@ -171,6 +180,27 @@ def _emit_import_edges(
                 "build-loop-native-scanner (bare-import)",
                 description=f"{rel} uses {package_name}",
             )
+
+
+def _has_resolved_more_specific_same_line(
+    spec: str,
+    line: int,
+    resolved_imports: List[Tuple[str, int, Optional[str]]],
+) -> bool:
+    """Suppress fallback package edges when an imported submodule resolved.
+
+    Python import extraction emits both ``from pkg import mod`` candidates
+    (``pkg.mod``) and the package fallback (``pkg``). Keeping both creates
+    false cycles through ``__init__.py`` when the submodule candidate resolved.
+    """
+    for other_spec, other_line, other_target in resolved_imports:
+        if other_line != line or other_spec == spec or not other_target:
+            continue
+        if spec == "." and other_spec.startswith(".") and other_spec != ".":
+            return True
+        if other_spec.startswith(f"{spec}."):
+            return True
+    return False
 
 
 def _emit_api_fetch_edges(

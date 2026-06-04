@@ -223,3 +223,67 @@ def test_scan_one_file_updates_runtime_edges(tmp_path: Path) -> None:
     assert "react" not in packages
     assert any(c.type == "uses-package" and c.to_id == packages["vue"] for c in page_edges)
     assert not any(c.type == "frontend-calls-api" for c in page_edges)
+
+
+def test_scan_skips_type_checking_only_import_edges(tmp_path: Path) -> None:
+    _write(tmp_path / "pkg" / "__init__.py", "")
+    _write(
+        tmp_path / "pkg" / "a.py",
+        """
+        from typing import TYPE_CHECKING
+
+        if TYPE_CHECKING:
+            from . import b
+        """,
+    )
+    _write(tmp_path / "pkg" / "b.py", "from . import a\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["pkg/b.py"], by_file["pkg/a.py"]) in edges
+    assert (by_file["pkg/a.py"], by_file["pkg/b.py"]) not in edges
+
+
+def test_scan_keeps_runtime_or_import_edges(tmp_path: Path) -> None:
+    _write(tmp_path / "pkg" / "__init__.py", "")
+    _write(
+        tmp_path / "pkg" / "a.py",
+        """
+        from typing import TYPE_CHECKING
+
+        ENABLE_IMPORT = True
+
+        if TYPE_CHECKING or ENABLE_IMPORT:
+            from . import b
+        """,
+    )
+    _write(tmp_path / "pkg" / "b.py", "")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["pkg/a.py"], by_file["pkg/b.py"]) in edges
+
+
+def test_scan_prefers_resolved_submodule_over_package_fallback(tmp_path: Path) -> None:
+    _write(tmp_path / "pkg" / "__init__.py", "from .schemas import Thing\n")
+    _write(
+        tmp_path / "pkg" / "schemas.py",
+        """
+        from . import taxonomy
+
+        class Thing:
+            kind = taxonomy.KIND
+        """,
+    )
+    _write(tmp_path / "pkg" / "taxonomy.py", "KIND = 'demo'\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["pkg/schemas.py"], by_file["pkg/taxonomy.py"]) in edges
+    assert (by_file["pkg/schemas.py"], by_file["pkg/__init__.py"]) not in edges
