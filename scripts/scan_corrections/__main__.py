@@ -10,7 +10,9 @@ agent refinement, optional Ollama distill) can read them uniformly.
 Hook contract — never fails the session:
   - Any error logs and exits 0
   - `.build-loop/.no-capture` (per-session opt-out) → clean exit 0
-  - Wall-clock budget (`SCAN_CORRECTIONS_BUDGET_S`, default 10s) honored
+  - Wall-clock budget (`SCAN_CORRECTIONS_BUDGET_S`, default 10s) governs the
+    write loop; `SCAN_CORRECTIONS_MAX_BYTES` (default 100 MB) caps detection —
+    transcripts larger than the limit are skipped with a log message.
 
 Usage:
   python3 -m scan_corrections --workdir <repo> --transcript $CLAUDE_TRANSCRIPT_PATH
@@ -33,6 +35,7 @@ from scan_corrections.detect import Candidate, detect_candidates  # noqa: E402
 
 DEFAULT_BUDGET_S = 10
 PENDING_DIRNAME = "pending-lessons"
+MAX_TRANSCRIPT_BYTES = int(os.environ.get("SCAN_CORRECTIONS_MAX_BYTES", str(100 * 1024 * 1024)))
 
 
 def log(msg: str) -> None:
@@ -49,6 +52,9 @@ def _ts_for_filename() -> str:
 
 def _emit_frontmatter(cand: Candidate, *, source: str) -> str:
     """Render a Candidate as YAML frontmatter + body. No PyYAML dep."""
+    # title: a readable excerpt shown by context_bootstrap.py's queue surfacer,
+    # which reads title:/name: instead of the timestamp-hash filename.
+    title_excerpt = cand.quote[:80].replace("\n", " ").strip()
     lines = [
         "---",
         f"id: {cand.id_hash}",
@@ -60,6 +66,7 @@ def _emit_frontmatter(cand: Candidate, *, source: str) -> str:
         f"captured_chars: {cand.captured_chars}",
         f"tier: 1-deterministic",
         f"source: {source}",
+        f"title: {title_excerpt!r}",
         f"captured_at: {_iso_now()}",
     ]
     if cand.extras:
@@ -148,7 +155,18 @@ def main(argv: list[str] | None = None) -> int:
             turns = _load_text_turns(Path(args.text_turns_file))
             candidates = detect_candidates(text_turns=turns)
         elif args.transcript:
-            candidates = detect_candidates(Path(args.transcript))
+            transcript_path = Path(args.transcript)
+            try:
+                size = transcript_path.stat().st_size
+            except OSError:
+                size = 0
+            if size > MAX_TRANSCRIPT_BYTES:
+                log(
+                    f"transcript too large ({size} bytes > {MAX_TRANSCRIPT_BYTES} limit); "
+                    "skipping detection. Set SCAN_CORRECTIONS_MAX_BYTES to override."
+                )
+                return 0
+            candidates = detect_candidates(transcript_path)
         else:
             log("no --transcript and no --text-turns-file; nothing to do")
             return 0

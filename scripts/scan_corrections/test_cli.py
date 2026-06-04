@@ -159,3 +159,50 @@ def test_cli_budget_exhaustion_is_clean(tmp_path: Path) -> None:
         env_overrides={"SCAN_CORRECTIONS_BUDGET_S": "0"},
     )
     assert r.returncode == 0
+
+
+def test_f7_title_field_in_frontmatter(tmp_path: Path) -> None:
+    """f7 — emitted candidate files must contain a title: field derived from the quote."""
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    turns_file = _write_text_turns_file(tmp_path, ["Revert that global change."])
+    r = _run_cli(["--workdir", str(workdir), "--text-turns-file", str(turns_file)], cwd=workdir)
+    assert r.returncode == 0
+
+    pending = workdir / ".build-loop" / "pending-lessons"
+    files = sorted(pending.glob("*.md"))
+    assert files, "expected at least one candidate file"
+
+    # Every file must carry a title: key.
+    for f in files:
+        body = f.read_text(encoding="utf-8")
+        assert "title:" in body, f"{f.name} is missing title: field"
+        # The title value should be a non-empty quoted string containing the quote excerpt.
+        import re
+        m = re.search(r"^title:\s*(.+)$", body, re.MULTILINE)
+        assert m and m.group(1).strip(), f"{f.name} has empty title: field"
+
+
+def test_f2_oversized_transcript_is_skipped(tmp_path: Path) -> None:
+    """f2 — transcripts over the byte cap skip detection and return 0."""
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    # Create a minimal valid transcript JSONL file.
+    transcript = tmp_path / "transcript.jsonl"
+    import json
+    record = json.dumps({"role": "user", "content": "Revert that."})
+    transcript.write_text(record + "\n", encoding="utf-8")
+
+    # Set cap to 1 byte so any file exceeds it.
+    r = _run_cli(
+        ["--workdir", str(workdir), "--transcript", str(transcript)],
+        cwd=workdir,
+        env_overrides={"SCAN_CORRECTIONS_MAX_BYTES": "1"},
+    )
+    assert r.returncode == 0
+    # No candidates written — detection was skipped.
+    pending = workdir / ".build-loop" / "pending-lessons"
+    assert not pending.exists() or len(list(pending.glob("*.md"))) == 0
+    # Log message must mention the skip.
+    assert "too large" in r.stderr.lower() or "skipping" in r.stderr.lower()

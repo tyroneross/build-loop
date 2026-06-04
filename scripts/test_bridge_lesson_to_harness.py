@@ -182,6 +182,81 @@ def test_no_inputs_strict_exits_nonzero(tmp_path: Path) -> None:
     assert r.returncode != 0
 
 
+def test_f4_default_memory_dir_derived_from_home(tmp_path: Path) -> None:
+    """f4 — DEFAULT_HARNESS_MEMORY_DIR must derive from Path.home(), not hardcode a username."""
+    import importlib
+    import unittest.mock as mock
+    from pathlib import Path as _Path
+
+    fake_home = _Path("/home/alice")
+    with mock.patch("pathlib.Path.home", return_value=fake_home):
+        # Re-evaluate the module-level constant via the module's own logic.
+        # Import fresh so the patched home is visible at module level.
+        import sys
+        mod_name = "bridge_lesson_to_harness"
+        # Remove cached module so we get a fresh import with the patched home.
+        sys.modules.pop(mod_name, None)
+        import bridge_lesson_to_harness as blh_fresh  # noqa: PLC0415
+        expected = fake_home / ".claude" / "projects" / "-home-alice" / "memory"
+        assert blh_fresh.DEFAULT_HARNESS_MEMORY_DIR == expected, (
+            f"Expected {expected}, got {blh_fresh.DEFAULT_HARNESS_MEMORY_DIR}"
+        )
+        sys.modules.pop(mod_name, None)
+
+
+def test_f5_malicious_name_sanitized_in_index(tmp_path: Path) -> None:
+    """f5 — frontmatter name with link-injection chars must not produce broken MEMORY.md syntax."""
+    p = tmp_path / "src" / "evil.md"
+    p.parent.mkdir(parents=True)
+    # name contains ]( which would break the Markdown link if interpolated raw.
+    body = (
+        "---\n"
+        "name: \"]( evil\"\n"
+        "description: injection test.\n"
+        "type: lesson\n"
+        "scope: global\n"
+        "---\n\n"
+        "Body.\n"
+    )
+    p.write_text(body, encoding="utf-8")
+    target_dir = tmp_path / "harness"
+    r = _run(["--source", str(p), "--target-dir", str(target_dir), "--json"], cwd=tmp_path)
+    assert r.returncode == 0
+
+    index = target_dir / "MEMORY.md"
+    assert index.exists()
+    idx_text = index.read_text(encoding="utf-8")
+    # The line must not contain unbalanced ]( that would inject a second link.
+    # A safe entry has the pattern "- [<text>](<basename>) —" where <text> has no ][().
+    import re
+    for line in idx_text.splitlines():
+        if line.startswith("- ["):
+            # Extract link text between "- [" and "]("
+            m = re.match(r"^- \[([^\]]*)\]\(", line)
+            assert m, f"Malformed link line: {line!r}"
+            link_text = m.group(1)
+            assert "]" not in link_text, f"Injected ] in link text: {link_text!r}"
+            assert "(" not in link_text, f"Injected ( in link text: {link_text!r}"
+
+
+def test_f6_concurrent_write_lock_file_created(tmp_path: Path) -> None:
+    """f6 — _update_index creates a .lock sidecar for advisory locking (POSIX)."""
+    import sys
+    sys.path.insert(0, str(HERE))
+    import bridge_lesson_to_harness as blh  # noqa: PLC0415
+    target_dir = tmp_path / "harness"
+    target_dir.mkdir()
+
+    src_fm = {"name": "lock-test", "description": "lock test", "type": "lesson"}
+    blh._update_index(target_dir, src_fm, "lesson_lock-test.md", tmp_path / "src.md")
+
+    lock_file = target_dir / "MEMORY.md.lock"
+    # On POSIX (macOS/Linux) the lock sidecar must exist after a write.
+    import platform
+    if platform.system() != "Windows":
+        assert lock_file.exists(), "MEMORY.md.lock sidecar was not created on POSIX"
+
+
 def test_index_append_preserves_existing_other_sections(tmp_path: Path) -> None:
     """MEMORY.md may already have content; bridge must append at end of Bridged section only."""
     target_dir = tmp_path / "harness"

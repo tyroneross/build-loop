@@ -231,6 +231,67 @@ class TestDetectCandidatesAPI:
         assert len(cs) == 1
 
 
+class TestF3FalsePositiveFixes:
+    """f3 — false positives that were wrongly captured before the fix."""
+
+    def test_never_mind_is_skipped(self) -> None:
+        d = CorrectionDetector()
+        assert d.scan_turn("never mind the error", 0) == []
+
+    def test_never_mind_with_punctuation_is_skipped(self) -> None:
+        d = CorrectionDetector()
+        assert d.scan_turn("Never mind the error.", 0) == []
+
+    def test_must_have_been_is_skipped(self) -> None:
+        d = CorrectionDetector()
+        assert d.scan_turn("must have been my mistake", 0) == []
+
+    def test_must_be_causing_is_skipped(self) -> None:
+        d = CorrectionDetector()
+        assert d.scan_turn("must be causing the timeout", 0) == []
+
+    def test_should_probably_check_is_skipped(self) -> None:
+        d = CorrectionDetector()
+        assert d.scan_turn("should probably check", 0) == []
+
+    def test_stop_overthinking_is_skipped(self) -> None:
+        d = CorrectionDetector()
+        assert d.scan_turn("stop overthinking it", 0) == []
+
+    # True positives must still fire.
+    def test_revert_that_still_fires(self) -> None:
+        d = CorrectionDetector()
+        cs = d.scan_turn("revert that global change", 0)
+        assert any(c.signal_type == "revert" for c in cs)
+
+    def test_must_work_on_any_machine_still_fires(self) -> None:
+        d = CorrectionDetector()
+        cs = d.scan_turn("it must work on any user machine", 0)
+        assert any(c.signal_type == "must" for c in cs)
+
+    def test_always_use_project_config_still_fires(self) -> None:
+        d = CorrectionDetector()
+        cs = d.scan_turn("always use project config", 0)
+        assert any(c.signal_type == "always" for c in cs)
+
+    def test_you_must_always_fires(self) -> None:
+        d = CorrectionDetector()
+        cs = d.scan_turn("you must always X", 0)
+        assert any(c.signal_type == "must" for c in cs)
+
+    def test_never_store_secrets_fires(self) -> None:
+        d = CorrectionDetector()
+        cs = d.scan_turn("never store secrets in code", 0)
+        assert any(c.signal_type == "never" for c in cs)
+
+    def test_combined_revert_plus_must_work(self) -> None:
+        """'revert that, it must work on any machine' → both revert + must fire."""
+        d = CorrectionDetector()
+        cs = d.scan_turn("revert that, it must work on any machine", 0)
+        assert any(c.signal_type == "revert" for c in cs)
+        assert any(c.signal_type == "must" for c in cs)
+
+
 class TestBoundaryConditions:
     def test_max_candidates_per_turn_respected(self) -> None:
         d = CorrectionDetector(max_candidates_per_turn=2)

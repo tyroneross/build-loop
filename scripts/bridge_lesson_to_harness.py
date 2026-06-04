@@ -58,7 +58,15 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_HARNESS_MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-tyroneross" / "memory"
+try:
+    import fcntl as _fcntl  # POSIX only
+    _HAVE_FLOCK = hasattr(_fcntl, "flock")
+except ImportError:
+    _fcntl = None  # type: ignore[assignment]
+    _HAVE_FLOCK = False
+
+_home = Path.home()
+DEFAULT_HARNESS_MEMORY_DIR = _home / ".claude" / "projects" / str(_home).replace("/", "-") / "memory"
 INDEX_FILENAME = "MEMORY.md"
 BRIDGED_SECTION_HEADER = "## Bridged from build-loop-memory"
 
@@ -263,67 +271,85 @@ def _update_index(target_dir: Path, fm: dict, target_basename: str, source: Path
     """Append a one-line entry to MEMORY.md under the Bridged section.
 
     Dedup'd on the target basename — re-runs don't add duplicate lines.
+    Concurrent writes are serialised via an advisory fcntl.flock on a
+    <MEMORY.md>.lock sidecar (POSIX only; silently skipped elsewhere).
+    The final write remains atomic via tmp + os.replace.
     """
     index_path = target_dir / INDEX_FILENAME
     name = _name_from_fm_or_path(fm, source)
+    # Sanitize: strip characters that would break Markdown link syntax.
+    name = re.sub(r"[\[\]()\n]", "", name)
     desc = _description_from_fm(fm)
     desc_short = (desc[:140] + "…") if len(desc) > 140 else desc
     entry = f"- [{name}]({target_basename}) — {desc_short or '(no description)'}"
 
-    if not index_path.exists():
-        # Brand new index — start from scratch.
-        body = (
-            "# Project Memory\n\n"
-            f"{BRIDGED_SECTION_HEADER}\n\n"
-            "Bridged lesson/feedback entries from build-loop-memory; "
-            "the source is canonical and these mirrors update on bridge runs.\n\n"
-            f"{entry}\n"
-        )
+    lock_path = index_path.with_name(INDEX_FILENAME + ".lock")
+    _lock_fh = None
+    try:
+        if _HAVE_FLOCK:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            _lock_fh = lock_path.open("a")
+            _fcntl.flock(_lock_fh, _fcntl.LOCK_EX)  # type: ignore[union-attr]
+
+        if not index_path.exists():
+            # Brand new index — start from scratch.
+            body = (
+                "# Project Memory\n\n"
+                f"{BRIDGED_SECTION_HEADER}\n\n"
+                "Bridged lesson/feedback entries from build-loop-memory; "
+                "the source is canonical and these mirrors update on bridge runs.\n\n"
+                f"{entry}\n"
+            )
+            tmp = index_path.with_suffix(".md.tmp")
+            tmp.write_text(body, encoding="utf-8")
+            os.replace(tmp, index_path)
+            return True
+
+        text = index_path.read_text(encoding="utf-8")
+        # Dedup: anchor on the unique target basename.
+        if f"]({target_basename})" in text:
+            return False
+
+        if BRIDGED_SECTION_HEADER in text:
+            # Insert after the section header (and any blank line + intro).
+            # Look for the next blank line after the header; insert after it.
+            idx = text.find(BRIDGED_SECTION_HEADER)
+            end_of_header_line = text.find("\n", idx) + 1
+            # Find the END of the bridged section — either next "## " or EOF.
+            next_section = text.find("\n## ", end_of_header_line)
+            section_end = next_section if next_section >= 0 else len(text)
+            section_text = text[end_of_header_line:section_end]
+            # Insert at the end of the section (just before the next "## " or EOF).
+            if section_text and not section_text.endswith("\n"):
+                new_text = text[:section_end] + "\n" + entry + "\n" + text[section_end:]
+            else:
+                new_text = text[:section_end] + entry + "\n" + text[section_end:]
+        else:
+            # Append the section at the end of the file.
+            sep = "" if text.endswith("\n") else "\n"
+            new_text = (
+                text
+                + sep
+                + "\n"
+                + BRIDGED_SECTION_HEADER
+                + "\n\n"
+                + "Bridged lesson/feedback entries from build-loop-memory; "
+                + "the source is canonical and these mirrors update on bridge runs.\n\n"
+                + entry
+                + "\n"
+            )
+
         tmp = index_path.with_suffix(".md.tmp")
-        tmp.write_text(body, encoding="utf-8")
+        tmp.write_text(new_text, encoding="utf-8")
         os.replace(tmp, index_path)
         return True
-
-    text = index_path.read_text(encoding="utf-8")
-    # Dedup: anchor on the unique target basename.
-    if f"]({target_basename})" in text:
-        return False
-
-    if BRIDGED_SECTION_HEADER in text:
-        # Insert after the section header (and any blank line + intro).
-        # Look for the next blank line after the header; insert after it.
-        idx = text.find(BRIDGED_SECTION_HEADER)
-        end_of_header_line = text.find("\n", idx) + 1
-        # Skip any subsequent text until we find a line starting with "- " or end-of-text.
-        scan = end_of_header_line
-        # Find the END of the bridged section — either next "## " or EOF.
-        next_section = text.find("\n## ", end_of_header_line)
-        section_end = next_section if next_section >= 0 else len(text)
-        section_text = text[end_of_header_line:section_end]
-        # Insert at the end of the section (just before the next "## " or EOF).
-        if section_text and not section_text.endswith("\n"):
-            new_text = text[:section_end] + "\n" + entry + "\n" + text[section_end:]
-        else:
-            new_text = text[:section_end] + entry + "\n" + text[section_end:]
-    else:
-        # Append the section at the end of the file.
-        sep = "" if text.endswith("\n") else "\n"
-        new_text = (
-            text
-            + sep
-            + "\n"
-            + BRIDGED_SECTION_HEADER
-            + "\n\n"
-            + "Bridged lesson/feedback entries from build-loop-memory; "
-            + "the source is canonical and these mirrors update on bridge runs.\n\n"
-            + entry
-            + "\n"
-        )
-
-    tmp = index_path.with_suffix(".md.tmp")
-    tmp.write_text(new_text, encoding="utf-8")
-    os.replace(tmp, index_path)
-    return True
+    finally:
+        if _lock_fh is not None:
+            try:
+                _fcntl.flock(_lock_fh, _fcntl.LOCK_UN)  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001
+                pass
+            _lock_fh.close()
 
 
 def collect_sources(source: Path | None, source_dir: Path | None) -> list[Path]:

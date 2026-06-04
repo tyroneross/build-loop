@@ -50,7 +50,9 @@ CORRECTION_PATTERNS = [
     (re.compile(r"\b(revert\s+(?:that|this|it)|undo\s+(?:that|this|it)?)\b", re.I), "revert"),
     (re.compile(r"\bdon[''’]t\s+(?:do|use|add|change|touch|run)\s+([^.,;!?\n]{2,80})", re.I), "negative_directive"),
     (re.compile(r"\b(?:no,?\s+)?(?:that[''’]s|that\s+is|it[''’]s)\s+wrong\b", re.I), "wrong"),
-    (re.compile(r"\b(?:stop|cease)\s+(?:doing\s+)?([^.,;!?\n]{2,80})", re.I), "stop_directive"),
+    # Negative lookahead excludes metacognitive/self-referential continuations
+    # ("stop overthinking it", "stop worrying about it") that are not agent directives.
+    (re.compile(r"\b(?:stop|cease)\s+(?:doing\s+)?(?!overthinking|worrying|panicking|second-guessing|stressing)([^.,;!?\n]{2,80})", re.I), "stop_directive"),
     (re.compile(r"\bback\s+(?:that|it|those)\s+out\b", re.I), "back_out"),
     (re.compile(r"\b(?:not\s+(?:what|how)\s+i\s+(?:want|asked)|wrong\s+approach)\b", re.I), "wrong_approach"),
 ]
@@ -59,7 +61,10 @@ CORRECTION_PATTERNS = [
 PREFERENCE_PATTERNS = [
     (re.compile(r"\balways\s+([^.,;!?\n]{3,120})", re.I), "always"),
     (re.compile(r"\bnever\s+([^.,;!?\n]{3,120})", re.I), "never"),
-    (re.compile(r"\b(?:must|need\s+to|should)\s+(?:always\s+)?([^.,;!?\n]{3,120})", re.I), "must"),
+    # Negative lookahead excludes state-description auxiliaries/hedges:
+    # "must have been", "must be causing", "should probably check" — these describe
+    # a state, not a directive about an action or tool.
+    (re.compile(r"\b(?:must|need\s+to|should)\s+(?:always\s+)?(?!have\s+been\b|have\b|been\b|be\b|probably\b)([^.,;!?\n]{3,120})", re.I), "must"),
     (re.compile(r"\bdefault\s+(?:to|is)\s+([^.,;!?\n]{2,120})", re.I), "default"),
     (re.compile(r"\bwe\s+use\s+([^.,;!?\n]{2,120})\s+(?:for|to)\s+([^.,;!?\n]{2,120})", re.I), "we_use_for"),
     (re.compile(r"\bprefer\s+([^.,;!?\n]{2,120})", re.I), "prefer"),
@@ -87,6 +92,8 @@ GLOBAL_SCOPE_HINTS = re.compile(
 HARD_SKIP_PATTERNS = [
     re.compile(r"^\s*(?:hi|hello|hey|thanks|ok(?:ay)?|nice|cool|got\s+it)\s*[.!?]?\s*$", re.I),
     re.compile(r"^\s*(?:what|how|why|when|where|who|which|can|could|would|should)\b.{0,200}\?\s*$", re.I | re.DOTALL),
+    # "never mind X" — conversational dismissal, not a directive.
+    re.compile(r"^\s*never\s+mind\b", re.I),
 ]
 
 
