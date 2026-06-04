@@ -70,6 +70,16 @@ def _iter_user_messages(transcript_jsonl: Path | None) -> Iterable[dict[str, Any
                     continue
                 if rec.get("type") != "user":
                     continue
+                # Skip hook-injected / command-scaffolding / skill-load records.
+                # Claude Code marks these with top-level isMeta=true even though
+                # role stays "user". Counting them as human prompts corrupts the
+                # "prompted ≥2×" detection (Stop-hook feedback repeats per turn)
+                # and produces bogus enforce-candidates. See v0.29.0 retrospective
+                # over transcript dfe491e3-…: 23 raw user records → 6 isMeta noise
+                # (4× Stop-hook feedback + 1 SPDX skill body + 1 skill base-dir)
+                # + 17 real human prompts.
+                if rec.get("isMeta"):
+                    continue
                 msg = rec.get("message") or {}
                 content = msg.get("content")
                 # Content is either a string (legacy) or a list of blocks.
@@ -329,11 +339,21 @@ def build(
     )
 
     # 5. what_went_well — judges with verdict yay/pass.
+    # Dedupe (order-preserving) and only include checkpoint_id when non-empty
+    # so we don't render "auditor approved " with a trailing space.
     wins: list[str] = []
+    seen_wins: set[str] = set()
     for j in last_run.get("judge_decisions") or []:
         verdict = (j.get("verdict") or "").lower()
-        if verdict in ("yay", "approve", "pass"):
-            wins.append(f"{j.get('judge_id', 'judge')} approved {j.get('checkpoint_id', '')}".strip())
+        if verdict not in ("yay", "approve", "pass"):
+            continue
+        judge_id = j.get("judge_id") or "judge"
+        ck = (j.get("checkpoint_id") or "").strip()
+        win = f"{judge_id} approved {ck}" if ck else f"{judge_id} approved"
+        if win in seen_wins:
+            continue
+        seen_wins.add(win)
+        wins.append(win)
     sections["what_went_well"] = _format_simple_bullet_section(
         wins, "no positive judge verdicts captured this run"
     )

@@ -196,5 +196,122 @@ class BuildSectionsTests(unittest.TestCase):
         self.assertIn("no user prompts captured", sec["user_prompts_and_repeats"])
 
 
+class IsMetaFilterRegressionTests(unittest.TestCase):
+    """Regression — v0.29.0 retrospective over transcript dfe491e3-… counted
+    hook-injected and command-scaffolding records (top-level ``isMeta=true``)
+    as human prompts. That produced a bogus "**4×**" Stop-hook-feedback cluster
+    and a garbage enforce-candidate. Fixed by skipping isMeta records in
+    ``_iter_user_messages`` before text extraction.
+    """
+
+    def _write_mixed(self, tmpdir: Path) -> Path:
+        """Fixture: 2 identical Stop-hook isMeta records, 1 skill-load isMeta,
+        3 distinct genuine human prompts (one repeated 2×)."""
+        p = tmpdir / "mixed.jsonl"
+        records = [
+            # 2 identical Stop-hook meta (would falsely cluster as ≥2× if counted)
+            {"type": "user", "isMeta": True, "timestamp": "2026-06-04T12:00:00Z",
+             "message": {"role": "user", "content":
+                         'Stop hook feedback: [cd "$CLAUDE_PROJECT_DIR" && git diff]'}},
+            {"type": "user", "isMeta": True, "timestamp": "2026-06-04T12:00:01Z",
+             "message": {"role": "user", "content":
+                         'Stop hook feedback: [cd "$CLAUDE_PROJECT_DIR" && git diff]'}},
+            # 1 skill-load meta (command template scaffolding)
+            {"type": "user", "isMeta": True, "timestamp": "2026-06-04T12:00:02Z",
+             "message": {"role": "user", "content":
+                         "Base directory for this skill: /plugins/cache/foo"}},
+            # 3 genuine human prompts — one repeated 2×
+            {"type": "user", "timestamp": "2026-06-04T12:00:10Z",
+             "message": {"role": "user", "content": "build the retrospective fix"}},
+            {"type": "user", "timestamp": "2026-06-04T12:00:11Z",
+             "message": {"role": "user", "content": "verify with a real run"}},
+            {"type": "user", "timestamp": "2026-06-04T12:00:12Z",
+             "message": {"role": "user", "content": "build the retrospective fix"}},
+        ]
+        p.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+        return p
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def test_extract_user_prompts_excludes_isMeta(self) -> None:
+        p = self._write_mixed(self.dir)
+        out = extract_user_prompts(p)
+        # 3 genuine prompts, 0 isMeta
+        self.assertEqual(len(out), 3)
+        texts = [o["text"] for o in out]
+        for t in texts:
+            self.assertNotIn("Stop hook feedback", t)
+            self.assertNotIn("Base directory for this skill", t)
+
+    def test_cluster_repeated_prompts_only_clusters_genuine(self) -> None:
+        p = self._write_mixed(self.dir)
+        out = extract_user_prompts(p)
+        clusters = cluster_repeated_prompts(out, threshold=2)
+        # Only the genuine 2× "build the retrospective fix" repeat
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0]["count"], 2)
+        self.assertIn("retrospective", clusters[0]["normalized"])
+
+    def test_enforce_candidates_have_no_stop_hook_text(self) -> None:
+        p = self._write_mixed(self.dir)
+        sec = build(p, {}, None, None, "run-x")
+        for cand in sec["enforce_candidates"]:
+            self.assertNotIn("Stop hook feedback", cand)
+            self.assertNotIn("Base directory for this skill", cand)
+        # meta counts reflect the filter
+        self.assertEqual(sec["meta"]["prompt_count"], 3)
+        self.assertEqual(sec["meta"]["cluster_count"], 1)
+
+
+class WhatWentWellDedupeTests(unittest.TestCase):
+    """Regression — section 5 ``what_went_well`` listed undeduped judge wins
+    ("commit-auditor approved" ×2, "independent-auditor-hook approved" ×3) with
+    trailing whitespace when ``checkpoint_id`` was empty. Fix dedupes
+    order-preservingly and omits trailing checkpoint when blank.
+    """
+
+    def test_dedupes_repeated_wins_preserving_order(self) -> None:
+        state = {"runs": [{
+            "judge_decisions": [
+                {"judge_id": "commit-auditor", "checkpoint_id": "", "verdict": "approve"},
+                {"judge_id": "commit-auditor", "checkpoint_id": "", "verdict": "approve"},
+                {"judge_id": "independent-auditor-hook", "checkpoint_id": "", "verdict": "pass"},
+                {"judge_id": "independent-auditor-hook", "checkpoint_id": "", "verdict": "pass"},
+                {"judge_id": "independent-auditor-hook", "checkpoint_id": "", "verdict": "pass"},
+            ],
+        }]}
+        sec = build(None, state, None, None, "run-x")
+        ww = sec["what_went_well"]
+        # Each distinct judge appears exactly once
+        self.assertEqual(ww.count("commit-auditor approved"), 1)
+        self.assertEqual(ww.count("independent-auditor-hook approved"), 1)
+        # No trailing-space artifact when checkpoint_id is empty
+        self.assertNotIn("approved \n", ww)
+        self.assertNotIn("approved  ", ww)
+
+    def test_keeps_checkpoint_when_non_empty(self) -> None:
+        state = {"runs": [{
+            "judge_decisions": [
+                {"judge_id": "auditor", "checkpoint_id": "phase-3-commit", "verdict": "pass"},
+            ],
+        }]}
+        sec = build(None, state, None, None, "run-x")
+        self.assertIn("auditor approved phase-3-commit", sec["what_went_well"])
+
+    def test_distinct_checkpoints_kept_separately(self) -> None:
+        state = {"runs": [{
+            "judge_decisions": [
+                {"judge_id": "auditor", "checkpoint_id": "chunk-1", "verdict": "pass"},
+                {"judge_id": "auditor", "checkpoint_id": "chunk-2", "verdict": "pass"},
+            ],
+        }]}
+        sec = build(None, state, None, None, "run-x")
+        self.assertIn("auditor approved chunk-1", sec["what_went_well"])
+        self.assertIn("auditor approved chunk-2", sec["what_went_well"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
