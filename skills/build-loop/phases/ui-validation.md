@@ -148,9 +148,11 @@ Read the plan's `## UI Input/Output Contract` section and compare it to the chan
 
 Missing coverage is a Validate failure unless the diff is copy-only and the contract explicitly says no data surface changed.
 
-### Visual validation (lesson from build 53–55)
+### Visual validation (lesson from build 53–55 + session-findings 2026-06-04)
 
 The static scanner caught zero issues with a semicircle gauge that rendered upside-down with an invisible track stroke and stray floating tick marks. The bug was only visible by rendering the screen and looking at it. **Static rules cannot catch rendering bugs.** Visual validation is a separate, non-negotiable gate.
+
+**The BL-1 enforced gate** (`scanners/require-visual-evidence.mjs`) replaces the previous prose requirement with an exit-code check at chunk-close (Phase 3, step 7b) and at Phase 4-B Validate. Symbol/string evidence (`nm`, `strings`, `git grep`, "identifier present", "compiles cleanly") is rejected automatically when `uiTarget != null` and a UI file changed. The required artifacts are a screenshot path (anchored to the running app's pid), an AX-tree dump, or a scan/SSIM result. See `references/phase-3-execute.md` §7b for the wiring.
 
 Per platform:
 

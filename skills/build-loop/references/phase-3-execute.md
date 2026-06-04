@@ -30,4 +30,18 @@
    Subagents cannot rely on parent context — knowledge that doesn't enter the prompt doesn't reach the code. The template entering the prompt is non-negotiable. Plus also load `calm-precision` skill at the orchestrator level for cross-cutting decisions. Apply "beauty in the basics": every visible element needs a purpose, working behavior, clear hierarchy, useful states, accurate data, and an explicit input/output contract.
 7. **Surface pre-existing issues**: Don't silently ignore problems discovered during implementation. If an issue affects users and is local to the current build, plan and fix it automatically. If it is too large/risky, log to `.build-loop/issues/` with user impact and proposed fix.
 7a. **Simplify as you go**: remove dead code AND prefer the clearest, equal-or-better-performing logic/architecture — never just deletion; preserve behavior + correctness.
+7b. **Visual-evidence gate (BL-1)** — REQUIRED at chunk-close when `uiTarget != null` AND the chunk's `files_changed` includes any UI file (`Views/`, `*.swift`, `*.tsx`, `*.jsx`, `*.vue`, `*.svelte`, `components/*`, `pages/*`, `app/*.ts(x)`). After the implementer returns and before the commit step, build an envelope `{ uiTarget, files_changed, verification, evidence_paths }` from the return packet and run:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/build-loop/scanners/require-visual-evidence.mjs" \
+     --envelope-file "$PWD/.build-loop/visual-evidence-<chunk>.json"
+   ```
+
+   Exit-code routing:
+   - `0` (pass) → proceed to commit step
+   - `1` (warn) → re-prompt the implementer for a screenshot / AX-tree dump / scan result; do NOT commit yet
+   - `2` (reject) → **BLOCK the commit**; route the chunk back to Phase 5 Iterate with `status: fail` and the gate's `reason` as the rubric. Symbol/string-only evidence (`nm`, `strings`, `git grep`, "compiles cleanly", "identifier present") is NOT a substitute for visual/AX verification. Required: render the running app (pid-anchored) and capture a screenshot, AX-tree dump, or scan result.
+   - `3` (malformed) → log a one-line warn and proceed (infra defect, not a build defect — capture in `.build-loop/feedback.md`)
+
+   This gate exists because "visual-verify REQUIRED" was historical prose that a bad dispatch brief could override (session-findings 2026-06-04: brief blessed `nm`/`strings` → chunks shipped with non-rendering UI). The gate replaces prose with an enforced exit-code check.
 8. **Coordination checkpoints**: At defined sync points, verify agent outputs align before continuing
