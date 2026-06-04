@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+"""build-loop pre-push hook — path-agnostic push-HOLD gate.
+
+INSTALLED VIA: ``scripts/install_git_hooks.py --install`` writes this file
+verbatim to ``.git/hooks/pre-push`` (chmod +x).  The committed source lives at
+``hooks/git/pre-push`` so it's distributable / reviewable.
+
+WHY THIS LIVES AT THE GIT LAYER
+-------------------------------
+``scripts/deployment_policy.py`` is an *app-layer* policy — anything that
+doesn't consult it (a launchd job, a Codex shell, a stray ``git push`` from a
+crashed automation) bypasses it.  The git pre-push hook is the only place that
+fires for EVERY push regardless of who initiated it.
+
+CONTRACT
+--------
+Per ``man githooks``: pre-push receives ``<remote> <url>`` as argv, and four
+fields per ref on stdin: ``<local_ref> <local_sha> <remote_ref> <remote_sha>``.
+Exit non-zero → push is blocked.
+
+This hook:
+
+1. Locates the repo (git rev-parse) and adds ``<repo>/scripts`` to sys.path.
+2. Imports ``push_hold.evaluate_push``.
+3. Calls it with the stdin lines.
+4. On ``allow``/``bypass``: exit 0 (push proceeds).
+5. On ``block``: print the reason + release instructions to stderr, exit 1.
+6. On ANY internal exception (broken import, syntax error, OSError): log to
+   stderr and exit 0.  A broken hook MUST NOT permanently wedge the user's
+   ability to push — fail OPEN on internal errors, fail CLOSED on holds.
+
+The block-vs-fail-open distinction is the whole reason for the try/except
+wrapper below.  Do NOT collapse it into a bare ``raise``.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _repo_root() -> Path:
+    """Resolve the repo root via ``git rev-parse --show-toplevel``."""
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if out:
+            return Path(out)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    # Fallback: walk up from the hook's location.  In a normal install the
+    # hook lives at ``<repo>/.git/hooks/pre-push``; the hook's __file__ is
+    # often a real path but may be a symlink target.  Walk up looking for
+    # ``.git``.
+    here = Path(__file__).resolve()
+    for parent in [here] + list(here.parents):
+        if (parent / ".git").exists():
+            return parent
+    return Path.cwd()
+
+
+def _fail_open(reason: str) -> int:
+    """Internal-error path: print to stderr, return 0 (allow push)."""
+    sys.stderr.write(
+        f"[build-loop pre-push] internal error — allowing push: {reason}\n"
+    )
+    return 0
+
+
+def _format_block_message(verdict: dict) -> str:
+    targets = ",".join(verdict.get("protected_targets") or []) or "(unknown)"
+    reason = verdict.get("reason") or "hold active"
+    source = verdict.get("source") or "unknown"
+    return (
+        "\n"
+        "===============================================================\n"
+        "  BUILD-LOOP PUSH HOLD — push BLOCKED\n"
+        "===============================================================\n"
+        f"  protected target(s): {targets}\n"
+        f"  hold source        : {source}\n"
+        f"  reason             : {reason}\n"
+        "  ---------------------------------------------------------------\n"
+        "  To release this hold:\n"
+        "    1. Resolve the underlying issue (auditor findings / brief).\n"
+        "    2. Run:   python3 scripts/push_hold.py --release \\\n"
+        '                       --reason "<one-line why>"\n"'
+        "    3. Re-push.\n"
+        "\n"
+        "  EMERGENCY override (logged):\n"
+        "    BUILDLOOP_PUSH_HOLD_BYPASS=1 git push <remote> <branch>\n"
+        "===============================================================\n"
+    )
+
+
+def main() -> int:
+    try:
+        repo = _repo_root()
+        scripts_dir = repo / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        try:
+            import push_hold  # type: ignore
+        except Exception as exc:  # pragma: no cover — exercised by installer test
+            return _fail_open(f"could not import push_hold: {exc!r}")
+
+        try:
+            stdin_lines = sys.stdin.readlines()
+        except OSError as exc:
+            return _fail_open(f"could not read stdin: {exc!r}")
+
+        verdict = push_hold.evaluate_push(repo, stdin_lines, env=os.environ)
+        action = verdict.get("action", "allow")
+        if action == "block":
+            sys.stderr.write(_format_block_message(verdict))
+            return int(verdict.get("exit_code") or 1)
+        # allow / bypass / anything else → exit 0
+        return 0
+    except Exception as exc:  # noqa: BLE001 — broad on purpose; we MUST fail-open
+        return _fail_open(f"unhandled exception: {exc!r}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
