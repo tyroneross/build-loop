@@ -56,8 +56,12 @@ rm -rf "$BL_DIR_1"
 # pre-tool-use guardian blocks that string in the test environment; using a
 # functionally equivalent confirm-class command avoids that constraint.
 # ---------------------------------------------------------------------------
+BL_DIR_2=$(mktemp -d)
+mkdir -p "${BL_DIR_2}/.build-loop"
+echo '{}' > "${BL_DIR_2}/.build-loop/config.json"
+
 RESULT=$(printf '%s' \
-    "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"production deploy v1\"},\"cwd\":\"${REPO_ROOT}\"}" \
+    "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"production deploy v1\"},\"cwd\":\"${BL_DIR_2}\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$PRE_BASH")
 
 DECISION=$(printf '%s' "$RESULT" | python3 -c "
@@ -74,6 +78,7 @@ if [ "$DECISION" = "ask" ]; then
 else
     fail "Case 2: deployment command -> ask (confirm verdict)" "got permissionDecision='${DECISION}' from: ${RESULT}"
 fi
+rm -rf "$BL_DIR_2"
 
 # ---------------------------------------------------------------------------
 # Case 3: PreToolUse with subagent agent_id present -> still works (no special
