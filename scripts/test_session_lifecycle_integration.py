@@ -250,11 +250,13 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         self.assertEqual(prefs.get("continue_from_queues"), "ask")
         self.assertEqual(prefs.get("source"), "default")
 
-    def test_continuation_gate_no_pref_returns_false(self) -> None:
-        """With no preference set, should_continue_into_queues returns False."""
-        self.assertFalse(
+    def test_continuation_gate_no_pref_returns_true_default_flip(self) -> None:
+        """SHIPPED DEFAULT (2026-06-04): no preference set → True so the end-of-run
+        backlog/issues drain runs automatically. Reversible per-repo via
+        ``continue_from_queues: "never"`` in .build-loop/config.json."""
+        self.assertTrue(
             cb.should_continue_into_queues(self.workdir),
-            "Gate must return False when no preference has been set",
+            "Gate must return True when no preference has been set (default-flip)",
         )
 
     def test_continuation_gate_after_write_always_returns_true(self) -> None:
@@ -320,10 +322,11 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         self.assertIn("#issues=1", brief)
         self.assertIn("#backlog=1", brief)
 
-        # 2. Gate is False before preference is written.
-        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+        # 2. Gate is True before preference is written (SHIPPED DEFAULT 2026-06-04
+        #    — source="default" → auto-drain). Reversible via continue_from_queues:"never".
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
 
-        # 3. Write "always" → gate flips True AND pending shows items.
+        # 3. Write "always" → gate stays True AND pending shows items.
         cb.write_session_prefs(self.workdir, "always", source="asked")
         self.assertTrue(cb.should_continue_into_queues(self.workdir))
         pending = cb.pending_queue_items(self.workdir)

@@ -372,12 +372,27 @@ def write_session_prefs(
 
 
 def should_continue_into_queues(workdir: Path) -> bool:
-    """Return True iff session_prefs.continue_from_queues == "always".
+    """Return True when the end-of-run backlog/issues drain should run.
 
-    "ask" / "never" / unset → False.  The gate is strict: only an explicit
-    opt-in ("always") triggers end-of-run continuation into issues + backlog.
+    SHIPPED DEFAULT (2026-06-04): an *unset* preference behaves as ``"always"``
+    so every build-loop run auto-drains its backlog at end-of-thread without
+    operator intervention. Existing explicit preferences are still respected:
+
+    - ``source == "default"`` (unset, fresh repo)   → True  (auto-drain)
+    - ``continue_from_queues == "always"``           → True
+    - ``continue_from_queues == "never"``            → False (per-repo opt-out)
+    - ``continue_from_queues == "ask"`` (explicit)   → False (legacy opt-in path)
+
+    The per-repo opt-out remains ``continue_from_queues: "never"`` in
+    ``.build-loop/config.json`` or via ``write_session_prefs(workdir, "never")``.
     """
-    return read_session_prefs(workdir)["continue_from_queues"] == "always"
+    prefs = read_session_prefs(workdir)
+    if prefs["continue_from_queues"] == "always":
+        return True
+    if prefs["continue_from_queues"] == "never":
+        return False
+    # "ask" — distinguish unset (default flip → True) from explicit ask (legacy False).
+    return prefs.get("source") == "default"
 
 
 def pending_queue_items(workdir: Path) -> dict[str, Any]:
