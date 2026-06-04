@@ -44,9 +44,12 @@ When `uiTarget != null`, build-loop owns the design route:
 
 1. Phase 2 loads `build-loop:ui-design`, then dispatches `design-contract-specialist` with `trigger_point: phase2-design-direction` for non-trivial UI work. It reads the UI input/output contract, `references/recent-design-structures.md`, `skills/ui-design/references/ui-guidance-sources.md`, product/workflow needs, project tokens, mockups, screenshots, and local design artifacts, then chooses a fit-for-purpose direction and writes `.build-loop/app-contract/ui.md`. Recent and existing design patterns are inputs, not mandates.
 2. Phase 3 implementers receive the UI contract plus `templates/ui-subagent-prompt.md`.
-3. Phase 4-B dispatches `ui-validator` first, then runs scanners and code graders.
+3. Visual verification routes per `state.json.availablePlugins.ibr`:
+   - **IBR installed → IBR primary**: dispatch IBR `scan` (web) / `scan_macos` (macOS) via `build-loop:ibr-bridge`; `ui-validator` runs in parallel as the build-loop-owned check.
+   - **IBR absent → native fallback**: Phase 4-B dispatches `ui-validator` first (web), or routes to `native-ax-driver` (macOS), or the iOS-simulator screenshot path (`uiTarget: "mobile"`). Either path satisfies the BL-1 visual-evidence gate.
+4. Phase 4-B always runs scanners and code graders after the visual verifier. The BL-1 gate (`scanners/require-visual-evidence.mjs`) is a separate exit-code check; it does not care which route ran, only that the evidence is visual/AX rather than symbol/string.
 
-IBR is not an automatic route. If the user explicitly asks for IBR, the bridge can be invoked manually, but build-loop's default UI path stays inside build-loop-owned agents and artifacts.
+The verification route reverses the previous "explicit-only" IBR policy (2026-06-04). The build-loop-owned native verifiers remain the always-available floor. `nm` / `strings` / `git grep` over compiled symbols is never an acceptable substitute regardless of which route was chosen.
 
 ## Skills to load by platform
 
@@ -154,13 +157,14 @@ The static scanner caught zero issues with a semicircle gauge that rendered upsi
 
 **The BL-1 enforced gate** (`scanners/require-visual-evidence.mjs`) replaces the previous prose requirement with an exit-code check at chunk-close (Phase 3, step 7b) and at Phase 4-B Validate. Symbol/string evidence (`nm`, `strings`, `git grep`, "identifier present", "compiles cleanly") is rejected automatically when `uiTarget != null` and a UI file changed. The required artifacts are a screenshot path (anchored to the running app's pid), an AX-tree dump, or a scan/SSIM result. See `references/phase-3-execute.md` §7b for the wiring.
 
-Per platform:
+Per `uiTarget` (preferred verifier when IBR plugin is present, then native fallback):
 
-| Platform | Tool |
-|---|---|
-| iOS / macOS / watchOS | Build → install on booted simulator → launch → `xcrun simctl io booted screenshot <path>` or built-in native AX driver for macOS |
-| Web (Next/Vite/Vue) | Start dev server → browser/screenshot artifact via available host browser tooling |
-| Fallback | Static scanner + saved screenshot gap note in Review-G |
+| `uiTarget` | IBR present (primary) | Native fallback |
+|---|---|---|
+| `macos` (desktop `.app`) | IBR `scan_macos` against the running `.app` (pid) | `native-ax-driver` (`skills/native-ax-driver/`) pid-anchored AX-tree + screenshot. NEVER `xcrun simctl` (macOS has no simulator). |
+| `mobile` (iOS/watchOS sim) | IBR `scan` against the booted sim (when supported) | Build → install on booted simulator → `xcrun simctl io booted screenshot <path>`, `idb ui` for interaction |
+| `web` (Next/Vite/Vue) | IBR `scan` against the dev-server route | Start dev server → `ui-validator` agent + browser/screenshot artifact via available host tooling |
+| Fallback when ALL routes unavailable | n/a | Return `status: blocked` naming the unreachable verifier — BL-1 gate will warn or reject. Do NOT fall back to `nm`/`strings`. |
 
 Failure modes the visual gate is checking for:
 - Geometry rendering correctly (arcs, charts, gauges, custom paths)
