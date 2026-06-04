@@ -91,6 +91,11 @@
           },
           {
             "type": "command",
+            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; nohup env PYTHONPATH=\"$root/scripts\" python3 -m scan_corrections --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --source stop-hook </dev/null >/dev/null 2>&1 & fi; printf '{}'",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/state_finalize.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --mark-incomplete-as-crashed </dev/null >/dev/null 2>&1; printf '{}'",
             "timeout": 2000
           },
