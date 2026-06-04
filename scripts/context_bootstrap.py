@@ -48,7 +48,7 @@ from _paths import (  # type: ignore  # noqa: E402
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
 DEFAULT_LIMIT = 6
 DEFAULT_MAX_EXCERPT_CHARS = 1600
-QUEUE_NAMES = ("issues", "backlog", "ux-queue", "followup", "proposals")
+QUEUE_NAMES = ("issues", "backlog", "ux-queue", "followup", "proposals", "pending-lessons")
 SESSION_PREFS_VALID = ("ask", "always", "never")
 REPO_LOCAL_FILES = (
     ".build-loop/feedback.md",
