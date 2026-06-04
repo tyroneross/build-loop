@@ -240,8 +240,24 @@ def _mark_ref_status(
     }
 
 
-def _normalize_refs(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-    """Merge the three registries into one unified ref list, deduped by branch name.
+def _normalize_refs(
+    run: dict[str, Any],
+    execution: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Merge ref registries into one unified ref list, deduped by branch name.
+
+    Sources (in order — later sources can upgrade review_hold and fill in
+    missing paths):
+      1. ``run.dispatchedWorktrees[]`` — work already integrated.
+      2. ``run.riskyBranches[]`` — always review_hold=True.
+      3. ``run.createdRefs[]`` — uses its own review_hold flag.
+      4. ``execution.run_worktree_path`` / ``execution.run_worktree_branch``
+         (when provided) — the per-run isolation worktree from
+         ``build_loop_id.generate_or_resume(provision_worktree=True)``.
+         Treated like a dispatchedWorktree (review_hold=False) since its
+         purpose is just "isolate this run"; if the run reached closeout,
+         its work was either merged or is otherwise accounted for via the
+         other registries.
 
     Each entry has:
       branch         str
@@ -331,6 +347,22 @@ def _normalize_refs(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str
             merge_target=entry.get("merge_target", "main"),
         )
 
+    # execution.run_worktree_* — Phase 1a run-entry isolation worktree.
+    # See scripts/rally_point/build_loop_id.py:_provision_run_worktree for why
+    # this lives on state.execution rather than runs[N].createdRefs[].
+    if execution:
+        exec_branch = execution.get("run_worktree_branch")
+        exec_path = execution.get("run_worktree_path")
+        if exec_branch:
+            _add(
+                branch=str(exec_branch),
+                path=str(exec_path) if exec_path else None,
+                review_hold=False,
+                summary="run-entry isolation worktree (state.execution)",
+                source="executionRunWorktree",
+                merge_target="main",
+            )
+
     return [v for v in seen.values() if v["branch"]], skipped_protected
 
 
@@ -373,7 +405,30 @@ def collapse(
     run = _pick_run(state, run_id)
     actual_run_id: str = (run or {}).get("run_id") or (run or {}).get("id") or run_id
 
-    refs, skipped_notes = _normalize_refs(run) if run else ([], [])
+    # state.execution holds the Phase 1a run-entry isolation worktree
+    # (build_loop_id.generate_or_resume(provision_worktree=True)). Pass it into
+    # the normalizer so the per-run worktree flows through bundle-then-collapse
+    # like any other ref. Only honour it when its build_loop_id matches the
+    # selected run (or run_id=="latest") to avoid clobbering a still-active run.
+    execution_block: dict[str, Any] | None = None
+    raw_execution = state.get("execution") if isinstance(state.get("execution"), dict) else None
+    if raw_execution and run is not None:
+        # Match by build_loop_id when the run carries one; fall back to "latest"
+        # semantics when the run was anonymous.
+        run_bli = run.get("build_loop_id")
+        exec_bli = raw_execution.get("build_loop_id")
+        if run_bli and exec_bli and run_bli != exec_bli:
+            execution_block = None  # different active run; do not touch its worktree
+        else:
+            execution_block = raw_execution
+    elif raw_execution and run_id == "latest":
+        # No runs[] entries yet (Phase 1 only reached generate_or_resume).
+        # Operator explicitly asked for "latest"; honour the execution block.
+        execution_block = raw_execution
+
+    refs, skipped_notes = _normalize_refs(run, execution_block) if run else (
+        ([], []) if execution_block is None else _normalize_refs({}, execution_block)
+    )
 
     current_branch = _current_branch(workdir)
 
