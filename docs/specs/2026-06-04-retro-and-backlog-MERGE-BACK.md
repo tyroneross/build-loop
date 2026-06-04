@@ -28,7 +28,7 @@ created and merged. The machine-readable equivalent is `state.json.createdRefs[]
 
 | Ref / worktree | Purpose | Merge target | Status | Closed |
 |---|---|---|---|---|
-| `bl/run-<id>` (run-worktree) | implement retro + backlog features | `main` | pending | — |
+| `bl/run-827367` (run-worktree at `.build-loop/worktrees/run-827367`) | implement retro + backlog features | `main` | closed — merged into main; collapsed via scripts/collapse_run.py; bundle at `.build-loop/bundles/collapse-run_20260505T222953Z_5e7592fc-20260604T215740Z.bundle` | 2026-06-04T21:57:40Z |
 
 ## Stop conditions / escalation
 - A `PRODUCTION` or `DECISION`-classified change surfaces (not auto-executed) → report, await user.
