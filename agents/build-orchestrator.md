@@ -244,6 +244,16 @@ Full protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess detail".
 - **Approach lenses**: for non-trivial architecture, workflow, dependency, UI/product, or long-lived interface recommendations, write `state.json.approachLenses` with `clean_sheet`, `current_constraints`, `constraint_delta`, and `bridge_backcast`. The clean-sheet lens asks what is best for the use case without inherited debt or prior repo decisions; the current-constraints lens asks what is best given the repo's debt, tools, dependencies, migration cost, and delivery horizon.
 - **Synthesis-density routing**: count `synthesis_dimensions` via `plan_verify.count_synthesis_dimensions()`. Priority order: explicit user override → auto-escalate on count > 5 → default Sonnet fan-out (1–5 or 0) → per-chunk override. Write to `state.json.synthesisDensity`. Effect: when `escalated == true`, Phase 3 executes inline at `tier: thinking`; otherwise fan-out with C3/C4/C5 backstops. Full rationale in `references/phase-gate-checklist.md` §"Synthesis-density routing".
 - Every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
+- **Push-hold marker on briefed do-not-push (mandatory)**: when the run brief (or the user's `/build-loop:run` arguments) contains an explicit do-not-push signal — keywords `do not push`, `no push`, `holdPush`, `no_push`, or a top-level `state.json.runBrief.holdPush: true` — immediately set the push-hold marker at `.build-loop/.push-hold` so any parallel autonomous push path (self-review `apply_push`, the `codex-autonomy-poller` launchd job, a stray `git push` from a crashed automation) is blocked at the git layer by `hooks/git/pre-push`. App-layer `deployment_policy.py` is bypassable; the git-layer hook is not. Command:
+
+  ```bash
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/push_hold.py --set \
+      --source orchestrator \
+      --reason "briefed: do-not-push" \
+      --run-id "<run_id>" --json
+  ```
+
+  The marker survives a crash. The orchestrator clears it ONLY on explicit user release OR at Review-G when the brief's hold reason no longer applies (e.g. the brief was scoped to "do not push during this build" and the build closed with no blocking findings). If the pre-push hook is not yet installed in `.git/hooks/`, also run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_git_hooks.py --install --json` first (idempotent). Bypass via `BUILDLOOP_PUSH_HOLD_BYPASS=1` is logged to `.build-loop/audit-log.md` — never invoke it autonomously.
 
 ### Phase 2: Plan
 

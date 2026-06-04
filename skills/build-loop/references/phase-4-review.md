@@ -26,6 +26,25 @@ Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violatio
    - `severity: medium|low` findings → record in `.build-loop/issues/` and proceed; `critical|high` never proceed silently (they block the final pass — see Sub-step G no-critical/high exit gate)
 5. **Escalation**: if the same chunk fails critic twice, escalate the implementer to Opus per `model-tiering` skill §Escalation Triggers.
 6. **Skip** on re-reviews after Iterate (critic already saw the diff at first pass) unless Iterate touched different files. Skip entirely for trivial chunks (single-file typo, config value).
+7. **Push-hold marker (set on blocking verdict, clear on resolution)** — close the "autonomous push of un-reviewed work" defect at the git layer, not the app layer. When the auditor returns `verdict: nay` OR `verdict: suggest_correction` OR `verdict: look_again` AND those findings are NOT yet resolved, immediately set the push-hold marker so a parallel autonomous push (self-review `apply_push`, `codex-autonomy-poller`, any path that doesn't consult `deployment_policy.py`) gets blocked by `hooks/git/pre-push`:
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/push_hold.py --set \
+       --source review-a \
+       --reason "<verdict> from independent-auditor (run <run_id>)" \
+       --auditor-verdict "<verdict>" \
+       --finding-ids "<comma-separated finding ids>" \
+       --run-id "<run_id>" --json
+   ```
+
+   The marker is auto-detected as a hold by the pre-push hook even when the orchestrator crashes mid-run — that's the whole reason it lives at the git layer. On re-audit pass (verdict `yay`, OR every prior `critical`/`high` finding now has `resolved: true` in `state.json.runs[-1].judge_decisions[]`), CLEAR the marker:
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/push_hold.py --release \
+       --reason "auditor findings resolved (run <run_id>)" --json
+   ```
+
+   The state.json signal is a backstop: if the marker was somehow lost, `push_hold.evaluate_push` will still detect an unresolved blocking verdict in `runs[-1].judge_decisions[]` and block. The explicit marker takes precedence; both are honored. Bypass exists at `BUILDLOOP_PUSH_HOLD_BYPASS=1` (logged to `.build-loop/audit-log.md`) for genuine emergencies — never in autonomous mode without an explicit operator decision. The pre-push hook is installed via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_git_hooks.py --install` (idempotent; mirror of the existing `audit_before_commit.py` install pattern).
 
 ### Sub-step B: Validate (graders + memory-first gate)
 
