@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "build-loop-debugger": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/src/mcp/server.js"]
-    }
-  }
-}

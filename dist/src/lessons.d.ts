@@ -19,7 +19,7 @@ export interface Lesson {
     category: string;
     /** Plugins/packages affected by this lesson */
     pluginsAffected?: string[];
-    /** Reference to a claude-code-debugger incident ID if this lesson was spawned from one */
+    /** Reference to a build-loop debugging incident ID if this lesson was spawned from one */
     linkedIncident?: string;
     /** URL or file path to the authoritative source that confirms the rule */
     authoritativeSource?: string;

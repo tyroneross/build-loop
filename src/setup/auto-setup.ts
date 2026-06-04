@@ -4,13 +4,13 @@
 /**
  * Auto-Setup Script
  *
- * Runs automatically after npm install to set up debugging memory.
- * Zero user action required — just install and it works.
+ * Legacy auto-setup helper for build-loop native debugging memory.
+ * Build-loop no longer runs package-install setup hooks.
  *
  * What it does:
  * 1. Creates memory directories (.claude/memory/)
  * 2. Installs slash commands (/debugger, /debugger-detail, etc.)
- * 3. Configures session hooks (auto-mine on session end)
+ * 3. Relies on build-loop's packaged hooks/hooks.json
  * 4. Adds Debugging Memory section to CLAUDE.md
  */
 
@@ -56,7 +56,7 @@ async function autoSetup(): Promise<void> {
   // Skip if this is our own package (development mode)
   try {
     const pkg = JSON.parse(fs.readFileSync(projectPkg, 'utf-8'));
-    if (pkg.name === '@tyroneross/claude-code-debugger') return;
+    if (pkg.name === '@tyroneross/build-loop') return;
   } catch { /* ignore */ }
 
   const DIM = '\x1b[2m';
@@ -64,7 +64,7 @@ async function autoSetup(): Promise<void> {
   const CYAN = '\x1b[36m';
   const RESET = '\x1b[0m';
 
-  console.log(`\n  ${GREEN}Claude Code Debugger${RESET} — Setting up debugging memory\n`);
+  console.log(`\n  ${GREEN}Build Loop${RESET} — Setting up native debugging memory\n`);
 
   const steps: string[] = [];
 
@@ -88,7 +88,7 @@ async function autoSetup(): Promise<void> {
     try {
       const hooksConfigured = await configureHooks(projectRoot);
       if (hooksConfigured) {
-        steps.push('Configured auto-mining hook (saves debugging work on session end)');
+        steps.push('Verified build-loop hook ownership');
       }
     } catch { /* silently skip */ }
 
@@ -113,8 +113,7 @@ async function autoSetup(): Promise<void> {
     console.log(`  ${DIM}  - Next time a similar bug appears, Claude checks memory first${RESET}`);
     console.log(`  ${DIM}  - Use${RESET} ${CYAN}/debugger "symptom"${RESET} ${DIM}to search manually${RESET}`);
     console.log();
-    console.log(`  ${DIM}Run${RESET} claude-code-debugger init ${DIM}for interactive setup${RESET}`);
-    console.log(`  ${DIM}Run${RESET} claude-code-debugger uninstall ${DIM}to remove${RESET}`);
+    console.log(`  ${DIM}Use${RESET} /build-loop:debug ${DIM}for native deep debugging${RESET}`);
     console.log();
 
   } catch (error) {

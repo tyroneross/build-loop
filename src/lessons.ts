@@ -26,7 +26,7 @@ export interface Lesson {
   category: string;
   /** Plugins/packages affected by this lesson */
   pluginsAffected?: string[];
-  /** Reference to a claude-code-debugger incident ID if this lesson was spawned from one */
+  /** Reference to a build-loop debugging incident ID if this lesson was spawned from one */
   linkedIncident?: string;
   /** URL or file path to the authoritative source that confirms the rule */
   authoritativeSource?: string;
@@ -48,7 +48,7 @@ const DEFAULT_HEADER = `# Lessons Learned
 
 Pattern-level reminders from past incidents. Use this **proactively** when designing, reviewing, or building new code.
 
-## How this file relates to claude-code-debugger incidents
+## How this file relates to build-loop debugging incidents
 
 | Use | Tool |
 |---|---|
@@ -57,7 +57,7 @@ Pattern-level reminders from past incidents. Use this **proactively** when desig
 
 Not redundant. Incidents are per-occurrence and searchable by symptom. Lessons are per-pattern and read in full during design. One incident can spawn a lesson; most won't. Only pattern-level generalizations belong here.
 
-Managed by \`claude-code-debugger lesson add\` (CLI) or the \`lesson_add\` MCP tool. Hand-editable.
+Managed by build-loop's native debugging memory workflow. Hand-editable.
 
 ---
 `;

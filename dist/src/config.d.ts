@@ -62,7 +62,7 @@ export declare function displayTokenConfig(config?: TokenConfig): void;
 /**
  * Get paths for internal logger storage
  *
- * Logs are stored under .claude-code-debugger/logs/ in the project root.
+ * Logs are stored under .build-loop/logs/debugging/ in the project root.
  * Separate from memory paths — these are operational logs, not debugging incidents.
  */
 export declare function getLogPaths(): {

@@ -53,17 +53,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre_bash_autonomy.sh",
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_autonomy.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
             "timeout": 2000
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/pre_bash_dependency_cooldown.sh",
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_dependency_cooldown.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
             "timeout": 2000
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/audit_before_commit.py\"",
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/audit_before_commit.py\"; if [ -f \"$hook\" ]; then python3 \"$hook\"; else printf '{}'; fi",
             "timeout": 5000
           }
         ]
@@ -86,22 +86,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "test -n \"$CLAUDE_TRANSCRIPT_PATH\" && nohup python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/scan_transcript_for_decisions.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log\" </dev/null >/dev/null 2>&1 & exit 0",
+            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then nohup python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/scan_transcript_for_decisions.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log\" </dev/null >/dev/null 2>&1 & fi; printf '{}'",
             "timeout": 5000
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/state_finalize.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --mark-incomplete-as-crashed </dev/null >/dev/null 2>&1; exit 0",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/state_finalize.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --mark-incomplete-as-crashed </dev/null >/dev/null 2>&1; printf '{}'",
             "timeout": 2000
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/stop_finalize.sh",
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/stop_finalize.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
             "timeout": 30000
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; exit 0",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; else printf '{}'; fi",
             "timeout": 5000
           }
         ]

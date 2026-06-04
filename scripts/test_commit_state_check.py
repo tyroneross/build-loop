@@ -55,12 +55,12 @@ class TestCleanRepo(unittest.TestCase):
             self.assertEqual(data["tracked_changed"], [])
             self.assertEqual(data["summary"], "clean")
 
-    def test_hook_mode_prints_nothing_when_clean(self) -> None:
+    def test_hook_mode_prints_noop_json_when_clean(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _init_repo(tmp)
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
-            self.assertEqual(cp.stdout, "")
+            self.assertEqual(json.loads(cp.stdout), {})
             self.assertEqual(cp.stderr, "")
 
 
@@ -74,14 +74,16 @@ class TestModifiedTrackedFile(unittest.TestCase):
             self.assertTrue(data["has_uncommitted_tracked"])
             self.assertIn("README", data["tracked_changed"])
 
-    def test_hook_prints_reminder_for_modified(self) -> None:
+    def test_hook_prints_advisory_json_for_modified(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _init_repo(tmp)
             (root / "README").write_text("changed\n")
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
-            self.assertNotEqual(cp.stdout.strip(), "")
-            self.assertIn("commit", cp.stdout.lower())
+            data = json.loads(cp.stdout)
+            context = data["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Advisory only", context)
+            self.assertIn("README", context)
 
 
 class TestUntrackedOnlyFile(unittest.TestCase):
@@ -95,13 +97,13 @@ class TestUntrackedOnlyFile(unittest.TestCase):
             self.assertEqual(data["tracked_changed"], [])
             self.assertGreaterEqual(data["untracked_count"], 1)
 
-    def test_hook_silent_for_untracked_only(self) -> None:
+    def test_hook_noop_json_for_untracked_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _init_repo(tmp)
             (root / "scratch.txt").write_text("scratch\n")
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
-            self.assertEqual(cp.stdout, "")
+            self.assertEqual(json.loads(cp.stdout), {})
 
 
 class TestStagedFile(unittest.TestCase):
@@ -124,14 +126,16 @@ class TestStagedFile(unittest.TestCase):
             self.assertTrue(data["has_uncommitted_tracked"])
             self.assertIn("README", data["staged"])
 
-    def test_hook_prints_reminder_for_staged(self) -> None:
+    def test_hook_prints_advisory_json_for_staged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _init_repo(tmp)
             (root / "README").write_text("updated\n")
             _git("add", "README", cwd=tmp)
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
-            self.assertNotEqual(cp.stdout.strip(), "")
+            data = json.loads(cp.stdout)
+            context = data["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Advisory only", context)
 
 
 class TestNonGitDir(unittest.TestCase):
@@ -147,11 +151,11 @@ class TestNonGitDir(unittest.TestCase):
             cp = _run("--json", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
 
-    def test_non_git_dir_hook_silent(self) -> None:
+    def test_non_git_dir_hook_noop_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cp = _run("--hook", workdir=tmp)
             self.assertEqual(cp.returncode, 0)
-            self.assertEqual(cp.stdout, "")
+            self.assertEqual(json.loads(cp.stdout), {})
 
 
 if __name__ == "__main__":

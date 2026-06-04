@@ -2,13 +2,13 @@
 /**
  * Auto-Setup Script
  *
- * Runs automatically after npm install to set up debugging memory.
- * Zero user action required — just install and it works.
+ * Legacy auto-setup helper for build-loop native debugging memory.
+ * Build-loop no longer runs package-install setup hooks.
  *
  * What it does:
  * 1. Creates memory directories (.claude/memory/)
  * 2. Installs slash commands (/debugger, /debugger-detail, etc.)
- * 3. Configures session hooks (auto-mine on session end)
+ * 3. Relies on build-loop's packaged hooks/hooks.json
  * 4. Adds Debugging Memory section to CLAUDE.md
  */
 export {};

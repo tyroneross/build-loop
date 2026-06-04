@@ -18,8 +18,8 @@ JS/JSON shape because bridges document the check in prose, code blocks,
 or both.
 
 Bridges in build-loop:
-  - debugger-bridge        → claude-code-debugger (extended capability)
-  - logging-tracer-bridge  → claude-code-debugger (extended observability)
+  - debugger-bridge        → native build-loop debugging / optional Coding Debugger
+  - logging-tracer-bridge  → Coding Debugger (extended observability)
   - navgator-bridge        → navgator (architecture analysis)
   - api-registry-bridge    → api-registry (api discovery)
   - prd-bridge             → docs/prd-*.md (PRD-grounded planning)

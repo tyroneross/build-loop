@@ -1,19 +1,19 @@
 ---
-description: "Search past bugs for similar issues before debugging"
-allowed-tools: Bash, Read
+description: "Search build-loop native debugging memory before debugging"
+allowed-tools: Read, Grep
 argument-hint: "<symptom>"
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-Search debugging memory for similar past incidents before investigating a new bug.
+Search build-loop's native debugging memory for similar past incidents before investigating a new bug.
 
 {{#if ARGUMENTS}}
 
-Run the debugger search with the provided symptom:
+Run the native memory-first workflow with the provided symptom:
 
-```bash
-npx @tyroneross/claude-code-debugger debug "{{ARGUMENTS}}"
+```
+Skill("build-loop:debugging-memory-search") with input { symptom: "{{ARGUMENTS}}" }
 ```
 
 After running the search:
@@ -25,12 +25,8 @@ After running the search:
 
 {{else}}
 
-No symptom provided. Show recent issues from memory:
+No symptom provided. Read recent local incidents from `.build-loop/issues/` if present, then ask the user to describe what they are debugging.
 
-```bash
-npx @tyroneross/claude-code-debugger status
-```
-
-Ask the user to describe what they're debugging, or suggest picking from the recent issues shown above.
+Use standalone Coding Debugger only when the user explicitly asks for cross-project debugger memory.
 
 {{/if}}

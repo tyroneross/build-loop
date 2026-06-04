@@ -10,9 +10,8 @@ Checks:
                         valid JSON with the expected `mcpServers` key
   ServerNamingHygiene — server names should be plugin-prefixed to avoid name
                         collisions across installed plugins (build-loop ships
-                        its bundled server as `build-loop-debugger` so it does
-                        not collide with the standalone `claude-code-debugger`
-                        plugin's `debugger` server)
+                        its bundled server as `build-loop-debugger` so it did
+                        not collide with the legacy standalone debugger server)
   CommandResolves     — for each server with command:"node" or similar, the
                         referenced script path resolves under CLAUDE_PLUGIN_ROOT
   NoDuplicateNames    — within this plugin, every server name is unique
@@ -100,9 +99,8 @@ class ServerNamingHygieneTests(unittest.TestCase):
     only one wins at runtime, the others are silently shadowed. Bare names
     aren't blocked by Claude Code, but they are a footgun.
 
-    Build-loop ships its bundled server as `build-loop-debugger` to coexist
-    cleanly with the standalone `claude-code-debugger` plugin's `debugger`
-    server. Both can be installed; both register; neither shadows the other.
+    Build-loop no longer ships an MCP server. This historical check remains
+    for plugins that still declare MCP servers.
     """
 
     def test_server_names_avoid_common_unprefixed_names(self) -> None:

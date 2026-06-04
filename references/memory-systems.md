@@ -11,7 +11,7 @@ Build-loop reads/writes four memory stores. Loaded on demand at Phase 1 Assess a
 | Run history | `.build-loop/state.json.runs[]` | Per-build outcome + diagnostic trail. Phase 6 Learn scans this for recurring patterns. | Project-local |
 | Episodic decisions | `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/*.md` (canonical); legacy paths only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1` | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
 | Semantic facts | Postgres `agent_memory.<schema>.semantic_facts` | Embeddings + structured facts for hybrid retrieval. | Project-tagged, opt-in |
-| Debugger incidents | `claude-code-debugger` MCP `store`/`search`/`outcome` | Bug history with verdict-classifier feedback loop. | Cross-project; bundled MCP server |
+| Debugger incidents | `.build-loop/issues/*.md` plus optional standalone Coding Debugger MCP | Bug history with local recall; optional verdict-classifier feedback loop when Coding Debugger is installed. | Project-local by default; optional cross-project |
 
 The **memory facade** at `scripts/memory_facade.py` exposes one `recall(query, kind, project, limit)` over all four with graceful degradation. Use it instead of writing four ad-hoc reads.
 
@@ -32,12 +32,12 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 **Return shape**: JSON packet with `{ generated_at, workdir, project, query, terms, sources, agent_brief }`.
 
 `sources` includes:
-- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `~/dev/git-folder/build-loop-memory`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. Semantic/Postgres and debugger MCP reads are opt-in via `--include-postgres` and `--include-debugger` so the default Phase 1 pass stays file-backed and fast.
+- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `~/dev/git-folder/build-loop-memory`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.
 - `repo_local`: `.build-loop/feedback.md`, `.build-loop/state.json` summary including `runs[-3:]` and backend health when present, plus current `.build-loop/intent.md`, `.build-loop/goal.md`, and `.build-loop/plan.md`.
 - `codex_memory`: `~/.codex/memories/MEMORY.md` registry hits and bounded excerpts from linked `rollout_summaries/*` files.
 - `rally`: best-effort `coordination_status.py` result when coordination context exists.
 
-**Degradation**: every source carries `reasons[]`. Missing Codex memory, absent repo-local files, skipped or down Postgres, skipped or unreachable debugger MCP, or Rally errors are context-quality signals, not blockers. Surface high-impact gaps in the Assess brief.
+**Degradation**: every source carries `reasons[]`. Missing Codex memory, absent repo-local files, skipped or down Postgres, unavailable optional Coding Debugger, or Rally errors are context-quality signals, not blockers. Surface high-impact gaps in the Assess brief.
 
 ### 1a. Live context snapshots (handoff/resume, not durable memory)
 
@@ -72,21 +72,21 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_facade.py recall \
 
 ### 3. Debugger incidents priming (recent-list)
 
-The bootstrap includes debugger results through the facade. If the facade reports debugger unavailability and the build is debugging-heavy, also call:
+The bootstrap includes build-loop incident results through the facade. If the build is debugging-heavy, also call:
 
 ```text
 Skill("build-loop:debugging-memory") with { intent: "list-recent" }
 ```
 
-**Return shape**: one-line summary `"N recent incidents in this project, top categories: [...]"`. Counts feed Phase 1's awareness of what's been failing lately. **Degradation**: MCP unreachable -> fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep over `.build-loop/issues/` and `.build-loop/feedback.md`). Flag debugger fallback in Review-F.
+**Return shape**: one-line summary `"N recent incidents in this project, top categories: [...]"`. Counts feed Phase 1's awareness of what's been failing lately. **Degradation**: optional Coding Debugger unavailable -> fall through to `${CLAUDE_PLUGIN_ROOT}/skills/build-loop/fallbacks.md#bug-memory` (token-extract + grep over `.build-loop/issues/` and `.build-loop/feedback.md`). Flag debugger fallback in Review-F only when cross-project recall was requested and unavailable.
 
-### 4. Per-MCP shape (diagnostic reference; use only when step 3's fallback fired)
+### 4. Optional Coding Debugger MCP shape (diagnostic reference; use only when installed)
 
 ```text
-mcp__plugin_build-loop-debugger__list({ filter: { project: "<current>" }, limit: 10 })
+mcp__plugin_coding_debugger__list({ filter: { project: "<current>" }, limit: 10 })
 ```
 
-**Return shape**: `{ incidents: [{ id, symptom, root_cause, fix, tags, created_at }, ...] }`. Surfaced here so a diagnostic check (e.g. "is the MCP actually returning anything?") doesn't have to traverse the skill abstraction.
+**Return shape**: `{ incidents: [{ id, symptom, root_cause, fix, tags, created_at }, ...] }`. Surfaced here so a diagnostic check of the standalone debugger doesn't have to traverse the skill abstraction.
 
 ### 5. Backend health check (Priority 17)
 
@@ -109,7 +109,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 | 1 | `context_bootstrap.py` | JSON packet w/ `sources.*.reasons[]` + `agent_brief` | yes | per-source `reason`; other sources still respond |
 | 2 | `memory_facade.py recall` | JSON envelope w/ `reasons[]` | yes | per-backend `reason`; other backends still respond |
 | 3 | `Skill("build-loop:debugging-memory")` | one-line text summary | yes | grep-fallback per `fallbacks.md#bug-memory` |
-| 4 | `mcp__plugin_build-loop-debugger__list` | `{ incidents: [...] }` | yes | step 3 already covered the fallback |
+| 4 | optional `mcp__plugin_coding_debugger__list` | `{ incidents: [...] }` | yes | step 3 already covered the fallback |
 | 5 | `scripts/backend_health.py` | one-liner + JSON envelope written to `state.json.architecture.backendHealth` | n/a | per-backend `ok: false` + `reason`; other backends still probable |
 
 ### Graceful-degradation matrix
@@ -117,7 +117,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 | Failure mode | Step 1 | Step 2 | Step 3 | Step 4 | Step 5 |
 |---|---|---|---|---|---|
 | Postgres unavailable | `canonical_memory.reasons[]` records skip/down | `reason: db_unavailable` for semantic backend, others continue | n/a | n/a | `semantic.ok: false` |
-| MCP server unreachable | `canonical_memory.reasons[]` records debugger unavailable | `reason: mcp_unavailable` | grep fallback | unusable; rely on step 3 fallback | `debugger.ok: false` |
+| Optional Coding Debugger unavailable | `canonical_memory.reasons[]` records debugger unavailable when requested | `reason: debugger_unavailable` | grep fallback | unusable; rely on step 3 fallback | `debugger.ok: false` |
 | `state.json` missing | `repo_local.reasons[]` records missing file | recall still runs other backends | n/a | n/a | runs may still report down |
 | Codex MEMORY.md absent | `codex_memory.reasons[]` records missing registry | n/a | n/a | n/a | n/a |
 | All backends down | packet still emits with populated `reasons[]` | envelope w/ all `reasons` populated, `results: []` | grep fallback | n/a | all relevant backends `ok: false` |

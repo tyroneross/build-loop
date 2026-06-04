@@ -1,6 +1,6 @@
 ---
-description: "Load full incident or pattern details from debugging memory"
-allowed-tools: Bash, Read
+description: "Load full build-loop incident or pattern details from native debugging memory"
+allowed-tools: Read, Grep
 argument-hint: "<INC_* or PTN_* id>"
 ---
 
@@ -20,10 +20,7 @@ Where `<ID>` is an incident ID (INC_*) or pattern ID (PTN_*).
 
 ## What to do
 
-1. Run the CLI command to load the full data:
-   ```bash
-   npx @tyroneross/claude-code-debugger detail $ARGUMENTS
-   ```
+1. Search `.build-loop/issues/` for the requested incident or pattern ID.
 
 2. Present the result to the user in a readable format:
    - For incidents: show symptom, root cause, fix approach, file changes, verification status

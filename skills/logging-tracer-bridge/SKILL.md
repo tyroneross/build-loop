@@ -1,6 +1,6 @@
 ---
 name: build-loop:logging-tracer-bridge
-description: Use when the bundled logging-tracer skill signals insufficient tier-selection or codegen, or the user asks for "extended observability" or "cross-build log correlation". Escalates to standalone claude-code-debugger for additional tracer backends and advanced placement intelligence.
+description: Use when the bundled logging-tracer skill signals insufficient tier-selection or codegen, or the user asks for "extended observability" or "cross-build log correlation". Optional escalation to standalone Coding Debugger for additional tracer backends and advanced placement intelligence.
 version: 0.3.0
 user-invocable: false
 ---
@@ -11,7 +11,7 @@ user-invocable: false
 
 As of build-loop 0.7.1 this bridge's role is **escalation, not primary coordination**. The orchestrator owns when-to-fire (Phase 1 Assess observability scan, Phase 5 Iterate reactive trigger on `evidence_gap`) and routes those phases to the bundled internal `build-loop:logging-tracer` skill, which owns tier selection, stack detection, codegen, the ephemeral-by-default policy (Mechanisms A and B), and code-placement rules.
 
-This bridge is the **secondary hop**: when the bundled logging-tracer decides it needs more than build-loop ships natively, it can invoke this bridge to delegate to the standalone `claude-code-debugger` plugin (if installed) for extended observability tooling.
+This bridge is the **secondary hop**: when the bundled logging-tracer decides it needs more than build-loop ships natively, it can invoke this bridge to delegate to standalone Coding Debugger (if installed) for extended observability tooling.
 
 ## When this bridge is invoked
 
@@ -24,8 +24,8 @@ The orchestrator MUST NOT call this bridge directly. Orchestrator → `logging-t
 ## Pre-flight (always run first)
 
 ```
-if (!state.availablePlugins.claudeCodeDebugger) {
-  return { delegated: false, reason: "standalone claude-code-debugger plugin not installed" }
+if (!state.availablePlugins.codingDebugger) {
+  return { delegated: false, reason: "standalone Coding Debugger plugin not installed" }
 }
 ```
 
@@ -35,7 +35,7 @@ If false, the calling target skill continues with bundled-only capability.
 
 | Capability needed | Standalone Skill / MCP call |
 |---|---|
-| Extended tracer backends not in bundle | `Skill("claude-code-debugger:logging-tracer")` with `tier: <upstream-only>` |
+| Extended tracer backends not in bundle | `Skill("coding-debugger:logging-tracer")` with `tier: <upstream-only>` |
 | Cross-build log correlation (e.g., correlation IDs across multiple build-loop runs) | standalone-only MCP tools |
 | Advanced placement intelligence (e.g., function-call graph aware insertion) | standalone-only assessor skills |
 
@@ -46,7 +46,7 @@ The bridge passes through caller-supplied symptom + target-files + tier-hint, re
 - Reimplement tier selection, stack detection, ephemeral mechanisms, or code placement — those live in `build-loop:logging-tracer`
 - Replace the orchestrator's when-to-fire policy (Phase 1 Assess scan, Phase 5 Iterate evidence_gap trigger) — that lives in `agents/build-orchestrator.md`
 - Introduce new logging dependencies without explicit user approval — that constraint stays in `logging-tracer`
-- Mutate `.claude-code-debugger/` paths — backward-compat preserved
+- Mutate build-loop's native `.build-loop/issues/` paths
 - Hard-fail when standalone is absent — pre-flight returns gracefully
 
 ## State

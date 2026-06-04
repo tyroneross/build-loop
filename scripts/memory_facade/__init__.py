@@ -7,7 +7,7 @@ Phase 6 Learn must see signals from all stores. Today's reality:
   1. .build-loop/state.json.runs[]                — local file
   2. build-loop-memory indexes/project folders    — canonical files
   3. agent_memory.<schema>.semantic_facts         — Postgres
-  4. claude-code-debugger MCP `search` tool       — MCP server
+  4. .build-loop/issues/*.md                     — native debugging incidents
 
 Four read paths, four discovery costs. This module collapses them behind one
 function:
@@ -25,8 +25,8 @@ Each backend degrades gracefully:
   - Postgres          → returns [] AND records reason="db_unavailable" when
                         no DB URL is configured, psycopg is missing, or the
                         connection fails. Never raises.
-  - debugger MCP      → returns [] AND records reason="mcp_unavailable" when
-                        the MCP server is not running.
+  - debugger incidents → returns [] AND records reason="debugger_unavailable"
+                        when local incident notes are absent.
 
 Public API (frozen — all consumers import these directly):
   recall, read_runs, read_lessons, read_decisions, read_semantic, read_debugger,

@@ -63,22 +63,18 @@ Patterns are extracted automatically when conditions are met:
 
 ### Triggering Extraction
 
-Use the `debugger patterns` MCP tool to preview and extract patterns.
+Use build-loop's native incident notes to preview and extract patterns.
 
-CLI alternative (if MCP unavailable):
+Local workflow:
 
 ```bash
-# Preview potential patterns
-npx @tyroneross/claude-code-debugger patterns
-
-# Extract and store
-npx @tyroneross/claude-code-debugger patterns --extract
+find .build-loop/issues -type f -name '*.md' 2>/dev/null
 ```
 
-Or programmatically:
+Standalone Coding Debugger can provide richer pattern APIs when explicitly installed and requested. Programmatic examples should import that package from the standalone repo, not from build-loop.
 
 ```typescript
-import { extractPatterns } from '@tyroneross/claude-code-debugger';
+import { extractPatterns } from '<coding-debugger-package>';
 
 const patterns = await extractPatterns({
   min_incidents: 3,
@@ -138,7 +134,7 @@ Low success rate patterns may indicate:
 While automatic extraction is preferred, create patterns manually for well-understood solutions:
 
 ```typescript
-import { storePattern } from '@tyroneross/claude-code-debugger';
+import { storePattern } from '<coding-debugger-package>';
 
 await storePattern({
   pattern_id: 'PTN_CATEGORY_NAME',

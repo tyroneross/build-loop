@@ -10,7 +10,7 @@ Backends:
   1. runs[]       — `state.json.runs[]` (filesystem; always probable)
   2. decisions    — `build-loop-memory/projects/<project>/decisions/*.md`
   3. semantic     — Postgres `agent_memory.<schema>.semantic_facts`
-  4. debugger     — `@tyroneross/claude-code-debugger` MCP / npx CLI
+  4. debugger     — native `.build-loop/issues/*.md` incident notes
 
 Budget:
   - 5s per backend
@@ -34,7 +34,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -53,7 +52,7 @@ from _db_url import NO_URL_REASON, resolve_db_url  # noqa: E402
 PER_BACKEND_TIMEOUT_S = 5
 TOTAL_BUDGET_S = 30
 
-# Test injection points — set via setter functions below to mock subprocess
+# Test injection points — set via setter functions below to mock backends
 # / DB calls without requiring `unittest.mock` patching.
 _DEBUGGER_RUNNER_OVERRIDE: Optional[Callable[..., Tuple[bool, str]]] = None
 _SEMANTIC_RUNNER_OVERRIDE: Optional[Callable[..., Tuple[bool, str]]] = None
@@ -274,16 +273,11 @@ def probe_semantic(workdir: Path) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Backend 4: claude-code-debugger MCP
+# Backend 4: build-loop native debugging incidents
 # ---------------------------------------------------------------------------
 
 def probe_debugger(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept for API symmetry
-    """Probe `@tyroneross/claude-code-debugger` MCP reachability.
-
-    We attempt a `status` invocation through the npx-installed CLI. If the
-    package isn't installed or `npx` isn't on PATH, classify as `mcp_unreachable`.
-    Mirror of `memory_facade.read_debugger`'s probe pattern.
-    """
+    """Probe native `.build-loop/issues` debugging memory."""
     started = time.monotonic()
     if _DEBUGGER_RUNNER_OVERRIDE is not None:
         ok, msg = _DEBUGGER_RUNNER_OVERRIDE()
@@ -292,30 +286,20 @@ def probe_debugger(workdir: Path) -> Dict[str, Any]:  # noqa: ARG001 — kept fo
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
         if not ok:
-            result["reason"] = msg or "mcp_unreachable"
+            result["reason"] = msg or "debugger_unavailable"
         return result
 
-    try:
-        proc = subprocess.run(
-            ["npx", "--no-install", "@tyroneross/claude-code-debugger", "status"],
-            capture_output=True,
-            text=True,
-            timeout=PER_BACKEND_TIMEOUT_S,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+    issues_dir = workdir / ".build-loop" / "issues"
+    if not issues_dir.is_dir():
         return {
             "ok": False,
-            "reason": f"mcp_unreachable: {type(e).__name__}",
+            "reason": "debugger_unavailable: local issue dir absent",
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
-    if proc.returncode != 0:
-        return {
-            "ok": False,
-            "reason": f"mcp_unreachable: rc={proc.returncode}",
-            "duration_ms": int((time.monotonic() - started) * 1000),
-        }
+    count = sum(1 for _ in issues_dir.rglob("*.md"))
     return {
         "ok": True,
+        "count": count,
         "duration_ms": int((time.monotonic() - started) * 1000),
     }
 

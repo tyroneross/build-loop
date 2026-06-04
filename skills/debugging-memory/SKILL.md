@@ -9,14 +9,14 @@ user-invocable: false
 
 # Debugging Memory Workflow
 
-This skill integrates the claude-code-debugger memory system into debugging workflows. The core principle: **never solve the same bug twice**.
+This skill integrates build-loop's native debugging memory into debugging workflows. The core principle: **never solve the same bug twice**.
 
 ## Memory-First Approach
 
-Before investigating any bug, always check the debugging memory using the debugger `search` MCP tool:
+Before investigating any bug, always check build-loop's native debugging memory:
 
 ```
-Use the debugger search tool with the symptom description.
+Search `.build-loop/issues/` and invoke `build-loop:debugging-memory-search` with the symptom description.
 ```
 
 The search returns a **verdict** with matching incidents and patterns.
@@ -49,9 +49,9 @@ When `KNOWN_FIX` direct-apply is blocked, the caller should treat the verdict as
 
 Results are returned as compact summaries. Drill into matches on demand:
 
-1. **Initial search**: Use the debugger `search` MCP tool — returns verdict + compact matches
-2. **Drill down**: Use the debugger `detail` MCP tool with the ID to load full incident/pattern data
-3. **Outcome tracking**: Use the debugger `outcome` MCP tool to record whether the fix worked, failed, or was modified
+1. **Initial search**: Use `build-loop:debugging-memory-search` — returns verdict + compact matches when structured memory exists
+2. **Drill down**: Read the matching `.build-loop/issues/<id>.md` incident note for full context
+3. **Outcome tracking**: Use `build-loop:debugging-store` after verification to record whether the fix worked, failed, or was modified
 
 ## Visibility
 
@@ -272,26 +272,24 @@ Skill("build-loop:debugging-memory") with input { symptom, scope: "global", call
 Skill("build-loop:debugging-assess") with input { symptom, scope: "global" }
 ```
 
-Both are native skills sourced from claude-code-debugger and use the bundled debugger MCP. If the MCP is unavailable, the skills fall back to local grep across `.build-loop/issues/` and `.build-loop/feedback.md` — no error, just narrower coverage.
+Both are native build-loop skills. They search local `.build-loop/issues/` first and may use standalone Coding Debugger only when that plugin is installed and the caller explicitly requests cross-project memory.
 
 Use this for:
 - A `NO_MATCH` from project memory where cross-project history might still have a relevant incident
 - An ambiguous verdict where additional assessor input would change the routing decision
-- Coordination state that lives in the standalone plugin only
+- Coordination state that lives outside the current project and was explicitly requested
 
 Do NOT use this for: every memory call (it's escalation, not primary path), or when project memory already returned `KNOWN_FIX` (bundled is enough).
 
-## MCP Tools Quick Reference
+## Native Memory Quick Reference
 
-| Tool | Purpose |
+| Surface | Purpose |
 |------|---------|
-| `search` | Search memory for similar bugs (returns verdict) |
-| `store` | Store a new debugging incident |
-| `detail` | Get full details of an incident or pattern |
-| `status` | Show memory statistics |
-| `list` | List recent incidents |
-| `patterns` | List known fix patterns |
-| `outcome` | Record whether a fix worked |
+| `build-loop:debugging-memory-search` | Search memory for similar bugs (returns verdict when available) |
+| `build-loop:debugging-store` | Store a new debugging incident |
+| `.build-loop/issues/<id>.md` | Full incident or pattern detail |
+| `.build-loop/issues/` | Recent incidents and local memory corpus |
+| `build-loop:debugging-assess` | Parallel domain assessment |
 
 ## Parallel Domain Assessment
 
@@ -400,7 +398,7 @@ When debugging involves subagents (your own or from other plugins), follow these
 ### Automatic Behavior
 
 **Before spawning debugging-related subagents:**
-1. Search debugging memory first using the debugger `search` MCP tool
+1. Search debugging memory first using `build-loop:debugging-memory-search`
 2. Pass relevant context to the subagent in its prompt
 3. Include any matching incidents or patterns found
 
@@ -430,7 +428,7 @@ Start your investigation considering this prior knowledge.
 
 When using parallel assessment or multiple debugging subagents:
 
-1. **Pre-query memory once** using the debugger `search` MCP tool before spawning agents
+1. **Pre-query memory once** using `build-loop:debugging-memory-search` before spawning agents
 2. **Distribute context** - each agent gets relevant subset
 3. **Aggregate findings** - collect new insights from all agents
 4. **Store unified incident** - use the debugger `store` MCP tool to document the combined diagnosis

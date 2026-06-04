@@ -1,6 +1,6 @@
 ---
 name: build-loop:debugging-assess
-description: Parallel domain assessment for complex debugging symptoms — fans out database / frontend / API / performance assessors in parallel and ranks findings. Build-loop's native assessor orchestration, copied from claude-code-debugger's command (no canonical SKILL.md exists upstream).
+description: Parallel domain assessment for complex debugging symptoms — fans out database / frontend / API / performance assessors in parallel and ranks findings. Build-loop's native assessor orchestration, adapted from debugger command workflows (no canonical SKILL.md exists upstream).
 version: 0.1.0
 user-invocable: false
 source: claude-code-debugger/commands/assess.md
@@ -11,9 +11,9 @@ source_hash: f97d4966e110928acea7678124aad0c421e6fc64ddf0a6f53a7e14580650307a
 
 # Parallel Domain Assessment
 
-Run multiple specialized assessor agents in parallel against a vague or multi-domain symptom, then rank findings by confidence. Native to build-loop — content adapted from `claude-code-debugger/commands/assess.md`.
+Run multiple specialized assessor agents in parallel against a vague or multi-domain symptom, then rank findings by confidence. Native to build-loop; initially adapted from the debugger command workflow.
 
-> **Divergence note**: claude-code-debugger ships this as a slash command, not a discrete SKILL.md. The canonical assessor agents (`api-assessor`, `database-assessor`, `frontend-assessor`, `performance-assessor`) are bundled into build-loop under `agents/` and used directly here.
+> **Divergence note**: the standalone debugger ships this as a slash command, not a discrete SKILL.md. The assessor agents (`api-assessor`, `database-assessor`, `frontend-assessor`, `performance-assessor`) are bundled into build-loop under `agents/` and used directly here.
 
 ## When to Activate
 
@@ -108,4 +108,4 @@ Write summary to `.build-loop/state.json.debugging.assess[<symptom-hash>]`:
 - `build-loop:debugging-debug-loop` — escalate when assessment is inconclusive
 - `build-loop:debugging-store` — store the resolved incident after the recommended action lands
 
-*Source: claude-code-debugger `commands/assess.md`. The canonical implementation is the slash command + the four bundled assessor agents. Drift-checked by `build-loop:sync-skills`.*
+*Source: adapted from the standalone debugger assess command plus the four assessor agents. Drift-checked by `build-loop:sync-skills`.*

@@ -2,7 +2,7 @@
  * Log Reader
  *
  * Powers the `read_logs` MCP tool. Reads logs from:
- * 1. Debugger's own operation logs (.claude-code-debugger/logs/)
+ * 1. Build-loop debugging operation logs (.build-loop/logs/debugging/)
  * 2. Project logs — auto-discovers common log locations
  * 3. Explicit file paths
  *

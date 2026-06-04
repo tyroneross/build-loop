@@ -165,7 +165,7 @@ If the bundled tier selection / codegen / placement isn't enough (e.g., the proj
 Skill("build-loop:logging-tracer-bridge") with input { symptom, target_files, tier_hint, calledBy: "logging-tracer" }
 ```
 
-The bridge pre-flights `availablePlugins.claudeCodeDebugger`. If the standalone supporting plugin is installed, it delegates to extended observability tooling there. If not installed, returns `{ delegated: false }` and this skill continues with bundled-only Tier 1/2/3 codegen.
+The bridge pre-flights `availablePlugins.codingDebugger`. If standalone Coding Debugger is installed, it delegates to extended observability tooling there. If not installed, returns `{ delegated: false }` and this skill continues with bundled-only Tier 1/2/3 codegen.
 
 ## Log Analysis Guidance
 

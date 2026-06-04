@@ -1,10 +1,10 @@
 ---
 name: build-loop:debugging-store
-description: Store a debugging incident after fixing a bug — writes to the bundled debugger MCP store tool with required fields and optional manual JSON fallback. Build-loop's native incident storage; canonical source has no discrete SKILL.md (the §"Incident Documentation" section of debugging-memory).
+description: Store a debugging incident after fixing a bug — writes build-loop's native local incident record and optionally mirrors to standalone Coding Debugger. Build-loop's native incident storage; canonical source has no discrete SKILL.md (the §"Incident Documentation" section of debugging-memory).
 version: 0.1.0
 user-invocable: false
 source: claude-code-debugger/skills/debugging-memory/SKILL.md
-source_hash: 484cd20dfe7fc6f345e508738a54fc6ba9750dca1efa9dbe26c6d57e5ba8f46e
+source_hash: 5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d
 source_section: "Incident Documentation"
 ---
 
@@ -12,9 +12,9 @@ source_section: "Incident Documentation"
 
 # Debugging Incident Storage
 
-Persist a fixed bug to debugging memory so future builds get a `KNOWN_FIX` verdict on recurrence. Native to build-loop — content adapted from the §"Incident Documentation" section of `claude-code-debugger/skills/debugging-memory/SKILL.md`.
+Persist a fixed bug to debugging memory so future builds can recognize recurrence. Native to build-loop; initially adapted from the §"Incident Documentation" workflow in the debugger lineage.
 
-> **Divergence note**: claude-code-debugger does not ship a discrete `store` SKILL.md. Storage is described inline in `debugging-memory/SKILL.md` and exposed as the `store` MCP tool. This skill encodes the workflow as a build-loop-native skill and points the source hash at the canonical file.
+> **Divergence note**: the standalone debugger does not ship a discrete `store` SKILL.md. Build-loop keeps storage as a native skill because Review-F needs deterministic local persistence even when no MCP server exists.
 
 ## When to Activate
 
@@ -22,10 +22,42 @@ Persist a fixed bug to debugging memory so future builds get a `KNOWN_FIX` verdi
 - After any `build-loop:debugging-debug-loop` run that produced a verified fix
 - User asks "save this fix", "remember this bug"
 
-## Preferred Path — `store` MCP Tool
+## Native Path — Build-Loop Incident Note
+
+Write one incident note per resolved failure:
+
+```bash
+mkdir -p .build-loop/issues
+```
+
+Path:
+
+```text
+.build-loop/issues/YYYY-MM-DD-<short-slug>.md
+```
+
+Template:
+
+```markdown
+# <one-line symptom>
+
+**Symptom**: <error string, failing command, or observed behavior>
+**Root cause**: <technical cause plus first controllable system cause>
+**Fix**: <what changed and why>
+**Verification**: <commands, tests, or observed proof>
+**Files**: <paths touched>
+**Tags**: build-loop, <project>, <layer>, <framework>, <symptom-type>
+**RCA framework**: <5 Whys | causal tree | fishbone | Kepner-Tregoe | differential diagnosis | falsification>
+```
+
+**Required**: `symptom`, `root_cause`, `fix`, `verification`. Everything else improves future retrieval.
+
+## Optional Mirror — Coding Debugger MCP
+
+If standalone Coding Debugger is installed and available, mirror the same incident:
 
 ```
-mcp__plugin_build-loop-debugger__store({
+mcp__plugin_coding_debugger__store({
   symptom: "user-facing description (≤200 chars, preserves error type/file/key phrase)",
   root_cause: "technical explanation of why",
   fix: "what was changed",
@@ -36,7 +68,7 @@ mcp__plugin_build-loop-debugger__store({
 })
 ```
 
-**Required**: `symptom`, `root_cause`, `fix`. Everything else improves future retrieval.
+Mirror failure is not a build failure. Report it as "local incident stored; Coding Debugger mirror unavailable."
 
 ## Tag Discipline
 
@@ -60,9 +92,9 @@ The memory system scores stored incidents:
 
 Target 75%+. Score below 75% means future searches won't surface this incident reliably — pad the description and tags before storing.
 
-## Manual JSON Fallback (MCP unavailable)
+## JSON Compatibility Fallback
 
-If the bundled debugger MCP server fails to start, write the incident JSON directly:
+If a downstream process requires JSON, write a compatibility copy after the native note:
 
 **Step 1: Generate incident ID**
 ```
@@ -72,10 +104,8 @@ where `xxxx` is 4 random alphanumeric characters. Example: `INC_API_20260403_143
 
 **Step 2: Ensure directory exists**
 ```bash
-mkdir -p .claude-code-debugger/memory/incidents
+mkdir -p .build-loop/debugging/incidents
 ```
-
-(Build-loop bundles the debugger; the storage path is the standalone debugger plugin's directory, kept compatible so memory survives a future un-bundling.)
 
 **Step 3: Write the JSON**
 ```json
@@ -106,13 +136,13 @@ mkdir -p .claude-code-debugger/memory/incidents
 }
 ```
 
-Write to `.claude-code-debugger/memory/incidents/<incident_id>.json`. Flag `⚠️ debugger MCP unavailable — wrote incident manually` in Review-F report.
+Write to `.build-loop/debugging/incidents/<incident_id>.json`. Flag `debugger JSON compatibility copy written` in Review-F only if another workflow requested JSON.
 
 ## After Storing
 
-1. Confirm: "Incident stored as `<incident_id>` (quality score: <score>)"
-2. If `outcome` MCP is needed (a prior incident's fix was applied this build), invoke it now: `outcome({incident_id, result: "worked"|"failed"|"modified", notes})` to train the verdict classifier
-3. If quality score < 0.75, suggest enriching tags or root-cause description before next build
+1. Confirm the local note path.
+2. If standalone Coding Debugger supplied the prior incident, invoke `outcome({incident_id, result: "worked"|"failed"|"modified", notes})` to train its verdict classifier.
+3. If the note lacks verification, enrich it before ending Review-F.
 
 ## Sibling Skills
 
@@ -120,4 +150,4 @@ Write to `.claude-code-debugger/memory/incidents/<incident_id>.json`. Flag `⚠�
 - `build-loop:debugging-assess` — parallel domain assessment
 - `build-loop:debugging-debug-loop` — full iterative debugging that produces the incident this skill stores
 
-*Source: §"Incident Documentation" of `claude-code-debugger/skills/debugging-memory/SKILL.md`. Drift-checked by `build-loop:sync-skills`.*
+*Source: adapted from the debugger incident-documentation workflow and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

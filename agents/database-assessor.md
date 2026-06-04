@@ -38,10 +38,10 @@ Determine which type of database issue:
 
 ### Step 2: Search Memory
 
-Check for similar past incidents:
+Check for similar past incidents with native build-loop debugging memory:
 
-```bash
-npx @tyroneross/claude-code-debugger debug "<symptom>"
+```
+Skill("build-loop:debugging-memory-search") with input { symptom: "<symptom>", domain: "database" }
 ```
 
 Filter results for database-related incidents using tags:

@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
@@ -14,9 +14,6 @@
       "require": "./dist/src/index.js",
       "import": "./dist/src/index.js"
     }
-  },
-  "bin": {
-    "claude-code-debugger": "dist/cli/index.js"
   },
   "files": [
     "dist",
@@ -49,7 +46,6 @@
     ".claude-plugin",
     ".codex-plugin",
     ".agents",
-    ".mcp.json",
     "README.md",
     "AGENTS.md",
     "LICENSE"
@@ -58,10 +54,8 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "postinstall": "node dist/src/setup/auto-setup.js || true",
-    "test": "node test-v1.4.0-e2e.js && node test-v1.5.0-e2e.js",
+    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py && bash scripts/hooks/test_hooks.sh",
     "benchmark": "node benchmark-scoring.js",
-    "mcp": "node dist/src/mcp/server.js",
     "clean": "rm -rf dist",
     "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",
     "plugin:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --apply",

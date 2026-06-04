@@ -1,31 +1,31 @@
 ---
 name: build-loop:debugging-memory-search
-description: Memory-first lookup before debugging — search past incidents and patterns via the debugger MCP search tool. Build-loop's native debugging memory, copied from claude-code-debugger. Distinct from the legacy in-tree `build-loop:debugging-memory` skill (kept for backward compat); this is the source-tracked native version.
+description: Memory-first lookup before debugging — search local build-loop incidents and optionally standalone Coding Debugger memory. Build-loop's native debugging memory, adapted from debugger workflows. Distinct from the legacy in-tree `build-loop:debugging-memory` skill (kept for backward compat); this is the source-tracked native version.
 version: 0.1.0
 user-invocable: false
 source: claude-code-debugger/skills/debugging-memory/SKILL.md
-source_hash: 484cd20dfe7fc6f345e508738a54fc6ba9750dca1efa9dbe26c6d57e5ba8f46e
+source_hash: 5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Debugging Memory Workflow (Native, Sourced)
 
-Memory-first debugging. Core principle: **never solve the same bug twice**. Native to build-loop — content adapted from `claude-code-debugger/skills/debugging-memory/SKILL.md`. Uses the bundled debugger MCP server (`mcp__plugin_build-loop-debugger__*`).
+Memory-first debugging. Core principle: **never solve the same bug twice**. Native to build-loop; initially adapted from the debugger workflow lineage. Search local `.build-loop/issues/` first, then use standalone Coding Debugger for cross-project memory only when that plugin is installed.
 
 > **Naming note**: this skill is `build-loop:debugging-memory-search` to avoid colliding with the legacy in-tree `build-loop:debugging-memory` skill (which the orchestrator continues to call as the memory-first gate's primary entry point). Both have equivalent content; this one carries `source` + `source_hash` provenance and is drift-checked by `build-loop:sync-skills`. New code should prefer the legacy name until the orchestrator is migrated; sibling skills in `skills/debugging/` reference the legacy name where the gate's exact runtime semantics are needed.
 
 ## When to Activate
 
-- Phase 1 Assess: pull recent project incident context for orientation (`list` MCP)
+- Phase 1 Assess: pull recent project incident context for orientation (`list-recent` intent)
 - Phase 4 Review-B Validate: on every criterion failure with an error-like signal — read logs first, synthesize symptom, search memory
 - Phase 5 Iterate: at the start of every Iterate attempt, re-search with the new symptom (failure may have shifted shape after a fix)
 
 ## Memory-First Approach
 
-Before investigating any bug, always check the debugging memory using the debugger `search` MCP tool with the symptom description.
+Before investigating any bug, check debugging memory with the symptom description.
 
-The search returns a **verdict** with matching incidents and patterns.
+The search returns a **verdict** with matching incidents and patterns when structured memory is available. File-backed fallback returns a degraded local verdict with the same action shape.
 
 **Verdict-based decision tree:**
 
@@ -46,9 +46,9 @@ Skip direct-apply for any pattern with category `react-hooks`, `performance`, or
 
 ## Progressive Depth Retrieval
 
-1. **Initial search**: `search` MCP — returns verdict + compact matches
-2. **Drill down**: `detail` MCP with the ID for full incident/pattern data
-3. **Outcome tracking**: `outcome` MCP to record whether the fix worked
+1. **Initial search**: local build-loop incident lookup; if standalone Coding Debugger is available, use its `search` tool for cross-project matches
+2. **Drill down**: read the local issue file or, for Coding Debugger matches, use `detail` with the ID
+3. **Outcome tracking**: for Coding Debugger matches, use `outcome` to record whether the fix worked
 
 ## Visibility
 
@@ -82,7 +82,7 @@ Also enter the debug loop when:
 
 ## Incident Documentation
 
-After fixing a bug, store via `build-loop:debugging-store` skill (uses the `store` MCP tool). Required fields: `symptom`, `root_cause`, `fix`. Optional: `category`, `tags`, `files_changed`, `file`.
+After fixing a bug, store via `build-loop:debugging-store`. Required fields: `symptom`, `root_cause`, `fix`. Optional: `category`, `tags`, `files_changed`, `file`.
 
 ## Quality Indicators
 
@@ -104,7 +104,7 @@ Target 75%+ quality score for effective future retrieval.
 
 The memory system extracts patterns when 3+ similar incidents exist. Patterns have higher reliability than individual incidents. When a pattern matches, trust the solution template (90%+ confidence), apply the recommended approach, note caveats.
 
-## MCP Tools Quick Reference
+## Optional Coding Debugger Tools
 
 | Tool | Purpose |
 |------|---------|
@@ -116,25 +116,25 @@ The memory system extracts patterns when 3+ similar incidents exist. Patterns ha
 | `patterns` | List known fix patterns |
 | `outcome` | Record whether a fix worked |
 
-(In build-loop these are exposed under `mcp__plugin_build-loop-debugger__*`.)
+Use these only when standalone Coding Debugger is installed. Build-loop does not register these MCP tools itself.
 
 ## Review-F Outcome Feedback
 
 Closes the memory-first gate's feedback loop. Both required:
 
-- For each newly resolved Review-B/Iterate failure: invoke `store` MCP with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
-- For each Review-B memory gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied: invoke `outcome` MCP with `{incident_id, result: "worked"|"failed"|"modified", notes}` — this trains the verdict classifier
+- For each newly resolved Review-B/Iterate failure: invoke `build-loop:debugging-store` with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
+- For each Review-B memory gate where standalone Coding Debugger supplied a prior `KNOWN_FIX` or `LIKELY_MATCH`: invoke its `outcome` tool with `{incident_id, result: "worked"|"failed"|"modified", notes}` — this trains the optional verdict classifier
 
-Skipping `outcome` means the verdict classifier never improves.
+Skipping `outcome` means the optional verdict classifier never improves.
 
 ## Subagent Integration
 
 When debugging involves subagents:
 
-1. **Pre-query memory once** with the `search` MCP before spawning agents
+1. **Pre-query memory once** through `build-loop:debugging-memory` before spawning agents
 2. **Distribute context** — each agent gets relevant subset
 3. **Aggregate findings** — collect insights from all agents
-4. **Store unified incident** — single `store` call to document combined diagnosis
+4. **Store unified incident** — single `build-loop:debugging-store` call to document combined diagnosis
 
 Subagents do not inherit Skill or MCP access — pre-load context into their prompt.
 
@@ -144,4 +144,4 @@ Subagents do not inherit Skill or MCP access — pre-load context into their pro
 - `build-loop:debugging-assess` — parallel domain assessment for multi-domain symptoms
 - `build-loop:debugging-debug-loop` — iterative root-cause analysis with causal-tree investigation
 
-*Source: copied verbatim from claude-code-debugger and rewritten for build-loop. Drift-checked by `build-loop:sync-skills`.*
+*Source: adapted from the debugger workflow lineage and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

@@ -239,7 +239,7 @@ Incidents stored in project's `.claude/memory/incidents/`:
 
 ### Shared Mode
 
-Incidents stored in `~/.claude-code-debugger/incidents/`:
+Incidents stored in `.build-loop/issues/`:
 - Cross-project learning
 - Common patterns accessible everywhere
 - Best for reusable solutions
@@ -265,7 +265,7 @@ Higher quality incidents rank higher in results.
 Use interactive mode for guided documentation:
 
 ```typescript
-import { storeIncident } from '@tyroneross/claude-code-debugger';
+import { storeIncident } from '<coding-debugger-package>';
 
 await storeIncident(incident, {
   interactive: true,
