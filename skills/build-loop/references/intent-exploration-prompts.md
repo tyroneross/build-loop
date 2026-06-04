@@ -1,14 +1,14 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-# Exploration prompt templates
+# Intent exploration prompt templates
 
-Loaded on demand by `intent-explorer`. Each template covers one common ambiguity pattern detected by `scripts/intent_confidence.py` and produces the structure required by the SKILL's output contract.
+Loaded ON DEMAND by the orchestrator when its LLM judges intent genuinely ambiguous during Phase 1 Step B (`skills/build-loop/references/intent-capability-pack.md` § Intent restatement protocol). Never auto-fires on regex detection. Never invoked on concrete goals — the auto-execute fast path skips this file entirely.
 
-The templates are scaffolding — the orchestrator fills them in from the actual goal + intent.md + repo context. Each section header in the output is fixed; the body is adaptive.
+Each template covers one common ambiguity shape and produces the structure required by Step B of the protocol. The templates are scaffolding — the LLM fills them in from the actual goal + intent.md + repo context. Each section header in the output is fixed; the body is adaptive.
 
 ---
 
-## Pattern 1 — `vague_verb` (explore, figure out, see if, look into, play with)
+## Pattern 1 — vague-verb ("explore", "figure out", "see if", "look into", "play with", "think about")
 
 The goal uses an investigative verb without a concrete target. Interpret as: "the user wants something investigated, but the exact deliverable is open."
 
@@ -28,9 +28,11 @@ Restate as one of:
 
 ---
 
-## Pattern 2 — `branching_or` (X or Y)
+## Pattern 2 — branching-or ("X or Y" as competing paths)
 
 The goal names two candidate paths. Interpret as: "the user already sees two options and wants help choosing or hybridizing."
+
+**Important judgment**: most "or" phrases in goal text are NOT this pattern. "Verify the endpoint returns 200 or 404" is enumeration, not branching. "Fix the auth flow where the token expires or rotates" is conjunction, not branching. Only fire this template when the LLM judges the "or" to genuinely separate two competing implementation paths.
 
 Restate as: "Recommend X or Y for <restated underlying goal>, with the evidence that drove the choice."
 
@@ -44,7 +46,7 @@ Restate as: "Recommend X or Y for <restated underlying goal>, with the evidence 
 
 ---
 
-## Pattern 3 — `creative_open` (brainstorm, design from scratch, greenfield, open-ended)
+## Pattern 3 — creative-open ("brainstorm", "design from scratch", "greenfield", "open-ended")
 
 The goal explicitly invites generative work. Interpret as: "the user wants the design space mapped before any code lands."
 
@@ -60,7 +62,7 @@ Restate as: "Map the design space for <target>, recommend a starting point, name
 
 ---
 
-## Pattern 4 — `hedge_phrase` (something like, kind of, sort of, maybe, not sure)
+## Pattern 4 — hedge-phrase ("something like", "kind of", "sort of", "maybe", "not sure")
 
 The goal uses hedging language. Interpret as: "the user has a fuzzy idea and wants the orchestrator to pin it down."
 
@@ -76,16 +78,19 @@ Restate as: "The fuzzy idea is most likely <concrete restatement>; restated for 
 
 ---
 
-## Output assembly
+## Output assembly (when Step B fires)
 
-After selecting the template(s) — multiple may fire — fill in:
+After selecting the template(s) — multiple may apply — fill in the `.build-loop/intent.md` sections per the protocol in `intent-capability-pack.md` § Intent restatement protocol § Step B:
 
-1. `## Surfaced ambiguity` — the signal(s) that fired and what each implies
-2. `## Restated intent` — single concrete sentence
-3. `## Approach options` — 2-3 from the templates above, recommended first
-4. `## Recommended path` — option number + 1-sentence reason
-5. `## Scope cuts considered` — list 1-2 things being excluded
-6. `## Open assumptions (TAG:ASSUMED)` — every leap the exploration made
-7. `## Confidence` — `now-high` if the restated intent + recommendation is concrete; `still-medium` or `still-low` otherwise
+1. `## Approach options` — 1-3 from the templates above, recommended first
+2. `## Recommended path` — option number + 1-sentence reason
+3. `## Scope cuts considered` — list 1-2 things being excluded
+4. `## Open assumptions (TAG:ASSUMED)` — every leap the LLM made (per Step C)
 
-Append to `.build-loop/intent.md`, mirror compact summary into `.build-loop/state.json.exploration`, and return a one-paragraph summary to the orchestrator.
+Mirror compact summary into `.build-loop/state.json.intent` per Step D. Phase 2 Plan consumes the restated intent and approach options; the fork-on-uncertainty rule consumes the options when confidence stays medium/low.
+
+## Why these templates and not others
+
+Distills the core mechanism of `superpowers:brainstorming` — explore intent + propose options + name assumptions BEFORE implementation — into a build-loop-compatible, non-interactive form. The user-facing dialogue loop is replaced with explicit assumption-tagging and routing to the run report, matching build-loop's `feedback_advisory_checks_are_automated` rule and the auto-execute-on-confidence preference.
+
+The four patterns are the ones that recur in goal text. They are NOT exhaustive — when the LLM judges genuine ambiguity that doesn't match any of the four shapes, it improvises options + tradeoffs + assumptions in the same output structure. The templates are a reference, not a gate.
