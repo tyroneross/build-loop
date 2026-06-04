@@ -8,6 +8,8 @@ source: <where it came from — issue id / review finding / user request / run i
 classify: SAFE              # SAFE | RISKY | DECISION | PRODUCTION (from scripts/classify_action.py)
 effort: M                   # XS | S | M | L | XL
 status: open                # open | in-progress | blocked | done
+product_impacting: false    # bool — does this affect end-user experience (UI, data, perf, security, accessibility)?
+impact:                     # one-line user-facing consequence; empty when product_impacting: false
 ---
 
 ## Problem

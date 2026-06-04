@@ -42,6 +42,14 @@ Values above 12 are clamped. Values above `cpu_count−2` are clamped to `cpu_co
 
 Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains its own `ux-queue/` + `issues/` + `proposals/`, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. Default since this mode shipped (`--autonomous=false` opts back to classic one-pass).
 
+**End-of-run backlog/issues drain — SHIPPED DEFAULT 2026-06-04**: every run now auto-drains `.build-loop/issues/` then `.build-loop/backlog/` at end-of-thread without asking. Reversible per-repo via `.build-loop/config.json`:
+
+```json
+{ "sessionPrefs": { "continueFromQueues": "never" } }
+```
+
+`PRODUCTION`/`DECISION`-classified items still surface (not auto-executed). The continuation runs the same alignment-checker + scope-auditor + independent-auditor wiring as the in-run iterate loop. Stop conditions: iterate-cap (25 autonomous / 5 classic), budget exhausted, PRODUCTION encountered, 5 consecutive iterate failures, explicit user pause. Surfaced in the run report's `## Queue continuation` section.
+
 ### Flag surface
 
 | Invocation | Effect |
@@ -339,7 +347,7 @@ Key steps: subagent-driven-development → model assignment (Sonnet default) →
 
 Seven sub-steps run in order: A Critic → B Validate → C Optimize (opt-in) → D Fact-Check → E Simplify → F Auto-Resolve → G Report. F drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G is final-pass-only.
 
-Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry. On self-recursive runs, G appends `## Self-modifications (readback)` listing every self-modification attempted this run — file, what/why, gate verdict, additional-review finding — so the human sees results at the end without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
+Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry → **non-gating post-push retrospective dispatch** (`build-loop:retrospective-synthesizer` writes the 9-section `.build-loop/retrospectives/<date>/<run-id>.md` + ≤5-line summary surfaced inline; enforce-candidates land at `.build-loop/proposals/enforce-from-retro/` for human review — never auto-promoted; fire-and-continue, run-close is NOT delayed). On self-recursive runs, G appends `## Self-modifications (readback)` listing every self-modification attempted this run — file, what/why, gate verdict, additional-review finding — so the human sees results at the end without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
 
 **Load `skills/build-loop/references/phase-4-review.md`** for sub-step details, gate matrices, routing rules, and the full Sub-step F Auto-Resolve protocol (all 4 verdict arms including `warn` exit-0 behavior).
 

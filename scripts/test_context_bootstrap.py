@@ -479,9 +479,11 @@ class ContinuationGateTests(EnvIsolationMixin, unittest.TestCase):
         self._write_prefs("never")
         self.assertFalse(cb.should_continue_into_queues(self.workdir))
 
-    def test_unset_returns_false(self) -> None:
-        # No .build-loop dir at all → default "ask" → False
-        self.assertFalse(cb.should_continue_into_queues(self.workdir))
+    def test_unset_returns_true_default_flip(self) -> None:
+        """SHIPPED DEFAULT (2026-06-04): unset → True so backlog drain runs automatically.
+        Reversible per-repo via ``continue_from_queues: "never"``."""
+        # No .build-loop dir at all → source=="default" → auto-drain
+        self.assertTrue(cb.should_continue_into_queues(self.workdir))
 
     # --- pending_queue_items ---
 
