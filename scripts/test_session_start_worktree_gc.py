@@ -72,6 +72,15 @@ def repo(tmp_path: Path) -> Path:
     _git(r, "branch", "merged-dirty")
     _git(r, "worktree", "add", "-q", str(wt_root / "wt-dirty"), "merged-dirty")
     (wt_root / "wt-dirty" / "scratch").write_text("uncommitted")
+
+    # rally-owned worktree under .rally/worktrees/ -> must NEVER be removed,
+    # even though it matches the merged+clean+unlocked profile that would
+    # otherwise trigger ACT. Regression: prior behavior reaped these out from
+    # under live rally agents, causing posix_spawn ENOENT in every hook.
+    rally_root = r / ".rally" / "worktrees"
+    rally_root.mkdir(parents=True)
+    _git(r, "branch", "rally/test-agent-01")
+    _git(r, "worktree", "add", "-q", str(rally_root / "test-agent-01"), "rally/test-agent-01")
     return r
 
 
@@ -103,6 +112,44 @@ def test_opt_out_is_report_only(repo: Path):
     assert "wt-merged" in _worktree_paths(repo), "ACT=0 must not remove anything"
     assert "Auto-removed" not in report
     assert "REPORT-ONLY" in report
+
+
+def test_rally_worktrees_are_never_removed(repo: Path):
+    """Regression: build-loop's GC must NEVER reap worktrees under
+    .rally/worktrees/, even though `rally run` creates merged+clean+unlocked
+    worktrees that match the ACT removal profile. Reaping them deletes the
+    cwd of a live agent process; every subsequent hook then fails with
+    posix_spawn ENOENT. Rally owns its own worktree lifecycle.
+
+    This run uses default ACT (BUILDLOOP_GC_ACT unset → ON), which is the
+    surface that fired the original bug. We assert two invariants in one
+    run to prove the exclusion is TARGETED, not a kill-switch:
+      1. The rally worktree + branch survive.
+      2. A normal merged+clean build-loop worktree is still removed.
+    """
+    report = _run_hook(repo, act=None)
+    wts = _worktree_paths(repo)
+    branches = _git(repo, "branch")
+
+    # Invariant 1: rally worktree preserved.
+    assert "test-agent-01" in wts, "rally worktree must be preserved by GC"
+    assert "rally/test-agent-01" in branches, "rally branch must be preserved by GC"
+    assert "SKIP:rally-owned" in report, "hook must mark the rally candidate as skipped"
+
+    # Invariant 2: normal merged+clean worktree is still removed (no kill-switch).
+    assert "wt-merged" not in wts, "non-rally merged+clean worktree must still be removed"
+    assert "merged-clean" not in branches, "non-rally merged branch must still be deleted"
+
+    # Sanity: report's Auto-removed section exists for non-rally removals,
+    # and contains the non-rally worktree path but never a rally path.
+    assert "Auto-removed" in report, "report should still document non-rally removals"
+    auto_removed_section = report.split("## Auto-removed", 1)[1]
+    assert "wt-merged" in auto_removed_section, (
+        "non-rally merged worktree must appear in Auto-removed"
+    )
+    assert ".rally/worktrees/" not in auto_removed_section, (
+        f"GC must never log a .rally/worktrees/* path under Auto-removed; got: {auto_removed_section!r}"
+    )
 
 
 if __name__ == "__main__":

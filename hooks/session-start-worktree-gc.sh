@@ -9,6 +9,26 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 R=".build-loop/worktree-gc-last.txt"
 mkdir -p "$(dirname "$R")"
 _bundle_done=0
+
+# Rally exclusion (defense-in-depth, optional). If `rally` is on PATH and
+# `rally sessions --json` returns a list of live sessions, collect their
+# `cwd` paths so we can skip any worktree owned by an active session in
+# addition to the path-prefix guard below. Rally owns its own worktree
+# lifecycle; build-loop's GC must never reap a rally-owned worktree (force-
+# removing it deletes the cwd of a live agent process and every subsequent
+# hook fails with posix_spawn ENOENT). The path-prefix exclusion is the
+# PRIMARY guard and works even when `rally` is not installed.
+_rally_cwds=""
+if command -v rally >/dev/null 2>&1; then
+  _rally_cwds=$(rally sessions --json 2>/dev/null \
+    | awk 'match($0, /"cwd"[[:space:]]*:[[:space:]]*"[^"]+"/){
+             s=substr($0,RSTART,RLENGTH);
+             sub(/^"cwd"[[:space:]]*:[[:space:]]*"/,"",s);
+             sub(/"$/,"",s);
+             print s
+           }' 2>/dev/null || true)
+fi
+
 {
   printf '# Worktree GC report — %s\n\n## Stale candidates (REPORT-ONLY)\n' "$(date -u +%FT%TZ)"
 
@@ -18,6 +38,31 @@ _bundle_done=0
     | awk '/^worktree /{p=$2} /^branch /{b=$2; sub("refs/heads/","",b); if(p && b){print p" "b}; p=""; b=""}' \
     | while read -r path branch; do
         [ "$branch" = main ] && continue
+        # Rally-owned worktrees are NEVER touched by build-loop's GC.
+        # Primary guard: path-prefix exclusion (works without rally on PATH).
+        case "$path" in
+          */.rally/worktrees/*)
+            echo "  SKIP:rally-owned  $path  branch=$branch"
+            continue
+            ;;
+        esac
+        # Defense-in-depth: live rally session cwd cross-check.
+        if [ -n "$_rally_cwds" ]; then
+          _skip=0
+          while IFS= read -r _cwd; do
+            [ -z "$_cwd" ] && continue
+            if [ "$_cwd" = "$path" ]; then
+              _skip=1
+              break
+            fi
+          done <<EOF
+$_rally_cwds
+EOF
+          if [ "$_skip" = "1" ]; then
+            echo "  SKIP:rally-live-session  $path  branch=$branch"
+            continue
+          fi
+        fi
         git merge-base --is-ancestor "$branch" main 2>/dev/null || continue
         dirty=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
         locked=unlocked
