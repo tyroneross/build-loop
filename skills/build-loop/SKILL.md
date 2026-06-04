@@ -479,6 +479,7 @@ Contextual material loaded on demand (not at skill invocation):
 Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>")`):
 
 - `build-loop:research` · `build-loop:optimize` · `build-loop:self-improve` — callable modes
+- `build-loop:intent-explorer` — lightweight intent-exploration pass. Routed automatically by the orchestrator at Phase 1 step 11a when `scripts/intent_confidence.py` returns `should_explore: true` (ambiguous or creative-open goals). Skips silently for concrete goals — auto-execute fast path unaffected. Output is advisory: writes `## Exploration findings` to `.build-loop/intent.md`, routes summary to `## Notes from judges`. Never calls `AskUserQuestion`. Not user-invocable.
 - `build-loop:model-tiering` — dynamically assign subagent tiers by complexity (guide, not rule): prefer Sonnet; Haiku only for trivial mechanical/recognition work; Opus subagents to accelerate complex subtasks (cross-file, novel, ambiguous, hard refactor); verify every subagent's output before accepting it (cheaper tier → stronger check) (`references/model-tier-mapping.md`)
 - `build-loop:architecture-{scan,impact,trace,rules,dead,review}` — native architecture skills sourced from NavGator (provenance + drift-detection via `build-loop:sync-skills`)
 - `build-loop:debugging-memory` · `build-loop:debug-loop` · `build-loop:logging-tracer` — bundled debugger primitives (orchestrator owns when-to-fire, these own the procedural detail)

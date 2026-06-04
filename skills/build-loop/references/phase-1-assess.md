@@ -109,6 +109,23 @@
 
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Sub-step G Report's `## Held` section, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
 11. **Capture north star + update intent**: When `state.json.prd.core_principles` is non-empty (a PRD was loaded by step 10), use it as the strategic frame; `intent.md` cites the PRD path + revision rather than re-deriving. Otherwise use `references/intent-capability-pack.md` to identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals fresh. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
+11a. **Intent confidence check** (lightweight, advisory, default-skips): run
+
+    ```bash
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/intent_confidence.py \
+      --goal "<goal text from user prompt or .build-loop/goal.md>" \
+      --workdir "$PWD" \
+      --json
+    ```
+
+    Output is `{confidence: "high"|"medium"|"low", signals: [...], should_explore: bool, reason: str}`. Mirror to `.build-loop/state.json.intentConfidence`. Routing:
+
+    - `confidence: "high"` (default, `should_explore: false`) → proceed to step 12. Auto-execute fast path is unaffected. This is the common case.
+    - `should_explore: true` → dispatch `Skill("build-loop:intent-explorer")` once, passing the signals + the current `.build-loop/intent.md`. The skill writes an `## Exploration findings` section back to `.build-loop/intent.md` and mirrors a compact summary to `.build-loop/state.json.exploration`. The skill NEVER calls `AskUserQuestion`, NEVER produces a `## Held` entry. Output is advisory and routes to Phase 4 Review-G's `## Notes from judges` block.
+    - Helper failure / non-zero exit / unreadable JSON → treat as `should_explore: false` and log a one-line warning. Never blocks Phase 1.
+
+    The intent-explorer skill produces a restated concrete intent + 2-3 approach options + tagged assumptions. Phase 2 Plan consumes the restated intent and approach options; the "fork on uncertainty" rule fires when `exploration.confidence_after` remains medium/low AND Phase 2 surfaces 2+ viable approaches differing only on implementation tradeoffs. Per `feedback_advisory_checks_are_automated`: every check routes to the run report, never to AskUserQuestion or `## Held`.
+
 12. **Assess modular structure**: Use `references/modular-systems-pack.md`. Identify current module boundaries, stable interfaces, coupling risks, likely MECE work partitions, and any justified modularity exception. Mirror compact fields to `.build-loop/state.json.structure`.
 12a. **Capture approach lenses**: For any non-trivial architecture, workflow, dependency, UI/product, or long-lived interface recommendation, assess two separate answers before planning:
     - **Clean-sheet best approach**: what would be best for the use case if prior repo decisions, accumulated tech debt, and current implementation constraints did not exist.
