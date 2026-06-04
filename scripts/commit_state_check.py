@@ -8,8 +8,8 @@ CLI:
 
 Exit codes: always 0 (fail-soft, never blocks).
 
---hook mode: silent when clean; prints one advisory reminder line when
-tracked changes are detected (per hook-design rule: silent unless actionable).
+--hook mode: emits valid Stop-hook JSON. Clean repos print {}; dirty tracked
+work prints one advisory context message and never blocks.
 
 --json mode: emits the full envelope as JSON.
 
@@ -79,10 +79,7 @@ def _classify(lines: list[str]) -> dict[str, object]:
 
     if has_uncommitted:
         n = len(tracked_changed)
-        summary = (
-            f"{n} tracked file{'s' if n != 1 else ''} changed and not committed"
-            " — commit before ending the turn"
-        )
+        summary = f"{n} tracked file{'s' if n != 1 else ''} changed and not committed"
     else:
         summary = "clean"
 
@@ -125,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         "--hook",
         action="store_true",
         help=(
-            "Stop-hook mode: silent when clean, prints one reminder line when "
-            "tracked changes exist. Always exits 0."
+            "Stop-hook mode: emit JSON, advisory when tracked changes exist. "
+            "Always exits 0."
         ),
     )
     parser.add_argument(
@@ -145,9 +142,29 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.hook:
-        # Silent when clean (hook-design rule). One advisory line when dirty.
         if result["has_uncommitted_tracked"]:
-            print(result["summary"])
+            changed = result.get("tracked_changed", [])
+            details = "\n".join(f"- {path}" for path in changed[:20])
+            remaining = len(changed) - 20 if isinstance(changed, list) else 0
+            if remaining > 0:
+                details += f"\n- ... {remaining} more"
+            message = (
+                f"{result['summary']}. Advisory only; hooks do not stop work by default."
+            )
+            if details:
+                message += "\nTracked changes:\n" + details
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "Stop",
+                            "additionalContext": message,
+                        }
+                    }
+                )
+            )
+        else:
+            print("{}")
         return 0
 
     # Default: print summary

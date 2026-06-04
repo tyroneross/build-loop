@@ -466,6 +466,69 @@ def _expand_with_lessons(query: str, project: str, limit: int) -> dict[str, Any]
     }
 
 
+def _expand_with_graph(current: dict[str, Any], limit: int) -> dict[str, Any]:
+    project = str(current.get("project") or "")
+    seeds = [f"project:{project}"] if project else []
+    if not seeds:
+        for item in current.get("evidence", []):
+            item_id = str(item.get("id") or "")
+            if item_id and not item_id.startswith("context:"):
+                seeds.append(item_id)
+    # Preserve order while deduping.
+    seeds = list(dict.fromkeys(seeds))
+    if not seeds:
+        return {"related": [], "stats": {}, "seeds": [], "reasons": ["graph_no_seeds"]}
+
+    try:
+        from memory_graph import GraphStore  # type: ignore  # noqa: PLC0415
+    except ImportError as exc:
+        return {
+            "related": [],
+            "stats": {},
+            "seeds": seeds,
+            "reasons": [f"memory_graph_import_failed: {exc}"],
+        }
+    graph = None
+    try:
+        graph = GraphStore.open()
+        result = graph.related(seeds, depth=2, limit=max(limit * 5, 25), project=project)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "related": [],
+            "stats": {},
+            "seeds": seeds,
+            "reasons": [f"memory_graph_query_failed: {exc}"],
+        }
+    finally:
+        if graph is not None and hasattr(graph, "close"):
+            graph.close()
+
+    related = []
+    for node in result.get("nodes", []):
+        if not node.get("path"):
+            continue
+        related.append(
+            {
+                "id": node.get("id"),
+                "title": node.get("title"),
+                "path": str(memory_store_root() / str(node.get("path"))),
+                "project": node.get("project"),
+                "memory_type": node.get("memory_type"),
+                "hop": node.get("hop"),
+                "score": node.get("score"),
+            }
+        )
+    related = related[:limit]
+    return {
+        "backend": result.get("backend"),
+        "query_shape": result.get("query_shape"),
+        "related": related,
+        "stats": result.get("stats", {}),
+        "seeds": result.get("seeds", seeds),
+        "reasons": result.get("reasons", []),
+    }
+
+
 def build_context(
     workdir: Path | str,
     query: str = "",
@@ -492,7 +555,9 @@ def build_context(
         "written": written,
     }
     if mode == "expand":
-        envelope["expansion"] = _expand_with_lessons(query, current["project"], limit)
+        expansion = _expand_with_lessons(query, current["project"], limit)
+        expansion["graph"] = _expand_with_graph(current, limit)
+        envelope["expansion"] = expansion
     return envelope
 
 

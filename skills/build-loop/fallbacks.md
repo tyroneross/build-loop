@@ -260,7 +260,7 @@ Do not fetch URLs the user did not explicitly provide or that aren't core to the
 
 ## debug — Root-cause investigation
 
-The `build-loop:debug-loop` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill or its `build-loop-debugger` MCP server fails to load:
+The `build-loop:debug-loop` skill is bundled with build-loop. Use this fallback only if the skill fails to load:
 
 1. **Reproduce** — minimal case that fails every time. Write the command/steps down.
 2. **Isolate** — binary-search the diff / commits / inputs until you find the smallest change that flips pass ↔ fail.
@@ -274,7 +274,7 @@ Stop after 3 failed hypotheses and escalate to the user with what was tried.
 
 ## bug-memory — Prior-bug lookup
 
-The `build-loop:debugging-memory` skill is bundled with build-loop (v0.6.0+). Use this fallback only if the skill or its MCP server fails to load. No verdict classifier, no cross-session training — just a file-grep of this project's prior builds.
+The `build-loop:debugging-memory` skill is bundled with build-loop. Use this fallback only if the skill cannot provide structured recall. No cross-project training — just a file-grep of this project's prior builds.
 
 ### Query procedure
 
@@ -318,7 +318,7 @@ After resolving a failure, append to `.build-loop/issues/YYYY-MM-DD-<slug>.md`:
 **Tags**: <layer>, <component>, <pattern>
 ```
 
-Future builds will grep this file. The bundled `build-loop:debugging-memory` skill (v0.6.0+) promotes this to classified, cross-project, ranked memory — but the file-grep works standalone if the MCP server is down.
+Future builds will grep this file. The bundled `build-loop:debugging-memory` skill promotes this to native build-loop recall; standalone Coding Debugger can mirror it into cross-project ranked memory when installed separately.
 
 ---
 

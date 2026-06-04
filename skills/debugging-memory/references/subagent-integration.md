@@ -2,7 +2,7 @@
 
 # Subagent Integration Guide
 
-This guide explains how to integrate claude-code-debugger with custom subagents, third-party agents, and multi-agent workflows.
+This guide explains how to integrate build-loop native debugging memory with custom subagents, third-party agents, and multi-agent workflows.
 
 ## Overview
 
@@ -51,11 +51,11 @@ Add this to the agent's system prompt:
 ```markdown
 ## Debugging Memory
 
-This project uses claude-code-debugger for debugging memory.
+This project uses build-loop native debugging memory.
 
 **Before investigating any bug:**
-\`\`\`bash
-npx @tyroneross/claude-code-debugger debug "<symptom description>"
+\`\`\`
+Skill("build-loop:debugging-memory-search") with input { symptom: "<symptom description>" }
 \`\`\`
 
 **Interpret results:**
@@ -64,12 +64,12 @@ npx @tyroneross/claude-code-debugger debug "<symptom description>"
 - Low/no match (<40%): Investigate fresh, document afterward
 
 **After fixing a bug:**
-Write incident JSON to `.claude/memory/incidents/INC_YYYYMMDD_HHMMSS_xxxx.json`
+Write an incident note to `.build-loop/issues/INC_YYYYMMDD_HHMMSS_xxxx.md`
 
 This ensures fixes are remembered for future similar issues.
 ```
 
-> Note: CLI is the correct approach here — these agents lack MCP tool access.
+> Note: pass memory context from the parent when the subagent lacks direct skill or filesystem access.
 
 ## Proxy Integration
 
@@ -88,10 +88,10 @@ When subagents cannot directly access debugging memory (no Bash tool, sandboxed,
 
 **Step 1: Search before spawning**
 
-Use the `debugger search` MCP tool with the symptom description. If MCP is unavailable, fall back to CLI:
+Use `build-loop:debugging-memory-search` with the symptom description. If the subagent cannot invoke skills, the parent reads `.build-loop/issues/` and passes compact matches:
 
-```bash
-npx @tyroneross/claude-code-debugger debug "user login failing with 401"
+```
+Skill("build-loop:debugging-memory-search") with input { symptom: "user login failing with 401" }
 ```
 
 **Step 2: Format context for subagent**

@@ -1,6 +1,6 @@
 ---
 name: build-loop:debugging-debug-loop
-description: Iterative root-cause debugging with causal-tree analysis, hypothesis testing, fix-verify-score cycles, and fix-critique pressure-test. Up to 5 iterations. Build-loop's native debug loop, copied from claude-code-debugger.
+description: Iterative root-cause debugging with 5 Whys, causal/fault-tree analysis, hypothesis testing, fix-verify-score cycles, and fix-critique pressure-test. Up to 5 iterations. Build-loop's native debug loop, adapted from debugger workflows.
 version: 0.1.0
 user-invocable: false
 source: claude-code-debugger/skills/debug-loop/SKILL.md
@@ -11,7 +11,7 @@ source_hash: 07b2dd2ad30c210b14bbac3c4e7ddd772ed642dd4c478dfbdb81b52ae809c92a
 
 # Debug Loop — Iterative Root Cause Debugging
 
-A 7-phase debugging loop: investigate via causal tree analysis, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures. Native to build-loop — content adapted from `claude-code-debugger/skills/debug-loop/SKILL.md`.
+A 7-phase debugging loop: investigate with structured root-cause methods, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures. Native to build-loop; initially adapted from the debugger workflow lineage.
 
 ## Scope Check
 
@@ -31,7 +31,7 @@ Trigger is the **verdict category**, not a numeric score — research shows LLM-
 
 **Goal**: Understand what's actually failing and why, not just what it looks like.
 
-1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Note any related incidents.
+1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Note related incidents from local build-loop memory and optional standalone Coding Debugger memory when available.
 2. **Reproduce the issue** — identify exact steps, commands, or conditions that trigger the bug
 3. **Deploy `root-cause-investigator` agent** — pass the symptom and reproduction steps for causal tree analysis. The agent explores multiple branches (not a single chain), prioritizes by evidence strength, and prunes with evidence.
 4. **Research gate** — if the investigator flags unfamiliar error codes, library behavior, or version-specific issues:
@@ -41,6 +41,21 @@ Trigger is the **verdict category**, not a numeric score — research shows LLM-
 5. **Assess completeness** — does the investigation explain ALL reported symptoms? Check for multi-causal bugs (2+ independent root causes)
 
 **Output**: Causal tree (with confirmed and pruned branches), reproduction steps, evidence gathered, research performed.
+
+### Root-Cause Frameworks
+
+Use the lightest framework that fits the failure. Stack frameworks only when the current one stalls.
+
+| Framework | Use when | Output |
+|---|---|---|
+| 5 Whys | A symptom has a plausible linear chain and needs a controllable system cause | Five-level why-chain ending in a code, test, config, protocol, or process control |
+| Causal tree / fault tree | Multiple causes could explain the same symptom | Branches with confirming and pruning evidence |
+| Ishikawa / fishbone | The failure may span people/process/code/tooling/data/environment | Category map, then the top 2-3 branches to test |
+| Kepner-Tregoe problem analysis | The issue is intermittent, version-specific, or boundary-sensitive | Is/is-not table: affected/unaffected versions, inputs, users, routes, environments |
+| Differential diagnosis | Several hypotheses look similar from symptoms alone | Ranked hypotheses plus the discriminating test for each |
+| Falsification test | A hypothesis is attractive but under-proven | Smallest test that would disprove it |
+
+For hard fixes, record which framework was used and the decisive evidence. The framework is a thinking scaffold, not a report section unless it clarifies the outcome.
 
 ## Phase 2: HYPOTHESIZE — State the Root Cause
 
@@ -137,8 +152,8 @@ The critique agent checks 5 things:
 
 ### After Reporting
 
-- Store via `build-loop:debugging-store` (uses `store` MCP)
-- Record outcome via `outcome` MCP for any matched-and-applied prior incident
+- Store via `build-loop:debugging-store`
+- Record outcome through standalone Coding Debugger only when it supplied the matched prior incident
 - Write state to `.build-loop/debugging-debug-loop/scorecard.md`
 
 ## Iteration Rules
@@ -213,4 +228,4 @@ MEMORY SEARCH → INVESTIGATE → HYPOTHESIZE → FIX → VERIFY → SCORE
 - `build-loop:debugging-assess` — escalation path when investigation can't isolate domain
 - `build-loop:debugging-store` — Phase 7 incident storage
 
-*Source: copied verbatim from claude-code-debugger and rewritten for build-loop. Drift-checked by `build-loop:sync-skills`.*
+*Source: adapted from the debugger workflow lineage and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

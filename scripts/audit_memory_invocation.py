@@ -6,8 +6,8 @@
 Companion to `.build-loop/audits/memory-invocation-2026-05-05.md`. For each
 call site documented in build-loop's phase protocol, this script exercises
 the call programmatically and records the result envelope. This is a
-**reporting** tool, not a gate — it always exits 0. Empty results, MCP
-unavailability, and Postgres-down are all valid data points.
+**reporting** tool, not a gate — it always exits 0. Empty results, absent
+native debugging incidents, and Postgres-down are all valid data points.
 
 Per call site:
   {
@@ -31,8 +31,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 from datetime import date as _date
@@ -212,28 +210,31 @@ def probe_decision_canonical(workdir: Path) -> dict[str, Any]:
 
 
 def probe_debugger_mcp(workdir: Path, query: str = "memory") -> dict[str, Any]:
-    """Probe the debugger MCP via npx CLI. Reports unreachable as data."""
-    npx = shutil.which("npx")
-    if not npx:
-        return {"invoked": False, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": "npx not on PATH"}
-    try:
-        proc = subprocess.run(
-            [npx, "--no-install", "@tyroneross/claude-code-debugger", "search", "--query", query, "--limit", "3", "--json"],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": f"mcp_unavailable: {type(e).__name__}: {e}"}
-    if proc.returncode != 0:
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": f"mcp_unavailable: cli rc={proc.returncode}"}
-    try:
-        payload = json.loads(proc.stdout) if proc.stdout else {"incidents": []}
-    except json.JSONDecodeError as e:
-        return {"invoked": True, "result_count": 0, "result_sample": None, "verdict": "graceful_degradation", "error": f"mcp_unavailable: bad json: {e}"}
-    incidents = payload.get("incidents") or payload.get("results") or []
+    """Probe build-loop native debugging memory. Name kept for report compatibility."""
+    issues_dir = workdir / ".build-loop" / "issues"
+    if not issues_dir.is_dir():
+        return {
+            "invoked": True,
+            "result_count": 0,
+            "result_sample": None,
+            "verdict": "graceful_degradation",
+            "error": f"debugger_unavailable: local issue dir absent: {issues_dir}",
+        }
+    incidents = []
+    query_l = query.lower()
+    for note in sorted(issues_dir.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            text = note.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if query_l == "memory" or query_l in text.lower():
+            incidents.append({"id": note.stem, "path": str(note)})
+        if len(incidents) >= 3:
+            break
     return {
         "invoked": True,
         "result_count": len(incidents),
-        "result_sample": [{"id": i.get("id"), "symptom_head": (i.get("symptom") or "")[:80]} for i in incidents[:3]],
+        "result_sample": incidents,
         "verdict": "ok",
     }
 
@@ -302,14 +303,14 @@ PROBES: list[tuple[str, str, str, Callable[[Path], dict[str, Any]]]] = [
     ("Phase 1 Assess → read build-loop-memory/projects/<slug>/MEMORY.md (project)", "phase-1", "wired", probe_project_memory),
     ("Phase 1 Assess → state.json.runs[-3:] tail", "phase-1", "wired", probe_runs_tail),
     ("Phase 1 Assess → architecture-scout baseline (decision artifact)", "phase-1", "wired", probe_decision_canonical),
-    ("Phase 1 Assess → debugger MCP list/search", "phase-1", "best-effort", probe_debugger_mcp),
+    ("Phase 1 Assess → native debugger issue search", "phase-1", "best-effort", probe_debugger_mcp),
     ("Phase 1 Assess → recall() facade (unified read)", "phase-1", "wired", probe_recall_facade),
-    ("Phase 4 Review-B → debugger MCP search (memory-first gate)", "phase-4-b", "best-effort", probe_debugger_mcp),
+    ("Phase 4 Review-B → native debugger search (memory-first gate)", "phase-4-b", "best-effort", probe_debugger_mcp),
     # Review-D scout dispatch: not directly probable without invoking subagent; we read its artifact instead.
     ("Phase 4 Review-D → architecture-scout review-rules artifacts", "phase-4-d", "wired", probe_decision_canonical),
-    ("Phase 4 Review-F → debugger MCP store (proxy: CLI reachable)", "phase-4-f", "best-effort", probe_debugger_mcp),
+    ("Phase 4 Review-F → native debugger store readiness", "phase-4-f", "best-effort", probe_debugger_mcp),
     ("Phase 4 Review-F → write_run_entry.py", "phase-4-f", "wired", probe_write_run_entry),
-    ("Phase 5 Iterate → debugger MCP search (adapted symptom)", "phase-5", "best-effort", probe_debugger_mcp),
+    ("Phase 5 Iterate → native debugger search (adapted symptom)", "phase-5", "best-effort", probe_debugger_mcp),
     ("Phase 6 Learn → consolidate_memory.py", "phase-6", "wired", probe_consolidate_memory),
     ("Phase 6 Learn → procedural_governance.py", "phase-6", "wired", probe_procedural_governance),
 ]

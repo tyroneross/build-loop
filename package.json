@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
@@ -15,21 +15,24 @@
       "import": "./dist/src/index.js"
     }
   },
-  "bin": {
-    "claude-code-debugger": "dist/cli/index.js"
-  },
   "files": [
     "dist",
     "codex-skills",
     "commands",
     "skills",
     "scripts/_paths.py",
+    "scripts/_db_url.py",
     "scripts/blm.py",
     "scripts/blm_api.py",
     "scripts/check_cache_sync.py",
+    "scripts/embed_backend.py",
+    "scripts/install_memory.py",
     "scripts/lessons_index",
     "scripts/memory_context",
+    "scripts/memory_graph",
     "scripts/project_resolver.py",
+    "scripts/semantic_index",
+    "scripts/sync_navgator_lessons.py",
     "scripts/sync_plugin_cache.py",
     "scripts/prune_plugin_cache.py",
     "scripts/prune_codex_plugin_cache.py",
@@ -38,11 +41,11 @@
     "hooks",
     "agents",
     "docs/agent-surface-policy.md",
+    "templates/memory",
     ".cursor",
     ".claude-plugin",
     ".codex-plugin",
     ".agents",
-    ".mcp.json",
     "README.md",
     "AGENTS.md",
     "LICENSE"
@@ -51,10 +54,8 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "postinstall": "node dist/src/setup/auto-setup.js || true",
-    "test": "node test-v1.4.0-e2e.js && node test-v1.5.0-e2e.js",
+    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py && bash scripts/hooks/test_hooks.sh",
     "benchmark": "node benchmark-scoring.js",
-    "mcp": "node dist/src/mcp/server.js",
     "clean": "rm -rf dist",
     "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",
     "plugin:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --apply",

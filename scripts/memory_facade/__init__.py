@@ -7,7 +7,7 @@ Phase 6 Learn must see signals from all stores. Today's reality:
   1. .build-loop/state.json.runs[]                — local file
   2. build-loop-memory indexes/project folders    — canonical files
   3. agent_memory.<schema>.semantic_facts         — Postgres
-  4. claude-code-debugger MCP `search` tool       — MCP server
+  4. .build-loop/issues/*.md                     — native debugging incidents
 
 Four read paths, four discovery costs. This module collapses them behind one
 function:
@@ -25,8 +25,8 @@ Each backend degrades gracefully:
   - Postgres          → returns [] AND records reason="db_unavailable" when
                         no DB URL is configured, psycopg is missing, or the
                         connection fails. Never raises.
-  - debugger MCP      → returns [] AND records reason="mcp_unavailable" when
-                        the MCP server is not running.
+  - debugger incidents → returns [] AND records reason="debugger_unavailable"
+                        when local incident notes are absent.
 
 Public API (frozen — all consumers import these directly):
   recall, read_runs, read_lessons, read_decisions, read_semantic, read_debugger,
@@ -49,6 +49,8 @@ _HERE = Path(__file__).resolve().parent        # scripts/memory_facade/
 _SCRIPTS_DIR = _HERE.parent                    # scripts/
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+if __name__ == "__main__" and not __package__:
+    __package__ = _HERE.name
 
 REPO_ROOT_DEFAULT = _SCRIPTS_DIR.parent
 
@@ -97,7 +99,7 @@ _DEBUGGER_RUNNER_OVERRIDE: Optional[Any] = None
 
 
 def set_debugger_runner(fn: Optional[Any]) -> None:
-    """Inject a callable used by `read_debugger` instead of the npx CLI.
+    """Inject a callable used by `read_debugger` for structured incident payloads.
 
     Tests pass ``lambda query, limit, project: '{"incidents":[...]}'``.
     """
@@ -111,14 +113,12 @@ def read_debugger(
     limit: int,
     project: Optional[str],
 ) -> tuple[List[Dict[str, Any]], List[str]]:
-    """Best-effort MCP read.
+    """Best-effort native debugger incident read.
 
-    The MCP server is bundled at ``dist/src/mcp/server.js`` (relative to the
-    plugin root). We do NOT spawn the server from here — that is the
-    orchestrator's job. Instead we attempt to invoke the CLI mode of the same
-    package if it's installed; otherwise we return an empty list with a
-    ``mcp_unavailable`` reason. Tests inject a mock at
-    ``_DEBUGGER_RUNNER_OVERRIDE``.
+    Build-loop does not register a bundled debugger MCP server. By default this
+    reads local ``.build-loop/issues/*.md`` incident notes and returns
+    ``debugger_unavailable`` when that local store is absent. Tests inject a
+    mock at ``_DEBUGGER_RUNNER_OVERRIDE`` for structured incident payloads.
     """
     return read_debugger_impl(
         workdir=workdir,

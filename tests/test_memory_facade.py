@@ -4,14 +4,15 @@ Locks priority 3 of the architecture-awareness follow-up: a single `recall()`
 function that fans out to all four memory backends and degrades gracefully
 when any (or all) are unavailable.
 
-No live Postgres, no live MCP. The DB and MCP backends are forced into
-unavailable states by clearing env vars and (for the MCP backend) injecting
-a stub callable.
+No live Postgres or external debugger dependency. The DB backend is forced into
+an unavailable state by clearing env vars; the debugger backend uses local
+incident files by default and can be injected with a stub callable.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import memory_facade as mf  # type: ignore  # noqa: E402
+from semantic_index import upsert_fact  # type: ignore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +141,31 @@ def test_semantic_backend_unavailable_without_env(workdir: Path) -> None:
     assert any("BUILD_LOOP_DATABASE_URL" in r for r in reasons)
 
 
+def test_semantic_backend_reads_local_sqlite_first(
+    workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SQLite semantic facts are returned without a Postgres URL."""
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    db_path = memory_root / "indexes" / "semantic_facts.sqlite"
+    upsert_fact(
+        subject="fact:sqlite",
+        predicate="captures",
+        object_text="architecture adapter lesson",
+        project="build-loop",
+        confidence=0.75,
+        db_path=db_path,
+    )
+    monkeypatch.delenv("BUILD_LOOP_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    out, reasons = mf.read_semantic(workdir, query="adapter", limit=5, project="build-loop")
+
+    assert reasons == []
+    assert len(out) == 1
+    assert out[0]["backend"] == "sqlite"
+    assert out[0]["subject"] == "fact:sqlite"
+
+
 def test_semantic_backend_unavailable_when_psycopg_missing(
     workdir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -152,18 +179,10 @@ def test_semantic_backend_unavailable_when_psycopg_missing(
     assert any("psycopg not installed" in r or "ImportError" in r for r in reasons)
 
 
-def test_debugger_backend_unavailable_when_no_runner(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Simulate npx not on PATH or returning non-zero by overriding subprocess.
-    import subprocess as sp
-
-    def _raise(*a, **kw):
-        raise FileNotFoundError("no npx")
-
-    monkeypatch.setattr(sp, "run", _raise)
-    # Reload reference inside memory_facade to use the patched subprocess.
+def test_debugger_backend_unavailable_when_no_local_incidents(workdir: Path) -> None:
     out, reasons = mf.read_debugger(workdir, query="x", limit=5, project=None)
     assert out == []
-    assert any("mcp_unavailable" in r for r in reasons)
+    assert any("debugger_unavailable" in r for r in reasons)
 
 
 def test_debugger_backend_uses_injected_runner(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

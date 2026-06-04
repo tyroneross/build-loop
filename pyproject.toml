@@ -23,7 +23,7 @@ test = [
 ]
 # Optional Postgres dual-write deps. Required by:
 #   scripts/db.py            — episodic memory writes
-#   scripts/sync_navgator_lessons.py (Chunk 7) — NavGator lessons sync
+#   scripts/sync_navgator_lessons.py (Chunk 7) — NavGator lessons sync, SQLite-first with optional Postgres mirror
 # Sync scripts gracefully degrade when these aren't installed; tests
 # stub psycopg out entirely. Install with `uv pip install -e .[db]`.
 db = [

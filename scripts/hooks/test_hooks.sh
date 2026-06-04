@@ -122,7 +122,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Case 4: Stop hook with subagent agent_id -> silent exit 0
+# Case 4: Stop hook with subagent agent_id -> valid no-op JSON
 # ---------------------------------------------------------------------------
 TMPDIR_4=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_4"' EXIT
@@ -131,15 +131,15 @@ RESULT=$(printf '%s' \
     "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-abc\",\"cwd\":\"${TMPDIR_4}\",\"agent_id\":\"sub-456\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$STOP_FIN")
 
-# Should be empty (silent exit 0)
-if [ -z "$RESULT" ]; then
-    pass "Case 4: Stop with agent_id -> silent exit 0"
+# Should emit valid no-op JSON.
+if [ "$RESULT" = "{}" ]; then
+    pass "Case 4: Stop with agent_id -> valid {}"
 else
-    fail "Case 4: Stop with agent_id -> silent" "got output: ${RESULT}"
+    fail "Case 4: Stop with agent_id -> valid {}" "got output: ${RESULT}"
 fi
 
 # ---------------------------------------------------------------------------
-# Case 5: Stop hook on non-build-loop cwd -> silent exit 0
+# Case 5: Stop hook on non-build-loop cwd -> valid no-op JSON
 # ---------------------------------------------------------------------------
 TMPDIR_5=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_5"' EXIT
@@ -148,11 +148,11 @@ RESULT=$(printf '%s' \
     "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-def\",\"cwd\":\"${TMPDIR_5}\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$STOP_FIN")
 
-# No state.json present -> exit 0 silently
-if [ -z "$RESULT" ]; then
-    pass "Case 5: Stop on non-build-loop cwd -> silent exit 0"
+# No state.json present -> no-op JSON
+if [ "$RESULT" = "{}" ]; then
+    pass "Case 5: Stop on non-build-loop cwd -> valid {}"
 else
-    fail "Case 5: Stop on non-build-loop cwd -> silent" "got output: ${RESULT}"
+    fail "Case 5: Stop on non-build-loop cwd -> valid {}" "got output: ${RESULT}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -178,11 +178,11 @@ RESULT=$(printf '%s' \
     "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-xyz-idempotent\",\"cwd\":\"${TMPDIR_6}\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$STOP_FIN")
 
-# Already recorded -> silent exit 0
-if [ -z "$RESULT" ]; then
-    pass "Case 6: Stop idempotency (duplicate session_id) -> silent exit 0"
+# Already recorded -> no-op JSON
+if [ "$RESULT" = "{}" ]; then
+    pass "Case 6: Stop idempotency (duplicate session_id) -> valid {}"
 else
-    fail "Case 6: Stop idempotency -> silent" "got output: ${RESULT}"
+    fail "Case 6: Stop idempotency -> valid {}" "got output: ${RESULT}"
 fi
 
 # ---------------------------------------------------------------------------

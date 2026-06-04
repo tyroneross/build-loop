@@ -102,7 +102,7 @@ If any infrastructure step fails (server won't start, curl errors, can't parse h
 - `WEAK_SIGNAL` → note reference in the Iterate plan, investigate normally
 - `NO_MATCH` → standard Iterate fallthrough; store at sub-step G Report for future learning
 
-The memory gate is always on — the debugger (skills + MCP) is bundled with build-loop as of 0.6.0. If the MCP server fails to start, the orchestrator falls through to a local-grep fallback. The strict direct-apply triple-gate spec lives in `skills/debugging-memory/SKILL.md` §"Direct-apply gate (strict)".
+The memory gate is always on. Build-loop bundles native debugging-memory skills and file-backed search/store, with standalone Coding Debugger available only as an optional cross-project memory plugin when explicitly installed. If structured memory is unavailable, the orchestrator falls through to the local-grep fallback. The strict direct-apply triple-gate spec lives in `skills/debugging-memory/SKILL.md` §"Direct-apply gate (strict)".
 
 **Output**: per-criterion pass/fail with evidence. Any `fail` → Iterate. All `pass` → sub-step C.
 
@@ -242,7 +242,7 @@ If a category is empty (no Held items, no Blocked items), omit the section entir
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 
-**Debugger store + outcome** (if `availablePlugins.claudeCodeDebugger`): for each resolved Review-B/Iterate failure, invoke `store` MCP with `{symptom, root_cause, fix, tags, files}`. For each Review-B memory-gate entry where a prior `KNOWN_FIX`/`LIKELY_MATCH` was applied, invoke `outcome` with `worked`/`failed`/`modified`. Both sides of the memory feedback loop — skipping either breaks learning.
+**Debugger store + outcome**: for each resolved Review-B/Iterate failure, write a native `.build-loop/issues/<incident>.md` incident note with `{symptom, root_cause, fix, tags, files}`. If `availablePlugins.codingDebugger` is true and the run explicitly requested cross-project memory, mirror the same outcome to standalone Coding Debugger. Both sides of the memory feedback loop — local store and outcome status — are required for learning.
 
 **Orphan scan**: invoke `Skill("build-loop:architecture-dead")` — runs `navgator dead`, diffs against the Phase 1 Assess baseline, surfaces ONLY new orphans introduced this build. No-ops cleanly when `.navgator/architecture/index.json` is absent.
 

@@ -116,6 +116,8 @@ def report(dest: Path) -> dict:
         ]
         status["user_md_files"] = len(user_files)
     # Project segmentation (NEW PR 1)
+    indexes_dir = dest / "indexes"
+    status["indexes_dir_exists"] = indexes_dir.is_dir()
     projects_dir = dest / "projects"
     status["projects_dir_exists"] = projects_dir.is_dir()
     if projects_dir.is_dir():
@@ -236,6 +238,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         if "user_md_files" in status:
             print(f"  global content: {status['user_md_files']} .md files beyond templates")
         projects_present = "✓" if status.get("projects_dir_exists") else "✗"
+        indexes_present = "✓" if status.get("indexes_dir_exists") else "✗"
+        print(f"  {indexes_present} indexes/ subtree")
         print(f"  {projects_present} projects/ subtree")
         if status.get("projects"):
             for entry in status["projects"]:
@@ -277,6 +281,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         wrote, reason = seed_template(src, target, force=args.force)
         status = "✓ seeded" if wrote else f"– skipped ({reason})"
         print(f"  {status}: {target_name}")
+
+    indexes_dir = dest / "indexes"
+    if not indexes_dir.exists():
+        indexes_dir.mkdir(parents=True, exist_ok=True)
+        print("  ✓ created: indexes/")
+    else:
+        print("  – skipped: indexes/ (already exists)")
 
     # Bootstrap the project-segmentation subtree (PR 1).
     projects_dir = dest / "projects"

@@ -1,14 +1,14 @@
 ---
-description: "Show debugging memory statistics"
-allowed-tools: Bash
+description: "Show build-loop native debugging memory statistics"
+allowed-tools: Bash, Read
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-Display the current state of the debugging memory system:
+Display the current state of build-loop's native debugging memory:
 
 ```bash
-npx @tyroneross/claude-code-debugger status
+find .build-loop/issues -type f -name '*.md' 2>/dev/null | wc -l
 ```
 
 This shows:

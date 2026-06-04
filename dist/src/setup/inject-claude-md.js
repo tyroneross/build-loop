@@ -50,13 +50,13 @@ const STATIC_SECTION = `
 
 ## Debugging Memory
 
-This project uses @tyroneross/claude-code-debugger for debugging memory.
+This project uses build-loop native debugging memory.
 
 **Automatic behavior:**
 - Past debugging sessions are stored and indexed
 - Similar incidents surface automatically when investigating bugs
 - Patterns are extracted from repeated issues
-- Session stop hook mines audit trail for missed incidents
+- Build-loop stores verified incidents under \`.build-loop/issues/\`
 
 **Commands:**
 - \`/debugger "symptom"\` - Search past bugs for similar issues

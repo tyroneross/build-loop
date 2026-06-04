@@ -50,7 +50,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Recent design structures | `design-contract-specialist` reads `references/recent-design-structures.md` and selects by product/workflow/data fit | explicit design-tool artifacts passed as evidence | `fallbacks.md#web-ui` |
 | Screenshot / visual evidence | `showcase:capture`, `showcase:record` | `screenshot` MCP tool | `fallbacks.md#screenshot` |
 | Web content fetching (low LLM) | `scraper-app:web-scraper` SDK | — | `fallbacks.md#web-fetch` (flags LLM cost in report) |
-| Deep debugging | `build-loop:debug-loop` + `debugger` MCP `search`/`store` | — | `fallbacks.md#debug` |
+| Deep debugging | `build-loop:debug-loop` + `build-loop:debugging-memory` native search/store | standalone Coding Debugger only when explicitly installed for cross-project memory | `fallbacks.md#debug` |
 | Bug-pattern memory | `build-loop:debugging-memory` | — | `fallbacks.md#bug-memory` (greps `.build-loop/issues/` + `.bookmark/`) |
 | Agent authoring | `agent-builder:agent-builder-anthropic` | `plugin-dev:agent-development` (if plugin work) | `fallbacks.md#agent-authoring` |
 | DeepAgents / local-LLM agent work | `build-loop:building-with-deepagents` (SubAgent API, middleware stack, per-agent tool scoping, anti-patterns) | — | Read installed `deepagents` source: `python3 -c 'import deepagents, os; print(os.path.dirname(deepagents.__file__))'` then `graph.py` + `middleware/subagents.py` |
@@ -163,7 +163,7 @@ If Phase 1 detects that the task touches plugin components, Phase 3 must map eac
 | Task surface | Skill (authoritative) | Fallback |
 |---|---|---|
 | `.claude-plugin/plugin.json` | `plugin-dev:plugin-structure` | Read `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` — paths must start with `./` |
-| `hooks/hooks.json` or hook scripts | `plugin-dev:hook-development` + run `plugin-dev/scripts/hook-linter.sh` | Command hooks default; silent-exit pattern; NO prompt hooks on PostToolUse/Stop/SessionStart |
+| `hooks/hooks.json` or hook scripts | `plugin-dev:hook-development` + run `plugin-dev/scripts/hook-linter.sh` | Command hooks default; Stop stdout must be valid JSON; advisory/non-blocking unless an explicit safety/security/integrity gate opts into blocking; NO prompt hooks on PostToolUse/Stop/SessionStart |
 | Slash commands (`commands/*.md`) | `plugin-dev:command-development` | — |
 | Subagents (`agents/*.md`) | `plugin-dev:agent-development` + `RossLabs-AI-Toolkit/agents/` | `fallbacks.md#agent-authoring` |
 | MCP servers (`.mcp.json`) | `plugin-dev:mcp-integration` | `.mcp.json` must NOT wrap with `mcpServers` key (Method 1) |

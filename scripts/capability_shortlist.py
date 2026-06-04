@@ -179,7 +179,7 @@ def _plugin_namespace(entry: Dict[str, Any]) -> str:
                 base = base[: -len(suffix)]
         return base.replace("-", "_")
     if "debugger" in name or "debug" in name.split(":")[-1]:
-        # mcp:build-loop-debugger and similar
+        # debug-loop, debugger commands, and optional external debugger tools
         return "debug"
     return name.split(":")[0].split("-")[0]
 

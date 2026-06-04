@@ -9,7 +9,7 @@ user-invocable: true
 
 # Debug Loop — Iterative Root Cause Debugging
 
-A 7-phase debugging loop: investigate via causal tree analysis, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures.
+A 7-phase debugging loop: investigate with structured root-cause methods, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures.
 
 ## Scope Check
 
@@ -29,7 +29,7 @@ Before entering the loop, assess whether it's warranted. The trigger is the **ve
 
 **Goal**: Understand what's actually failing and why, not just what it looks like.
 
-1. **Search debugging memory** — use the debugger `search` MCP tool with the symptom. Note any related incidents
+1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Note related incidents from local build-loop memory and optional standalone Coding Debugger memory when available.
 2. **Reproduce the issue** — identify exact steps, commands, or conditions that trigger the bug
 3. **Deploy root-cause-investigator agent** — pass the symptom and reproduction steps for causal tree analysis. The agent explores multiple branches (not a single chain), prioritizes by evidence strength, and prunes with evidence
 4. **Research gate** — if the investigator flags unfamiliar error codes, library behavior, or version-specific issues:
@@ -39,6 +39,21 @@ Before entering the loop, assess whether it's warranted. The trigger is the **ve
 5. **Assess completeness** — does the investigation explain ALL reported symptoms? Check for multi-causal bugs (2+ independent root causes)
 
 **Output**: Causal tree (with confirmed and pruned branches), reproduction steps, evidence gathered, research performed
+
+### Root-Cause Frameworks
+
+Use the lightest framework that fits the failure. Stack frameworks only when the current one stalls.
+
+| Framework | Use when | Output |
+|---|---|---|
+| 5 Whys | A symptom has a plausible linear chain and needs a controllable system cause | Five-level why-chain ending in a code, test, config, protocol, or process control |
+| Causal tree / fault tree | Multiple causes could explain the same symptom | Branches with confirming and pruning evidence |
+| Ishikawa / fishbone | The failure may span people/process/code/tooling/data/environment | Category map, then the top 2-3 branches to test |
+| Kepner-Tregoe problem analysis | The issue is intermittent, version-specific, or boundary-sensitive | Is/is-not table: affected/unaffected versions, inputs, users, routes, environments |
+| Differential diagnosis | Several hypotheses look similar from symptoms alone | Ranked hypotheses plus the discriminating test for each |
+| Falsification test | A hypothesis is attractive but under-proven | Smallest test that would disprove it |
+
+For hard fixes, record which framework was used and the decisive evidence. The framework is a thinking scaffold, not a report section unless it clarifies the outcome.
 
 ## Phase 2: HYPOTHESIZE — State the Root Cause
 
@@ -151,9 +166,9 @@ Every item in the report gets one marker:
 
 ### After Reporting
 
-- **Store the incident** via the debugger `store` MCP tool for future retrieval
-- **Record the outcome** via the debugger `outcome` MCP tool
-- **Write state** to `.claude-code-debugger/debug-loop/scorecard.md`
+- **Store the incident** as a native `.build-loop/issues/*.md` note for future retrieval
+- **Record the outcome** through standalone Coding Debugger only if that optional plugin supplied the prior incident
+- **Write state** to `.build-loop/debug-loop/scorecard.md`
 
 ## Iteration Rules
 
@@ -201,11 +216,11 @@ If the bundled assessor coverage isn't enough (e.g., the failure crosses a domai
 Skill("build-loop:debugging-assess") with input { symptom, scope: "global", calledBy: "debug-loop", reason: "stuck-iteration" }
 ```
 
-The native skill is sourced from claude-code-debugger and includes domain-specific assessors (api / database / frontend / performance). It uses the bundled debugger MCP for cross-build memory; if the MCP is unavailable, falls back to local grep across `.build-loop/issues/` and `.build-loop/feedback.md` — no error, just narrower coverage.
+The native skill includes domain-specific assessors (api / database / frontend / performance). It uses build-loop local memory by default and may use standalone Coding Debugger for cross-build memory when available; otherwise it falls back to grep across `.build-loop/issues/` and `.build-loop/feedback.md` with narrower coverage.
 
 ### State Tracking
 
-Write iteration state to `.claude-code-debugger/debug-loop/state.json`:
+Write iteration state to `.build-loop/debug-loop/state.json`:
 
 ```json
 {
@@ -233,7 +248,7 @@ Write iteration state to `.claude-code-debugger/debug-loop/state.json`:
 }
 ```
 
-Create the directory with `mkdir -p .claude-code-debugger/debug-loop/` before writing.
+Create the directory with `mkdir -p .build-loop/debug-loop/` before writing.
 
 ## Process Flow
 

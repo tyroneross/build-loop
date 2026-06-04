@@ -1,8 +1,9 @@
-<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 ---
 name: telemetry
 description: Use when adding observability/telemetry to an app, instrumenting traces/metrics/logs, wiring LLM/agent tracing, choosing a monitoring vendor, or auditing an app for missing telemetry. Triggers — "add telemetry", "add observability", "instrument this", "tracing", "OpenTelemetry/OTel", "LLM observability", "LangChain tracing", "Phoenix/Langfuse/LangSmith", "Crashlytics/Sentry/mobile telemetry", "why is this slow in prod", "no visibility into". OpenTelemetry-first, vendor-neutral.
 ---
+
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
 # Telemetry — OpenTelemetry-first, vendor-neutral
 

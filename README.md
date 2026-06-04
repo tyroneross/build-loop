@@ -75,7 +75,7 @@ User-authored scopes are exempt via a config-driven allowlist (`.build-loop/conf
 
 ### From GitHub (recommended)
 
-Via the RossLabs AI Toolkit marketplace (includes companion plugins — bookmark, claude-code-debugger, research, etc.):
+Via the RossLabs AI Toolkit marketplace (includes companion plugins such as bookmark, Coding Debugger, research, etc.):
 
 ```
 /plugin marketplace add tyroneross/RossLabs-AI-Toolkit
@@ -89,7 +89,7 @@ Or direct from the build-loop source repo alone (build-loop only, no companions)
 /plugin install build-loop@build-loop
 ```
 
-build-loop bundles an MCP server (`build-loop-debugger`) that provides incident-memory tools (`search`, `store`, `outcome`, `read_logs`, `list`). It is wired automatically via `.mcp.json` and starts on first plugin load. The name is plugin-prefixed to coexist with the standalone `claude-code-debugger` plugin's `debugger` server (both can be installed; neither shadows the other).
+build-loop does not register its own MCP server. Deep debugging is native to the build-loop skills; cross-project incident memory can be supplied separately by the standalone Coding Debugger plugin when installed.
 
 ### Manual (local development)
 
@@ -249,12 +249,14 @@ The pattern amortizes Opus cost across many Sonnet subagents. Typical build: Opu
 
 ## Native Architecture & Debugging Skills
 
-Architecture and debugging are used on nearly every build, so build-loop ships its own copies of the canonical NavGator and claude-code-debugger skills under:
+Architecture and debugging are used on nearly every build, so build-loop ships native skills under:
 
 - `skills/architecture/{scan,impact,trace,rules,dead,review}/` — sourced from NavGator
-- `skills/debugging/{memory,store,assess,debug-loop}/` — sourced from claude-code-debugger
+- `skills/debugging/{memory,store,assess,debug-loop}/` — build-loop-native RCA, investigation, memory, and storage workflows adapted from the debugger lineage
 
-Each native SKILL.md frontmatter carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 at copy time). The orchestrator calls them directly in Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
+Each sourced native SKILL.md frontmatter carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 at copy time). The orchestrator calls them directly in Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
+
+Deep debugging remains first-class inside build-loop: causal-tree investigation, 5 Whys, fishbone categories, fault-tree branching, Kepner-Tregoe style problem boundaries, hypothesis falsification, fix verification, scorecards, and critique all live in native skills rather than an MCP process.
 
 Drift detection is a deliberate, opt-in pass:
 
@@ -291,7 +293,7 @@ SessionStart fires an incremental scan when manifest > 24 h old. PreToolUse Edit
 116 capabilities indexed across 6 kinds (agent / skill / command / hook / mcp_tool / script) and 10 categories. Phase 1 invocation is **mandatory** — populates `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion, keeping the orchestrator below the empirical tool-selection ceiling. Phase 2 / 3 dispatchers read the cache instead of re-scoring.
 
 **Memory facade** (`scripts/memory_facade.py`)
-Unified `recall(query, kind, project, limit, skip_postgres)` over four backends — `state.json.runs[]` · canonical `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/` plus migration-mode legacy decisions · Postgres `semantic_facts` · debugger MCP `search`. Graceful degradation throughout; CLI accepts both `memory_facade.py --query ...` and the compatibility form `memory_facade.py recall --query ...`, including `--skip-postgres`.
+Unified `recall(query, kind, project, limit, skip_postgres)` over file-backed and optional database surfaces — `state.json.runs[]` · canonical `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/` plus migration-mode legacy decisions · local SQLite `indexes/semantic_facts.sqlite` · optional Postgres `semantic_facts` mirror. Debugging incident recall is native and file-backed by default; standalone Coding Debugger can provide cross-project MCP-backed recall when installed separately. Graceful degradation throughout; CLI accepts both `memory_facade.py --query ...` and the compatibility form `memory_facade.py recall --query ...`, including `--skip-postgres` for the optional Postgres path.
 
 **Backend health probe** (`scripts/backend_health.py`)
 Phase 1 sub-step probes each memory backend with per-backend 5 s timeout. Output: `runs: OK N | decisions: OK <legacy> + <canonical> | semantic: ok|down | debugger: ok|down`. Envelope cached at `state.json.architecture.backendHealth`. Phase 5 Iterate consumes it to short-circuit Postgres lookups when down.
@@ -303,7 +305,7 @@ Now includes `schema-migration-full-chain` — flags any commit touching writer/
 Phase 4 Review-B gate that runs after a deploy actually executed. Detects a Vercel link (`.vercel/project.json` or `vercel.json`), resolves the latest production deployment, polls `vercel inspect` to a terminal state, then probes the prod root + each changed route. An auth-gated `401`/`403` on a protected route is treated as **healthy** (the function deployed and is running) — only a `5xx`/build-error fails. Infra trouble (CLI missing, not authed) returns `skipped` and never blocks the build. Optional preferred-tier upgrade: the remote Vercel MCP, only if the user adds it to `.mcp.json` (build-loop does not add it). Inline degraded path: `fallbacks.md#web-deploy-verify`.
 
 **Decision capture loop**
-Every architecture violation surfaced by `rules` becomes a deduplicated decision in the canonical episodic store via `scripts/capture_arch_violation.py`. Recurring violations (≥3× across runs) get promoted to project-local lessons by `scripts/promote_violation_to_lesson.py` and one-way-synced into Postgres `semantic_facts` for cross-project recall by `scripts/sync_navgator_lessons.py`.
+Every architecture violation surfaced by `rules` becomes a deduplicated decision in the canonical episodic store via `scripts/capture_arch_violation.py`. Recurring violations (≥3× across runs) get promoted to project-local lessons by `scripts/promote_violation_to_lesson.py` and one-way-synced into local SQLite `semantic_facts` for cross-project recall by `scripts/sync_navgator_lessons.py`. Postgres mirroring is explicit with `--postgres-mirror`.
 
 ## External Skill Dependencies
 
@@ -358,7 +360,7 @@ Package root for Codex installs:
 
 Primary Codex surface:
 - public entrypoint skills from `./codex-skills` when present
-- MCP config from `./.mcp.json` when present
+- public entrypoint skill metadata only; build-loop does not expose a Codex MCP server
 
 Codex adapter files:
 - `skills/build-loop/references/codex-subagents.md`

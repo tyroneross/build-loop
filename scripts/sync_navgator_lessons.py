@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""One-way NavGator lessons → Postgres semantic_facts sync (Chunk 7).
+"""One-way NavGator lessons -> local SQLite semantic-facts sync.
 
 Reads project-local + global NavGator lessons.json files and upserts each
-real (non-template) lesson into ``agent_memory.<schema>.semantic_facts``
+real (non-template) lesson into the local build-loop-memory SQLite index
 with ``subject='lesson:nav:<id>'`` and ``domain='architecture'``.
 
 Cross-project lesson recall happens through the existing recall pipeline;
@@ -30,31 +30,42 @@ For project-local lessons the row's ``project`` column holds this tag.
 For global lessons ``project`` is NULL — that is the cross-project
 sentinel ``recall.py`` already understands.
 
-Upsert
-------
-Postgres-side, ``semantic_facts`` has no UNIQUE constraint on
-``(subject, project)``. We follow the ``sync_db_from_files.py`` pattern:
-DELETE-then-INSERT in a single transaction — idempotent and safe.
+SQLite upsert
+-------------
+The local index lives at ``<memory-root>/indexes/semantic_facts.sqlite`` by
+default. It has a real ``PRIMARY KEY(subject, project_key)`` and uses an
+idempotent upsert.
+
+Postgres mirror
+---------------
+Postgres is optional. Pass ``--postgres-mirror`` to also write
+``agent_memory.<schema>.semantic_facts``. Postgres-side, ``semantic_facts``
+has no UNIQUE constraint on ``(subject, project)``. We follow the
+``sync_db_from_files.py`` pattern: DELETE-then-INSERT in a single transaction.
 
 Embeddings
 ----------
-``scripts/embed_backend.embed`` (MLX default, Ollama fallback). On
-embedding failure we still write the row with ``embedding = NULL`` and
-record the per-lesson error in the JSON output's ``errors`` array.
+The SQLite default does not require embeddings. When ``--postgres-mirror`` is
+set, ``scripts/embed_backend.embed`` is attempted for the Postgres vector
+column. On embedding failure the mirror row is still written with
+``embedding = NULL`` and the JSON output records the per-lesson error.
 
 Failure modes
 -------------
-* Postgres unreachable → log to ``.build-loop/sync_errors.log`` and exit
-  0 with ``errors: ["postgres_unavailable"]``. Best-effort sync; the
-  scout treats this as a soft failure.
+* SQLite write failure -> log to ``.build-loop/sync_errors.log`` and continue
+  with ``errors: ["sqlite_upsert_failed:<lesson_id>"]``.
+* Postgres mirror unreachable -> log to ``.build-loop/sync_errors.log`` and
+  exit 0 with SQLite counts intact plus ``errors: ["postgres_unavailable"]``.
 * Missing/empty/template-only ``lessons.json`` → ``synced: 0`` cleanly.
 * Embedding subsystem unavailable → row written with NULL embedding;
   ``errors`` lists ``embed_unavailable:<lesson_id>``.
 
 Stdout (always JSON):
     {
-      "synced":            <int>,   # project-local rows written
-      "global_synced":     <int>,   # global rows written
+      "synced":            <int>,   # project-local SQLite rows written
+      "global_synced":     <int>,   # global SQLite rows written
+      "postgres_mirrored": <int>,   # project-local Postgres mirror rows
+      "global_postgres_mirrored": <int>,
       "skipped_templates": <int>,
       "errors":            [str],
       "schema_version":    "1.0.0"
@@ -65,19 +76,21 @@ CLI
     --project-only      only sync project-local lessons
     --global-only       only sync ~/.navgator/lessons/global-lessons.json
     --dry-run           don't open a DB connection or write anything
+    --postgres-mirror   also write Postgres semantic_facts
+    --sqlite-db PATH    override local SQLite index path
     --workdir PATH      project root (default: cwd)
     --lessons-file PATH override the lessons source — treat the given file as the
                         single project-local lessons.json and skip both the
                         NavGator project-local + global discovery. Used by
                         Chunk 8's promotion pipeline to feed
                         ``.build-loop/architecture/lessons.json`` through the
-                        same Postgres write path with a different subject prefix.
+                        same write path with a different subject prefix.
     --source-prefix STR override the ``subject = '<prefix><lesson_id>'`` mapping.
                         Default ``lesson:nav:`` (NavGator origin). Chunk 8's
                         promotion script passes ``lesson:bl:`` so build-loop-
                         native lessons land in distinct semantic_facts rows.
 
-DSN resolution (matches build-loop convention from ``scripts/db.py``):
+Postgres DSN resolution (mirror only; matches build-loop convention):
     1. $BUILD_LOOP_DATABASE_URL (preferred, plan-doc convention)
     2. $DATABASE_URL            (fallback, ``db.py`` default)
     3. ~/.config/agent-memory/connection.env
@@ -104,6 +117,8 @@ SYNC_ERRORS_LOG = ".build-loop/sync_errors.log"
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+
+from semantic_index import upsert_lesson as _upsert_sqlite_lesson  # type: ignore  # noqa: E402
 
 
 # ---------- helpers ----------
@@ -214,8 +229,7 @@ def _resolve_dsn() -> str | None:
 
     Delegates to the shared resolver (`scripts/_db_url.py`). Returns None
     when nothing is configured (the shared resolver returns ""); caller
-    treats None as 'postgres unavailable' and exits 0 with the
-    soft-failure envelope.
+    treats None as 'postgres unavailable' only when --postgres-mirror is set.
     """
     from _db_url import resolve_db_url  # noqa: PLC0415
 
@@ -364,7 +378,7 @@ def _upsert_lesson(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="One-way NavGator lessons → Postgres semantic_facts sync"
+        description="One-way NavGator lessons -> local SQLite semantic-facts sync"
     )
     p.add_argument(
         "--workdir",
@@ -384,7 +398,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Do not open a DB connection. Reports what would be synced.",
+        help="Do not open SQLite or Postgres. Reports what would be synced.",
+    )
+    p.add_argument(
+        "--sqlite-db",
+        default=None,
+        help="Override local SQLite semantic index path. Default: <memory-root>/indexes/semantic_facts.sqlite.",
+    )
+    p.add_argument(
+        "--postgres-mirror",
+        action="store_true",
+        help="Also mirror rows into Postgres semantic_facts. Default: SQLite only.",
     )
     p.add_argument(
         "--schema",
@@ -446,6 +470,8 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "synced": 0,
                     "global_synced": 0,
+                    "postgres_mirrored": 0,
+                    "global_postgres_mirrored": 0,
                     "skipped_templates": 0,
                     "errors": ["invalid_flags:project_only_and_global_only_mutually_exclusive"],
                     "schema_version": SCHEMA_VERSION,
@@ -488,15 +514,20 @@ def main(argv: list[str] | None = None) -> int:
     errors: list[str] = []
     synced = 0
     global_synced = 0
+    postgres_mirrored = 0
+    global_postgres_mirrored = 0
 
     if args.dry_run:
         out = {
             "synced": len(project_lessons),
             "global_synced": len(global_lessons),
+            "postgres_mirrored": 0,
+            "global_postgres_mirrored": 0,
             "skipped_templates": skipped_templates,
             "errors": errors,
             "schema_version": SCHEMA_VERSION,
             "dry_run": True,
+            "postgres_mirror": bool(args.postgres_mirror),
         }
         print(json.dumps(out, sort_keys=True))
         return 0
@@ -505,85 +536,127 @@ def main(argv: list[str] | None = None) -> int:
         out = {
             "synced": 0,
             "global_synced": 0,
+            "postgres_mirrored": 0,
+            "global_postgres_mirrored": 0,
             "skipped_templates": skipped_templates,
             "errors": errors,
             "schema_version": SCHEMA_VERSION,
+            "postgres_mirror": bool(args.postgres_mirror),
         }
         print(json.dumps(out, sort_keys=True))
         return 0
 
-    # Open Postgres. Soft-fail to graceful exit on any connection error.
-    try:
-        conn = _open_connection()
-    except Exception as exc:  # noqa: BLE001 - psycopg.OperationalError, RuntimeError, etc.
-        msg = f"postgres_unavailable: {type(exc).__name__}: {exc}"
-        _append_sync_error(workdir, msg)
-        out = {
-            "synced": 0,
-            "global_synced": 0,
-            "skipped_templates": skipped_templates,
-            "errors": ["postgres_unavailable"],
-            "schema_version": SCHEMA_VERSION,
-        }
-        print(json.dumps(out, sort_keys=True))
-        return 0
+    sqlite_db = Path(args.sqlite_db).expanduser().resolve() if args.sqlite_db else None
 
-    try:
-        for lesson in project_lessons:
-            lid = str(lesson.get("id", ""))
-            embedding = _embed_safely(
-                str(lesson.get("pattern", "") or ""), errors, lid
-            )
-            try:
-                _upsert_lesson(
-                    conn,
-                    schema=schema,
-                    lesson=lesson,
-                    project=project_tag,
-                    embedding=embedding,
-                    subject_prefix=subject_prefix,
-                )
-                synced += 1
-            except Exception as exc:  # noqa: BLE001 - psycopg + unforeseen
-                conn.rollback()
-                msg = f"upsert_failed:{lid}: {type(exc).__name__}: {exc}"
-                errors.append(f"upsert_failed:{lid}")
-                _append_sync_error(workdir, msg)
-                # Re-open implicit transaction by issuing a new statement on
-                # next iteration; psycopg auto-begins.
-        for lesson in global_lessons:
-            lid = str(lesson.get("id", ""))
-            embedding = _embed_safely(
-                str(lesson.get("pattern", "") or ""), errors, lid
-            )
-            try:
-                _upsert_lesson(
-                    conn,
-                    schema=schema,
-                    lesson=lesson,
-                    project=None,
-                    embedding=embedding,
-                    subject_prefix=subject_prefix,
-                )
-                global_synced += 1
-            except Exception as exc:  # noqa: BLE001
-                conn.rollback()
-                msg = f"upsert_failed_global:{lid}: {type(exc).__name__}: {exc}"
-                errors.append(f"upsert_failed:{lid}")
-                _append_sync_error(workdir, msg)
-        conn.commit()
-    finally:
+    for lesson in project_lessons:
+        lid = str(lesson.get("id", ""))
+        promoted = bool(lesson.get("promoted", False))
         try:
-            conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+            _upsert_sqlite_lesson(
+                lesson=lesson,
+                project=project_tag,
+                subject_prefix=subject_prefix,
+                confidence=_confidence_float_for(promoted),
+                confidence_source=_confidence_source_for(promoted),
+                db_path=sqlite_db,
+                tool=TOOL,
+                domain=DOMAIN,
+            )
+            synced += 1
+        except Exception as exc:  # noqa: BLE001
+            msg = f"sqlite_upsert_failed:{lid}: {type(exc).__name__}: {exc}"
+            errors.append(f"sqlite_upsert_failed:{lid}")
+            _append_sync_error(workdir, msg)
+
+    for lesson in global_lessons:
+        lid = str(lesson.get("id", ""))
+        promoted = bool(lesson.get("promoted", False))
+        try:
+            _upsert_sqlite_lesson(
+                lesson=lesson,
+                project=None,
+                subject_prefix=subject_prefix,
+                confidence=_confidence_float_for(promoted),
+                confidence_source=_confidence_source_for(promoted),
+                db_path=sqlite_db,
+                tool=TOOL,
+                domain=DOMAIN,
+            )
+            global_synced += 1
+        except Exception as exc:  # noqa: BLE001
+            msg = f"sqlite_upsert_failed_global:{lid}: {type(exc).__name__}: {exc}"
+            errors.append(f"sqlite_upsert_failed:{lid}")
+            _append_sync_error(workdir, msg)
+
+    if args.postgres_mirror:
+        # Open Postgres. Soft-fail to graceful exit on any connection error.
+        try:
+            conn = _open_connection()
+        except Exception as exc:  # noqa: BLE001 - psycopg.OperationalError, RuntimeError, etc.
+            msg = f"postgres_unavailable: {type(exc).__name__}: {exc}"
+            _append_sync_error(workdir, msg)
+            errors.append("postgres_unavailable")
+            conn = None
+
+        if conn is not None:
+            try:
+                for lesson in project_lessons:
+                    lid = str(lesson.get("id", ""))
+                    embedding = _embed_safely(
+                        str(lesson.get("pattern", "") or ""), errors, lid
+                    )
+                    try:
+                        _upsert_lesson(
+                            conn,
+                            schema=schema,
+                            lesson=lesson,
+                            project=project_tag,
+                            embedding=embedding,
+                            subject_prefix=subject_prefix,
+                        )
+                        postgres_mirrored += 1
+                    except Exception as exc:  # noqa: BLE001 - psycopg + unforeseen
+                        conn.rollback()
+                        msg = f"upsert_failed:{lid}: {type(exc).__name__}: {exc}"
+                        errors.append(f"upsert_failed:{lid}")
+                        _append_sync_error(workdir, msg)
+                for lesson in global_lessons:
+                    lid = str(lesson.get("id", ""))
+                    embedding = _embed_safely(
+                        str(lesson.get("pattern", "") or ""), errors, lid
+                    )
+                    try:
+                        _upsert_lesson(
+                            conn,
+                            schema=schema,
+                            lesson=lesson,
+                            project=None,
+                            embedding=embedding,
+                            subject_prefix=subject_prefix,
+                        )
+                        global_postgres_mirrored += 1
+                    except Exception as exc:  # noqa: BLE001
+                        conn.rollback()
+                        msg = f"upsert_failed_global:{lid}: {type(exc).__name__}: {exc}"
+                        errors.append(f"upsert_failed:{lid}")
+                        _append_sync_error(workdir, msg)
+                conn.commit()
+            finally:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     out = {
         "synced": synced,
         "global_synced": global_synced,
+        "postgres_mirrored": postgres_mirrored,
+        "global_postgres_mirrored": global_postgres_mirrored,
         "skipped_templates": skipped_templates,
         "errors": errors,
         "schema_version": SCHEMA_VERSION,
+        "postgres_mirror": bool(args.postgres_mirror),
+        "sqlite_db": str(sqlite_db) if sqlite_db else None,
     }
     print(json.dumps(out, sort_keys=True))
     return 0

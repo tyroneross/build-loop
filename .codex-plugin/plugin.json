@@ -1,7 +1,7 @@
 {
   "name": "build-loop",
-  "version": "0.27.0",
-  "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2. Optional UI design gates. Bundled debug-loop, debugging-memory, logging-tracer skills + MCP incident-memory server. Orchestrator owns when-to-fire; bundled skills own procedural detail; bridges are optional escalation hops to supporting plugins for extended capability.",
+  "version": "0.28.0",
+  "description": "Multi-phase build orchestration with native debugging: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2. Optional UI design gates. Native debug-loop, debugging-memory, and logging-tracer skills provide root-cause investigation without a bundled MCP server. Orchestrator owns when-to-fire; bundled skills own procedural detail; bridges are optional escalation hops to supporting plugins for extended capability.",
   "author": {
     "name": "Tyrone Ross",
     "url": "https://github.com/tyroneross"
@@ -27,11 +27,10 @@
     "incident-memory"
   ],
   "skills": "./codex-skills",
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Build Loop",
     "shortDescription": "Multi-phase build orchestration with review gates, UI validation, debugging, and a Codex subagent adapter.",
-    "longDescription": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2. Optional UI design gates. Bundled debug-loop, debugging-memory, logging-tracer skills + MCP incident-memory server. Orchestrator owns when-to-fire; bundled skills own procedural detail; bridges are optional escalation hops to supporting plugins for extended capability.",
+    "longDescription": "Multi-phase build orchestration with native debugging: assess, plan, execute, review, iterate. Plan-verify gate on Phase 2. Optional UI design gates. Native debug-loop, debugging-memory, and logging-tracer skills provide root-cause investigation without a bundled MCP server. Orchestrator owns when-to-fire; bundled skills own procedural detail; bridges are optional escalation hops to supporting plugins for extended capability.",
     "developerName": "Ross Labs",
     "category": "Coding",
     "capabilities": [

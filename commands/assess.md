@@ -20,9 +20,9 @@ Analyze "{{ARGUMENTS}}" across multiple domains in parallel.
 
 Spawn multiple Task calls in a single message for detected domains.
 
-**3. Search memory** for similar past incidents:
-```bash
-npx @tyroneross/claude-code-debugger debug "{{ARGUMENTS}}"
+**3. Search memory** for similar past incidents via native build-loop memory:
+```
+Skill("build-loop:debugging-memory-search") with input { symptom: "{{ARGUMENTS}}" }
 ```
 
 **4. Present results** ranked by confidence, with recommended action sequence.

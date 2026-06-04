@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-# Stop hook: build-loop run-entry finalizer + F-criteria gate
+# Stop hook: build-loop run-entry finalizer + F-criteria advisory
 #
-# Fires on every top-level Claude Stop event. Skips silently unless this
+# Fires on every top-level Claude Stop event. Emits valid JSON and skips unless this
 # is a completed build-loop run (cwd/.build-loop/state.json exists and
 # phase == "report").
 #
 # Checks performed in order:
-#   1. agent_id present => subagent stop, exit 0 silently
-#   2. state.json missing or phase != "report" => not a build-loop run, exit 0
-#   3. Idempotency: session_id already in runs[] => exit 0 silently
+#   1. agent_id present => subagent stop, emit {}
+#   2. state.json missing or phase != "report" => not a build-loop run, emit {}
+#   3. Idempotency: session_id already in runs[] => emit {}
 #   4. Invoke write_run_entry.py (or minimal inline append if absent)
-#   5. Check latest scorecard for failed F-criteria not held => block if found
+#   5. Check latest scorecard for failed F-criteria not held => advisory by default
 #
 # Always exits 0 (hook contract: non-zero = hook failure, not a build block).
-# Blocking Claude from stopping is done via JSON {"decision":"block",...}.
+# Blocking Stop is opt-in only: set BUILD_LOOP_STOP_HOOK_BLOCKING=1 for an
+# explicit safety/integrity gate.
 #
 # Security: all values from the stdin event JSON or filesystem are passed
 # to embedded Python via environment variables, never via shell string
 # interpolation into Python source. Shell injection class is not possible.
 
 set -euo pipefail
+
+emit_empty() {
+    printf '{}\n'
+}
 
 INPUT=$(cat)
 export _BL_INPUT="$INPUT"
@@ -51,6 +56,7 @@ EOF_VARS
 [ "$CWD" = "-" ] && CWD=""
 
 if [ -n "$AGENT_ID" ]; then
+    emit_empty
     exit 0
 fi
 
@@ -61,6 +67,7 @@ export _BL_SESSION_ID="$SESSION_ID"
 
 # Step 2: check state.json exists and phase == "report"
 if [ ! -f "$STATE_FILE" ]; then
+    emit_empty
     exit 0
 fi
 
@@ -75,6 +82,7 @@ PY
 ) || PHASE=""
 
 if [ "$PHASE" != "report" ]; then
+    emit_empty
     exit 0
 fi
 
@@ -95,6 +103,7 @@ PY
 ) || ALREADY="no"
 
     if [ "$ALREADY" = "yes" ]; then
+        emit_empty
         exit 0
     fi
 fi
@@ -206,15 +215,28 @@ fi
 # Emit the response JSON
 export _BL_FCRIT_BLOCK="$FCRIT_BLOCK"
 export _BL_RUN_ENTRY_STATUS="$RUN_ENTRY_STATUS"
+export _BL_STOP_HOOK_BLOCKING="${BUILD_LOOP_STOP_HOOK_BLOCKING:-}"
 
 python3 <<'PY'
 import json, os
 fcrit = os.environ.get('_BL_FCRIT_BLOCK', '')
 status = os.environ.get('_BL_RUN_ENTRY_STATUS', 'unknown')
-if fcrit:
+blocking_raw = os.environ.get('_BL_STOP_HOOK_BLOCKING', '').strip().lower()
+blocking = blocking_raw in {'1', 'true', 'yes', 'on'}
+if fcrit and blocking:
     print(json.dumps({
         'decision': 'block',
         'reason': f'F-criterion {fcrit} failed; build cannot finalize'
+    }))
+elif fcrit:
+    print(json.dumps({
+        'hookSpecificOutput': {
+            'hookEventName': 'Stop',
+            'additionalContext': (
+                f'build-loop run entry {status}; F-criterion {fcrit} failed. '
+                'Advisory only; continue investigation and do not claim done until validation passes.'
+            )
+        }
     }))
 else:
     print(json.dumps({

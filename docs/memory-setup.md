@@ -16,7 +16,7 @@ The build-loop public repo ships only the **scaffolding** — templates and the 
 
 ```bash
 # Bootstrap with templates (creates ~/dev/git-folder/build-loop-memory/ if missing,
-# seeds constitution.md + MEMORY.md from templates/memory/)
+# seeds constitution.md + MEMORY.md from templates/memory/, plus indexes/ and projects/)
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
 
 # Check status anytime
@@ -29,8 +29,9 @@ This creates:
 ~/dev/git-folder/build-loop-memory/
 ├── constitution.md     # template — replace with your invariants
 ├── MEMORY.md           # template — index for entries you add
-└── indexes/
-    └── updates.jsonl   # created on first memory mutation; global update ledger
+├── indexes/            # rebuildable local indexes, including semantic_facts.sqlite
+│   └── updates.jsonl   # created on first memory mutation; global update ledger
+└── projects/           # project-scoped memory trees
 ```
 
 ## Linking to a private repo

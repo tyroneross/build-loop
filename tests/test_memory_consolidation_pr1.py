@@ -279,7 +279,7 @@ def test_f17_recall_merges_global_and_project(patched_env, tmp_path):
     PR 3 (2026-05-13): legacy_project tier is REMOVED. recall() merges only
     global + project. Files at the legacy per-repo location are invisible.
     """
-    from _paths import project_memory_dir_for_project  # type: ignore
+    from _paths import project_lessons_dir  # type: ignore
     from memory_facade import recall  # type: ignore
 
     repo = tmp_path / "myapp"
@@ -288,19 +288,22 @@ def test_f17_recall_merges_global_and_project(patched_env, tmp_path):
 
     mem_root = Path(os.environ["BUILD_LOOP_MEMORY_ROOT"])
 
+    global_lessons = mem_root / "lessons"
+    global_lessons.mkdir()
+
     # Global tier: feedback_global.md (unique to global)
-    (mem_root / "feedback_global.md").write_text(
+    (global_lessons / "feedback_global.md").write_text(
         "---\nname: feedback-global\ndescription: only at global\n---\n# Global lesson\n",
         encoding="utf-8",
     )
     # Same filename in global AND project to test override
-    (mem_root / "feedback_shared.md").write_text(
+    (global_lessons / "feedback_shared.md").write_text(
         "---\nname: feedback-shared\ndescription: GLOBAL VERSION\n---\nglobal body\n",
         encoding="utf-8",
     )
 
     # Project tier: same filename + a unique one
-    project_dir = project_memory_dir_for_project("myapp")
+    project_dir = project_lessons_dir("myapp")
     project_dir.mkdir(parents=True)
     (project_dir / "feedback_shared.md").write_text(
         "---\nname: feedback-shared\ndescription: PROJECT VERSION\n---\nproject body\n",

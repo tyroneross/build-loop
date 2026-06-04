@@ -10,7 +10,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 - **KISS + DRY — code and output (governing principle).** Before adding a rule, gate, schema, script, agent, or report section, first try to (a) delete something, (b) extend something that already exists, or (c) do nothing. A new mechanism must earn its place against a *named, observed* failure in this repo — never a cited statistic or a blog claim. Prefer one rule that covers many cases over many narrow rules; prefer one source of truth over duplicated logic. For output: say it once, in the fewest words that still carry the evidence; omit empty sections; headline first, detail on demand. Fewer rules and fewer lines is the default — growth is the exception that must be justified out loud. This principle outranks the others below when they tension: when in doubt, simplify.
   - **Every issue is a systems issue.** When something doesn't work, debugging is not done at the fix — it's done when the *system* is updated so the class of issue can't recur: a durable guidance, check, simplification, or restructure that addresses the root cause and the meta-point, never a surface patch. The default corrective move is to **reduce complexity** — fewer lines, fewer dependencies, fewer steps — or, when size is irreducible, better structure (split a large file into smaller ones, progressive disclosure) so the next agent or human navigates it with minimal cognitive load. The goal is the highest-quality, most efficient, durable, scalable outcome. **Scalable usually means simple over compact:** every node (rule, script, agent, step, dependency) is a failure site, so prefer more-readable-but-simpler over clever-but-dense.
-- Self-sufficient: works without any specific tool installed. Build-loop owns its UI design route through `build-loop:ui-design`, `design-contract-specialist`, `skills/build-loop/references/recent-design-structures.md`, `skills/ui-design/references/ui-guidance-sources.md`, `ui-validator`, and `skills/build-loop/fallbacks.md`; external design tools are explicit-only accelerators, not automatic build routes. (As of 0.6.0 the debugger is bundled internally; see KNOWN-ISSUES "Plugin merge — 2026-05-02".)
+- Self-sufficient: works without any specific tool installed. Build-loop owns its UI design route through `build-loop:ui-design`, `design-contract-specialist`, `skills/build-loop/references/recent-design-structures.md`, `skills/ui-design/references/ui-guidance-sources.md`, `ui-validator`, and `skills/build-loop/fallbacks.md`; external design tools are explicit-only accelerators, not automatic build routes. Native debugging is bundled as skills, not as an MCP server.
 - North star first: every build captures app/repo purpose, update intent, user value, and non-goals, then passes that intent to each subagent.
 - Beauty in the basics: core flows, real data, clear hierarchy, working controls, useful states, and accurate information matter more than extra surface area.
 - Modular by default, not by dogma: prefer high cohesion, loose coupling, stable interfaces, scalable boundaries, and MECE file/agent ownership unless a documented exception better serves the use case.
@@ -22,13 +22,13 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 - Commit and push authorship stays human or service-owned. Agent involvement can be noted in commit bodies, run notes, `.build-loop` context, judge decisions, or auxiliary metadata, but official git/GitHub author, committer, push actor, release actor, or equivalent platform actor fields must not be set to Claude Code, Codex, or another agent identity.
 - Research persistent problems before retrying — when a fix doesn't hold, the same criterion fails repeatedly, or behavior contradicts your model, escalate to internet research from trusted sources (T1 official docs/issue trackers first) to find the root cause. `root-cause-investigator` carries WebSearch; use it. A documented upstream bug or library/terminal behavior often explains an "impossible" intermittent failure faster than another local iteration — and stops you layering a workaround over a known root cause.
 - Learn from recurring patterns — auto-draft experimental skills with A/B comparison, user keeps or removes
-- Cherry-pick from companion tools, don't embed — except when integration density justifies a merge. Companion repos stay independent; build-loop consumes their artifacts only when the user or plan explicitly asks. claude-code-debugger was merged inline in 0.6.0 because the debugger is invoked from inside the build loop on every Review-B / Iterate failure (multiple times per build) — keeping it external created loose coupling without a benefit. Other companions remain separate.
+- Cherry-pick from companion tools, don't embed — except when integration density justifies a merge. Companion repos stay independent; build-loop consumes their artifacts only when the user or plan explicitly asks. Build-loop keeps native debugging skills because Review-B and Iterate need deep investigation repeatedly; cross-project debugger memory stays optional in standalone Coding Debugger. Other companions remain separate.
 
 ## Claude Code Integration
 
 - `/build-loop:run [goal]` — triggers the build-loop skill which orchestrates all 5 phases (the bare `/build-loop` form is deprecated due to a namesake collision with the skill of the same qualified name; see `KNOWN-ISSUES.md`)
 - `/build-loop:debug <symptom>` — deep iterative root-cause investigation via the bundled `debug-loop` skill (also auto-invoked by the orchestrator on Review-B failures and Iterate attempts 2 and 3)
-- `/build-loop:debugger`, `/build-loop:debugger-detail`, `/build-loop:debugger-scan`, `/build-loop:debugger-status`, `/build-loop:assess` — bundled debugger surface
+- `/build-loop:debugger`, `/build-loop:debugger-detail`, `/build-loop:debugger-scan`, `/build-loop:debugger-status`, `/build-loop:assess` — native debugger command surface backed by build-loop skills
 - `/build-loop:self-improve` — run Phase 6 Learn alone against recent runs without a new build
 - Build orchestrator agent (Opus 4.7) coordinates phase execution and spawns parallel subagents
 - Fact-checker and mock-scanner agents run in parallel during Review sub-step D
@@ -89,7 +89,7 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 Architecture and debugging are load-bearing for nearly every build, so build-loop owns native copies under:
 
 - `skills/architecture/{scan,impact,trace,rules,dead,review}/SKILL.md` — copied from NavGator (`~/dev/git-folder/NavGator/`)
-- `skills/debugging/{memory,store,assess,debug-loop}/SKILL.md` — copied from claude-code-debugger (`~/dev/git-folder/claude-code-debugger/`)
+- `skills/debugging/{memory,store,assess,debug-loop}/SKILL.md` — build-loop-native debugging workflows adapted from the standalone debugger lineage
 
 Each native SKILL.md carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks both trees, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md.
 
@@ -124,23 +124,24 @@ For parity with non-Claude tools (which lack SessionStart hooks), the host-neutr
 - Plugin manifest: `.claude-plugin/plugin.json`
 - Test changes by installing locally: add repo path to `~/.claude/settings.json` under `projects.plugins`
 - Runtime data goes in `.build-loop/` in consumer projects, not in the plugin repo
+- Hooks are advisory and non-blocking by default. Stop hooks must emit valid JSON when they emit stdout, exit 0, and reserve blocking for explicit safety/security/integrity gates.
 
 
 ## Debugging Memory
 
-This project uses @tyroneross/claude-code-debugger for debugging memory.
+This project uses build-loop-native debugging memory. Standalone Coding Debugger can be installed separately for cross-project memory.
 
 **Automatic behavior:**
-- Past debugging sessions are stored and indexed
-- Similar incidents surface automatically when investigating bugs
-- Patterns are extracted from repeated issues
-- Session stop hook mines audit trail for missed incidents
+- Resolved incidents are stored under `.build-loop/issues/`
+- Similar local incidents surface before hard debugging work
+- Patterns from repeated issues can be promoted during Learn
+- Optional Coding Debugger mirror adds cross-project recall when installed
 
 **Commands:**
-- `/debugger "symptom"` - Search past bugs for similar issues
-- `/debugger` - Show recent bugs, pick one to debug
-- `/debugger-detail <ID>` - Drill into a specific incident or pattern
-- `/debugger-status` - Show memory statistics
-- `/debugger-scan` - Scan recent sessions for debugging work
+- `/build-loop:debug <symptom>` - Run deep root-cause investigation
+- `/build-loop:debugger "symptom"` - Search past local bugs for similar issues
+- `/build-loop:debugger-detail <ID>` - Drill into a specific incident or pattern
+- `/build-loop:debugger-status` - Show memory statistics
+- `/build-loop:debugger-scan` - Scan recent sessions for debugging work
 
-The system learns from your debugging sessions automatically.
+The system learns through explicit Review-F storage and Learn-phase promotion.

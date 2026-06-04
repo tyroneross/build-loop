@@ -6,7 +6,7 @@
 
 Claude Code installs MCP servers per-plugin. When two plugins each register a server with the same bare name (e.g., `debugger`, `memory`, `search`), only one wins at runtime; the other is silently shadowed. There's no error message — the second plugin's MCP tools just don't appear under the qualified name the second plugin's authors thought they did.
 
-The build-loop plugin and the standalone `claude-code-debugger` plugin both used to register a server named `debugger` in their respective `.mcp.json` files. Anyone who installed both got nondeterministic resolution. The fix landed in build-loop 0.8.2: rename the bundled server to `build-loop-debugger` so both can coexist. This test guards against a regression by failing the `ServerNamingHygiene` check if any future server name lacks a plugin-name prefix and matches a known collision-prone identifier.
+Build-loop previously registered a bundled debugger MCP server, while the standalone debugger plugin also registered a server named `debugger`. Anyone who installed both got nondeterministic resolution. Build-loop now avoids that entire class by not shipping an MCP server; this test remains useful for plugins that do expose MCP servers.
 
 The script also catches the broader category of "manifest looks fine but the binary it points at doesn't actually exist." A typical failure mode: someone changes a TypeScript build output path, or forgets to run `npm run build` before tagging a release. The plugin installs cleanly, but on first MCP call the runtime spawns `node` with a missing path, and the server crashes silently.
 
@@ -51,13 +51,13 @@ OK
 Before the rename, `test_server_names_avoid_common_unprefixed_names` would skip with:
 
 ```
-SKIP: server name(s) ['debugger'] are not plugin-prefixed and may collide with another plugin registering the same name. Consider renaming to e.g. 'build-loop-debugger'. Non-blocking — many plugins use bare names today.
+SKIP: server name(s) ['debugger'] are not plugin-prefixed and may collide with another plugin registering the same name. Consider renaming to e.g. 'my-plugin-debugger'. Non-blocking — many plugins use bare names today.
 ```
 
 If a future change moved the server binary without updating `.mcp.json`:
 
 ```
-AssertionError: server 'build-loop-debugger' references '${CLAUDE_PLUGIN_ROOT}/dist/src/mcp/server.js' which resolves to /Users/.../dist/src/mcp/server.js — not present (run `npm run build` if TS source?)
+AssertionError: server 'my-plugin-debugger' references '${CLAUDE_PLUGIN_ROOT}/dist/mcp/server.js' which resolves to /Users/.../dist/mcp/server.js — not present (run `npm run build` if TS source?)
 ```
 
 ## Edge cases and known limits
@@ -69,12 +69,12 @@ AssertionError: server 'build-loop-debugger' references '${CLAUDE_PLUGIN_ROOT}/d
 
 ## Verification / how do we know it works
 
-The 0.8.2 build-loop rename was bootstrapped against this test: pre-rename, the test skipped with the warning text shown above; post-rename, the test passes cleanly. The path-resolution check was verified by deliberately introducing a typo in `.mcp.json` (changing `dist/src` to `dst/src`) — the test failed with the expected error message, and once corrected, passed.
+The original build-loop MCP collision fix was bootstrapped against this test. After Build Loop removed its MCP server, the same test now skips cleanly for Build Loop and remains available for plugins that declare `mcpServers`. The path-resolution check was verified by deliberately introducing a typo in `.mcp.json` (changing `dist/mcp` to `dst/mcp`) — the test failed with the expected error message, and once corrected, passed.
 
 ## Related files
 
-- `.mcp.json` — the file under test
-- `.claude-plugin/plugin.json` — declares which `.mcp.json` to load
-- `KNOWN-ISSUES.md` — documents the bundled-vs-standalone collision and the 0.8.2 fix
+- `.mcp.json` — the file under test when a plugin ships MCP servers
+- `.claude-plugin/plugin.json` — declares which `.mcp.json` to load when present
+- `KNOWN-ISSUES.md` — documents historical bundled-vs-standalone collisions
 - `skills/plugin-tests/SKILL.md` — describes when this test runs
 - `agents/build-orchestrator.md` §Phase 4 Review-B — auto-dispatch

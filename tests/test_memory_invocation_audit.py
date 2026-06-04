@@ -103,18 +103,16 @@ def test_runs_tail_handles_missing_state_json(tmp_path: Path) -> None:
     assert result["verdict"] == "graceful_degradation"
 
 
-# --- 4. Debugger MCP unreachability -> reason, not exception --------------
+# --- 4. Native debugger incident absence -> reason, not exception ---------
 
-def test_debugger_mcp_unreachable_returns_reason(tmp_path: Path) -> None:
-    """When npx is missing or returns non-zero, the probe records a reason and returns count 0."""
+def test_debugger_local_incidents_absent_returns_reason(tmp_path: Path) -> None:
+    """When local incident notes are absent, the probe records a reason and returns count 0."""
     from audit_memory_invocation import probe_debugger_mcp  # type: ignore
 
     result = probe_debugger_mcp(tmp_path)
-    # On this machine npx is present but the package is unlikely installed in CI.
-    # Either way: invocation produces a structured row.
     assert result["result_count"] == 0 or isinstance(result["result_sample"], list)
     if result["verdict"] == "graceful_degradation":
-        assert "mcp_unavailable" in (result.get("error") or "") or "npx not on PATH" in (result.get("error") or "")
+        assert "debugger_unavailable" in (result.get("error") or "")
 
 
 def test_recall_facade_records_postgres_unavailable_when_no_db_url(

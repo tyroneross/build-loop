@@ -985,7 +985,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Print the full JSON packet.")
     parser.add_argument("--brief", action="store_true", help="Print only the agent brief.")
     parser.add_argument("--include-postgres", action="store_true", help="Include the semantic Postgres backend in canonical memory recall.")
-    parser.add_argument("--include-debugger", action="store_true", help="Include the debugger MCP backend in canonical memory recall.")
+    parser.add_argument("--include-debugger", action="store_true", help="Include native debugging incidents in canonical memory recall.")
     parser.add_argument("--include-rally", action="store_true", help="Force the Rally/coordination status check even when no coordination context is detected.")
     parser.add_argument("--max-excerpt-chars", type=int, default=DEFAULT_MAX_EXCERPT_CHARS)
     parser.add_argument("--rollout-limit", type=int, default=3)

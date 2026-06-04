@@ -274,8 +274,8 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         )
         # Hook contract: never fail the session.
         self.assertEqual(cp.returncode, 0, msg=f"hook exited nonzero. stdout={cp.stdout!r} stderr={cp.stderr!r}")
-        # Backgrounding contract: terminal stays clean.
-        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+        # Backgrounding contract: no user-facing noise beyond valid no-op JSON.
+        self.assertEqual(json.loads(cp.stdout), {}, msg=f"unexpected stdout: {cp.stdout!r}")
         self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
 
         # Phase C: decision files land in <AGENT_MEMORY_ROOT>/decisions/<project>/.
@@ -383,8 +383,8 @@ class StopHookHardeningTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_hook_command_suppresses_output(self) -> None:
-        """The exact hook command produces no stdout/stderr to the calling shell."""
+    def test_hook_command_emits_noop_json(self) -> None:
+        """The exact hook command emits valid no-op JSON and no stderr."""
         cmd = _extract_scan_command_from_hooks_json()
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
@@ -402,12 +402,12 @@ class StopHookHardeningTests(unittest.TestCase):
             timeout=15,
         )
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr!r}")
-        # Critical: terminal stays clean.
-        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+        # Critical: Stop hook stdout remains valid JSON.
+        self.assertEqual(json.loads(cp.stdout), {}, msg=f"unexpected stdout: {cp.stdout!r}")
         self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
 
     def test_hook_lock_contention_skips_silently(self) -> None:
-        """When another scan holds the lock, the hook exits 0 with no terminal output."""
+        """When another scan holds the lock, the hook exits 0 with no-op JSON."""
         import fcntl
         # Remove the .no-capture flag so the script reaches the lock-acquire path.
         no_cap = self.workdir / ".episodic" / ".no-capture"
@@ -440,7 +440,7 @@ class StopHookHardeningTests(unittest.TestCase):
                 timeout=15,
             )
             self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr!r}")
-            self.assertEqual(cp.stdout, "")
+            self.assertEqual(json.loads(cp.stdout), {})
             self.assertEqual(cp.stderr, "")
 
             # The lock-skip should be visible in the log file.
@@ -468,7 +468,7 @@ class StopHookHardeningTests(unittest.TestCase):
         qwen3:8b (cold start 30-120s) and hold the global lock for that
         long, polluting subsequent tests. We test by directly invoking the
         scanner script with ``--mock-llm-output`` (empty array) wrapped in
-        ``nohup ... & exit 0`` to mirror the hook's backgrounding shape
+            ``nohup ... & printf '{}'`` to mirror the hook's backgrounding shape
         without the live LLM work. This isolates the latency concern
         (does ``& exit 0`` return fast?) from the LLM-call concern
         (covered by the live-qwen integration test).
@@ -494,7 +494,7 @@ class StopHookHardeningTests(unittest.TestCase):
             f'--mock-llm-output "{mock_path}" '
             f'--log-file "{log_file}" '
             f'--lock-file "{lock_file}" '
-            f'</dev/null >/dev/null 2>&1 & exit 0'
+            f'</dev/null >/dev/null 2>&1 & printf \'{{}}\''
         )
 
         t0 = time.perf_counter()
@@ -508,7 +508,7 @@ class StopHookHardeningTests(unittest.TestCase):
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr!r}")
-        self.assertEqual(cp.stdout, "", msg=f"unexpected stdout: {cp.stdout!r}")
+        self.assertEqual(json.loads(cp.stdout), {}, msg=f"unexpected stdout: {cp.stdout!r}")
         self.assertEqual(cp.stderr, "", msg=f"unexpected stderr: {cp.stderr!r}")
         self.assertLess(
             elapsed_ms,

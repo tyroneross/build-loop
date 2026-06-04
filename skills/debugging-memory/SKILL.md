@@ -9,14 +9,14 @@ user-invocable: false
 
 # Debugging Memory Workflow
 
-This skill integrates the claude-code-debugger memory system into debugging workflows. The core principle: **never solve the same bug twice**.
+This skill integrates build-loop's native debugging memory into debugging workflows. The core principle: **never solve the same bug twice**.
 
 ## Memory-First Approach
 
-Before investigating any bug, always check the debugging memory using the debugger `search` MCP tool:
+Before investigating any bug, always check build-loop's native debugging memory:
 
 ```
-Use the debugger search tool with the symptom description.
+Search `.build-loop/issues/` and invoke `build-loop:debugging-memory-search` with the symptom description.
 ```
 
 The search returns a **verdict** with matching incidents and patterns.
@@ -49,9 +49,9 @@ When `KNOWN_FIX` direct-apply is blocked, the caller should treat the verdict as
 
 Results are returned as compact summaries. Drill into matches on demand:
 
-1. **Initial search**: Use the debugger `search` MCP tool — returns verdict + compact matches
-2. **Drill down**: Use the debugger `detail` MCP tool with the ID to load full incident/pattern data
-3. **Outcome tracking**: Use the debugger `outcome` MCP tool to record whether the fix worked, failed, or was modified
+1. **Initial search**: Use `build-loop:debugging-memory-search` — returns verdict + compact matches when structured memory exists
+2. **Drill down**: Read the matching `.build-loop/issues/<id>.md` incident note for full context
+3. **Outcome tracking**: Use `build-loop:debugging-store` after verification to record whether the fix worked, failed, or was modified
 
 ## Visibility
 
@@ -126,56 +126,62 @@ Confirm the fix works:
 
 ## Review-F outcome feedback (closing the memory-first loop)
 
-When a build / debugging session completes, close the feedback loop in two steps. Both are required — skipping either degrades the verdict classifier on future runs.
+When a build / debugging session completes, close the feedback loop locally. If standalone Coding Debugger supplied cross-project memory for this run, mirror the result there as an optional second step.
 
 ### Step A — Store resolved incidents (write new knowledge)
 
-For each failure resolved during this run, store the incident:
+For each failure resolved during this run, write a native Build Loop incident note:
 
-```
-mcp__plugin_build-loop-debugger__store({
-  symptom: "<original failure string>",
-  root_cause: "<what was wrong>",
-  fix: "<diff or description>",
-  tags: ["build-loop", "<project>", "<layer>"],
-  files: ["<paths touched>"]
-})
+```bash
+mkdir -p .build-loop/issues
 ```
 
-### Step B — Report outcomes on applied memory (train verdict classification)
+```markdown
+# <short incident title>
 
-For each prior gate where a `KNOWN_FIX` or `LIKELY_MATCH` was applied (whether direct-apply or adapted), report back whether the suggested fix actually worked:
+## Symptom
+<original failure string>
 
+## Root Cause
+<what was wrong>
+
+## Fix
+<diff or description>
+
+## Verification
+<tests or reproduction checks that passed>
+
+## Tags
+build-loop, <project>, <layer>
 ```
-mcp__plugin_build-loop-debugger__outcome({
-  incident_id: "<from the gate record>",
-  result: "worked" | "failed" | "modified",
-  notes: "<one line>"
-})
-```
+
+Use `.build-loop/issues/<stable-slug>.md` as the path. Keep each note concise enough for future local search to surface the symptom, root cause, and verified fix.
+
+### Step B — Report outcomes on applied optional memory
+
+For each prior gate where standalone Coding Debugger supplied a `KNOWN_FIX` or `LIKELY_MATCH`, report back whether the suggested fix actually worked through that plugin's outcome tool:
 
 - `worked`: applied as-is, resolved the criterion on first attempt
 - `modified`: applied the suggested approach but had to adapt substantially (Iterate attempt count > 1 on that criterion)
 - `failed`: applied but criterion still failed; eventually resolved via different fix or not at all
 
-This is the training signal that makes the verdict classifier better over time. **Always call `outcome` for applied gates, even on build failures** — "worked" vs "failed" is meaningful in both outcomes.
+This optional training signal belongs to standalone Coding Debugger. Build Loop itself does not register an MCP outcome tool.
 
 ## Incident Documentation
 
-After fixing a bug, use the debugger `store` MCP tool to document it for future retrieval.
+After fixing a bug, store a local `.build-loop/issues/*.md` incident note for future retrieval.
 
-The store tool accepts:
-- **symptom** (required): User-facing description of the bug
-- **root_cause** (required): Technical explanation of why the bug occurred
-- **fix** (required): What was done to fix it
-- **category**: Root cause category (logic, config, dependency, performance, react-hooks)
-- **tags**: Search keywords for future retrieval
-- **files_changed**: List of files that were modified
-- **file**: Primary file where the bug was located
+The local note should include:
+- **Symptom**: user-facing description of the bug
+- **Root Cause**: technical explanation of why the bug occurred
+- **Fix**: what was done to fix it
+- **Verification**: tests or reproduction checks that passed
+- **Tags**: search keywords for future retrieval
+- **Files Changed**: list of files that were modified
 
 ### Manual Incident Storage (Alternative)
 
-Claude Code can also directly write incident files to `.claude/memory/incidents/` using the Write tool.
+Agents can write incident files directly with the Write tool.
 
 **Step 1: Generate incident ID**
 ```
@@ -185,47 +191,37 @@ Where `xxxx` is 4 random alphanumeric characters. Example: `INC_20241231_143052_
 
 **Step 2: Write JSON file**
 ```bash
-.claude/memory/incidents/INC_20241231_143052_a7b2.json
+.build-loop/issues/INC_20241231_143052_a7b2.md
 ```
 
 **Minimal incident structure:**
-```json
-{
-  "incident_id": "INC_20241231_143052_a7b2",
-  "timestamp": 1735654252000,
-  "symptom": "User-facing description of the bug",
-  "root_cause": {
-    "description": "Technical explanation of why the bug occurred",
-    "file": "path/to/problematic/file.ts",
-    "category": "logic|config|dependency|performance|react-hooks",
-    "confidence": 0.85
-  },
-  "fix": {
-    "approach": "What was done to fix it",
-    "changes": [
-      {
-        "file": "path/to/file.ts",
-        "lines_changed": 10,
-        "change_type": "modify|add|delete",
-        "summary": "Brief description of change"
-      }
-    ]
-  },
-  "verification": {
-    "status": "verified|unverified",
-    "regression_tests_passed": true,
-    "success_criteria_met": true
-  },
-  "tags": ["relevant", "keywords", "for", "search"],
-  "files_changed": ["list/of/all/files.ts"],
-  "quality_score": 0.75
-}
+```markdown
+# INC_20241231_143052_a7b2
+
+## Symptom
+User-facing description of the bug.
+
+## Root Cause
+Technical explanation of why the bug occurred.
+
+## Fix
+What was done to fix it.
+
+## Verification
+- Reproduction now passes
+- Related regression tests pass
+
+## Files Changed
+- path/to/file.ts
+
+## Tags
+relevant, keywords, search
 ```
 
 **Step 3: Ensure directory exists**
 Before writing, create the directory if needed:
 ```bash
-mkdir -p .claude/memory/incidents
+mkdir -p .build-loop/issues
 ```
 
 ### Quality Indicators
@@ -272,26 +268,24 @@ Skill("build-loop:debugging-memory") with input { symptom, scope: "global", call
 Skill("build-loop:debugging-assess") with input { symptom, scope: "global" }
 ```
 
-Both are native skills sourced from claude-code-debugger and use the bundled debugger MCP. If the MCP is unavailable, the skills fall back to local grep across `.build-loop/issues/` and `.build-loop/feedback.md` — no error, just narrower coverage.
+Both are native build-loop skills. They search local `.build-loop/issues/` first and may use standalone Coding Debugger only when that plugin is installed and the caller explicitly requests cross-project memory.
 
 Use this for:
 - A `NO_MATCH` from project memory where cross-project history might still have a relevant incident
 - An ambiguous verdict where additional assessor input would change the routing decision
-- Coordination state that lives in the standalone plugin only
+- Coordination state that lives outside the current project and was explicitly requested
 
 Do NOT use this for: every memory call (it's escalation, not primary path), or when project memory already returned `KNOWN_FIX` (bundled is enough).
 
-## MCP Tools Quick Reference
+## Native Memory Quick Reference
 
-| Tool | Purpose |
+| Surface | Purpose |
 |------|---------|
-| `search` | Search memory for similar bugs (returns verdict) |
-| `store` | Store a new debugging incident |
-| `detail` | Get full details of an incident or pattern |
-| `status` | Show memory statistics |
-| `list` | List recent incidents |
-| `patterns` | List known fix patterns |
-| `outcome` | Record whether a fix worked |
+| `build-loop:debugging-memory-search` | Search memory for similar bugs (returns verdict when available) |
+| `build-loop:debugging-store` | Store a new debugging incident |
+| `.build-loop/issues/<id>.md` | Full incident or pattern detail |
+| `.build-loop/issues/` | Recent incidents and local memory corpus |
+| `build-loop:debugging-assess` | Parallel domain assessment |
 
 ## Parallel Domain Assessment
 
@@ -400,7 +394,7 @@ When debugging involves subagents (your own or from other plugins), follow these
 ### Automatic Behavior
 
 **Before spawning debugging-related subagents:**
-1. Search debugging memory first using the debugger `search` MCP tool
+1. Search debugging memory first using `build-loop:debugging-memory-search`
 2. Pass relevant context to the subagent in its prompt
 3. Include any matching incidents or patterns found
 
@@ -430,17 +424,17 @@ Start your investigation considering this prior knowledge.
 
 When using parallel assessment or multiple debugging subagents:
 
-1. **Pre-query memory once** using the debugger `search` MCP tool before spawning agents
+1. **Pre-query memory once** using `build-loop:debugging-memory-search` before spawning agents
 2. **Distribute context** - each agent gets relevant subset
 3. **Aggregate findings** - collect new insights from all agents
-4. **Store unified incident** - use the debugger `store` MCP tool to document the combined diagnosis
+4. **Store unified incident** - write a native `.build-loop/issues/*.md` note to document the combined diagnosis
 
 ## Best Practices
 
-1. **Always check memory first** - Use the `search` tool before investigating any bug
-2. **Document every fix** - Use the `store` tool after resolving bugs
+1. **Always check memory first** - Search local `.build-loop/issues/` before investigating any bug
+2. **Document every fix** - Write a `.build-loop/issues/*.md` note after resolving bugs
 3. **Use descriptive symptoms** - Better matching requires good descriptions
 4. **Include verification status** - Helps prioritize trusted solutions
-5. **Record outcomes** - Use the `outcome` tool to improve future verdicts
+5. **Record outcomes** - Use standalone Coding Debugger outcomes only when that optional plugin supplied the prior incident
 6. **Pass context to subagents** - Don't let debugging knowledge stay siloed
 7. **Inform users of limitations** - Be transparent when memory can't be accessed

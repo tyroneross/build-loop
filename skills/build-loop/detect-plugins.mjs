@@ -25,7 +25,7 @@ const PLUGIN_MAP = {
   showcase: "showcase",
   scraperApp: "scraper-app",
   agentBuilder: "agent-builder",
-  claudeCodeDebugger: "claude-code-debugger",
+  codingDebugger: "coding-debugger",
   pyramidPrinciple: "pyramid-principle",
   pluginDev: "plugin-dev",
   replitMigrate: "replit-migrate",

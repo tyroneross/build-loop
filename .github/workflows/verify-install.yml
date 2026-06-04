@@ -77,4 +77,47 @@ jobs:
             exit 1
           fi
 
+          PKG="node_modules/@tyroneross/build-loop"
+          for REQUIRED in \
+            "scripts/install_memory.py" \
+            "templates/memory/MEMORY.md.template" \
+            "templates/memory/constitution.md.template" \
+            "scripts/memory_context/__init__.py" \
+            "scripts/memory_graph/__init__.py" \
+            "scripts/semantic_index/__init__.py" \
+            "scripts/sync_navgator_lessons.py"
+          do
+            if [ ! -e "$PKG/$REQUIRED" ]; then
+              echo "::error::Installed package missing $REQUIRED"
+              exit 1
+            fi
+          done
+
+          MEMORY_ROOT=$(mktemp -d)
+          python3 "$PKG/scripts/install_memory.py" --dest "$MEMORY_ROOT" --ensure-project fresh-install
+          test -f "$MEMORY_ROOT/MEMORY.md"
+          test -f "$MEMORY_ROOT/constitution.md"
+          test -d "$MEMORY_ROOT/indexes"
+          test -d "$MEMORY_ROOT/projects/fresh-install/raw/files"
+
+          mkdir -p "$MEMORY_ROOT/projects/fresh-install/context"
+          printf '# Fresh install context\n\nPackage bootstrap smoke.\n' > "$MEMORY_ROOT/projects/fresh-install/context/CONTEXT.md"
+          mkdir -p /tmp/verify-app
+          BUILD_LOOP_MEMORY_STORE_ROOT="$MEMORY_ROOT" \
+            python3 "$PKG/scripts/blm.py" context \
+              --workdir /tmp/verify-app \
+              --project fresh-install \
+              --query "bootstrap" \
+              --mode expand \
+              --json > /tmp/verify-context.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("/tmp/verify-context.json").read_text())
+          assert data["current"]["project"] == "fresh-install"
+          assert data["current"]["context"]["exists"] is True
+          assert "graph" in data.get("expansion", {})
+          PY
+
           echo "::notice::Verified @tyroneross/build-loop@$INSTALLED — $FILE_COUNT files installed"

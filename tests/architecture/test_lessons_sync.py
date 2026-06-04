@@ -2,20 +2,21 @@
 
 Coverage:
   - template entries are skipped (only real lessons synced)
-  - upsert is idempotent: running twice leaves a single row per (subject, project)
-  - global lessons get ``project IS NULL`` in the DELETE/INSERT payload
-  - postgres unreachable → exit 0, errors=['postgres_unavailable']
+  - SQLite upsert is idempotent: running twice leaves a single row per (subject, project)
+  - global lessons get ``project IS NULL`` in the local row
+  - Postgres mirror unreachable keeps SQLite counts and adds errors=['postgres_unavailable']
   - confidence_source maps to write_decision's closed taxonomy
     (auto-confirmed | auto-inferred), Chunk 6 alignment
-  - ``--dry-run`` does not open a DB connection
+  - ``--dry-run`` does not open SQLite or Postgres
 
-All DB and embedding calls are mocked. CI does not need live Postgres.
+Postgres and embedding calls are mocked. CI does not need live Postgres.
 """
 from __future__ import annotations
 
 import io
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -162,99 +163,102 @@ def _capture_stdout(monkeypatch) -> io.StringIO:
     return buf
 
 
+def _sqlite_rows(db_path: Path) -> list[dict]:
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "SELECT subject, project, predicate, object, confidence_source FROM semantic_facts ORDER BY subject"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
 # ---------- tests ----------
 
 
-def test_skip_template_entries(monkeypatch, isolated_env, mock_embed, mock_psycopg):
-    """A lessons.json with one _template + one real entry → only real synced."""
+def test_skip_template_entries(monkeypatch, isolated_env):
+    """A lessons.json with one _template + one real entry -> only real synced."""
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     _write_project_lessons(
         workdir, [_template_lesson(), _real_lesson(1)]
     )
     buf = _capture_stdout(monkeypatch)
     rc = sync_mod.main(
-        ["--workdir", str(workdir), "--project-only"]
+        ["--workdir", str(workdir), "--project-only", "--sqlite-db", str(db_path)]
     )
     assert rc == 0
     out = json.loads(buf.getvalue())
     assert out["synced"] == 1
     assert out["skipped_templates"] == 1
     assert out["global_synced"] == 0
-    # The fake conn saw exactly one DELETE + one INSERT (for the real lesson).
-    conn = mock_psycopg["conn"]
-    sql_text = " | ".join(s for s, _ in conn.executed)
-    assert sql_text.count("DELETE FROM") == 1
-    assert sql_text.count("INSERT INTO") == 1
+    assert out["postgres_mirrored"] == 0
+    rows = _sqlite_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "lesson:nav:lesson-test-1"
 
 
-def test_upsert_idempotent(monkeypatch, isolated_env, mock_embed, mock_psycopg):
+def test_upsert_idempotent(monkeypatch, isolated_env):
     """Run twice; second run still issues 1 DELETE + 1 INSERT per lesson and
     yields synced=1 each time. The DELETE makes the second write a no-op
     against any prior row → idempotent."""
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     _write_project_lessons(workdir, [_real_lesson(1)])
 
     # First run.
     buf1 = _capture_stdout(monkeypatch)
-    rc1 = sync_mod.main(["--workdir", str(workdir), "--project-only"])
+    rc1 = sync_mod.main(["--workdir", str(workdir), "--project-only", "--sqlite-db", str(db_path)])
     assert rc1 == 0
     out1 = json.loads(buf1.getvalue())
     assert out1["synced"] == 1
-    first_calls = list(mock_psycopg["conn"].executed)
+    first_rows = _sqlite_rows(db_path)
 
-    # Second run — fresh fake conn, same input.
+    # Second run, same input.
     buf2 = _capture_stdout(monkeypatch)
-    rc2 = sync_mod.main(["--workdir", str(workdir), "--project-only"])
+    rc2 = sync_mod.main(["--workdir", str(workdir), "--project-only", "--sqlite-db", str(db_path)])
     assert rc2 == 0
     out2 = json.loads(buf2.getvalue())
     assert out2["synced"] == 1
-    second_calls = list(mock_psycopg["conn"].executed)
+    second_rows = _sqlite_rows(db_path)
 
-    # Same shape across runs (DELETE then INSERT) — proves idempotency at
-    # the SQL emission layer; real DB would converge to one row.
-    assert [s.split()[0] for s, _ in first_calls] == [
-        s.split()[0] for s, _ in second_calls
-    ]
-    assert any("DELETE FROM" in s for s, _ in second_calls)
-    assert any("INSERT INTO" in s for s, _ in second_calls)
+    assert len(first_rows) == 1
+    assert len(second_rows) == 1
+    assert first_rows[0]["subject"] == second_rows[0]["subject"]
 
 
 def test_global_lessons_have_null_project(
-    monkeypatch, isolated_env, mock_embed, mock_psycopg
+    monkeypatch, isolated_env
 ):
-    """Sync a global lesson; assert project IS NULL in DELETE and INSERT."""
+    """Sync a global lesson; assert project is NULL in SQLite."""
     home_dir = Path(os.environ["HOME"])
     home_dir.mkdir(parents=True, exist_ok=True)
     _write_global_lessons(home_dir, [_real_lesson(42, promoted=True)])
 
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
 
     buf = _capture_stdout(monkeypatch)
-    rc = sync_mod.main(["--workdir", str(workdir), "--global-only"])
+    rc = sync_mod.main(["--workdir", str(workdir), "--global-only", "--sqlite-db", str(db_path)])
     assert rc == 0
     out = json.loads(buf.getvalue())
     assert out["global_synced"] == 1
     assert out["synced"] == 0
 
-    conn = mock_psycopg["conn"]
-    delete_call = next(s for s, _ in conn.executed if "DELETE FROM" in s)
-    assert "project IS NULL" in delete_call
-
-    # INSERT params: positional `project` slot is the 7th param after
-    # subject, predicate, object, confidence, embedding, metadata.
-    insert_sql, insert_params = next(
-        (s, p) for s, p in conn.executed if "INSERT INTO" in s
-    )
-    # Find param index of project — it's the column right after metadata.
-    # Easier check: scan params for None matching project tag position.
-    assert None in insert_params  # project slot is None for global lessons
+    rows = _sqlite_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["project"] is None
 
 
 def test_postgres_unavailable_graceful(monkeypatch, isolated_env, mock_embed):
-    """psycopg.connect raises → exit 0 with errors=['postgres_unavailable']."""
+    """psycopg.connect raises -> SQLite still syncs and mirror reports soft error."""
 
     # Build an OperationalError-ish exception via a stub module.
     class FakeOperationalError(Exception):
@@ -269,14 +273,22 @@ def test_postgres_unavailable_graceful(monkeypatch, isolated_env, mock_embed):
 
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     _write_project_lessons(workdir, [_real_lesson(1)])
 
     buf = _capture_stdout(monkeypatch)
-    rc = sync_mod.main(["--workdir", str(workdir), "--project-only"])
+    rc = sync_mod.main([
+        "--workdir", str(workdir),
+        "--project-only",
+        "--sqlite-db", str(db_path),
+        "--postgres-mirror",
+    ])
     assert rc == 0
     out = json.loads(buf.getvalue())
-    assert out["errors"] == ["postgres_unavailable"]
-    assert out["synced"] == 0
+    assert "postgres_unavailable" in out["errors"]
+    assert out["synced"] == 1
+    assert out["postgres_mirrored"] == 0
+    assert len(_sqlite_rows(db_path)) == 1
     # And the error log should now exist with one line.
     log_path = workdir / ".build-loop" / "sync_errors.log"
     assert log_path.exists()
@@ -298,7 +310,7 @@ def test_taxonomy_mapping(monkeypatch):
 
 
 def test_lessons_file_flag_overrides_discovery(
-    monkeypatch, isolated_env, mock_embed, mock_psycopg
+    monkeypatch, isolated_env
 ):
     """--lessons-file PATH treats the given file as the project-local source.
 
@@ -307,6 +319,7 @@ def test_lessons_file_flag_overrides_discovery(
     """
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     # Canonical NavGator project-local path — should be SKIPPED.
     _write_project_lessons(workdir, [_real_lesson(99)])
     # Override file — should be the SOLE source.
@@ -323,6 +336,7 @@ def test_lessons_file_flag_overrides_discovery(
         [
             "--workdir", str(workdir),
             "--lessons-file", str(override_path),
+            "--sqlite-db", str(db_path),
         ]
     )
     assert rc == 0
@@ -331,14 +345,18 @@ def test_lessons_file_flag_overrides_discovery(
     # entirely because --lessons-file flips us into override mode.
     assert out["synced"] == 2
     assert out["global_synced"] == 0
+    rows = _sqlite_rows(db_path)
+    assert len(rows) == 2
+    assert not any(row["subject"].endswith("lesson-test-99") for row in rows)
 
 
 def test_source_prefix_lesson_bl(
-    monkeypatch, isolated_env, mock_embed, mock_psycopg
+    monkeypatch, isolated_env
 ):
-    """--source-prefix lesson:bl: must land in DELETE/INSERT subjects."""
+    """--source-prefix lesson:bl: must land in SQLite subjects."""
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     override = workdir / ".build-loop" / "architecture" / "lessons.json"
     override.parent.mkdir(parents=True, exist_ok=True)
     override.write_text(
@@ -352,46 +370,66 @@ def test_source_prefix_lesson_bl(
             "--workdir", str(workdir),
             "--lessons-file", str(override),
             "--source-prefix", "lesson:bl:",
+            "--sqlite-db", str(db_path),
         ]
     )
     assert rc == 0
 
-    conn = mock_psycopg["conn"]
-    # Find the INSERT and inspect its first param (subject column).
-    insert_sql, insert_params = next(
-        (s, p) for s, p in conn.executed if "INSERT INTO" in s
-    )
-    subject = insert_params[0]
+    rows = _sqlite_rows(db_path)
+    subject = rows[0]["subject"]
     assert subject.startswith("lesson:bl:"), f"subject={subject!r}"
-    # And the matching DELETE.
-    delete_sql, delete_params = next(
-        (s, p) for s, p in conn.executed if "DELETE FROM" in s
-    )
-    assert delete_params[0].startswith("lesson:bl:")
 
 
 def test_default_source_prefix_lesson_nav(
-    monkeypatch, isolated_env, mock_embed, mock_psycopg
+    monkeypatch, isolated_env
 ):
     """Backward-compat: default flow (no flags) still uses 'lesson:nav:'."""
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     _write_project_lessons(workdir, [_real_lesson(1)])
 
     buf = _capture_stdout(monkeypatch)
-    rc = sync_mod.main(["--workdir", str(workdir), "--project-only"])
+    rc = sync_mod.main([
+        "--workdir", str(workdir),
+        "--project-only",
+        "--sqlite-db", str(db_path),
+    ])
     assert rc == 0
 
-    conn = mock_psycopg["conn"]
-    insert_sql, insert_params = next(
-        (s, p) for s, p in conn.executed if "INSERT INTO" in s
-    )
-    subject = insert_params[0]
+    subject = _sqlite_rows(db_path)[0]["subject"]
     assert subject.startswith("lesson:nav:")
 
 
+def test_postgres_mirror_writes_when_requested(
+    monkeypatch, isolated_env, mock_embed, mock_psycopg
+):
+    """--postgres-mirror preserves the legacy Postgres write path explicitly."""
+    workdir = isolated_env / "proj"
+    workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
+    _write_project_lessons(workdir, [_real_lesson(1)])
+
+    buf = _capture_stdout(monkeypatch)
+    rc = sync_mod.main([
+        "--workdir", str(workdir),
+        "--project-only",
+        "--sqlite-db", str(db_path),
+        "--postgres-mirror",
+    ])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["synced"] == 1
+    assert out["postgres_mirrored"] == 1
+
+    conn = mock_psycopg["conn"]
+    sql_text = " | ".join(s for s, _ in conn.executed)
+    assert sql_text.count("DELETE FROM") == 1
+    assert sql_text.count("INSERT INTO") == 1
+
+
 def test_dry_run_no_writes(monkeypatch, isolated_env, mock_embed):
-    """--dry-run never touches psycopg.connect."""
+    """--dry-run never touches SQLite or psycopg.connect."""
     connect_called = {"count": 0}
 
     def boom(*args, **kwargs):
@@ -404,13 +442,21 @@ def test_dry_run_no_writes(monkeypatch, isolated_env, mock_embed):
 
     workdir = isolated_env / "proj"
     workdir.mkdir()
+    db_path = workdir / "semantic.sqlite"
     _write_project_lessons(workdir, [_real_lesson(1), _template_lesson()])
 
     buf = _capture_stdout(monkeypatch)
-    rc = sync_mod.main(["--workdir", str(workdir), "--project-only", "--dry-run"])
+    rc = sync_mod.main([
+        "--workdir", str(workdir),
+        "--project-only",
+        "--sqlite-db", str(db_path),
+        "--dry-run",
+        "--postgres-mirror",
+    ])
     assert rc == 0
     out = json.loads(buf.getvalue())
     assert out["dry_run"] is True
     assert out["synced"] == 1
     assert out["skipped_templates"] == 1
     assert connect_called["count"] == 0
+    assert not db_path.exists()

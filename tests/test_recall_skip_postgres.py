@@ -38,7 +38,7 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A workdir with no semantic data and the debugger stub returning empty."""
     monkeypatch.setenv("BUILD_LOOP_DATABASE_URL", "postgres://stub-host/db")
     monkeypatch.setenv("AGENT_MEMORY_ROOT", str(tmp_path / "_no_canonical"))
-    # Stub debugger so the npx CLI is never spawned.
+    # Stub debugger so the native local incident reader is bypassed.
     mf.set_debugger_runner(lambda query, limit, project: '{"incidents": []}')
     yield tmp_path
     mf.set_debugger_runner(None)

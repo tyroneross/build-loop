@@ -52,6 +52,35 @@ class MemoryContextTests(unittest.TestCase):
             "---\nname: hot-context-lesson\ndescription: Hot context starts agents faster\n---\nFast context should avoid raw evidence.\n",
             encoding="utf-8",
         )
+        (self.memroot / "indexes" / "graph-nodes.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": "decision-demo",
+                    "title": "Use hot capsule",
+                    "path": "projects/demo/decisions/decision-demo.md",
+                    "project": "demo",
+                    "memory_type": "decision",
+                    "status": "accepted",
+                    "type": "memory-entry",
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (self.memroot / "indexes" / "graph-edges.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": "edge-project-demo-decision",
+                    "source": "project:demo",
+                    "target": "decision-demo",
+                    "relation": "contains",
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         for mod in list(sys.modules):
             if mod == "memory_context" or mod.startswith("memory_context."):
@@ -100,6 +129,10 @@ class MemoryContextTests(unittest.TestCase):
         self.assertIn("expansion", envelope)
         names = [item["name"] for item in envelope["expansion"]["lessons"]]
         self.assertIn("hot-context-lesson", names)
+        graph = envelope["expansion"]["graph"]
+        self.assertEqual(graph["backend"], "sqlite_edges")
+        related_ids = [item["id"] for item in graph["related"]]
+        self.assertIn("decision-demo", related_ids)
 
     def test_open_artifact_reads_evidence_id(self) -> None:
         import memory_context as mc  # noqa: PLC0415
