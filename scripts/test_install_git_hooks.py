@@ -246,11 +246,14 @@ class TestHookEndToEnd(unittest.TestCase):
 
     def test_state_blocking_verdict_blocks_push(self):
         """End-to-end signal #2 — unresolved blocking verdict in state.json."""
+        from datetime import datetime, timezone, timedelta
+        recent_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         (self.workdir / ".build-loop").mkdir(exist_ok=True)
         state = {
             "runs": [
                 {
                     "run_id": "run_end_to_end",
+                    "created_at": recent_ts,
                     "judge_decisions": [
                         {
                             "verdict": "suggest_correction",
@@ -265,6 +268,71 @@ class TestHookEndToEnd(unittest.TestCase):
         rc, out, err = self._push("main")
         self.assertNotEqual(rc, 0, f"state-signal failed to block: out={out}\nerr={err}")
         self.assertIn("suggest_correction", err)
+
+
+class TestSessionStartAutoInstall(unittest.TestCase):
+    """f3: session-start-git-hooks.sh auto-installs the pre-push hook (idempotent)."""
+
+    HOOK_SCRIPT = REPO_ROOT / "hooks" / "session-start-git-hooks.sh"
+
+    def setUp(self):
+        self._td = TemporaryDirectory()
+        self.parent = Path(self._td.name)
+        self.workdir = self.parent / "repo"
+        self.workdir.mkdir()
+        subprocess.run(["git", "init", str(self.workdir)], check=True, capture_output=True)
+        # Mirror the build-loop layout the hook and installer expect.
+        scripts_dir = self.workdir / "scripts"
+        scripts_dir.mkdir()
+        shutil.copy2(SCRIPT, scripts_dir / "install_git_hooks.py")
+        hooks_src_dir = self.workdir / "hooks" / "git"
+        hooks_src_dir.mkdir(parents=True)
+        shutil.copy2(HOOK_SOURCE, hooks_src_dir / "pre-push")
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def test_session_start_script_exists_and_is_executable(self):
+        self.assertTrue(self.HOOK_SCRIPT.exists(), "session-start-git-hooks.sh must exist")
+        import stat
+        mode = self.HOOK_SCRIPT.stat().st_mode
+        self.assertTrue(mode & stat.S_IXUSR, "session-start-git-hooks.sh must be executable")
+
+    def test_session_start_installs_pre_push(self):
+        """Running session-start-git-hooks.sh installs the pre-push hook."""
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(self.workdir)
+        env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
+        rc, _, err = _run(
+            "bash", str(self.HOOK_SCRIPT),
+            env_extra={"CLAUDE_PLUGIN_ROOT": str(self.workdir), "CLAUDE_PROJECT_DIR": str(self.workdir)},
+        )
+        self.assertEqual(rc, 0, f"session-start hook failed: {err}")
+        hook_dst = self.workdir / ".git" / "hooks" / "pre-push"
+        self.assertTrue(hook_dst.exists(), "pre-push hook must be installed after session-start")
+        self.assertTrue(hook_dst.stat().st_mode & 0o111, "installed hook must be executable")
+
+    def test_session_start_is_idempotent(self):
+        """Running session-start-git-hooks.sh twice must not corrupt the hook."""
+        for _ in range(2):
+            _run(
+                "bash", str(self.HOOK_SCRIPT),
+                env_extra={"CLAUDE_PLUGIN_ROOT": str(self.workdir), "CLAUDE_PROJECT_DIR": str(self.workdir)},
+            )
+        hook_dst = self.workdir / ".git" / "hooks" / "pre-push"
+        self.assertTrue(hook_dst.exists())
+        content = hook_dst.read_text(encoding="utf-8")
+        self.assertIn("build-loop", content)
+
+    def test_session_start_outside_git_repo_is_noop(self):
+        """Running in a non-git directory must exit 0 silently (not fail)."""
+        non_git = self.parent / "not_a_repo"
+        non_git.mkdir()
+        rc, _, _ = _run(
+            "bash", str(self.HOOK_SCRIPT),
+            env_extra={"CLAUDE_PLUGIN_ROOT": str(self.workdir), "CLAUDE_PROJECT_DIR": str(non_git)},
+        )
+        self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":

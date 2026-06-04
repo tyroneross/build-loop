@@ -26,6 +26,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-git-hooks.sh\" </dev/null >/dev/null 2>&1; exit 0",
+            "timeout": 2000
+          },
+          {
+            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-plugin-drift.sh\" </dev/null >/dev/null 2>&1; exit 0",
             "timeout": 2000
           }

@@ -68,6 +68,7 @@ Importable surface
 - ``is_hold_active(workdir) -> tuple[bool, str | None, str]``
 - ``evaluate_push(workdir, stdin_lines, *, env=None,
                   protected_branches=None) -> dict``
+- ``release_if_briefed(workdir, *, reason=None) -> dict``
 """
 from __future__ import annotations
 
@@ -95,6 +96,12 @@ BLOCKING_VERDICTS: frozenset[str] = frozenset(
 # Bypass env var name — kept consistent with the audit gate pattern.
 BYPASS_ENV = "BUILDLOOP_PUSH_HOLD_BYPASS"
 
+# Maximum age (hours) for a state.json blocking verdict to be treated as active.
+# Older verdicts are ignored so a stale unresolved entry can never permanently
+# wedge autonomous pushes.  Override via env or .build-loop/config.json.
+_DEFAULT_MAX_VERDICT_AGE_HOURS = 24
+_MAX_AGE_ENV = "BUILDLOOP_PUSH_HOLD_MAX_AGE_H"
+
 # Relative paths inside the workdir.
 MARKER_RELPATH = Path(".build-loop") / ".push-hold"
 STATE_RELPATH = Path(".build-loop") / "state.json"
@@ -108,6 +115,57 @@ LOG_RELPATH = Path(".build-loop") / "audit-log.md"
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _max_verdict_age_hours(workdir: Path) -> float:
+    """Return the configured max verdict age in hours.
+
+    Priority: env ``BUILDLOOP_PUSH_HOLD_MAX_AGE_H`` > ``.build-loop/config.json``
+    ``push_hold.max_verdict_age_hours`` > default (24).
+    """
+    env_val = os.environ.get(_MAX_AGE_ENV)
+    if env_val is not None:
+        try:
+            return float(env_val)
+        except ValueError:
+            pass
+    cfg_path = workdir / ".build-loop" / "config.json"
+    cfg = _read_json(cfg_path)
+    if isinstance(cfg, dict):
+        ph_cfg = cfg.get("push_hold")
+        if isinstance(ph_cfg, dict):
+            try:
+                return float(ph_cfg["max_verdict_age_hours"])
+            except (KeyError, (TypeError, ValueError)):
+                pass
+    return float(_DEFAULT_MAX_VERDICT_AGE_HOURS)
+
+
+def _parse_iso_ts(ts: str | None) -> datetime | None:
+    """Parse an ISO-8601 UTC timestamp string.  Returns None on failure.
+
+    Robust to microseconds, ``Z`` / ``+00:00`` offsets, and naive timestamps.
+    ``datetime.fromisoformat`` (Python 3.11+) covers the common variants; the
+    strptime loop is a fallback. IMPORTANT: a too-narrow parser silently
+    disables the staleness guard (an unparsed timestamp reads as
+    "missing → don't block"), so this MUST accept whatever the state writers
+    emit — including a bare ``datetime.now(...).isoformat()`` with microseconds.
+    """
+    if not ts:
+        return None
+    s = str(ts).strip()
+    iso = s[:-1] + "+00:00" if s.endswith("Z") else s
+    try:
+        dt = datetime.fromisoformat(iso)
+        return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
 
 
 def _read_json(path: Path) -> Any:
@@ -207,6 +265,57 @@ def clear_marker(workdir: Path, *, reason: str | None = None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Closeout release helper (Phase D — briefed hold self-clearing)
+# ---------------------------------------------------------------------------
+
+
+def release_if_briefed(workdir: Path, *, reason: str | None = None) -> dict[str, Any]:
+    """Release a briefed (orchestrator or manual) hold when no blocking verdict remains.
+
+    Called by Phase D Closeout to ensure a hold set at Phase 1 never persists
+    past the end of its run.  Logic:
+
+    1. Load the marker.  If absent → noop (already clear).
+    2. If ``source`` is ``review-a`` → skip (Review-A's re-audit path owns that
+       release).
+    3. If ``detect_blocking_verdict`` returns a non-None result → hold stays
+       (unresolved blocking findings remain; release not appropriate yet).
+    4. Otherwise → clear the marker.
+
+    Returns a dict with ``action`` ∈ {``released``, ``noop_absent``,
+    ``noop_review_a``, ``noop_blocking_verdict``, ``skipped``} and a ``reason``
+    field.
+    """
+    marker = load_marker(workdir)
+    if marker is None:
+        return {"action": "noop_absent", "reason": "no marker present"}
+
+    source = str(marker.get("source") or "").strip().lower()
+    if source == "review-a":
+        return {
+            "action": "noop_review_a",
+            "reason": "marker source is review-a; that path owns its own release",
+        }
+
+    verdict = detect_blocking_verdict(workdir)
+    if verdict is not None:
+        return {
+            "action": "noop_blocking_verdict",
+            "reason": (
+                f"unresolved blocking verdict ({verdict['verdict']}) still present"
+                f" in run {verdict['run_id'] or 'latest'} — hold retained"
+            ),
+        }
+
+    release_reason = reason or "run closed, no blocking findings"
+    cleared = clear_marker(workdir, reason=release_reason)
+    return {
+        "action": "released" if cleared else "skipped",
+        "reason": release_reason,
+    }
+
+
+# ---------------------------------------------------------------------------
 # State.json — unresolved blocking auditor verdict detection
 # ---------------------------------------------------------------------------
 
@@ -219,6 +328,13 @@ def detect_blocking_verdict(workdir: Path) -> dict[str, Any] | None:
     block on a corrupt state.json — the marker file is the authoritative
     explicit hold).  A verdict is considered RESOLVED when its record carries
     ``"resolved": true`` (or ``"status": "resolved"``).
+
+    Staleness guard: the run's timestamp (``created_at``, ``ts``, or
+    ``started_at``) is compared against ``MAX_VERDICT_AGE_HOURS`` (default 24h;
+    override via env ``BUILDLOOP_PUSH_HOLD_MAX_AGE_H`` or
+    ``.build-loop/config.json push_hold.max_verdict_age_hours``).  When the
+    timestamp is missing OR older than the window the verdict is treated as
+    stale → returns None.  This prevents a permanently-wedging stale entry.
     """
     state_path = workdir / STATE_RELPATH
     data = _read_json(state_path)
@@ -230,6 +346,20 @@ def detect_blocking_verdict(workdir: Path) -> dict[str, Any] | None:
     latest = runs[-1]
     if not isinstance(latest, dict):
         return None
+
+    # --- Staleness guard ---
+    run_ts_raw = (
+        latest.get("created_at")
+        or latest.get("ts")
+        or latest.get("started_at")
+    )
+    run_ts = _parse_iso_ts(run_ts_raw)
+    max_age_h = _max_verdict_age_hours(workdir)
+    now = datetime.now(timezone.utc)
+    if run_ts is None or (now - run_ts).total_seconds() > max_age_h * 3600:
+        # Missing timestamp OR too old — do NOT block.
+        return None
+
     decisions = latest.get("judge_decisions")
     if not isinstance(decisions, list):
         return None
@@ -445,6 +575,16 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--status", action="store_true", help="Report current hold state.")
     mode.add_argument("--set", action="store_true", dest="set_mode", help="Write/refresh the hold marker.")
     mode.add_argument("--release", action="store_true", help="Remove the hold marker.")
+    mode.add_argument(
+        "--release-if-briefed",
+        action="store_true",
+        dest="release_if_briefed",
+        help=(
+            "Phase D closeout helper: release an orchestrator/manual briefed hold "
+            "when no unresolved blocking verdict remains.  Skips if source=review-a. "
+            "Safe to run unconditionally at closeout (idempotent)."
+        ),
+    )
 
     parser.add_argument("--workdir", type=Path, default=Path.cwd())
     parser.add_argument("--reason", type=str, default=None)
@@ -500,7 +640,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    # argparse guarantees one of the three above; safeguard:
+    if args.release_if_briefed:
+        result = release_if_briefed(workdir, reason=args.reason)
+        _emit(result, as_json=args.json)
+        return 0
+
+    # argparse guarantees one of the four above; safeguard:
     parser.error("no mode selected")  # pragma: no cover
     return 2  # pragma: no cover
 

@@ -253,7 +253,7 @@ Full protocol in `references/phase-gate-checklist.md` §"Phase 1 Assess detail".
       --run-id "<run_id>" --json
   ```
 
-  The marker survives a crash. The orchestrator clears it ONLY on explicit user release OR at Review-G when the brief's hold reason no longer applies (e.g. the brief was scoped to "do not push during this build" and the build closed with no blocking findings). If the pre-push hook is not yet installed in `.git/hooks/`, also run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_git_hooks.py --install --json` first (idempotent). Bypass via `BUILDLOOP_PUSH_HOLD_BYPASS=1` is logged to `.build-loop/audit-log.md` — never invoke it autonomously.
+  The marker survives a crash. The orchestrator clears it ONLY on explicit user release OR at Review-G when the brief's hold reason no longer applies (e.g. the brief was scoped to "do not push during this build" and the build closed with no blocking findings). Always run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_git_hooks.py --install --json` first (idempotent — safe to run unconditionally; the session-start hook also does this automatically). Bypass via `BUILDLOOP_PUSH_HOLD_BYPASS=1` is logged to `.build-loop/audit-log.md` — never invoke it autonomously.
 
 ### Phase 2: Plan
 
@@ -372,6 +372,7 @@ Closeout terminates live processes, reaps stale presence records, force-removes 
 6. **Optional changes.jsonl rotation**: `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)`. Rotates when EITHER threshold is exceeded; returns the rotated-to path or `None`. Logged in `state.json.runs[N].channelRotated`.
 7. **Final post**: `scripts/rally_point/post.post(channel_dir=..., kind="phase", payload={"phase": "run-closeout", "session_id": <id>, "coord_file": <archived-path>, "outcomes": {...}})`. Signals to peers + future readers that this run is done; readers know to skip its presence/changes when scoping new work.
 8. **State tracking**: write `state.json.runs[N].closeout_status` ∈ {`completed`, `partial`, `failed`} with per-step outcomes. The run report (Review-G) includes a closeout summary line; future-session pattern-miners and Phase 6 Learn use the per-step outcomes to detect chronic closeout failures.
+9. **Release briefed push-hold**: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/push_hold.py --release-if-briefed --reason "run closed, no blocking findings" --json`. This command is safe to run unconditionally — it is a no-op when no marker is present (`noop_absent`), when the source is `review-a` (`noop_review_a`, that path owns its own release), or when an unresolved blocking verdict still exists in state.json (`noop_blocking_verdict`). It only removes a marker with `source: orchestrator` or `source: manual` when `detect_blocking_verdict` returns None. This ensures a briefed do-not-push hold is never stranded past the end of its run.
 
 **`## Branch hygiene` report block** (every run's final report carries this section, sourced from collapse_run.py's JSON output):
 

@@ -77,6 +77,17 @@ def _format_block_message(verdict: dict) -> str:
     targets = ",".join(verdict.get("protected_targets") or []) or "(unknown)"
     reason = verdict.get("reason") or "hold active"
     source = verdict.get("source") or "unknown"
+
+    # Corrupt-marker note: help the operator self-rescue without digging into docs.
+    corrupt_note = ""
+    if source == "marker" and ("unparseable" in reason or "malformed" in reason or "not a JSON" in reason):
+        corrupt_note = (
+            "  NOTE: the hold marker is corrupt (not valid JSON).\n"
+            "        Run `push_hold.py --release` to clear it (works even\n"
+            "        on a corrupt marker, no prior --set needed).\n"
+            "  ---------------------------------------------------------------\n"
+        )
+
     return (
         "\n"
         "===============================================================\n"
@@ -86,10 +97,11 @@ def _format_block_message(verdict: dict) -> str:
         f"  hold source        : {source}\n"
         f"  reason             : {reason}\n"
         "  ---------------------------------------------------------------\n"
-        "  To release this hold:\n"
+        + corrupt_note
+        + "  To release this hold:\n"
         "    1. Resolve the underlying issue (auditor findings / brief).\n"
         "    2. Run:   python3 scripts/push_hold.py --release \\\n"
-        '                       --reason "<one-line why>"\n"'
+        '                       --reason "<one-line why>"\n'
         "    3. Re-push.\n"
         "\n"
         "  EMERGENCY override (logged):\n"
