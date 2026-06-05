@@ -534,3 +534,115 @@ class TestTrap2DeduplicationPreventsInflation:
             f"Trap 2 violation: duplicated records inflated user_messages count. "
             f"once={len(agg_once.user_messages)}, dup={len(agg_dup.user_messages)}"
         )
+
+
+class TestIsMetaRecordsExcluded:
+    """isMeta records (Stop-hook injections, slash-command templates,
+    skill-load bodies) carry type='user'/'assistant' but must NOT
+    contribute to user_messages, secret_hits, tool_sequence, or
+    test_invocations.
+
+    Claude Code marks these with top-level isMeta=true. The existing
+    META_PREFIXES text-pattern allowlist in textproc.py is brittle
+    (misses isMeta records whose text doesn't start with a known
+    prefix — SPDX skill bodies, skill base-dir scaffolding, future
+    hook shapes). Mirrors the canonical v0.29.1
+    `scripts/retrospective/sections.py` guard at record level.
+    """
+
+    def test_isMeta_user_records_do_not_pollute_aggregate(self, tmp_path):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        from transcript_pattern_miner.session import process_session_file
+        import json as _json
+
+        cwd = "/Users/tyroneross/dev/git-folder/some-project/src"
+        sid = "ismeta-test-session"
+
+        # 1. Genuine assistant turn that uses a tool.
+        asst_with_tool = {
+            "type": "assistant", "uuid": "u-a1", "timestamp": "2026-01-15T10:00:00.000Z",
+            "sessionId": sid, "cwd": cwd,
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "t-1", "name": "Edit",
+                 "input": {"file_path": "/x/y.py"}},
+                {"type": "text", "text": "Done."},
+            ]},
+        }
+        # 2. Stop-hook injection — isMeta=true. Contains a "fake" API key
+        #    string so we can prove secret-scan does NOT pick it up.
+        hook_inject = {
+            "type": "user", "isMeta": True, "uuid": "u-h1",
+            "timestamp": "2026-01-15T10:01:00.000Z", "sessionId": sid, "cwd": cwd,
+            "message": {"role": "user", "content":
+                "Stop hook feedback: cd /tmp && git diff staged "
+                "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+        }
+        # 3. Skill-load body — isMeta=true, SPDX-style content with a
+        #    secret-shaped string.
+        skill_body = {
+            "type": "user", "isMeta": True, "uuid": "u-h2",
+            "timestamp": "2026-01-15T10:02:00.000Z", "sessionId": sid, "cwd": cwd,
+            "message": {"role": "user", "content":
+                "# SPDX-FileCopyrightText: example header content "
+                "ANTHROPIC_API_KEY=sk-ant-api03-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"},
+        }
+        # 4. Skill base-dir scaffolding — isMeta=true.
+        skill_scaffold = {
+            "type": "user", "isMeta": True, "uuid": "u-h3",
+            "timestamp": "2026-01-15T10:03:00.000Z", "sessionId": sid, "cwd": cwd,
+            "message": {"role": "user", "content":
+                "Base directory for this skill: /Users/x/.claude/plugins/foo"},
+        }
+        # 5. Assistant turn so the next user prompt qualifies as "real"
+        #    (the miner only counts user prose that follows an assistant).
+        asst_response = {
+            "type": "assistant", "uuid": "u-a2", "timestamp": "2026-01-15T10:04:00.000Z",
+            "sessionId": sid, "cwd": cwd,
+            "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Acknowledged."},
+            ]},
+        }
+        # 6. Genuine human prompt — should be the ONLY user_messages entry.
+        real_user = {
+            "type": "user", "uuid": "u-u1",
+            "timestamp": "2026-01-15T10:05:00.000Z", "sessionId": sid, "cwd": cwd,
+            "message": {"role": "user",
+                "content": "Please add a regression test for this case."},
+        }
+
+        path = tmp_path / f"{sid}.jsonl"
+        with path.open("w") as f:
+            for r in [asst_with_tool, hook_inject, skill_body, skill_scaffold,
+                      asst_response, real_user]:
+                f.write(_json.dumps(r) + "\n")
+
+        agg = process_session_file(path, None)
+        assert agg is not None, "expected aggregate, got None"
+
+        # (a) Only the real user message survives.
+        assert len(agg.user_messages) == 1, (
+            f"isMeta records leaked into user_messages: {agg.user_messages}")
+        assert "regression test" in agg.user_messages[0][1], (
+            f"wrong user message captured: {agg.user_messages[0]}")
+
+        # (b) No isMeta-injected secrets surfaced. The two fake keys
+        #     embedded in isMeta records must not appear in secret_hits.
+        leaked = [h for h in agg.secret_hits if "AAAA" in h[1] or "BBBB" in h[1]]
+        assert leaked == [], (
+            f"secret_hits leaked from isMeta records: {leaked}")
+
+        # (c) The real assistant tool_use (Edit) is still captured. This
+        #     proves the guard doesn't over-filter genuine assistant turns.
+        assert any("Edit" in s for s in agg.tool_sequence), (
+            f"real assistant tool_use missing from tool_sequence: {agg.tool_sequence}")
+
+        # (d) No isMeta record's text appears as an event.
+        for ev in agg.events:
+            txt = ev.get("text") or ""
+            assert "Stop hook feedback" not in txt, (
+                f"Stop-hook text leaked into events: {txt!r}")
+            assert "SPDX-FileCopyrightText" not in txt, (
+                f"skill-load SPDX text leaked into events: {txt!r}")
+            assert "Base directory for this skill" not in txt, (
+                f"skill base-dir text leaked into events: {txt!r}")

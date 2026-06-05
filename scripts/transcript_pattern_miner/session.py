@@ -547,6 +547,22 @@ def process_session_file(path: Path, cutoff: dt.datetime | None) -> SessionAggre
     seen_uuids: set[str] = set()
 
     for obj in iter_jsonl(path):
+        # Skip hook-injected / command-scaffolding / skill-load records.
+        # Claude Code marks these with top-level isMeta=true even though
+        # type stays "user"/"assistant" (Stop-hook feedback, slash-command
+        # templates, SessionStart hook output, skill-load bodies). These
+        # records pollute every downstream signal: secret-scanning runs on
+        # injected diffs, user_messages count hook text as human prompts,
+        # and tool-sequence captures hook-rendered assistant tool calls.
+        # The text-level META_PREFIXES allowlist in textproc.py is brittle
+        # (misses isMeta records whose text doesn't start with a known
+        # prefix — SPDX headers, skill base-dir scaffolding, future hook
+        # shapes). The structural isMeta flag is canonical and future-proof.
+        # Mirrors the v0.29.1 retrospective sections.py fix on the same
+        # record-shape gap (evidence transcript dfe491e3-…: 4× Stop-hook +
+        # 1 SPDX skill body + 1 skill base-dir leaked through text filters).
+        if obj.get("isMeta"):
+            continue
         uid = obj.get("uuid")
         if uid:
             if uid in seen_uuids:
