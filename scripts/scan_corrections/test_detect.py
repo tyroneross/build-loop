@@ -194,6 +194,64 @@ class TestTranscriptParsing:
     def test_missing_transcript_yields_nothing(self, tmp_path: Path) -> None:
         assert list(iter_user_turns_from_jsonl(tmp_path / "nope.jsonl")) == []
 
+    def test_isMeta_records_excluded(self, tmp_path: Path) -> None:
+        """isMeta records (Stop-hook injections, skill-load bodies,
+        command-template scaffolding) carry type='user' / role='user' but
+        must NOT count as human turns or generate correction candidates.
+
+        Evidence — v0.29.1 retrospective sections.py fix on transcript
+        dfe491e3-…: 4× Stop-hook 'git diff' + 1 SPDX skill body + 1 skill
+        base-dir scaffolding all sit as type=user/isMeta=true. Without this
+        guard, Stop-hook 'revert the commit' or 'doesn't work' text in
+        injected diffs would fire correction candidates.
+        """
+        t = tmp_path / "meta_mixed.jsonl"
+        records = [
+            # Genuine human prompt — should be kept.
+            {"type": "user", "message": {"role": "user", "content": "Hi"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "name": "Edit"},
+                {"type": "text", "text": "Done."},
+            ]}},
+            # Stop-hook injection — isMeta=true, must be skipped even though
+            # the text contains a correction-keyword ("revert").
+            {"type": "user", "isMeta": True, "message": {"role": "user",
+                "content": "Stop hook feedback: revert that staged change"}},
+            # Skill-load body — isMeta=true, SPDX-style content.
+            {"type": "user", "isMeta": True, "message": {"role": "user",
+                "content": "# SPDX-FileCopyrightText: that doesn't work for our license"}},
+            # Slash-command template — isMeta=true.
+            {"type": "user", "isMeta": True, "message": {"role": "user",
+                "content": "<command-name>foo</command-name>\nThis is wrong, undo"}},
+            # Genuine human correction — should be detected.
+            {"type": "user", "message": {"role": "user", "content": "Revert that."}},
+        ]
+        t.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+
+        turns = list(iter_user_turns_from_jsonl(t))
+        # Only the two genuine user prompts survive.
+        assert len(turns) == 2, f"expected 2 real user turns, got {len(turns)}: {turns}"
+        assert turns[0] == (0, "Hi", False)
+        assert turns[1] == (1, "Revert that.", True)
+
+        # End-to-end: detect_candidates must surface ONE correction (the real
+        # 'Revert that.' turn) and zero candidates from any of the three
+        # isMeta records — even though they contain 'revert', "doesn't work",
+        # and 'undo' text that would otherwise fire.
+        candidates = detect_candidates(transcript_path=t)
+        for c in candidates:
+            assert "Stop hook feedback" not in c.quote, (
+                f"isMeta Stop-hook leaked into candidate: {c.quote!r}")
+            assert "SPDX" not in c.quote, (
+                f"isMeta skill-load leaked into candidate: {c.quote!r}")
+            assert "command-name" not in c.quote, (
+                f"isMeta command-template leaked into candidate: {c.quote!r}")
+        # The real 'Revert that.' should be detected as a correction.
+        assert any(
+            c.signal_type == "revert" and "Revert that" in c.quote
+            for c in candidates
+        ), f"genuine 'Revert that.' correction not detected: {candidates}"
+
 
 class TestDetectCandidatesAPI:
     def test_text_turns_path(self) -> None:

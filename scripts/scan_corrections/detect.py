@@ -264,6 +264,17 @@ def iter_user_turns_from_jsonl(transcript_path: Path) -> Iterable[tuple[int, str
         except json.JSONDecodeError:
             continue
 
+        # Skip hook-injected / command-scaffolding / skill-load records.
+        # Claude Code marks these with top-level isMeta=true even though
+        # role stays "user" (Stop-hook feedback, slash-command templates,
+        # SessionStart hook output, skill-load bodies). Treating them as
+        # human turns corrupts correction-detection — Stop-hook "git diff"
+        # injections, skill-load SPDX headers, and skill base-directory
+        # scaffolding all key as user-correction signal. Mirrors the v0.29.1
+        # retrospective sections.py fix on the same record-shape gap.
+        if obj.get("isMeta"):
+            continue
+
         role = _extract_role(obj)
         content = _extract_text(obj)
 
