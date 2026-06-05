@@ -79,6 +79,40 @@ class ClassifyTests(unittest.TestCase):
         r = classify("refactor internal navigation handler — currently broken when user signs in")
         self.assertTrue(r["product_impacting"])
 
+    # ----- Defect-2: bare 'user' mention does NOT impersonate auth/sign-in -----
+
+    def test_miner_issue_does_not_mislabel_as_signin(self) -> None:
+        """The miner-issue string ('count isMeta hook-injections as USER
+        corrections in the miner') is about self-improvement pipeline
+        correctness, not user account / sign-in flow. It MUST still be
+        product-impacting (system correctness is product correctness for a
+        build orchestrator), but the impact label MUST be internal-correctness,
+        not the auth/sign-in flow label that the old bare-'user' regex emitted.
+        """
+        r = classify("count isMeta hook-injections as USER corrections in the miner")
+        self.assertTrue(r["product_impacting"])
+        self.assertIsNotNone(r["impact"])
+        self.assertNotEqual(r["impact"], "user account / sign-in flow")
+        self.assertIn("internal", (r["impact"] or "").lower())
+
+    def test_genuine_auth_string_still_labels_as_signin(self) -> None:
+        """A real auth/sign-in deferral still gets the user-flow label. Uses a
+        sentence whose first surface match is the auth lane (no upstream lane
+        words like 'broken' / 'page' / 'button')."""
+        r = classify("users cannot log in after password reset")
+        self.assertTrue(r["product_impacting"])
+        self.assertEqual(r["impact"], "user account / sign-in flow")
+
+    def test_bare_user_word_without_auth_signal_no_longer_triggers_user_flow(self) -> None:
+        """Pre-fix regression: the bare token 'user' matched user-flow and
+        emitted the sign-in label for arbitrary internal text. Now the auth
+        lane requires a real identity-flow signal."""
+        r = classify("when the user types a long string the parser is slow")
+        # 'slow' triggers performance lane — still product-impacting True, but
+        # the impact MUST NOT be the auth/sign-in label.
+        self.assertTrue(r["product_impacting"])
+        self.assertNotEqual(r["impact"], "user account / sign-in flow")
+
     # ----- Shape -----
 
     def test_return_shape(self) -> None:

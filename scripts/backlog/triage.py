@@ -60,7 +60,15 @@ _SURFACE_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\b(?:data\s+integrity|lost\s+data|corrupt(?:ion)?|stale\s+data|wrong\s+(?:value|number|amount))\b", re.I),
      "data-integrity",
      "data integrity / correctness"),
-    (re.compile(r"\b(?:user|account|profile|signin|signup|sign-in|sign-up|login|logout|onboarding)\b", re.I),
+    # Auth / sign-in lane — requires specific identity-flow signals, NOT the bare
+    # word "user" (which appears in too many internal-tooling contexts to be a
+    # useful auth signal — see triage of "count … USER corrections in the miner").
+    (re.compile(
+        r"\b(?:sign[\s-]?in|sign[\s-]?up|sign[\s-]?out|log[\s-]?in|log[\s-]?out|"
+        r"signin|signup|signout|login|logout|"
+        r"auth(?:entication|orize|orization)?|"
+        r"account|profile|credential(?:s)?|session(?:s)?|onboarding|password)\b",
+        re.I),
      "user-flow",
      "user account / sign-in flow"),
     (re.compile(r"\b(?:dashboard|chart|graph|table|list|grid)\b", re.I),
@@ -78,6 +86,19 @@ _SURFACE_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\b(?:loads?|loading|fetch(?:ing)?|render(?:ing)?)\s+(?:incorrectly|wrong|too\s+slow|fails?)\b", re.I),
      "render-failure",
      "user-visible render / load failure"),
+    # Internal-correctness / pipeline-accuracy lane — issues about build-loop's
+    # own tooling, miners, self-improvement pipeline, classifiers, hooks,
+    # subagents, or build internals. These ARE product-impacting (system
+    # correctness IS product correctness for a build orchestrator) but deserve
+    # an honest label that doesn't impersonate a user-facing surface. Placed
+    # last so any genuine UI / auth / data lane label wins first-match.
+    (re.compile(
+        r"\b(?:miner|self[\s-]?improvement|pipeline|triage|classifier|"
+        r"frontmatter|build[\s-]?loop|subagent|orchestrator|tooling|"
+        r"build\s+internals|hook[\s-]?injection(?:s)?)\b",
+        re.I),
+     "internal-correctness",
+     "internal correctness / pipeline accuracy"),
 ]
 
 # Internal-only suppression — when the entire deferral reads as pure-internal,
