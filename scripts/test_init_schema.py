@@ -21,6 +21,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "init_agent_memory_schema.sql"
 TEST_SCHEMA = "test_schema_init_check"
@@ -61,6 +63,7 @@ def apply_schema_with_substitution(test_schema: str) -> tuple[int, str, str]:
     return cp.returncode, cp.stdout, cp.stderr
 
 
+@pytest.mark.db
 class InitSchemaTests(unittest.TestCase):
 
     @classmethod

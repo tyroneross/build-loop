@@ -19,6 +19,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 WRITE = HERE / "write_decision" / "__main__.py"
@@ -138,6 +140,7 @@ def sync(workdir: Path, rebuild: bool = False, project: str = "test-default") ->
     return subprocess.run(args, capture_output=True, text=True, timeout=120)
 
 
+@pytest.mark.db
 class SyncTests(MemIsolationMixin, unittest.TestCase):
 
     @classmethod
