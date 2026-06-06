@@ -120,6 +120,16 @@ def _should_skip(workdir: Path, paths: list[str]) -> tuple[bool, str]:
     if not has_config and not has_any_path:
         return True, "no pytest config and no test paths present"
     if not has_any_path:
+        if has_config:
+            # Python-bearing repo (has config) but tests are not at the default
+            # paths. Skip LOUDLY so the operator notices the bypass and can pass
+            # --paths for a non-standard layout — silence here would hide whole
+            # test trees from the gate.
+            return True, (
+                "pytest config present but neither default path ("
+                + ", ".join(paths)
+                + ") found — pass --paths for non-standard layouts"
+            )
         return True, "no test paths present"
     return False, ""
 

@@ -85,6 +85,19 @@ def test_should_not_skip_when_paths_present(tmp_path):
     assert skip is False
 
 
+def test_skipped_with_config_but_nonstandard_paths(tmp_path):
+    # Python-bearing repo (has pyproject.toml) whose tests live at a
+    # non-standard path (src/tests/), not the default scripts/ or tests/.
+    # The gate skips, but the reason must LOUDLY name the bypass + --paths.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "src" / "tests").mkdir(parents=True)
+    (tmp_path / "src" / "tests" / "test_y.py").write_text("def test_b(): pass\n")
+    skip, reason = _should_skip(tmp_path, ["scripts/", "tests/"])
+    assert skip is True
+    assert "--paths" in reason
+    assert "config present" in reason
+
+
 # ---------------------------------------------------------------------------
 # Subprocess acceptance — broken-import sandbox
 # ---------------------------------------------------------------------------
