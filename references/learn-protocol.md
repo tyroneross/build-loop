@@ -2,13 +2,23 @@
 
 # Phase 6 Learn Protocol — orchestrator reference
 
-Optional cross-build pattern detection. Runs after Review sub-step F on every build unless `.build-loop/config.json.autoSelfImprove` is false or `runs[]` has fewer than 3 entries.
+Mandatory cross-build pattern detection (v0.30.0+). Phase 6 **always runs and always emits a `## Learn` outcome line** in the Review-G report. The expensive arm (Sonnet draft + Opus signoff) stays conditional on `runs[] >= 3` AND a pattern crossing threshold AND not-deferred. See §"Gating outcomes" below for the three Review-G outcome states (accruing / deferred / full). The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error.
+
+## Gating outcomes (decide once at Phase 6 entry)
+
+| State | Trigger | What runs | Review-G line |
+|---|---|---|---|
+| **Accruing** | `runs[] < 3` | Detector (cheap) + consolidation only — skip Sonnet draft | `Learn: accruing (N/3 runs)` |
+| **Deferred** | debug-only (`closeout: false` in dispatch envelope) OR budget-exhausted (`budget_check.py` envelope `action == "finalize_and_stop"` at Phase 6 entry) | Detector + consolidation; write `.build-loop/proposals/learn-deferred-<run-id>.md` marker with `{reason, runs_count, budget_action}`; skip Sonnet draft + Opus signoff so Learn never blows the budget ceiling | `Learn: deferred — <reason>` |
+| **Full** | `runs[] >= 3` AND detector returned a pattern AND not deferred | All steps below 4–9 fire | `Learn: <N> patterns drafted` (or `Learn: 0 patterns above threshold (N runs scanned)` when detector returned nothing) |
+
+Deprecated `autoSelfImprove: false` is read for migration safety only: when present and `false`, log a one-line `state.json.warnings[]` entry (`"autoSelfImprove: false is deprecated; ignored (migration no-op)"`) and proceed as if the key were absent. Decision-3 of the design: promotion to `active/` still requires explicit `/build-loop:promote-experiment` — that safety boundary is unchanged.
 
 ## Steps
 
 1. Load `Skill("build-loop:self-improve")` for the full protocol.
-2. Dispatch `recurring-pattern-detector` (Haiku) — reads `.build-loop/state.json.runs[]`, returns patterns JSON (only `phase_failure` and `manual_intervention` types). In parallel, dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: learn-sync')` — promotes new lessons (Chunk 8) and syncs NavGator lessons into Postgres (Chunk 7); scout no-ops gracefully when those scripts are not yet present.
-3. Filter to `confidence: "high"` or `count >= 4` (or type `manual_intervention` with count >= 2); dedupe against existing active/experimental skill names; cap 2 artifacts per scan.
+2. Dispatch `recurring-pattern-detector` (Haiku) — reads **two signal sources**: (a) `.build-loop/state.json.runs[]` (emits `phase_failure`, `manual_intervention`, `security_finding`), (b) `.build-loop/proposals/enforce-from-retro/*.md` written by the post-push retrospective (emits `enforce_recurrence` when the same normalized candidate signature appears across ≥ 2 distinct run-ids). The orchestrator may cite `python3 scripts/enforce_retro_signals.py --workdir "$PWD" --json` as pre-computed input. In parallel, dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: learn-sync')` — promotes new lessons (Chunk 8) and syncs NavGator lessons into Postgres (Chunk 7); scout no-ops gracefully when those scripts are not yet present.
+3. Filter to `confidence: "high"` or `count >= 4` (or type `manual_intervention` with count >= 2, or type `enforce_recurrence` with count >= 2 distinct run-ids); dedupe against existing active/experimental skill names; cap 2 artifacts per scan.
 4. For each kept pattern, dispatch `self-improvement-architect` (Sonnet) — drafts experimental artifact to `.build-loop/skills/experimental/<name>/SKILL.md`.
 5. **Opus 4.7 signoff (you)** — read each drafted artifact, verdict: APPROVE / REVISE (1 retry max) / DISCARD. Log discard reason to `.build-loop/experiments/discarded.jsonl`.
 6. For APPROVED artifacts: write baseline entry to `.build-loop/experiments/<name>.jsonl` with metric, target, sample size (default 8 non-confounded runs).

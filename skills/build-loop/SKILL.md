@@ -10,7 +10,7 @@ user-invocable: true
 
 # Build Loop — Orchestrated Development
 
-A 5-phase development loop (+1 optional): assess state and criteria, plan, execute, review (critic/validate/fact-check/report as sub-steps), iterate on review failures. Optional Phase 6 Learn detects cross-build recurring patterns and drafts experimental skills.
+A 5-phase development loop with a mandatory Phase 6: assess state and criteria, plan, execute, review (critic/validate/fact-check/report as sub-steps), iterate on review failures. Phase 6 Learn (mandatory; always runs) detects cross-build recurring patterns and drafts experimental skills; below 3 runs it accrues; debug-only and budget-exhausted runs defer the expensive arm.
 
 ## Routing
 
@@ -18,7 +18,7 @@ A 5-phase development loop (+1 optional): assess state and criteria, plan, execu
 
 Internal modes:
 
-- **Build** (default): Full 5-phase loop plus optional Learn — triggered by implementation, fix, refactor, migrate, or update language
+- **Build** (default): Full 5-phase loop plus mandatory Phase 6 Learn — triggered by implementation, fix, refactor, migrate, or update language
 - **Optimize**: Metric-driven optimization loop — triggered by "speed up", "reduce", "improve" + a mechanical metric (`/build-loop:optimize` as a direct override)
 - **Research**: Pre-decision analysis, outputs a research packet, no commits — triggered by "research", "evaluate", "compare", "should I" (`/build-loop:research` as a direct override)
 - **Debug**: Deep iterative root-cause investigation — triggered by symptom language; also auto-invoked inside the loop on Review-B failures (`/build-loop:debug` as a direct override)
@@ -361,13 +361,13 @@ Key steps: prioritized work list (Validate failures → blocker UX → major UX 
 
 **Load `skills/build-loop/references/phase-5-iterate.md`** for the full prioritized work list, status routing for all 9 implementer return values, convergence detection, and followup overflow protocol.
 
-## Phase 6: Learn — Cross-Build Pattern Detection (optional)
+## Phase 6: Learn — Cross-Build Pattern Detection (mandatory; always runs and always reports)
 
-Detect recurring patterns across recent runs, auto-draft experimental skills/agents. Runs after Review-G unless disabled. Requires `runs[] >= 3`.
+Detect recurring patterns across recent runs, auto-draft experimental skills/agents. **Always runs after Review-G** (v0.30.0+) and always emits a `## Learn` outcome line. Three outcome states: **accruing** (`runs[] < 3` → `Learn: accruing (N/3 runs)`), **deferred** (debug-only `closeout: false` or budget-exhausted → write `learn-deferred-<run-id>.md` marker → `Learn: deferred — <reason>`), or **full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred). Promotion to `active/` still requires explicit `/build-loop:promote-experiment` (safety boundary). The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error.
 
-Key steps: recurring-pattern-detector (Haiku) → filter (confidence: high OR count >= 4) → draft via self-improvement-architect (Sonnet) → Opus signoff → sample review sweep → notify.
+Key steps: recurring-pattern-detector (Haiku; reads `state.json.runs[]` AND `.build-loop/proposals/enforce-from-retro/*.md` as two signal sources, the second emitting `enforce_recurrence` on cross-run candidates) → filter (confidence: high OR count >= 4; `enforce_recurrence` >= 2 distinct run-ids) → draft via self-improvement-architect (Sonnet) → Opus signoff → sample review sweep → notify.
 
-**Load `skills/build-loop/references/phase-6-learn.md`** for the full detect-filter-draft-signoff flow, auto-promote rules, and user control commands.
+**Load `skills/build-loop/references/phase-6-learn.md`** for the full gating-outcomes table, detect-filter-draft-signoff flow, auto-promote rules, and user control commands.
 
 ## Memory — Global and Project-Scoped
 

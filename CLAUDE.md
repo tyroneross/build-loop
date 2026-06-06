@@ -1,8 +1,8 @@
 # Build Loop Plugin
 
-Orchestrated 5-phase development loop (+1 optional) for significant multi-step code changes.
+Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for significant multi-step code changes.
 
-**Phases**: Assess → Plan → Execute → Review → Iterate (5x max). Optional: Learn (cross-build pattern detection).
+**Phases**: Assess → Plan → Execute → Review → Iterate (5x max). Mandatory: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
 
 Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report.
 

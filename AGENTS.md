@@ -1,6 +1,6 @@
 # Build Loop
 
-Orchestrated 5-phase development loop (+1 optional) for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
+Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for significant multi-step code changes. Use this methodology when changes span multiple files, require planning, and benefit from structured validation.
 
 **Skip this loop for:** single-file edits, config changes, quick fixes under ~20 lines.
 
@@ -58,7 +58,7 @@ Lead each point with the finding. Progressive disclosure: headline first, files/
 | 3 | **Execute** | Build it — dispatch parallel work for independent file groups | Working implementation |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report — seven ordered sub-steps, single exit point | Scorecard + evidence; routes to Iterate on failure |
 | 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) | Updated scorecard |
-| 6 | **Learn** (optional) | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking; auto-promote on metric wins when enabled | Experimental artifacts + synthesis |
+| 6 | **Learn** (mandatory) | Always runs after Review-G; emits a `## Learn` outcome line (accruing / deferred / full). Detects recurring patterns across runs (incl. retro enforce-candidates as a second signal source), auto-drafts experimental skills/agents with A/B tracking; promotion to `active/` still requires explicit `/build-loop:promote-experiment` | Experimental artifacts + synthesis |
 
 ## Run Modes
 
@@ -419,16 +419,22 @@ For each fix:
 
 Log iteration state to `.build-loop/state.json`.
 
-### Phase 6: Learn (optional)
+### Phase 6: Learn (mandatory; always runs and always reports)
 
-Runs after Review sub-step G (Report) on every build unless disabled or `runs[]` has fewer than 3 entries.
+Runs after Review sub-step G (Report) on **every** build. Cheap detector + `consolidate_memory.py` + `procedural_governance.py --mode detect-patterns` always fire. A `## Learn` outcome line is always emitted. Three outcome states:
 
-- **Detect**: pattern detector scans `state.json.runs[]` for recurring `phase_failure` + `manual_intervention` signals.
+- **Accruing** (`runs[] < 3`): cheap detector + consolidation only; report `Learn: accruing (N/3 runs)`.
+- **Deferred** (debug-only `closeout: false` in dispatch envelope OR budget-exhausted `budget_check.py` envelope `action == "finalize_and_stop"` at Phase 6 entry): cheap detector + consolidation; write `.build-loop/proposals/learn-deferred-<run-id>.md` marker with `{reason, runs_count, budget_action}`; skip Sonnet draft + Opus signoff so Learn never blows the budget ceiling. Report `Learn: deferred — <reason>`.
+- **Full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred): full flow below.
+
+Full-flow steps:
+
+- **Detect**: pattern detector scans (a) `state.json.runs[]` for recurring `phase_failure` + `manual_intervention` + `security_finding` signals, (b) `.build-loop/proposals/enforce-from-retro/*.md` for `enforce_recurrence` patterns (the same normalized candidate signature across ≥ 2 distinct run-ids — wires the post-push retrospective's enforce-candidates into Learn's cross-run detector).
 - **Draft**: for each kept pattern, architect agent writes experimental SKILL.md with A/B Experiment section (sample target 8 non-confounded runs).
 - **Signoff**: Opus reviews each draft; APPROVE / REVISE (1 retry) / DISCARD.
-- **Sample sweep**: for existing experimental artifacts with sample complete, auto-promote to `active/` (only when `autoPromote: true` config is set AND effective non-confounded sample ≥ 8 AND non-regression). Regressions and inconclusive results write proposals, never auto-delete.
+- **Sample sweep**: for existing experimental artifacts with sample complete, eligible for promotion (only when `autoPromote: true` config is set AND effective non-confounded sample ≥ 8 AND non-regression). Promotion to `active/` still requires explicit `/build-loop:promote-experiment <name>` user confirmation. Regressions and inconclusive results write proposals, never auto-delete.
 
-User controls: `rm -rf .build-loop/skills/experimental/<name>/`, `.build-loop/skills/.demoted` blocklist, `autoSelfImprove: false` disables the phase entirely.
+User controls: `rm -rf .build-loop/skills/experimental/<name>/`, `.build-loop/skills/.demoted` blocklist. The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error, but the value is logged as a one-line `state.json.warnings[]` entry and ignored.
 
 ## Project Data
 
