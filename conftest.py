@@ -2,17 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Root conftest.py — covers both scripts/ and tests/.
 
-Implements the `live` marker auto-skip:
-  - Tests marked `@pytest.mark.live` are skipped automatically when
-    Ollama's port (127.0.0.1:11434) is not reachable via a fast TCP probe.
-  - When Ollama IS reachable, `live`-marked tests run normally.
+Marker auto-skip rules (both probed once per collection pass):
 
-This is the load-bearing fix for the full-scope gate hang:
-  scripts/test_stop_hook_integration.py::StopHookIntegrationTests::
-    test_hook_command_runs_end_to_end_with_live_qwen
-  ... and all similar tests that poll an external service.
+  `live`  — skipped when Ollama (127.0.0.1:11434) is unreachable.
+             Load-bearing fix for the full-scope gate hang on live-qwen
+             tests (test_stop_hook_integration, etc.).
 
-The probe uses stdlib `socket` only (no deps).  Timeout is 0.5s.
+  `db`    — skipped when psycopg is not installed (.[db] extra absent).
+             Makes `pytest scripts/ tests/` collect and run clean on a
+             fresh `uv sync` without the optional Postgres extra, honouring
+             the contract stated in pyproject.toml:
+             "Sync scripts gracefully degrade when these aren't installed;
+              tests stub psycopg out entirely."
+             PG-requiring tests that are already marked `live` inherit
+             the `live` skip; `db` is for tests that need psycopg but
+             don't need a live Ollama service.
+
+Both probes use stdlib only (no extra deps).  Timeout for the TCP probe
+is 0.5s.
 """
 from __future__ import annotations
 
@@ -30,23 +37,36 @@ def _ollama_reachable() -> bool:
         return False
 
 
+def _psycopg_available() -> bool:
+    """True if psycopg (the .[db] extra) is importable."""
+    try:
+        import psycopg  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
-    """Auto-skip `live`-marked tests when Ollama/qwen is unreachable.
+    """Auto-skip `live`- and `db`-marked tests based on one-shot probes.
 
-    A single probe per collection run (cached here) keeps overhead at
-    ~0.5s worst-case regardless of how many live-marked tests exist.
+    Both probes run once per collection pass; total overhead is ≤0.5s
+    regardless of how many marked tests exist.
     """
-    # Probe once per collection pass.
-    reachable = _ollama_reachable()
-    if reachable:
-        return  # live service up — run all tests normally
+    ollama_up = _ollama_reachable()
+    psycopg_up = _psycopg_available()
 
-    skip_marker = pytest.mark.skip(
+    skip_live = pytest.mark.skip(
         reason="live service (Ollama/qwen on 127.0.0.1:11434) unreachable"
     )
+    skip_db = pytest.mark.skip(
+        reason="psycopg not installed — install .[db] extra to run Postgres tests"
+    )
+
     for item in items:
-        if item.get_closest_marker("live") is not None:
-            item.add_marker(skip_marker, append=False)
+        if not ollama_up and item.get_closest_marker("live") is not None:
+            item.add_marker(skip_live, append=False)
+        if not psycopg_up and item.get_closest_marker("db") is not None:
+            item.add_marker(skip_db, append=False)

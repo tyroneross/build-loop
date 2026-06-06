@@ -43,8 +43,19 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-import psycopg
-from psycopg.rows import dict_row
+# psycopg is an optional extra (.[db]).  Import lazily so this module (and
+# recall.py, which imports `from db import ...` at module level) collect and
+# import cleanly even when psycopg is absent.  Any function that actually
+# opens a connection calls _require_psycopg() first, which raises a clear
+# actionable error at call time — not at import time.
+try:
+    import psycopg
+    from psycopg.rows import dict_row as _dict_row
+    _PSYCOPG_AVAILABLE = True
+except ImportError:
+    psycopg = None  # type: ignore[assignment]
+    _dict_row = None  # type: ignore[assignment]
+    _PSYCOPG_AVAILABLE = False
 
 # Make scripts/ importable as a sibling so `_db_url` resolves whether this
 # module is imported as `scripts.db` or run with scripts/ on sys.path.
@@ -54,7 +65,22 @@ if str(_HERE) not in sys.path:
 
 from _db_url import resolve_db_url  # noqa: E402
 
-_CONN: psycopg.Connection | None = None
+_CONN: Any = None  # psycopg.Connection when psycopg is available
+
+
+def _require_psycopg() -> None:
+    """Raise a clear error when psycopg is absent.
+
+    Called at the top of every function that needs a live DB connection so
+    the ImportError surfaces at the actual call site rather than at module
+    import time.  This lets tests that mock the DB helpers collect and run
+    without psycopg installed (.[db] extra).
+    """
+    if not _PSYCOPG_AVAILABLE:
+        raise ImportError(
+            "psycopg is not installed. "
+            "Install the optional extra: uv pip install -e '.[db]'"
+        )
 
 
 def _read_db_url() -> str:
@@ -74,8 +100,9 @@ def _read_db_url() -> str:
     )
 
 
-def get_connection() -> psycopg.Connection:
+def get_connection() -> Any:
     """Return a process-local connection, opening it on first call."""
+    _require_psycopg()
     global _CONN
     if _CONN is None or _CONN.closed:
         _CONN = psycopg.connect(_read_db_url(), autocommit=False)
@@ -143,7 +170,7 @@ def execute_script(sql: str) -> None:
 def query(sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
     """Run a SELECT and return list of dict rows. No commit (read-only)."""
     conn = get_connection()
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor(row_factory=_dict_row) as cur:
         cur.execute(sql, params or ())
         return list(cur.fetchall())
 
@@ -151,7 +178,7 @@ def query(sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]
 def query_one(sql: str, params: Sequence[Any] | None = None) -> dict[str, Any] | None:
     """Run a SELECT and return the first row, or None."""
     conn = get_connection()
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor(row_factory=_dict_row) as cur:
         cur.execute(sql, params or ())
         row = cur.fetchone()
         return row

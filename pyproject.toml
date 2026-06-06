@@ -24,8 +24,9 @@ test = [
 # Optional Postgres dual-write deps. Required by:
 #   scripts/db.py            — episodic memory writes
 #   scripts/sync_navgator_lessons.py (Chunk 7) — NavGator lessons sync, SQLite-first with optional Postgres mirror
-# Sync scripts gracefully degrade when these aren't installed; tests
-# stub psycopg out entirely. Install with `uv pip install -e .[db]`.
+# Sync scripts degrade gracefully when absent (db.py imports psycopg lazily;
+# PG-requiring tests are marked @pytest.mark.db and auto-skipped by conftest).
+# Install with `uv pip install -e .[db]`.
 db = [
     "psycopg[binary]>=3.1",
 ]
@@ -56,6 +57,7 @@ addopts = "-q"
 markers = [
     "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
     "live: test that requires a live external service (Ollama/qwen on :11434, embed/rerank daemon, Postgres); auto-skipped when the service is unreachable",
+    "db: test that requires psycopg (.[db] extra) and/or a live Postgres instance; auto-skipped when psycopg is not installed",
 ]
 
 [dependency-groups]
