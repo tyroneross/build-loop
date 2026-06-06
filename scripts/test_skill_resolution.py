@@ -54,6 +54,10 @@ ACCEPTED_SIBLINGS: set[str] = {
     # skill. The command is the supported entrypoint; the skill is hidden from
     # user invocation and loaded only by explicit internal routing.
     "build-loop:agent-rally-point",
+    # Handoff command + skill share a name by design: /build-loop:handoff loads the
+    # handoff skill. Command is the user entry; skill holds the full doc-composition
+    # template, source table, and host-agnostic design notes.
+    "build-loop:handoff",
 }
 
 FINDING_KEYS = (
