@@ -10,6 +10,12 @@ Runnable as:
 Public API (consumed by other scripts):
   update_execution_state(state_path, action, ...)
   compute_run_id(goal, now=None)
+
+Public constants (consumed by tests and external callers):
+  EXECUTION_SCHEMA_VERSION  — int, current execution-state schema version
+  EXECUTION_VALID_ACTIONS   — set[str], allowed action values for update_execution_state
+  EXECUTION_VALID_PHASES    — set[str], allowed phase values
+  EXECUTION_RETURN_STATUSES — set[str], allowed return-chunk status values
 """
 from __future__ import annotations
 
@@ -27,5 +33,11 @@ for _d in (str(_PKG_DIR), str(_SCRIPTS_DIR)):
         sys.path.insert(0, _d)
 
 # Re-export the names callers import from the old flat module.
-from execstate import update_execution_state  # type: ignore  # noqa: E402,F401
+from execstate import (  # type: ignore  # noqa: E402,F401
+    EXECUTION_RETURN_STATUSES,
+    EXECUTION_SCHEMA_VERSION,
+    EXECUTION_VALID_ACTIONS,
+    EXECUTION_VALID_PHASES,
+    update_execution_state,
+)
 from idtime import compute_run_id  # type: ignore  # noqa: E402,F401
