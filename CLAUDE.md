@@ -99,7 +99,9 @@ The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are no
 
 ## Plugin Bridging Policy
 
-When build-loop integrates capabilities from other plugins, **bridge artifacts and explicit actions, not default orchestration**. Programmatic calls (CLI flags, MCP tools, headless modes) compose well only when the user or plan explicitly requests them; viewer dashboards and persistent browser sessions don't belong inside an automated loop. IBR is explicit-only and is no longer auto-routed into UI builds.
+When build-loop integrates capabilities from other plugins, **bridge artifacts and explicit actions, not default orchestration**. Programmatic calls (CLI flags, MCP tools, headless modes) compose well only when the user or plan explicitly requests them; viewer dashboards and persistent browser sessions don't belong inside an automated loop. Non-verify IBR usage (IBR's interactive viewer, persistent browser sessions, full-suite dashboards) stays explicit-only for that reason.
+
+**UI visual-verification is the carved-out exception (BL-3, `5c78fbd`).** When a build modifies UI files and the IBR plugin is installed, build-loop routes the verification step through `build-loop:ibr-bridge` as the primary verifier — IBR's headless scan is a programmatic action, not an interactive surface, and beats symbol/string fallbacks for catching nm/strings-only "green" regressions on UI work. When IBR is not installed, the bridge falls through to `native-ax-driver` and `ui-validator`. Symbol-only verification (`nm`, `strings`, `otool`, "identifier present", "compiles cleanly") is never a substitute for visual/AX verification on a UI chunk.
 
 **Documented exception**: `mockup-gallery` is invoked from Phase 2 Plan for major UI work (new pages, ≥40% redesigns) to draft black-and-white mockups before any UI is written. Mockup drafting IS the action, and the user has explicitly authorized this pattern as the only place build-loop spawns plugin UI.
 

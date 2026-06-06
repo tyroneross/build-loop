@@ -352,7 +352,7 @@ Two checkpoints fire automatically after every implementer commit on plans that 
 
 Both backstops are first-class on the code-tier (fan-out) implementer path where they catch some of the recall gap, and defense-in-depth on the thinking-tier path where they rarely fire.
 
-**Sub-step B — Validate**: when the build touches UI, run build-loop's `ui-validator` first, then check the UI input/output contract for changed surfaces, code-based graders (test, lint, type, build), design-rule scanner, visual evidence capture, and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. IBR is explicit-only and is not auto-routed into the build. Scorecard format:
+**Sub-step B — Validate**: when the build touches UI, run build-loop's `ui-validator` first, then check the UI input/output contract for changed surfaces, code-based graders (test, lint, type, build), design-rule scanner, visual evidence capture, and LLM-as-judge for nuanced criteria. Every pass/fail has evidence. Use only headless/programmatic surfaces — never auto-open a viewer/dashboard. IBR's interactive viewer / persistent browser sessions stay explicit-only; **UI visual-verification** (BL-3) routes through `build-loop:ibr-bridge` as the primary verifier when the IBR plugin is installed (headless scan is a programmatic action), with `native-ax-driver` / `ui-validator` as fallback. Symbol-only checks (`nm`, `strings`, `otool`) are never a substitute for visual/AX verification on a UI chunk. Scorecard format:
 
 | # | Criterion | Method | Result | Evidence |
 |---|-----------|--------|--------|----------|
