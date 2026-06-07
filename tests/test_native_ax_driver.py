@@ -7,7 +7,7 @@ running .app — they're CLI-only smoke checks.
 
 Specifically asserts:
   - native_driver.py --help works (argparse stays valid)
-  - subcommand registry covers preflight, apps, resolve, scan, action
+  - subcommand registry covers preflight, apps, resolve, scan, analyze-layout, action
   - VALID_ACTIONS matches the Swift switch (catches drift if either side adds
     or renames an action without updating the other)
   - Swift package is well-formed (Package.swift + Sources/main.swift present,
@@ -74,7 +74,7 @@ def test_swift_package_present():
 # ─── Launcher CLI surface ───────────────────────────────────────────────────
 
 
-def _run_launcher(args, env_extra=None):
+def _run_launcher(args, env_extra=None, input_text=None):
     env = {**os.environ, **(env_extra or {})}
     return subprocess.run(
         [sys.executable, str(LAUNCHER), *args],
@@ -82,6 +82,7 @@ def _run_launcher(args, env_extra=None):
         text=True,
         timeout=10,
         env=env,
+        input=input_text,
     )
 
 
@@ -89,11 +90,11 @@ def test_launcher_help_runs():
     proc = _run_launcher(["--help"])
     assert proc.returncode == 0, proc.stderr
     out = proc.stdout
-    for sub in ("preflight", "apps", "resolve", "scan", "action"):
+    for sub in ("preflight", "apps", "resolve", "scan", "analyze-layout", "action"):
         assert sub in out, f"--help missing subcommand {sub!r}"
 
 
-@pytest.mark.parametrize("sub", ["preflight", "apps", "resolve", "scan", "action"])
+@pytest.mark.parametrize("sub", ["preflight", "apps", "resolve", "scan", "analyze-layout", "action"])
 def test_launcher_subcommand_help(sub):
     proc = _run_launcher([sub, "--help"])
     assert proc.returncode == 0, f"{sub} --help failed: {proc.stderr}"
@@ -121,6 +122,39 @@ def test_launcher_action_rejects_unknown_action():
 def test_launcher_action_requires_pid():
     proc = _run_launcher(["action", "--element-path", "0", "--action", "press"])
     assert proc.returncode == 2  # argparse complaint about missing --pid
+
+
+def test_analyze_layout_stdin_envelope_reports_layout_fill():
+    tree = [
+        {
+            "role": "AXSplitGroup",
+            "title": "Main",
+            "position": {"x": 0, "y": 0},
+            "size": {"width": 1074, "height": 700},
+            "children": [
+                {
+                    "role": "AXGroup",
+                    "title": "Terminal",
+                    "position": {"x": 317, "y": 0},
+                    "size": {"width": 440, "height": 700},
+                    "children": [],
+                }
+            ],
+        }
+    ]
+    raw_scan = "WINDOW:1:1074x700:Main\n" + json.dumps(tree)
+
+    proc = _run_launcher(["analyze-layout", "--stdin"], input_text=raw_scan)
+
+    assert proc.returncode == 0, proc.stderr
+    envelope = json.loads(proc.stdout)
+    assert envelope["status"] == "ran"
+    assert envelope["route"] == "native"
+    assert envelope["verifier"] == "native-ax-driver"
+    assert envelope["findings"][0]["severity"] == "warning"
+    assert envelope["findings"][0]["category"] == "structure"
+    assert envelope["findings"][0]["message"].startswith("layout-fill: ")
+    assert envelope["findings"][0]["finding"]["emptyPx"] == 317
 
 
 # ─── Drift cross-check between launcher and Swift binary ────────────────────

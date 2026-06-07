@@ -34,6 +34,9 @@ Usage (from a build-loop run, project cwd):
     # List running regular GUI apps (no AX permission needed)
     python3 native_driver.py apps
 
+    # Analyze a captured AX tree for centered-narrow layout gaps
+    python3 native_driver.py analyze-layout --stdin < ax-tree.json
+
 The launcher is intentionally stdlib-only (no pip deps). Calling code can shell
 out from any orchestrator phase or skill.
 """
@@ -58,6 +61,10 @@ from pathlib import Path
 #   <consumer-cwd>/.build-loop/bin/bl-ax-driver
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from layout_fill import analyze_layout_fill
+
 SKILL_DIR = SCRIPT_DIR.parent  # skills/native-ax-driver
 SWIFT_SOURCE_DIR = SKILL_DIR / "swift" / "bl-ax-driver"
 SWIFT_MAIN = SWIFT_SOURCE_DIR / "Sources" / "main.swift"
@@ -249,6 +256,115 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def _strip_window_header(text: str) -> str:
+    lines = text.splitlines()
+    if lines and lines[0].startswith("WINDOW:"):
+        return "\n".join(lines[1:]).strip()
+    return text.strip()
+
+
+def _load_ax_roots(text: str) -> list[dict] | dict:
+    return json.loads(_strip_window_header(text))
+
+
+def _scan_for_layout(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    binary = ensure_binary()
+    cmd: list[str] = [str(binary)]
+    if args.pid is not None:
+        cmd += ["--pid", str(args.pid)]
+    elif args.app:
+        cmd += ["--app", args.app]
+    else:
+        return None, "analyze-layout requires --from-file, --stdin, --pid, or --app"
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        return None, proc.stderr.strip() or f"scan failed with exit {proc.returncode}"
+    return proc.stdout, None
+
+
+def _emit_layout_envelope(
+    *,
+    status: str,
+    artifacts: list[str],
+    verification: str,
+    findings: list[dict],
+    error: str | None = None,
+) -> None:
+    payload = {
+        "status": status,
+        "route": "native",
+        "verifier": "native-ax-driver",
+        "artifacts": artifacts,
+        "verification": verification,
+        "findings": findings,
+    }
+    if error:
+        payload["error"] = error
+    print(json.dumps(payload, indent=2))
+
+
+def cmd_analyze_layout(args: argparse.Namespace) -> int:
+    artifacts: list[str]
+    try:
+        if args.from_file:
+            artifacts = [str(args.from_file)]
+            source = Path(args.from_file).read_text()
+        elif args.stdin:
+            artifacts = ["stdin"]
+            source = sys.stdin.read()
+        else:
+            artifacts = [f"pid:{args.pid}" if args.pid is not None else f"app:{args.app}"]
+            source, error = _scan_for_layout(args)
+            if error:
+                _emit_layout_envelope(
+                    status="failed",
+                    artifacts=artifacts,
+                    verification=f"native-ax-driver analyze-layout failed: {error}",
+                    findings=[],
+                    error=error,
+                )
+                return 0
+
+        roots = _load_ax_roots(source)
+        raw_findings = analyze_layout_fill(
+            roots,
+            threshold=args.threshold,
+            min_container_px=args.min_container_px,
+        )
+        findings = [
+            {
+                "severity": "warning",
+                "category": "structure",
+                "message": f"layout-fill: {finding.get('detail', '')}",
+                "finding": finding,
+            }
+            for finding in raw_findings
+        ]
+        count = len(findings)
+        plural = "" if count == 1 else "s"
+        _emit_layout_envelope(
+            status="ran",
+            artifacts=artifacts,
+            verification=(
+                f"native-ax-driver analyze-layout ran; found {count} "
+                f"layout-fill finding{plural}."
+            ),
+            findings=findings,
+        )
+        return 0
+    except Exception as exc:  # Keep analyzer failures data-shaped for bridge callers.
+        error = str(exc)
+        _emit_layout_envelope(
+            status="failed",
+            artifacts=artifacts if "artifacts" in locals() else [],
+            verification=f"native-ax-driver analyze-layout failed: {error}",
+            findings=[],
+            error=error,
+        )
+        return 0
+
+
 VALID_ACTIONS = {
     "press",
     "setValue",
@@ -329,6 +445,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--app")
     p_scan.add_argument("--device-name", help="Pin to a specific iOS sim device window")
 
+    p_analyze = sub.add_parser(
+        "analyze-layout",
+        help="Analyze AX tree for centered-narrow layout-fill gaps",
+    )
+    source = p_analyze.add_mutually_exclusive_group(required=True)
+    source.add_argument("--from-file", type=Path, help="Read Swift scan JSON from a file")
+    source.add_argument("--stdin", action="store_true", help="Read Swift scan JSON from stdin")
+    source.add_argument("--pid", type=int, help="Scan this pid and analyze the result")
+    source.add_argument("--app", help="Scan this app name and analyze the result")
+    p_analyze.add_argument("--threshold", type=float, default=0.12)
+    p_analyze.add_argument("--min-container-px", type=float, default=50.0)
+
     p_action = sub.add_parser("action", help="Perform AX action on element by index path")
     p_action.add_argument("--pid", type=int, required=True)
     p_action.add_argument(
@@ -352,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
         "apps": cmd_apps,
         "resolve": cmd_resolve,
         "scan": cmd_scan,
+        "analyze-layout": cmd_analyze_layout,
         "action": cmd_action,
     }
 

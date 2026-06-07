@@ -1,7 +1,7 @@
 ---
 name: build-loop:native-ax-driver
 description: Use when the build needs to automate a macOS .app without touching the hardware cursor, or the user asks to "click through the app" or "test the UI headlessly". Drives running apps via Accessibility API; self-contained Swift binary — no IBR, Playwright, or Appium required.
-version: 1.0.0
+version: 1.1.0
 user-invocable: false
 ---
 
@@ -15,7 +15,7 @@ user-invocable: false
 
 Build-loop's Iterate phase needs to verify native macOS UI fixes the same way it verifies web routes. Previously, build-loop deferred to IBR's MCP for native automation, which made native verification IBR-dependent. This skill lifts the needed capability into build-loop directly: same Swift code lineage, same AX actions, no MCP hop, no plugin requirement.
 
-IBR's MCP path is still allowed only when explicitly requested (see `skills/ibr-bridge/SKILL.md`) — it can add session management, baselines, and screenshots as auxiliary evidence. Every native AX operation build-loop needs to ship a verified fix is in this skill's tree.
+Build-loop still routes to IBR as the primary verifier when `skills/ibr-bridge/SKILL.md` detects it, because IBR can add session management, baselines, and screenshots as auxiliary evidence. This skill is the native fallback path when IBR is absent.
 
 ## What "cursor-free" means
 
@@ -53,6 +53,7 @@ Element targeting uses an integer index path from the main window root (e.g. `0,
 skills/native-ax-driver/
 ├─ SKILL.md                                 (this file)
 ├─ scripts/
+│  ├─ layout_fill.py                        (layout-fill / gap analyzer; stdlib only)
 │  └─ native_driver.py                      (Python launcher; stdlib only)
 └─ swift/bl-ax-driver/
    ├─ Package.swift                         (Swift 5.9, macOS 13+)
@@ -92,6 +93,60 @@ python3 .../native_driver.py scan --pid 44330                # by pid
 ```
 
 Stdout: `WINDOW:<id>:<WxH>:<title>` header followed by the window root's children as a JSON array of `AXExtractedElement` (`role`, `subrole`, `title`, `identifier`, `value`, `enabled`, `focused`, `actions[]`, `position`, `size`, `children[]`, `path[]`).
+
+### Analyze layout-fill / gap findings
+
+```bash
+# Analyze a saved Swift scan JSON array
+python3 .../native_driver.py analyze-layout --from-file /tmp/ax-tree.json
+
+# Accept raw scan stdout with the leading WINDOW:<id>:<WxH>:<title> header
+python3 .../native_driver.py scan --app "Easy Terminal" \
+  | python3 .../native_driver.py analyze-layout --stdin
+
+# Re-scan a running app or pid and analyze the result
+python3 .../native_driver.py analyze-layout --app "Easy Terminal"
+python3 .../native_driver.py analyze-layout --pid 44330
+```
+
+`analyze-layout` catches the layout bug class where a content element renders narrow and centered inside a larger container, leaving large empty gutters that can be invisible in screenshots. It reads the existing Swift scan JSON only; no Swift change or rebuild is required.
+
+Inputs:
+- `--from-file`, `--stdin`, `--pid`, or `--app` are mutually exclusive.
+- `--threshold` defaults to `0.12`.
+- `--min-container-px` defaults to `50`.
+
+The analyzer returns the bridge envelope shape from `skills/ibr-bridge/SKILL.md`:
+
+```json
+{
+  "status": "ran",
+  "route": "native",
+  "verifier": "native-ax-driver",
+  "artifacts": ["stdin"],
+  "verification": "native-ax-driver analyze-layout ran; found 1 layout-fill finding.",
+  "findings": [
+    {
+      "severity": "warning",
+      "category": "structure",
+      "message": "layout-fill: AXSplitGroup [Main]: leading empty band 317px = 30% of container width 1074px (horizontal)",
+      "finding": {
+        "containerRole": "AXSplitGroup",
+        "containerLabel": "Main",
+        "axis": "horizontal",
+        "emptyPx": 317.0,
+        "emptyPct": 0.2951582867783985,
+        "position": "leading",
+        "containerWidth": 1074.0,
+        "containerHeight": 700.0,
+        "detail": "AXSplitGroup [Main]: leading empty band 317px = 30% of container width 1074px (horizontal)"
+      }
+    }
+  ]
+}
+```
+
+The Swift extractor emits absolute screen coordinates, which are correct for this analysis. Each computed value is an intra-container delta, so a constant origin offset cancels out: `firstChild.min - container.min`, `container.max - lastChild.max`, and `band / container.extent`.
 
 ### Drive an element
 
@@ -161,3 +216,5 @@ If all four print sensible JSON, the skill is healthy.
 ## Provenance
 
 Swift extractor ported from `interface-built-right/src/native/swift/ibr-ax-extract/Sources/main.swift`. The two copies started identical; build-loop's copy can drift independently and is not auto-synced. If a future bug is fixed in IBR's copy, port it manually and bump this skill's `version`.
+
+Layout-fill / gap analysis in `scripts/layout_fill.py` is ported from `interface-built-right/src/native/layout-fill.ts` v1.4.0. Its fixtures mirror `interface-built-right/src/native/layout-fill.test.ts`, especially the Easy Terminal regression case: a 440px terminal centered in a 1074px container yields `emptyPx == 317`, `emptyPct ~= 0.2952`, and `position == "leading"`. The analyzer is pure Python and has no live AX dependency.
