@@ -467,7 +467,15 @@ _POINTER_DENSITY_RULES = {
 
 
 def pointer_density_findings(text: str) -> list[str]:
-    """Return advisory findings on pointer-density violations. Empty = OK."""
+    """Return advisory pointer-density warnings (non-blocking). Empty = clean.
+
+    The hard caps (max_file_lines, max_inlined_changed_files, etc.) are enforced
+    structurally in ``current_markdown()`` — that function generates the text within
+    those bounds so a fresh write never violates them.  This function returns
+    *advisory* findings only: it does not gate any write, and ``write_snapshot()``
+    writes unconditionally regardless of findings.  Use the findings for reporting
+    and surfacing to the run report (f8 / context-density rule), not for blocking.
+    """
     if not isinstance(text, str):
         return ["non_string_input"]
     findings: list[str] = []
