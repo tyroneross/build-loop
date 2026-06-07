@@ -70,6 +70,11 @@
             "type": "command",
             "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/audit_before_commit.py\"; if [ -f \"$hook\" ]; then python3 \"$hook\"; else printf '{}'; fi",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\" 2>/dev/null; exit 0",
+            "timeout": 2000
           }
         ]
       }
