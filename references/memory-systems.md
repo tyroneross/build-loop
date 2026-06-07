@@ -33,6 +33,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 
 `sources` includes:
 - `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `~/dev/git-folder/build-loop-memory`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. If the root `constitution.md` is missing, `scripts/context_bootstrap.py` seeds it once from `templates/memory/constitution.md.template` before reading; existing files and project-specific constitutions are never overwritten. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.
+- Ephemeral project plans must be archived before cleanup removes them. Use `scripts/archive_project_plan.py <plan> --workdir "$PWD"` to copy them into `build-loop-memory/projects/<slug>/archive/plans/<YYYY-MM-DD>/`; pass `--remove-source` only when the local file should be deleted after the archive write succeeds.
 - `repo_local`: `.build-loop/feedback.md`, `.build-loop/state.json` summary including `runs[-3:]` and backend health when present, plus current `.build-loop/intent.md`, `.build-loop/goal.md`, and `.build-loop/plan.md`.
 - `codex_memory`: `~/.codex/memories/MEMORY.md` registry hits and bounded excerpts from linked `rollout_summaries/*` files.
 - `rally`: best-effort `coordination_status.py` result when coordination context exists.

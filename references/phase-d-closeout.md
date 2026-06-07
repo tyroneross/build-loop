@@ -8,6 +8,15 @@ Extracted from `agents/build-orchestrator.md` §"Phase D: Closeout". The agent b
 
 Closeout terminates live processes, reaps stale presence records, force-removes dispatch worktrees, archives the active coordination file, and posts a `run-closeout` phase record to the channel. This is automated, not operator-discipline-dependent. Skipping it leaves ghost-peer signals that the next run has to debug. Memory citation: `feedback_close_out_stops_the_watcher`. Constitution: `references/coordination-rules.md` §"Closeout hygiene".
 
+If closeout or cleanup removes ephemeral project plans (`.build-loop/plan*.md`
+or `.build-loop/plans/*.md`), archive each one first:
+
+```bash
+python3 scripts/archive_project_plan.py <plan> --workdir "$PWD" --remove-source --json
+```
+
+The archive target is `build-loop-memory/projects/<slug>/archive/plans/<date>/`.
+
 Phase D runs by default at the end of every run, including when Phase 6 Learn is deferred. The only way to skip Phase D entirely is an explicit `closeout: false` in the dispatch envelope (used by debug-only runs); set this conservatively.
 
 ## Mandatory closeout sequence

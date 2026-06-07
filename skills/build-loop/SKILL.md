@@ -276,6 +276,11 @@ their brief explicitly hands them a bounded implementation task.
 
 **Native agent-rally capabilities**: build-loop vendors `skills/agent-rally-point/SKILL.md` and `skills/agent-rally-watcher/SKILL.md` as embedded mini-plugin skills. Use those skill entrypoints for Rally Point substrate or watcher work before reaching for the standalone repos. The grouped extraction contract is `scripts/rally_point/plugin_boundary.json`; validate it with `python3 scripts/agent_rally.py boundary --repo "$PWD" --check --json`.
 
+**Ephemeral plan cleanup**: never delete a `.build-loop/plan*.md` or
+`.build-loop/plans/*.md` project plan without first archiving it to
+build-loop-memory via `python3 scripts/archive_project_plan.py <plan> --workdir
+"$PWD"`. Use `--remove-source` only after the archive write succeeds.
+
 **Coding-host coordination polling gate**: when a build-loop task involves more than one coding host, an active rally-point peer, an active coord file, any `inbox/<tool>.jsonl` message, or any `inbox/all.jsonl` broadcast, the current host must keep a cheap watcher live while work is in flight. Use a stable tool id (`claude_code`, `codex`, `cursor`, etc.). Run a one-shot status check first:
 
 ```bash
