@@ -39,6 +39,15 @@ Run after Phase 6 Learn if it ran; otherwise immediately after Review-G.
 8. **State tracking**: write `state.json.runs[N].closeout_status` ∈ {`completed`, `partial`, `failed`} with per-step outcomes. The run report (Review-G) includes a closeout summary line; future-session pattern-miners and Phase 6 Learn use the per-step outcomes to detect chronic closeout failures.
 9. **Release briefed push-hold**: run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/push_hold.py --release-if-briefed --reason "run closed, no blocking findings" --json`. This command is safe to run unconditionally — it is a no-op when no marker is present (`noop_absent`), when the source is `review-a` (`noop_review_a`, that path owns its own release), or when an unresolved blocking verdict still exists in state.json (`noop_blocking_verdict`). It only removes a marker with `source: orchestrator` or `source: manual` when `detect_blocking_verdict` returns None. This ensures a briefed do-not-push hold is never stranded past the end of its run.
 
+## Push readiness guidance
+
+When closeout needs to answer "is this ready to push?", use
+`references/push-readiness-checklist.md`. It is advisory, not a blocking gate:
+the checklist shapes the recommendation and evidence readout, while
+`deployment_policy.py`, `autonomy_gate.py`, `push_hold.py`, protected-branch
+rules, and explicit operator confirmation remain the authorities for whether a
+push command may actually run.
+
 ## `## Branch hygiene` report block
 
 Every run's final report carries this section, sourced from collapse_run.py's JSON output:

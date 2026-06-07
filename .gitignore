@@ -76,3 +76,5 @@ __pycache__/
 .navgator/
 .ibr/
 .claude-code-debugger/
+archive/*.bundle
+archive/**/*.bundle
