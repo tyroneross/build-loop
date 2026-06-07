@@ -59,68 +59,11 @@ If your findings exceed the budget, truncate the `findings[]` array and add `"_t
 1. Check freshness — wait if needed (see Failure modes).
 2. Run `python -m build_loop.architecture acp` to refresh `.build-loop/architecture/acp.json`.
 3. Read the ACP. Surface up to 5 hotspots (highest blast_radius), all `recent_violations`, all `lessons_in_scope`.
-4. **Persist the baseline as a decision** so cross-session recall can warm-start the next Phase 1. Run once per baseline (idempotent topic-identity supersession by primary_tag+entity in `write_decision.py`):
-
-    ```bash
-    SCAN_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    COMPONENTS=$(jq '.component_count // .components_count // 0' .build-loop/architecture/index.json)
-    CONNECTIONS=$(jq '.connection_count // .connections_count // 0' .build-loop/architecture/index.json)
-    VIOLATIONS=$(jq '.violations | length' .episodic/architecture/known_violations.json 2>/dev/null || echo 0)
-
-    python3 "${CLAUDE_PLUGIN_ROOT:-$PWD}/scripts/write_decision/__main__.py" \
-      --workdir "$PWD" \
-      --title "Architecture baseline scan: ${COMPONENTS} components, ${CONNECTIONS} connections" \
-      --decision "Baseline captured at ${SCAN_TS}; ACP path .build-loop/architecture/acp.json recorded for downstream phase use." \
-      --context "Top hotspots and recent violations summarized in the scout's envelope; full ACP at .build-loop/architecture/acp.json." \
-      --consequences "Cross-session recall available via scripts/recall.py and scripts/memory_facade.py; Phase 1 in next session uses this as warm start." \
-      --tags "architecture,proposed:baseline,proposed:scout,proposed:arch-baseline" \
-      --primary-tag "architecture" \
-      --entity "baseline-scan" \
-      --confidence "confirmed" \
-      --confidence-source "tool_extraction" \
-      --status "accepted" \
-      --source "auto-confirmed" \
-      --domain "meta" \
-      --goal "maintainability" \
-      --task-category "research" \
-      --no-db
-    ```
-
-   Use `--no-db` because Phase 1 must not block on Postgres availability; the `consolidate_memory.py` Stop-hook step will sync the file row into `semantic_facts` later. Record the resulting decision id (stdout) in `findings[].side_effects: "wrote_decision_<id>"`. If `write_decision.py` is missing or returns non-zero, log `"write_decision_failed"` and proceed — the scan still happened.
+4. **Persist the baseline as a decision** so cross-session recall can warm-start the next Phase 1. Run the `write_decision.py` command in `references/scout-playbooks.md` §"baseline step 4" (idempotent topic-identity supersession; `--no-db` so Phase 1 never blocks on Postgres). Record the decision id (stdout) in `findings[].side_effects: "wrote_decision_<id>"`; if `write_decision.py` is missing or non-zero, log `"write_decision_failed"` and proceed — the scan still happened.
 
 5. `summary` ≤ 200 words: count + layers + top risk component name. Cite the decision id from step 4.
 6. `follow_up`: which components a Plan-phase chunk should treat as risky.
-7. **Write portable handoff artifact** `.build-loop/architecture/handoff.md`. This file is a self-contained markdown snapshot — no external state required to interpret it — readable by humans and by a fresh agent session. Write it unconditionally on every `baseline` run; overwrite the previous version. The `task: handoff` variant (when explicitly dispatched) produces the same artifact without re-running the full ACP refresh — it reads from the existing `acp.json` and `baseline.json` caches.
-
-   Required sections (use these exact headings):
-
-   ```markdown
-   # Architecture Handoff
-   _Generated: <ISO timestamp> | Components: N | Connections: M_
-
-   ## Component Map
-   | Name | Path | Role |
-   |------|------|------|
-   | ... | ... | one-line role |
-
-   ## Key Connections / Data Flows
-   <!-- Each row: source → target : flow description -->
-
-   ## Runtime Topology
-   <!-- Deployment units, process boundaries, external services. -->
-
-   ## LLM Use-Cases
-   <!-- Each LLM call site: component, model_class, purpose. -->
-
-   ## Porting Notes
-   <!-- What a fresh session or port to another version needs to know:
-        pinned deps, non-obvious config, env vars, build order constraints,
-        known violations still open. Keep to facts, not opinions. -->
-   ```
-
-   Keep the file ≤ 400 lines. Truncate the Component Map table to the 20 highest blast-radius components when the project exceeds that count; note `(truncated — full list in acp.json)` below the table.
-
-   **Fresh / resumed session behavior**: when the orchestrator's Phase 1 detects `handoff.md` exists AND its mtime is within the last 24 hours (or within the `architecture.staleness_threshold_hours` config value when set), it reads `handoff.md` and skips dispatching a full baseline scout. The session still dispatches `chunk-impact` scouts as needed. When `handoff.md` is absent, stale, or the orchestrator passes `force_baseline: true`, run the full baseline and overwrite.
+7. **Write portable handoff artifact** `.build-loop/architecture/handoff.md` — a self-contained markdown snapshot (no external state required), readable by humans and a fresh agent session. Write it unconditionally on every `baseline` run; overwrite the previous version. Use the exact section headings, ≤400-line truncation rule, and fresh/resumed-session behavior in `references/scout-playbooks.md` §"baseline step 7". The `task: handoff` variant produces the same artifact from existing `acp.json`/`baseline.json` caches without re-running the full ACP refresh.
 
 ### `chunk-impact` (Phase 2 Plan, parallel fan-out)
 
