@@ -79,6 +79,29 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 21. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, approachLenses, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
 
+## Phase 2 Plan detail (full protocol)
+
+Extracted from `agents/build-orchestrator.md` §"Phase 2: Plan". The agent body keeps a high-level bullet list and links here.
+
+- Follow `Skill("build-loop:build-loop")` §Phase 2 — break work, build dependency graph, MECE-partition file ownership, define integration checkpoints.
+- **Embed cached capability shortlist into planner brief**: read `state.json.activeCapabilities["2"][-1].results[:8]` and embed as `available_capabilities:` in the planner brief. Do NOT re-run `capability_shortlist.py`.
+- **UI input/output contract gate**: if `uiTarget != null`, require the plan to include `## UI Input/Output Contract` covering inputs/outputs/data taxonomy/operation verb/component mapping/states/modality fallback/validation/security/traceability.
+- **Build-loop designer gate**: for non-trivial UI work, load `Skill("build-loop:ui-design")`, then dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase2-design-direction')` after the UI input/output contract exists and before Execute. Pass the contract text, intent packet, `recent_design_structures_path=${CLAUDE_PLUGIN_ROOT}/skills/build-loop/references/recent-design-structures.md`, `ui_design_source_map_path=${CLAUDE_PLUGIN_ROOT}/skills/ui-design/references/ui-guidance-sources.md`, project token/theme/component paths, and any mockup/screenshot/image artifacts. Require `## Calm Precision Core Considerations` in `.build-loop/app-contract/ui.md` so Calm Precision is a design gate, not a passive reference. The specialist writes `.build-loop/app-contract/ui.md` and owns visual style direction. It should choose based on product/workflow needs, not prescriptive pattern matching; do not route to IBR unless the user explicitly requested IBR for this build.
+- **Approach Lenses gate**: for non-trivial architecture, workflow, dependency, UI/product, or long-lived interface decisions, require `## Approach Lenses` before the task list: clean-sheet best approach, current-constraints approach, bridge/backcast, and final recommendation. The plan may choose the constrained path, but it must name the constraint that makes that compromise correct now.
+- **Pay-it-forward architectural gate** (load `skills/build-loop/references/pay-it-forward-arch.md`): chunks that touch a typed protocol/interface/schema/multi-surface behavior must include a `Path A vs Path B` section. Default: Path B (typed-contract extension); justify Path A via time-budget >2×, missing dep/infra, missing design decision, or empty foreclosed-future-capability list.
+- **Architecture chunk-impact fan-out**: build-loop dispatches up to `effective_max` parallel `architecture-scout` subagents, where `effective_max = scripts/parallelism.py effective_max_implementers(workdir)` — machine-aware (default 8; `min(config.parallelism.maxImplementers, cpu_count−2, hard ceiling 12)`) — task: `chunk-impact, files: [<chunk N's files_touched>]`. Cache per-chunk to `.build-loop/architecture/scout-cache/chunk-<N>.json`. Use `parallel_safe_with` to refine the dependency graph. Phase 3 does NOT re-dispatch.
+- **Mockup-first gate for major UI work** (new page/screen OR ≥40% redesign): invoke `mockup-gallery:mockup-session-new`; wait for `mockup-gallery:mockup-feedback`; carry selection into Execute. Documented exception to the "no plugin UI surfaces" policy.
+
+### Plan acceptance gate
+
+Required before Phase 2 done:
+
+1. **`plan-verify`**: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plan_verify.py <plan-file> --repo "$PWD" --json` (includes `no-stop-language` rule). Exit 0 → proceed. Exit 1 → revise or override (`state.json.planVerifyOverride[]`). Exit 2 → log outage, continue with plan-critic alone.
+   - Plans that name multiple independent / parallel-safe chunks MUST include `parallel_batch:` or `parallel_skipped_reason:`. `plan_verify.py` enforces this as `parallel-decision-record` so the orchestrator cannot silently serialize work that the plan already proved can fan out.
+2. **`plan-critic`**: dispatch with plan + verify JSON. WARN-only.
+3. **Emit gaps-readback** (mandatory, before presenting the plan): prefix the plan with `✓ Plan gaps-checked (plan-verify + plan-critic): none` when both passes are clean, or `⚠ Plan gaps: <N> — <findings list, each marked resolved/surfaced>` when findings exist. The user should never have to ask "anything missing?" — build-loop always shows the gaps-check result first.
+4. **`scope-auditor`** (Plan→Execute boundary): trace caller-sites of every modified-API symbol; appends `## Caller Audit (Scope Auditor)` to the plan. If `overall_verdict: scope_gap_found`, absorb missing callers into `files_owned` OR record explicit acceptance in `state.json.scopeGapAccepted[]`. Skip ONLY when plan has zero `modifies_api` entries.
+
 ## Phase 4 Review (sub-steps A–G)
 
 ### Sub-step A — Critic
