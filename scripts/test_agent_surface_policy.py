@@ -21,6 +21,7 @@ PUBLIC_ENTRYPOINTS = {
     "optimize",
     "research",
     "knowledge",
+    "handoff",
 }
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)

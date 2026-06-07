@@ -12,6 +12,7 @@ These are the only skills that should appear as user-facing Build Loop choices:
 - `optimize` — metric-driven optimization
 - `research` — repo-grounded pre-build research
 - `knowledge` — durable decisions and lessons
+- `handoff` — compose a durable handoff from build-loop run state (BL-4)
 
 ## Host Rules
 
