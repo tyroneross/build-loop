@@ -167,8 +167,8 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     Envelope shape (Priority 20):
 
         {
-          "ok": <True if canonical store has files>,
-          "count": <legacy_count + canonical_count>,
+          "ok": <True if EITHER store has files>,
+          "count": <canonical_count when canonical present, else legacy_count>,
           "duration_ms": <int>,
           "legacy":    {"ok": bool, "count": int, "path": str|None, ...},
           "canonical": {"ok": bool, "count": int, "path": str|None, ...},
@@ -188,8 +188,13 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     canonical = _probe_one_decisions_dir(canonical_path)
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    any_ok = canonical["ok"]
-    total_count = canonical["count"] if canonical["ok"] else 0
+    # Top-level ok/count retain the pre-Priority-20 contract: ok when EITHER
+    # store has decision files; count prefers the canonical store when present
+    # and falls back to the legacy store otherwise (so a legacy-only machine
+    # still reports its real count). Consumers needing both read the
+    # `legacy`/`canonical` sub-keys.
+    any_ok = canonical["ok"] or legacy["ok"]
+    total_count = canonical["count"] if canonical["ok"] else legacy["count"]
 
     envelope: Dict[str, Any] = {
         "ok": any_ok,

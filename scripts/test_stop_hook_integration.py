@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -443,10 +444,23 @@ class StopHookHardeningTests(unittest.TestCase):
             self.assertEqual(json.loads(cp.stdout), {})
             self.assertEqual(cp.stderr, "")
 
-            # The lock-skip should be visible in the log file.
+            # The hook backgrounds the scan (`nohup … &`), so the lock-skip log
+            # is written asynchronously by a detached process — poll for it
+            # rather than checking synchronously (the lock stays held here, so
+            # the background scan keeps hitting contention until it logs + exits).
             log_file = Path(env["XDG_STATE_HOME"]) / "build-loop" / "scan.log"
-            self.assertTrue(log_file.exists(), msg="log file not created")
-            contents = log_file.read_text()
+            deadline = time.monotonic() + 10.0
+            contents = ""
+            while time.monotonic() < deadline:
+                if log_file.exists():
+                    contents = log_file.read_text()
+                    if "another scan" in contents.lower():
+                        break
+                time.sleep(0.1)
+            self.assertTrue(
+                log_file.exists(),
+                msg="log file not created within 10s (scan is backgrounded by the hook)",
+            )
             self.assertIn("another scan", contents.lower(), msg=f"log contents: {contents!r}")
         finally:
             try:

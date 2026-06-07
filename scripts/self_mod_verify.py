@@ -442,7 +442,12 @@ def verify(
     # Full scope: serial (no xdist), per-test timeout so hangs fail cleanly,
     # and -m "not live" to exclude tests that require a live external service.
     # auto/changed scope: fast path — no extra flags needed.
-    cmd = runner_base + ["-q", "-p", "no:cacheprovider", "--tb=short"]
+    # `-rf` emits the "FAILED <nodeid>" short-summary lines that _FAILED_ITEM_RE
+    # parses into failed_tests[]; `--color=no` strips ANSI so the `^FAILED` regex
+    # matches (pytest can force color even when output is captured, e.g. PY_COLORS
+    # or a consumer repo's `color=yes`; a CLI flag overrides both). Without these,
+    # `-q` printed the count ("N failed") but failed_tests came back empty.
+    cmd = runner_base + ["-q", "-rf", "--color=no", "-p", "no:cacheprovider", "--tb=short"]
     if scope == "full":
         cmd += [
             "--timeout=120",

@@ -4,6 +4,7 @@
 """Tests for self_review.py. Run: uv run pytest scripts/test_self_review.py -q"""
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 import sys
@@ -12,6 +13,14 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# Seeded runs must fall inside self_review's lookback window (light=7d, deep=14d,
+# explicit up to 30d). A hardcoded absolute date goes stale as wall-clock advances
+# and silently drops out of the window — so derive a recent date relative to now
+# (1 day ago is inside every window the suite exercises).
+_RECENT_DATE = (
+    datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)
+).strftime("%Y-%m-%dT%H:%M:%SZ")
 SCRIPT = HERE / "self_review" / "__main__.py"
 
 
@@ -45,7 +54,7 @@ class TestLightMode(unittest.TestCase):
             [
                 {
                     "run_id": f"run_test_{i:02d}",
-                    "date": "2026-05-29T00:00:00Z",
+                    "date": _RECENT_DATE,
                     "goal": "test goal",
                     "outcome": "fail",
                     "phases": {
@@ -117,7 +126,7 @@ class TestDeepMode(unittest.TestCase):
             [
                 {
                     "run_id": f"run_deep_{i:02d}",
-                    "date": "2026-05-29T00:00:00Z",
+                    "date": _RECENT_DATE,
                     "goal": "deep test",
                     "outcome": "fail",
                     "phases": {
@@ -164,7 +173,7 @@ class TestDryRun(unittest.TestCase):
             [
                 {
                     "run_id": "run_dryrun_00",
-                    "date": "2026-05-29T00:00:00Z",
+                    "date": _RECENT_DATE,
                     "goal": "dry run test",
                     "outcome": "fail",
                     "phases": {"execute": {"status": "fail"}},
@@ -290,7 +299,7 @@ class TestJsonOutputShape(unittest.TestCase):
             [
                 {
                     "run_id": f"run_{i}",
-                    "date": "2026-05-29T00:00:00Z",
+                    "date": _RECENT_DATE,
                     "goal": "g",
                     "outcome": "fail",
                     "phases": {"assess": {"status": "fail"}},
@@ -413,7 +422,7 @@ class TestSelfSimplificationScan(unittest.TestCase):
                 [
                     {
                         "run_id": "run_plain_00",
-                        "date": "2026-05-29T00:00:00Z",
+                        "date": _RECENT_DATE,
                         "goal": "plain project",
                         "outcome": "fail",
                         "phases": {

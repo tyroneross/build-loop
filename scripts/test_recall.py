@@ -115,8 +115,13 @@ def run_recall(query: str) -> str:
 
 
 @pytest.mark.live
+@pytest.mark.db
 class RecallTests(unittest.TestCase):
-    """Live recall test. Requires embed backend (MLX or Ollama) + Postgres."""
+    """Live recall test. Requires embed backend (MLX or Ollama) + Postgres.
+
+    Exercises the optional Postgres fallback backend; SQLite (the default,
+    `scripts/semantic_index/`) is covered by `test_semantic_index.py`. Skips
+    cleanly when Ollama or Postgres is unavailable (`live` + `db` markers)."""
 
     @classmethod
     def setUpClass(cls) -> None:
