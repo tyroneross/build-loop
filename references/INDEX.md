@@ -14,6 +14,7 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 | [trigger-rules.md](trigger-rules.md) | How to set sub-routers (`uiTarget`, `platform`, `migrationSource`) + triggers in Phase 1 | `agents/build-orchestrator.md` |
 | [memory-systems.md](memory-systems.md) | Memory read protocol (Phase 1 Assess) + write protocol (Phase 4 Review-G); backend degradation | `agents/build-orchestrator.md`, `phase-1-assess.md` |
 | [research-trigger-policy.md](research-trigger-policy.md) | When Research plugin work is required; t-shirt depth lower bounds; final-claim citation gate | `agents/build-orchestrator.md`, `phase-1-assess.md`, `phase-2-plan.md` |
+| [task-capture-policy.md](task-capture-policy.md) | Canonical active task view from existing state/queue/backlog surfaces; no new ledger by default | `agents/build-orchestrator.md`, `phase-1-assess.md` |
 | [capability-routing.md](capability-routing.md) | Which capability/skill a phase routes to; trigger-driven routing | `agents/build-orchestrator.md`, `SKILL.md` |
 | [plan-template-ids.md](plan-template-ids.md) | The `T-N` task-ID convention plans use | `agents/implementer.md` |
 | [implementer-brief-template.md](implementer-brief-template.md) | Structure of the Phase 3 implementer dispatch brief (pre-Execute checklist) | `agents/build-orchestrator.md` |

@@ -137,6 +137,18 @@
    returned depth (`light`/`standard`/`deep`) or record why it was unavailable.
    If `blocks_final_claims: true`, final current/external/API claims need
    citations or an explicit unavailable/unverified note.
+14a. **Active task surface**: when the user asks what remains, when Phase 1
+   surfaces open work, or before queue-continuation decisions, run:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/task_surface.py" \
+     --workdir "$PWD" \
+     --json
+   ```
+
+   This is the canonical active view over existing state, queue, and
+   project-scoped memory backlog surfaces. Do not create a second task ledger by
+   default. See `references/task-capture-policy.md`.
 15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).
 16. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
     - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work; the checkpoint reactions (severity + reason) tell you whether overlap is `merged_residue` / `squash_landed` / `active_conflict`. See `agents/build-orchestrator.md` §Multi-session concurrency.
