@@ -127,6 +127,55 @@ def init(conn_or_path: sqlite3.Connection | str | Path | None = None) -> Path | 
     return None if isinstance(conn_or_path, sqlite3.Connection) else _db_path(conn_or_path)
 
 
+def _embed_text_for_fact(
+    subject: str, predicate: str, object_text: str
+) -> str:
+    """Canonical text fed to the write-path embedder.
+
+    Mirrors the haystack used by the keyword scorer (``subject + predicate +
+    object``) so a query that lexically matches the row is in the same
+    semantic neighborhood as the stored vector. The keyword scorer also
+    includes ``project / domain / tool`` but those are categorical labels —
+    embedding them inflates norm without adding semantic signal, so we
+    keep the embed text tight.
+    """
+    parts = [subject or "", predicate or "", object_text or ""]
+    return " ".join(p for p in parts if p).strip()
+
+
+def _safe_embed_for_write(
+    text: str,
+    embed_fn: Any,
+) -> list[float] | None:
+    """Best-effort embed for the write path. Returns None on any failure.
+
+    Contract: writes MUST NEVER fail because the embed backend is down.
+    A NULL ``embedding_json`` row stays keyword-discoverable; the backfill
+    capability can populate it later when a backend is available.
+
+    ``embed_fn=None`` lazily resolves ``embed_backend.embed`` so missing
+    optional MLX/Ollama deps don't fail at module import time.
+    """
+    if not text:
+        return None
+    if embed_fn is None:
+        try:
+            from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return None
+        embed_fn = _embed
+    try:
+        vec = embed_fn(text)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(vec, list) or not vec:
+        return None
+    try:
+        return [float(x) for x in vec]
+    except (TypeError, ValueError):
+        return None
+
+
 def upsert_fact(
     *,
     subject: str,
@@ -143,14 +192,43 @@ def upsert_fact(
     domain: str | None = None,
     source_prefix: str | None = None,
     embedding: list[float] | None = None,
+    embed_fn: Any = None,
+    auto_embed: bool = True,
     db_path: str | Path | None = None,
 ) -> None:
+    """Insert/update a semantic fact.
+
+    Auto-embed contract (NEW — fixes P1 dormant-production bug):
+      - When ``embedding`` is explicitly supplied, it is stored as-is
+        (callers can pre-compute or opt into a specific vector).
+      - When ``embedding`` is None AND ``auto_embed=True`` (default):
+        synthesize the embed text from ``subject + predicate + object``
+        and call ``embed_fn`` (or ``embed_backend.embed`` when None).
+        Failure (backend down, import error, raise) → store NULL. Writes
+        NEVER fail because of an embed-backend outage.
+      - ``auto_embed=False``: byte-equivalent to the pre-P1 behavior —
+        used by the backfill script (which controls the embedder itself)
+        and by tests that want to assert NULL-embedding state.
+
+    Why opt-in-via-default rather than required: the failure mode this
+    fixes is "production rows never get embeddings" — opting in by
+    default is the only thing that makes hybrid actually fire against
+    live data. Making it optional preserves the legacy contract for
+    callers that intentionally don't want write-time embed cost.
+    """
     if not subject.strip():
         raise ValueError("subject is required")
     metadata = dict(metadata or {})
     metadata.setdefault("last_synced", now_iso())
     metadata.setdefault("schema_version", SCHEMA_VERSION)
     files = [str(item) for item in (files_touched or [])]
+
+    # Auto-embed on write when caller didn't supply a vector. Best-effort;
+    # backend down → store NULL, fall back to keyword recall, never raise.
+    if embedding is None and auto_embed:
+        text = _embed_text_for_fact(subject, predicate, object_text)
+        embedding = _safe_embed_for_write(text, embed_fn)
+
     conn = connect(db_path)
     try:
         conn.execute(
@@ -212,6 +290,8 @@ def upsert_lesson(
     confidence: float | None = None,
     confidence_source: str | None = None,
     embedding: list[float] | None = None,
+    embed_fn: Any = None,
+    auto_embed: bool = True,
     db_path: str | Path | None = None,
     tool: str = "navgator",
     domain: str = "architecture",
@@ -243,6 +323,8 @@ def upsert_lesson(
         domain=domain,
         source_prefix=subject_prefix,
         embedding=embedding,
+        embed_fn=embed_fn,
+        auto_embed=auto_embed,
         db_path=db_path,
     )
 

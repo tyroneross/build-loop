@@ -155,10 +155,20 @@ def rerank_candidates(
 
 
 def has_any_embedding(candidates: list[tuple[float, sqlite3.Row]]) -> bool:
-    """Cheap probe: does any candidate row carry a parseable embedding?"""
+    """Cheap probe: does any candidate row carry a parseable embedding?
+
+    Per-row guard: a candidate without the column is skipped via ``continue``,
+    not short-circuited with ``return False``. Heterogeneous candidate sets
+    (e.g. a mid-migration mix of with/without-embedding rows, or a unioned
+    cursor from a future multi-source path) must still surface "yes" when
+    ANY row carries a vector. The earlier ``return False`` on the first
+    column-less row hid valid embedding rows downstream and turned hybrid
+    silently into keyword for the whole query — the exact dormancy this
+    rerank was meant to lift.
+    """
     for _, row in candidates:
         if "embedding_json" not in row.keys():
-            return False
+            continue
         if _parse_embedding(row["embedding_json"]) is not None:
             return True
     return False

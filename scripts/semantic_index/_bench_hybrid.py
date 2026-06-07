@@ -41,6 +41,7 @@ def _embed_det(text: str) -> list[float]:
 
 
 def _seed(db: Path, n: int) -> None:
+    """Seed with explicit embeddings (legacy path) — used for read benches."""
     for i in range(n):
         upsert_fact(
             subject=f"fact:{i}",
@@ -50,6 +51,59 @@ def _seed(db: Path, n: int) -> None:
             embedding=_det_vec(i),
             db_path=db,
         )
+
+
+def _bench_write_path(db: Path, n: int) -> dict[str, float]:
+    """Measure auto-embed-on-write latency delta vs explicit-embedding write.
+
+    Both paths persist the same vector to the same column; the only
+    difference is whether ``upsert_fact`` calls ``embed_fn`` internally
+    (auto path) or the caller pre-computed it (explicit path). The delta
+    is the write-time cost of the f1 dormancy fix.
+
+    Uses a stub embed_fn so the bench reflects the in-process overhead
+    of the new seam, not the (much larger) MLX/Ollama cold-load.
+    """
+    from semantic_index import _embed_text_for_fact  # noqa: PLC0415
+
+    # Path A: explicit embedding (legacy).
+    def write_explicit():
+        for i in range(n):
+            upsert_fact(
+                subject=f"explicit:{i}",
+                predicate="describes",
+                object_text=f"row {i} content",
+                project="bench-write",
+                embedding=_det_vec(i),
+                db_path=db,
+            )
+
+    # Path B: auto-embed via injected embed_fn (production path post-f1).
+    def write_auto():
+        for i in range(n):
+            upsert_fact(
+                subject=f"auto:{i}",
+                predicate="describes",
+                object_text=f"row {i} content",
+                project="bench-write",
+                db_path=db,
+                embed_fn=_embed_det,
+            )
+
+    t0 = time.perf_counter()
+    write_explicit()
+    explicit_ms = (time.perf_counter() - t0) * 1000
+    t1 = time.perf_counter()
+    write_auto()
+    auto_ms = (time.perf_counter() - t1) * 1000
+    return {
+        "explicit_total_ms": round(explicit_ms, 2),
+        "auto_total_ms": round(auto_ms, 2),
+        "explicit_per_row_ms": round(explicit_ms / n, 3),
+        "auto_per_row_ms": round(auto_ms / n, 3),
+        "delta_per_row_ms": round((auto_ms - explicit_ms) / n, 3),
+        "rows": n,
+    }
 
 
 def _bench(fn, runs: int) -> dict[str, float]:
@@ -103,6 +157,17 @@ def main() -> int:
 
         print(f"[keyword] cold={cold_kw['min_ms']}ms  warm={warm_kw}")
         print(f"[hybrid]  cold={cold_hy['min_ms']}ms  warm={warm_hy}")
+
+        # Write-path bench on a separate DB so seeded rows don't pollute
+        # the read bench above.
+        write_db = Path(td) / "bench-write.sqlite"
+        wp = _bench_write_path(write_db, n=100)
+        print(
+            f"[write]   explicit={wp['explicit_per_row_ms']}ms/row  "
+            f"auto={wp['auto_per_row_ms']}ms/row  "
+            f"delta=+{wp['delta_per_row_ms']}ms/row "
+            f"(n={wp['rows']})"
+        )
     return 0
 
 
