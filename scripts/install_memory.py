@@ -15,7 +15,9 @@ repo (see `docs/memory-setup.md`).
 
 Usage:
   python3 scripts/install_memory.py                    # bootstrap + seed
+  python3 scripts/install_memory.py --guided           # guided terminal install
   python3 scripts/install_memory.py --check            # report status, no writes
+  python3 scripts/install_memory.py --validate-seed    # validate packaged public seed
   python3 scripts/install_memory.py --link-repo <url>  # bootstrap + clone private repo
   python3 scripts/install_memory.py --dest <path>      # override default location
 
@@ -27,7 +29,8 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import os
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +49,7 @@ except Exception:  # noqa: BLE001
 
 DEFAULT_DEST = memory_store_root() if memory_store_root is not None else Path.home() / "dev" / "git-folder" / "build-loop-memory"
 TEMPLATE_DIR_RELATIVE = "templates/memory"
+SEED_MANIFEST_FILENAME = "manifest.json"
 TEMPLATES = [
     ("constitution.md.template", "constitution.md"),
     ("MEMORY.md.template", "MEMORY.md"),
@@ -91,6 +95,124 @@ def script_dir() -> Path:
 def template_dir() -> Path:
     # scripts/install_memory.py lives next to scripts/ at the repo root
     return script_dir().parent / TEMPLATE_DIR_RELATIVE
+
+
+def seed_manifest_path(tpl_dir: Optional[Path] = None) -> Path:
+    return (tpl_dir or template_dir()) / SEED_MANIFEST_FILENAME
+
+
+def _load_seed_manifest(tpl_dir: Optional[Path] = None) -> tuple[Optional[dict], list[str]]:
+    path = seed_manifest_path(tpl_dir)
+    if not path.exists():
+        return None, [f"seed manifest missing: {path}"]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return None, [f"seed manifest invalid JSON: {exc}"]
+    if not isinstance(data, dict):
+        return None, ["seed manifest root must be an object"]
+    issues: list[str] = []
+    if data.get("kind") != "build-loop-memory-public-seed":
+        issues.append("seed manifest kind must be build-loop-memory-public-seed")
+    if not data.get("schema_version"):
+        issues.append("seed manifest schema_version missing")
+    if not isinstance(data.get("sources"), list):
+        issues.append("seed manifest sources must be a list")
+    privacy = data.get("privacy")
+    if not isinstance(privacy, dict):
+        issues.append("seed manifest privacy block missing")
+    elif not isinstance(privacy.get("deny_patterns"), list):
+        issues.append("seed manifest privacy.deny_patterns must be a list")
+    return data, issues
+
+
+def _manifest_source_rels(manifest: dict) -> tuple[set[str], list[str]]:
+    rels: set[str] = set()
+    issues: list[str] = []
+    for entry in manifest.get("sources", []):
+        if not isinstance(entry, dict):
+            issues.append("seed manifest source entry must be an object")
+            continue
+        source = entry.get("source")
+        if isinstance(source, str):
+            rel_path = Path(source)
+            if rel_path.is_absolute() or ".." in rel_path.parts:
+                issues.append(f"seed manifest source must stay inside template dir: {source}")
+                continue
+            rels.add(source)
+        else:
+            issues.append("seed manifest source entry missing source string")
+    return rels, issues
+
+
+def validate_public_seed(tpl_dir: Optional[Path] = None) -> dict:
+    """Validate that the packaged memory seed is scaffold-only and allowlisted."""
+    root = tpl_dir or template_dir()
+    manifest, issues = _load_seed_manifest(root)
+    files: list[str] = []
+    seed_version = None
+    privacy_classification = None
+    if manifest is not None:
+        seed_version = manifest.get("seed_version")
+        privacy = manifest.get("privacy") if isinstance(manifest.get("privacy"), dict) else {}
+        privacy_classification = privacy.get("classification") if isinstance(privacy, dict) else None
+        allowed, source_issues = _manifest_source_rels(manifest)
+        issues.extend(source_issues)
+        if not allowed:
+            issues.append("seed manifest has no source allowlist")
+        for rel in sorted(allowed):
+            if not (root / rel).is_file():
+                issues.append(f"allowlisted seed file missing: {rel}")
+        deny_patterns = privacy.get("deny_patterns", []) if isinstance(privacy, dict) else []
+        compiled_patterns: list[tuple[str, re.Pattern[str]]] = []
+        for pattern in deny_patterns:
+            if not isinstance(pattern, str):
+                issues.append("seed manifest deny pattern must be a string")
+                continue
+            try:
+                compiled_patterns.append((pattern, re.compile(pattern)))
+            except re.error as exc:
+                issues.append(f"seed manifest deny pattern invalid: {pattern}: {exc}")
+
+        for path in sorted(root.rglob("*")):
+            if path.is_dir():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if rel == SEED_MANIFEST_FILENAME:
+                continue
+            files.append(rel)
+            if rel not in allowed:
+                issues.append(f"seed file not allowlisted in manifest: {rel}")
+                continue
+            try:
+                body = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                issues.append(f"seed file is not UTF-8 text: {rel}")
+                continue
+            for pattern, compiled in compiled_patterns:
+                if compiled.search(body):
+                    issues.append(f"privacy deny pattern matched {rel}: {pattern}")
+    return {
+        "ok": not issues,
+        "kind": "build-loop-memory-public-seed-validation",
+        "manifest": str(seed_manifest_path(root)),
+        "seed_version": seed_version,
+        "privacy_classification": privacy_classification,
+        "files": files,
+        "issues": issues,
+    }
+
+
+def print_seed_validation(validation: dict) -> None:
+    status = "ok" if validation.get("ok") else "failed"
+    print(f"public seed: {status}")
+    print(f"  manifest: {validation.get('manifest')}")
+    print(f"  seed_version: {validation.get('seed_version') or 'unknown'}")
+    print(f"  privacy: {validation.get('privacy_classification') or 'unknown'}")
+    for rel in validation.get("files") or []:
+        print(f"  - {rel}")
+    for issue in validation.get("issues") or []:
+        print(f"  ! {issue}")
 
 
 def report(dest: Path) -> dict:
@@ -145,6 +267,7 @@ def report(dest: Path) -> dict:
                             "md_files": nested_count,
                         })
         status["projects"] = per_project
+    status["public_seed"] = validate_public_seed()
     return status
 
 
@@ -215,6 +338,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help=f"Memory directory location (default: {DEFAULT_DEST})")
     p.add_argument("--check", action="store_true",
                    help="Report status without writing")
+    p.add_argument("--guided", action="store_true",
+                   help="Terminal-first guided install: validate packaged seed, bootstrap, and print next steps.")
+    p.add_argument("--validate-seed", action="store_true",
+                   help="Validate the packaged public memory seed without writing")
+    p.add_argument("--json", action="store_true",
+                   help="Emit machine-readable JSON for --check or --validate-seed")
     p.add_argument("--link-repo", default=None,
                    help="Clone a private git repo into the dest (for versioned user content). "
                         "Skips template seeding — the repo provides content.")
@@ -227,8 +356,27 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     dest = Path(args.dest).expanduser().resolve()
 
+    if args.json and not (args.check or args.validate_seed):
+        print("install_memory: --json is only supported with --check or --validate-seed", file=sys.stderr)
+        return 2
+
+    if args.guided and args.link_repo:
+        print("install_memory: --guided and --link-repo are separate paths; run one at a time", file=sys.stderr)
+        return 2
+
+    if args.validate_seed:
+        validation = validate_public_seed()
+        if args.json:
+            print(json.dumps(validation, indent=2, sort_keys=True))
+        else:
+            print_seed_validation(validation)
+        return 0 if validation.get("ok") else 1
+
     if args.check:
         status = report(dest)
+        if args.json:
+            print(json.dumps(status, indent=2, sort_keys=True))
+            return 0
         print(f"dest: {status['dest']}")
         print(f"  exists: {status['exists']}")
         print(f"  is_git_repo: {status['is_git_repo']}")
@@ -252,6 +400,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"    - {entry['slug']}: {entry['md_files']} file(s), {raw}")
         elif status.get("projects_dir_exists"):
             print("    (no project subdirs yet — populated by migration script in PR 1.5)")
+        print_seed_validation(status["public_seed"])
         return 0
 
     # Link-repo path: clone instead of seeding
@@ -266,6 +415,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             if not (dest / target_name).exists():
                 print(f"  ⚠️  expected file not in cloned repo: {target_name}", file=sys.stderr)
         return 0
+
+    seed_validation = validate_public_seed()
+    if not seed_validation.get("ok"):
+        print_seed_validation(seed_validation)
+        print("install_memory: packaged public seed failed validation; refusing to install templates", file=sys.stderr)
+        return 1
+
+    if args.guided and not args.json:
+        print("Build-loop memory guided install")
+        print(f"  dest: {dest}")
+        print("  source: packaged public seed only; no personal memory content is copied")
+        print()
+        print_seed_validation(seed_validation)
+        print()
 
     # Standard bootstrap: mkdir + seed templates
     dest.mkdir(parents=True, exist_ok=True)

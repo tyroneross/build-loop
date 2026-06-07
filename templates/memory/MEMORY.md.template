@@ -1,6 +1,6 @@
 # Global Memory — build-loop
 
-Cross-project learnings. Project-level `<repo>/.build-loop/memory/MEMORY.md` overrides global on conflict.
+Cross-project learnings. Project-level `projects/<slug>/MEMORY.md` overrides global on conflict.
 
 This is a template — replace `(empty)` sections as you accumulate lessons.
 
@@ -52,4 +52,4 @@ Body — for feedback/pattern entries, structure as:
 Link related entries with `[[other-slug]]`.
 ```
 
-See `~/dev/git-folder/build-loop/docs/memory-setup.md` for the full setup guide and how to link this directory to a private repo for versioning.
+See the packaged `docs/memory-setup.md` guide for the full setup flow and how to link this directory to a private repo for versioning.

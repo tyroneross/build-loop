@@ -10,17 +10,28 @@ one consolidated tree under `~/dev/git-folder/build-loop-memory/` by default:
 
 > **History** — until PR 3 of the memory-consolidation series (merged 2026-05-13), the legacy per-repo location was also read by `memory_facade._resolve_memory_dirs` as a transitional shim. As of PR 3, only the consolidated tree is read; any pre-migration content still at the legacy path is invisible. Operators with such content should run `scripts/migrate_project_memory.py --apply` (idempotent), then `scripts/cleanup_legacy_memory_stubs.py --apply` to remove the now-inert `.MOVED.md` stubs.
 
-The build-loop public repo ships only the **scaffolding** — templates and the setup script. Your actual lessons, constitution rules, and patterns belong in a private repo because they contain references to specific projects, decisions, and operator preferences that aren't appropriate for public distribution.
+The build-loop public repo ships only the **scaffolding** — templates, a public
+seed manifest, and the setup script. Your actual lessons, constitution rules,
+patterns, project plans, raw artifacts, generated indexes, and decisions belong
+in a private repo because they contain references to specific projects and
+operator preferences that are not appropriate for public distribution.
 
 ## Quick start
 
 ```bash
+# Guided terminal install. This validates the packaged public seed first, then
+# creates ~/dev/git-folder/build-loop-memory/ with scaffold-only files.
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --guided
+
 # Bootstrap with templates (creates ~/dev/git-folder/build-loop-memory/ if missing,
 # seeds constitution.md + MEMORY.md from templates/memory/, plus indexes/ and projects/)
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
 
 # Check status anytime
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --check
+
+# Validate the shipped public seed without writing
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --validate-seed
 ```
 
 This creates:
@@ -33,6 +44,23 @@ This creates:
 │   └── updates.jsonl   # created on first memory mutation; global update ledger
 └── projects/           # project-scoped memory trees
 ```
+
+## Packaged public seed
+
+The install package includes `templates/memory/manifest.json`, which is the
+contract for the public `build-loop-memory` seed. It allowlists only generic
+template files and generated empty directories:
+
+- `constitution.md.template` -> `constitution.md`
+- `MEMORY.md.template` -> `MEMORY.md`
+- `indexes/`
+- `projects/README.md`
+- empty `projects/<slug>/raw/.../.gitkeep` lanes when `--ensure-project` is used
+
+The seed validator refuses unlisted template files and scans the shipped
+templates for common secret, personal-path, private-repo, and operator-identity
+patterns. This protects the install package from accidentally shipping a
+developer's private `build-loop-memory` contents.
 
 ## Linking to a private repo
 
@@ -193,4 +221,6 @@ Treat `~/dev/git-folder/build-loop-memory/` as containing potentially-sensitive 
 - Constitution rules may reveal architectural patterns from past projects
 - Feedback entries often quote real exchanges
 
-The recommendation is a **private git repo** (`Option A` or `B` above), not the public build-loop repo. Build-loop ships only the templates.
+The recommendation is a **private git repo** (`Option A` or `B` above), not the
+public build-loop repo. Build-loop ships only the manifest-backed public seed
+and empty scaffolding.

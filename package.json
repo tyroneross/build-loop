@@ -41,6 +41,7 @@
     "hooks",
     "agents",
     "docs/agent-surface-policy.md",
+    "docs/memory-setup.md",
     "templates/memory",
     ".cursor",
     ".claude-plugin",

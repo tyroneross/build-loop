@@ -108,6 +108,7 @@ hygiene check as `scripts/` scales.
 | `sync_skills.py`, `check_cache_sync.py`, `sync_plugin_cache.py` | Native-skill drift detector + cache hygiene; committed-HEAD plugin cache sync for Claude/Codex |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
 | `archive_project_plan.py` | Archives ephemeral `.build-loop` project plans into build-loop-memory before optional local removal |
+| `install_memory.py` | Bootstraps `build-loop-memory` from a manifest-backed public seed; `--guided` walks a terminal-first install and `--validate-seed` checks privacy/package safety |
 | `research_trigger.py` | Classifies when Research plugin work is required, selects depth from trigger/risk/t-shirt signals, and caches the Phase 1 research gate |
 | `dogfood_reload_checkpoint.py` | Detects runtime-changing self-work and records stop/reload/resume checkpoint ACKs or fallbacks |
 | `task_surface.py` | Emits the canonical read-only active task view from existing execution state, local queues, and project memory backlog |

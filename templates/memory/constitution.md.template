@@ -36,11 +36,11 @@ rule IDs stable across edits — judge envelopes cite them by ID.
 ## C-MEMORY — Memory store invariants
 
 - **C-MEMORY/canonical_writer**: All memory writes go through `scripts/memory_writer.py` for provenance. No direct file appends to `decisions/` or `~/.build-loop/memory/`.
-- **C-MEMORY/no_global_pollution**: Project-specific facts go in `<repo>/.build-loop/memory/`. Cross-project lessons go in `~/.build-loop/memory/`. Don't conflate.
+- **C-MEMORY/no_global_pollution**: Project-specific facts go in `build-loop-memory/projects/<slug>/`; cross-project lessons go in `build-loop-memory/lessons/`. Don't conflate.
 
 ## C-SUPPLY — Supply-chain invariants
 
-- **C-SUPPLY/dependency_cooldown**: Third-party JS package installs and version bumps must wait until the resolved version has been published ≥ 7 days (smash-and-grab npm-compromise mitigation: a malicious version published then yanked within hours-to-days is filtered before lifecycle scripts run). Enforced primarily by native package-manager config (`minimumReleaseAge` / `npmMinimalAgeGate` via `scripts/inject_dependency_cooldown.py`); a PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`) backstops ad-hoc installs. User-authored scopes are exempt via a config-driven allowlist (`<repo>/.build-loop/config.json` key `dependencyCooldown.allowlist`, default `["@tyroneross/*"]`).
+- **C-SUPPLY/dependency_cooldown**: Third-party JS package installs and version bumps must wait until the resolved version has been published ≥ 7 days (smash-and-grab npm-compromise mitigation: a malicious version published then yanked within hours-to-days is filtered before lifecycle scripts run). Enforced primarily by native package-manager config (`minimumReleaseAge` / `npmMinimalAgeGate` via `scripts/inject_dependency_cooldown.py`); a PreToolUse hook (`scripts/hooks/pre_bash_dependency_cooldown.sh`) backstops ad-hoc installs. User-authored scopes are exempt via a config-driven allowlist (`<repo>/.build-loop/config.json` key `dependencyCooldown.allowlist`, default `["@your-scope/*"]`).
 
 ## C-FLOW — Run-loop flow control invariants
 
