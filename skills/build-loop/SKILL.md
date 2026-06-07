@@ -333,7 +333,7 @@ Build-loop prefers installed plugins and skills over reinventing patterns. Each 
 
 Understand current state, load memory through the automatic context bootstrap, detect tools, map architecture, capture north star + update intent, assess clean-sheet vs current-constraints approach lenses, define goal and criteria. Writes `.build-loop/context-bootstrap.json`, `.build-loop/context/current.md` via `scripts/context_snapshot.py`, `.build-loop/intent.md`, and `.build-loop/goal.md`.
 
-Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; check `session_prefs.continue_from_queues` and ask the user ONCE when "ask" and any queue has items; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
+Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; check `session_prefs.continue_from_queues` and ask the user ONCE when "ask" and any queue has items; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → run `scripts/research_trigger.py` to decide Research plugin depth and blocked final-claim handling → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
 
@@ -341,7 +341,7 @@ Key steps: detect plugins → set sub-routers → map architecture → run `scri
 
 Break work into executable steps, compare clean-sheet and current-constraints approaches, build dependency graph, MECE-partition file ownership, run plan acceptance gates.
 
-Key steps: writing-plans skill → parallel-safe identification → intent mapping → `## Approach Lenses` for non-trivial recommendations → UI input/output contract section when UI is in scope → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
+Key steps: writing-plans skill → parallel-safe identification → intent mapping → `## Approach Lenses` for non-trivial recommendations → `## Research Context` when `state.json.researchGate.research_required` → UI input/output contract section when UI is in scope → MECE partition → optimization checklist → plan-verify (deterministic) → plan-critic (non-deterministic) → scope-auditor (caller audit).
 
 **Load `skills/build-loop/references/phase-2-plan.md`** for the full protocol including spec-writing gate, mockup-first gate, Codex delegation, and plan acceptance steps.
 
@@ -485,6 +485,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol
 - `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
 - `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
+- `references/research-trigger-policy.md` — Research plugin trigger/depth gate, t-shirt depth lower bounds, and final-claim citation/unavailable rule
 - `references/agent-role-taxonomy.md` — Lead/peer/coder-assessor/reviewer/skill responsibility map; use before adding or renaming agents.
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
 - `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.

@@ -72,6 +72,7 @@ Produces a repo-grounded research packet without committing to implementation. U
 
 - Standalone: `/build-loop:research [topic]`
 - From build-loop: orchestrator routes RESEARCH-intent requests here instead of the full loop
+- During normal build-loop runs: `scripts/research_trigger.py` decides whether this skill should run, which depth to use, where to persist the packet, and whether current/external claims are blocked until cited. See `references/research-trigger-policy.md`.
 - After packet: user decides — `/build-loop:run` to implement, `/build-loop:optimize` to optimize, or shelve
 
 ## State

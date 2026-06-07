@@ -108,6 +108,7 @@ hygiene check as `scripts/` scales.
 | `sync_skills.py`, `check_cache_sync.py`, `sync_plugin_cache.py` | Native-skill drift detector + cache hygiene; committed-HEAD plugin cache sync for Claude/Codex |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
 | `archive_project_plan.py` | Archives ephemeral `.build-loop` project plans into build-loop-memory before optional local removal |
+| `research_trigger.py` | Classifies when Research plugin work is required, selects depth from trigger/risk/t-shirt signals, and caches the Phase 1 research gate |
 | `dispatch_identity.py` | Generates/validates `t-<8hex>` dispatch task ids for subagent briefs and cost-ledger joins |
 | `model_overrides.py` | Resolves `thinking`/`code`/`pattern` tiers to concrete model ids from `.build-loop/config.json`, state, or fallback |
 | `coordination_status.py` | Cheap multi-agent coordination sensor: Rally Point peers, overlaps, task-heartbeat health, latest verdicts, dirty files → `clear | warn | blocked` JSON |

@@ -34,6 +34,13 @@ Only when a mechanical metric exists. See `references/phase-gate-checklist.md` �
 
 Scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate (below). The blocking **no-critical/high exit gate** (`review_finding_gate.py` — any open `critical`/`high` without closure routes back to Phase 5 Iterate), the **report-section spec** (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` + forbidden patterns), and **auto-version-bump** are documented in `references/phase-gate-checklist.md` §"Sub-step G — Report (final pass only)" — execute them from there; do not re-derive their procedures here.
 
+**Research citation gate.** Before emitting the final report, read
+`.build-loop/state.json.researchGate`. When `blocks_final_claims: true`, any
+current/external/API/package claim in the report must cite the research packet
+or explicitly say the evidence was unavailable and the claim is unverified. If
+`packet_path` is non-null, include a one-line `research_packet:` evidence item
+in `## Done` or `## Status markers`.
+
 **Style lint (MANDATORY, warn-mode)** — run on the final user-facing report draft before emitting:
 
 ```

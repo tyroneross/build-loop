@@ -249,6 +249,13 @@ Final report sections, in this order:
 - `## Blocked` — items Auto-Resolve verdicted as `block`, same shape as Held.
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; keep this section).
 
+Research citation gate: before emitting, read
+`.build-loop/state.json.researchGate`. When `blocks_final_claims: true`, every
+current/external/API/package claim in the report must cite the research packet
+or explicitly say the evidence was unavailable and the claim is unverified. If
+`packet_path` is non-null, add a compact `research_packet:` evidence item to
+`## Done` or `## Status markers`.
+
 Before emitting the final report, write the draft to a temp file and run BOTH linters (orthogonal — structural vs style):
 
 ```bash

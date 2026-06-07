@@ -178,4 +178,4 @@ If Phase 1 detects that the task touches plugin components, Phase 3 must map eac
 | `/cookbook` | Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, thinking, structured output, batch, caching | Invoke `/cookbook` or read `~/.claude/projects/-Users-tyroneross/memory/reference_claude_cookbook.md` |
 | `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` | Any plugin work | Read during Phase 1 ASSESS |
 | `context7` MCP | Any library/framework use | `query-docs` / `resolve-library-id` — do NOT code from training data |
-| `research` skill | Factual claims, pricing, versions | T1 official docs → T4 forums; 2-source minimum |
+| `research` skill | Factual claims, pricing, versions | Run `scripts/research_trigger.py` first; T1 official docs → T4 forums; 2-source minimum |

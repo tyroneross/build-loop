@@ -27,7 +27,13 @@
 4. **Partition tasks and files MECE**: Use one grouping dimension per level (domain, layer, workflow, bounded context, adapter, or test surface). Every changed file gets exactly one owner; every required behavior, state, migration, test, and user-facing surface gets an owner.
 5. **Define subagent integration points**: Where do agents need to coordinate? Where must outputs be tested together? Record interface contracts and checkpoints for every boundary.
 6. **Codex delegation gate**: If running in Codex, record whether the user explicitly authorized subagents/parallel delegation. If not, keep all execution local even when the graph contains parallel-safe groups.
-7. **Research check**: For any external framework, API, or deployment target — verify current docs before coding
+7. **Research Context gate**: read `.build-loop/state.json.researchGate`. If
+   `research_required: true`, add `## Research Context` to the plan with the
+   returned `depth`, `packet_path`, source policy, and
+   `blocks_final_claims` value. If `packet_path` is non-null, state whether
+   the packet already exists, will be created before Execute, or is unavailable
+   with rationale. For current/external/API claims, verify current docs before
+   coding and do not carry uncited claims into the final report.
 8. **UI input/output contract gate**: If `uiTarget != null`, load `references/ui-io-contract.md` and add a `## UI Input/Output Contract` section to the plan before mockups or implementation. The section must cover every affected screen/component and name: user inputs, system outputs, data taxonomy, CRUD/domain operation, component mapping, state matrix, modality fallback, validation/security, and traceability. If a planned UI component has no named input/output, remove it or mark it decorative with rationale; decorative controls are usually a scope error.
 8a. **Calm Precision core-consideration gate**: If `uiTarget != null`, the design direction must treat Calm Precision as a core decision gate before selecting structure, style mode, motion, or interaction behavior. The resulting `.build-loop/app-contract/ui.md` must include `## Calm Precision Core Considerations` with relevant principles, perceptual foundations, implementation effects, and explicit exceptions.
 8b. **Recent design structures gate**: If `uiTarget != null`, load `references/recent-design-structures.md` before dispatching `design-contract-specialist`. The specialist, not the planner, selects the structure. The plan should pass the file path and any relevant mockup/screenshot/design artifacts; it should not force a named structure unless the user explicitly requested one.

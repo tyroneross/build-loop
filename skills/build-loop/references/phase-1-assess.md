@@ -120,7 +120,23 @@
 
     Prior decisions are evidence, not axioms. Do not discard current constraints; isolate them so Phase 2 can decide whether they justify a compromise. Mirror the compact summary to `.build-loop/state.json.approachLenses` with `clean_sheet`, `current_constraints`, `constraint_delta`, and `bridge_backcast` fields.
 13. **Check prior state**: Read `.build-loop/issues/` and `.build-loop/feedback.md` if they exist. Surface relevant items. If any issue affects the current user's experience, add it to the plan unless too large or risky; otherwise log and defer with user impact.
-14. **Research gate**: If project uses external frameworks/APIs/deploy targets, check current official docs (Context7 → research skill → WebSearch) before building assumptions.
+14. **Research trigger + depth gate**: run the deterministic classifier and cache the result:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/research_trigger.py" \
+     --workdir "$PWD" \
+     --task "<goal text>" \
+     --effort "<XS|S|M|L|XL>" \
+     --cache-into-state \
+     --json
+   ```
+
+   This writes `.build-loop/state.json.researchGate`. Use
+   `references/research-trigger-policy.md` for trigger policy and t-shirt depth
+   lower bounds. If `research_required: true`, run the Research plugin at the
+   returned depth (`light`/`standard`/`deep`) or record why it was unavailable.
+   If `blocks_final_claims: true`, final current/external/API claims need
+   citations or an explicit unavailable/unverified note.
 15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).
 16. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
     - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work; the checkpoint reactions (severity + reason) tell you whether overlap is `merged_residue` / `squash_landed` / `active_conflict`. See `agents/build-orchestrator.md` §Multi-session concurrency.
