@@ -88,11 +88,21 @@ CATEGORY_KEYWORDS = [
                       # Self-recursion / dogfood signals:
                       "self-recursive", "self_recursive", "dogfood",
                       "drift", "manifest version", "working-copy branch",
-                      "working copy", "branch echo")),
+                      "working copy", "branch echo",
+                      # Worktree GC + completed-but-uncommitted state + the
+                      # operator-question resolver are single-run lifecycle infra:
+                      "worktree-gc", "worktree gc", "commit_state",
+                      "uncommitted", "operator question")),
+    # Multi-session coordination surfaces — Rally Point bridge, presence,
+    # handoffs, and the per-run coord file. Distinct from `meta` (single-run
+    # orchestration) because these surfaces coordinate ACROSS agents/sessions.
+    ("coordination", ("rally", "coordination", "handoff", "presence", "roster",
+                      "inbox", "leadership", "mece", "channel")),
     ("architecture", ("architect", "navgator", "blast_radius", "blast-radius",
-                      "blast radius", "scout", "scan repo", "component", "graph")),
+                      "blast radius", "scout", "scan repo", "component", "graph",
+                      "mermaid", "diagram")),
     ("debugging",    ("debug", "debugger", "incident", "root cause", "root-cause",
-                      "trace", "logging-tracer", "memory-first")),
+                      "trace", "logging-tracer", "memory-first", "sourcekit")),
     # Validation includes plugin-hygiene checks (cache sync, namesake
     # collisions) and api-dependency contract checks.
     ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic",
@@ -106,7 +116,11 @@ CATEGORY_KEYWORDS = [
                       "supply-chain", "dependency_cooldown",
                       "dependency-cooldown", "pre_bash_autonomy",
                       "pre_bash_dependency", "autonomy_gate", "cooldown",
-                      "risk_surface", "risk surface", "risksurfacechange")),
+                      "risk_surface", "risk surface", "risksurfacechange",
+                      # Commit/repo-hygiene guards + plugin-cache pruning +
+                      # git-hook installation (all validation infrastructure):
+                      "audit_before_commit", "attribution", "private slug",
+                      "private app slug", "prune", "plugin cache", "git-hooks")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
@@ -121,7 +135,7 @@ CATEGORY_KEYWORDS = [
                       "wikilink", "graph leg", "contextual retrieval",
                       # Phase C/G additions:
                       "rerank", "wiki", "rrf", "cross-encoder",
-                      "federation", "daemon")),
+                      "federation", "daemon", "lesson")),
     ("testing",      ("test", "pytest", "jest", "vitest", "spec")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",
                       "version_advisor")),
@@ -490,7 +504,12 @@ def build_registry(repo: Path) -> Dict[str, Any]:
         entries.extend(fn(repo))
     # Sort for stable output: kind, then name.
     entries.sort(key=lambda e: (e["kind"], e["name"]))
-    by_kind: Dict[str, int] = {}
+    # Seed counts_by_kind with every structurally-supported surface kind so a
+    # kind with zero observed instances in this repo (e.g. `mcp_tool` when there
+    # is no .mcp.json) still appears in the schema. Routing code reads this as
+    # "kind X is a recognized surface", not "X has N instances".
+    SUPPORTED_KINDS = ("agent", "skill", "command", "hook", "mcp_tool", "script")
+    by_kind: Dict[str, int] = {k: 0 for k in SUPPORTED_KINDS}
     by_category: Dict[str, int] = {}
     by_status: Dict[str, int] = {}
     for e in entries:

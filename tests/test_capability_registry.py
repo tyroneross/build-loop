@@ -70,7 +70,7 @@ def test_categories_are_known(registry: dict) -> None:
     valid_cats = {
         "architecture", "debugging", "validation", "planning", "execution",
         "observability", "memory", "testing", "deployment", "ux-ui",
-        "optimization", "meta", "unknown",
+        "optimization", "meta", "coordination", "unknown",
     }
     for e in registry["entries"]:
         assert e["category"] in valid_cats, (
