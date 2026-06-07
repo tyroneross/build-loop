@@ -105,12 +105,14 @@ def _cmd_async(args: argparse.Namespace) -> int:
     Lazy-imported so the hot-path subcommands stay cheap.
     """
     from . import async_runner  # noqa: PLC0415
+    apply_lifecycle = not args.no_apply_lifecycle
     report = async_runner.run_async(
         workdir=args.workdir,
         memory_root=args.memory_root,
         min_projects=args.min_projects,
         similarity_threshold=args.threshold,
         write=not args.dry_run,
+        apply_lifecycle=apply_lifecycle,
     )
     json.dump(report.to_dict(), sys.stdout, sort_keys=True, indent=2)
     sys.stdout.write("\n")
@@ -166,6 +168,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="Cosine similarity threshold for clustering/dedup (default 0.55).")
     ac.add_argument("--dry-run", action="store_true",
                     help="Do not write distill/promote/lifecycle/backlinks output; report-only.")
+    ac.add_argument(
+        "--no-apply-lifecycle", action="store_true", default=False,
+        help=(
+            "Lifecycle state transitions (stale/archived) are written automatically; "
+            "pass --no-apply-lifecycle to report-only (no lifecycle writes). "
+            "Promotion and backlinks writes are unaffected by this flag."
+        ),
+    )
 
     return p.parse_args(argv)
 

@@ -30,6 +30,11 @@ sys.path.insert(0, str(HERE.parent))         # memory_consolidate/
 DEFAULT_MIN_PROJECTS = 2
 DEFAULT_SIMILARITY_THRESHOLD = 0.55
 
+# Module-level sentinel: flips False on first ImportError from semantic_index.
+# Emitted ONCE to stderr so callers can surface the degraded state.
+_recall_available: bool = True
+_recall_warn_emitted: bool = False
+
 # Project sublane → global lane mapping. Architecture maps to global
 # architecture lane, debugging to global debugging, design to global
 # design, etc. Anything else falls back to global lessons.
@@ -155,11 +160,20 @@ def _query_cross_project_siblings(
     embed_fn: Any = None,
 ) -> list[dict]:
     """P1 hybrid recall scoped across ALL projects (no project filter)."""
+    global _recall_available, _recall_warn_emitted
     if not body or not body.strip():
         return []
     try:
         from semantic_index import query_facts  # type: ignore  # noqa: PLC0415
     except (ImportError, ModuleNotFoundError):
+        if not _recall_warn_emitted:
+            print(
+                "WARN: semantic_index unavailable; promotion gate will reject "
+                "all candidates as single-project",
+                file=sys.stderr,
+            )
+            _recall_warn_emitted = True
+        _recall_available = False
         return []
     try:
         # NOTE: no project filter — we want siblings from OTHER projects.

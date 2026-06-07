@@ -517,6 +517,82 @@ def write(
     return fm
 
 
+def patch_frontmatter(
+    path: Path | str,
+    fm_delta: dict,
+    *,
+    body_append: str | None = None,
+    new_body: str | None = None,
+    run_id: str | None = None,
+    workdir: str | None = None,
+) -> dict:
+    """Surgically patch frontmatter key/value pairs in an existing memory file.
+
+    Reads the file, applies ``fm_delta`` (adds or overwrites keys), then
+    writes atomically — identical provenance path (atomic tmp→os.replace +
+    ledger append) as ``write()``. Idempotent: applying the same delta twice
+    yields the same file.
+
+    Body handling (mutually exclusive; both None means body is unchanged):
+      ``body_append``  — appended to the existing body (for footer additions).
+      ``new_body``     — replaces the body entirely (for surgical block edits
+                         such as the backlinks ``## Related`` union rewrite).
+
+    ``run_id`` and ``workdir`` are optional provenance overrides; when absent
+    the existing frontmatter values are preserved as-is (no source_run_id or
+    source_workdir refresh). This keeps surgical patches from clearing the
+    original provenance trail.
+
+    Returns the final frontmatter dict.
+    """
+    if body_append is not None and new_body is not None:
+        raise ValueError("body_append and new_body are mutually exclusive")
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"memory file not found: {p}")
+    text = p.read_text(encoding="utf-8")
+    fm, body = _split_frontmatter(text)
+
+    # Apply delta — caller's values win for every key in fm_delta.
+    for k, v in fm_delta.items():
+        fm[k] = v
+    # Refresh last_updated_at.
+    fm["last_updated_at"] = iso_utc()
+
+    # Body handling.
+    if new_body is not None:
+        body = new_body
+    elif body_append is not None:
+        body = body.rstrip("\n") + "\n" + body_append.lstrip("\n")
+
+    content = _emit_frontmatter(fm) + "\n" + body.lstrip("\n")
+    _atomic_write_text(p, content)
+
+    # Provenance ledger — fire-and-forget, never blocks the write.
+    effective_run_id = run_id or str(fm.get("source_run_id") or "patch")
+    effective_workdir = workdir or str(fm.get("source_workdir") or str(p.parent))
+    try:
+        memory_root = mul.infer_memory_root_for_path(p, fallback=p.parent)
+        mul.append_update(
+            memory_root=memory_root,
+            action="update",
+            path=p,
+            writer="memory_writer.patch_frontmatter",
+            run_id=effective_run_id,
+            source_repo=fm.get("source_repo"),
+            source_workdir=effective_workdir,
+            source_commit=fm.get("as_of_commit"),
+            source_host=str(fm.get("source_host") or "claude_code"),
+            memory_id=str(fm.get("name") or p.stem),
+            summary=f"Patched frontmatter keys: {sorted(fm_delta.keys())}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARN: memory_update_ledger append failed: {exc}", file=sys.stderr)
+
+    return fm
+
+
 def mark_applied(
     memory_dir: Path,
     file_rel: str,

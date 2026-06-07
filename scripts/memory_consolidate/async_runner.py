@@ -44,6 +44,10 @@ class AsyncReport:
     backlink_links_added: int = 0
     errors: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
+    # f2: signals whether the semantic recall backend is available.
+    # False when semantic_index could not be imported; promotion gate will
+    # reject every candidate as single-project in degraded mode.
+    recall_available: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +63,7 @@ class AsyncReport:
             "backlink_links_added": self.backlink_links_added,
             "errors": self.errors,
             "duration_seconds": self.duration_seconds,
+            "recall_available": self.recall_available,
         }
 
 
@@ -69,6 +74,7 @@ def run_async(
     min_projects: int = 2,
     similarity_threshold: float = 0.55,
     write: bool = True,
+    apply_lifecycle: bool = True,
     similarity_fn: Any = None,
     siblings_fn: Any = None,
     related_fn: Any = None,
@@ -79,6 +85,11 @@ def run_async(
     ``write=False`` runs every arm but stops short of writing distilled / promoted
     entries to disk; lifecycle frontmatter writes are also suppressed. Backlink
     writes obey the same flag. Useful for dry-run reports.
+
+    ``apply_lifecycle=False`` (f4: ``--no-apply-lifecycle``) runs lifecycle
+    classification and reporting but suppresses the frontmatter write; promotion
+    and backlinks writes are unaffected by this flag. When ``write=False``,
+    lifecycle writes are suppressed regardless of ``apply_lifecycle``.
 
     Injectable callbacks parallel the four capabilities' test seams — production
     callers leave them ``None`` and recall is sourced from P1.
@@ -121,6 +132,12 @@ def run_async(
                 "gate": packet.gate.to_dict(),
                 "suggested_decision": packet.suggested_decision,
             })
+        # f2: surface the recall-available sentinel from the inner promote module.
+        # promote_mod = memory_consolidate.promote (package); the sentinel lives
+        # in promote_mod.promote (the .promote.promote submodule).
+        inner = getattr(promote_mod, "promote", promote_mod)
+        if not getattr(inner, "_recall_available", True):
+            report.recall_available = False
     except Exception as exc:  # noqa: BLE001
         report.errors.append(f"promote: {exc}")
 
@@ -132,7 +149,8 @@ def run_async(
         report.lifecycle_transitions = len(transitions)
         for t in transitions:
             report.lifecycle_changes.append(t.to_dict())
-            if write:
+            # f4: apply_lifecycle=False → report-only (no frontmatter writes).
+            if write and apply_lifecycle:
                 try:
                     lifecycle_mod.apply_state_to_frontmatter(
                         t.path,

@@ -38,6 +38,12 @@ from typing import Any, Iterable
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent))  # scripts/
 
+try:
+    import memory_writer as _mw  # type: ignore  # noqa: E402
+    _patch_frontmatter = _mw.patch_frontmatter
+except Exception:  # noqa: BLE001
+    _patch_frontmatter = None  # degraded mode — tests may inject directly
+
 # Public state vocabulary.
 LIFECYCLE_STATES = ("draft", "active", "stale", "contradicted", "archived")
 
@@ -291,23 +297,54 @@ def apply_state_to_frontmatter(
     """Surgically write ``lifecycle_state`` + ``lifecycle_reason`` into the
     frontmatter of ``path`` without rewriting the body or other keys.
 
-    ``dry_run`` returns the would-be frontmatter without disk I/O.
+    Writes are routed through ``memory_writer.patch_frontmatter`` (canonical
+    writer with provenance/ledger trail). ``dry_run`` returns the would-be
+    frontmatter without disk I/O.
+
+    Values are sanitised: newlines/CRs are stripped from ``reason`` so
+    externally-supplied strings cannot inject spurious YAML keys.
     """
     if state not in LIFECYCLE_STATES:
         raise ValueError(
             f"unknown lifecycle state {state!r}; valid: {LIFECYCLE_STATES}"
         )
+    # f3: sanitize externally-supplied string values — strip embedded newlines/CRs
+    # that could inject spurious YAML keys (e.g. reason='bad\n---\ninjected: evil').
+    safe_reason = reason.replace("\n", " ").replace("\r", " ")
+
     p = Path(path)
-    text = p.read_text(encoding="utf-8")
-    fm, body = _parse_frontmatter(text)
-    fm["lifecycle_state"] = state
-    fm["lifecycle_reason"] = reason
-    fm["lifecycle_transitioned_at"] = datetime.now(timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
-    new_text = _emit_frontmatter(fm) + body.lstrip("\n")
-    if not dry_run:
+    if dry_run:
+        # Dry-run path: compute the would-be frontmatter without disk I/O.
+        text = p.read_text(encoding="utf-8")
+        fm, _ = _parse_frontmatter(text)
+        fm["lifecycle_state"] = state
+        fm["lifecycle_reason"] = safe_reason
+        fm["lifecycle_transitioned_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        return fm
+
+    # f1: route through canonical writer (provenance + ledger).
+    if _patch_frontmatter is not None:
+        fm_delta = {
+            "lifecycle_state": state,
+            "lifecycle_reason": safe_reason,
+            "lifecycle_transitioned_at": datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        }
+        return _patch_frontmatter(p, fm_delta)
+    else:
+        # Degraded fallback (memory_writer unavailable in restricted environments).
+        text = p.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(text)
+        fm["lifecycle_state"] = state
+        fm["lifecycle_reason"] = safe_reason
+        fm["lifecycle_transitioned_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        new_text = _emit_frontmatter(fm) + body.lstrip("\n")
         tmp = p.with_suffix(p.suffix + ".tmp")
         tmp.write_text(new_text, encoding="utf-8")
         os.replace(tmp, p)
-    return fm
+        return fm

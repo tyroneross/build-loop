@@ -29,6 +29,12 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent))  # scripts/
 
+try:
+    import memory_writer as _mw  # type: ignore  # noqa: E402
+    _patch_frontmatter = _mw.patch_frontmatter
+except Exception:  # noqa: BLE001
+    _patch_frontmatter = None  # degraded mode — tests may inject directly
+
 _FM_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 _BACKLINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 _RELATED_HEADING_RE = re.compile(r"^## Related\s*$", re.MULTILINE)
@@ -246,9 +252,17 @@ def write_backlinks_footer(
         new_text += "\n"
 
     if not dry_run:
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        tmp.write_text(new_text, encoding="utf-8")
-        os.replace(tmp, p)
+        # f1: route through canonical writer (provenance + ledger).
+        # Compute the new body (everything after the frontmatter) from new_text.
+        fm_block_end = new_text.find("\n---\n", 4) + 5 if new_text.startswith("---\n") else 0
+        new_body_only = new_text[fm_block_end:] if fm_block_end > 0 else new_text
+        if _patch_frontmatter is not None:
+            _patch_frontmatter(p, {}, new_body=new_body_only)
+        else:
+            # Degraded fallback (memory_writer unavailable in restricted environments).
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            tmp.write_text(new_text, encoding="utf-8")
+            os.replace(tmp, p)
     return new_text
 
 
