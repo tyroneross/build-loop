@@ -343,13 +343,27 @@ def _normalize_file_rel(
                 f"--file {file_rel!r} resolved to empty filename after lane strip"
             )
     elif scope == "top-level":
-        from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
+        from _paths import memory_store_root, project_root  # type: ignore  # noqa: PLC0415
         while True:
             before = list(parts)
+            # Strip recognized top-level lane prefixes.
             if parts and parts[0] in TOP_LEVEL_LANES:
                 lane = parts[0]
                 new_memory_dir = memory_store_root() / lane
                 parts = parts[1:]
+            # Also strip a leading ``projects/<slug>/`` segment (and its sublane)
+            # when the caller passed a fully-qualified project path without scope=.
+            # This makes the guard unconditional: a no-scope in-process call with
+            # file_rel="projects/<p>/<sublane>/x.md" lands once, not double-nested.
+            elif len(parts) >= 2 and parts[0] == "projects":
+                detected_slug = parts[1]
+                parts = parts[2:]
+                if parts and parts[0] in PROJECT_SUBLANES:
+                    sublane = parts[0]
+                    new_memory_dir = project_root(detected_slug) / sublane
+                    parts = parts[1:]
+                else:
+                    new_memory_dir = project_root(detected_slug) / "lessons"
             if parts == before:
                 break
         if not parts:
@@ -392,13 +406,15 @@ def write(
     if type_ not in VALID_TYPES:
         raise ValueError(f"type must be one of {sorted(VALID_TYPES)}; got {type_!r}")
 
-    # P2 guard: when caller declares scope, normalise the path so a
-    # lane-prefixed --file argument doesn't double-nest under memory_dir.
-    # Library callers that pass scope=None get byte-equivalent legacy behavior.
-    if scope is not None:
-        file_rel, memory_dir = _normalize_file_rel(
-            file_rel, scope=scope, project=project, memory_dir=memory_dir,
-        )
+    # P2 guard: unconditionally normalise the path so a lane-prefixed
+    # --file argument never double-nests under memory_dir regardless of
+    # whether the caller passed scope=.  When scope is None we default to
+    # "top-level" strip semantics (strips recognized TOP_LEVEL_LANES prefixes
+    # only; project-lane stripping requires an explicit scope + project pair).
+    _eff_scope = scope if scope is not None else "top-level"
+    file_rel, memory_dir = _normalize_file_rel(
+        file_rel, scope=_eff_scope, project=project, memory_dir=memory_dir,
+    )
 
     path = memory_dir / file_rel
     workdir_abs = str(Path(workdir).resolve())

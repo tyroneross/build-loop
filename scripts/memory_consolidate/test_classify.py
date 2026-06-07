@@ -78,6 +78,69 @@ class HeuristicDecisionTests(unittest.TestCase):
         self.assertEqual(d["backlinks"][0], "lessons/2026-01-01-x.md")
 
 
+class QuerySimilarSchemaTests(unittest.TestCase):
+    """f2: _query_similar output must include file_hint in every result row."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def test_query_similar_schema_has_file_hint(self):
+        """Each returned row must carry a 'file_hint' key (may be None when
+        the recall backend returns nothing useful, but the key must exist)."""
+        # Patch query_facts at the classify module level to return a synthetic row.
+        import unittest.mock as mock
+        fake_row = {
+            "subject": "lessons/2026-01-01-gotcha-something.md",
+            "predicate": "IS_A",
+            "object": "gotcha",
+            "project": "demoproj",
+        }
+        with mock.patch.object(classify, "_query_similar",
+                               wraps=classify._query_similar) as _wrapped:
+            # Call directly with a synthetic rows list.
+            result = classify._query_similar.__wrapped__ if hasattr(
+                classify._query_similar, "__wrapped__") else None
+
+        # Test via direct patching of query_facts inside classify.
+        import sys
+        import types
+        fake_module = types.ModuleType("semantic_index")
+        fake_module.query_facts = lambda **kw: [fake_row]
+        sys.modules["semantic_index"] = fake_module
+        try:
+            rows = classify._query_similar("something", project="demoproj", limit=1)
+        finally:
+            sys.modules.pop("semantic_index", None)
+
+        self.assertEqual(len(rows), 1)
+        self.assertIn("file_hint", rows[0])
+        # file_hint falls back to subject when no dedicated path column.
+        self.assertEqual(rows[0]["file_hint"], "lessons/2026-01-01-gotcha-something.md")
+        # All other expected keys are present.
+        for key in ("rank", "subject", "predicate", "object", "project"):
+            self.assertIn(key, rows[0])
+
+    def test_query_similar_file_hint_prefers_explicit_key(self):
+        """When the recall row carries an explicit 'file_hint' key, that wins
+        over the 'subject' fallback."""
+        import sys, types
+        fake_module = types.ModuleType("semantic_index")
+        fake_module.query_facts = lambda **kw: [{
+            "subject": "lessons/something.md",
+            "predicate": "IS_A",
+            "object": "gotcha",
+            "project": "demoproj",
+            "file_hint": "lessons/explicit-hint.md",
+        }]
+        sys.modules["semantic_index"] = fake_module
+        try:
+            rows = classify._query_similar("q", project=None, limit=1)
+        finally:
+            sys.modules.pop("semantic_index", None)
+
+        self.assertEqual(rows[0]["file_hint"], "lessons/explicit-hint.md")
+
+
 class PreparePacketTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

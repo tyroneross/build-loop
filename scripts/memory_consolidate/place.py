@@ -118,14 +118,20 @@ def place(
 
     memory_dir = _resolve_memory_dir({"scope": scope, "project": project})
 
+    # Normalize once here so placement metadata uses the same resolved path
+    # as the writer — eliminates a second _normalize_file_rel call after write().
+    file_rel_normalised, normalised_dir = mw._normalize_file_rel(
+        file_rel, scope=scope, project=project, memory_dir=memory_dir,
+    )
+
     body = _body_with_backlinks(c.content, backlinks)
 
     # Build a short, traceable description for provenance frontmatter.
     description = (c.hint or c.content.split("\n", 1)[0])[:200]
 
     fm = mw.write(
-        memory_dir,
-        file_rel=file_rel,
+        normalised_dir,
+        file_rel=file_rel_normalised,
         body=body,
         name=name,
         description=description,
@@ -141,10 +147,6 @@ def place(
         },
     )
 
-    # Re-derive the actual on-disk path the same way the writer did.
-    file_rel_normalised, normalised_dir = mw._normalize_file_rel(
-        file_rel, scope=scope, project=project, memory_dir=memory_dir,
-    )
     placement = {
         "memory_dir": str(normalised_dir),
         "file_rel": file_rel_normalised,

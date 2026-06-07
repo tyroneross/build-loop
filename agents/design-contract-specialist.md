@@ -130,10 +130,11 @@ Use the canonical writer with `extra_frontmatter={"domain": "ui" | "data" | "des
 
 ```python
 from scripts.memory_writer import write as memory_write
+from scripts._paths import project_lessons_dir
 from pathlib import Path
 memory_write(
-    memory_dir=Path.home() / ".build-loop" / "memory" / "projects" / app_slug / "ui",
-    file_rel="pattern_primary_cta_uses_indigo_600.md",
+    memory_dir=project_lessons_dir(app_slug) / "ui",
+    file_rel="ui/pattern_primary_cta_uses_indigo_600.md",
     body="...lesson body...",
     name="Primary CTA: indigo-600 + white text + 32px height",
     description="Visual contract for the primary-CTA tier; do not re-derive per chunk.",
@@ -141,6 +142,8 @@ memory_write(
     run_id=run_id,
     workdir=str(workdir),
     host="claude_code",
+    scope="project",
+    project=app_slug,
     extra_frontmatter={"domain": "ui"},
 )
 ```

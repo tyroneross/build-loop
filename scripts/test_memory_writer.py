@@ -483,9 +483,9 @@ class P2WriterGuardTests(unittest.TestCase):
         landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
         self.assertEqual(landed, ["projects/demoproj/lessons/bare.md"])
 
-    def test_legacy_callers_without_scope_kwarg_unaffected(self):
-        """Library callers that don't pass scope= get byte-equivalent legacy
-        behavior — the writer guard never fires."""
+    def test_legacy_callers_without_scope_kwarg_no_double_nest(self):
+        """Library callers that don't pass scope= still get normalization —
+        the guard is now unconditional. A lane-prefixed file_rel lands once."""
         mw.write(
             self._paths.project_lessons_dir("demoproj"),
             file_rel="projects/demoproj/issues/legacy.md",
@@ -494,13 +494,26 @@ class P2WriterGuardTests(unittest.TestCase):
             run_id="r", workdir=str(self.tmp), host="claude_code",
         )
         landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
-        # Without normalization, the path nests under lessons/ — that's the
-        # legacy behavior; library callers opt in via scope= when they want
-        # the guard.
-        self.assertIn(
-            "projects/demoproj/lessons/projects/demoproj/issues/legacy.md",
+        # Guard fires even without scope= — the double-nest is impossible.
+        self.assertEqual(
             landed,
+            ["projects/demoproj/issues/legacy.md"],
+            f"Expected single landing; got {landed}",
         )
+
+    def test_in_process_no_scope_lane_prefix_lands_once(self):
+        """In-process write() with a lane-prefixed file_rel and NO scope= arg
+        must land at the expected path exactly once (no double-nest)."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="projects/demoproj/debugging/crash-log.md",
+            body="crash details",
+            name="crash-log", description="crash log", type_="debug-incident",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            # No scope= kwarg — tests the unconditional guard path.
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        self.assertEqual(landed, ["projects/demoproj/debugging/crash-log.md"])
 
 
     def test_strip_doubly_prefixed_path(self):

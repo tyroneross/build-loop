@@ -135,11 +135,14 @@ def _query_similar(
         return []
     try:
         from semantic_index import query_facts  # type: ignore  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
+    except (ImportError, ModuleNotFoundError):
+        # Recall stack not installed — silent absence-tolerant fallback.
         return []
     try:
         rows = query_facts(query=query, limit=limit, project=project, mode="hybrid")
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # Backend present but broken — warn so the operator knows, then degrade.
+        print(f"WARN: semantic_index.query_facts failed: {exc}", file=sys.stderr)
         return []
     out: list[dict] = []
     for i, row in enumerate(rows, start=1):
@@ -149,6 +152,10 @@ def _query_similar(
             "predicate": row.get("predicate"),
             "object": row.get("object"),
             "project": row.get("project"),
+            # file_hint: best available path-like reference for backlinks.
+            # query_facts returns no dedicated 'path' column; subject carries
+            # the fact's file path or name when indexed from a memory file.
+            "file_hint": row.get("file_hint") or row.get("path") or row.get("subject"),
         })
     return out
 
