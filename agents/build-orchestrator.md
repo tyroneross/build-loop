@@ -123,7 +123,18 @@ Routing detail extracted to `references/phase-4-review.md`. Sub-step procedural 
 - **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value. Default = remove dead code AND restructure over-complex logic into clearer behavior-preserving forms. `complexity_detector.py` is a Python accelerator, not a gate.
 - **F. Auto-Resolve** — `scripts/autonomy_gate.py` against each candidate from A/D: `auto` executes, `warn` executes with `[warn]` prefix + autonomyEvents entry, `confirm` → `## Held`, `block` → `## Blocked`. Strong-checkpoint findings never enter this queue.
-- **G. Report** (final pass only) — scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate. Blocking no-critical/high exit gate (`review_finding_gate.py`), report-section spec (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` for structure + `report_lint.py` for style/jargon with one-pass auto-revise self-heal), and auto-version-bump documented in `references/phase-gate-checklist.md` §"Sub-step G". The style lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured. **Mandatory `runs[]` write + `## Judge decisions` block + milestone append + post-push retrospective-synthesizer dispatch (non-gating, in-flow) + `## Self-modifications (readback)` block + post-deploy verification gate** — full procedures in `references/phase-4-review.md`. The `runs[]` write fires every Phase 4G regardless of dispatch path; `--scope build` arms the review-completeness gate.
+- **G. Report** (final pass only) — scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate. Blocking no-critical/high exit gate (`review_finding_gate.py`), report-section spec (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` for structure), and auto-version-bump documented in `references/phase-gate-checklist.md` §"Sub-step G". **Mandatory `runs[]` write + `## Judge decisions` block + milestone append + post-push retrospective-synthesizer dispatch (non-gating, in-flow) + `## Self-modifications (readback)` block + post-deploy verification gate** — full procedures in `references/phase-4-review.md`. The `runs[]` write fires every Phase 4G regardless of dispatch path; `--scope build` arms the review-completeness gate.
+
+  **Style lint (MANDATORY, warn-mode)** — run on the final user-facing report draft before emitting:
+
+  ```
+  python3 scripts/report_lint.py <draft.md> --json
+  → total==0: emit as-is
+  → total>0: revise the draft ONCE per skills/build-loop/references/output-style.md (translate jargon, fix headline, add validation line, remove contrastive-pivots), re-run, emit (append a one-line "[warn] style-lint findings remain" to ## Done if any persist)
+  → script error: append "[warn] style-lint skipped" and continue
+  ```
+
+  The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured.
 
 ### Phase 5: Iterate (up to 5x classic, up to 25 autonomous)
 

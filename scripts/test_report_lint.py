@@ -27,6 +27,10 @@ from report_lint import (  # noqa: E402
     _strip_fenced_blocks,
 )
 
+# Paths for anti-dormancy checks
+AGENTS_DIR = ROOT.parent / "agents"
+REFERENCES_DIR = ROOT.parent / "references"
+
 
 def _write(text: str) -> Path:
     f = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
@@ -285,6 +289,104 @@ class TestCli(unittest.TestCase):
             check=False,
         )
         self.assertEqual(proc.returncode, 2)
+
+
+class TestVerbHintExtended(unittest.TestCase):
+    """f2: Extended verb list must not flag correct reporting-verb headlines."""
+
+    def test_ships_verb_passes(self):
+        text = "Report lint ships as a WARN-mode style enforcer."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_shipped_verb_passes(self):
+        text = "The style enforcer shipped with one-pass auto-revise self-heal."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_introduces_verb_passes(self):
+        text = "This commit introduces a mandatory style-lint step in Phase 4G."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_captures_verb_passes(self):
+        text = "The new rule captures inline-backtick jargon in user-facing prose."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_delivers_verb_passes(self):
+        text = "Phase 4G delivers the validated report to the operator terminal."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_enables_verb_passes(self):
+        text = "The feature flag enables async processing for large report drafts."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_improves_verb_passes(self):
+        text = "This change improves headline detection for common reporting verbs."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_creates_verb_passes(self):
+        text = "The orchestrator creates a draft markdown file before linting it."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_generates_verb_passes(self):
+        text = "The script generates a JSON findings report from the draft text."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_activates_verb_passes(self):
+        text = "Setting the feature flag activates the rate-limiting middleware now."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_triggers_verb_passes(self):
+        text = "A non-zero lint total triggers a single auto-revise pass on the draft."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_migrates_verb_passes(self):
+        text = "The script migrates existing run records to the new schema version."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+    def test_installs_verb_passes(self):
+        text = "The hook installer installs git hooks idempotently on first run now."
+        self.assertEqual(lint_headline(_strip_fenced_blocks(text)), [])
+
+
+class TestAntiDormancy(unittest.TestCase):
+    """f1: Prove the imperative style-lint block is present in both orchestrator files."""
+
+    IMPERATIVE_MARKER = "Style lint (MANDATORY, warn-mode)"
+    COMMAND_STRING = "python3 scripts/report_lint.py <draft.md> --json"
+
+    def _read(self, path: Path) -> str:
+        return path.read_text(encoding="utf-8")
+
+    def test_build_orchestrator_has_mandatory_block(self):
+        text = self._read(AGENTS_DIR / "build-orchestrator.md")
+        self.assertIn(
+            self.IMPERATIVE_MARKER,
+            text,
+            "agents/build-orchestrator.md is missing the mandatory style-lint block.",
+        )
+
+    def test_build_orchestrator_has_exact_command(self):
+        text = self._read(AGENTS_DIR / "build-orchestrator.md")
+        self.assertIn(
+            self.COMMAND_STRING,
+            text,
+            "agents/build-orchestrator.md is missing the exact report_lint.py command string.",
+        )
+
+    def test_phase4_review_has_mandatory_block(self):
+        text = self._read(REFERENCES_DIR / "phase-4-review.md")
+        self.assertIn(
+            self.IMPERATIVE_MARKER,
+            text,
+            "references/phase-4-review.md is missing the mandatory style-lint block.",
+        )
+
+    def test_phase4_review_has_exact_command(self):
+        text = self._read(REFERENCES_DIR / "phase-4-review.md")
+        self.assertIn(
+            self.COMMAND_STRING,
+            text,
+            "references/phase-4-review.md is missing the exact report_lint.py command string.",
+        )
 
 
 if __name__ == "__main__":

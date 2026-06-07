@@ -34,6 +34,17 @@ Only when a mechanical metric exists. See `references/phase-gate-checklist.md` �
 
 Scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate (below). The blocking **no-critical/high exit gate** (`review_finding_gate.py` — any open `critical`/`high` without closure routes back to Phase 5 Iterate), the **report-section spec** (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` + forbidden patterns), and **auto-version-bump** are documented in `references/phase-gate-checklist.md` §"Sub-step G — Report (final pass only)" — execute them from there; do not re-derive their procedures here.
 
+**Style lint (MANDATORY, warn-mode)** — run on the final user-facing report draft before emitting:
+
+```
+python3 scripts/report_lint.py <draft.md> --json
+→ total==0: emit as-is
+→ total>0: revise the draft ONCE per skills/build-loop/references/output-style.md (translate jargon, fix headline, add validation line, remove contrastive-pivots), re-run, emit (append a one-line "[warn] style-lint findings remain" to ## Done if any persist)
+→ script error: append "[warn] style-lint skipped" and continue
+```
+
+The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured.
+
 ### Mandatory `runs[]` write + `## Judge decisions` block (orchestrator-owned)
 
 `references/phase-gate-checklist.md` §G delegates these to the build-orchestrator agent; dispatch-path-independent, fire every time regardless of how the agent was invoked. Collect every judge/auditor verdict that fired this run (`plan-critic`, `independent-auditor`, `scope-auditor`, `fact-checker`, `mock-scanner`, `security-reviewer`, `synthesis-critic`, `architecture-scout`, `ui-validator`, etc.) into a JSON list at `.build-loop/judge-decisions.json` (shape per `agents/promotion-reviewer.md` §"Verdict envelope"); when no judge fired, write `[]` (the empty array is the signal). Then run:

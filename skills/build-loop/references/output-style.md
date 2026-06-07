@@ -56,6 +56,29 @@ Validation passed: python3 scripts/validate_memory_store.py --strict.
 
 Why this is good: plain-sentence headline implied by the commit subject, bulleted concrete artifacts with paths and a commit hash, an "It captures:" substance block, and an explicit validation line naming the exact command. Scannable, direct, no jargon.
 
+## Good — exemplar B (scoped-edit narration, captured 2026-06-06)
+
+```
+Claim is recorded. I'm keeping the edit scoped: selector scoring plus one regression
+test that reproduces "old handoff masks newer targeted inbox/review request."
+[visible actions: git switch -c …, Explored: read/search …]
+The edit is small: add a typed helper for requires_ack evidence, score direct targeted
+artifacts as inbox-doorbell work, and cover it with a regression where a stale handoff
+used to hide the newer message.
+```
+
+Why it's good: declarative state → scope stated plainly with the bug in plain words → the change in one informed sentence.
+
+## Good — exemplar C (closeout note, captured 2026-06-06)
+
+```
+Commit 4392166 is created on fix/actionable-inbox-next. I'm posting the closeout to
+Rally and releasing the two file claims now.
+[visible actions: rally say release …, rally say artifact …]
+```
+
+Why it's good: states the landed artifact (commit + branch) → then the action-in-progress in one plain line.
+
 ## Bad — verbose + jargon (rewritten Good)
 
 **Bad (jargon + filler):**
@@ -96,7 +119,7 @@ These are structured data for machines, not user-facing prose:
 - Rally Point post bodies on internal channels (peer-to-peer coordination)
 - `auditor_status` and other machine fields embedded in run records
 
-The lint targets ONLY the final user-facing report markdown + phase status lines printed to the operator's terminal.
+The lint targets ONLY the final user-facing report markdown + phase status lines printed to the operator's terminal. Inline backtick spans are NOT exempted — if an internal token appears in prose (even quoted), translate it; use a full fenced block only for verbatim code/trace the user should see literally.
 
 ## Enforcement summary
 

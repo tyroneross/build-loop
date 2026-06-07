@@ -51,8 +51,10 @@ NUMBERED_BULLET_RE = re.compile(r"^\s*\d+\.\s")
 # ``!``, ``?``, or ``;``; length >= 30 chars; not a heading; not a bullet;
 # not a noun phrase fragment (no verb-like token).
 SENTENCE_TERMINATORS = ".!?;"
-# Common English finite verbs / verb markers. Conservative — false-positives
-# on this list mean fewer lints, which is the safer side for a WARN lint.
+# Common English finite verbs / verb markers. Conservative — false-negatives
+# on this list mean fewer lints, which is fine; false-positives flag GOOD
+# headlines and trigger needless auto-revise, which IS the unsafe side for a
+# WARN linter that edits the draft on findings. Extend this list liberally.
 VERB_HINT_RE = re.compile(
     r"\b(is|are|was|were|has|have|had|will|would|can|could|should|"
     r"added|added|adds|adding|"
@@ -66,6 +68,18 @@ VERB_HINT_RE = re.compile(
     r"wires?|wired|wiring|"
     r"enforces?|enforced|enforcing|"
     r"replaces?|replaced|replacing|"
+    r"ships?|shipped|shipping|"
+    r"introduces?|introduced|introducing|"
+    r"captures?|captured|capturing|"
+    r"delivers?|delivered|delivering|"
+    r"enables?|enabled|enabling|"
+    r"improves?|improved|improving|"
+    r"creates?|created|creating|"
+    r"generates?|generated|generating|"
+    r"activates?|activated|activating|"
+    r"triggers?|triggered|triggering|"
+    r"migrates?|migrated|migrating|"
+    r"installs?|installed|installing|"
     r"now|then|today|"
     r"made|makes|making|"
     r"land(s|ed|ing)?|"
