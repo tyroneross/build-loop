@@ -394,5 +394,187 @@ class CLITests(unittest.TestCase):
         self.assertEqual(len(summary["migrated"]), 1)
 
 
+
+class P2WriterGuardTests(unittest.TestCase):
+    """P2 regression: --file with a lane prefix under --scope project must
+    NOT double-nest. This is today's exact bug (4 agents hit it 2026-06-07).
+    """
+
+    def setUp(self):
+        import os
+        self.tmp = Path(tempfile.mkdtemp())
+        # Isolate from the real memory store: env override + reload _paths.
+        self._prev_env = os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
+        os.environ["BUILD_LOOP_MEMORY_STORE_ROOT"] = str(self.tmp)
+        import importlib
+        import _paths as _p
+        importlib.reload(_p)
+        importlib.reload(mw)
+        self._paths = _p
+
+    def tearDown(self):
+        import os
+        if self._prev_env is None:
+            os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+        else:
+            os.environ["BUILD_LOOP_MEMORY_STORE_ROOT"] = self._prev_env
+        import importlib, _paths as _p
+        importlib.reload(_p)
+        importlib.reload(mw)
+
+    def test_double_nest_repro_today_exact_bug(self):
+        """``--file projects/<slug>/issues/x.md --scope project --project <slug>``
+        must land at ``projects/<slug>/issues/x.md`` ONCE (not nested under
+        ``lessons/``)."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="projects/demoproj/issues/regression.md",
+            body="body",
+            name="x", description="x", type_="gotcha",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = sorted(p.relative_to(self.tmp) for p in self.tmp.rglob("*.md"))
+        self.assertEqual(
+            [str(p) for p in landed],
+            ["projects/demoproj/issues/regression.md"],
+            f"Expected single landed path; got {landed}",
+        )
+
+    def test_strip_redundant_project_prefix_then_lessons(self):
+        """``--file projects/<slug>/lessons/x.md --scope project --project <slug>``
+        lands in lessons/ once."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="projects/demoproj/lessons/foo.md",
+            body="body",
+            name="x", description="x", type_="lesson",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        self.assertIn("projects/demoproj/lessons/foo.md", landed)
+        self.assertEqual(len(landed), 1, landed)
+
+    def test_strip_sublane_only_prefix(self):
+        """``--file issues/x.md --scope project --project <slug>`` resolves
+        to projects/<slug>/issues/x.md (sublane override)."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="issues/just-sublane.md",
+            body="body",
+            name="x", description="x", type_="gotcha",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        self.assertEqual(landed, ["projects/demoproj/issues/just-sublane.md"])
+
+    def test_bare_filename_under_scope_project(self):
+        """Bare filename keeps legacy behavior: lands in default lane (lessons/)."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="bare.md",
+            body="body",
+            name="x", description="x", type_="lesson",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        self.assertEqual(landed, ["projects/demoproj/lessons/bare.md"])
+
+    def test_legacy_callers_without_scope_kwarg_unaffected(self):
+        """Library callers that don't pass scope= get byte-equivalent legacy
+        behavior — the writer guard never fires."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="projects/demoproj/issues/legacy.md",
+            body="body",
+            name="x", description="x", type_="gotcha",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        # Without normalization, the path nests under lessons/ — that's the
+        # legacy behavior; library callers opt in via scope= when they want
+        # the guard.
+        self.assertIn(
+            "projects/demoproj/lessons/projects/demoproj/issues/legacy.md",
+            landed,
+        )
+
+    def test_top_level_lane_strip(self):
+        """``--file debugging/x.md --scope top-level`` resolves to
+        ``debugging/x.md`` (not ``lessons/debugging/x.md``)."""
+        mw.write(
+            self._paths.top_level_lessons_dir(),
+            file_rel="debugging/sigil.md",
+            body="body",
+            name="x", description="x", type_="debug-incident",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="top-level",
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        self.assertEqual(landed, ["debugging/sigil.md"])
+
+    def test_rejects_absolute_file(self):
+        with self.assertRaises(ValueError):
+            mw.write(
+                self._paths.project_lessons_dir("demoproj"),
+                file_rel="/etc/passwd",
+                body="b", name="x", description="x", type_="gotcha",
+                run_id="r", workdir=str(self.tmp), host="claude_code",
+                scope="project", project="demoproj",
+            )
+
+    def test_rejects_dotdot(self):
+        with self.assertRaises(ValueError):
+            mw.write(
+                self._paths.project_lessons_dir("demoproj"),
+                file_rel="../escape.md",
+                body="b", name="x", description="x", type_="gotcha",
+                run_id="r", workdir=str(self.tmp), host="claude_code",
+                scope="project", project="demoproj",
+            )
+
+    def test_normalize_is_idempotent(self):
+        """Running the normalizer twice yields the same path. Guards against
+        a future refactor that strips a layer per-call."""
+        from _paths import project_root
+        # First normalization: strip projects/<p>/issues/ prefix.
+        f1, m1 = mw._normalize_file_rel(
+            "projects/demoproj/issues/x.md",
+            scope="project", project="demoproj",
+            memory_dir=self._paths.project_lessons_dir("demoproj"),
+        )
+        # Second normalization on the result: no change.
+        f2, m2 = mw._normalize_file_rel(
+            f1, scope="project", project="demoproj", memory_dir=m1,
+        )
+        self.assertEqual(f1, "x.md")
+        self.assertEqual(m1, project_root("demoproj") / "issues")
+        self.assertEqual(f1, f2)
+        self.assertEqual(m1, m2)
+
+
+class CanonicalFilenameTests(unittest.TestCase):
+    def test_canonical_filename_shape(self):
+        fn = mw.canonical_filename(type_="lesson", name="Some Cool Thing!", date="2026-01-02")
+        self.assertEqual(fn, "2026-01-02-lesson-some-cool-thing.md")
+
+    def test_canonical_filename_slug_collapse(self):
+        fn = mw.canonical_filename(type_="gotcha", name="  X --- Y???  ", date="2026-01-02")
+        self.assertEqual(fn, "2026-01-02-gotcha-x-y.md")
+
+    def test_canonical_filename_empty_name_defaults_untitled(self):
+        fn = mw.canonical_filename(type_="lesson", name="!!!", date="2026-01-02")
+        self.assertEqual(fn, "2026-01-02-lesson-untitled.md")
+
+    def test_canonical_filename_default_date_is_today(self):
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        fn = mw.canonical_filename(type_="lesson", name="x")
+        self.assertTrue(fn.startswith(today), fn)
+
+
 if __name__ == "__main__":
     unittest.main()
