@@ -109,6 +109,24 @@ Matchers filter which tools trigger a hook:
 3. Use `${CLAUDE_PLUGIN_ROOT}` for paths
 4. Test manually before integrating
 
+## Reliability: minimal PATH, fail-open, advisory-only
+
+Hooks fire in a **subprocess with a minimal, non-interactive PATH** — typically `/usr/bin:/bin`, *not* your login shell's PATH. Binaries you installed to `~/.local/bin`, a Node version-manager dir, Homebrew, etc. are **not on PATH** inside a hook. This is the #1 cause of `exit code 127` (command not found) hook failures.
+
+Three rules for any hook that calls an external binary (`node`, `jq`, a project CLI):
+
+1. **Resolve binaries absolutely or guard every call.** Don't trust inherited PATH. Either hardcode/derive an absolute path (`RALLY_BIN`, `"$(command -v node || echo /opt/homebrew/bin/node)"`), or `command -v <bin> >/dev/null 2>&1 || exit 0` before using it.
+
+2. **Fail open for real — and test it.** A hook whose tooling is missing/slow must `exit 0` with no output, never abort. Watch for `set -euo pipefail` + an **unguarded** binary in a command substitution: `meta="$(printf '%s' "$x" | node -e '…')"` aborts the *whole script* with 127 the instant `node` isn't found — even if a later line has `|| true`. Guarding one line doesn't make the script fail-open. Verify under the real hook environment:
+   ```bash
+   printf '{"tool_input":{"file_path":"/tmp/x"}}' | env -i PATH=/usr/bin:/bin bash hooks/my-hook.sh before-write; echo "exit=$?"
+   # MUST print exit=0
+   ```
+
+3. **Advisory hooks must not enforce.** A coordination/lint/reminder hook should emit `additionalContext` (SessionStart/UserPromptSubmit, added to context) or `systemMessage`, never `permissionDecision:"deny"` / `decision:"block"`. Reserve blocking (`exit 2`, deny/block) for explicit safety/security/integrity gates, and gate any hard-block behind an opt-in env flag so the default never surprises an agent. Note SessionStart/Notification/Setup **cannot** block regardless.
+
+4. **Resolve your own path at runtime if installed out-of-tree.** If a host wrapper references a versioned/cache path (`${CLAUDE_PLUGIN_ROOT}`, `~/.codex/…`), prefer a thin shim that `exec`s the version-controlled script, or `realpath "$0"` inside the script — so the hook can't desync from the code it's supposed to run (see plugin-hygiene-lessons.md §17).
+
 ## Common Patterns
 
 ### Auto-Format on Write
@@ -186,3 +204,7 @@ Matchers filter which tools trigger a hook:
 | Script can't find files | Using `${CLAUDE_PLUGIN_ROOT}`? |
 | Matcher not matching | Tool name correct and case-sensitive? |
 | Prompt hook not working | Valid prompt with `$ARGUMENTS` if needed? |
+| `exit code 127` on every fire | A binary the script calls (`node`/`jq`/CLI) isn't on the hook's minimal PATH. Resolve it absolutely or `command -v`-guard it; test under `env -i PATH=/usr/bin:/bin`. |
+| Hook aborts instead of failing open | `set -e` + an unguarded command substitution. Guarding one line ≠ fail-open. |
+| Path-with-spaces → 127 | Known issue (anthropics/claude-code #5648); quote the path in the command string. |
+| Advisory hook blocking edits | It's emitting `deny`/`block`; switch to `additionalContext`/`systemMessage` and reserve blocking for safety gates. |

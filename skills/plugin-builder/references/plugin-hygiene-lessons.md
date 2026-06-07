@@ -267,6 +267,24 @@ The symlink satisfies the stale path until the session restarts and re-resolves 
 
 **For plugin authors.** Don't treat user bug reports of "MCP failed in /plugin" as gospel. Ask them to (a) run the standalone handshake, (b) try an actual tool invocation. Stale UI badges generate false bug reports.
 
+## 17. Out-of-tree hook wrappers desync silently; hooks must fail-open under a minimal PATH
+
+**What happened (2026-06-06, agent-rally-point).** Codex sessions spammed `PreToolUse hook (failed) error: hook exited with code 127` and `Stop hook (failed) error: hook exited with code 127` on every tool call. Two compounding defects:
+
+1. **Out-of-tree wrapper desync.** `~/.codex/rally-hook.sh` (installed once, *not* version-controlled) called `rally start` / `rally hook before-write` — subcommands the Rust rewrite had **removed**. The in-repo fix (a version-controlled canonical hook + an installer that repoints the wrapper to a thin `exec` shim) had shipped, but this machine's pre-rewrite global wrapper was never migrated. The repo *said* "fixed, advisory-only"; ground truth on disk was a months-old enforcing wrapper. A loose installed file cannot be caught by the repo's tests or CI — it drifts the moment the code it calls changes.
+
+2. **`set -e` + bare binary on the hook's minimal PATH → exit 127.** Hook subprocesses inherit `/usr/bin:/bin`, **not** the login PATH. The wrapper's line 6 ran `node` in a command substitution *before any guard*, under `set -euo pipefail`. `node` (in a version-manager dir) and `rally` (in `~/.local/bin`) were both absent → the substitution returned 127 → `set -e` aborted the whole script with 127, before it ever reached the removed subcommand. The lone `2>/dev/null || true` guarded a *different* line. Verified: `env -i PATH=/usr/bin:/bin bash stale-wrapper.sh before-write` → exit 127; the hardened in-repo hook under the same env → exit 0.
+
+A third latent hazard: the stale wrapper mapped `severity=="stop"` → `permissionDecision:"deny"` / `decision:"block"`. Had someone "fixed" only the PATH, the wrapper would have started **blocking tool calls** — violating the facilitator/never-block charter.
+
+**Rules.**
+
+- **Version-control the hook in-repo; make any host-side wrapper a thin shim.** The wrapper at `~/.codex/…` or `~/.claude/settings.json` should `exec "<repo>/hooks/<hook>.sh" "$@"`, never contain logic. Logic in-tree = tested, CI-guarded, can't silently desync from the CLI it drives. Ship an idempotent installer with `--uninstall` that backs up the prior wrapper to `.bak`.
+- **Hooks run with a minimal PATH. Resolve binaries absolutely or `command -v`-guard every call**, and **fail-open (`exit 0`) on any missing binary / timeout / parse error.** Guarding one line is not fail-open when `set -e` is on — an unguarded later command still aborts. Add a test that runs the hook under `env -i PATH=/usr/bin:/bin` and asserts `exit 0` + no `deny`/`block`. This catches the whole 127 class in CI.
+- **Advisory/coordination hooks never enforce by default.** Emit `additionalContext`/`systemMessage`; reserve `deny`/`block`/`exit 2` for explicit safety/security/integrity gates, gated behind an opt-in env flag.
+- **When a hook's backend changes, repoint or remove the installed wrapper** — don't leave an orphan. Treat "the repo shipped the fix" and "this machine runs the fix" as separate facts; verify the second on disk (`trust ground truth over artifacts`).
+- **Coordination caveat:** repointing/disabling a hook changes behavior for *live* peer agents. Hooks are read per-invocation (not cached like plugin `${CLAUDE_PLUGIN_ROOT}` paths in §15), so no restart is needed — but in a multi-agent room, prefer the least-disruptive relief (a clean fail-open shim) over one that introduces new behavior (e.g. auto-claim) mid-session.
+
 ## Preflight checklist before shipping a plugin change
 
 - [ ] `plugin.json` declares only non-default paths for `hooks`, `mcpServers`, `lsp`
@@ -283,3 +301,6 @@ The symlink satisfies the stale path until the session restarts and re-resolves 
 - [ ] Test with `claude --plugin-dir ./my-plugin` in a scratch directory before committing
 - [ ] `claude plugin validate .` passes in the marketplace root
 - [ ] `jq` the `installed_plugins.json` audit command on your own machine — no duplicates for this plugin
+- [ ] Hook scripts live in-repo; any host wrapper (`~/.codex/…`, settings.json) is a thin `exec` shim, not logic (§17)
+- [ ] Every external binary in a hook is absolute-path-resolved or `command -v`-guarded; hook fails open (`exit 0`) on missing binary (§17)
+- [ ] Hook tested under `env -i PATH=/usr/bin:/bin` → exits 0, no `deny`/`block` unless an explicit safety gate (§17)
