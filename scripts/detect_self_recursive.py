@@ -10,7 +10,14 @@ returns false on a real dogfooding session, the machinery stays dormant.
 Detection precedence (first signal wins):
   1. ``--runtime-root <path>`` arg → ``self_recursive = (realpath(runtime_root) == realpath(workdir))``.
   2. ``CLAUDE_PLUGIN_ROOT`` env var (set by Claude Code for the loaded plugin) → same check.
-  3. Legacy fallback: walk ``~/.claude/plugins/`` for a symlink resolving to ``<workdir>``
+  3. ``__file__`` self-location: ``Path(__file__).resolve().parents[1]`` gives the plugin root
+     of the *running script copy* (the script lives at ``<plugin_root>/scripts/<name>.py``).
+     If that resolves to ``workdir``, this is ground truth — the interpreter actually loaded
+     this exact copy, independent of any env var.  Env vars don't propagate to Bash-tool
+     subprocesses launched by Claude Code; this tier is the fix for that gap.
+     On mismatch, falls through to the symlink walk (``__file__`` is heuristic, not an
+     operator assertion).
+  4. Legacy fallback: walk ``~/.claude/plugins/`` for a symlink resolving to ``<workdir>``
      (covers ad-hoc dev symlinks under the legacy direct or per-version cache layout).
 
 Regardless of method, the workdir must:
@@ -25,7 +32,7 @@ Output JSON keys (stable):
 not_a_git_repo | symlink_check_failed.
 
 ``detection_method`` values: runtime_root_arg | plugin_root_env |
-cache_symlink | none.
+self_location | cache_symlink | none.
 
 Pure stdlib. Never raises — OSError during any path/symlink op degrades to
 ``self_recursive: false`` + ``symlink_check_failed``.
@@ -104,8 +111,16 @@ def _runtime_root_matches(runtime_root: Path, workdir_resolved: Path) -> bool:
 
 def detect(workdir: Path, plugins_root: Path | None = None,
            runtime_root: Path | None = None,
-           env: dict | None = None) -> dict:
-    """Detect self-recursion. ``runtime_root`` (arg) beats env beats symlink walk."""
+           env: dict | None = None,
+           self_path: Path | None = None) -> dict:
+    """Detect self-recursion.
+
+    Precedence: runtime_root arg > CLAUDE_PLUGIN_ROOT env > __file__ self-location >
+    symlink walk.
+
+    ``self_path`` defaults to ``Path(__file__)`` and is injectable for testing so tests
+    can drive the self-location tier without monkeypatching globals.
+    """
     plugins_root = plugins_root or (Path.home() / ".claude" / "plugins")
     env = env if env is not None else os.environ
     result = {"self_recursive": False, "plugin_name": None, "runtime_symlink_path": None,
@@ -139,7 +154,7 @@ def detect(workdir: Path, plugins_root: Path | None = None,
     arg_provided = runtime_root is not None and str(runtime_root) != "" \
         and not (isinstance(runtime_root, Path) and runtime_root == Path(""))
 
-    # 1. --runtime-root arg
+    # 1. --runtime-root arg (explicit override; empty string ignored — see guard above)
     if arg_provided:
         if _runtime_root_matches(runtime_root, workdir_resolved):
             result["detection_method"] = "runtime_root_arg"
@@ -163,7 +178,25 @@ def detect(workdir: Path, plugins_root: Path | None = None,
                 result["reason_if_false"] = "no_runtime_link"
                 return result
 
-    # 3. Legacy symlink walk under ~/.claude/plugins/
+    # 3. __file__ self-location (injectable via self_path for tests)
+    # Rationale: CLAUDE_PLUGIN_ROOT is NOT propagated to Bash-tool subprocesses that
+    # Claude Code spawns.  Path(__file__) is always the path the interpreter loaded,
+    # so parents[1] of the script (scripts/<name>.py) gives the plugin root regardless
+    # of env propagation.  On mismatch we fall through — this is a heuristic, not an
+    # operator assertion, so mismatches don't short-circuit the symlink walk.
+    if not matched:
+        resolved_self_path = self_path if self_path is not None else Path(__file__)
+        try:
+            self_plugin_root = resolved_self_path.resolve().parents[1]
+            if self_plugin_root == workdir_resolved:
+                result["detection_method"] = "self_location"
+                result["runtime_symlink_path"] = str(self_plugin_root)
+                matched = True
+            # Mismatch → fall through to symlink walk (no early return)
+        except (OSError, IndexError):
+            pass  # Degrade gracefully; continue to symlink walk
+
+    # 4. Legacy symlink walk under ~/.claude/plugins/
     if not matched:
         try:
             link = _find_runtime_symlink(workdir, name, plugins_root)
