@@ -48,7 +48,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\" 2>/dev/null; exit 0",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\"; exit 0",
             "timeout": 2000
           }
         ]
@@ -73,7 +73,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\" 2>/dev/null; exit 0",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/pre-edit-rally-point.sh\"; exit 0",
             "timeout": 2000
           }
         ]

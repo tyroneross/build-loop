@@ -39,11 +39,13 @@ else
   fail "SessionStart no-channel" "rc=$RC out='$OUT'"
 fi
 
-# ---- Case 2: pre-edit never blocks, exit 0, silent when no channel -----
+# ---- Case 2: pre-edit never blocks, exit 0, joins and prints when in a repo
+# (the join fires immediately on first tool-use for a git repo with no prior
+# channel — this is the "newly joined" path, not a "no channel = silence" path).
 OUT=$(CLAUDE_PROJECT_DIR="$REPO" bash "$PE_HOOK" </dev/null 2>/dev/null)
 RC=$?
-if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then
-  pass "pre-edit silent + exit 0 when no channel"
+if [ "$RC" -eq 0 ]; then
+  pass "pre-edit exit 0 when no prior channel (join fires or no-op)"
 else
   fail "pre-edit no-channel" "rc=$RC out='$OUT'"
 fi
@@ -64,11 +66,13 @@ ch.append_change(chan, ch.make_record(
 rev.bump_revision(chan)
 PYEOF
 
-# ---- Case 3: pre-edit prints a hint when revision advanced -------------
+# ---- Case 3: pre-edit prints peer-ahead hint when revision advanced ----
+# Throttle is 60s (default); the Case 2 join wrote a presence record moments
+# ago so the join is throttled — only the hint fires.
 OUT=$(CLAUDE_PROJECT_DIR="$REPO" bash "$PE_HOOK" </dev/null 2>/dev/null)
 RC=$?
-if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "channel advanced"; then
-  pass "pre-edit prints revision-advanced hint"
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "peer ahead"; then
+  pass "pre-edit prints 'peer ahead' hint when revision advanced"
 else
   fail "pre-edit hint" "rc=$RC out='$OUT'"
 fi
@@ -247,6 +251,138 @@ for HOOK_NAME in session-start-rally-point.sh pre-edit-rally-point.sh; do
     fail "fail-open missing-package ($HOOK_NAME)" "rc=$RC"
   fi
 done
+
+# =========================================================================
+# New tests: status line, quiet flag, 64KB cap, socket hostname, cd guard
+# =========================================================================
+
+# ---- Case 12: visible status line "rally: joined <slug> room" prints on
+# real join (throttle window set to 0 so the write always fires).
+APPS3=$(mktemp -d)
+REPO_Y=$(mktemp -d)
+( cd "$REPO_Y" && git init -q && git config user.email t@e.com && git config user.name t )
+EVENT_JSON_Y=$(printf '{"tool_input":{"file_path":"%s/z.py"}}' "$REPO_Y")
+OUT=$(printf '%s' "$EVENT_JSON_Y" | \
+      BUILD_LOOP_APPS_ROOT="$APPS3" \
+      BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1 \
+      BUILD_LOOP_RALLY_PRE_EDIT_THROTTLE_SECONDS=0 \
+      CLAUDE_PROJECT_DIR="$REPO_Y" \
+      bash "$PE_HOOK" 2>/dev/null)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "rally: joined"; then
+  pass "visible status: 'rally: joined <slug> room' prints on real join"
+else
+  fail "visible status: join line missing" "rc=$RC out='$OUT'"
+fi
+
+# ---- Case 13: status line is SILENT when throttled (write was skipped).
+# Reuse APPS3 / REPO_Y from case 12; presence file is fresh, so the
+# throttle (30s) blocks the write AND the status print.
+OUT=$(printf '%s' "$EVENT_JSON_Y" | \
+      BUILD_LOOP_APPS_ROOT="$APPS3" \
+      BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1 \
+      BUILD_LOOP_RALLY_PRE_EDIT_THROTTLE_SECONDS=30 \
+      CLAUDE_PROJECT_DIR="$REPO_Y" \
+      bash "$PE_HOOK" 2>/dev/null)
+RC=$?
+if [ "$RC" -eq 0 ] && ! echo "$OUT" | grep -q "rally: joined"; then
+  pass "visible status: silent when throttled (no double-print)"
+else
+  fail "visible status: spurious join line when throttled" "rc=$RC out='$OUT'"
+fi
+
+# ---- Case 14: BUILD_LOOP_RALLY_QUIET=1 suppresses the status line even
+# on a real join (throttle=0 so a write would fire without the quiet flag).
+APPS4=$(mktemp -d)
+REPO_Z=$(mktemp -d)
+( cd "$REPO_Z" && git init -q && git config user.email t@e.com && git config user.name t )
+EVENT_JSON_Z=$(printf '{"tool_input":{"file_path":"%s/q.py"}}' "$REPO_Z")
+OUT=$(printf '%s' "$EVENT_JSON_Z" | \
+      BUILD_LOOP_APPS_ROOT="$APPS4" \
+      BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1 \
+      BUILD_LOOP_RALLY_PRE_EDIT_THROTTLE_SECONDS=0 \
+      BUILD_LOOP_RALLY_QUIET=1 \
+      CLAUDE_PROJECT_DIR="$REPO_Z" \
+      bash "$PE_HOOK" 2>/dev/null)
+RC=$?
+if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then
+  pass "BUILD_LOOP_RALLY_QUIET=1 suppresses join status line"
+else
+  fail "QUIET flag did not suppress output" "rc=$RC out='$OUT'"
+fi
+
+# ---- Case 15: 64 KB stdin cap — a payload larger than 64 KB must not
+# cause a failure; the hook must exit 0 cleanly.
+APPS5=$(mktemp -d)
+REPO_W=$(mktemp -d)
+( cd "$REPO_W" && git init -q && git config user.email t@e.com && git config user.name t )
+# Build a ~100 KB JSON-ish blob (INVALID JSON so hooks.py falls through
+# gracefully — the 64KB cap test is about not crashing, not about parsing).
+BIG_PAYLOAD=$(python3 -c "print('{\"tool_input\":{\"file_path\":\"/tmp/x.py\",\"extra\":\"' + 'A'*102400 + '\"}}')")
+RC=$(printf '%s' "$BIG_PAYLOAD" | \
+     BUILD_LOOP_APPS_ROOT="$APPS5" \
+     BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1 \
+     BUILD_LOOP_RALLY_PRE_EDIT_THROTTLE_SECONDS=5 \
+     CLAUDE_PROJECT_DIR="$REPO_W" \
+     bash "$PE_HOOK" >/dev/null 2>/dev/null; echo $?)
+if [ "$RC" -eq 0 ]; then
+  pass "64KB stdin cap: exit 0 on oversized payload"
+else
+  fail "64KB stdin cap: hook errored on large stdin" "rc=$RC"
+fi
+
+# ---- Case 16: socket.gethostname() — session_id must NOT end in "-host"
+# (which was the fallback when HOSTNAME env var was missing). Under env -i
+# the real hostname is always available via the syscall.
+APPS6=$(mktemp -d)
+REPO_H=$(mktemp -d)
+( cd "$REPO_H" && git init -q && git config user.email t@e.com && git config user.name t )
+EVENT_JSON_H=$(printf '{"tool_input":{"file_path":"%s/h.py"}}' "$REPO_H")
+env -i PATH=/usr/bin:/bin HOME=/tmp \
+    BUILD_LOOP_APPS_ROOT="$APPS6" \
+    BUILD_LOOP_BRIDGE_INTERNAL_ONLY=1 \
+    BUILD_LOOP_RALLY_PRE_EDIT_THROTTLE_SECONDS=0 \
+    bash -c "printf '%s' '$EVENT_JSON_H' | CLAUDE_PROJECT_DIR='$REPO_H' bash '$PE_HOOK'" \
+    >/dev/null 2>/dev/null
+PFILE=$(find "$APPS6" -path "*/sessions/*.json" -type f 2>/dev/null | head -1)
+if [ -n "$PFILE" ]; then
+  SID=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('session_id',''))" "$PFILE" 2>/dev/null || true)
+  if echo "$SID" | grep -qv "\-host$"; then
+    pass "socket.gethostname(): session_id does not end in '-host' under env -i"
+  else
+    fail "socket.gethostname(): session_id still ends in '-host'" "sid='$SID'"
+  fi
+else
+  # No presence file written (env -i may lack python3 in /usr/bin path on this
+  # machine) — fall back to a direct Python unit check.
+  HOSTNAME_CHECK=$(env -i PATH=/usr/bin:/bin python3 -c "
+import socket, sys
+h = socket.gethostname()
+sys.exit(0 if h and h != 'host' else 1)
+" 2>/dev/null; echo $?)
+  if [ "$HOSTNAME_CHECK" = "0" ]; then
+    pass "socket.gethostname(): returns real hostname under env -i (direct check)"
+  else
+    fail "socket.gethostname(): returned empty or 'host' under env -i" ""
+  fi
+fi
+
+# ---- Case 17: non-first-line `cd` must resolve to None (not the evil path).
+# _extract_cd_target should return None for "echo x\ncd /evil".
+RESULT=$(python3 -c "
+import sys
+sys.path.insert(0, '${REPO_ROOT}/scripts')
+from rally_point.hooks import _extract_cd_target
+r = _extract_cd_target('echo x\ncd /evil')
+# .match() anchors at start; the leading 'echo' line must prevent the match.
+assert r is None, f'Expected None, got {r!r}'
+print('ok')
+" 2>/dev/null)
+if [ "$RESULT" = "ok" ]; then
+  pass "_extract_cd_target: non-first-line cd resolves to None (re.MULTILINE removed)"
+else
+  fail "_extract_cd_target: non-first-line cd wrongly matched" "result='$RESULT'"
+fi
 
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -30,9 +30,12 @@ PKG="$SCRIPT_DIR/../scripts/rally_point"
 # Read stdin (Claude Code PreToolUse JSON event). Best-effort; an empty
 # or malformed payload simply means "no operative-repo hint" — the legacy
 # revision-stat hint still fires using the workdir's channel.
+# Cap at 64 KB: a pathological Bash command must not exhaust ARG_MAX when
+# the payload is forwarded to Python via the environment.
 STDIN_JSON=""
 if [ ! -t 0 ]; then
     STDIN_JSON=$(cat 2>/dev/null || true)
+    STDIN_JSON=$(printf '%s' "$STDIN_JSON" | head -c 65536)
 fi
 
 # Extract file_path (Edit/Write) and command (Bash) from the event JSON.
@@ -74,7 +77,16 @@ fi
 # Single call: pre_edit_hint (legacy, workdir channel) + pre_edit_join
 # (throttled, operative-repo channel). Both are advisory and fail-open.
 # Empty strings on the Python side are treated as "no hint" (falsy).
-python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
-    --file-path "$FILE_PATH" --command "$TOOL_CMD" 2>/dev/null || exit 0
+#
+# Stderr routing (f1): quiet on the happy path; let stderr through only
+# when BUILD_LOOP_RALLY_DEBUG=1 so diagnostics are available on demand
+# without polluting the terminal by default.
+if [ "${BUILD_LOOP_RALLY_DEBUG:-0}" = "1" ]; then
+    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
+        --file-path "$FILE_PATH" --command "$TOOL_CMD" || exit 0
+else
+    python3 "$PKG/hooks.py" pre-edit --workdir "$WORKDIR" --tool claude_code \
+        --file-path "$FILE_PATH" --command "$TOOL_CMD" 2>/dev/null || exit 0
+fi
 
 exit 0

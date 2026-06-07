@@ -14,6 +14,7 @@ import argparse
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -70,12 +71,11 @@ def _is_git_repo(path: Path) -> bool:
 
 
 # Match a leading `cd <path> && ...` / `cd <path>; ...` / `cd <path>\n...`.
-# Captures `<path>` (which may be quoted). Anchored to start so we do not
-# pick up a `cd` that appears mid-pipeline (those are not the operative
-# workdir for the subsequent commands in the same shell).
+# Captures `<path>` (which may be quoted). re.match() anchors at string start,
+# so re.MULTILINE is a no-op here — omitted to avoid misleading readers into
+# thinking mid-string `cd` lines are matched.
 _CD_PREFIX_RE = re.compile(
     r"""^\s*cd\s+(?P<path>'(?:[^']|\\')*'|"(?:[^"\\]|\\.)*"|\S+)\s*(?:&&|;|\n|$)""",
-    re.MULTILINE,
 )
 
 
@@ -189,7 +189,7 @@ def _heartbeat_session_id(slug: str) -> str:
     for "an agent is editing this repo" at this advisory layer; per-session
     attribution belongs to the SessionStart probe's presence record.
     """
-    host = os.environ.get("HOSTNAME") or "host"
+    host = socket.gethostname() or "host"
     safe_host = "".join(c if c.isalnum() or c in "-_." else "-" for c in host)[:40]
     return f"claude-code-hb-{slug.replace('/', '_')}-{safe_host}"
 
@@ -267,6 +267,11 @@ def session_start_advance(workdir: Path) -> int:
     return 0
 
 
+def _rally_quiet() -> bool:
+    """Return True when the user has suppressed rally status lines."""
+    return os.environ.get("BUILD_LOOP_RALLY_QUIET", "0") == "1"
+
+
 def pre_edit_hint(workdir: Path) -> int:
     resolved = _resolve_existing_channel(workdir)
     if resolved is None:
@@ -275,11 +280,8 @@ def pre_edit_hint(workdir: Path) -> int:
     current = revision.read_revision(channel_dir)
     session_id = _session_start_id(slug)
     seen = presence.get_cursor(channel_dir, session_id).get("revision", 0)
-    if current > seen:
-        print(
-            f"Rally Point: {slug} channel advanced "
-            f"(rev {seen} -> {current}) - run a checkpoint before editing."
-        )
+    if current > seen and not _rally_quiet():
+        print(f"rally: peer ahead → checkpoint ({slug} rev {seen}→{current})")
     return 0
 
 
@@ -348,10 +350,14 @@ def pre_edit_join(
             app_slug=slug,
             phase="pre-edit-join",
             files_in_flight=[],
-            cwd=op,
+            cwd=str(op),
         )
     except Exception:
         return 0
+    # Print a concise status line on every real write (not throttled).
+    # Gate behind BUILD_LOOP_RALLY_QUIET=1 to suppress if desired.
+    if not _rally_quiet():
+        print(f"rally: joined {slug} room")
     return 0
 
 
