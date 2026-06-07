@@ -53,7 +53,7 @@ VERSION_FILES = [
     REPO_ROOT / "package.json",
     REPO_ROOT / ".codex-plugin" / "plugin.json",
 ]
-EXPECTED_VERSION = "0.30.1"
+EXPECTED_VERSION = "0.30.2"
 
 
 def _read(p: Path) -> str:
