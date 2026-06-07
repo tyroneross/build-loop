@@ -51,6 +51,25 @@ class EnvIsolationMixin:
 
 
 class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
+    def test_ensure_root_constitution_seeds_template_when_missing(self) -> None:
+        target = self.memroot / "constitution.md"
+        self.assertFalse(target.exists())
+
+        reasons = cb.ensure_root_constitution(self.memroot)
+
+        self.assertTrue(target.exists())
+        self.assertTrue(any(reason.startswith("constitution_seeded:") for reason in reasons))
+        self.assertIn("Build-Loop Constitution", target.read_text(encoding="utf-8"))
+
+    def test_ensure_root_constitution_never_overwrites_existing_file(self) -> None:
+        target = self.memroot / "constitution.md"
+        target.write_text("custom rules stay\n", encoding="utf-8")
+
+        reasons = cb.ensure_root_constitution(self.memroot)
+
+        self.assertEqual(reasons, [])
+        self.assertEqual(target.read_text(encoding="utf-8"), "custom rules stay\n")
+
     def write_repo_local(self) -> None:
         bl = self.workdir / ".build-loop"
         bl.mkdir()

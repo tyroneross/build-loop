@@ -79,7 +79,7 @@
      --json
    ```
 
-   The packet must include canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists. Missing surfaces are recorded in `sources.*.reasons[]`; they do not block Phase 1 by themselves. See `references/memory-systems.md` §"Read protocol — Phase 1 Assess".
+   The packet must include canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists. If the root constitution is absent, `context_bootstrap.py` seeds it once from the shipped template before reading; it never overwrites existing root or project constitution files. Missing surfaces are recorded in `sources.*.reasons[]`; they do not block Phase 1 by themselves. See `references/memory-systems.md` §"Read protocol — Phase 1 Assess".
 
    Then write the first live handoff snapshot:
 

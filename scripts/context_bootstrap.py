@@ -48,6 +48,7 @@ from _paths import (  # type: ignore  # noqa: E402
 DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
 DEFAULT_LIMIT = 6
 DEFAULT_MAX_EXCERPT_CHARS = 1600
+CONSTITUTION_TEMPLATE = HERE.parent / "templates" / "memory" / "constitution.md.template"
 QUEUE_NAMES = ("issues", "backlog", "ux-queue", "followup", "proposals", "pending-lessons")
 SESSION_PREFS_VALID = ("ask", "always", "never")
 REPO_LOCAL_FILES = (
@@ -88,6 +89,33 @@ def read_text(path: Path, max_chars: int | None = None) -> tuple[str | None, str
     if max_chars is not None and len(text) > max_chars:
         return text[:max_chars], f"truncated: {path}: first {max_chars} chars"
     return text, None
+
+
+def ensure_root_constitution(memory_root: Path) -> list[str]:
+    """Seed root constitution.md from the shipped template if missing.
+
+    This is intentionally narrow: it never overwrites an existing file and it
+    does not create project-specific constitutions. The root constitution is
+    the binding default that Phase 1 and advisory judges expect to exist.
+    """
+    target = memory_root / "constitution.md"
+    if target.exists():
+        return []
+    if not CONSTITUTION_TEMPLATE.exists():
+        return [f"constitution_template_missing: {CONSTITUTION_TEMPLATE}"]
+    try:
+        body = CONSTITUTION_TEMPLATE.read_bytes()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
+            os.write(fd, body)
+        finally:
+            os.close(fd)
+    except FileExistsError:
+        return []
+    except OSError as exc:
+        return [f"constitution_seed_error: {target}: {exc}"]
+    return [f"constitution_seeded: {target}"]
 
 
 def token_set(query: str, workdir: Path, project: str) -> list[str]:
@@ -496,6 +524,8 @@ def canonical_memory_context(
     reasons: list[str] = []
     telemetry_ids: list[str] = []
     telemetry_warnings: list[str] = []
+    root = memory_store_root()
+    reasons.extend(ensure_root_constitution(root))
 
     try:
         for kind in kinds:
@@ -536,7 +566,7 @@ def canonical_memory_context(
     if not include_debugger:
         reasons.append("skipped_debugger: context_bootstrap default file-backed pass")
     canonical_files, file_reasons = canonical_memory_files(
-        memory_root=memory_store_root(),
+        memory_root=root,
         project=project,
         terms=terms,
         max_chars=max_chars,
