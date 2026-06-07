@@ -37,7 +37,8 @@ The detector still walks the symlink layout as a **fallback** so existing setups
 
 1. **`--runtime-root <path>` arg** (Phase 1 passes `"$CLAUDE_PLUGIN_ROOT"`). `self_recursive = (realpath(runtime_root) == realpath(workdir))`. Method = `runtime_root_arg`.
 2. **`CLAUDE_PLUGIN_ROOT` env var** when the arg is absent. Same check. Method = `plugin_root_env`.
-3. **Legacy fallback** — walk `~/.claude/plugins/` for a symlink resolving to the workdir. Method = `cache_symlink`.
+3. **`__file__` self-location** — `Path(__file__).resolve().parents[1]` gives the plugin root of the running script copy (the script lives at `<plugin_root>/scripts/<name>.py`). If that resolves to `workdir`, this is ground truth — env-independent, because `CLAUDE_PLUGIN_ROOT` is not propagated to Bash-tool subprocesses. Mismatch falls through (heuristic, not operator assertion). Method = `self_location`.
+4. **Legacy fallback** — walk `~/.claude/plugins/` for a symlink resolving to the workdir. Method = `cache_symlink`.
 
 Both manifest (`.claude-plugin/plugin.json` with a `name`) and `.git/` must be present in the workdir regardless of method.
 
