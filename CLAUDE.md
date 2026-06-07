@@ -127,6 +127,7 @@ For parity with non-Claude tools (which lack SessionStart hooks), the host-neutr
 - Test changes by installing locally: add repo path to `~/.claude/settings.json` under `projects.plugins`
 - Runtime data goes in `.build-loop/` in consumer projects, not in the plugin repo
 - Hooks are advisory and non-blocking by default. Stop hooks must emit valid JSON when they emit stdout, exit 0, and reserve blocking for explicit safety/security/integrity gates.
+- Dogfooding build-loop against itself (self-recursive runs that arm per-commit mode + self-mod safety): launch with `claude --plugin-dir ~/dev/git-folder/build-loop`. Background, alias, restart-boundary caveat: `skills/build-loop/references/self-recursive-dev.md`.
 
 
 ## Debugging Memory

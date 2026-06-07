@@ -68,13 +68,14 @@ def test_true_with_direct_symlink(tmp_path):
     workdir = _make_workdir(tmp_path)
     root = _make_plugins_root(tmp_path)
     _link_direct(root, "myplugin", workdir)
-    r = dsr.detect(workdir, plugins_root=root)
+    r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is True
     assert r["plugin_name"] == "myplugin"
     assert r["runtime_symlink_path"] == str(root / "myplugin")
     assert r["working_copy_branch"] == "main"
     assert r["working_copy_sha"] and len(r["working_copy_sha"]) == 40
     assert r["reason_if_false"] is None
+    assert r["detection_method"] == "cache_symlink"
 
 
 def test_true_with_cache_subdir_symlink(tmp_path):
@@ -82,9 +83,123 @@ def test_true_with_cache_subdir_symlink(tmp_path):
     workdir = _make_workdir(tmp_path)
     root = _make_plugins_root(tmp_path)
     link = _link_cache(root, "some-mkt", "myplugin", "0.10.0", workdir)
-    r = dsr.detect(workdir, plugins_root=root)
+    r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is True
     assert r["runtime_symlink_path"] == str(link)
+    assert r["detection_method"] == "cache_symlink"
+
+
+# ---- Runtime-root precedence (arg > env > symlink walk) -----------------
+
+def test_runtime_root_arg_matches_workdir_returns_true(tmp_path):
+    """The reliable signal under `claude --plugin-dir <path>`: no symlink, arg matches."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)  # intentionally empty
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=workdir, env={})
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "runtime_root_arg"
+    assert r["runtime_symlink_path"] == str(workdir)
+    assert r["reason_if_false"] is None
+
+
+def test_runtime_root_arg_mismatch_returns_false_no_link(tmp_path):
+    """Explicit arg that doesn't match → cache is loaded copy, not this checkout."""
+    workdir = _make_workdir(tmp_path)
+    other = tmp_path / "loaded-elsewhere"
+    other.mkdir()
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=other, env={})
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "no_runtime_link"
+    assert r["detection_method"] == "none"
+
+
+def test_runtime_root_arg_beats_env_var(tmp_path):
+    """Explicit arg wins even when env var would say otherwise."""
+    workdir = _make_workdir(tmp_path)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=workdir,
+                   env={"CLAUDE_PLUGIN_ROOT": str(other)})
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "runtime_root_arg"
+
+
+def test_env_var_matches_workdir_returns_true(tmp_path):
+    """No arg, but CLAUDE_PLUGIN_ROOT env points at workdir."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root,
+                   env={"CLAUDE_PLUGIN_ROOT": str(workdir)})
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "plugin_root_env"
+    assert r["runtime_symlink_path"] == str(workdir)
+
+
+def test_env_var_mismatch_returns_false(tmp_path):
+    """Env points at a real-but-different plugin cache → not self-recursive."""
+    workdir = _make_workdir(tmp_path)
+    other = tmp_path / "other-plugin"
+    other.mkdir()
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root,
+                   env={"CLAUDE_PLUGIN_ROOT": str(other)})
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "no_runtime_link"
+
+
+def test_runtime_root_normalizes_symlink(tmp_path):
+    """realpath/symlink normalization: arg via a symlinked path still matches."""
+    workdir = _make_workdir(tmp_path)
+    alias = tmp_path / "alias"
+    alias.symlink_to(workdir)
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=alias, env={})
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "runtime_root_arg"
+
+
+def test_runtime_root_arg_present_but_no_git_returns_not_a_git_repo(tmp_path):
+    """Arg matched, but .git is missing → not_a_git_repo (preserves taxonomy)."""
+    workdir = _make_workdir(tmp_path, with_git=False)
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=workdir, env={})
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "not_a_git_repo"
+
+
+def test_no_signal_falls_through_to_existing_symlink_behavior(tmp_path):
+    """No arg, no env, no symlink → exactly the prior no_runtime_link result."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root, env={})
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "no_runtime_link"
+    assert r["detection_method"] == "none"
+
+
+def test_empty_string_runtime_root_treated_as_not_provided(tmp_path):
+    """Shell expansion of an unset CLAUDE_PLUGIN_ROOT produces an empty string;
+    that must NOT be treated as 'matches CWD' (Path('').resolve() == CWD).
+    Falls through to env then symlink walk."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    _link_direct(root, "myplugin", workdir)
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=Path(""), env={})
+    # Falls through to symlink walk and finds the link.
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "cache_symlink"
+
+
+def test_empty_string_env_var_treated_as_unset(tmp_path):
+    """Empty CLAUDE_PLUGIN_ROOT env var must not short-circuit detection."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    _link_direct(root, "myplugin", workdir)
+    r = dsr.detect(workdir, plugins_root=root, env={"CLAUDE_PLUGIN_ROOT": ""})
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "cache_symlink"
 
 
 # ---- False cases --------------------------------------------------------
@@ -92,7 +207,7 @@ def test_true_with_cache_subdir_symlink(tmp_path):
 def test_false_no_manifest(tmp_path):
     workdir = _make_workdir(tmp_path, with_manifest=False)
     root = _make_plugins_root(tmp_path)
-    r = dsr.detect(workdir, plugins_root=root)
+    r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is False
     assert r["reason_if_false"] == "not_a_plugin"
     assert r["plugin_name"] is None
@@ -102,7 +217,7 @@ def test_false_manifest_missing_name_field(tmp_path):
     workdir = tmp_path / "wd"
     (workdir / ".claude-plugin").mkdir(parents=True)
     (workdir / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": "1"}))
-    r = dsr.detect(workdir, plugins_root=_make_plugins_root(tmp_path))
+    r = dsr.detect(workdir, plugins_root=_make_plugins_root(tmp_path), env={})
     assert r["self_recursive"] is False
     assert r["reason_if_false"] == "not_a_plugin"
 
@@ -110,7 +225,7 @@ def test_false_manifest_missing_name_field(tmp_path):
 def test_false_no_runtime_link(tmp_path):
     workdir = _make_workdir(tmp_path)
     root = _make_plugins_root(tmp_path)  # no symlinks created
-    r = dsr.detect(workdir, plugins_root=root)
+    r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is False
     assert r["reason_if_false"] == "no_runtime_link"
     assert r["plugin_name"] == "myplugin"
@@ -120,7 +235,7 @@ def test_false_no_git(tmp_path):
     workdir = _make_workdir(tmp_path, with_git=False)
     root = _make_plugins_root(tmp_path)
     _link_direct(root, "myplugin", workdir)
-    r = dsr.detect(workdir, plugins_root=root)
+    r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is False
     assert r["reason_if_false"] == "not_a_git_repo"
     assert r["runtime_symlink_path"] is not None
@@ -136,7 +251,7 @@ def test_detached_head_returns_null_branch(tmp_path):
                    check=True, capture_output=True)
     root = _make_plugins_root(tmp_path)
     _link_direct(root, "myplugin", workdir)
-    r = dsr.detect(workdir, plugins_root=root)
+    r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is True
     assert r["working_copy_branch"] is None
     assert r["working_copy_sha"] == sha
@@ -156,7 +271,7 @@ def test_shallow_clone_returns_true(tmp_path):
     assert (shallow / ".claude-plugin" / "plugin.json").exists()
     root = _make_plugins_root(tmp_path)
     _link_direct(root, "myplugin", shallow)
-    r = dsr.detect(shallow, plugins_root=root)
+    r = dsr.detect(shallow, plugins_root=root, env={})
     assert r["self_recursive"] is True
     assert (shallow / ".git" / "shallow").exists()  # confirm it's actually shallow
 
@@ -176,7 +291,7 @@ def test_workdir_resolve_oserror_returns_symlink_check_failed(tmp_path):
         return real_resolve(self, *a, **kw)
 
     with patch.object(Path, "resolve", boom):
-        r = dsr.detect(workdir, plugins_root=root)
+        r = dsr.detect(workdir, plugins_root=root, env={})
     assert r["self_recursive"] is False
     assert r["reason_if_false"] == "symlink_check_failed"
 
@@ -195,10 +310,154 @@ def test_human_readable_output(tmp_path, capsys):
 def test_subprocess_invocation_emits_valid_json_schema(tmp_path):
     """End-to-end: script invoked as subprocess emits the documented schema."""
     workdir = _make_workdir(tmp_path)
+    # Strip CLAUDE_PLUGIN_ROOT so the subprocess test is independent of the
+    # caller's environment (would otherwise short-circuit the symlink walk).
+    sub_env = {k: v for k, v in __import__("os").environ.items()
+               if k != "CLAUDE_PLUGIN_ROOT"}
     out = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "detect_self_recursive.py"),
                           "--workdir", str(workdir), "--json"],
-                         capture_output=True, text=True, check=True)
+                         capture_output=True, text=True, check=True, env=sub_env)
     payload = json.loads(out.stdout)
     expected = {"self_recursive", "plugin_name", "runtime_symlink_path",
-                "working_copy_branch", "working_copy_sha", "reason_if_false"}
+                "working_copy_branch", "working_copy_sha", "reason_if_false",
+                "detection_method"}
     assert set(payload) == expected
+
+
+def test_subprocess_runtime_root_arg_returns_true(tmp_path):
+    """End-to-end: --runtime-root flag is accepted and produces detection_method=runtime_root_arg."""
+    workdir = _make_workdir(tmp_path)
+    sub_env = {k: v for k, v in __import__("os").environ.items()
+               if k != "CLAUDE_PLUGIN_ROOT"}
+    out = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "detect_self_recursive.py"),
+                          "--workdir", str(workdir),
+                          "--runtime-root", str(workdir),
+                          "--json"],
+                         capture_output=True, text=True, check=True, env=sub_env)
+    payload = json.loads(out.stdout)
+    assert payload["self_recursive"] is True
+    assert payload["detection_method"] == "runtime_root_arg"
+
+
+def test_subprocess_env_var_returns_true(tmp_path):
+    """End-to-end: CLAUDE_PLUGIN_ROOT env propagates to subprocess detection."""
+    workdir = _make_workdir(tmp_path)
+    sub_env = dict(__import__("os").environ)
+    sub_env["CLAUDE_PLUGIN_ROOT"] = str(workdir)
+    out = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "detect_self_recursive.py"),
+                          "--workdir", str(workdir), "--json"],
+                         capture_output=True, text=True, check=True, env=sub_env)
+    payload = json.loads(out.stdout)
+    assert payload["self_recursive"] is True
+    assert payload["detection_method"] == "plugin_root_env"
+
+
+def test_backward_compatible_no_runtime_args(tmp_path):
+    """Existing callers passing only --workdir still work; legacy symlink path preserved."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    _link_direct(root, "myplugin", workdir)
+    # Skip the subprocess CLI here — exercise via detect() with explicit empty env
+    # to simulate "old caller, no env" without depending on the test runner's env.
+    r = dsr.detect(workdir, plugins_root=root, env={})
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "cache_symlink"
+
+
+# ---- self_location tier (NEW: __file__ self-location, no env var required) -----
+
+def test_self_location_matches_workdir_returns_true(tmp_path):
+    """__file__ tier: injected self_path pointing at <workdir>/scripts/detect_self_recursive.py
+    → self_recursive: true, detection_method: self_location (no env, no arg, no symlink)."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)  # intentionally empty — no symlinks
+    fake_self_path = workdir / "scripts" / "detect_self_recursive.py"
+    (workdir / "scripts").mkdir()
+    fake_self_path.write_text("# placeholder")
+    r = dsr.detect(workdir, plugins_root=root, env={}, self_path=fake_self_path)
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "self_location"
+    assert r["reason_if_false"] is None
+
+
+def test_self_location_mismatch_falls_through_to_no_runtime_link(tmp_path):
+    """__file__ tier: self_path resolves to a DIFFERENT directory → falls through to
+    symlink walk; with no symlinks present, result is no_runtime_link / false."""
+    workdir = _make_workdir(tmp_path)
+    other = tmp_path / "other_plugin"
+    other.mkdir()
+    (other / "scripts").mkdir()
+    other_self = other / "scripts" / "detect_self_recursive.py"
+    other_self.write_text("# placeholder")
+    root = _make_plugins_root(tmp_path)
+    r = dsr.detect(workdir, plugins_root=root, env={}, self_path=other_self)
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "no_runtime_link"
+
+
+def test_arg_beats_self_location(tmp_path):
+    """Explicit --runtime-root arg wins over self_location tier."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    # self_path points at workdir (would match), but arg is also present
+    fake_self_path = workdir / "scripts" / "detect_self_recursive.py"
+    (workdir / "scripts").mkdir()
+    fake_self_path.write_text("# placeholder")
+    r = dsr.detect(workdir, plugins_root=root, runtime_root=workdir, env={},
+                   self_path=fake_self_path)
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "runtime_root_arg"
+
+
+def test_env_beats_self_location(tmp_path):
+    """CLAUDE_PLUGIN_ROOT env wins over self_location tier."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    fake_self_path = workdir / "scripts" / "detect_self_recursive.py"
+    (workdir / "scripts").mkdir()
+    fake_self_path.write_text("# placeholder")
+    r = dsr.detect(workdir, plugins_root=root,
+                   env={"CLAUDE_PLUGIN_ROOT": str(workdir)},
+                   self_path=fake_self_path)
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "plugin_root_env"
+
+
+def test_self_location_no_git_returns_not_a_git_repo(tmp_path):
+    """self_location matched but .git is absent → not_a_git_repo (gating still applies)."""
+    workdir = _make_workdir(tmp_path, with_git=False)
+    root = _make_plugins_root(tmp_path)
+    fake_self_path = workdir / "scripts" / "detect_self_recursive.py"
+    (workdir / "scripts").mkdir()
+    fake_self_path.write_text("# placeholder")
+    r = dsr.detect(workdir, plugins_root=root, env={}, self_path=fake_self_path)
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "not_a_git_repo"
+
+
+def test_self_location_no_plugin_json_returns_not_a_plugin(tmp_path):
+    """self_location matched but plugin.json is absent → not_a_plugin (gating still applies)."""
+    workdir = _make_workdir(tmp_path, with_manifest=False)
+    root = _make_plugins_root(tmp_path)
+    fake_self_path = workdir / "scripts" / "detect_self_recursive.py"
+    (workdir / "scripts").mkdir()
+    fake_self_path.write_text("# placeholder")
+    r = dsr.detect(workdir, plugins_root=root, env={}, self_path=fake_self_path)
+    assert r["self_recursive"] is False
+    assert r["reason_if_false"] == "not_a_plugin"
+
+
+def test_self_location_symlink_normalization(tmp_path):
+    """Symlinked self_path resolves to the same workdir via realpath → still matches."""
+    workdir = _make_workdir(tmp_path)
+    root = _make_plugins_root(tmp_path)
+    (workdir / "scripts").mkdir()
+    real_self = workdir / "scripts" / "detect_self_recursive.py"
+    real_self.write_text("# placeholder")
+    # Create a symlink alias to the scripts directory
+    alias_scripts = tmp_path / "alias_scripts"
+    alias_scripts.symlink_to(workdir / "scripts")
+    fake_self_path = alias_scripts / "detect_self_recursive.py"
+    r = dsr.detect(workdir, plugins_root=root, env={}, self_path=fake_self_path)
+    assert r["self_recursive"] is True
+    assert r["detection_method"] == "self_location"
