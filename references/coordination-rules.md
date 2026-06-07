@@ -134,7 +134,10 @@ the live agent must record a fallback (`reassign`, `defer`, or
 Use stable tool ids (`claude_code`, `codex`, `cursor`, etc.) so targeted
 `inbox/<tool>.jsonl` messages route cleanly. Broadcast messages live in
 `inbox/all.jsonl`; every tool's read path includes that file in addition to
-its direct inbox. Status `clear` → proceed; status `warn` → review peer
+its direct inbox. Unread counts are session-ack aware: after reading and acting
+on current inbox payloads, run `agent_rally.py ack-inbox --session-id <id>
+--tool <tool>` so resolved notes stop appearing as new doorbells. Status
+`clear` → proceed; status `warn` → review peer
 overlap + dirty files; status `blocked` → resolve unresolved verdicts before
 any of the above. Memory citation:
 `feedback_poll_channel_at_step_boundaries`, `feedback_script_first_coordination_checks`.
@@ -153,7 +156,7 @@ any of the above. Memory citation:
 
 When an agent is idle and `rally next` returns no actionable item, walk the tree top-down, stop at the first match:
 
-1. **Pending handoff/inject addressed to me** (by session, name, or tool) → ack and handle it.
+1. **Pending handoff/inject addressed to me** (by session, name, or tool) → handle it, record the response, then run `ack-inbox`.
 2. **An open blocker I can resolve** → resolve it; post the resolution.
 3. **A no-regret item is free** → pick from the project's no-regret backlog (`.build-loop/followup/`, deferred-but-safe items, the run's recorded follow-ups). For its files, run `rally check before-write --path <each>`; if clear, `claim` them, `say` what you're starting, then do it. Reversible + behavior-preserving + tests-pass only.
 4. **All coding candidates are claimed or conflicted** → do read-only research or assessment that helps and has zero file conflict (simplification scans of untouched areas, duplication/test-gap audits, docs the room needs).

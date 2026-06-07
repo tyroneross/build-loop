@@ -62,15 +62,17 @@ surfaced on Rally Point records as top-level `build_loop_id` and
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py status --workdir "$PWD" --session-id "$SESSION_ID" --json
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat --workdir "$PWD" --session-id "$SESSION_ID" --task-ref "$TASK_REF" --progress "still working" --json
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py ack-inbox --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_ID" --json
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py boundary --repo "${CLAUDE_PLUGIN_ROOT}" --check --json
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/boundary.py --repo "${CLAUDE_PLUGIN_ROOT}" --check --json
 ```
 
 Use `/agent-rally-point status` for the same sensor from Claude Code.
 Status/watch envelopes include `inbox_latest_messages`, a compact doorbell
-preview for the newest direct/broadcast inbox records. Counts remain the raw
-wake signal; read `inbox/<tool>.jsonl` or `inbox/all.jsonl` before acting on a
-full message.
+preview for the newest unread direct/broadcast inbox records. Counts are
+session-ack aware; read `inbox/<tool>.jsonl` or `inbox/all.jsonl` before acting
+on a full message, then run `ack-inbox` after handling it. Ack cursors live
+under `inbox/.acks/` and never rewrite the append-only inbox payloads.
 
 ## Task Heartbeat — still on the claimed task
 

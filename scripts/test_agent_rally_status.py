@@ -102,6 +102,91 @@ class AgentRallyStatusTests(unittest.TestCase):
         self.assertEqual(status["inbox_latest_messages"][0]["id"], "codex-msg")
         self.assertEqual(status["inbox_latest_messages"][0]["preview"], "codex-only")
 
+    def test_ack_inbox_hides_seen_messages_and_surfaces_new_ones(self) -> None:
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(
+            channel,
+            sender="claude_code",
+            recipient="codex",
+            payload={"summary": "old note"},
+            message_id="old-msg",
+        )
+
+        ack = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "ack-inbox",
+                "--workdir",
+                str(self.workdir),
+                "--session-id",
+                "me",
+                "--tool",
+                "codex",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        ack_status = json.loads(ack.stdout)
+        self.assertEqual(ack_status["action"], "inbox-ack-written")
+        self.assertEqual(ack_status["direct_line_count"], 1)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "status",
+                "--workdir",
+                str(self.workdir),
+                "--session-id",
+                "me",
+                "--tool",
+                "codex",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        status = json.loads(result.stdout)
+        self.assertEqual(status["direct_inbox_unread_count"], 0)
+        self.assertEqual(status["inbox_latest_messages"], [])
+
+        inbox.write_message(
+            channel,
+            sender="claude_code",
+            recipient="codex",
+            payload={"summary": "new note"},
+            message_id="new-msg",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "status",
+                "--workdir",
+                str(self.workdir),
+                "--session-id",
+                "me",
+                "--tool",
+                "codex",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        status = json.loads(result.stdout)
+        self.assertEqual(status["direct_inbox_unread_count"], 1)
+        self.assertEqual(status["inbox_latest_messages"][0]["id"], "new-msg")
+        self.assertEqual(status["inbox_latest_messages"][0]["preview"], "new note")
+
     def test_heartbeat_command_writes_status_visible_task_health(self) -> None:
         heartbeat = subprocess.run(
             [

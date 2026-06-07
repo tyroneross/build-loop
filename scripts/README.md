@@ -120,7 +120,7 @@ hygiene check as `scripts/` scales.
 | `agent_rally_watcher/watch.py` | Namespaced watcher implementation for future `agent-rally-watcher` extraction |
 | `rally_point/boundary.py` | Validates `rally_point/plugin_boundary.json`, the embedded agent-rally extraction contract |
 | `rally_point/hooks.py` | Namespaced implementation behind the Rally Point shell hook wrappers |
-| `rally_point/inbox.py` | Inbox API at `apps/<slug>/inbox/<tool>.jsonl` plus common `inbox/all.jsonl`, with optional `changes.jsonl` mirror |
+| `rally_point/inbox.py` | Inbox API at `apps/<slug>/inbox/<tool>.jsonl` plus common `inbox/all.jsonl`, optional `changes.jsonl` mirror, and session ack cursors under `inbox/.acks/` |
 | `rally_point/task_heartbeat.py` | Append-only long-running task check-ins that distinguish process liveness from still-on-task health |
 
 ## Phase B: repo-local memory, canonicalized outside the repo (added 2026-05-04)

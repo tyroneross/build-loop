@@ -64,7 +64,7 @@ At Phase 1 entry, the orchestrator (see `agents/build-orchestrator.md` §"Phase 
 python3 scripts/coordination_status.py --workdir "$PWD" --session-id "$SESSION_ID" --json
 ```
 
-The status reports: active peers (live sessions in the channel's `sessions/`), unread inbox messages (`inbox/<my-tool>.jsonl`, `inbox/all.jsonl`), task-heartbeat health when `--task-ref` is set, and any active coordination file. If `active_peers > 0` OR `inbox_unread_count > 0`, the orchestrator MUST drain the inbox before dispatching any chunk; otherwise the peer's last verdict/handoff is invisible to the new run.
+The status reports: active peers (live sessions in the channel's `sessions/`), session-ack-aware unread inbox messages (`inbox/<my-tool>.jsonl`, `inbox/all.jsonl`), task-heartbeat health when `--task-ref` is set, and any active coordination file. If `active_peers > 0` OR `inbox_unread_count > 0`, the orchestrator MUST drain the inbox before dispatching any chunk; otherwise the peer's last verdict/handoff is invisible to the new run. After acting on the inbox payload, run `python3 scripts/agent_rally.py ack-inbox --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_ID" --json` so stale notes stop ringing the doorbell.
 
 ### Coordination polling gate — watcher install when a peer is present
 

@@ -1,5 +1,5 @@
 ---
-description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, heartbeat, announce, init, lead, escalate, boundary, docs, help."
+description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, heartbeat, ack-inbox, announce, init, lead, escalate, boundary, docs, help."
 allowed-tools: Bash, Read
 argument-hint: "[status|watch|heartbeat|announce|init|lead|escalate|boundary|docs|help] [args]"
 model: inherit
@@ -81,7 +81,8 @@ When the watcher emits an event with a higher `revision`,
 the channel before continuing. Watch/status output also includes
 `inbox_latest_messages`: compact metadata and a short preview for the newest
 direct/broadcast inbox records. Treat it as a doorbell only; read the inbox
-file for full payloads before acting.
+file for full payloads before acting. After the message is handled, run
+`ack-inbox` so old direct notes do not keep appearing as unread.
 
 ### `heartbeat`
 
@@ -112,6 +113,25 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
 Use `--status blocked --attention-reason "<why>"` or
 `--status needs_attention --attention-reason "<why>"` when a human or lead must
 act. Use `--not-on-task` only to make drift explicit.
+
+### `ack-inbox`
+
+Mark the current direct/broadcast inbox tail as seen for this tool/session.
+This writes an ack cursor under `inbox/.acks/`; it does not rewrite or delete
+the append-only inbox messages.
+
+Executes:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py ack-inbox \
+  --workdir "$PWD" \
+  --session-id "user-rally-$(date +%s)" \
+  --tool "claude_code" \
+  --json
+```
+
+Run this only after reading and acting on the current inbox payloads. Pass
+`--no-broadcast` when a broadcast message should remain visible.
 
 ### `announce [message]`
 

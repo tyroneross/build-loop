@@ -107,12 +107,13 @@ python3 scripts/coordination_watch.py \
   --baseline-current
 ```
 
-The scripts emit compact `clear | warn | blocked` state plus inbox unread
-count and task-heartbeat health. Presence answers whether a session is live;
-task heartbeat answers whether it is still on the expected task and when its
-next check-in is due. AI should read full coordination context only when the
-script reports `warn` or `blocked`, a target inbox changes, a task heartbeat
-goes stale/wrong-task/blocked, a step
+The scripts emit compact `clear | warn | blocked` state plus session-ack-aware
+inbox unread count and task-heartbeat health. Presence answers whether a
+session is live; task heartbeat answers whether it is still on the expected
+task and when its next check-in is due. After acting on an inbox payload, call
+`agent_rally.py ack-inbox` so old notes stop surfacing as new doorbells. AI
+should read full coordination context only when the script reports `warn` or
+`blocked`, a target inbox changes, a task heartbeat goes stale/wrong-task/blocked, a step
 moves to `verification-pending`, or the next action is a commit, version bump,
 archive/delete, or shared/high-risk file edit.
 

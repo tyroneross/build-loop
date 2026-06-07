@@ -18,6 +18,7 @@ Subcommands:
     handoff      post a kind=handoff record (MECE + lateral-limits packet)
     status       read the cheap coordination-status envelope
     heartbeat    write a structured task heartbeat for long-running work
+    ack-inbox    mark current direct/broadcast inbox messages seen
     where        print the global channel_dir for the current repo (joins it)
     lead claim       claim the leadership lease
     lead renew       renew the current lease (lead only)
@@ -52,6 +53,7 @@ if str(HERE) not in sys.path:
 
 from rally_point import boundary as _boundary
 from rally_point import (  # noqa: E402
+    inbox,
     leadership,
     presence,
     roster as _roster,
@@ -384,6 +386,18 @@ def cmd_status(args: argparse.Namespace) -> int:
     return result.returncode
 
 
+def cmd_ack_inbox(args: argparse.Namespace) -> int:
+    """Mark current direct/broadcast inbox messages seen for this tool/session."""
+    slug, channel_dir = _resolve_channel(args.workdir)
+    result = inbox.mark_read(
+        channel_dir,
+        tool=args.tool,
+        session_id=args.session_id,
+        include_broadcast=not args.no_broadcast,
+    )
+    return _emit({"app_slug": slug, **result})
+
+
 def cmd_heartbeat(args: argparse.Namespace) -> int:
     """Write a structured heartbeat for a long-running task."""
     slug, channel_dir = _resolve_channel(args.workdir)
@@ -678,6 +692,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_status.add_argument("--json", action="store_true")
     sp_status.set_defaults(func=cmd_status)
+
+    sp_ack = sub.add_parser(
+        "ack-inbox",
+        help="Mark current direct/broadcast inbox messages seen.",
+    )
+    sp_ack.add_argument("--workdir", default=".")
+    sp_ack.add_argument("--session-id", required=True)
+    sp_ack.add_argument(
+        "--tool",
+        default="claude_code",
+        help="Tool name for tool-scoped inbox ack (default: claude_code).",
+    )
+    sp_ack.add_argument(
+        "--no-broadcast",
+        action="store_true",
+        help="Ack direct inbox only; leave broadcast inbox unread.",
+    )
+    sp_ack.add_argument("--json", action="store_true")
+    sp_ack.set_defaults(func=cmd_ack_inbox)
 
     sp_heartbeat = sub.add_parser(
         "heartbeat",

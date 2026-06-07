@@ -121,7 +121,7 @@ def _load_files_in_flight(args: argparse.Namespace) -> list[str]:
     return [v.strip() for v in raw.split(",") if v.strip()]
 
 
-def _read_inbox_unread_counts(channel_dir: Path, tool: str) -> dict[str, int]:
+def _read_inbox_unread_counts(channel_dir: Path, tool: str, session_id: str) -> dict[str, int]:
     """Count direct, broadcast, and total unread inbox lines for ``tool``.
 
     β1 channel-split fix: takes the resolved ``channel_dir`` directly
@@ -131,12 +131,18 @@ def _read_inbox_unread_counts(channel_dir: Path, tool: str) -> dict[str, int]:
     via the internal apps root. See ``coordination-substrate-canonical``
     §"channel-consistency invariant".
     """
-    return inbox.unread_counts(channel_dir, tool)
+    return inbox.unread_counts(channel_dir, tool, session_id=session_id)
 
 
-def _read_inbox_latest_messages(channel_dir: Path, tool: str) -> list[dict[str, Any]]:
+def _read_inbox_latest_messages(channel_dir: Path, tool: str, session_id: str) -> list[dict[str, Any]]:
     """Return compact inbox doorbell summaries for ``tool``."""
-    return inbox.latest_message_summaries(channel_dir, tool=tool, limit=3)
+    return inbox.latest_message_summaries(
+        channel_dir,
+        tool=tool,
+        limit=3,
+        unread_only=True,
+        session_id=session_id,
+    )
 
 
 def _read_task_heartbeat(args: argparse.Namespace, channel_dir: Path, tool: str) -> dict[str, Any]:
@@ -369,8 +375,8 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         or int(c.get("revision", 0)) > args.since_revision
     ]
 
-    inbox_counts = _read_inbox_unread_counts(channel_dir, requesting_tool)
-    inbox_latest_messages = _read_inbox_latest_messages(channel_dir, requesting_tool)
+    inbox_counts = _read_inbox_unread_counts(channel_dir, requesting_tool, session_id)
+    inbox_latest_messages = _read_inbox_latest_messages(channel_dir, requesting_tool, session_id)
     task_heartbeat_status = _read_task_heartbeat(args, channel_dir, requesting_tool)
     rejection_count = _read_rejection_count(channel_dir)
 
