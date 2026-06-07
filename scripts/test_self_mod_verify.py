@@ -534,11 +534,12 @@ class TestTimeoutFlagPlumbing(unittest.TestCase):
 
         def mock_run(cmd, **kwargs):
             call_count[0] += 1
-            # Allow the first call (runner detection: `uv run pytest --version`)
-            # to succeed so _find_runner returns a runner base.
-            if call_count[0] <= 1:
+            # Let ALL runner-detection probes through (`uv run pytest --version`
+            # AND the `python3 -m pytest --version` fallback — _find_runner may
+            # make either or both depending on whether uv resolves here). Only
+            # the real test-run invocation (no `--version`) simulates a timeout.
+            if "--version" in cmd:
                 return original_run(cmd, **kwargs)
-            # Simulate timeout on the actual pytest invocation
             raise subprocess.TimeoutExpired(cmd, 1)
 
         with mock.patch("subprocess.run", side_effect=mock_run):
