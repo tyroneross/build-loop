@@ -261,6 +261,11 @@ This applies both to the orchestrator dispatched via `/build-loop:run` AND to an
 
 Build-loop keeps the core method host-neutral, then adapts the execution mechanics to the current coding host.
 
+Role boundaries are canonical in `references/agent-role-taxonomy.md`: the live
+Rally Point leadership lease decides who is lead; `implementer` is the current
+coder subagent; database/API/frontend/performance agents are assessors unless
+their brief explicitly hands them a bounded implementation task.
+
 | Host | Primary surface | Subagent behavior |
 |---|---|---|
 | Claude Code | `agents/*.md`, slash commands, `Skill(...)`, `Agent` tool | Use the existing Claude orchestrator and agent definitions. Do not rewrite Claude agents for Codex behavior. |
@@ -475,6 +480,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol
 - `references/memory.md` — Memory system: global vs project stores, routing rule, read/write policy
 - `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
+- `references/agent-role-taxonomy.md` — Lead/peer/coder-assessor/reviewer/skill responsibility map; use before adding or renaming agents.
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
 - `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.
 - `../ui-design/references/universal-design-principles.md` — Cross-medium communication and experience doctrine for app UI, writing, images, decks, docs, reports, spreadsheets, PDFs, and other information artifacts.

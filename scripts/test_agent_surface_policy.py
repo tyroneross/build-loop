@@ -88,6 +88,20 @@ class OtherAgentSurfaceTests(unittest.TestCase):
         self.assertTrue((REPO_ROOT / "docs/agent-surface-policy.md").is_file())
         self.assertTrue((REPO_ROOT / ".cursor/rules/build-loop-surface.mdc").is_file())
 
+    def test_agent_role_taxonomy_is_discoverable(self) -> None:
+        taxonomy = REPO_ROOT / "references" / "agent-role-taxonomy.md"
+        self.assertTrue(taxonomy.is_file())
+        taxonomy_text = taxonomy.read_text(encoding="utf-8")
+        self.assertIn("The lead is the session holding the current valid Rally Point leadership lease", taxonomy_text)
+        self.assertIn("Build-loop already has a dedicated coder subagent: `implementer`", taxonomy_text)
+
+        index_text = (REPO_ROOT / "references" / "INDEX.md").read_text(encoding="utf-8")
+        orchestrator_text = (REPO_ROOT / "agents" / "build-orchestrator.md").read_text(encoding="utf-8")
+        skill_text = (REPO_ROOT / "skills" / "build-loop" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("agent-role-taxonomy.md", index_text)
+        self.assertIn("agent-role-taxonomy.md", orchestrator_text)
+        self.assertIn("agent-role-taxonomy.md", skill_text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

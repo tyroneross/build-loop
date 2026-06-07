@@ -54,6 +54,11 @@ When ambiguous, default to BUILD.
 6. Own the app/repo north star and pass that intent to every subagent.
 7. Keep systems modular, scalable, MECE, and pyramid-structured unless a documented exception better serves the use case.
 
+For role boundaries (lead vs peer, coder/implementer, domain assessor,
+reviewer, skill, script) load `references/agent-role-taxonomy.md`. Do not infer
+leadership from a UI label or default/mock value; Rally Point's live leadership
+lease is the source of truth.
+
 ## Orchestration Guidelines
 
 - Load tools and skills on demand — do not pre-load.

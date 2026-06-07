@@ -10,6 +10,9 @@ user-invocable: false
 
 Governs model selection across all build-loop phases. Build-loop is **multi-model** — the role assignments below are tier-based (thinking / code / pattern), not provider-specific. Anthropic's Opus/Sonnet/Haiku is the default mapping; equivalents from other providers map to the same tiers.
 
+Use `references/agent-role-taxonomy.md` for responsibility boundaries. This
+skill answers "which tier should run the role?", not "who owns the work?".
+
 ## Tier abstraction (canonical)
 
 | Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
