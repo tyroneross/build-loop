@@ -6,7 +6,7 @@ A plugin for Claude Code that turns big code changes into a checked, repeatable 
 
 ## What it is
 
-Build-loop runs your code change through five phases: plan, execute, review, iterate, and an optional learn step. It splits the work into safe parallel chunks where it can. A critic reads the diff before tests run, so cheap checks catch the obvious mistakes first. Tests must actually pass. Every number on the page traces back to a real source. Fake data in production paths gets flagged. The build stops if what you shipped does not match what you said you would build. The plugin picks the right model for each task: a strong model to plan and review, a faster model to write code, a small model for pattern checks.
+Build-loop runs your code change through five phases — plan, execute, review, iterate — plus a mandatory Learn step that runs after every build. It splits the work into safe parallel chunks where it can. A critic reads the diff before tests run, so cheap checks catch the obvious mistakes first. Tests must actually pass. Every number on the page traces back to a real source. Fake data in production paths gets flagged. The build stops if what you shipped does not match what you said you would build. The plugin picks the right model for each task: a strong model to plan and review, a faster model to write code, a small model for pattern checks.
 
 ## Why use it
 
@@ -59,7 +59,7 @@ Detail on each phase, the model tier rules, the synthesis-decision lint, the arc
 | 3 | **Execute** | Build it — parallel subagents for independent work |
 | 4 | **Review** | Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report — six ordered sub-steps, single exit point; routes to Iterate on failure |
 | 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) |
-| 6 | **Learn** *(optional)* | Detect recurring patterns across runs, auto-draft experimental skills/agents with A/B tracking; auto-promote on metric wins when enabled |
+| 6 | **Learn** *(mandatory)* | Always runs and always emits a `## Learn` outcome line in the Review-G report. Three states: `accruing` (`runs[] < 3` — detector + memory consolidation only), `deferred` (debug-only or budget-exhausted — writes a marker, skips Sonnet draft), or `full` (`runs[] >= 3` + a pattern crossed threshold — detector + Sonnet draft + Opus signoff). Reads two signal sources: `state.json.runs[]` and `proposals/enforce-from-retro/` (recurring enforce-candidates across runs). |
 
 ## Supply-chain: dependency cooldown
 
@@ -212,7 +212,7 @@ This is a decision rule, not architecture for its own sake. When a simpler or mo
 
 | Agent | Role | Model |
 |-------|------|-------|
-| **build-orchestrator** | Drives the 5-phase loop plus optional Learn, dispatches subagents | opus (overridable) |
+| **build-orchestrator** | Drives the 5-phase loop plus mandatory Phase 6 Learn, dispatches subagents | opus (overridable) |
 | **commit-auditor** | Advisory judge — chunk scope (Phase 3) + build scope (Phase 4-A, replaces retired sonnet-critic) | opus |
 | **fact-checker** | Traces rendered metrics to data sources | inherit (sonnet recommended) |
 | **mock-scanner** | Scans for placeholder/fake data in production code | haiku |
@@ -237,6 +237,7 @@ The pattern amortizes Opus cost across many Sonnet subagents. Typical build: Opu
 - **Code-based graders first** — test pass/fail, lint, type check, build (fast, deterministic)
 - **LLM-as-judge second** — for nuanced criteria code can't evaluate
 - **One evaluator per dimension** — no multi-dimension "God Evaluator"
+- **Pytest-collection gate at Review-B** — `scripts/pytest_collect_gate.py` runs `pytest --collect-only` (with `PYTHONPATH` stripped) on Python-bearing repos before LLM judges. The bar is collection only — db/live tests still skip at execution time via their markers — but every test module must *load*. A run can't report success while any test module fails to import. Closes the silent-coverage-loss gap where a broken import quietly removes whole modules from coverage. Skipped on library-only repos with no test paths.
 
 ### Iteration Rules
 
@@ -246,6 +247,12 @@ The pattern amortizes Opus cost across many Sonnet subagents. Typical build: Opu
 - Fixing one criterion breaks another → stop, reassess
 - No improvement after 2 consecutive iterations → change strategy
 - **Hard stop at 5 iterations**
+
+### Post-build retrospective & backlog drain
+
+- **Post-push retrospective** — after the Phase 4 Report closing push, the `retrospective-synthesizer` agent runs non-gating in the background and writes a 9-section lessons-learned file (`.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md`) plus a ≤5-line summary surfaced inline. Anything prompted ≥2× in the thread, or surfaced for "what should be enforced", becomes an auto-drafted enforce-candidate at `.build-loop/proposals/enforce-from-retro/` — a candidate for human review, never silently promoted. The closing run does not wait for it.
+- **Backlog auto-iterate** — product-impacting work that gets descoped during a build is triaged on capture (via `scripts/backlog/triage.py` + `assess.py`) into `.build-loop/backlog/<id>.md` using `templates/backlog-item.md` (mandatory `repo` + `branch` segmentation keys plus `classify`, `effort`, `status`). Phase 5 Iterate drains the backlog at end-of-run alongside `issues/` and `ux-queue/` by default; the durable cross-run backlog of record lives at `build-loop-memory/projects/<slug>/backlog.md`. Cross-repo items are never mixed into one tracker.
+- **Retro → Learn wiring** — `scripts/enforce_retro_signals.py` normalizes the enforce-candidates and counts recurrence across distinct run-ids; the `recurring-pattern-detector` agent reads it as a second signal source (alongside `state.json.runs[]`) and emits `enforce_recurrence` patterns when the same candidate signature appears across ≥2 runs. Delivers "anything prompted or needed repeatedly → enforce" across sessions, not just within one.
 
 ## Native Architecture & Debugging Skills
 
@@ -320,7 +327,7 @@ These skills enhance the loop when available but are not required:
 
 ## Cross-Tool Support
 
-This repo includes `AGENTS.md` — the open-standard version of the build loop methodology. If you use Codex, Copilot, Cursor, Jules, or any other AI coding tool, that file provides the same 5-phase (+1 optional Learn) workflow without Claude-specific integration.
+This repo includes `AGENTS.md` — the open-standard version of the build loop methodology. If you use Codex, Copilot, Cursor, Jules, or any other AI coding tool, that file provides the same 5-phase + mandatory Phase 6 Learn workflow without Claude-specific integration.
 
 Codex-specific subagent behavior lives in `skills/build-loop/references/codex-subagents.md` and `skills/build-loop/templates/codex-worker-prompt.md`. These files are additive: Claude Code continues to use the existing `agents/*.md` runtime, while Codex maps Build Loop ownership packets to explorer/worker-style delegation only when the user explicitly authorizes subagents or parallel work.
 
