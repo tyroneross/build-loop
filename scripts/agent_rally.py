@@ -33,7 +33,7 @@ Examples (all use the generic `example-app` slug — no real app names):
         --tool codex --model gpt-5 --run-id run-1 --phase execute
     python3 scripts/agent_rally.py lead claim --session-id codex-r1 \\
         --tool codex --model gpt-5 --run-id run-1
-    python3 scripts/agent_rally.py status --session-id codex-r1
+    python3 scripts/agent_rally.py status --session-id codex-r1 --tool codex
 """
 from __future__ import annotations
 
@@ -358,6 +358,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         str(HERE / "coordination_status.py"),
         "--workdir", args.workdir,
         "--session-id", args.session_id,
+        "--tool", args.tool,
         "--json",
     ]
     if args.coordination_file:
@@ -615,6 +616,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp_status = sub.add_parser("status", help="Read coordination status.")
     sp_status.add_argument("--workdir", default=".")
     sp_status.add_argument("--session-id", required=True)
+    sp_status.add_argument(
+        "--tool",
+        default="claude_code",
+        help="Tool name for tool-scoped inbox status (default: claude_code).",
+    )
     sp_status.add_argument("--coordination-file", default=None)
     sp_status.add_argument("--json", action="store_true")
     sp_status.set_defaults(func=cmd_status)
