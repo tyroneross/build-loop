@@ -67,7 +67,7 @@ Complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one
 
 Procedure per dispatch:
 
-1. **Generate `TASK_ID`** before the `Agent(...)` call: `TASK_ID="t-$(uuidgen | tr A-F a-f | cut -c1-8)"`. Record `started_at` (ISO 8601 UTC).
+1. **Generate `TASK_ID`** before the `Agent(...)` call: `TASK_ID="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dispatch_identity.py --plain)"`. Record `started_at` (ISO 8601 UTC).
 2. **Prepend `[TASK_ID: <id>]` to the implementer brief** as the first line of the prompt body. The implementer echoes it in `task_id` per `references/implementer-envelope-schema.md`.
 3. **Write the dispatch row** (status=`dispatched`):
    ```bash

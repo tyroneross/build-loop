@@ -163,12 +163,12 @@
     - Load `eval-guide.md` in this skill directory for judge prompt template and scorecard format if needed.
 17. **Write goal file**: Save to `.build-loop/goal.md` in the project directory.
 18. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing with explicit speed/quality lanes): if a plan file already exists, count its `synthesis_dimensions:` entries via `count_synthesis_dimensions()` in `scripts/plan_verify.py` (shared parser; do NOT write a second). Resolve tier in this priority order:
-    1. **Explicit override** — `state.json.config.modelOverrides.thinking` set OR plan/chunk frontmatter declares `tier: thinking` → route to thinking-tier.
+   1. **Explicit override** — `.build-loop/config.json.modelOverrides.thinking` or `state.json.config.modelOverrides.thinking` set OR plan/chunk frontmatter declares `tier: thinking` → route to thinking-tier.
     2. **Auto-escalate on density** — `count > 5` (6+ entries) → `tier: thinking` (synthesis-dense at commit level; fan-out loses cross-dimension coherence).
     3. **Default — Sonnet fan-out for speed** — `count` 1–5 OR `count == 0` → fan-out. Sonnet's ~33% wall-clock and ~28% token savings are real; C3-C5 backstops catch the residual recall gap.
     4. **Per-chunk override** — individual chunks may declare `tier: thinking` even when plan-level was fan-out.
 
-    Write to `state.json.synthesisDensity` as `{count, escalated, reason}`. Routing target is `tier: thinking`, **never a hardcoded model name** (config override → orchestrator frontmatter → fail-loud). When `escalated == true`, do NOT fan out; execute inline at thinking-tier.
+   Write to `state.json.synthesisDensity` as `{count, escalated, reason}`. Routing target is `tier: thinking`, **never a hardcoded model name** (`scripts/model_overrides.py`: repo config → state snapshot → orchestrator frontmatter fallback → fail-loud). When `escalated == true`, do NOT fan out; execute inline at thinking-tier.
 
     **Why this shape:** n=6 A/B experiment (2026-05-07, `~/dev/research/topics/synthesis-decision-delegation/experiment-2026-05-07/`) showed β catches ~40% of α's novels — real quality gap — but also showed β saves ~33% wall-clock and ~28% tokens, and the C3-C5 backstops catch some leaks. Defaulting Opus universally would erase β's velocity; the `> 5` threshold matches the empirical inflection point where β's recall collapses (C5 at 5 dims surfaced 0 novels vs α's 5). Below that, fan-out is the right speed choice; above it, depth dominates. Plan/chunk-level overrides let the operator pick quality > speed when needed without changing the default. See `agents/build-orchestrator.md` Phase 1 for full procedure.
 

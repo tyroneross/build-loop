@@ -19,7 +19,8 @@ orchestrator is responsible for persisting the verdict to
 Stdlib only. Reuses `count_synthesis_dimensions()` from `plan_verify.py`.
 
 Resolution order (must match the orchestrator):
-  1. `state.json.config.modelOverrides.thinking` set    → tier=thinking,
+  1. `.build-loop/config.json.modelOverrides.thinking`
+     or `state.json.config.modelOverrides.thinking` set → tier=thinking,
                                                           reason=explicit-override
   2. plan frontmatter `tier: thinking`                   → tier=thinking,
                                                           reason=explicit-override
@@ -59,6 +60,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from plan_verify import count_synthesis_dimensions  # noqa: E402  (path-injected import)
+import model_overrides  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +88,20 @@ def read_state_thinking_override(state_path: Path) -> bool:
     thinking = overrides.get("thinking")
     # Truthy non-empty string / non-null = override is set.
     return bool(thinking)
+
+
+def read_thinking_override(config_path: Path, state_path: Path) -> bool:
+    """Return True if repo config or state has a thinking-tier override.
+
+    Repo config is preferred by `model_overrides.resolve_model`; state.json is
+    retained for older runs that snapshot config under `state.config`.
+    """
+    return model_overrides.has_override(
+        tier="thinking",
+        workdir=state_path.parent.parent,
+        config_path=config_path,
+        state_path=state_path,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +145,11 @@ def read_plan_frontmatter_tier(plan_path: Path) -> str | None:
 # Resolver
 # ---------------------------------------------------------------------------
 
-def decide(plan_path: Path, state_path: Path) -> dict[str, Any]:
+def decide(
+    plan_path: Path,
+    state_path: Path,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
     """Apply the 4-priority synthesis-density routing rule.
 
     Returns the verdict dict (see module docstring for shape)."""
@@ -146,7 +166,8 @@ def decide(plan_path: Path, state_path: Path) -> dict[str, Any]:
         }
 
     # Priority 1: explicit user override via state.json.
-    if read_state_thinking_override(state_path):
+    cfg_path = config_path or state_path.with_name("config.json")
+    if read_thinking_override(cfg_path, state_path):
         # Count dims anyway so the verdict carries full diagnostic data.
         try:
             count = count_synthesis_dimensions(plan_path)
@@ -157,8 +178,9 @@ def decide(plan_path: Path, state_path: Path) -> dict[str, Any]:
             "reason": "explicit-override",
             "synthesis_dimensions_count": count,
             "details": (
-                f"state.json.config.modelOverrides.thinking is set "
-                f"({state_path}); routing to thinking regardless of density"
+                "modelOverrides.thinking is set in repo config or state "
+                f"({cfg_path} / {state_path}); routing to thinking regardless "
+                "of density"
             ),
         }
 
@@ -210,7 +232,7 @@ def decide(plan_path: Path, state_path: Path) -> dict[str, Any]:
 
 _DESCRIPTION = (
     "Deterministic Phase 1 synthesis-density routing helper for build-loop. "
-    "Reads a plan markdown file plus an optional state.json, applies the "
+    "Reads a plan markdown file plus optional config/state JSON, applies the "
     "4-priority routing rule documented in agents/build-orchestrator.md "
     "Phase 1 (explicit-override → density-escalate → default-fanout, with a "
     "no-plan graceful default), and prints a JSON verdict naming the tier "
@@ -242,6 +264,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to build-loop state.json (default: .build-loop/state.json in cwd).",
     )
     p.add_argument(
+        "--config",
+        default=None,
+        help="Path to build-loop config.json (default: sibling of --state).",
+    )
+    p.add_argument(
         "--self-test",
         action="store_true",
         help="Run inline self-tests and exit. Demonstrates each of the 4 reason values.",
@@ -256,8 +283,9 @@ def main(argv: list[str] | None = None) -> int:
         p.error("plan path is required (positional or --plan)")
     plan_path = Path(plan_arg).expanduser().resolve()
     state_path = Path(args.state).expanduser().resolve()
+    config_path = Path(args.config).expanduser().resolve() if args.config else None
 
-    verdict = decide(plan_path, state_path)
+    verdict = decide(plan_path, state_path, config_path)
     print(json.dumps(verdict, indent=2))
     return 0
 
@@ -293,7 +321,8 @@ def _self_test() -> int:
         # Case A: no-plan (file doesn't exist).
         missing_plan = tmpdir / "nope.md"
         missing_state = tmpdir / "no-state.json"
-        v = decide(missing_plan, missing_state)
+        missing_config = tmpdir / "no-config.json"
+        v = decide(missing_plan, missing_state, missing_config)
         _check("no-plan", v, "code", "no-plan", 0)
 
         # Case B: default-fanout (low density, no overrides).
@@ -309,7 +338,7 @@ def _self_test() -> int:
             ## Body
             etc.
         """))
-        v = decide(plan_low, missing_state)
+        v = decide(plan_low, missing_state, missing_config)
         _check("default-fanout", v, "code", "default-fanout", 3)
 
         # Case C: density-escalate (>5 dims, no overrides).
@@ -328,7 +357,7 @@ def _self_test() -> int:
             ## Body
             etc.
         """))
-        v = decide(plan_dense, missing_state)
+        v = decide(plan_dense, missing_state, missing_config)
         _check("density-escalate", v, "thinking", "density-escalate", 6)
 
         # Case D1: explicit-override via state.json.
@@ -352,11 +381,18 @@ def _self_test() -> int:
 
             ## Body
         """))
-        v = decide(plan_fm, missing_state)
+        v = decide(plan_fm, missing_state, missing_config)
         _check("explicit-override (frontmatter)", v, "thinking", "explicit-override", 1)
 
-        # Case D3: priority — state.json beats frontmatter beats density.
-        # state.json override on a dense plan still attributes to state-override.
+        # Case D3: explicit-override via repo config.
+        config_override = tmpdir / "config.json"
+        config_override.write_text(json.dumps({
+            "modelOverrides": {"thinking": "gpt-5-thinking"}
+        }))
+        v = decide(plan_low, missing_state, config_override)
+        _check("explicit-override (config.json)", v, "thinking", "explicit-override", 3)
+
+        # Case D4: priority — explicit override beats density.
         v = decide(plan_dense, state_override)
         _check("priority: state.json over density", v, "thinking", "explicit-override", 6)
 
@@ -374,7 +410,7 @@ def _self_test() -> int:
 
             ## Body
         """))
-        v = decide(plan_5, missing_state)
+        v = decide(plan_5, missing_state, missing_config)
         _check("threshold: count==5 stays code", v, "code", "default-fanout", 5)
 
     if failures:

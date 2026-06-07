@@ -28,7 +28,7 @@ skill answers "which tier should run the role?", not "who owns the work?".
 Build-loop's agent frontmatter uses Anthropic model aliases (`opus`, `sonnet`, `haiku`) because Claude Code is the primary host. To run on a different provider:
 
 1. **One-time edit per agent:** open each `agents/*.md` and change the `model:` field to your provider's equivalent. The tier (Thinking/Code/Pattern) determines the substitution target.
-2. **Runtime override:** `.build-loop/config.json.modelOverrides` accepts `{ thinking: "<id>", code: "<id>", pattern: "<id>" }`. The orchestrator reads this before dispatching subagents (see `references/model-tier-mapping.md` for full schema).
+2. **Runtime override:** `.build-loop/config.json.modelOverrides` accepts `{ thinking: "<id>", code: "<id>", pattern: "<id>" }`. The orchestrator resolves this through `scripts/model_overrides.py` before dispatching subagents (see `references/model-tier-mapping.md` for full schema).
 3. **Per-dispatch override:** any orchestrator dispatch may pass `model: <id>` in the subagent prompt to force that call.
 
 The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
@@ -201,5 +201,16 @@ Why prefer the router:
 - **Free**: heuristic-only, no LLM call to decide
 
 Fallback when router is unavailable: use the inline tier rules above. The router's policy mirrors them, so behavior is consistent either way.
+
+Always resolve the final tier to a concrete model before writing the dispatch
+cost-ledger row:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_overrides.py \
+  --workdir "$PWD" \
+  --tier code \
+  --fallback sonnet \
+  --json
+```
 
 Full contract and routing matrix: `~/dev/research/topics/llm/llm.build-loop-router-integration-2026-04.md`

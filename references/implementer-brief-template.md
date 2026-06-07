@@ -159,6 +159,6 @@ If the orchestrator can't populate any of these sections, the brief is too vague
 
 ## Note on brief size budget
 
-Each implementer brief is its own input cost — the orchestrator pays Thinking-tier rate to write 80-120 lines × N implementers. For N=4 parallel, that's ~400 lines of brief text at Thinking rate. **This is a real cost** that doesn't show in implementer envelope token estimates. Track it in cost-ledger when TASK_ID instrumentation lands (PR followup).
+Each implementer brief is its own input cost — the orchestrator pays Thinking-tier rate to write 80-120 lines × N implementers. For N=4 parallel, that's ~400 lines of brief text at Thinking rate. **This is a real cost** that doesn't show in implementer envelope token estimates. Generate a task id with `scripts/dispatch_identity.py --plain` and track the dispatch/return pair with `scripts/write_cost_ledger_row.py`.
 
 The cost is worth paying when the work-shape supports parallelism (Mode A wins on time). For sequential or cross-cutting features, prefer Mode B (single Opus context) where the brief overhead disappears.

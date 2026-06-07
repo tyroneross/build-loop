@@ -17,13 +17,24 @@ Loaded on demand by the build-orchestrator agent when a phase needs a capability
 Before each sub-agent dispatch in Phase 3, ask the router which provider/MCP tool fits:
 
 ```bash
-TASK_ID="t-$(uuidgen | tr 'A-Z' 'a-z' | cut -d- -f1)"
+TASK_ID="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dispatch_identity.py --plain)"
 DECISION=$(python3 ~/.claude/scripts/model-router.py \
   --task "<one-line task>" \
   --complexity auto \
   --phase execute \
   --task-id "$TASK_ID" \
   --json)
+```
+
+Resolve the final model id from the selected tier and repo overrides before
+dispatch and before writing the cost-ledger row:
+
+```bash
+MODEL=$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_overrides.py \
+  --workdir "$PWD" \
+  --tier code \
+  --fallback sonnet \
+  --plain)
 ```
 
 Dispatch via the indicated `tool_call.name`:

@@ -41,7 +41,7 @@ At every dispatch + return, write subagent envelopes atomically (M1), heartbeat 
 
 ### Step 9 — Per-agent invocation telemetry (cost-ledger extension)
 
-Closes OPEN-ITEMS #4. Wrap every `Agent(subagent_type=..., ...)` call site with TWO `scripts/write_cost_ledger_row.py` invocations sharing the same `--task-id` (format: `t-<8-hex>`, generated before dispatch):
+Closes OPEN-ITEMS #4. Wrap every `Agent(subagent_type=..., ...)` call site with TWO `scripts/write_cost_ledger_row.py` invocations sharing the same `--task-id` (format: `t-<8-hex>`, generated before dispatch with `scripts/dispatch_identity.py --plain`):
 
 1. **Dispatch row** (before `Agent(...)` returns): `--status dispatched --called true --started-at <iso> --elapsed-seconds null`. If the call site decided NOT to dispatch (gate untripped, trivial bypass, prior-pass cached), emit instead with `--called false --skipped-reason "<why>" --status dispatched`.
 2. **Return row** (after `Agent(...)` returns): `--status <terminal value from envelope> --called true --failed <bool> --issue-found <bool> --elapsed-seconds <float> --completed-at <iso>`. The orchestrator backfills `--downstream-iterate-outcome <enum>` once Phase 5 closes (one of `clean | resolved-on-pass-1 | resolved-on-pass-2-or-later | overflow-to-followup | abandoned`).

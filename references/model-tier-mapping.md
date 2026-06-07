@@ -75,9 +75,21 @@ This is durable but requires re-editing on every plugin update. Prefer #2 below.
 }
 ```
 
-The orchestrator (`agents/build-orchestrator.md` Phase 3) reads this before dispatching each subagent. Frontmatter `model:` becomes the fallback when an override is absent for that tier.
+The orchestrator resolves this before dispatching each subagent with
+`scripts/model_overrides.py`. Frontmatter `model:` becomes the fallback when an
+override is absent for that tier.
 
-⚠️ Implementation status (2026-05-07): the override-reading code path is documented but not yet wired in `agents/build-orchestrator.md`. Treat this section as design intent; until wired, use option #1.
+```bash
+python3 scripts/model_overrides.py \
+  --workdir "$PWD" \
+  --tier code \
+  --fallback sonnet \
+  --json
+```
+
+Resolution order is repo config first, then `.build-loop/state.json`
+`config.modelOverrides`, then the supplied fallback. Use `--require` when a
+tier must resolve to a concrete model before dispatch.
 
 ### 3. Per-dispatch override
 
