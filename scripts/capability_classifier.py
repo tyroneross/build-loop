@@ -91,7 +91,7 @@ CAPABILITY_SYNONYMS: dict[str, list[Any]] = {
         "telemetry",
         "observability",
         "opentelemetry",
-        "tracing",
+        "distributed tracing",
         "metrics pipeline",
         "instrumentation",
         ("structured logging", 1),
@@ -134,7 +134,6 @@ CAPABILITY_SYNONYMS: dict[str, list[Any]] = {
     "websockets": [
         "websocket",
         "server-sent events",
-        "sse",
         "realtime updates",
         "live updates",
     ],

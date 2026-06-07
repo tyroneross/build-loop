@@ -868,7 +868,7 @@ def prior_art_context(
     project: str,
     *,
     memory_root: Path | None = None,
-    max_total_chars: int = 4000,
+    max_total_chars: int | None = None,
 ) -> dict[str, Any]:
     """P4 — Cross-project prior-art digest for Phase 1 Assess.
 
@@ -882,6 +882,8 @@ def prior_art_context(
       * ``BUILD_LOOP_PRIOR_ART=0`` disables the digest entirely (opt-out).
       * Missing classifier / engine / memory root → empty payload + reason.
       * Never raises; never blocks Phase 1.
+    ``max_total_chars`` defaults to ``prior_art.DEFAULT_MAX_TOTAL_CHARS`` (4000)
+    so the two modules stay in sync — never pass a raw magic number here.
     """
     if os.environ.get("BUILD_LOOP_PRIOR_ART") == "0":
         return {
@@ -896,7 +898,10 @@ def prior_art_context(
 
     try:
         from capability_classifier import classify_envelope  # type: ignore  # noqa: PLC0415
-        from prior_art import build_prior_art  # type: ignore  # noqa: PLC0415
+        from prior_art import (  # type: ignore  # noqa: PLC0415
+            DEFAULT_MAX_TOTAL_CHARS,
+            build_prior_art,
+        )
     except Exception as exc:  # noqa: BLE001
         return {
             "enabled": True,
@@ -908,6 +913,8 @@ def prior_art_context(
             "reasons": [f"prior_art_import_error: {exc}"],
         }
 
+    resolved_max_chars: int = max_total_chars if max_total_chars is not None else DEFAULT_MAX_TOTAL_CHARS
+
     try:
         env = classify_envelope(query or workdir.name)
         digest = build_prior_art(
@@ -915,7 +922,7 @@ def prior_art_context(
             capabilities=env["capabilities"],
             current_project=project,
             memory_root=memory_root,
-            max_total_chars=max_total_chars,
+            max_total_chars=resolved_max_chars,
             terms=env["terms"],
         )
     except Exception as exc:  # noqa: BLE001 — Phase 1 must never block
@@ -1068,7 +1075,6 @@ def build_packet(
             workdir=workdir,
             query=query,
             project=project,
-            max_total_chars=max_excerpt_chars * 3,  # share the excerpt budget
         ),
         "session_prefs": read_session_prefs(workdir),
         "staleness": staleness_context(workdir),
@@ -1104,7 +1110,74 @@ def build_packet(
     if lesson_reasons:
         packet["sources"]["canonical_memory"].setdefault("reasons", []).extend(lesson_reasons)
     packet["agent_brief"] = agent_brief(packet)
+
+    # f1 — deterministic prior-art delivery: write the digest into intent.md by
+    # CODE so Phase 1 always has it, not just via the advisory brief pointer.
+    digest_text = (packet.get("prior_art") or {}).get("digest_text") or ""
+    write_prior_art_to_intent(workdir, digest_text)
+
     return packet
+
+
+_PRIOR_ART_START = "<!-- prior-art:start -->"
+_PRIOR_ART_END = "<!-- prior-art:end -->"
+
+
+def write_prior_art_to_intent(workdir: Path, digest_text: str) -> bool:
+    """Idempotently write (or replace) a delimited prior-art block in intent.md.
+
+    Guards:
+    * No-op when ``digest_text`` is empty.
+    * No-op when ``<workdir>/.build-loop/`` does not exist (plugin repo guard).
+    * Creates intent.md when absent.
+    * Replaces the existing block on re-run (never duplicates).
+
+    Returns True when the file was written/updated, False when skipped.
+    Never raises — failure is logged to stderr and returns False.
+    """
+    if not digest_text:
+        return False
+    build_loop_dir = workdir / ".build-loop"
+    if not build_loop_dir.is_dir():
+        return False
+
+    intent_path = build_loop_dir / "intent.md"
+    block = f"{_PRIOR_ART_START}\n{digest_text.rstrip()}\n{_PRIOR_ART_END}\n"
+
+    try:
+        existing = intent_path.read_text(encoding="utf-8") if intent_path.exists() else ""
+    except OSError as exc:
+        import sys as _sys
+        print(f"write_prior_art_to_intent: read failed: {exc}", file=_sys.stderr)
+        return False
+
+    if _PRIOR_ART_START in existing:
+        # Replace the existing block (idempotent re-run).
+        start_idx = existing.index(_PRIOR_ART_START)
+        end_marker_idx = existing.find(_PRIOR_ART_END, start_idx)
+        if end_marker_idx >= 0:
+            after = existing[end_marker_idx + len(_PRIOR_ART_END):]
+            # Trim one leading newline from what follows the end marker.
+            if after.startswith("\n"):
+                after = after[1:]
+            new_content = existing[:start_idx] + block + after
+        else:
+            # Malformed (start without end) — replace from start to end of file.
+            new_content = existing[:start_idx] + block
+    else:
+        # Append with a blank-line separator.
+        separator = "\n" if existing and not existing.endswith("\n\n") else ""
+        new_content = existing + separator + block
+
+    try:
+        tmp = intent_path.with_name(f".{intent_path.name}.prior-art.tmp")
+        tmp.write_text(new_content, encoding="utf-8")
+        os.replace(tmp, intent_path)
+    except OSError as exc:
+        import sys as _sys
+        print(f"write_prior_art_to_intent: write failed: {exc}", file=_sys.stderr)
+        return False
+    return True
 
 
 def write_packet(packet: dict[str, Any], output: Path) -> None:

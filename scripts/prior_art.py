@@ -533,11 +533,14 @@ def _render_digest(
     if impls:
         parts.append("### Implementations")
         for impl in impls:
+            kind = impl.get('kind', 'semantic')
+            suffix = " _(lesson — verify intent before reusing)_" if kind == "lesson" else ""
             line = (
                 f"- **{impl.get('project', '?')}** ({impl.get('capability', '?')}, "
-                f"{impl.get('kind', 'semantic')}): "
+                f"{kind}): "
                 f"`{impl.get('source') or '(no source)'}` — "
                 f"{(impl.get('snippet') or '').splitlines()[0][:200]}"
+                f"{suffix}"
             )
             if not _budget_ok():
                 truncated = True
