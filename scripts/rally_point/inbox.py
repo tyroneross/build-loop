@@ -358,6 +358,110 @@ def unread_counts(
     }
 
 
+_PREVIEW_PAYLOAD_KEYS = ("subject", "summary", "message", "text", "reason")
+
+
+def _compact_str(value: Any, *, max_chars: int = 240) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        text = str(value).strip()
+    else:
+        return None
+    if not text:
+        return None
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "..."
+
+
+def summarize_message(record: dict[str, Any], *, source: str) -> dict[str, Any]:
+    """Return a compact, prompt-safe inbox message summary.
+
+    Inbox payloads are peer-authored free text. The raw JSONL line remains the
+    durable source; status/watch surfaces get only routing metadata, payload
+    keys, and one short preview from known fields.
+    """
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    out: dict[str, Any] = {
+        "source": source,
+        "id": str(record.get("id") or ""),
+        "kind": str(record.get("kind") or "message"),
+        "from": str(record.get("from") or "unknown"),
+        "to": str(record.get("to") or "unknown"),
+        "requires_ack": bool(record.get("requires_ack")),
+    }
+    if "ts" in record:
+        out["ts"] = record.get("ts")
+    if isinstance(payload, dict) and payload:
+        keys = sorted(str(k) for k in payload.keys())
+        out["payload_keys"] = keys[:12]
+        for key in _PREVIEW_PAYLOAD_KEYS:
+            preview = _compact_str(payload.get(key))
+            if preview:
+                out["preview"] = preview
+                out["preview_key"] = key
+                break
+    if "preview" not in out:
+        for key in _PREVIEW_PAYLOAD_KEYS:
+            preview = _compact_str(record.get(key))
+            if preview:
+                out["preview"] = preview
+                out["preview_key"] = key
+                break
+    return out
+
+
+def latest_message_summaries(
+    channel_dir: Path,
+    *,
+    tool: str,
+    limit: int = 3,
+    include_broadcast: bool = True,
+) -> list[dict[str, Any]]:
+    """Return newest inbox records as compact doorbell summaries.
+
+    This is deliberately separate from ``unread_count``. Counts preserve the
+    original raw-line wake contract; summaries make a changed mailbox
+    actionable without requiring agents to manually inspect inbox files first.
+    """
+    if limit <= 0:
+        return []
+    paths: list[tuple[str, Path]] = [
+        ("direct", inbox_path(Path(channel_dir), tool)),
+    ]
+    if include_broadcast and _safe_tool(tool) != _BROADCAST_TOOL:
+        paths.append(("broadcast", inbox_path(Path(channel_dir), _BROADCAST_TOOL)))
+
+    rows: list[tuple[float, int, str, dict[str, Any]]] = []
+    order = 0
+    for source, path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            try:
+                ts = float(rec.get("ts", 0.0))
+            except (TypeError, ValueError):
+                ts = 0.0
+            rows.append((ts, order, source, rec))
+            order += 1
+    rows.sort(key=lambda item: (item[0], item[1]))
+    return [
+        summarize_message(rec, source=source)
+        for _ts, _order, source, rec in rows[-limit:]
+    ]
+
+
 def _channel_from_workdir(workdir: str, *, create: bool) -> tuple[str, Path]:
     """β1: resolve via the shared discovery bridge so inbox CLI writes
     reach the canonical channel when ``agent-rally-point`` is installed.

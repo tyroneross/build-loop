@@ -56,6 +56,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_watch.py \
   --jsonl
 ```
 
+Watcher transition events include `inbox_latest_messages`, a compact
+doorbell preview of the newest addressed/broadcast inbox records. It is
+additive to the raw unread counts; read the inbox before acting on the full
+message.
+
 ## Validation
 
 ```bash

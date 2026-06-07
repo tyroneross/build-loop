@@ -505,6 +505,7 @@ def probe(
             "active_peers": [],
             "inbox_unread_count": 0,
             "inbox_unread_counts": {"direct": 0, "broadcast": 0, "total": 0},
+            "inbox_latest_messages": [],
             "watcher_started": False,
             "coordination_file": None,
             "session_id": session_id,
@@ -521,9 +522,13 @@ def probe(
     # ------------------------------------------------------------------
     try:
         inbox_counts = inbox.unread_counts(channel_dir, tool)
+        inbox_latest_messages = inbox.latest_message_summaries(
+            channel_dir, tool=tool, limit=3
+        )
     except Exception as exc:
         errors.append(f"inbox read failed: {exc}")
         inbox_counts = {"direct": 0, "broadcast": 0, "total": 0}
+        inbox_latest_messages = []
 
     # ------------------------------------------------------------------
     # Step 4: Write presence
@@ -619,6 +624,7 @@ def probe(
         "active_peers": active_peers,
         "inbox_unread_count": inbox_counts.get("total", 0),
         "inbox_unread_counts": inbox_counts,
+        "inbox_latest_messages": inbox_latest_messages,
         "watcher_started": watcher_started,
         "coordination_file": coordination_file,
         "session_id": session_id,

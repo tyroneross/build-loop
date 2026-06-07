@@ -75,7 +75,10 @@ stable lowercase tool id.
 When the watcher emits an event with a higher `revision`,
 `direct_inbox_unread_count > 0`, or `broadcast_inbox_unread_count > 0`, run
 `status`, read the addressed inbox plus `inbox/all.jsonl`, and respond through
-the channel before continuing.
+the channel before continuing. Watch/status output also includes
+`inbox_latest_messages`: compact metadata and a short preview for the newest
+direct/broadcast inbox records. Treat it as a doorbell only; read the inbox
+file for full payloads before acting.
 
 ### `announce [message]`
 

@@ -260,7 +260,8 @@ class CoordinationStatusTests(unittest.TestCase):
             "status", "required_action", "channel_dir", "active_peers",
             "overlaps", "peer_overlap_files",
             "inbox_unread_count", "inbox_unread_counts",
-            "rejection_count", "escalation_count", "blocked_verdict_count",
+            "inbox_latest_messages", "rejection_count", "escalation_count",
+            "blocked_verdict_count",
             "coordination_file", "latest_verdicts", "unresolved",
             "dirty_files", "dirty_outside_owned", "new_changes",
         ):
@@ -428,11 +429,34 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(event["inbox_unread_count"], 1)
         self.assertEqual(event["direct_inbox_unread_count"], 1)
         self.assertEqual(event["broadcast_inbox_unread_count"], 0)
+        self.assertEqual(event["inbox_latest_messages"][0]["source"], "direct")
+        self.assertEqual(
+            event["inbox_latest_messages"][0]["preview"],
+            "codex should see this",
+        )
 
     def test_watch_signature_changes_when_inbox_count_changes_without_revision(self):
         base = {"status": "clear", "required_action": "none", "revision": 1}
         self.assertNotEqual(cw._signature({**base, "inbox_unread_count": 0}),
                             cw._signature({**base, "inbox_unread_count": 1}))
+
+    def test_watch_signature_changes_when_inbox_message_changes_same_count(self):
+        base = {
+            "status": "clear",
+            "required_action": "none",
+            "revision": 1,
+            "inbox_unread_count": 1,
+            "inbox_latest_messages": [
+                {"source": "direct", "id": "msg-1", "preview": "first"},
+            ],
+        }
+        changed = {
+            **base,
+            "inbox_latest_messages": [
+                {"source": "direct", "id": "msg-2", "preview": "second"},
+            ],
+        }
+        self.assertNotEqual(cw._signature(base), cw._signature(changed))
 
     # ------------------------------------------------------------------
     # Ownership-aware warn tests (R1 C8)
@@ -532,7 +556,7 @@ class CoordinationStatusTests(unittest.TestCase):
             # New fields
             "peer_overlap_files", "direct_inbox_unread_count",
             "broadcast_inbox_unread_count", "inbox_unread_count",
-            "inbox_unread_counts",
+            "inbox_unread_counts", "inbox_latest_messages",
         ]
         for field in required_fields:
             self.assertIn(field, status, f"Missing field: {field}")
@@ -553,6 +577,59 @@ class CoordinationStatusTests(unittest.TestCase):
         self.assertEqual(status["inbox_unread_count"], 2)
         self.assertEqual(status["direct_inbox_unread_count"], 2)
         self.assertEqual(status["broadcast_inbox_unread_count"], 0)
+
+    def test_inbox_latest_messages_surface_compact_doorbell_preview(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(
+            channel,
+            sender="claude_code",
+            recipient="codex",
+            payload={
+                "summary": "review the dense recall branch",
+                "raw": "do not surface this raw value",
+            },
+            requires_ack=True,
+            message_id="doorbell-1",
+        )
+
+        status = self._run("--tool", "codex")
+        latest = status["inbox_latest_messages"]
+
+        self.assertEqual(len(latest), 1)
+        self.assertEqual(latest[0]["source"], "direct")
+        self.assertEqual(latest[0]["id"], "doorbell-1")
+        self.assertEqual(latest[0]["from"], "claude_code")
+        self.assertTrue(latest[0]["requires_ack"])
+        self.assertEqual(latest[0]["preview"], "review the dense recall branch")
+        self.assertEqual(latest[0]["preview_key"], "summary")
+        self.assertIn("raw", latest[0]["payload_keys"])
+        self.assertNotIn("do not surface this raw value", json.dumps(latest[0]))
+
+    def test_inbox_latest_messages_preview_top_level_text_records(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        path = inbox.inbox_path(channel, "codex")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({
+                "id": "inject-1",
+                "kind": "deliver",
+                "from": "claude_code",
+                "to": "codex",
+                "ts": 1.0,
+                "text": "Lead note: review branch before merge",
+                "payload": {},
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        status = self._run("--tool", "codex")
+        latest = status["inbox_latest_messages"]
+
+        self.assertEqual(latest[0]["id"], "inject-1")
+        self.assertEqual(latest[0]["preview"], "Lead note: review branch before merge")
+        self.assertEqual(latest[0]["preview_key"], "text")
 
     def test_inbox_unread_count_is_tool_scoped(self):
         slug = channel_paths.app_slug(self.workdir)

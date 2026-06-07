@@ -127,6 +127,11 @@ def _read_inbox_unread_counts(channel_dir: Path, tool: str) -> dict[str, int]:
     return inbox.unread_counts(channel_dir, tool)
 
 
+def _read_inbox_latest_messages(channel_dir: Path, tool: str) -> list[dict[str, Any]]:
+    """Return compact inbox doorbell summaries for ``tool``."""
+    return inbox.latest_message_summaries(channel_dir, tool=tool, limit=3)
+
+
 def _read_rejection_count(channel_dir: Path) -> int:
     """Count MECE rejections logged to ``<channel_dir>/rejections.jsonl``.
 
@@ -342,6 +347,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     inbox_counts = _read_inbox_unread_counts(channel_dir, requesting_tool)
+    inbox_latest_messages = _read_inbox_latest_messages(channel_dir, requesting_tool)
     rejection_count = _read_rejection_count(channel_dir)
 
     # G3 — escalation salience. An `escalation`-kind change record marks
@@ -416,6 +422,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "broadcast_inbox_unread_count": inbox_counts["broadcast"],
         "inbox_unread_count": inbox_counts["total"],
         "inbox_unread_counts": inbox_counts,
+        "inbox_latest_messages": inbox_latest_messages,
         "rejection_count": rejection_count,
         "escalation_count": escalation_count,
         "blocked_verdict_count": blocked_verdict_count,

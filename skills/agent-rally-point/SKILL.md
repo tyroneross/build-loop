@@ -66,6 +66,10 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/boundary.py --repo "${CLAUDE_P
 ```
 
 Use `/agent-rally-point status` for the same sensor from Claude Code.
+Status/watch envelopes include `inbox_latest_messages`, a compact doorbell
+preview for the newest direct/broadcast inbox records. Counts remain the raw
+wake signal; read `inbox/<tool>.jsonl` or `inbox/all.jsonl` before acting on a
+full message.
 
 ## Roster — who is running, where, doing what, with how many subagents
 

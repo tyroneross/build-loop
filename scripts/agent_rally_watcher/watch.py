@@ -85,6 +85,15 @@ def _signature(status: dict[str, Any]) -> dict[str, Any]:
         "direct_inbox_unread_count": status.get("direct_inbox_unread_count", 0),
         "broadcast_inbox_unread_count": status.get("broadcast_inbox_unread_count", 0),
         "inbox_unread_count": status.get("inbox_unread_count", 0),
+        "inbox_latest_messages": [
+            (
+                msg.get("source"),
+                msg.get("id"),
+                msg.get("requires_ack"),
+                msg.get("preview"),
+            )
+            for msg in status.get("inbox_latest_messages", [])
+        ],
     }
 
 
@@ -212,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
                     "broadcast_inbox_unread_count", 0
                 ),
                 "inbox_unread_count": status.get("inbox_unread_count", 0),
+                "inbox_latest_messages": status.get("inbox_latest_messages", []),
                 "new_change_revisions": _change_revisions(status),
             }
             if args.jsonl:

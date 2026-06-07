@@ -33,6 +33,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from rally_point import channel_paths, presence
+from rally_point import inbox
 from rally_point import post as _post_mod
 import rally_point.session_probe as sp
 
@@ -201,6 +202,7 @@ class FreshRepoTests(_ProbeTestBase):
         self.assertIn("session_id", result)
         self.assertIn("slug", result)
         self.assertIn("inbox_unread_counts", result)
+        self.assertIn("inbox_latest_messages", result)
 
     def test_returns_coordination_file_none_when_no_coord_file(self):
         result = self._run_probe()
@@ -392,8 +394,8 @@ class SoloModeContractTests(_ProbeTestBase):
         result = self._run_probe()
         required_keys = {
             "status", "active_peers", "inbox_unread_count",
-            "inbox_unread_counts", "watcher_started", "coordination_file",
-            "session_id", "slug",
+            "inbox_unread_counts", "inbox_latest_messages",
+            "watcher_started", "coordination_file", "session_id", "slug",
         }
         missing = required_keys - set(result.keys())
         self.assertFalse(missing, f"Missing envelope keys: {missing}")
@@ -405,6 +407,26 @@ class SoloModeContractTests(_ProbeTestBase):
         self.assertIn("direct", counts)
         self.assertIn("broadcast", counts)
         self.assertIn("total", counts)
+
+    def test_solo_mode_surfaces_inbox_latest_messages(self):
+        slug = self._slug()
+        chan = channel_paths.ensure_channel_dir(slug)
+        inbox.write_message(
+            chan,
+            sender="codex",
+            recipient="claude_code",
+            payload={"summary": "wake up"},
+            message_id="probe-doorbell",
+        )
+
+        result = self._run_probe(tool="claude_code")
+
+        self.assertEqual(result["inbox_unread_count"], 1)
+        self.assertEqual(
+            result["inbox_latest_messages"][0]["id"],
+            "probe-doorbell",
+        )
+        self.assertEqual(result["inbox_latest_messages"][0]["preview"], "wake up")
 
 
 # ---------------------------------------------------------------------------
