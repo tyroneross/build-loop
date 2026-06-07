@@ -46,6 +46,44 @@ def _psycopg_available() -> bool:
         return False
 
 
+def _postgres_reachable() -> bool:
+    """Fast TCP probe: True if a Postgres server is reachable per the resolved DSN.
+
+    SQLite is the default semantic backend (see ``scripts/semantic_index/``);
+    Postgres is an optional fallback. A ``db``-marked test needs BOTH psycopg
+    AND a live server — so a machine with psycopg installed but no PG running
+    (or no DSN configured) must skip, not error. Resolves the DSN via the
+    stdlib-only ``_db_url.resolve_db_url`` and probes host:port (default
+    127.0.0.1:5432). Timeout 0.5s; never raises.
+    """
+    import sys
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    scripts_dir = Path(__file__).resolve().parent / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from _db_url import resolve_db_url  # type: ignore
+        dsn = resolve_db_url()
+    except Exception:
+        return False
+    if not dsn:
+        return False  # no DB configured → treat as unreachable (skip)
+    host, port = "127.0.0.1", 5432
+    try:
+        parsed = urlparse(dsn)
+        host = parsed.hostname or host
+        port = parsed.port or port
+    except Exception:
+        pass
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
@@ -56,17 +94,21 @@ def pytest_collection_modifyitems(
     regardless of how many marked tests exist.
     """
     ollama_up = _ollama_reachable()
-    psycopg_up = _psycopg_available()
+    # A `db`-marked test needs BOTH psycopg AND a live Postgres server. Postgres
+    # is an optional fallback backend (SQLite is the default), so when either is
+    # absent the test skips rather than erroring.
+    db_up = _psycopg_available() and _postgres_reachable()
 
     skip_live = pytest.mark.skip(
         reason="live service (Ollama/qwen on 127.0.0.1:11434) unreachable"
     )
     skip_db = pytest.mark.skip(
-        reason="psycopg not installed — install .[db] extra to run Postgres tests"
+        reason="Postgres backend unavailable (psycopg missing or no server reachable); "
+        "SQLite is the default — install .[db] + run Postgres to exercise the fallback"
     )
 
     for item in items:
         if not ollama_up and item.get_closest_marker("live") is not None:
             item.add_marker(skip_live, append=False)
-        if not psycopg_up and item.get_closest_marker("db") is not None:
+        if not db_up and item.get_closest_marker("db") is not None:
             item.add_marker(skip_db, append=False)

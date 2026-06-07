@@ -112,8 +112,12 @@ UNRELATED = "Schedule the marketing offsite for next week"              # ~0.36
 
 
 @pytest.mark.live
+@pytest.mark.db
 class DedupPathTests(unittest.TestCase):
-    """Live dedup path test. Requires embed backend (MLX or Ollama) + Postgres."""
+    """Live dedup path test. Requires embed backend (MLX or Ollama) + Postgres.
+
+    Exercises the optional Postgres fallback; skips cleanly when Ollama or
+    Postgres is unavailable (`live` + `db` markers)."""
 
     @classmethod
     def setUpClass(cls) -> None:
