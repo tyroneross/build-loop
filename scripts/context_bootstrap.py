@@ -36,6 +36,7 @@ if str(HERE) not in sys.path:
 
 from memory_facade import recall as recall_memory  # type: ignore  # noqa: E402
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
+from load_current import load_current, WorkingContextEnvelope  # type: ignore  # noqa: E402
 from _paths import (  # type: ignore  # noqa: E402
     memory_indexes_dir,
     memory_store_root,
@@ -1053,6 +1054,15 @@ def build_packet(
     rollout_limit: int = 3,
 ) -> dict[str, Any]:
     workdir = workdir.resolve()
+
+    # f1 — load working context FIRST, structurally, before any heavier bootstrap
+    # work.  This makes it impossible to build the Phase-1 packet without the
+    # short-term working context already loaded.  Absence-tolerant: missing or
+    # corrupt current.md yields exists=False; never raises, never blocks.
+    from dataclasses import asdict as _asdict  # local import keeps top-level clean
+    _wc_envelope: WorkingContextEnvelope = load_current(workdir)
+    working_context: dict[str, Any] = _asdict(_wc_envelope)
+
     project = resolve_project(workdir)
     terms = token_set(query, workdir, project)
     memory_root = codex_memory_root or expand_path(
@@ -1069,6 +1079,7 @@ def build_packet(
         "project": project,
         "query": query,
         "terms": terms,
+        "working_context": working_context,
         "queues": queue_context(workdir),
         "lessons_progressive": lessons,
         "prior_art": prior_art_context(

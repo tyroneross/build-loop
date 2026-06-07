@@ -31,6 +31,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -146,6 +147,20 @@ def git_context(workdir: Path) -> tuple[dict[str, Any], list[str]]:
     )
 
 
+_TRANSIENT_REASON_PREFIXES = (
+    # One-shot side effects of bootstrap that change between identical
+    # back-to-back runs (seeding files, etc.). Filtering keeps the fingerprint
+    # stable across `--if-changed` calls.
+    "constitution_seeded:",
+)
+
+
+def _strip_transient(reasons: list[str] | None) -> list[str]:
+    if not reasons:
+        return []
+    return [r for r in reasons if not any(r.startswith(p) for p in _TRANSIENT_REASON_PREFIXES)]
+
+
 def summarize_bootstrap(packet: dict[str, Any]) -> dict[str, Any]:
     sources = packet.get("sources") or {}
     canonical = sources.get("canonical_memory") or {}
@@ -161,12 +176,94 @@ def summarize_bootstrap(packet: dict[str, Any]) -> dict[str, Any]:
         "codex_rollout_hits": len(codex.get("rollout_hits") or []),
         "rally_checked": bool(rally.get("checked")),
         "reasons": {
-            "canonical_memory": canonical.get("reasons") or [],
-            "repo_local": repo.get("reasons") or [],
-            "codex_memory": codex.get("reasons") or [],
-            "rally": rally.get("reasons") or [],
+            "canonical_memory": _strip_transient(canonical.get("reasons")),
+            "repo_local": _strip_transient(repo.get("reasons")),
+            "codex_memory": _strip_transient(codex.get("reasons")),
+            "rally": _strip_transient(rally.get("reasons")),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Memory backlinks — P0 "pointers DOWN into long-term memory" requirement.
+# Reuses P4 prior_art digest + P1 lessons_progressive; the heavy work is
+# already in `packet`, we just project it down to a stable backlink list.
+# Each entry is {kind, title, path, why?} — pure pointers, no inlined bodies.
+# ---------------------------------------------------------------------------
+def memory_backlinks_from_packet(packet: dict[str, Any], *, max_links: int = 8) -> list[dict[str, str]]:
+    """Return up to `max_links` typed pointers DOWN into long-term memory.
+
+    Sources, in priority order:
+      1. packet["prior_art"]["decisions"] — cross-project decisions (P4).
+      2. packet["prior_art"]["implementations"] — cross-project impls (P4).
+      3. packet["lessons_progressive"]      — project lessons (P1).
+      4. packet["sources"]["canonical_memory"]["merged"] — recall hits.
+
+    Pure projection — never raises. Empty packet -> []. Bounded so the
+    pointer-dense `current.md` never floods.
+    """
+    if not isinstance(packet, dict):
+        return []
+    links: list[dict[str, str]] = []
+
+    prior = packet.get("prior_art") or {}
+    for dec in (prior.get("decisions") or [])[:max_links]:
+        links.append(
+            {
+                "kind": "decision",
+                "title": str(dec.get("title", "")).strip() or "(untitled)",
+                "path": str(dec.get("path", "")),
+                "why": str(dec.get("snippet", "")).strip()[:120],
+                "project": str(dec.get("project", "")),
+            }
+        )
+        if len(links) >= max_links:
+            return links
+
+    for impl in (prior.get("implementations") or [])[:max_links]:
+        links.append(
+            {
+                "kind": "implementation",
+                "title": str(impl.get("source", "")).strip() or "(unnamed)",
+                "path": str(impl.get("source", "")),
+                "why": str(impl.get("snippet", "")).strip()[:120],
+                "project": str(impl.get("project", "")),
+            }
+        )
+        if len(links) >= max_links:
+            return links
+
+    for lesson in (packet.get("lessons_progressive") or [])[:max_links]:
+        links.append(
+            {
+                "kind": "lesson",
+                "title": str(lesson.get("name", "")).strip() or "(unnamed)",
+                "path": str(lesson.get("source_path", "")),
+                "why": str(lesson.get("description") or lesson.get("snippet") or "").strip()[:120],
+                "project": str(packet.get("project", "")),
+            }
+        )
+        if len(links) >= max_links:
+            return links
+
+    merged = ((packet.get("sources") or {}).get("canonical_memory") or {}).get("merged") or []
+    for hit in merged[:max_links]:
+        title = str(hit.get("name") or hit.get("title") or hit.get("decision_id") or "").strip()
+        if not title:
+            continue
+        links.append(
+            {
+                "kind": str(hit.get("kind", "memory")),
+                "title": title,
+                "path": str(hit.get("source_path") or hit.get("path") or ""),
+                "why": str(hit.get("snippet") or hit.get("rationale") or "").strip()[:120],
+                "project": str(hit.get("project", "")),
+            }
+        )
+        if len(links) >= max_links:
+            break
+
+    return links
 
 
 def build_snapshot(args: argparse.Namespace) -> dict[str, Any]:
@@ -230,6 +327,7 @@ def build_snapshot(args: argparse.Namespace) -> dict[str, Any]:
         "working_state": working_state or {},
         "bootstrap_summary": summarize_bootstrap(bootstrap),
         "bootstrap_agent_brief": bootstrap.get("agent_brief", ""),
+        "memory_backlinks": memory_backlinks_from_packet(bootstrap, max_links=8),
         "reasons": reasons,
     }
     snapshot["fingerprint"] = snapshot_fingerprint(snapshot)
@@ -260,15 +358,25 @@ def snapshot_fingerprint(snapshot: dict[str, Any]) -> str:
 
 
 def current_markdown(snapshot: dict[str, Any]) -> str:
+    """Render a pointer-dense `current.md` (P0 — short-term working context).
+
+    Contract:
+      * Every line carries a fact the next agent needs to resume work.
+      * Sections are pointers — files, paths, IDs — never inlined dumps.
+      * `## Memory Backlinks` links DOWN into long-term memory (P1/P4 surfaces)
+        so the working note is a hub, not a silo.
+      * Heavy bootstrap reasons / file dumps stay in the JSON snapshot, not here.
+    """
     git = snapshot.get("git") or {}
     working = snapshot.get("working_state") or {}
     bootstrap = snapshot.get("bootstrap_summary") or {}
     validation = snapshot.get("validation") or {}
     changed = git.get("changed_files") or []
-    reasons = snapshot.get("reasons") or []
-    canonical_reasons = (bootstrap.get("reasons") or {}).get("canonical_memory") or []
-    lines = [
-        "# Build Loop Context Snapshot",
+    snapshot_id = snapshot.get("snapshot_id") or "unknown"
+    backlinks = snapshot.get("memory_backlinks") or []
+
+    lines: list[str] = [
+        "# Build Loop Working Context",
         "",
         f"- Updated: {snapshot.get('generated_at')}",
         f"- Trigger: {snapshot.get('trigger')}",
@@ -289,36 +397,125 @@ def current_markdown(snapshot: dict[str, Any]) -> str:
         "",
         f"- Dirty count: {git.get('dirty_count', 0)}",
     ]
-    for path in changed[:20]:
+    # Pointer-dense: cap inlined file list at 10 (not 20); the rest are in the snapshot JSON.
+    for path in changed[:10]:
         lines.append(f"- {path}")
-    if len(changed) > 20:
-        lines.append(f"- ... {len(changed) - 20} more")
+    if len(changed) > 10:
+        lines.append(f"- (+{len(changed) - 10} more — see snapshot JSON)")
+
+    # Validation: one summary line + count, never inline the full command list.
+    commands = validation.get("commands") or []
     lines.extend(
         [
             "",
             "## Validation",
             "",
             f"- Result: {validation.get('result') or 'not recorded'}",
+            f"- Commands recorded: {len(commands)}",
         ]
     )
-    for command in validation.get("commands") or []:
-        lines.append(f"- Command: `{command}`")
+
+    # Memory backlinks — pointers DOWN into long-term memory (P0 req #6).
+    # Reuses P4 prior_art + P1 lessons surfaces; never inlines bodies.
+    if backlinks:
+        lines.extend(["", "## Memory Backlinks", ""])
+        for link in backlinks[:8]:
+            title = link.get("title") or "(untitled)"
+            kind = link.get("kind") or "memory"
+            path = link.get("path") or ""
+            project = link.get("project") or ""
+            proj_tag = f" [{project}]" if project else ""
+            path_tag = f" — `{path}`" if path else ""
+            lines.append(f"- {kind}: {title}{proj_tag}{path_tag}")
+    else:
+        lines.extend(
+            [
+                "",
+                "## Memory Backlinks",
+                "",
+                "- (none — prior_art empty / bootstrap not yet run)",
+            ]
+        )
+
+    # Pointers: where to look for the heavy detail. Progressive disclosure.
     lines.extend(
         [
             "",
-            "## Context Quality",
+            "## Pointers",
             "",
-            f"- Canonical memory hits: {bootstrap.get('canonical_hits', 0)}",
-            f"- Canonical memory files/dirs present: {bootstrap.get('canonical_files_present', 0)}",
-            f"- Repo-local files present: {bootstrap.get('repo_files_present', 0)}",
-            f"- Codex memory hits: {bootstrap.get('codex_registry_hits', 0)}",
-            f"- Rally checked: {bootstrap.get('rally_checked')}",
+            f"- Snapshot JSON: `.build-loop/context/snapshots/` (id={snapshot_id})",
+            f"- Snapshot index: `.build-loop/context/index.json`",
+            f"- Memory store: `~/dev/git-folder/build-loop-memory/projects/{snapshot.get('project') or '<unscoped>'}/`",
+            f"- Prior art digest (full): `packet.prior_art.digest_text` via context_bootstrap.py",
         ]
     )
-    for reason in (reasons + canonical_reasons)[:10]:
-        lines.append(f"- Reason: {reason}")
     lines.append("")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Pointer-density lint — gates the "every token has meaning" requirement.
+# Returns {ok: bool, findings: list[str]}; advisory, never raises.
+# ---------------------------------------------------------------------------
+_POINTER_DENSITY_RULES = {
+    "max_file_lines": 80,                  # whole-doc cap
+    "max_inlined_changed_files": 10,       # ## Changed Files
+    "max_inlined_validation_commands": 0,  # validation commands -> count only
+    "max_inlined_backlinks": 8,            # ## Memory Backlinks
+    "forbidden_sections": ("## Context Quality",),  # heavy reason dump banned
+}
+
+
+def pointer_density_findings(text: str) -> list[str]:
+    """Return advisory pointer-density warnings (non-blocking). Empty = clean.
+
+    The hard caps (max_file_lines, max_inlined_changed_files, etc.) are enforced
+    structurally in ``current_markdown()`` — that function generates the text within
+    those bounds so a fresh write never violates them.  This function returns
+    *advisory* findings only: it does not gate any write, and ``write_snapshot()``
+    writes unconditionally regardless of findings.  Use the findings for reporting
+    and surfacing to the run report (f8 / context-density rule), not for blocking.
+    """
+    if not isinstance(text, str):
+        return ["non_string_input"]
+    findings: list[str] = []
+    lines = text.splitlines()
+    if len(lines) > _POINTER_DENSITY_RULES["max_file_lines"]:
+        findings.append(f"too_many_lines: {len(lines)} > {_POINTER_DENSITY_RULES['max_file_lines']}")
+
+    for forbidden in _POINTER_DENSITY_RULES["forbidden_sections"]:
+        if forbidden in text:
+            findings.append(f"forbidden_section: {forbidden}")
+
+    # Count list items under ## Changed Files.
+    in_changed = False
+    inlined = 0
+    for line in lines:
+        if line.startswith("## Changed Files"):
+            in_changed = True
+            continue
+        if in_changed and line.startswith("## "):
+            in_changed = False
+        elif in_changed and line.startswith("- ") and not line.startswith("- Dirty count") and "more" not in line:
+            inlined += 1
+    if inlined > _POINTER_DENSITY_RULES["max_inlined_changed_files"]:
+        findings.append(f"too_many_changed_files: {inlined}")
+
+    # Validation: no inlined `Command:` lines.
+    in_val = False
+    val_cmd_lines = 0
+    for line in lines:
+        if line.startswith("## Validation"):
+            in_val = True
+            continue
+        if in_val and line.startswith("## "):
+            in_val = False
+        elif in_val and "Command:" in line:
+            val_cmd_lines += 1
+    if val_cmd_lines > _POINTER_DENSITY_RULES["max_inlined_validation_commands"]:
+        findings.append(f"inlined_validation_commands: {val_cmd_lines}")
+
+    return findings
 
 
 def read_index(context_dir: Path) -> dict[str, Any]:
@@ -376,7 +573,21 @@ def write_snapshot(snapshot: dict[str, Any], workdir: Path, if_changed: bool, re
     snapshot_rel = str(snapshot_path.relative_to(workdir))
 
     atomic_write_text(snapshot_path, json.dumps(snapshot, indent=2, sort_keys=True, default=str) + "\n")
-    atomic_write_text(current_path, current_markdown(snapshot))
+    current_text = current_markdown(snapshot)
+    atomic_write_text(current_path, current_text)
+
+    # Measure warm read latency — the time a downstream agent pays to read
+    # `current.md` immediately after we wrote it. Non-blocking; pure local FS.
+    warm_read_ms: float | None = None
+    try:
+        t0 = time.perf_counter()
+        current_path.read_text(encoding="utf-8")
+        warm_read_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+    except OSError:
+        warm_read_ms = None
+
+    # Advisory pointer-density lint — surfaced in result.reasons[] but never blocks.
+    density_findings = pointer_density_findings(current_text)
 
     reasons: list[str] = []
     row = event_row(snapshot, snapshot_rel)
@@ -401,15 +612,24 @@ def write_snapshot(snapshot: dict[str, Any], workdir: Path, if_changed: bool, re
         "last_trigger": trigger,
         "last_updated_at": snapshot.get("generated_at"),
         "snapshot_count": len(list(snapshot_dir.glob("*.json"))),
+        "warm_read_latency_ms": warm_read_ms,
+        "current_md_lines": current_text.count("\n") + 1,
+        "memory_backlinks_count": len(snapshot.get("memory_backlinks") or []),
+        "pointer_density_findings": density_findings,
     }
     atomic_write_text(context_dir / "index.json", json.dumps(next_index, indent=2, sort_keys=True) + "\n")
     prune_snapshots(snapshot_dir, retention)
+    for finding in density_findings:
+        reasons.append(f"density_lint: {finding}")
     return {
         "ok": True,
         "action": "written",
         "snapshot_id": snapshot.get("snapshot_id"),
         "snapshot_path": str(snapshot_path),
         "current_path": str(current_path),
+        "warm_read_latency_ms": warm_read_ms,
+        "memory_backlinks_count": len(snapshot.get("memory_backlinks") or []),
+        "pointer_density_findings": density_findings,
         "reasons": reasons,
     }
 

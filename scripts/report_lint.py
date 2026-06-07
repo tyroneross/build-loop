@@ -330,7 +330,39 @@ def lint_length(
     )]
 
 
-def run_lint(report_path: Path, length_cap: int = DEFAULT_LENGTH_CAP) -> dict[str, Any]:
+def lint_context_density(workdir: Path | None = None) -> list[dict[str, Any]]:
+    """Emit a WARN-level finding when pointer_density_findings is non-empty.
+
+    Reads ``.build-loop/context/index.json`` from *workdir* (defaults to cwd).
+    Advisory-checks-are-automated: surfaces density findings in the Phase-4G
+    report so they appear without operator intervention.  Never blocks — missing
+    or unreadable index → no finding, no error.
+    """
+    import json as _json  # already imported at module level; local ref for clarity
+    base = Path(workdir) if workdir is not None else Path.cwd()
+    index_path = base / ".build-loop" / "context" / "index.json"
+    try:
+        data = _json.loads(index_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, _json.JSONDecodeError):
+        return []
+    density = data.get("pointer_density_findings")
+    if not density:
+        return []
+    joined = "; ".join(str(d) for d in density)
+    return [_finding(
+        rule_id="context-density",
+        severity="WARN",
+        line=None,
+        snippet=None,
+        message=f"context/current.md density findings: {joined}",
+    )]
+
+
+def run_lint(
+    report_path: Path,
+    length_cap: int = DEFAULT_LENGTH_CAP,
+    workdir: Path | None = None,
+) -> dict[str, Any]:
     text = report_path.read_text(encoding="utf-8")
     lines = _strip_fenced_blocks(text)
     findings: list[dict[str, Any]] = []
@@ -339,6 +371,7 @@ def run_lint(report_path: Path, length_cap: int = DEFAULT_LENGTH_CAP) -> dict[st
     findings.extend(lint_jargon(lines))
     findings.extend(lint_contrastive_pivot(lines))
     findings.extend(lint_length(lines, cap=length_cap))
+    findings.extend(lint_context_density(workdir))
     summary = {
         "total": len(findings),
         "by_severity": {
@@ -383,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true", help="Emit JSON")
     parser.add_argument("--quiet", action="store_true", help="Suppress human output")
+    parser.add_argument("--workdir", default=None, help="Workdir for context-density check (default: cwd)")
     args = parser.parse_args(argv)
 
     report_path = Path(args.report).expanduser().resolve()
@@ -390,8 +424,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report-lint: file not found: {report_path}", file=sys.stderr)
         return 2
 
+    workdir = Path(args.workdir).expanduser().resolve() if args.workdir else None
     try:
-        result = run_lint(report_path, length_cap=args.length_cap)
+        result = run_lint(report_path, length_cap=args.length_cap, workdir=workdir)
     except Exception as exc:  # noqa: BLE001 — verifier outage maps to lint-outage finding
         result = {
             "report": str(report_path),

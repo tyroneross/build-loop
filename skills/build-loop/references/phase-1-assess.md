@@ -69,6 +69,19 @@
 7. **Debugger context priming** (always; native to build-loop): invoke `Skill("build-loop:debugging-memory")` with `{ intent: "list-recent", project: "<current>" }` to summarize recent incidents in this project. One-line output; no action. If cross-project Coding Debugger is installed, the skill may use it; otherwise it falls through to `fallbacks.md#bug-memory`.
 8. **Capture UI state** (if web/mobile): host browser/screenshot tooling or simulator/native-AX evidence when available → showcase capture → manual screenshot. Do not route to IBR unless the user explicitly requested it.
 8a. **UI input/output inventory** (if `uiTarget != null`): load `skills/build-loop/references/ui-io-contract.md` and identify every affected user input and system output before component choices are made. Classify each by structural type, content format, persistence intent, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and traceability. Mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical; the full contract is finalized in Phase 2.
+
+8b. **Load short-term working context (Pillar 0 — structurally loaded first, inside memory bootstrap)**: `context_bootstrap.build_packet()` calls `load_current(workdir)` at its very entry, before any heavier memory work, and attaches the result as `packet['working_context']` (a serialized `WorkingContextEnvelope`). The working context is therefore available as part of the Phase-1 packet without a separate CLI step.
+
+   Consume it directly from the packet:
+
+   ```python
+   wc = packet["working_context"]   # {exists, path, warm_read_latency_ms, parsed, reasons}
+   ```
+
+   Use `wc["parsed"]["links_down"]` as the entry pointers DOWN into long-term memory (P1 hybrid recall + P4 prior-art). Missing / corrupt `current.md` → `wc["exists"] == False` + `wc["reasons"]`; never blocks Phase 1 or bootstrap. Mirror `wc["warm_read_latency_ms"]` into `.build-loop/state.json.assess.workingContextLatencyMs` for the Phase 4G report.
+
+   The standalone CLI (`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/load_current.py --workdir "$PWD" --json`) remains available for manual inspection but is no longer a required Phase-1 step — the enforced path is via `build_packet()`.
+
 9. **Load memory**: Run the automatic context bootstrap before planning:
 
    ```bash

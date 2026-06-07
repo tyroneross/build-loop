@@ -141,7 +141,10 @@ class ContextSnapshotTests(EnvIsolationMixin, unittest.TestCase):
         index = self.workdir / ".build-loop" / "context" / "index.json"
         self.assertTrue(current.is_file())
         self.assertTrue(index.is_file())
-        self.assertIn("Build Loop Context Snapshot", current.read_text(encoding="utf-8"))
+        # P0: current.md now uses the v2 "Working Context" title to advertise
+        # the pointer-dense + memory-backlinks shape to load_current.py.
+        self.assertIn("Build Loop Working Context", current.read_text(encoding="utf-8"))
+        # next_action is mandatory: it's the single most important resume signal.
         self.assertIn("run validation", current.read_text(encoding="utf-8"))
         loaded_index = json.loads(index.read_text(encoding="utf-8"))
         snapshot_path = self.workdir / loaded_index["last_snapshot_path"]
@@ -172,6 +175,147 @@ class ContextSnapshotTests(EnvIsolationMixin, unittest.TestCase):
         self.assertEqual(len(returns), 1)
         self.assertEqual(len(commits), 2)
         self.assertEqual(json.loads(commits[0])["commit_sha"], "abc123")
+
+
+# ===========================================================================
+# Pillar 0 — short-term working-context layer guarantees
+# ===========================================================================
+
+
+class ContextSnapshotPillar0Tests(EnvIsolationMixin, unittest.TestCase):
+    """Verify the P0 contract on the current.md rewrite."""
+
+    # ---- current.md is now pointer-dense (no forbidden ## Context Quality dump) ----
+    def test_current_md_drops_legacy_context_quality_section(self) -> None:
+        args = self.args("manual")
+        snapshot = cs.build_snapshot(args)
+        text = cs.current_markdown(snapshot)
+        self.assertNotIn("## Context Quality", text)
+        # The new v2 title is required by the loader's marker.
+        self.assertTrue(text.startswith("# Build Loop Working Context"))
+
+    # ---- pointer-density lint: a hand-crafted bloated doc trips findings ----
+    def test_pointer_density_lint_flags_inlined_validation_commands(self) -> None:
+        bloated = (
+            "# Build Loop Working Context\n\n"
+            "- Updated: now\n\n"
+            "## Validation\n\n"
+            "- Command: `do thing 1`\n"
+            "- Command: `do thing 2`\n"
+        )
+        findings = cs.pointer_density_findings(bloated)
+        self.assertTrue(any("inlined_validation_commands" in f for f in findings))
+
+    def test_pointer_density_lint_flags_overlong_doc(self) -> None:
+        too_many_lines = "\n".join(["# Build Loop Working Context"] + [f"- line {i}" for i in range(120)])
+        findings = cs.pointer_density_findings(too_many_lines)
+        self.assertTrue(any("too_many_lines" in f for f in findings))
+
+    def test_pointer_density_lint_accepts_real_current_md(self) -> None:
+        args = self.args("manual")
+        snapshot = cs.build_snapshot(args)
+        text = cs.current_markdown(snapshot)
+        findings = cs.pointer_density_findings(text)
+        # A fresh, well-formed write must lint clean.
+        self.assertEqual(findings, [], f"density findings on canonical write: {findings}")
+
+    # ---- ## Memory Backlinks section is always present (graceful when empty) ----
+    def test_current_md_always_contains_memory_backlinks_section(self) -> None:
+        args = self.args("manual")
+        snapshot = cs.build_snapshot(args)
+        text = cs.current_markdown(snapshot)
+        self.assertIn("## Memory Backlinks", text)
+        # The empty-state pointer must be the explicit graceful line.
+        if not snapshot.get("memory_backlinks"):
+            self.assertIn("prior_art empty", text)
+
+    # ---- memory_backlinks_from_packet projects P4 surfaces correctly ----
+    def test_memory_backlinks_projects_prior_art_decisions(self) -> None:
+        packet = {
+            "project": "build-loop",
+            "prior_art": {
+                "decisions": [
+                    {
+                        "title": "Pick MLX for embeddings",
+                        "path": "projects/build-loop/decisions/2026-06-07-mlx.md",
+                        "project": "build-loop",
+                        "snippet": "Mac-only OK; perf > Ollama",
+                    },
+                ],
+                "implementations": [
+                    {
+                        "source": "scripts/semantic_index/hybrid.py",
+                        "project": "atomize-news",
+                        "snippet": "hybrid vector+sparse w/ RRF",
+                    },
+                ],
+            },
+            "lessons_progressive": [
+                {
+                    "name": "memory closeout mandatory",
+                    "source_path": "lessons/closeout.md",
+                    "description": "write at end of every run",
+                }
+            ],
+        }
+        links = cs.memory_backlinks_from_packet(packet, max_links=8)
+        self.assertEqual(links[0]["kind"], "decision")
+        self.assertEqual(links[0]["title"], "Pick MLX for embeddings")
+        kinds = {l["kind"] for l in links}
+        self.assertIn("implementation", kinds)
+        self.assertIn("lesson", kinds)
+
+    def test_memory_backlinks_empty_packet_is_safe(self) -> None:
+        self.assertEqual(cs.memory_backlinks_from_packet({}), [])
+        self.assertEqual(cs.memory_backlinks_from_packet(None), [])  # type: ignore[arg-type]
+
+    # ---- warm read latency is recorded on every write (non-blocking) ----
+    def test_write_records_warm_read_latency_ms(self) -> None:
+        snapshot = cs.build_snapshot(self.args("manual"))
+        result = cs.write_snapshot(snapshot, self.workdir, if_changed=False, retention=10)
+        self.assertIn("warm_read_latency_ms", result)
+        # Local FS read of a small file must succeed and produce a real number.
+        self.assertIsNotNone(result["warm_read_latency_ms"])
+        self.assertGreaterEqual(result["warm_read_latency_ms"], 0.0)
+
+        index = json.loads((self.workdir / ".build-loop" / "context" / "index.json").read_text())
+        self.assertIn("warm_read_latency_ms", index)
+        self.assertIn("memory_backlinks_count", index)
+        self.assertIn("pointer_density_findings", index)
+        self.assertIn("current_md_lines", index)
+
+    # ---- changed files cap (10) — pointer-dense rule, was 20 in v1 ----
+    def test_changed_files_capped_at_10_inline(self) -> None:
+        # Fake a snapshot with many changed files.
+        snapshot = {
+            "schema_version": 1,
+            "snapshot_id": "ctx-test",
+            "generated_at": "2026-06-07T00:00:00+00:00",
+            "trigger": "manual",
+            "project": "build-loop",
+            "phase": "execute",
+            "run_id": "r",
+            "build_loop_id": "bl",
+            "agent": None,
+            "chunk_id": None,
+            "status": None,
+            "message": "x",
+            "next_action": "y",
+            "git": {
+                "branch": "main",
+                "head": "abc",
+                "dirty_count": 25,
+                "changed_files": [f"file_{i}.py" for i in range(25)],
+            },
+            "validation": {"commands": [], "result": None},
+            "bootstrap_summary": {},
+            "memory_backlinks": [],
+        }
+        text = cs.current_markdown(snapshot)
+        # 10 listed + 1 "+15 more" line; never 25 raw paths.
+        self.assertIn("(+15 more — see snapshot JSON)", text)
+        for n in range(11, 25):
+            self.assertNotIn(f"file_{n}.py", text)
 
 
 if __name__ == "__main__":
