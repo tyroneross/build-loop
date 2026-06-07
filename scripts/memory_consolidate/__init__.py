@@ -1,36 +1,28 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Raw-candidate intake + consolidation for build-loop-memory.
+"""Raw-candidate intake + consolidation + async distill/promote/lifecycle/backlinks
+for build-loop-memory.
 
-P2 ingestion arm. Agents NEVER pick a memory path directly. They drop a
-raw candidate via ``intake.submit()`` (or ``python3 -m memory_consolidate
-submit ...``); a consolidator then:
+Hot-path (P2 — submit/place; called from agent return / Stop):
+  * ``intake`` — queue contract; agents drop candidates here.
+  * ``classify`` — builds a host-LLM consolidation packet.
+  * ``place`` — writes the candidate through the writer guard.
 
-  1. Loads the candidate.
-  2. Queries the P1 dense recall (``semantic_index.query_facts(mode='hybrid')``)
-     for similar existing entries to surface dedup + backlink suggestions.
-  3. Builds a structured packet the host agent (Claude Code, Codex, ...)
-     reads — per "host agent is the LLM" rule: NO vendor API calls here.
-     The host reads the packet, picks lane + type + backlinks, returns a
-     decision JSON.
-  4. ``place.execute()`` files the candidate via ``memory_writer.write()``
-     through the P2 writer guard, so even a misformed lane path is corrected
-     before disk.
+Async / off-hot-path (P3 — distill/promote/lifecycle/backlinks):
+  * ``distill`` — group similar placed entries via P1 hybrid recall.
+  * ``promote`` — recurrence-gated project→global promotion.
+  * ``lifecycle`` — Karpathy states (draft/active/stale/contradicted/archived).
+  * ``backlinks`` — surgical ``[[name]]`` link generation.
+  * ``async_runner`` — chain the four arms; invoked by cron / a manual
+    ``memory_consolidate async``.
 
-A ``--deterministic-only`` mode skips step 3 and uses heuristic defaults so
-headless tests (and end-to-end CI) run without a host agent in the loop.
+All P3 calls reuse the P1 hybrid recall (no second similarity engine) and
+the existing rot/supersede/revoke primitives where relevant — KISS+DRY.
 
-Public surface:
-    submit(content, hint=None, *, project=None, workdir=".", run_id, host)
-    list_pending() -> list[Candidate]
-    prepare(candidate_id) -> ConsolidationPacket  # the host agent reads this
-    place(candidate_id, decision) -> dict          # final frontmatter dict
-
-All routes call ``memory_writer.write()`` — the guard is the single source of
-truth for path safety. The consolidator is a thin assembly of three units:
-``intake.py`` (queue), ``classify.py`` (packet prep + heuristic decision),
-``place.py`` (guarded write).
+Per "host agent is the LLM" — every classifier/distiller/promoter builds
+structured data; vendor APIs are never called. ``deterministic-only``
+modes drive CI / headless.
 """
 from __future__ import annotations
 
@@ -65,3 +57,10 @@ __all__ = [
     "prepare",
     "submit",
 ]
+
+# NOTE: distill / promote / lifecycle / backlinks / async_runner are NOT
+# re-exported from the package root. They are intentionally lazy-loaded
+# (imported via ``from memory_consolidate import distill`` only by the
+# async_runner + CLI subcommands), so importing ``memory_consolidate``
+# does not pull the four arms into ``sys.modules``. That guarantee is
+# enforced by ``test_async_runner.test_intake_module_imports_without_loading_arms``.

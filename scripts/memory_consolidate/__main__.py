@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""CLI for memory_consolidate: submit / list / prepare / place / consolidate.
+"""CLI for memory_consolidate: submit / list / prepare / place / consolidate / async.
 
-Examples:
+Hot-path subcommands (P2):
     python3 -m memory_consolidate submit \\
         --content-file /tmp/raw.md --hint "smells like a debug-incident" \\
         --run-id run_x --host claude_code --project demoproj
 
     python3 -m memory_consolidate list --workdir .
-
     python3 -m memory_consolidate prepare <candidate-id> --workdir . --json
-        # → emits the host-LLM packet on stdout
-
     python3 -m memory_consolidate place <candidate-id> --decision-file decision.json
-        # → files via the writer guard, transitions to placed/
-
     python3 -m memory_consolidate consolidate <candidate-id> --deterministic-only
-        # → end-to-end: prepare → heuristic_decision → place
+
+Async / off-hot-path (P3 — for cron / `consolidate-async` watchers):
+    python3 -m memory_consolidate async --workdir . --min-projects 2 --json
 """
 from __future__ import annotations
 
@@ -89,9 +86,7 @@ def _cmd_place(args: argparse.Namespace) -> int:
 
 
 def _cmd_consolidate(args: argparse.Namespace) -> int:
-    """End-to-end: prepare → heuristic_decision → place. ``--deterministic-only``
-    is the default (host-LLM-free); a future ``--host-decision`` route reads
-    a decision JSON from stdin."""
+    """End-to-end: prepare → heuristic_decision → place."""
     packet = classify.prepare(args.candidate_id, workdir=args.workdir)
     decision = packet.suggested_decision
     fm = place.place(
@@ -104,9 +99,30 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_async(args: argparse.Namespace) -> int:
+    """Run the off-hot-path async consolidation pass (P3).
+
+    Lazy-imported so the hot-path subcommands stay cheap.
+    """
+    from . import async_runner  # noqa: PLC0415
+    apply_lifecycle = not args.no_apply_lifecycle
+    report = async_runner.run_async(
+        workdir=args.workdir,
+        memory_root=args.memory_root,
+        min_projects=args.min_projects,
+        similarity_threshold=args.threshold,
+        write=not args.dry_run,
+        apply_lifecycle=apply_lifecycle,
+    )
+    json.dump(report.to_dict(), sys.stdout, sort_keys=True, indent=2)
+    sys.stdout.write("\n")
+    return 0 if not report.errors else 2
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--workdir", default=".", help="Repo workdir (queue lives under .build-loop/pending-lessons)")
+    p.add_argument("--workdir", default=".",
+                   help="Repo workdir (queue lives under .build-loop/pending-lessons)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("submit", help="Drop a candidate into the pending queue")
@@ -140,6 +156,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     co.add_argument("--run-id", default=None)
     co.add_argument("--host", default=None, choices=[None, "claude_code", "codex", "gemini", "other"])
 
+    ac = sub.add_parser(
+        "async",
+        help="Run distill/promote/lifecycle/backlinks (off-hot-path; cron-style).",
+    )
+    ac.add_argument("--memory-root", default=None,
+                    help="Override build-loop-memory root (default: $BUILD_LOOP_MEMORY_STORE_ROOT).")
+    ac.add_argument("--min-projects", type=int, default=2,
+                    help="Recurrence-gate threshold (promotion requires ≥N distinct projects, default 2).")
+    ac.add_argument("--threshold", type=float, default=0.55,
+                    help="Cosine similarity threshold for clustering/dedup (default 0.55).")
+    ac.add_argument("--dry-run", action="store_true",
+                    help="Do not write distill/promote/lifecycle/backlinks output; report-only.")
+    ac.add_argument(
+        "--no-apply-lifecycle", action="store_true", default=False,
+        help=(
+            "Lifecycle state transitions (stale/archived) are written automatically; "
+            "pass --no-apply-lifecycle to report-only (no lifecycle writes). "
+            "Promotion and backlinks writes are unaffected by this flag."
+        ),
+    )
+
     return p.parse_args(argv)
 
 
@@ -151,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         "prepare": _cmd_prepare,
         "place": _cmd_place,
         "consolidate": _cmd_consolidate,
+        "async": _cmd_async,
     }[args.cmd](args)
 
 
