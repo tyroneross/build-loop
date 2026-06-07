@@ -173,6 +173,108 @@ SECTION_TITLES = {
     "issues_with_causal_tree":    "Issues (with causal tree)",
 }
 
+_PASS_VERDICTS = {"yay", "approve", "pass"}
+_HARD_FAIL_VERDICTS = {
+    "nay",
+    "block",
+    "fail",
+    "blocked",
+    "rethink",
+    "new_approach",
+    "suggest_correction",
+    "look-again",
+    "look_again",
+}
+_ACTIONABLE_VERDICTS = _HARD_FAIL_VERDICTS | {"suggest"}
+
+
+def _append_unique(items: list[str], text: str | None) -> None:
+    if text and text not in items:
+        items.append(text)
+
+
+def _run_identifier(run: dict[str, Any]) -> str | None:
+    for key in ("run_id", "build_loop_id", "id"):
+        value = run.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _runs_for_run_id(state_json: dict[str, Any], run_id: str | None) -> list[dict[str, Any]]:
+    """Return run records for this retrospective.
+
+    Prefer run records matching ``run_id``. When none match, fall back to the
+    latest run to preserve the historical behavior and support hook-only state.
+    """
+    runs = [r for r in (state_json.get("runs") or []) if isinstance(r, dict)]
+    if not runs:
+        return []
+    if run_id:
+        matched = [r for r in runs if _run_identifier(r) == str(run_id)]
+        if matched:
+            return matched
+    return [runs[-1]]
+
+
+def _iter_judge_decisions(runs: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+    for run in runs:
+        for judge in run.get("judge_decisions") or []:
+            if isinstance(judge, dict):
+                yield judge
+
+
+def _judge_context(judge: dict[str, Any]) -> str:
+    jid = judge.get("judge_id") or "judge"
+    checkpoint = (judge.get("checkpoint_id") or "").strip()
+    return f"**{jid}** at `{checkpoint}`" if checkpoint else f"**{jid}**"
+
+
+def _variance_summary(variance: Any) -> str | None:
+    if isinstance(variance, dict):
+        summary = (
+            variance.get("why_it_matters")
+            or variance.get("summary")
+            or variance.get("title")
+            or variance.get("id")
+        )
+        if not summary:
+            return None
+        severity = variance.get("severity")
+        return f"{severity}: {summary}" if severity else str(summary)
+    if isinstance(variance, str):
+        return variance
+    return None
+
+
+def _meta_guidance(judge: dict[str, Any]) -> list[str]:
+    guidance = judge.get("meta_guidance") or []
+    if isinstance(guidance, str):
+        return [guidance]
+    if isinstance(guidance, list):
+        return [str(item) for item in guidance if item]
+    return []
+
+
+def _judge_signal_summaries(judge: dict[str, Any]) -> list[str]:
+    """Return issue/lesson summaries carried by an actionable judge decision."""
+    verdict = (judge.get("verdict") or "").lower()
+    variances = [
+        summary for summary in (_variance_summary(v) for v in (judge.get("variances") or []))
+        if summary
+    ]
+    if variances:
+        return variances
+    if verdict in _HARD_FAIL_VERDICTS:
+        guidance = _meta_guidance(judge)
+        if guidance:
+            return guidance
+        outcome = judge.get("outcome")
+        if outcome:
+            return [str(outcome)]
+        return [f"judge returned verdict `{verdict}`"]
+    return []
+
 
 def _format_user_prompts_section(prompts: list[dict[str, Any]], clusters: list[dict[str, Any]]) -> str:
     """Build section 8 (user_prompts_and_repeats).
@@ -199,31 +301,26 @@ def _format_user_prompts_section(prompts: list[dict[str, Any]], clusters: list[d
     return "\n".join(lines)
 
 
-def _format_issues_section(state_json: dict[str, Any]) -> str:
+def _format_issues_section(state_json: dict[str, Any], run_id: str | None = None) -> str:
     """Build section 9 (issues_with_causal_tree).
 
-    Reads issues from ``state.json.runs[-1].judge_decisions[]`` + any
+    Reads issues from the current run's ``judge_decisions[]`` + any
     ``review_findings``/``failures``/``iterate_failures`` arrays. Each issue
     is rendered with a stub causal-tree the agent's LLM body can elaborate.
     Headless mode shows the captured signals as-is.
     """
-    runs = state_json.get("runs") or []
-    last = runs[-1] if runs else {}
+    runs = _runs_for_run_id(state_json, run_id)
     candidates: list[str] = []
-    judges = last.get("judge_decisions") or []
-    for j in judges:
+    for j in _iter_judge_decisions(runs):
         verdict = (j.get("verdict") or "").lower()
-        if verdict in ("nay", "block", "fail", "blocked"):
-            jid = j.get("judge_id", "judge")
-            ck = j.get("checkpoint_id", "?")
-            for v in j.get("variances") or []:
-                why = v.get("why_it_matters") or v.get("summary") or "issue"
-                candidates.append(f"- **{jid}** at `{ck}` — {why}")
-    for f in last.get("review_findings") or last.get("failures") or []:
-        candidates.append(f"- {f}")
-    iter_failures = last.get("iterate_failures") or []
-    for f in iter_failures:
-        candidates.append(f"- iterate-failure: {f}")
+        if verdict in _ACTIONABLE_VERDICTS:
+            for why in _judge_signal_summaries(j):
+                candidates.append(f"- {_judge_context(j)} — {why}")
+    for run in runs:
+        for f in run.get("review_findings") or run.get("failures") or []:
+            candidates.append(f"- {f}")
+        for f in run.get("iterate_failures") or []:
+            candidates.append(f"- iterate-failure: {f}")
     if not candidates:
         return "_No issues surfaced this run._"
     lines = ["### Issues surfaced", "", *candidates, "",
@@ -241,7 +338,11 @@ def _format_simple_bullet_section(items: list[str], empty_msg: str) -> str:
     return "\n".join(f"- {it}" for it in items)
 
 
-def _enforce_signals(clusters: list[dict[str, Any]], state_json: dict[str, Any]) -> list[str]:
+def _enforce_signals(
+    clusters: list[dict[str, Any]],
+    state_json: dict[str, Any],
+    run_id: str | None = None,
+) -> list[str]:
     """Surface candidates for the 'what should be enforced' section.
 
     Two sources:
@@ -253,10 +354,8 @@ def _enforce_signals(clusters: list[dict[str, Any]], state_json: dict[str, Any])
     for c in clusters:
         excerpt = c["examples"][0][:120]
         out.append(f"Make this an enforced default instead of user-prompted: _{excerpt}_")
-    runs = state_json.get("runs") or []
-    last = runs[-1] if runs else {}
-    for j in last.get("judge_decisions") or []:
-        if (j.get("verdict") or "").lower() in ("nay", "block"):
+    for j in _iter_judge_decisions(_runs_for_run_id(state_json, run_id)):
+        if (j.get("verdict") or "").lower() in _ACTIONABLE_VERDICTS and _judge_signal_summaries(j):
             rule = j.get("checkpoint_id") or j.get("judge_id") or "rule"
             out.append(f"Enforce gate: {rule} (failed this run)")
     return out
@@ -296,16 +395,23 @@ def build(
 
     prompts = extract_user_prompts(transcript_jsonl)
     clusters = cluster_repeated_prompts(prompts, threshold=prompted_threshold)
-    enforce = _enforce_signals(clusters, state_json)
+    run_records = _runs_for_run_id(state_json, run_id)
+    last_run = run_records[-1] if run_records else {}
+    judges = list(_iter_judge_decisions(run_records))
+    enforce = _enforce_signals(clusters, state_json, run_id)
 
     sections: dict[str, Any] = {}
 
-    # 1. lessons_learned — derived from state.json.runs[-1].lessons + clusters.
-    runs = state_json.get("runs") or []
-    last_run = runs[-1] if runs else {}
-    lessons: list[str] = list(last_run.get("lessons") or [])
+    # 1. lessons_learned — derived from run lessons, judge findings + clusters.
+    lessons: list[str] = []
+    for run in run_records:
+        for lesson in run.get("lessons") or []:
+            _append_unique(lessons, str(lesson))
+    for judge in judges:
+        for summary in _judge_signal_summaries(judge):
+            _append_unique(lessons, f"{judge.get('judge_id') or 'judge'}: {summary}")
     for c in clusters:
-        lessons.append(f"Prompted {c['count']}× — _{c['examples'][0][:100]}_")
+        _append_unique(lessons, f"Prompted {c['count']}× — _{c['examples'][0][:100]}_")
     sections["lessons_learned"] = _format_simple_bullet_section(
         lessons, "no lessons captured (transcript empty or no prior signals)"
     )
@@ -331,9 +437,12 @@ def build(
     )
 
     # 4. what_could_be_better — pull failures/iterate_failures.
-    bads: list[str] = list(last_run.get("failures") or [])
-    for f in last_run.get("iterate_failures") or []:
-        bads.append(f"iterate-failure: {f}")
+    bads: list[str] = []
+    for run in run_records:
+        for f in run.get("failures") or []:
+            _append_unique(bads, str(f))
+        for f in run.get("iterate_failures") or []:
+            _append_unique(bads, f"iterate-failure: {f}")
     sections["what_could_be_better"] = _format_simple_bullet_section(
         bads, "no failures captured this run"
     )
@@ -343,9 +452,9 @@ def build(
     # so we don't render "auditor approved " with a trailing space.
     wins: list[str] = []
     seen_wins: set[str] = set()
-    for j in last_run.get("judge_decisions") or []:
+    for j in judges:
         verdict = (j.get("verdict") or "").lower()
-        if verdict not in ("yay", "approve", "pass"):
+        if verdict not in _PASS_VERDICTS:
             continue
         judge_id = j.get("judge_id") or "judge"
         ck = (j.get("checkpoint_id") or "").strip()
@@ -359,8 +468,13 @@ def build(
     )
 
     # 6. what_went_well_by_accident — split planned-and-earned vs lucky.
-    earned = list(last_run.get("planned_wins") or [])
-    lucky = list(last_run.get("unplanned_wins") or [])
+    earned: list[str] = []
+    lucky: list[str] = []
+    for run in run_records:
+        for item in run.get("planned_wins") or []:
+            _append_unique(earned, str(item))
+        for item in run.get("unplanned_wins") or []:
+            _append_unique(lucky, str(item))
     if not earned and not lucky:
         sections["what_went_well_by_accident"] = "_(no signals captured — populate from agent reflection)_"
     else:
@@ -383,13 +497,14 @@ def build(
     sections["user_prompts_and_repeats"] = _format_user_prompts_section(prompts, clusters)
 
     # 9. issues_with_causal_tree — judge-flagged issues + stubs.
-    sections["issues_with_causal_tree"] = _format_issues_section(state_json)
+    sections["issues_with_causal_tree"] = _format_issues_section(state_json, run_id)
 
     sections["enforce_candidates"] = enforce
     sections["meta"] = {
         "run_id": run_id,
         "prompt_count": len(prompts),
         "cluster_count": len(clusters),
+        "judge_decision_count": len(judges),
         "transcript_present": transcript_jsonl is not None,
     }
     return sections

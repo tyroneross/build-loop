@@ -41,6 +41,86 @@ def _load_state_json(workdir: Path) -> dict[str, Any]:
         return {}
 
 
+def _load_judge_decisions_json(workdir: Path) -> list[dict[str, Any]]:
+    """Read `.build-loop/judge-decisions.json` without enforcing writer policy.
+
+    The writer validates judge envelopes before persisting them to state.json.
+    Retrospective synthesis is best-effort: malformed or absent files degrade to
+    no extra signals rather than blocking the background retrospective.
+    """
+    p = workdir / ".build-loop" / "judge-decisions.json"
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(data, dict) and isinstance(data.get("decisions"), list):
+        data = data["decisions"]
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _decision_key(decision: dict[str, Any]) -> str:
+    try:
+        return json.dumps(decision, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+        return repr(sorted(decision.items()))
+
+
+def _run_identifier(run: dict[str, Any]) -> str | None:
+    for key in ("run_id", "build_loop_id", "id"):
+        value = run.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _merge_judge_decisions(
+    state: dict[str, Any],
+    judge_decisions: list[dict[str, Any]],
+    run_id: str,
+) -> dict[str, Any]:
+    """Fold file-backed judge decisions into the state used for synthesis."""
+    if not judge_decisions:
+        return state
+
+    merged = dict(state or {})
+    runs = [dict(item) for item in (merged.get("runs") or []) if isinstance(item, dict)]
+
+    target_index = None
+    for index in range(len(runs) - 1, -1, -1):
+        if _run_identifier(runs[index]) == run_id:
+            target_index = index
+            break
+    if target_index is None and runs:
+        target_index = len(runs) - 1
+
+    if target_index is None:
+        target = {"run_id": run_id}
+        runs.append(target)
+        target_index = 0
+    else:
+        target = dict(runs[target_index])
+
+    combined: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for decision in list(target.get("judge_decisions") or []) + judge_decisions:
+        if not isinstance(decision, dict):
+            continue
+        key = _decision_key(decision)
+        if key in seen:
+            continue
+        seen.add(key)
+        combined.append(decision)
+
+    target["judge_decisions"] = combined
+    runs[target_index] = target
+    merged["runs"] = runs
+    return merged
+
+
 def _load_md(workdir: Path, name: str) -> str:
     p = workdir / ".build-loop" / name
     if not p.is_file():
@@ -117,6 +197,7 @@ def run(
         intent_md = _load_md(workdir, "intent.md")
         plan_md = _load_md(workdir, "plan.md")
         rid = run_id or _derive_run_id(state)
+        state = _merge_judge_decisions(state, _load_judge_decisions_json(workdir), rid)
         tx = transcript if transcript is not None else find_transcript_for_cwd(workdir)
         repo = _derive_repo_slug(workdir)
         intent_one = _intent_one_line(intent_md)

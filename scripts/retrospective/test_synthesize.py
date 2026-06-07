@@ -115,6 +115,53 @@ class SynthesizeRunTests(unittest.TestCase):
             ec_body = Path(p).read_text(encoding="utf-8")
             self.assertIn("Adopt as default", ec_body)
 
+    def test_gap2_judge_decisions_file_surfaces_with_hook_only_state(self) -> None:
+        workdir = self.tmp_dir / "gap2"
+        build_loop = workdir / ".build-loop"
+        build_loop.mkdir(parents=True)
+        (build_loop / "state.json").write_text(json.dumps({
+            "execution": {"build_loop_id": "gap2-run"},
+            "runs": [{
+                "run_id": "hook-only",
+                "outcome": "pass",
+                "judge_decisions": [{
+                    "judge_id": "independent-auditor-hook",
+                    "checkpoint_id": "",
+                    "verdict": "suggest",
+                    "variances": [],
+                }],
+                "lessons": [],
+            }],
+        }), encoding="utf-8")
+        (build_loop / "judge-decisions.json").write_text(json.dumps({
+            "decisions": [{
+                "judge_id": "independent-auditor",
+                "checkpoint_id": "Review-A",
+                "verdict": "nay",
+                "variances": [{
+                    "id": "V-1",
+                    "severity": "HIGH",
+                    "why_it_matters": "Cookie secret leaked into logs",
+                }],
+                "meta_guidance": ["Persist auditor findings into retrospectives"],
+            }],
+        }), encoding="utf-8")
+
+        r = synth_run(
+            workdir,
+            run_id="gap2-run",
+            transcript=None,
+            memory_root=self.tmp_dir / "no-memory",
+        )
+
+        self.assertEqual(r["status"], "ok")
+        body = Path(r["active_path"]).read_text(encoding="utf-8")
+        self.assertIn("Cookie secret leaked into logs", body)
+        self.assertIn("independent-auditor: HIGH: Cookie secret leaked into logs", body)
+        self.assertIn("Enforce gate: Review-A", body)
+        self.assertNotIn("_No issues surfaced this run._", body)
+        self.assertGreater(len(r["enforce_candidates"]), 0)
+
     # ----- Durable promotion behavior -----
 
     def test_durable_skipped_when_memory_root_missing(self) -> None:
