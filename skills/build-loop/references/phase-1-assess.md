@@ -81,6 +81,8 @@
 
    The packet must include canonical `build-loop-memory` root/project `MEMORY.md` and `constitution.md` files, indexed recall, repo-local `.build-loop/feedback.md`, `.build-loop/state.json`, current plan/goal/intent, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, and best-effort Rally/coordination state when coordination context exists. If the root constitution is absent, `context_bootstrap.py` seeds it once from the shipped template before reading; it never overwrites existing root or project constitution files. Missing surfaces are recorded in `sources.*.reasons[]`; they do not block Phase 1 by themselves. See `references/memory-systems.md` §"Read protocol — Phase 1 Assess".
 
+   **Cross-project prior art (P4 — payoff)**: the bootstrap also emits `packet.prior_art`, a compact cross-project digest of prior implementations + linked decisions for the task's classified capability. Powered by `scripts/capability_classifier.py` (deterministic, host-LLM-refinable) and `scripts/prior_art.py` (reuses P1 hybrid recall + scans `projects/<slug>/decisions/` and `projects/<slug>/lessons/` across other projects). The digest is compact (hard char cap) and absence-tolerant (empty memory → empty payload, never blocks). Phase 1 inlines `packet.prior_art.digest_text` into `.build-loop/intent.md` when non-empty so the agent sees prior approaches AND the "why" without the operator knowing to ask. Disable via `BUILD_LOOP_PRIOR_ART=0`.
+
    Then write the first live handoff snapshot:
 
    ```bash

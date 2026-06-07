@@ -862,6 +862,77 @@ def rally_context(workdir: Path, include_rally: bool) -> dict[str, Any]:
     return {"checked": True, "status": status, "reasons": reasons}
 
 
+def prior_art_context(
+    workdir: Path,
+    query: str,
+    project: str,
+    *,
+    memory_root: Path | None = None,
+    max_total_chars: int = 4000,
+) -> dict[str, Any]:
+    """P4 — Cross-project prior-art digest for Phase 1 Assess.
+
+    Classifies the task's capability(ies) from ``query`` and surfaces prior
+    implementations + linked decisions from OTHER projects in the
+    build-loop-memory store. Designed to answer the cold "build semantic
+    search" gap: the agent learns about atomize-news / atomize-ai / AIDA's
+    prior approaches AND the "why" without the operator knowing to ask.
+
+    Fail-soft contract:
+      * ``BUILD_LOOP_PRIOR_ART=0`` disables the digest entirely (opt-out).
+      * Missing classifier / engine / memory root → empty payload + reason.
+      * Never raises; never blocks Phase 1.
+    """
+    if os.environ.get("BUILD_LOOP_PRIOR_ART") == "0":
+        return {
+            "enabled": False,
+            "capabilities": [],
+            "implementations": [],
+            "decisions": [],
+            "digest_text": "",
+            "stats": {"impls": 0, "decisions": 0, "projects": [], "truncated": False},
+            "reasons": ["prior_art_disabled_by_env"],
+        }
+
+    try:
+        from capability_classifier import classify_envelope  # type: ignore  # noqa: PLC0415
+        from prior_art import build_prior_art  # type: ignore  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "enabled": True,
+            "capabilities": [],
+            "implementations": [],
+            "decisions": [],
+            "digest_text": "",
+            "stats": {"impls": 0, "decisions": 0, "projects": [], "truncated": False},
+            "reasons": [f"prior_art_import_error: {exc}"],
+        }
+
+    try:
+        env = classify_envelope(query or workdir.name)
+        digest = build_prior_art(
+            query=query or workdir.name,
+            capabilities=env["capabilities"],
+            current_project=project,
+            memory_root=memory_root,
+            max_total_chars=max_total_chars,
+            terms=env["terms"],
+        )
+    except Exception as exc:  # noqa: BLE001 — Phase 1 must never block
+        return {
+            "enabled": True,
+            "capabilities": [],
+            "implementations": [],
+            "decisions": [],
+            "digest_text": "",
+            "stats": {"impls": 0, "decisions": 0, "projects": [], "truncated": False},
+            "reasons": [f"prior_art_runtime_error: {exc}"],
+        }
+    digest["enabled"] = True
+    digest["classifier_confidence"] = env.get("confidence")
+    return digest
+
+
 def staleness_context(workdir: Path, timeout: float = 5.0) -> dict[str, Any]:
     """Capture the freshness probes' signals so they reach the packet + brief.
 
@@ -943,6 +1014,23 @@ def agent_brief(packet: dict[str, Any]) -> str:
             lines.append(
                 f"- {hit['title']} ({hit['path']}:{hit['line_start']}-{hit['line_end']})"
             )
+
+    # Prior-art cross-project digest (P4) — pointer-dense; full digest text
+    # lives in packet["prior_art"]["digest_text"] for the orchestrator to
+    # inline into intent.md. Here we just show that prior art exists so the
+    # brief stays compact.
+    prior = packet.get("prior_art") or {}
+    stats = prior.get("stats") or {}
+    if stats.get("impls") or stats.get("decisions"):
+        lines.append("")
+        lines.append("### Prior Art (cross-project)")
+        caps = ", ".join(prior.get("capabilities") or []) or "(unclassified)"
+        projs = ", ".join(stats.get("projects") or []) or "(none)"
+        lines.append(
+            f"- capability={caps} · impls={stats.get('impls', 0)} · "
+            f"decisions={stats.get('decisions', 0)} · projects: {projs}"
+        )
+        lines.append("- Inline `packet.prior_art.digest_text` into intent.md.")
     return "\n".join(lines)
 
 
@@ -976,6 +1064,12 @@ def build_packet(
         "terms": terms,
         "queues": queue_context(workdir),
         "lessons_progressive": lessons,
+        "prior_art": prior_art_context(
+            workdir=workdir,
+            query=query,
+            project=project,
+            max_total_chars=max_excerpt_chars * 3,  # share the excerpt budget
+        ),
         "session_prefs": read_session_prefs(workdir),
         "staleness": staleness_context(workdir),
         "sources": {
