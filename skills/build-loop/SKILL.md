@@ -349,7 +349,7 @@ Key steps: writing-plans skill → parallel-safe identification → intent mappi
 
 Implement the plan using parallel subagents where possible, following the single-writer git contract.
 
-Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → non-blocking context snapshots at dispatch/return boundaries → pass the UI input/output contract to UI implementers → single-writer git contract (implementers never commit) with pre/post commit context snapshots → C5 halt-and-ask backstop for architectural-class novel decisions.
+Key steps: subagent-driven-development → model assignment (Sonnet default) → parallel dispatch → non-blocking context snapshots at dispatch/return boundaries → pass the UI input/output contract to UI implementers → single-writer git contract (implementers never commit) with pre/post commit context snapshots → `scripts/dogfood_reload_checkpoint.py` for self-recursive runtime-changing stages → C5 halt-and-ask backstop for architectural-class novel decisions.
 
 **Load `skills/build-loop/references/phase-3-execute.md`** for the full protocol including Codex adapter, UI subagent prompt template, and coordination checkpoint policy.
 
@@ -480,6 +480,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-1-assess.md` — Full Phase 1 Assess protocol
 - `references/phase-2-plan.md` — Full Phase 2 Plan protocol
 - `references/phase-3-execute.md` — Full Phase 3 Execute protocol
+- `references/dogfood-reload-checkpoint.md` — Self-recursive stop/reload/resume checkpoint and ACK/fallback protocol
 - `references/phase-4-review.md` — Full Phase 4 Review protocol (sub-steps A–G, including Sub-step F Auto-Resolve with all 4 verdict arms)
 - `references/phase-5-iterate.md` — Full Phase 5 Iterate protocol
 - `references/phase-6-learn.md` — Full Phase 6 Learn protocol

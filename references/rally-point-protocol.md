@@ -43,6 +43,7 @@ Outside a git repo, fallback slug derivation delegates to memory's
 | Every phase-start | `post.post(kind="phase", payload={"phase": <name>}, ...)`, then `checkpoint.checkpoint_read(...)` |
 | files owned for the phase change | refresh `presence.write_presence` with `files_in_flight` |
 | Long-running task start and every 10 minutes | `agent_rally.py heartbeat --task-ref <claim-or-run-id> --progress <short update>` |
+| Runtime-changing dogfood stage | create `scripts/dogfood_reload_checkpoint.py` checkpoint, post Rally handoff with checkpoint path/instructions, and wait for ACKs or recorded fallback before the next stage |
 | Run complete | last presence write (the reaper clears it after the heartbeat window — no explicit unregister needed) |
 
 All writes are fire-and-forget (atomic JSON tmp+rename / JSONL

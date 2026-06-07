@@ -19,6 +19,7 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 | [implementer-brief-template.md](implementer-brief-template.md) | Structure of the Phase 3 implementer dispatch brief (pre-Execute checklist) | `agents/build-orchestrator.md` |
 | [implementer-envelope-schema.md](implementer-envelope-schema.md) | Canonical implementer return-envelope contract; `status` enum; `decision_ledger`; `novel_decisions[]` | `agents/implementer.md`, `agents/synthesis-critic.md` |
 | [single-writer-commit-protocol.md](single-writer-commit-protocol.md) | Phase 3 commit step — orchestrator owns `.git/` as single writer | `agents/build-orchestrator.md` |
+| [dogfood-reload-checkpoint.md](dogfood-reload-checkpoint.md) | Stop/reload/resume checkpoint for self-recursive runtime-changing stages | `agents/build-orchestrator.md`, `phase-3-execute.md` |
 | [ui-spotcheck-protocol.md](ui-spotcheck-protocol.md) | Phase 3 chunk-close UI spot-check (`uiTouched` routing) | `skills/.../ui-guidance-sources.md` |
 | [runtime-smoke-triggers.md](runtime-smoke-triggers.md) | When the Phase 4 Review-B runtime smoke gate fires | `phase-4-review.md` |
 | [autonomy-config.md](autonomy-config.md) | Autonomy gate config consumed by Phase 4 Auto-Resolve | `phase-4-review.md` |

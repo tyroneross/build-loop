@@ -50,6 +50,21 @@ Output JSON keys: `self_recursive`, `plugin_name`, `runtime_symlink_path`, `work
 
 Changing how build-loop is loaded (cache → `--plugin-dir`, or vice versa) takes effect **only at a fresh Claude Code session**. Do not switch mid-session: the live cache copy continues to serve your skills/agents until restart, and switching can GC the in-use cache and break the current session (`Agent not found` mid-run). Deploy plugin updates at a restart boundary; the same rule applies here.
 
+## Dogfood reload checkpoint
+
+When a self-recursive stage changes skills, agents, commands, hooks, MCP,
+Rally, memory/research, plugin manifests, or the self-recursive detector, the
+next stage must prove it is using the updated runtime. Use
+`references/dogfood-reload-checkpoint.md` and
+`scripts/dogfood_reload_checkpoint.py`:
+
+1. Finish and validate the runtime-changing stage.
+2. Create the checkpoint and post its path/instructions to Rally.
+3. Restart or reload each participating terminal.
+4. ACK with runtime root, runtime commit, reload method, and Rally status.
+5. Continue only after all expected tools ACK, or after an explicit fallback
+   decision records the stale/unmanaged terminal.
+
 ## Quick verification
 
 After launching with `--plugin-dir`, from inside the working tree:

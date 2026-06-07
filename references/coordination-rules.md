@@ -101,6 +101,8 @@ python3 scripts/coordination_status.py \
 5. Archiving / deleting files.
 6. Editing a shared / no-touch-zone file.
 7. Transitioning a step from `verification-pending` to `done`.
+8. Declaring a self-recursive runtime-changing stage ready for the next stage
+   after a dogfood reload checkpoint.
 
 Between triggers, no polling is needed only when there is no active peer, no
 active coord file, and no tool inbox message. When a host is waiting on an
@@ -121,6 +123,13 @@ python3 scripts/agent_rally.py heartbeat --workdir "$PWD" --session-id "$SESSION
 Then pass `--task-ref "$TASK_REF"` to `status` or `watch`. Presence only says
 the session is live; task heartbeat says whether it is still on the claimed
 task and when the next check-in is due.
+
+For self-recursive runtime-changing stages, use
+`scripts/dogfood_reload_checkpoint.py` and
+`references/dogfood-reload-checkpoint.md`. A Rally handoff or inject is not reload proof.
+Each participating terminal must ACK runtime root + commit, or
+the live agent must record a fallback (`reassign`, `defer`, or
+`continue_solo`) before continuing.
 
 Use stable tool ids (`claude_code`, `codex`, `cursor`, etc.) so targeted
 `inbox/<tool>.jsonl` messages route cleanly. Broadcast messages live in

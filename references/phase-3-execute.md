@@ -52,6 +52,17 @@ Consumers join the two rows on `task_id`. The `agent` field carries the `subagen
 
 Full protocol in `references/single-writer-commit-protocol.md`. Implementers no longer call `git add` or `git commit` (Hard rule 4); the orchestrator owns `.git/` as a single-writer resource. After each parallel batch returns, sequentially per envelope with `status: fixed | partial | completed`: the commit step executes unconditionally — no operator confirmation is required, even in interactive mode (the autonomy gate classifies `git commit` as `auto`). Sequence: context-snapshot pre_commit → verify-no-staged-residue → verify-scope → stage → commit (pre-commit hook runs HERE; no `--no-verify`) → verify-landed → context-snapshot post_commit → attestation-lint → synthesis-critic (UI files only) → independent-auditor advisory (with trivial bypass). For `status: blocked`, see `references/halt-and-ask-protocol.md` (C5 architectural-decision backstop, N=3 cap, Thinking-tier resolver).
 
+## Dogfood reload checkpoint (self-recursive runtime changes)
+
+After a validated stage/commit touches build-loop runtime surfaces, run
+`python3 scripts/dogfood_reload_checkpoint.py detect` on the changed files. If
+`runtime_change_required: true`, create a checkpoint and do not dispatch the
+next stage until `dogfood_reload_checkpoint.py status` returns `ready: true`.
+Read `references/dogfood-reload-checkpoint.md` for the create/ACK/fallback
+commands and host-specific reload boundaries. A stale or unmanaged peer is not
+a reason to wait silently: record `fallback` with `reassign`, `defer`, or
+`continue_solo`, then post the decision to Rally.
+
 ## Phase 3 UI spot-check (between chunks)
 
 After each chunk's commit step closes and before the next chunk dispatches, fire `ui-validator` whenever `uiTouched: true`. Full protocol — `uiTouched` signal table, dispatch brief, routing on return (`pass`/`fail`/`skipped`), iteration budget, and render-path fallback — in `references/halt-and-ask-protocol.md` §"Phase 3 UI spot-check (between chunks)".
