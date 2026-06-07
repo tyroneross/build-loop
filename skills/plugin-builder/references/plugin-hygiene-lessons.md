@@ -304,3 +304,4 @@ A third latent hazard: the stale wrapper mapped `severity=="stop"` → `permissi
 - [ ] Hook scripts live in-repo; any host wrapper (`~/.codex/…`, settings.json) is a thin `exec` shim, not logic (§17)
 - [ ] Every external binary in a hook is absolute-path-resolved or `command -v`-guarded; hook fails open (`exit 0`) on missing binary (§17)
 - [ ] Hook tested under `env -i PATH=/usr/bin:/bin` → exits 0, no `deny`/`block` unless an explicit safety gate (§17)
+- [ ] `python3 scripts/hook_hygiene_lint.py --hooks hooks/hooks.json --json` returns exit 0 (no `HH001` bare-binary / `HH002` strict-mode-subst / `HH003` no-fail-open / `HH004` advisory-deny findings). Operationalizes §17. WARN-level — surfaces in the run report, never blocks. Build-loop's own `hooks/hooks.json` is the passing reference fixture.

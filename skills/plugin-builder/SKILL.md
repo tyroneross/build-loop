@@ -137,6 +137,8 @@ Create `hooks/hooks.json`:
 
 For detailed hooks configuration, see `references/hooks-reference.md`.
 
+**Lint hooks before shipping.** Run `python3 scripts/hook_hygiene_lint.py --hooks hooks/hooks.json --json` against any hooks.json change. It operationalizes §17 of `references/plugin-hygiene-lessons.md`: HH001 (bare-binary on minimal PATH), HH002 (`set -e` + unguarded substitution), HH003 (no fail-open tail), HH004 (advisory-deny without safety marker). WARN-level — surfaces in the run report, never blocks; consistent with build-loop's "judges route, never stop" rule. Build-loop's own `hooks/hooks.json` is the passing reference fixture (`scripts/test_hook_hygiene_lint.py`).
+
 #### MCP Servers
 Create `.mcp.json` at plugin root:
 
