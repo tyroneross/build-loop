@@ -260,13 +260,37 @@ def _score(row: sqlite3.Row, tokens: list[str]) -> int:
     return sum(1 for token in tokens if token in haystack)
 
 
+VALID_RECALL_MODES = ("hybrid", "keyword")
+
+
 def query_facts(
     *,
     query: str = "",
     limit: int = 10,
     project: str | None = None,
     db_path: str | Path | None = None,
+    mode: str = "hybrid",
+    embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
+    """Recall facts. Default mode is **hybrid** (keyword candidates → embedding rerank).
+
+    Pipeline:
+      1. Keyword scorer (token match count, overfetched to ``limit * 20``).
+      2. If ``mode='hybrid'`` AND an embed backend is available AND any
+         candidate has a persisted ``embedding_json`` — rerank by adding
+         cosine(query, candidate) to the keyword score.
+      3. Otherwise return the pure-keyword ranking.
+
+    Graceful fallback (never raises):
+      - ``mode='keyword'``: legacy behavior, byte-equivalent ranking.
+      - Embed backend down or no candidate has an embedding: degrades to
+        keyword ranking, returns successfully.
+
+    ``embed_fn`` is injectable for tests/callers that want a deterministic
+    embedder. When None, ``embed_backend.embed`` is used lazily.
+    """
+    if mode not in VALID_RECALL_MODES:
+        raise ValueError(f"unknown mode {mode!r}; valid: {VALID_RECALL_MODES}")
     path = _db_path(db_path)
     if not path.exists():
         return []
@@ -280,7 +304,8 @@ def query_facts(
         rows = conn.execute(
             f"""
             SELECT rowid, subject, predicate, object, project, confidence,
-                   last_synced, metadata_json, tool, domain, confidence_source
+                   last_synced, metadata_json, tool, domain, confidence_source,
+                   embedding_json
             FROM semantic_facts
             WHERE {' AND '.join(where)}
             ORDER BY last_synced DESC, rowid DESC
@@ -291,13 +316,39 @@ def query_facts(
     finally:
         conn.close()
     tokens = _tokens(query)
-    ranked: list[tuple[int, sqlite3.Row]] = []
+    candidates: list[tuple[float, sqlite3.Row]] = []
     for row in rows:
         score = _score(row, tokens)
         if tokens and score <= 0:
-            continue
-        ranked.append((score, row))
-    ranked.sort(key=lambda item: (item[0], _parse_iso(item[1]["last_synced"]) or 0), reverse=True)
+            # Hybrid mode admits embedding-only matches: include the row
+            # with a zero keyword score so a strong cosine match can still
+            # surface synonyms / paraphrases. Keyword mode preserves the
+            # legacy "must have at least one token hit" behavior.
+            if mode != "hybrid":
+                continue
+            if not _row_has_embedding(row):
+                continue
+        candidates.append((float(score), row))
+
+    use_hybrid = mode == "hybrid" and bool(query and query.strip())
+    if use_hybrid:
+        from .hybrid import (  # noqa: PLC0415
+            _safe_embed_query,
+            has_any_embedding,
+            rerank_candidates,
+        )
+
+        if has_any_embedding(candidates):
+            query_emb = _safe_embed_query(query, embed_fn)
+            if query_emb is not None:
+                ranked = rerank_candidates(candidates, query_emb)
+            else:
+                ranked = _keyword_sort(candidates)
+        else:
+            ranked = _keyword_sort(candidates)
+    else:
+        ranked = _keyword_sort(candidates)
+
     out: list[dict[str, Any]] = []
     for _, row in ranked[:limit]:
         out.append({
@@ -316,6 +367,25 @@ def query_facts(
             "confidence_source": row["confidence_source"],
         })
     return out
+
+
+def _row_has_embedding(row: sqlite3.Row) -> bool:
+    try:
+        raw = row["embedding_json"]
+    except (IndexError, KeyError):
+        return False
+    return bool(raw)
+
+
+def _keyword_sort(
+    candidates: list[tuple[float, sqlite3.Row]],
+) -> list[tuple[float, sqlite3.Row]]:
+    """Legacy keyword ranking, byte-equivalent to pre-hybrid behavior."""
+    return sorted(
+        candidates,
+        key=lambda item: (item[0], _parse_iso(item[1]["last_synced"]) or 0),
+        reverse=True,
+    )
 
 
 def stats(db_path: str | Path | None = None) -> dict[str, Any]:
