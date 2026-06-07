@@ -69,6 +69,15 @@
 7. **Debugger context priming** (always; native to build-loop): invoke `Skill("build-loop:debugging-memory")` with `{ intent: "list-recent", project: "<current>" }` to summarize recent incidents in this project. One-line output; no action. If cross-project Coding Debugger is installed, the skill may use it; otherwise it falls through to `fallbacks.md#bug-memory`.
 8. **Capture UI state** (if web/mobile): host browser/screenshot tooling or simulator/native-AX evidence when available → showcase capture → manual screenshot. Do not route to IBR unless the user explicitly requested it.
 8a. **UI input/output inventory** (if `uiTarget != null`): load `skills/build-loop/references/ui-io-contract.md` and identify every affected user input and system output before component choices are made. Classify each by structural type, content format, persistence intent, operation/domain verb, component mapping, state matrix, modality fallback, validation/security layer, and traceability. Mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical; the full contract is finalized in Phase 2.
+
+8b. **Load short-term working context (Pillar 0 — runs BEFORE memory bootstrap)**: read `.build-loop/context/current.md` via the cheap loader so the agent resumes from the prior session's working state immediately, without paying the bootstrap latency first:
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/load_current.py --workdir "$PWD" --json
+   ```
+
+   The loader is local-FS-only (no DB, no embeddings, no recall) and returns a typed envelope `{exists, path, warm_read_latency_ms, parsed: {phase, run_id, next_action, links_down[], pointers[]}, reasons[]}`. Use `parsed.links_down[]` as the entry pointers DOWN into long-term memory (P1 hybrid recall + P4 prior-art) so the heavy bootstrap below knows where to look first. Missing / corrupt `current.md` → `exists: false` + `reasons[]`; never blocks Phase 1. Mirror `warm_read_latency_ms` into `.build-loop/state.json.assess.workingContextLatencyMs` for the Phase 4G report.
+
 9. **Load memory**: Run the automatic context bootstrap before planning:
 
    ```bash
