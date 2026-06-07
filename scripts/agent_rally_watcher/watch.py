@@ -94,6 +94,12 @@ def _signature(status: dict[str, Any]) -> dict[str, Any]:
             )
             for msg in status.get("inbox_latest_messages", [])
         ],
+        "task_heartbeat": {
+            "health": (status.get("task_heartbeat") or {}).get("health"),
+            "missed_count": (status.get("task_heartbeat") or {}).get("missed_count"),
+            "expected_ref": (status.get("task_heartbeat") or {}).get("expected_ref"),
+            "latest_id": ((status.get("task_heartbeat") or {}).get("latest") or {}).get("id"),
+        },
     }
 
 
@@ -139,6 +145,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--coordination-file", default=None)
     p.add_argument("--since-revision", type=int, default=None)
     p.add_argument("--max-changes", type=int, default=20)
+    p.add_argument(
+        "--task-ref",
+        default=None,
+        help="Expected active task/claim/run ref for task-heartbeat health.",
+    )
+    p.add_argument(
+        "--task-heartbeat-grace-seconds",
+        type=int,
+        default=coordination_status.task_heartbeat.DEFAULT_GRACE_SECONDS,
+        help="Grace window after next_check_in_at before a heartbeat is stale.",
+    )
     p.add_argument(
         "--baseline-current",
         action="store_true",
@@ -222,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 "inbox_unread_count": status.get("inbox_unread_count", 0),
                 "inbox_latest_messages": status.get("inbox_latest_messages", []),
+                "task_heartbeat": status.get("task_heartbeat", {}),
                 "new_change_revisions": _change_revisions(status),
             }
             if args.jsonl:

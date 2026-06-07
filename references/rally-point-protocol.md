@@ -42,6 +42,7 @@ Outside a git repo, fallback slug derivation delegates to memory's
 | Phase 1 preamble (once) | `build_loop_id.generate_or_resume(...)` before any Rally Point write, then `presence.write_presence(...)` — session_id, tool, model, run_id, app_slug, phase=`assess`, files_in_flight=`[]`; writers attach top-level `build_loop_id` + `build_loop_run_label` |
 | Every phase-start | `post.post(kind="phase", payload={"phase": <name>}, ...)`, then `checkpoint.checkpoint_read(...)` |
 | files owned for the phase change | refresh `presence.write_presence` with `files_in_flight` |
+| Long-running task start and every 10 minutes | `agent_rally.py heartbeat --task-ref <claim-or-run-id> --progress <short update>` |
 | Run complete | last presence write (the reaper clears it after the heartbeat window — no explicit unregister needed) |
 
 All writes are fire-and-forget (atomic JSON tmp+rename / JSONL
@@ -98,6 +99,7 @@ python3 scripts/coordination_watch.py \
   --workdir "$PWD" \
   --session-id "$SESSION_ID" \
   --tool "$TOOL_NAME" \
+  --task-ref "$TASK_REF" \
   --owned-files .build-loop/coordination/current-owned-files.txt \
   --interval 3 \
   --jsonl \
@@ -105,8 +107,11 @@ python3 scripts/coordination_watch.py \
 ```
 
 The scripts emit compact `clear | warn | blocked` state plus inbox unread
-count. AI should read full coordination context only when the script reports
-`warn` or `blocked`, a target inbox changes, a step
+count and task-heartbeat health. Presence answers whether a session is live;
+task heartbeat answers whether it is still on the expected task and when its
+next check-in is due. AI should read full coordination context only when the
+script reports `warn` or `blocked`, a target inbox changes, a task heartbeat
+goes stale/wrong-task/blocked, a step
 moves to `verification-pending`, or the next action is a commit, version bump,
 archive/delete, or shared/high-risk file edit.
 

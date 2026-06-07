@@ -102,6 +102,67 @@ class AgentRallyStatusTests(unittest.TestCase):
         self.assertEqual(status["inbox_latest_messages"][0]["id"], "codex-msg")
         self.assertEqual(status["inbox_latest_messages"][0]["preview"], "codex-only")
 
+    def test_heartbeat_command_writes_status_visible_task_health(self) -> None:
+        heartbeat = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "heartbeat",
+                "--workdir",
+                str(self.workdir),
+                "--session-id",
+                "me",
+                "--tool",
+                "codex",
+                "--task-ref",
+                "claim-1",
+                "--progress",
+                "ran tests",
+                "--evidence",
+                "pytest,git diff",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        heartbeat_payload = json.loads(heartbeat.stdout)
+        self.assertEqual(heartbeat_payload["action"], "task-heartbeat-written")
+        self.assertEqual(heartbeat_payload["task_ref"], "claim-1")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "status",
+                "--workdir",
+                str(self.workdir),
+                "--session-id",
+                "me",
+                "--tool",
+                "codex",
+                "--task-ref",
+                "claim-1",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=os.environ.copy(),
+        )
+        status = json.loads(result.stdout)
+
+        self.assertEqual(status["task_heartbeat"]["health"], "current")
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["progress_since_last"],
+            "ran tests",
+        )
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["evidence_refs"],
+            ["pytest", "git diff"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

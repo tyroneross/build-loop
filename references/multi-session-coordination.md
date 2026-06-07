@@ -7,6 +7,7 @@ _Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
 Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
 
 - **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/discovery_bridge.py`: the single concurrent-presence source of truth. One file per live session at `<resolved-channel>/sessions/<session-id>.json`; native `agent-rally-point` installs resolve under `~/.agent-rally-point/apps/<repo-id>/`, and the embedded build-loop fallback uses the same root with a local `<slug>`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
+- **Rally Point task heartbeat** — `scripts/rally_point/task_heartbeat.py`: append-only long-running task check-ins at `<resolved-channel>/task-heartbeats/<tool>.jsonl`. This is not process liveness; it records whether a session is still on the expected task, what changed since the prior check-in, and when the next check-in is due.
 - `scripts/memory_writer.py` — canonical writer for memory files (provenance frontmatter + atomic INDEX append in one operation)
 - `scripts/memory_index.py` — append-only discovery log at `~/dev/git-folder/build-loop-memory/INDEX.jsonl`
 
@@ -15,6 +16,7 @@ Multiple build-loop sessions can run concurrently in different terminals and acr
 This section defines the Rally Point presence integration plus the M5 trigger family. They complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
 
 - **Rally Point presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3). New change records use `scripts/rally_point/post.py`, not raw `append_change`.
+- **Rally Point task heartbeat — long-running work adherence.** Fires at task start, then at least every 10 minutes while a host is doing long-running work. `coordination_status.py --task-ref <id>` reports `current`, `stale_check_in`, `wrong_task`, `drift_risk`, `blocked`, or `needs_attention` without requiring an inbox message.
 - **Script-first status checks — token conservation.** `scripts/coordination_status.py` and `scripts/coordination_watch.py` compress Rally Point, coordination verdicts, peer overlap, and dirty-file state into compact JSON so agents do not repeatedly reread the full coordination note.
 - **M5 — Memory index append + canonical writer.** Fires on every memory write to canonical `~/dev/git-folder/build-loop-memory/` lanes (via `memory_writer.py write`) and every read between phases (via `memory_index.py tail --since`). Telemetry + cross-session discovery; never blocks.
 
@@ -59,8 +61,24 @@ If it returns `clear`, proceed without spending tokens on the coordination
 note. If it returns `warn` or `blocked`, read the reported coordination file or
 verdicts and resolve before the next shared-file edit, commit, version bump, or
 archive/delete. During high-overlap work, run `coordination_watch.py --interval
-3 --tool "$TOOL_NAME" --jsonl --baseline-current`; it prints only state
-transitions plus inbox unread count.
+3 --tool "$TOOL_NAME" --task-ref "$TASK_REF" --jsonl --baseline-current`; it
+prints only state transitions plus inbox unread count and task-heartbeat
+health.
+
+For long-running tasks, write the task heartbeat separately from presence:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --tool "$TOOL_NAME" \
+  --run-id "$RUN_ID" \
+  --task-ref "$TASK_REF" \
+  --status running \
+  --progress "<short update>" \
+  --evidence "<csv refs>" \
+  --json
+```
 
 Use the same rule for every coding host. Claude Code uses `claude_code`, Codex
 uses `codex`, Cursor can use `cursor`, and future agents should pick a stable

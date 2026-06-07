@@ -111,6 +111,17 @@ watcher running:
 python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --interval 5 --jsonl --baseline-current
 ```
 
+For long-running task ownership, write a task heartbeat at task start and at
+least every 10 minutes:
+
+```bash
+python3 scripts/agent_rally.py heartbeat --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_NAME" --task-ref "$TASK_REF" --progress "still on task" --json
+```
+
+Then pass `--task-ref "$TASK_REF"` to `status` or `watch`. Presence only says
+the session is live; task heartbeat says whether it is still on the claimed
+task and when the next check-in is due.
+
 Use stable tool ids (`claude_code`, `codex`, `cursor`, etc.) so targeted
 `inbox/<tool>.jsonl` messages route cleanly. Broadcast messages live in
 `inbox/all.jsonl`; every tool's read path includes that file in addition to

@@ -40,6 +40,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_watch.py \
   --workdir "$PWD" \
   --session-id "$SESSION_ID" \
   --tool "$TOOL_ID" \
+  --task-ref "$TASK_REF" \
   --interval 5 \
   --jsonl \
   --baseline-current
@@ -60,6 +61,11 @@ Watcher transition events include `inbox_latest_messages`, a compact
 doorbell preview of the newest addressed/broadcast inbox records. It is
 additive to the raw unread counts; read the inbox before acting on the full
 message.
+
+Watcher transition events also include `task_heartbeat`. Pass `--task-ref`
+when a long-running task has an expected claim/run/pillar id; the watcher will
+wake on current/stale/wrong-task/blocked heartbeat changes without requiring
+the peer to send an inbox message.
 
 ## Validation
 

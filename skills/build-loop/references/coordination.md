@@ -64,17 +64,21 @@ At Phase 1 entry, the orchestrator (see `agents/build-orchestrator.md` §"Phase 
 python3 scripts/coordination_status.py --workdir "$PWD" --session-id "$SESSION_ID" --json
 ```
 
-The status reports: active peers (live sessions in the channel's `sessions/`), unread inbox messages (`inbox/<my-tool>.jsonl`, `inbox/all.jsonl`), and any active coordination file. If `active_peers > 0` OR `inbox_unread_count > 0`, the orchestrator MUST drain the inbox before dispatching any chunk; otherwise the peer's last verdict/handoff is invisible to the new run.
+The status reports: active peers (live sessions in the channel's `sessions/`), unread inbox messages (`inbox/<my-tool>.jsonl`, `inbox/all.jsonl`), task-heartbeat health when `--task-ref` is set, and any active coordination file. If `active_peers > 0` OR `inbox_unread_count > 0`, the orchestrator MUST drain the inbox before dispatching any chunk; otherwise the peer's last verdict/handoff is invisible to the new run.
 
 ### Coordination polling gate — watcher install when a peer is present
 
 When the Phase 1 status returns peers, build-loop installs a cheap continuous watcher:
 
 ```bash
-python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool claude_code --interval 5 --jsonl --baseline-current
+python3 scripts/coordination_watch.py --workdir "$PWD" --session-id "$SESSION_ID" --tool claude_code --task-ref "$TASK_REF" --interval 5 --jsonl --baseline-current
 ```
 
-The watcher reports revision changes + inbox deltas as line-delimited JSON. The orchestrator polls it before commits, before final responses, and after any 30-second work interval. When a peer posts (e.g. a verifier returns a `feedback` verdict), the orchestrator routes the response into the active coordination file's "Codex feedback log" section rather than asking the user to paste it.
+The watcher reports revision changes, inbox deltas, and task-heartbeat health as line-delimited JSON. The orchestrator polls it before commits, before final responses, and after any 30-second work interval. When a peer posts (e.g. a verifier returns a `feedback` verdict), the orchestrator routes the response into the active coordination file's "Codex feedback log" section rather than asking the user to paste it.
+
+For long-running work, write `agent_rally.py heartbeat --task-ref "$TASK_REF"`
+at task start and at least every 10 minutes. Presence says the session is live;
+task heartbeat says it is still on the claimed task.
 
 The watcher process is OPTIONAL — if the daemon process can't start (no FS-watch support, sandboxed environment), the orchestrator falls back to per-checkpoint `coordination_status.py` polls. The same flow works; latency is higher.
 

@@ -61,6 +61,7 @@ surfaced on Rally Point records as top-level `build_loop_id` and
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py status --workdir "$PWD" --session-id "$SESSION_ID" --json
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat --workdir "$PWD" --session-id "$SESSION_ID" --task-ref "$TASK_REF" --progress "still working" --json
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py boundary --repo "${CLAUDE_PLUGIN_ROOT}" --check --json
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/boundary.py --repo "${CLAUDE_PLUGIN_ROOT}" --check --json
 ```
@@ -70,6 +71,35 @@ Status/watch envelopes include `inbox_latest_messages`, a compact doorbell
 preview for the newest direct/broadcast inbox records. Counts remain the raw
 wake signal; read `inbox/<tool>.jsonl` or `inbox/all.jsonl` before acting on a
 full message.
+
+## Task Heartbeat — still on the claimed task
+
+Presence is process liveness: it tells peers this session can still write to
+the channel. Task heartbeat is work liveness: it tells peers whether the
+session is still on the claimed task, what changed since the last check-in,
+what evidence exists, and when the next check-in is due.
+
+For long-running tasks, write a heartbeat at task start and then at least every
+10 minutes:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --tool "$TOOL_ID" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --task-ref "$TASK_REF" \
+  --status running \
+  --progress "short update since last check-in" \
+  --evidence "files/tests/commit-or-handoff-ids" \
+  --json
+```
+
+Then pass the same `--task-ref` to `status` or `watch`. Health can be
+`current`, `stale_check_in`, `wrong_task`, `missing`, `drift_risk`, `blocked`,
+or `needs_attention`. `blocked` and `needs_attention` make status report
+`blocked`; stale, missing, wrong-task, and drift-risk states report `warn`.
 
 ## Roster — who is running, where, doing what, with how many subagents
 
@@ -110,8 +140,9 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py presence \
 - `--task` — fuller free text (falls back to `--phase` for display).
 - `--parent <session_id>` — links a subagent to its spawning agent; omit for top-level.
 - `--spawned <type:count,…>` — the fan-out an agent self-reports.
-- Every `presence` call rewrites `last_seen` (presence IS the heartbeat) — re-post
-  periodically so the agent stays in the live window (default 120s).
+- Every `presence` call rewrites `last_seen`; re-post periodically so the
+  agent stays in the live window (default 120s). Presence is not task
+  heartbeat; use `agent_rally.py heartbeat` for long-running task check-ins.
 
 Top-level orchestrators should post `--spawned` reflecting their dispatched
 subagents; each dispatched subagent that can post should set `--parent` to the
@@ -120,7 +151,7 @@ orchestrator's `session_id`.
 ## Validation
 
 ```bash
-uv run pytest scripts/test_build_loop_id.py scripts/rally_point/test_boundary.py scripts/rally_point/test_orchestrator_contract.py scripts/test_agent_rally_roster.py
+uv run pytest scripts/test_build_loop_id.py scripts/rally_point/test_boundary.py scripts/rally_point/test_orchestrator_contract.py scripts/test_agent_rally_roster.py scripts/test_agent_rally_status.py
 python3 scripts/agent_rally.py boundary --repo "$PWD" --check --json
 ```
 

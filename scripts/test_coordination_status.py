@@ -17,7 +17,13 @@ sys.path.insert(0, str(HERE))
 
 import coordination_status as cs  # noqa: E402
 import coordination_watch as cw  # noqa: E402
-from rally_point import changes, channel_paths, inbox, presence  # noqa: E402
+from rally_point import (  # noqa: E402
+    changes,
+    channel_paths,
+    inbox,
+    presence,
+    task_heartbeat,
+)
 from rally_point import discovery_bridge as _bridge  # test isolation
 
 
@@ -458,6 +464,29 @@ class CoordinationStatusTests(unittest.TestCase):
         }
         self.assertNotEqual(cw._signature(base), cw._signature(changed))
 
+    def test_watch_signature_changes_when_task_heartbeat_health_changes(self):
+        base = {
+            "status": "clear",
+            "required_action": "none",
+            "revision": 1,
+            "task_heartbeat": {
+                "health": "current",
+                "missed_count": 0,
+                "expected_ref": "claim-1",
+                "latest": {"id": "hb-1"},
+            },
+        }
+        changed = {
+            **base,
+            "task_heartbeat": {
+                "health": "stale_check_in",
+                "missed_count": 1,
+                "expected_ref": "claim-1",
+                "latest": {"id": "hb-1"},
+            },
+        }
+        self.assertNotEqual(cw._signature(base), cw._signature(changed))
+
     # ------------------------------------------------------------------
     # Ownership-aware warn tests (R1 C8)
     # ------------------------------------------------------------------
@@ -557,9 +586,183 @@ class CoordinationStatusTests(unittest.TestCase):
             "peer_overlap_files", "direct_inbox_unread_count",
             "broadcast_inbox_unread_count", "inbox_unread_count",
             "inbox_unread_counts", "inbox_latest_messages",
+            "task_heartbeat",
         ]
         for field in required_fields:
             self.assertIn(field, status, f"Missing field: {field}")
+
+    def test_task_heartbeat_current_for_expected_ref(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="claim-1",
+            progress_since_last="ran focused tests",
+            evidence_refs=["pytest"],
+            interval_seconds=600,
+            ts=100.0,
+            next_check_in_at=700.0,
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-1",
+            "--task-heartbeat-now", "200",
+        )
+
+        self.assertEqual(status["task_heartbeat"]["health"], "current")
+        self.assertEqual(status["task_heartbeat"]["missed_count"], 0)
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["progress_since_last"],
+            "ran focused tests",
+        )
+
+    def test_task_heartbeat_one_missed_checkin_warns(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="claim-1",
+            interval_seconds=600,
+            ts=100.0,
+            next_check_in_at=700.0,
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-1",
+            "--task-heartbeat-now", "701",
+            "--task-heartbeat-grace-seconds", "0",
+        )
+
+        self.assertEqual(status["status"], "warn")
+        self.assertEqual(status["required_action"], "review_task_heartbeat_health")
+        self.assertEqual(status["task_heartbeat"]["health"], "stale_check_in")
+        self.assertEqual(status["task_heartbeat"]["missed_count"], 1)
+
+    def test_task_heartbeat_repeated_missed_checkins_count(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="claim-1",
+            interval_seconds=10,
+            ts=0.0,
+            next_check_in_at=10.0,
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-1",
+            "--task-heartbeat-now", "45",
+            "--task-heartbeat-grace-seconds", "0",
+        )
+
+        self.assertEqual(status["task_heartbeat"]["health"], "stale_check_in")
+        self.assertEqual(status["task_heartbeat"]["missed_count"], 4)
+
+    def test_task_heartbeat_wrong_task_warns(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="other-claim",
+            interval_seconds=600,
+            ts=100.0,
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-1",
+            "--task-heartbeat-now", "150",
+        )
+
+        self.assertEqual(status["status"], "warn")
+        self.assertEqual(status["task_heartbeat"]["health"], "wrong_task")
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["task_ref"],
+            "other-claim",
+        )
+
+    def test_task_heartbeat_newer_wrong_task_overrides_older_expected(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="claim-1",
+            interval_seconds=600,
+            ts=100.0,
+        )
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="other-claim",
+            interval_seconds=600,
+            ts=200.0,
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-1",
+            "--task-heartbeat-now", "250",
+        )
+
+        self.assertEqual(status["status"], "warn")
+        self.assertEqual(status["task_heartbeat"]["health"], "wrong_task")
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["task_ref"],
+            "other-claim",
+        )
+        self.assertEqual(
+            status["task_heartbeat"]["latest_for_expected"]["task_ref"],
+            "claim-1",
+        )
+
+    def test_task_heartbeat_blocked_status_blocks(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel = channel_paths.ensure_channel_dir(slug)
+        task_heartbeat.write_heartbeat(
+            channel,
+            session_id="me",
+            tool="codex",
+            app_slug=slug,
+            task_ref="claim-1",
+            status="blocked",
+            attention_reason="waiting on reviewer",
+            interval_seconds=600,
+            ts=100.0,
+        )
+
+        status = self._run(
+            "--tool", "codex",
+            "--task-ref", "claim-1",
+            "--task-heartbeat-now", "150",
+        )
+
+        self.assertEqual(status["status"], "blocked")
+        self.assertEqual(status["required_action"], "review_task_heartbeat_attention")
+        self.assertEqual(status["task_heartbeat"]["health"], "blocked")
+        self.assertEqual(
+            status["task_heartbeat"]["latest"]["attention_reason"],
+            "waiting on reviewer",
+        )
 
     def test_inbox_unread_count_zero_when_no_inbox(self):
         """inbox_unread_count is 0 when inbox file doesn't exist."""

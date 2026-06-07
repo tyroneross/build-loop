@@ -17,6 +17,7 @@ Subcommands:
     presence     write/refresh this session's presence record
     handoff      post a kind=handoff record (MECE + lateral-limits packet)
     status       read the cheap coordination-status envelope
+    heartbeat    write a structured task heartbeat for long-running work
     where        print the global channel_dir for the current repo (joins it)
     lead claim       claim the leadership lease
     lead renew       renew the current lease (lead only)
@@ -50,7 +51,12 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from rally_point import boundary as _boundary
-from rally_point import leadership, presence, roster as _roster  # noqa: E402
+from rally_point import (  # noqa: E402
+    leadership,
+    presence,
+    roster as _roster,
+    task_heartbeat,
+)
 from rally_point.discovery_bridge import (  # noqa: E402
     resolve as _bridge_resolve,
     rust_rally_binary,
@@ -363,12 +369,49 @@ def cmd_status(args: argparse.Namespace) -> int:
     ]
     if args.coordination_file:
         cmd += ["--coordination-file", args.coordination_file]
+    if args.task_ref:
+        cmd += ["--task-ref", args.task_ref]
+    if args.task_heartbeat_grace_seconds is not None:
+        cmd += [
+            "--task-heartbeat-grace-seconds",
+            str(args.task_heartbeat_grace_seconds),
+        ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
         return _emit({"action": "status-error", "error": str(exc)})
     sys.stdout.write(result.stdout)
     return result.returncode
+
+
+def cmd_heartbeat(args: argparse.Namespace) -> int:
+    """Write a structured heartbeat for a long-running task."""
+    slug, channel_dir = _resolve_channel(args.workdir)
+    record = task_heartbeat.write_heartbeat(
+        channel_dir,
+        session_id=args.session_id,
+        tool=args.tool,
+        model=args.model,
+        run_id=args.run_id,
+        app_slug=slug,
+        task_ref=args.task_ref,
+        status=args.status,
+        still_on_task=not args.not_on_task,
+        progress_since_last=args.progress,
+        evidence_refs=_split_csv(args.evidence),
+        attention_reason=args.attention_reason,
+        interval_seconds=args.interval_seconds,
+    )
+    return _emit({
+        "action": "task-heartbeat-written",
+        "app_slug": slug,
+        "session_id": args.session_id,
+        "tool": args.tool,
+        "task_ref": args.task_ref,
+        "status": record["status"],
+        "still_on_task": record["still_on_task"],
+        "next_check_in_at": record["next_check_in_at"],
+    })
 
 
 def cmd_boundary(args: argparse.Namespace) -> int:
@@ -622,8 +665,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tool name for tool-scoped inbox status (default: claude_code).",
     )
     sp_status.add_argument("--coordination-file", default=None)
+    sp_status.add_argument(
+        "--task-ref",
+        default=None,
+        help="Expected active task/claim/run ref for task-heartbeat health.",
+    )
+    sp_status.add_argument(
+        "--task-heartbeat-grace-seconds",
+        type=int,
+        default=None,
+        help="Grace window after next_check_in_at before a heartbeat is stale.",
+    )
     sp_status.add_argument("--json", action="store_true")
     sp_status.set_defaults(func=cmd_status)
+
+    sp_heartbeat = sub.add_parser(
+        "heartbeat",
+        help="Write a structured task heartbeat for long-running work.",
+    )
+    _common(sp_heartbeat)
+    sp_heartbeat.add_argument("--task-ref", required=True)
+    sp_heartbeat.add_argument(
+        "--status",
+        default="running",
+        choices=sorted(task_heartbeat.STATUSES),
+    )
+    sp_heartbeat.add_argument(
+        "--not-on-task",
+        action="store_true",
+        help="Mark this heartbeat as drift-risk / not still on the active task.",
+    )
+    sp_heartbeat.add_argument("--progress", default="")
+    sp_heartbeat.add_argument(
+        "--evidence",
+        default=None,
+        help="CSV refs such as changed files, tests, commits, or handoff ids.",
+    )
+    sp_heartbeat.add_argument(
+        "--attention-reason",
+        default="",
+        help="Required by convention for blocked or needs_attention heartbeats.",
+    )
+    sp_heartbeat.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=task_heartbeat.DEFAULT_INTERVAL_SECONDS,
+    )
+    sp_heartbeat.set_defaults(func=cmd_heartbeat)
 
     sp_boundary = sub.add_parser(
         "boundary",

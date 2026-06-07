@@ -27,7 +27,14 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from rally_point import changes, channel_paths, inbox, presence, revision  # noqa: E402
+from rally_point import (  # noqa: E402
+    changes,
+    channel_paths,
+    inbox,
+    presence,
+    revision,
+    task_heartbeat,
+)
 from rally_point.checkpoint import sanitize_change_for_surface  # noqa: E402
 from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 
@@ -130,6 +137,22 @@ def _read_inbox_unread_counts(channel_dir: Path, tool: str) -> dict[str, int]:
 def _read_inbox_latest_messages(channel_dir: Path, tool: str) -> list[dict[str, Any]]:
     """Return compact inbox doorbell summaries for ``tool``."""
     return inbox.latest_message_summaries(channel_dir, tool=tool, limit=3)
+
+
+def _read_task_heartbeat(args: argparse.Namespace, channel_dir: Path, tool: str) -> dict[str, Any]:
+    """Return task heartbeat health for the current session/tool."""
+    return task_heartbeat.summarize_task_health(
+        channel_dir,
+        tool=tool,
+        session_id=args.session_id,
+        expected_ref=getattr(args, "task_ref", None),
+        now=getattr(args, "task_heartbeat_now", None),
+        grace_seconds=getattr(
+            args,
+            "task_heartbeat_grace_seconds",
+            task_heartbeat.DEFAULT_GRACE_SECONDS,
+        ),
+    )
 
 
 def _read_rejection_count(channel_dir: Path) -> int:
@@ -348,6 +371,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
 
     inbox_counts = _read_inbox_unread_counts(channel_dir, requesting_tool)
     inbox_latest_messages = _read_inbox_latest_messages(channel_dir, requesting_tool)
+    task_heartbeat_status = _read_task_heartbeat(args, channel_dir, requesting_tool)
     rejection_count = _read_rejection_count(channel_dir)
 
     # G3 — escalation salience. An `escalation`-kind change record marks
@@ -378,21 +402,37 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         if "BLOCKED" in (v.get("verdict") or v.get("label", "")).upper()
     )
 
-    if unresolved or escalation_count:
+    heartbeat_health = task_heartbeat_status.get("health")
+    heartbeat_blocking = heartbeat_health in {"blocked", "needs_attention"}
+    heartbeat_warn = heartbeat_health in {
+        "stale_check_in",
+        "missing",
+        "wrong_task",
+        "drift_risk",
+    }
+
+    if unresolved or escalation_count or heartbeat_blocking:
         status = "blocked"
-        if escalation_count and not unresolved:
+        if heartbeat_blocking and not escalation_count and not unresolved:
+            required_action = "review_task_heartbeat_attention"
+        elif heartbeat_blocking:
+            required_action = "resolve_escalations_verdicts_or_heartbeat_attention"
+        elif escalation_count and not unresolved:
             required_action = "resolve_open_escalations"
         elif escalation_count:
             required_action = "resolve_escalations_and_coordination_verdicts"
         else:
             required_action = "resolve_unresolved_coordination_verdicts"
-    elif peer_overlap_files or dirty_outside_owned:
+    elif peer_overlap_files or dirty_outside_owned or heartbeat_warn:
         # warn only when a peer's ``owns`` intersects our files_in_flight,
         # OR when dirty files exist outside our owned set.  Raw peer count
         # does NOT trigger warn (prevents false positives when peers share
         # no files with us).
         status = "warn"
-        required_action = "review_peer_overlap_or_dirty_files"
+        if heartbeat_warn and not (peer_overlap_files or dirty_outside_owned):
+            required_action = "review_task_heartbeat_health"
+        else:
+            required_action = "review_peer_overlap_or_dirty_files"
     else:
         status = "clear"
         required_action = "none"
@@ -423,6 +463,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "inbox_unread_count": inbox_counts["total"],
         "inbox_unread_counts": inbox_counts,
         "inbox_latest_messages": inbox_latest_messages,
+        "task_heartbeat": task_heartbeat_status,
         "rejection_count": rejection_count,
         "escalation_count": escalation_count,
         "blocked_verdict_count": blocked_verdict_count,
@@ -465,6 +506,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--coordination-file", default=None)
     p.add_argument("--since-revision", type=int, default=None)
     p.add_argument("--max-changes", type=int, default=20)
+    p.add_argument(
+        "--task-ref",
+        default=None,
+        help="Expected active task/claim/run ref for task-heartbeat health.",
+    )
+    p.add_argument(
+        "--task-heartbeat-grace-seconds",
+        type=int,
+        default=task_heartbeat.DEFAULT_GRACE_SECONDS,
+    )
+    p.add_argument(
+        "--task-heartbeat-now",
+        type=float,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     p.add_argument("--json", action="store_true")
     return p.parse_args(argv)
 

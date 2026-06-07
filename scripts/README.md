@@ -107,13 +107,14 @@ hygiene check as `scripts/` scales.
 | `systemic_rca_doe.py` | Experimental packet builder and results scorer for the systemic RCA DOE matrix |
 | `sync_skills.py`, `check_cache_sync.py`, `sync_plugin_cache.py` | Native-skill drift detector + cache hygiene; committed-HEAD plugin cache sync for Claude/Codex |
 | `transcript-pattern-miner.py` | Read-only transcript miner |
-| `coordination_status.py` | Cheap multi-agent coordination sensor: Rally Point peers, overlaps, latest verdicts, dirty files → `clear | warn | blocked` JSON |
+| `coordination_status.py` | Cheap multi-agent coordination sensor: Rally Point peers, overlaps, task-heartbeat health, latest verdicts, dirty files → `clear | warn | blocked` JSON |
 | `coordination_rally.py` | Lightweight Rally Point rally publisher: presence + handoff without creating a coordination file |
 | `coordination_watch.py` | Compatibility entrypoint for the embedded `agent_rally_watcher` loop; polls `coordination_status.py` and prints only state transitions, including direct/broadcast inbox unread count |
 | `agent_rally_watcher/watch.py` | Namespaced watcher implementation for future `agent-rally-watcher` extraction |
 | `rally_point/boundary.py` | Validates `rally_point/plugin_boundary.json`, the embedded agent-rally extraction contract |
 | `rally_point/hooks.py` | Namespaced implementation behind the Rally Point shell hook wrappers |
 | `rally_point/inbox.py` | Inbox API at `apps/<slug>/inbox/<tool>.jsonl` plus common `inbox/all.jsonl`, with optional `changes.jsonl` mirror |
+| `rally_point/task_heartbeat.py` | Append-only long-running task check-ins that distinguish process liveness from still-on-task health |
 
 ## Phase B: repo-local memory, canonicalized outside the repo (added 2026-05-04)
 

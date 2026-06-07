@@ -48,12 +48,15 @@
         "scripts/rally_point/test_*.py",
         "scripts/test_build_loop_id.py",
         "scripts/test_agent_rally_where.py",
+        "scripts/test_agent_rally_status.py",
         "hooks/test_rally_point_hooks.sh"
       ],
       "stable_interfaces": [
         "rally_point.discovery_bridge.resolve(workdir)",
         "rally_point.post.post(...)",
         "rally_point.presence.write_presence(...)",
+        "rally_point.task_heartbeat.write_heartbeat(...)",
+        "rally_point.task_heartbeat.summarize_task_health(...)",
         "rally_point.checkpoint.checkpoint_read(...)",
         "python3 scripts/agent_rally.py <subcommand>"
       ],

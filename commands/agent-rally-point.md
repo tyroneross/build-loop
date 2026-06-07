@@ -1,7 +1,7 @@
 ---
-description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, announce, init, lead, escalate, boundary, docs, help."
+description: "Inspect or invoke build-loop's multi-session coordination (Rally Point + per-run coord file). Subcommands: status (default), watch, heartbeat, announce, init, lead, escalate, boundary, docs, help."
 allowed-tools: Bash, Read
-argument-hint: "[status|watch|announce|init|lead|escalate|boundary|docs|help] [args]"
+argument-hint: "[status|watch|heartbeat|announce|init|lead|escalate|boundary|docs|help] [args]"
 model: inherit
 ---
 
@@ -13,7 +13,7 @@ Parse `{{ARGUMENTS}}` as `<subcommand> [args...]`. **If `<subcommand>` is omitte
 
 ### `status` (default — no-args runs this)
 
-Cheap (~100-token) sensor poll. Reports active peer sessions, unresolved verifier verdicts, dirty files, and the active coord file path. Run this BEFORE any step-boundary decision (next-step recommendation, subagent dispatch, commit, version bump, archive/delete).
+Cheap (~100-token) sensor poll. Reports active peer sessions, unresolved verifier verdicts, dirty files, task-heartbeat health, and the active coord file path. Run this BEFORE any step-boundary decision (next-step recommendation, subagent dispatch, commit, version bump, archive/delete).
 
 Executes:
 
@@ -24,7 +24,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_status.py \
   --json
 ```
 
-(If the user passed `--coordination-file=<path>` in subcommand args, forward it.)
+(If the user passed `--coordination-file=<path>`, `--task-ref=<id>`, or
+`--task-heartbeat-grace-seconds=<seconds>` in subcommand args, forward it.)
 
 Example output (clear):
 
@@ -53,7 +54,8 @@ Example output (warn — peer overlap on owned files):
 Continuous cheap sensor loop. Use this while waiting on another coding host,
 during active shared-file work, or whenever an inbox message is expected. The
 watcher prints only state transitions, revision changes, dirty-file risk, and
-inbox unread count.
+inbox unread count. When `--task-ref` is set, it also wakes on task-heartbeat
+health changes.
 
 Executes:
 
@@ -67,8 +69,9 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_watch.py \
   --baseline-current
 ```
 
-If the user passed `--tool=<name>`, `--files-in-flight=<csv>`, or
-`--coordination-file=<path>` in subcommand args, forward them. Claude Code uses
+If the user passed `--tool=<name>`, `--files-in-flight=<csv>`,
+`--coordination-file=<path>`, `--task-ref=<id>`, or
+`--task-heartbeat-grace-seconds=<seconds>` in subcommand args, forward them. Claude Code uses
 `--tool claude_code`; Codex uses `--tool codex`; other hosts should choose a
 stable lowercase tool id.
 
@@ -79,6 +82,36 @@ the channel before continuing. Watch/status output also includes
 `inbox_latest_messages`: compact metadata and a short preview for the newest
 direct/broadcast inbox records. Treat it as a doorbell only; read the inbox
 file for full payloads before acting.
+
+### `heartbeat`
+
+Write a structured task heartbeat for long-running work. This is separate from
+presence: presence answers "process can still write"; heartbeat answers "the
+agent is still on the claimed task and when the next check-in is due."
+
+Use it at the start of a long-running task, then at least every 10 minutes or
+after each meaningful phase boundary. Set `--task-ref` to the claim, issue,
+pillar, or run id that status/watch should expect.
+
+Executes:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
+  --workdir "$PWD" \
+  --session-id "user-rally-$(date +%s)" \
+  --tool "claude_code" \
+  --model "inherit" \
+  --run-id "<run-id>" \
+  --task-ref "<claim-or-issue-id>" \
+  --status running \
+  --progress "<short progress since last check-in>" \
+  --evidence "<csv refs: files/tests/commits/handoffs>" \
+  --json
+```
+
+Use `--status blocked --attention-reason "<why>"` or
+`--status needs_attention --attention-reason "<why>"` when a human or lead must
+act. Use `--not-on-task` only to make drift explicit.
 
 ### `announce [message]`
 
@@ -221,6 +254,7 @@ Outputs:
 Subcommands:
   status (default)        Sensor poll: active peers, unresolved verdicts, coord file
   watch                   Continuous sensor loop for peer/inbox changes
+  heartbeat               Write a long-running task check-in
   announce [message]      Publish Rally Point presence + handoff without coord file
   init <topic> <scope>    Bootstrap a coord file from template; atomic + idempotent
   lead <op>               Inspect or update the leadership lease
@@ -236,7 +270,7 @@ When auto-invoke is enough:
   points (Phase 1 Assess preamble, Phase 3 chunk-close, Phase 4 Review-A).
   See agents/build-orchestrator.md §"Auto-invoke coordination". Use `watch`
   when waiting on an async peer response or targeted inbox message. Use
-  `status`, `announce`, or `init` for manual peer setup, debugging
+  `status`, `heartbeat`, `announce`, or `init` for manual peer setup, debugging
   coordination state, or onboarding a fresh verifier session.
 ```
 
