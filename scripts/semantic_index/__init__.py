@@ -127,6 +127,55 @@ def init(conn_or_path: sqlite3.Connection | str | Path | None = None) -> Path | 
     return None if isinstance(conn_or_path, sqlite3.Connection) else _db_path(conn_or_path)
 
 
+def _embed_text_for_fact(
+    subject: str, predicate: str, object_text: str
+) -> str:
+    """Canonical text fed to the write-path embedder.
+
+    Mirrors the haystack used by the keyword scorer (``subject + predicate +
+    object``) so a query that lexically matches the row is in the same
+    semantic neighborhood as the stored vector. The keyword scorer also
+    includes ``project / domain / tool`` but those are categorical labels —
+    embedding them inflates norm without adding semantic signal, so we
+    keep the embed text tight.
+    """
+    parts = [subject or "", predicate or "", object_text or ""]
+    return " ".join(p for p in parts if p).strip()
+
+
+def _safe_embed_for_write(
+    text: str,
+    embed_fn: Any,
+) -> list[float] | None:
+    """Best-effort embed for the write path. Returns None on any failure.
+
+    Contract: writes MUST NEVER fail because the embed backend is down.
+    A NULL ``embedding_json`` row stays keyword-discoverable; the backfill
+    capability can populate it later when a backend is available.
+
+    ``embed_fn=None`` lazily resolves ``embed_backend.embed`` so missing
+    optional MLX/Ollama deps don't fail at module import time.
+    """
+    if not text:
+        return None
+    if embed_fn is None:
+        try:
+            from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return None
+        embed_fn = _embed
+    try:
+        vec = embed_fn(text)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(vec, list) or not vec:
+        return None
+    try:
+        return [float(x) for x in vec]
+    except (TypeError, ValueError):
+        return None
+
+
 def upsert_fact(
     *,
     subject: str,
@@ -143,14 +192,43 @@ def upsert_fact(
     domain: str | None = None,
     source_prefix: str | None = None,
     embedding: list[float] | None = None,
+    embed_fn: Any = None,
+    auto_embed: bool = True,
     db_path: str | Path | None = None,
 ) -> None:
+    """Insert/update a semantic fact.
+
+    Auto-embed contract (NEW — fixes P1 dormant-production bug):
+      - When ``embedding`` is explicitly supplied, it is stored as-is
+        (callers can pre-compute or opt into a specific vector).
+      - When ``embedding`` is None AND ``auto_embed=True`` (default):
+        synthesize the embed text from ``subject + predicate + object``
+        and call ``embed_fn`` (or ``embed_backend.embed`` when None).
+        Failure (backend down, import error, raise) → store NULL. Writes
+        NEVER fail because of an embed-backend outage.
+      - ``auto_embed=False``: byte-equivalent to the pre-P1 behavior —
+        used by the backfill script (which controls the embedder itself)
+        and by tests that want to assert NULL-embedding state.
+
+    Why opt-in-via-default rather than required: the failure mode this
+    fixes is "production rows never get embeddings" — opting in by
+    default is the only thing that makes hybrid actually fire against
+    live data. Making it optional preserves the legacy contract for
+    callers that intentionally don't want write-time embed cost.
+    """
     if not subject.strip():
         raise ValueError("subject is required")
     metadata = dict(metadata or {})
     metadata.setdefault("last_synced", now_iso())
     metadata.setdefault("schema_version", SCHEMA_VERSION)
     files = [str(item) for item in (files_touched or [])]
+
+    # Auto-embed on write when caller didn't supply a vector. Best-effort;
+    # backend down → store NULL, fall back to keyword recall, never raise.
+    if embedding is None and auto_embed:
+        text = _embed_text_for_fact(subject, predicate, object_text)
+        embedding = _safe_embed_for_write(text, embed_fn)
+
     conn = connect(db_path)
     try:
         conn.execute(
@@ -212,6 +290,8 @@ def upsert_lesson(
     confidence: float | None = None,
     confidence_source: str | None = None,
     embedding: list[float] | None = None,
+    embed_fn: Any = None,
+    auto_embed: bool = True,
     db_path: str | Path | None = None,
     tool: str = "navgator",
     domain: str = "architecture",
@@ -243,6 +323,8 @@ def upsert_lesson(
         domain=domain,
         source_prefix=subject_prefix,
         embedding=embedding,
+        embed_fn=embed_fn,
+        auto_embed=auto_embed,
         db_path=db_path,
     )
 
@@ -260,13 +342,37 @@ def _score(row: sqlite3.Row, tokens: list[str]) -> int:
     return sum(1 for token in tokens if token in haystack)
 
 
+VALID_RECALL_MODES = ("hybrid", "keyword")
+
+
 def query_facts(
     *,
     query: str = "",
     limit: int = 10,
     project: str | None = None,
     db_path: str | Path | None = None,
+    mode: str = "hybrid",
+    embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
+    """Recall facts. Default mode is **hybrid** (keyword candidates → embedding rerank).
+
+    Pipeline:
+      1. Keyword scorer (token match count, overfetched to ``limit * 20``).
+      2. If ``mode='hybrid'`` AND an embed backend is available AND any
+         candidate has a persisted ``embedding_json`` — rerank by adding
+         cosine(query, candidate) to the keyword score.
+      3. Otherwise return the pure-keyword ranking.
+
+    Graceful fallback (never raises):
+      - ``mode='keyword'``: legacy behavior, byte-equivalent ranking.
+      - Embed backend down or no candidate has an embedding: degrades to
+        keyword ranking, returns successfully.
+
+    ``embed_fn`` is injectable for tests/callers that want a deterministic
+    embedder. When None, ``embed_backend.embed`` is used lazily.
+    """
+    if mode not in VALID_RECALL_MODES:
+        raise ValueError(f"unknown mode {mode!r}; valid: {VALID_RECALL_MODES}")
     path = _db_path(db_path)
     if not path.exists():
         return []
@@ -280,7 +386,8 @@ def query_facts(
         rows = conn.execute(
             f"""
             SELECT rowid, subject, predicate, object, project, confidence,
-                   last_synced, metadata_json, tool, domain, confidence_source
+                   last_synced, metadata_json, tool, domain, confidence_source,
+                   embedding_json
             FROM semantic_facts
             WHERE {' AND '.join(where)}
             ORDER BY last_synced DESC, rowid DESC
@@ -291,13 +398,39 @@ def query_facts(
     finally:
         conn.close()
     tokens = _tokens(query)
-    ranked: list[tuple[int, sqlite3.Row]] = []
+    candidates: list[tuple[float, sqlite3.Row]] = []
     for row in rows:
         score = _score(row, tokens)
         if tokens and score <= 0:
-            continue
-        ranked.append((score, row))
-    ranked.sort(key=lambda item: (item[0], _parse_iso(item[1]["last_synced"]) or 0), reverse=True)
+            # Hybrid mode admits embedding-only matches: include the row
+            # with a zero keyword score so a strong cosine match can still
+            # surface synonyms / paraphrases. Keyword mode preserves the
+            # legacy "must have at least one token hit" behavior.
+            if mode != "hybrid":
+                continue
+            if not _row_has_embedding(row):
+                continue
+        candidates.append((float(score), row))
+
+    use_hybrid = mode == "hybrid" and bool(query and query.strip())
+    if use_hybrid:
+        from .hybrid import (  # noqa: PLC0415
+            _safe_embed_query,
+            has_any_embedding,
+            rerank_candidates,
+        )
+
+        if has_any_embedding(candidates):
+            query_emb = _safe_embed_query(query, embed_fn)
+            if query_emb is not None:
+                ranked = rerank_candidates(candidates, query_emb)
+            else:
+                ranked = _keyword_sort(candidates)
+        else:
+            ranked = _keyword_sort(candidates)
+    else:
+        ranked = _keyword_sort(candidates)
+
     out: list[dict[str, Any]] = []
     for _, row in ranked[:limit]:
         out.append({
@@ -316,6 +449,25 @@ def query_facts(
             "confidence_source": row["confidence_source"],
         })
     return out
+
+
+def _row_has_embedding(row: sqlite3.Row) -> bool:
+    try:
+        raw = row["embedding_json"]
+    except (IndexError, KeyError):
+        return False
+    return bool(raw)
+
+
+def _keyword_sort(
+    candidates: list[tuple[float, sqlite3.Row]],
+) -> list[tuple[float, sqlite3.Row]]:
+    """Legacy keyword ranking, byte-equivalent to pre-hybrid behavior."""
+    return sorted(
+        candidates,
+        key=lambda item: (item[0], _parse_iso(item[1]["last_synced"]) or 0),
+        reverse=True,
+    )
 
 
 def stats(db_path: str | Path | None = None) -> dict[str, Any]:

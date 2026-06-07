@@ -17,12 +17,36 @@ from _db_url import NO_URL_REASON, resolve_db_url  # type: ignore  # noqa: E402
 from semantic_index import query_facts  # type: ignore  # noqa: E402
 
 
+def _resolve_embed_fn() -> Any:
+    """Return ``embed_backend.embed`` if importable, else ``None``.
+
+    Wired into ``query_facts`` so the production read path embeds the
+    query and the hybrid rerank actually fires. Graceful: import error
+    or missing optional deps return None and recall degrades to keyword.
+
+    Pre-P1-fix bug: ``read_semantic`` called ``query_facts`` without an
+    ``embed_fn``. The hybrid module's lazy import inside
+    ``_safe_embed_query`` would also try ``embed_backend.embed``, BUT it
+    only fires AFTER ``has_any_embedding`` returns True. With NULL
+    embeddings everywhere, that gate never opened — so hybrid silently
+    degraded to keyword even when the backend WAS available. Now the
+    write path populates embeddings (see ``upsert_fact``), and this
+    read path explicitly resolves the embedder so the rerank fires.
+    """
+    try:
+        from embed_backend import embed as _embed  # type: ignore  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return None
+    return _embed
+
+
 def read_semantic(
     workdir: Path,
     query: str,
     limit: int,
     project: Optional[str],
     skip_postgres: bool = False,
+    embed_fn: Any = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Read semantic facts from the local SQLite index, then Postgres fallback.
 
@@ -30,9 +54,21 @@ def read_semantic(
     ``skipped_postgres`` (distinct from ``db_unavailable: ...``) so consumers
     can tell intentional skip from genuine backend-down. Local SQLite remains
     available because it is the default fresh-install backend.
+
+    ``embed_fn`` is injectable so tests can pin a deterministic embedder.
+    When None, defaults to ``embed_backend.embed`` (resolved lazily via
+    ``_resolve_embed_fn``). When the backend is unavailable, the resolved
+    value is None and hybrid recall degrades to keyword — never raises.
     """
     reasons: List[str] = []
-    sqlite_out = query_facts(query=query, limit=limit, project=project)
+    if embed_fn is None:
+        embed_fn = _resolve_embed_fn()
+    sqlite_out = query_facts(
+        query=query,
+        limit=limit,
+        project=project,
+        embed_fn=embed_fn,
+    )
     if sqlite_out:
         if skip_postgres:
             reasons.append("skipped_postgres")
