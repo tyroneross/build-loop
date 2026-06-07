@@ -44,6 +44,21 @@ Each bypass is logged to `~/.build-loop/audit-bypass.log` with timestamp + cwd +
 
 For LLM-grade judgment on a specific commit or commit range, dispatch `Agent(subagent_type="build-loop:independent-auditor", ...)`. The agent uses the same context-gathering procedure as the script and renders a structured JSON envelope (with explicit `context_seen` flags and `missing_artifacts[]`). The agent is Sonnet-tier; use it for per-chunk advisory, cross-chunk reviews, and Phase 4 Review-A build-scope critique.
 
+## Dispatch ladder & `auditor_status` — the LLM auditor is never silently skipped (GAP-1)
+
+`Agent(subagent_type=...)` only works from a context that HAS the Agent tool. When the build-loop **orchestrator itself runs as a nested subagent** (dispatched via the Agent tool as `build-loop:build-orchestrator`, or running per-commit mode), the harness blocks sub-subagents — so that orchestrator **cannot** dispatch this agent. The historical defect (2026-06-06 IBR retro): the nested orchestrator silently fell back to inline self-reasoning and reported "independent-auditor ran inline", which rubber-stamped a HIGH cookie-leak + 2 MEDIUM findings that a real dispatch later caught. **Inline self-audit is not the independent auditor.**
+
+There are exactly **three honest ways a real auditor verdict enters `judge_decisions[]`**, and one honest "didn't run" signal:
+
+| `auditor_status` | How the verdict was produced | `judge_id` written |
+|---|---|---|
+| `ran:dispatched-agent` | `Agent(subagent_type="build-loop:independent-auditor")` — Agent tool present (top-level / Mode A) | `independent-auditor` |
+| `ran:peer-host(<host>)` | Auditor run as a peer process (rally channel / `codex exec`) — used when the orchestrator is nested but a peer host is reachable (Bash survives nesting) | `independent-auditor` |
+| (hook) | The PreToolUse boundary hook `scripts/audit_before_commit.py` | `independent-auditor-hook` |
+| `not-run:parent-must-dispatch` / `cross-vendor-deferred` | No Agent tool AND no peer host could execute. **No `independent-auditor`-labeled verdict is written.** | — |
+
+**Never-masquerade rule:** do not write a `judge_id` containing `independent-auditor` for inline orchestrator reasoning. If neither a dispatched agent, a peer-host process, nor the hook produced a verdict, the only honest record is `auditor_status: not-run:parent-must-dispatch` in the orchestrator's return envelope — never a fabricated verdict. A `not-run` run is **not review-complete**: the dispatching parent (which has the Agent tool) owes the audit before Report. Full ladder + parent-dispatch contract in `phase-4-review.md` §"Sub-step A"; the structural backstop is `scripts/write_run_entry` (`review_completeness_error` → exit 3 on a `scope=build` code-touching `pass` that lacks a real auditor verdict).
+
 ## How the running session should interpret a packet
 
 When a Bash `git commit` returns with the packet appended to stderr:
