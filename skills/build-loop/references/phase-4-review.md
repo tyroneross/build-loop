@@ -249,15 +249,26 @@ Final report sections, in this order:
 - `## Blocked` — items Auto-Resolve verdicted as `block`, same shape as Held.
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; keep this section).
 
-Before emitting the final report, write the draft to a temp file and run:
+Before emitting the final report, write the draft to a temp file and run BOTH linters (orthogonal — structural vs style):
 
 ```bash
-python3 scripts/build_report_lint.py <report.md> --json
+python3 scripts/build_report_lint.py <draft.md> --json    # structural: parallel_batch, merge_plan, evidence triplets
+python3 scripts/report_lint.py       <draft.md> --json    # style: headline shape, validation line, jargon, contrastive pivot, length
 ```
+
+Structural lint (`build_report_lint.py`):
 
 - Exit 0 → emit the report.
 - Exit 1 → revise the report before emitting it. The linter blocks vague verified/known claims, missing `parallel_batch` / `parallel_skipped_reason`, and missing `merge_plan` fields.
 - Exit 2 → lint outage. Record `[warn] build-report-lint skipped (<reason>)` in `## Done` and continue.
+
+Style lint (`report_lint.py`) — WARN with self-heal, never a hard halt. The user has asked for enforced concise, no-jargon user-facing output (`skills/build-loop/references/output-style.md` is the contract):
+
+- `summary.total == 0` → emit the report.
+- `summary.total > 0` → auto-revise the draft ONCE to clear the findings (translate jargon to plain language per the contract's blocklist, rewrite a missing headline as a one-sentence statement of what changed, add a validation line naming the exact command/method that verified the work, remove contrastive-pivot constructions), then re-run the lint. If a second pass still has findings, emit the report with a `[warn] report-lint findings remain after one revise pass` line in `## Done` and continue. Never block on style.
+- Script error / file not found → record `[warn] report-lint skipped (<reason>)` in `## Done` and continue.
+
+The two lints are orthogonal: structural rules live in `build_report_lint.py`, style/jargon rules live in `report_lint.py`. Neither replaces the other. The lints target ONLY the final user-facing report markdown; internal envelopes between agents stay structured/jargon-ok.
 
 Evidence contract: each verified/known claim carries its evidence in the compact form `✅ <claim> [<method> → <artifact>]` (e.g. `✅ auth works [pytest → ci.log]`); `@<observer>` only when the observer isn't this run's orchestrator. One line per claim — no restated context or process narration. Multi-chunk or parallel reports must include `merge_plan:` with `clean_against`, `conflicts_with`, and `suggested_order`.
 
