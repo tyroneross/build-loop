@@ -320,27 +320,38 @@ def _normalize_file_rel(
     parts = list(p.parts)
     new_memory_dir = memory_dir
 
+    # Strip lane/project prefixes in a loop so a doubly-prefixed path
+    # (``issues/projects/<p>/issues/x.md``) reduces to its base filename in
+    # one normalisation. The strip rules are idempotent at the leaf, so the
+    # loop terminates as soon as nothing was stripped this pass.
+    # Each pass tries: (1) projects/<p>/ -> strip, (2) <sublane>/ -> strip
+    # and re-point memory_dir.
     if scope == "project" and project:
-        # Strip leading ``projects/<project>/`` — present when the caller
-        # passed the full lane-relative path (the today's-exact-bug case).
-        if len(parts) >= 2 and parts[0] == "projects" and parts[1] == project:
-            parts = parts[2:]
-        # If remainder starts with a known sublane, re-resolve memory_dir.
-        if parts and parts[0] in PROJECT_SUBLANES:
-            from _paths import project_root  # type: ignore  # noqa: PLC0415
-            sublane = parts[0]
-            new_memory_dir = project_root(project) / sublane
-            parts = parts[1:]
+        from _paths import project_root  # type: ignore  # noqa: PLC0415
+        while True:
+            before = list(parts)
+            if len(parts) >= 2 and parts[0] == "projects" and parts[1] == project:
+                parts = parts[2:]
+            if parts and parts[0] in PROJECT_SUBLANES:
+                sublane = parts[0]
+                new_memory_dir = project_root(project) / sublane
+                parts = parts[1:]
+            if parts == before:
+                break
         if not parts:
             raise ValueError(
                 f"--file {file_rel!r} resolved to empty filename after lane strip"
             )
     elif scope == "top-level":
-        if parts and parts[0] in TOP_LEVEL_LANES:
-            from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
-            lane = parts[0]
-            new_memory_dir = memory_store_root() / lane
-            parts = parts[1:]
+        from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
+        while True:
+            before = list(parts)
+            if parts and parts[0] in TOP_LEVEL_LANES:
+                lane = parts[0]
+                new_memory_dir = memory_store_root() / lane
+                parts = parts[1:]
+            if parts == before:
+                break
         if not parts:
             raise ValueError(
                 f"--file {file_rel!r} resolved to empty filename after lane strip"

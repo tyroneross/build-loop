@@ -502,6 +502,23 @@ class P2WriterGuardTests(unittest.TestCase):
             landed,
         )
 
+
+    def test_strip_doubly_prefixed_path(self):
+        """Loop normalisation: ``issues/projects/<p>/issues/x.md`` collapses
+        to ``projects/<p>/issues/x.md`` (one landing)."""
+        mw.write(
+            self._paths.project_lessons_dir("demoproj"),
+            file_rel="issues/projects/demoproj/issues/double-prefix.md",
+            body="body",
+            name="x", description="x", type_="gotcha",
+            run_id="r", workdir=str(self.tmp), host="claude_code",
+            scope="project", project="demoproj",
+        )
+        landed = [str(p.relative_to(self.tmp)) for p in self.tmp.rglob("*.md")]
+        self.assertEqual(
+            landed, ["projects/demoproj/issues/double-prefix.md"]
+        )
+
     def test_top_level_lane_strip(self):
         """``--file debugging/x.md --scope top-level`` resolves to
         ``debugging/x.md`` (not ``lessons/debugging/x.md``)."""
