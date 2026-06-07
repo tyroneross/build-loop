@@ -75,6 +75,22 @@ def default_memory_dir() -> Path:
 
 DEFAULT_MEMORY_DIR = default_memory_dir()
 
+# Project sublanes that live as siblings under ``projects/<slug>/``.
+# When a caller passes ``--file <lane>/x.md`` or ``--file projects/<slug>/<lane>/x.md``
+# under ``--scope project``, the writer re-resolves memory_dir to the sublane
+# rather than nesting beneath ``lessons/``. Match the lane helpers in _paths.py.
+PROJECT_SUBLANES = frozenset({
+    "lessons", "issues", "decisions", "debugging", "design", "product",
+    "architecture", "raw",
+})
+
+# Top-level lanes (siblings under ``build-loop-memory/``). Same idea: a
+# ``--scope top-level --file <lane>/x.md`` should land in the lane, not nested
+# under ``lessons/``.
+TOP_LEVEL_LANES = frozenset({
+    "lessons", "debugging", "design", "product", "architecture",
+})
+
 VALID_HOSTS = frozenset({"claude_code", "codex", "gemini", "other"})
 VALID_TYPES = frozenset({
     "tool", "deployment", "library-choice", "user-preference", "pattern",
@@ -241,6 +257,123 @@ def _detect_git_head(workdir: Path) -> str | None:
     return None
 
 
+
+# ---------------------------------------------------------------------------
+# Path normalization + canonical filename derivation (P2 writer guard)
+# ---------------------------------------------------------------------------
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, collapse non-alphanumeric runs to ``-``, strip ends."""
+    s = re.sub(r"[^A-Za-z0-9]+", "-", str(text).lower()).strip("-")
+    return s or "untitled"
+
+
+def canonical_filename(*, type_: str, name: str, date: str | None = None) -> str:
+    """Return ``<YYYY-MM-DD>-<type>-<slug>.md`` (P2 contract).
+
+    Centralised here so callers that omit ``--file`` get a stable, sortable
+    filename without picking the lane themselves. The leading date keeps
+    chronologically related entries clustered in directory listings; the type
+    keeps mixed-lane folders (e.g. ``lessons/``) grouped by kind.
+    """
+    date_str = date or iso_utc().split("T", 1)[0]
+    return f"{date_str}-{_slugify(type_)}-{_slugify(name)}.md"
+
+
+def _normalize_file_rel(
+    file_rel: str,
+    *,
+    scope: str,
+    project: str | None,
+    memory_dir: Path,
+) -> tuple[str, Path]:
+    """Strip lane prefixes and re-resolve memory_dir when the path implies a sublane.
+
+    Single source of truth for the "lane is implicit" guard. Without this,
+    ``--file projects/<slug>/issues/x.md --scope project --project <slug>``
+    landed at ``<root>/projects/<slug>/lessons/projects/<slug>/issues/x.md``
+    because ``memory_dir`` was already ``projects/<slug>/lessons`` and the
+    caller's path was treated as lane-relative under it.
+
+    Rules (idempotent — running twice yields the same result):
+      * scope=project, project=<p>: strip a leading ``projects/<p>/`` segment;
+        if the remainder starts with a known PROJECT_SUBLANE (``issues/``,
+        ``decisions/``, ``architecture/`` ...), re-point ``memory_dir`` to
+        ``project_root(p) / <sublane>`` and drop that segment from the path.
+      * scope=top-level: strip a leading ``<lane>/`` segment when the lane is
+        in TOP_LEVEL_LANES (callers writing into ``debugging/`` should land in
+        ``<root>/debugging/`` even if memory_dir defaulted to ``lessons/``).
+      * Absolute paths are rejected (security: never resolve outside the lane).
+      * ``..`` is rejected for the same reason.
+
+    Returns ``(normalized_file_rel, normalized_memory_dir)``.
+    """
+    if not file_rel:
+        raise ValueError("file_rel is empty")
+    p = Path(file_rel)
+    if p.is_absolute():
+        raise ValueError(f"--file must be lane-relative, not absolute: {file_rel!r}")
+    if ".." in p.parts:
+        raise ValueError(f"--file must not contain '..': {file_rel!r}")
+
+    parts = list(p.parts)
+    new_memory_dir = memory_dir
+
+    # Strip lane/project prefixes in a loop so a doubly-prefixed path
+    # (``issues/projects/<p>/issues/x.md``) reduces to its base filename in
+    # one normalisation. The strip rules are idempotent at the leaf, so the
+    # loop terminates as soon as nothing was stripped this pass.
+    # Each pass tries: (1) projects/<p>/ -> strip, (2) <sublane>/ -> strip
+    # and re-point memory_dir.
+    if scope == "project" and project:
+        from _paths import project_root  # type: ignore  # noqa: PLC0415
+        while True:
+            before = list(parts)
+            if len(parts) >= 2 and parts[0] == "projects" and parts[1] == project:
+                parts = parts[2:]
+            if parts and parts[0] in PROJECT_SUBLANES:
+                sublane = parts[0]
+                new_memory_dir = project_root(project) / sublane
+                parts = parts[1:]
+            if parts == before:
+                break
+        if not parts:
+            raise ValueError(
+                f"--file {file_rel!r} resolved to empty filename after lane strip"
+            )
+    elif scope == "top-level":
+        from _paths import memory_store_root, project_root  # type: ignore  # noqa: PLC0415
+        while True:
+            before = list(parts)
+            # Strip recognized top-level lane prefixes.
+            if parts and parts[0] in TOP_LEVEL_LANES:
+                lane = parts[0]
+                new_memory_dir = memory_store_root() / lane
+                parts = parts[1:]
+            # Also strip a leading ``projects/<slug>/`` segment (and its sublane)
+            # when the caller passed a fully-qualified project path without scope=.
+            # This makes the guard unconditional: a no-scope in-process call with
+            # file_rel="projects/<p>/<sublane>/x.md" lands once, not double-nested.
+            elif len(parts) >= 2 and parts[0] == "projects":
+                detected_slug = parts[1]
+                parts = parts[2:]
+                if parts and parts[0] in PROJECT_SUBLANES:
+                    sublane = parts[0]
+                    new_memory_dir = project_root(detected_slug) / sublane
+                    parts = parts[1:]
+                else:
+                    new_memory_dir = project_root(detected_slug) / "lessons"
+            if parts == before:
+                break
+        if not parts:
+            raise ValueError(
+                f"--file {file_rel!r} resolved to empty filename after lane strip"
+            )
+
+    return str(Path(*parts)), new_memory_dir
+
+
 # ---------------------------------------------------------------------------
 # Core API
 # ---------------------------------------------------------------------------
@@ -258,6 +391,8 @@ def write(
     workdir: str,
     host: str,
     extra_frontmatter: dict | None = None,
+    scope: str | None = None,
+    project: str | None = None,
 ) -> dict:
     """Create or update a memory file with provenance frontmatter.
 
@@ -270,6 +405,16 @@ def write(
         raise ValueError(f"host must be one of {sorted(VALID_HOSTS)}; got {host!r}")
     if type_ not in VALID_TYPES:
         raise ValueError(f"type must be one of {sorted(VALID_TYPES)}; got {type_!r}")
+
+    # P2 guard: unconditionally normalise the path so a lane-prefixed
+    # --file argument never double-nests under memory_dir regardless of
+    # whether the caller passed scope=.  When scope is None we default to
+    # "top-level" strip semantics (strips recognized TOP_LEVEL_LANES prefixes
+    # only; project-lane stripping requires an explicit scope + project pair).
+    _eff_scope = scope if scope is not None else "top-level"
+    file_rel, memory_dir = _normalize_file_rel(
+        file_rel, scope=_eff_scope, project=project, memory_dir=memory_dir,
+    )
 
     path = memory_dir / file_rel
     workdir_abs = str(Path(workdir).resolve())
@@ -552,10 +697,12 @@ def _cli_write(args: argparse.Namespace) -> int:
     if body is None:
         # Fall back to stdin
         body = sys.stdin.read()
+    # P2: --file is optional; auto-derive ``<date>-<type>-<slug>.md`` when missing.
+    file_rel = args.file or canonical_filename(type_=args.type, name=args.name)
     try:
         fm = write(
             _cli_memory_dir(args),
-            file_rel=args.file,
+            file_rel=file_rel,
             body=body,
             name=args.name,
             description=args.description,
@@ -563,6 +710,8 @@ def _cli_write(args: argparse.Namespace) -> int:
             run_id=args.run_id,
             workdir=args.workdir,
             host=args.host,
+            scope=args.scope,
+            project=_cli_resolved_project(args),
         )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -633,7 +782,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     w = sub.add_parser("write", help="Create or update a memory file")
-    w.add_argument("--file", required=True, help="Relative path inside memory-dir")
+    w.add_argument("--file", default=None, help="Relative path inside memory-dir (optional; auto-derived from --type+--name when omitted)")
     w.add_argument("--name", required=True)
     w.add_argument("--description", required=True)
     w.add_argument("--type", required=True, choices=sorted(VALID_TYPES))
@@ -660,6 +809,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     m.add_argument("--json", action="store_true")
 
     return p.parse_args(argv)
+
+
+def _cli_resolved_project(args: argparse.Namespace) -> str | None:
+    """Resolve the project tag the same way _cli_memory_dir does.
+
+    Kept in lockstep so the scope/project passed to write() (for path
+    normalization) matches the lane _cli_memory_dir resolves. When
+    --scope is top-level, returns None — the writer guard ignores it.
+    """
+    if args.scope != "project":
+        return None
+    workdir = (
+        getattr(args, "workdir", None)
+        or getattr(args, "applying_workdir", None)
+        or "."
+    )
+    if args.project:
+        return args.project
+    from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+    return resolve_project(Path(workdir))
 
 
 def _cli_memory_dir(args: argparse.Namespace) -> Path:

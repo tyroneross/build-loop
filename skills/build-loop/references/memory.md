@@ -89,12 +89,32 @@ last_updated_at: "ISO8601 UTC"
 
 ### Writer side — use memory_writer.py, never write memory files directly
 
+**Top-level (cross-project) write** — `--scope top-level` routes to `build-loop-memory/lessons/` (or a sibling lane when `--file <lane>/x.md` is used):
+
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py \
+  --scope top-level \
+  write \
   --file "<rel-path>" \
   --name "<slug>" \
   --description "<one-line>" \
   --type feedback \
+  --run-id "$RUN_ID" \
+  --workdir "$PWD" \
+  --host claude_code \
+  --body-file /tmp/memory-body.md
+```
+
+**Project-scoped write** — `--scope project --project <slug>` routes to `build-loop-memory/projects/<slug>/lessons/` (or a sublane when `--file <sublane>/x.md` is used):
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py \
+  --scope project --project "$PROJECT_SLUG" \
+  write \
+  --file "<rel-path>" \
+  --name "<slug>" \
+  --description "<one-line>" \
+  --type gotcha \
   --run-id "$RUN_ID" \
   --workdir "$PWD" \
   --host claude_code \
