@@ -167,7 +167,7 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     Envelope shape (Priority 20):
 
         {
-          "ok": <True if canonical store has files>,
+          "ok": <True if EITHER store has files>,
           "count": <legacy_count + canonical_count>,
           "duration_ms": <int>,
           "legacy":    {"ok": bool, "count": int, "path": str|None, ...},
@@ -188,8 +188,11 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     canonical = _probe_one_decisions_dir(canonical_path)
 
     duration_ms = int((time.monotonic() - started) * 1000)
-    any_ok = canonical["ok"]
-    total_count = canonical["count"] if canonical["ok"] else 0
+    # Top-level ok/count retain the pre-Priority-20 (legacy-inclusive) contract:
+    # ok when EITHER store has decision files; count is the sum. Consumers that
+    # need to distinguish the stores read the `legacy`/`canonical` sub-keys.
+    any_ok = canonical["ok"] or legacy["ok"]
+    total_count = canonical["count"] + legacy["count"]
 
     envelope: Dict[str, Any] = {
         "ok": any_ok,
@@ -200,7 +203,7 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
     }
     if not any_ok:
         # Aggregate reason — useful for the one-liner.
-        envelope["reason"] = "canonical decision store missing"
+        envelope["reason"] = "no decision store found (canonical + legacy both empty/missing)"
     return envelope
 
 
