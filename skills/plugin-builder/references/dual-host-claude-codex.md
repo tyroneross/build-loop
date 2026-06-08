@@ -168,6 +168,11 @@ When the plugin has install scripts (most do), pair them so users can pick their
 ```
 
 The `files` array is what ships to npm — make sure both manifest directories and both install scripts are listed.
+Before publishing, run the package surface gate in
+`skills/plugin-builder/references/distribution.md`: review
+`npm pack --dry-run --json` output, confirm no build caches or local runtime
+artifacts are included, and validate npmjs and GitHub Packages as separate
+registry surfaces when both are used.
 
 ## What stays the same
 
@@ -195,6 +200,8 @@ Do not duplicate content:
 | Divergent `name` or `version` between Claude and Codex manifests | Keep them identical — same plugin, same version |
 | Duplicating `skills/` under `.codex-plugin/skills/` | One `skills/` at repo root, both manifests point to it via `"skills": "./skills"` |
 | Forgetting `.codex-plugin/` in `package.json` `files[]` | Add it — otherwise `npm publish` ships a broken package for Codex users |
+| Treating GitHub Packages success as npmjs success | Verify each registry separately with `npm view` or an install smoke |
+| Treating `npm publish --dry-run` as proof npmjs trusted publishing is configured | Dry-run is a package check; verify the npm Trusted Publisher owner, repo, workflow filename, environment, and allowed action before real publish |
 | `interface.capabilities` claims more than the plugin uses | Codex surfaces this at install time; claiming unused permissions looks worse, not better |
 | Missing `interface` block entirely | Codex marketplace UI will show raw name/description with no formatting; always include the block |
 | README doesn't mention Codex | Existing users don't discover the new install surface |
@@ -206,5 +213,8 @@ Do not duplicate content:
 - [ ] `interface.displayName`, `shortDescription`, `longDescription`, `developerName`, `category`, `capabilities` all set
 - [ ] `skills` and `mcpServers` paths point to the repo-root directories (same ones Claude uses)
 - [ ] `package.json` `files[]` includes `.codex-plugin/` and `.agents/` if used
+- [ ] `npm pack --dry-run --json` inventory has no `.build/`, `node_modules/`, local runtime output, credentials, or unexpected large artifacts
+- [ ] npmjs and GitHub Packages publish/install checks are reported separately when both registries are in use
+- [ ] npmjs Trusted Publisher settings match the workflow owner, repo, workflow filename, environment, and `npm publish` allowed action
 - [ ] README has the Codex section so existing users know about the install surface
 - [ ] Install scripts exist for both hosts (`install:claude`, `install:codex`) when package.json has a `scripts` section

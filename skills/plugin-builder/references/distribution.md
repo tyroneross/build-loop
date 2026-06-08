@@ -121,6 +121,96 @@ For team-internal distribution:
 - No caching involved
 - Good for development
 
+## npm Package Publishing
+
+Use this checklist when a plugin also ships as an npm package. Keep npmjs and
+GitHub Packages as separate release surfaces; a pass on one registry does not
+prove the other one shipped.
+
+### Registry Rules
+
+- Public npmjs publishes must target `https://registry.npmjs.org`. If
+  `package.json` has `publishConfig.registry` set to GitHub Packages, pass
+  `--registry=https://registry.npmjs.org` in the npmjs workflow and validation
+  commands.
+- GitHub Packages publishes target `https://npm.pkg.github.com` and need their
+  own install smoke. Do not report "published" without naming which registry
+  passed.
+- Validate the final registry state after publish:
+
+```bash
+npm view @scope/package version dist-tags --registry=https://registry.npmjs.org --json
+npm view @scope/package version --registry=https://npm.pkg.github.com
+```
+
+### Package Surface Gate
+
+Run the pack inventory before any tag or publish:
+
+```bash
+npx -y npm@11 pack --dry-run --json --registry=https://registry.npmjs.org
+```
+
+Review the JSON, not just the exit code:
+
+- Required files are present: `dist/` or runtime entrypoints, `bin` targets,
+  `.claude-plugin/`, `.codex-plugin/`, `skills/`, install scripts, README, and
+  license.
+- Generated caches are absent: `.build/`, `node_modules/`, simulator or local
+  runtime build output, local config, credentials, and large derived artifacts.
+- The tarball size is plausible for the package. A sudden large tarball is a
+  release blocker until the included file list is explained.
+- `package-lock.json`, if present, has the same package version as
+  `package.json`.
+
+### npmjs Trusted Publisher Gate
+
+For npmjs tokenless publishing from GitHub Actions, verify the npm package's
+Trusted Publisher settings before the real publish:
+
+- Provider: GitHub Actions.
+- Owner/user or organization and repository exactly match the GitHub repo.
+- Workflow filename exactly matches the publish workflow, for example
+  `publish-npmjs.yml`.
+- Environment is blank unless the workflow uses a GitHub environment.
+- Allowed actions include `npm publish`.
+
+The workflow should use a GitHub-hosted runner, `permissions: id-token: write`,
+`actions/checkout`, and `actions/setup-node` with `registry-url` set to the
+target registry. Do not set `NODE_AUTH_TOKEN` for trusted-publisher npmjs
+publishes. Remove obsolete `always-auth` inputs when using modern
+`setup-node`; use an explicit package-manager cache setting if the default
+cache detection is noisy.
+
+Run `npm publish --dry-run --access public --registry=https://registry.npmjs.org`
+as a packaging check, but do not treat it as proof that the Trusted Publisher
+mapping is valid. A real publish can still fail after a successful dry-run when
+the npm package settings do not match the GitHub workflow.
+
+### Failure Triage
+
+- If GitHub Packages publishes and installs but npmjs fails, report split
+  registry status instead of changing package code by default.
+- If npmjs fails with `E404` or "not found or you do not have permission" on the
+  final `PUT`, first inspect the npm Trusted Publisher owner/repo/workflow and
+  package access. After fixing npm settings, rerun the failed workflow:
+
+```bash
+gh run rerun <run-id> --failed
+```
+
+- Use local npm login or token publishing only as an explicit fallback decision,
+  because it bypasses the trusted-publisher/provenance path.
+
+### Official References
+
+- npm CLI publish command:
+  `https://docs.npmjs.com/cli/v11/commands/npm-publish`
+- npm Trusted Publishers:
+  `https://docs.npmjs.com/trusted-publishers#supported-cicd-providers`
+- GitHub Actions setup-node trusted-publisher OIDC:
+  `https://github.com/actions/setup-node/blob/main/docs/advanced-usage.md#publishing-to-npm-with-trusted-publisher-oidc`
+
 ## README Guidelines
 
 For GitHub distribution, include:
