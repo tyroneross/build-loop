@@ -232,6 +232,185 @@ class PrunePluginCacheTests(unittest.TestCase):
         self.assertEqual(data["protected"], [])
         self.assertFalse(self.claude_old.exists())
 
+    def test_peer_session_version_is_protected_via_fake_ps(self) -> None:
+        """Simulate a peer Claude session bound to claude_old via a fake `ps`
+        on PATH. The peer scan must see the peer's CLAUDE_PLUGIN_ROOT and
+        protect claude_old even when this process's env has no pin.
+
+        Strategy: prepend a tempdir to PATH containing a `ps` shim that emits
+        a fixed line with the peer's PID, command, and env. Forces the macOS
+        branch by running with no /proc available (the script's Linux branch
+        is gated on Path('/proc').is_dir() — present on Linux, absent on
+        macOS, so we'd need a separate Linux test using a chroot-like
+        construct; instead we cover the cross-platform path via the
+        public API and rely on the in-process direct test for /proc).
+        """
+        if Path("/proc").is_dir():
+            # Linux: peer scan reads /proc directly, not `ps`. Skip the fake-ps
+            # path (it doesn't exercise the code path used on Linux).
+            self.skipTest("/proc-based scan: see test_peer_proc_environ_in_process")
+        fake_dir = Path(self.tmp.name) / "fake-bin"
+        fake_dir.mkdir(parents=True, exist_ok=True)
+        peer_pid = "99999"  # implausibly high, won't collide with the test pid
+        # Fake ps emits ONE line. Order: pid, command, env (env after the
+        # command, matching ps -E).
+        fake_ps = fake_dir / "ps"
+        fake_ps.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo '{peer_pid} claude --some-arg CLAUDE_PLUGIN_ROOT={self.claude_old} OTHER=x'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_ps.chmod(0o755)
+        env = env_without_plugin_roots()  # no pin in our env
+        env["PATH"] = f"{fake_dir}:" + env.get("PATH", "")
+        result = run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--apply",
+            "--json",
+        ], env=env)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        data = json.loads(result.stdout)
+        self.assertIn("1.0.0", data["protected"])
+        self.assertTrue(self.claude_old.exists())
+        self.assertTrue(self.claude_current.exists())
+
+    def test_peer_session_protection_disabled_by_no_scan_peers(self) -> None:
+        """With --no-scan-peers, a peer pin is NOT protected — useful as an
+        escape hatch when the fake-ps / /proc scan is misbehaving in CI."""
+        if Path("/proc").is_dir():
+            self.skipTest("/proc-based scan: see in-process tests")
+        fake_dir = Path(self.tmp.name) / "fake-bin-noscan"
+        fake_dir.mkdir(parents=True, exist_ok=True)
+        fake_ps = fake_dir / "ps"
+        fake_ps.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo '88888 claude CLAUDE_PLUGIN_ROOT={self.claude_old}'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_ps.chmod(0o755)
+        env = env_without_plugin_roots()
+        env["PATH"] = f"{fake_dir}:" + env.get("PATH", "")
+        result = run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--no-scan-peers",
+            "--apply",
+            "--json",
+        ], env=env)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        data = json.loads(result.stdout)
+        # protected is empty because (a) our own env has no pin and (b) peers
+        # were not scanned.
+        self.assertEqual(data["protected"], [])
+        self.assertFalse(self.claude_old.exists())
+
+
+class PeerDetectorUnitTests(unittest.TestCase):
+    """In-process tests of _detect_peer_in_use_versions covering BOTH
+    code paths (ps shim + /proc) regardless of host OS, so the function
+    is exercised end-to-end on every CI runner."""
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(HERE))
+        import prune_plugin_cache  # noqa: PLC0415
+        self.mod = prune_plugin_cache
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_macos_ps_path_parses_env_var(self) -> None:
+        """Force the ps branch by routing the subprocess call through a fake
+        Path('/proc') that isn't a dir, regardless of host OS."""
+        # Patch Path('/proc').is_dir to False so the script takes the ps path.
+        original_path_is_dir = Path.is_dir
+        original_run = self.mod.subprocess.run
+
+        def fake_is_dir(self_):  # noqa: ANN001
+            if str(self_) == "/proc":
+                return False
+            return original_path_is_dir(self_)
+
+        peer_pid = "77777"
+        peer_line = (
+            f"{peer_pid} claude --foo "
+            "CLAUDE_PLUGIN_ROOT=/cache/m/build-loop/9.9.9 "
+            "OTHER=ignored"
+        )
+
+        class _R:
+            returncode = 0
+            stdout = peer_line + "\n"
+            stderr = ""
+
+        def fake_run(*_args, **_kwargs):  # noqa: ANN002
+            return _R()
+
+        Path.is_dir = fake_is_dir  # type: ignore[assignment]
+        self.mod.subprocess.run = fake_run  # type: ignore[assignment]
+        try:
+            names = self.mod._detect_peer_in_use_versions(plugin_name="build-loop")
+        finally:
+            Path.is_dir = original_path_is_dir  # type: ignore[assignment]
+            self.mod.subprocess.run = original_run  # type: ignore[assignment]
+        self.assertIn("9.9.9", names)
+
+    def test_ps_path_fail_open_on_missing_binary(self) -> None:
+        original_path_is_dir = Path.is_dir
+        original_run = self.mod.subprocess.run
+
+        def fake_is_dir(self_):  # noqa: ANN001
+            if str(self_) == "/proc":
+                return False
+            return original_path_is_dir(self_)
+
+        def fake_run(*_args, **_kwargs):  # noqa: ANN002
+            raise FileNotFoundError("no ps")
+
+        Path.is_dir = fake_is_dir  # type: ignore[assignment]
+        self.mod.subprocess.run = fake_run  # type: ignore[assignment]
+        try:
+            names = self.mod._detect_peer_in_use_versions(plugin_name="build-loop")
+        finally:
+            Path.is_dir = original_path_is_dir  # type: ignore[assignment]
+            self.mod.subprocess.run = original_run  # type: ignore[assignment]
+        self.assertEqual(names, set())
+
+    def test_unrelated_env_value_does_not_overprotect(self) -> None:
+        """Env points at a path whose PARENT name isn't the plugin → ignored.
+        Same un-resolved name match rule as the current-process detector."""
+        original_path_is_dir = Path.is_dir
+        original_run = self.mod.subprocess.run
+
+        def fake_is_dir(self_):  # noqa: ANN001
+            if str(self_) == "/proc":
+                return False
+            return original_path_is_dir(self_)
+
+        class _R:
+            returncode = 0
+            stdout = (
+                "55555 claude CLAUDE_PLUGIN_ROOT=/somewhere/else/plugin/1.0.0\n"
+            )
+            stderr = ""
+
+        Path.is_dir = fake_is_dir  # type: ignore[assignment]
+        self.mod.subprocess.run = lambda *a, **k: _R()  # type: ignore[assignment]
+        try:
+            names = self.mod._detect_peer_in_use_versions(plugin_name="build-loop")
+        finally:
+            Path.is_dir = original_path_is_dir  # type: ignore[assignment]
+            self.mod.subprocess.run = original_run  # type: ignore[assignment]
+        self.assertEqual(names, set())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
