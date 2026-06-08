@@ -127,6 +127,27 @@ Use this checklist when a plugin also ships as an npm package. Keep npmjs and
 GitHub Packages as separate release surfaces; a pass on one registry does not
 prove the other one shipped.
 
+### npmjs Release Standard
+
+Every npmjs package publish uses provenance. Preferred path: trusted publishing
+with OIDC, which generates provenance without a stored npm token. Fallback path:
+a scoped npm access token plus `npm publish --provenance`. Do not add or edit an
+npmjs publish workflow that omits provenance unless the user explicitly accepts
+that exception.
+
+Use npm CLI v11 command docs as the command reference for release work. The
+standard command set is:
+
+```bash
+npm whoami --registry=https://registry.npmjs.org
+npm view @scope/package version dist-tags --registry=https://registry.npmjs.org --json
+npx -y npm@11 pack --dry-run --json --registry=https://registry.npmjs.org
+npm publish --dry-run --access public --registry=https://registry.npmjs.org
+npm publish --provenance --access public --registry=https://registry.npmjs.org
+npm token list
+npm audit signatures
+```
+
 ### Registry Rules
 
 - Public npmjs publishes must target `https://registry.npmjs.org`. If
@@ -192,7 +213,8 @@ the npm package settings do not match the GitHub workflow.
 Trusted publishing is preferred because it removes long-lived npm secrets from
 CI and automatically generates provenance attestations. Use an npm access token
 only when the user explicitly chooses a fallback after the trusted-publisher
-path is blocked.
+path is blocked. Token fallback is still a provenance publish; it is not a
+non-provenance shortcut.
 
 If token fallback is approved:
 
@@ -225,8 +247,9 @@ using `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`.
 
 ### Provenance Gate
 
-For npmjs packages, publish with provenance unless there is an explicit reason
-not to. Provenance requires:
+For all npmjs packages, publish with provenance unless there is an explicit
+reason not to and that exception is recorded in the release notes. Provenance
+requires:
 
 - A supported cloud CI/CD provider and a cloud-hosted runner.
 - npm CLI `9.5.0+` at minimum; prefer current npm.
@@ -234,10 +257,10 @@ not to. Provenance requires:
   repository used by the workflow.
 - `permissions.id-token: write` in the workflow.
 
-Trusted publishing creates provenance attestations without adding
-`--provenance`. Token-based fallback must add `--provenance` to `npm publish`.
-After install, downstream consumers can verify registry signatures and
-attestations with:
+Trusted publishing creates provenance attestations without adding `--provenance`
+to the command. Token-based fallback must add `--provenance` to every real
+npmjs `npm publish` command. After install, downstream consumers can verify
+registry signatures and attestations with:
 
 ```bash
 npm audit signatures
@@ -260,6 +283,8 @@ gh run rerun <run-id> --failed
 
 ### Official References
 
+- npm CLI v11 command index:
+  `https://docs.npmjs.com/cli/v11/commands/npm`
 - npm CLI publish command:
   `https://docs.npmjs.com/cli/v11/commands/npm-publish`
 - npm Trusted Publishers:
