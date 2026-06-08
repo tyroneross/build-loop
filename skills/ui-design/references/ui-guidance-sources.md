@@ -141,7 +141,7 @@ The cross-project design library is now available as the `ui-guidance` plugin. P
 **Bundled in the plugin under `references/`** (organized for cross-reference, not for direct path-based access from outside the plugin):
 
 - `references/design-evidence/` — 8 owned-app evidence files
-- `references/screenshots/{speaksavvy, truepace, productpilot}/` — 16 live IBR captures (2026-05-26)
+- `references/screenshots/{sample-voice, sample-timer, sample-product}/` — 16 live IBR captures (2026-05-26)
 - `references/style-modes/` — `aurora-deep.md`, `aurora-glass.md`, `warm-craft.md` catalog briefs
 - `references/tools/mockup-gallery-reviewer.html` — mockup-rating browser tool
 - `references/historical/universal-design-principles-original.md` — pre-migration 365-line original
