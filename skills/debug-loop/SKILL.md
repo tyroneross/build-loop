@@ -55,6 +55,8 @@ Use the lightest framework that fits the failure. Stack frameworks only when the
 
 For hard fixes, record which framework was used and the decisive evidence. The framework is a thinking scaffold, not a report section unless it clarifies the outcome.
 
+**Domain root-cause catalogs (read directly + point sub-agents at the PATH):** for SwiftUI/macOS "clunky UI" symptoms — choppy/janky panel resize, drag not tracking the cursor, collapse-snap-back, re-render storms, scrunched panes, Picker/list lag — use `references/swiftui-macos-clunky-ui-debugger.html` (13 discrete Root-Cause→Fix slides with real Swift code: onContinuousHover, two-state DragGesture, HSplitView vs NSViewRepresentable, updateNSView feedback-loop guard, re-render storms, animation placement, view-identity resets, NSViewRepresentable minimal pattern, Instruments workflow). It maps symptom→cause→fix directly (e.g. collapse-snap-back → Slide 9 NSViewRepresentable feedback loop → updateNSView guard). When dispatching an implementer, reference the file by PATH so it reads the full methodology — a structured reference FILE read directly beats pasting prose (a sub-agent then carries only your lossy summary). This catalog fixed an NSSplitView resize regression in one pass after two prior failed attempts (easy-terminal 2026-06-08).
+
 ## Phase 2: HYPOTHESIZE — State the Root Cause
 
 **Goal**: Commit to a specific, testable hypothesis before writing any fix.
