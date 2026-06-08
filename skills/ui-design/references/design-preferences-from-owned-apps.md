@@ -6,8 +6,8 @@
 
 > Sourced from `.build-loop/design-evidence/*.md` (8 apps scanned 2026-05-26). Every claim in this file traces to a specific evidence file. The evidence files are the ground truth — when this doc and an evidence file disagree, the evidence file wins.
 >
-> **Primary preferred references** (per intent.md): SpeakSavvy iOS, TruePace (iPad primary), Atomize AI, ProductPilot.
-> **Secondary / directional** (note what works AND what user dislikes): Secrets Vault macOS, Aida, Travel Planner iOS, Local Smartz.
+> **Primary preferred references** (per intent.md): SpeakSavvy iOS, TruePace (iPad primary), Sample Reader, ProductPilot.
+> **Secondary / directional** (note what works AND what user dislikes): Secrets Vault macOS, Sample Decision App, Sample Offline iOS, Sample Onboarding App.
 
 ---
 
@@ -21,7 +21,7 @@
 - **SpeakSavvy** — nine named typography tokens (`Theme.swift:31-35,70-75` per `speaksavvy-ios.md`) including `fontTabular` (10pt mono-equivalent for numerics) — a use-case that single-purpose token sets miss.
 
 **Anti-pattern (secondary apps):**
-- **Local Smartz** — typography is **inline pixel sizes scattered across call sites**: `.font(.system(size: 34))`, `.system(size: 20)`, `.system(size: 18)`, `.system(size: 16)`, `.system(size: 15)`, `.system(size: 14)`, `.system(size: 13)`, `.system(size: 12)` — all in `SetupView.swift` alone (evidence: `local-smartz.md`). Cannot grep for "title size." Cannot bump the scale once. The ladder is not a ladder; it is a pile.
+- **Sample Onboarding App** — typography is **inline pixel sizes scattered across call sites**: `.font(.system(size: 34))`, `.system(size: 20)`, `.system(size: 18)`, `.system(size: 16)`, `.system(size: 15)`, `.system(size: 14)`, `.system(size: 13)`, `.system(size: 12)` — all in `SetupView.swift` alone (evidence: `sample-onboarding-app.md`). Cannot grep for "title size." Cannot bump the scale once. The ladder is not a ladder; it is a pile.
 
 **Preference recorded:** **define a typography token enum (TextRole-style) before writing the first view.** Inline pixel sizes are tolerated only when the role doesn't yet exist in the enum — and that gap becomes a follow-up to extend the enum, not a permanent state.
 
@@ -33,12 +33,12 @@
 
 **What works (primary apps):**
 - **ProductPilot** — strictest single-accent enforcement in inventory: `--primary === --accent === --ring === #f0b65e` (`index.css:18,22,26` per `productpilot.md`). The entire palette is warm-monochromatic; the only "second color" is `--success: #7bc67e` (muted sage) and `--destructive: #e06356` (warm red-orange, not pure red — palette discipline holds even on error).
-- **Atomize AI** — explicit semantic separation: `--color-error-bg` and `--color-error-border` exist for tinted alert containers, but they are tokens distinct from `--status-error` (the foreground text color). Container surfaces are gated to news-reading flow where text-color-only would underread (`atomize-ai.md` cites the divergence with rationale).
+- **Sample Reader** — explicit semantic separation: `--color-error-bg` and `--color-error-border` exist for tinted alert containers, but they are tokens distinct from `--status-error` (the foreground text color). Container surfaces are gated to reading flow where text-color-only would underread (`sample-reader.md` cites the divergence with rationale).
 - **Secrets Vault** — three-tier text contrast (`textPrimary / textSecondary / textMuted` = stone-900 / stone-600 / stone-400 in light; stone-100 / stone-300 / stone-450 in dark, per `secrets-vault-macos.md`). Each tier maps directly to L1/L2/L3 of the typography ladder — text size + text contrast move together.
 
 **Anti-pattern (secondary apps):**
-- **Aida theme-toggle pattern** — three switchable themes (F default, A "Case File," B "Conversation") via `[data-theme="A"|"B"]` on `<html>` (evidence: `aida-decision-doctor.md`). Each theme owns the same 6 token names but different brand colors. *Works for*: keeping semantic meaning constant across visual presentation. *Fails for*: brand identity — a brand that can become blue or terracotta or red is brand-fungible. Likely user-dislike: the existence of the toggle dilutes the canonical voice (Theme F).
-- **Atomize AI tinted error containers** — divergence from Calm Precision noted above. **Not always a flaw** — atomize-ai justifies it by reading-flow density, and the divergence is contained to status containers — but it is a divergence, and absent a similar rationale, default to text-color-only.
+- **Sample Decision App theme-toggle pattern** — three switchable themes (F default, A "Case File," B "Conversation") via `[data-theme="A"|"B"]` on `<html>` (evidence: `sample-decision-app.md`). Each theme owns the same 6 token names but different brand colors. *Works for*: keeping semantic meaning constant across visual presentation. *Fails for*: brand identity — a brand that can become blue or terracotta or red is brand-fungible. Likely user-dislike: the existence of the toggle dilutes the canonical voice (Theme F).
+- **Sample Reader tinted error containers** — divergence from Calm Precision noted above. **Not always a flaw** — the sample reader justifies it by reading-flow density, and the divergence is contained to status containers — but it is a divergence, and absent a similar rationale, default to text-color-only.
 
 **Preference recorded:** **one accent color per app. Status uses text color first; tinted containers only when reading-flow density justifies and the divergence is documented in the token file's comments.**
 
@@ -53,7 +53,7 @@
 - **SpeakSavvy** — primary CTA is 52pt height (`HomeView.swift:92` per `speaksavvy-ios.md`), exceeds the 44pt floor, and the tab bar uses a 100pt reserve token (`Theme.tabBarReserve`) so list items never clip behind the iOS 26 floating bar.
 
 **Cited Calm Precision compliance via system defaults:**
-- **Travel Planner iOS** — uses Apple system `List` rows and `.plus` button — both meet 44pt via Apple defaults. Demonstrates that *"system primitives over visual fakes"* (alt doc §2.14) can be the touch-target win — but only when the app doesn't need brand-distinct controls.
+- **Sample Offline iOS** — uses Apple system `List` rows and `.plus` button — both meet 44pt via Apple defaults. Demonstrates that *"system primitives over visual fakes"* (alt doc §2.14) can be the touch-target win — but only when the app doesn't need brand-distinct controls.
 
 **Preference recorded:** **encode touch-target minimums in the component class itself, not in per-view padding math.** When using system primitives, prefer them — Apple has already done the work.
 
@@ -84,10 +84,10 @@
 **Universal non-negotiable:** *"Motion serves comprehension, not decoration"* (alt doc §2 visual-craft inheritance).
 
 **What works (primary apps):**
-- **Aida** — `@media (prefers-reduced-motion: reduce)` overrides all animations to 0.01ms at the globals level (`app/globals.css:65-71` per `aida-decision-doctor.md`). Single CSS rule covers the whole app.
+- **Sample Decision App** — `@media (prefers-reduced-motion: reduce)` overrides all animations to 0.01ms at the globals level (`app/globals.css:65-71` per `sample-decision-app.md`). Single CSS rule covers the whole app.
 - **SpeakSavvy** — `@Environment(\.accessibilityReduceMotion)` honored on HomeView; first-time onboarding animation gated to once per AppStorage flag (`HomeView.swift:16,47` per `speaksavvy-ios.md`).
 - **Secrets Vault** — stagger animation capped at 400ms total (`60ms × N items, max 400ms`) — prevents the long-list "wave" anti-pattern (per project CLAUDE.md cited in `secrets-vault-macos.md`).
-- **Local Smartz** — StatusBanner's `phase label itself stays visible briefly after a stage transition so the user sees the most recent phase without flicker` (verbatim from `StatusBanner.swift` per `local-smartz.md`). Anti-flicker is a documented design decision, encoded in code comments.
+- **Sample Onboarding App** — StatusBanner's `phase label itself stays visible briefly after a stage transition so the user sees the most recent phase without flicker` (verbatim from `StatusBanner.swift` per `sample-onboarding-app.md`). Anti-flicker is a documented design decision, encoded in code comments.
 
 **Preference recorded:** **`prefers-reduced-motion` / `accessibilityReduceMotion` must be respected by default, not opt-in. Stagger animations have a total-time cap, not just a per-item interval. Anti-flicker behavior is a first-class design concern, not an afterthought.**
 
@@ -99,7 +99,7 @@
 
 **What works (primary apps):**
 - **Secrets Vault** — explicit three-part error pattern named in project CLAUDE.md (cited `secrets-vault-macos.md`): *"Errors: what → why → fix pattern."* Plus voice rule: *"Verb+Object labels, contextual loading ('Deriving encryption key…')"* — loading messages name the actual operation.
-- **Travel Planner iOS** — *"Errors surface inline (red footnote) without removing cached rows — offline still shows the last good list"* (`CampsListView.swift` code comment per `travel-planner-ios.md`). On error, the cache is preserved — graceful degradation in action.
+- **Sample Offline iOS** — *"Errors surface inline (red footnote) without removing cached rows — offline still shows the last good list"* (`CampsListView.swift` code comment per `sample-offline-ios.md`). On error, the cache is preserved — graceful degradation in action.
 - **SpeakSavvy** — `Haptics.impact(.light)` paired with state change on every CTA tap (`HomeView.swift:81` per `speaksavvy-ios.md`) — action feedback via haptic + visible state, not just one or the other.
 
 **Preference recorded:** **errors are calm and informative (what / why / fix); they never wipe state; loading is named ('Deriving encryption key…' not 'Loading…'); actions get both haptic + visual confirmation on mobile.**
@@ -110,10 +110,10 @@
 
 | Anti-pattern | Source | Why it fails |
 |---|---|---|
-| Inline pixel-size typography | `local-smartz.md` | Ladder not enforceable, scale bump not greppable, accessibility uplift impossible at scale |
-| Theme-toggle for brand color | `aida-decision-doctor.md` | Brand fungibility — *"design-toggle app"* not *"Decision Doctor"* |
-| Tinted error containers without rationale | (atomize-ai gets a pass with rationale) | Default fails Calm Precision's text-color-only rule; needs reading-flow density justification when used |
-| System-default with no brand voice | `travel-planner-ios.md` | Indistinct from any other camp-management list; appropriate for offline-first utility, inappropriate for a brand-led product |
+| Inline pixel-size typography | `sample-onboarding-app.md` | Ladder not enforceable, scale bump not greppable, accessibility uplift impossible at scale |
+| Theme-toggle for brand color | `sample-decision-app.md` | Brand fungibility — *"design-toggle app"* not *"Decision Doctor"* |
+| Tinted error containers without rationale | (sample reader gets a pass with rationale) | Default fails Calm Precision's text-color-only rule; needs reading-flow density justification when used |
+| System-default with no brand voice | `sample-offline-ios.md` | Indistinct from any other camp-management list; appropriate for offline-first utility, inappropriate for a brand-led product |
 | Off-grid spacing without flag | (TruePace handles this well — off-grid values are noted as "exotic" in code comments per `truepace.md`) | Drift cause; the discipline is the comment, not the value |
 
 ---
@@ -126,8 +126,8 @@ A new app in this ecosystem should, in priority order:
 2. **One accent. Single. Don't theme-toggle.** ProductPilot is the strictest example.
 3. **Three-line text hierarchy** baked into the typography enum. Secrets Vault's `VaultTypography.title/.description/.metadata` is the textbook.
 4. **Touch targets at the component layer.** ProductPilot's `.btn-primary` is the example.
-5. **`prefers-reduced-motion` / `accessibilityReduceMotion` from day one.** Aida's single-CSS-rule approach is the cheapest implementation.
-6. **Errors are calm, informative, non-destructive.** Travel Planner's offline-preserves-cache + Secrets Vault's what→why→fix pattern combine into a single rule.
+5. **`prefers-reduced-motion` / `accessibilityReduceMotion` from day one.** The sample decision app's single-CSS-rule approach is the cheapest implementation.
+6. **Errors are calm, informative, non-destructive.** The sample offline app's offline-preserves-cache + Secrets Vault's what→why→fix pattern combine into a single rule.
 7. **Multi-form-factor via viewport-scale tokens, not forked themes.** TruePace's `\.viewportScale` is the reference; the multi-pattern framework draft (`design-patterns-multi.md`) is where this becomes formal if/when prototyped.
 
 When deviating: name the deviation in the token file's comments, the way TruePace flags off-grid spacing and Atomize AI flags tinted error containers. The discipline is the comment.

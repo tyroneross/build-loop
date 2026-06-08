@@ -56,7 +56,7 @@ VALID_CURRENT_MD = """\
 
 - decision: P1 hybrid retrieval picks MLX [build-loop] — `~/dev/git-folder/build-loop-memory/projects/build-loop/decisions/p1.md`
 - lesson: build-loop memory closeout mandatory [build-loop] — `~/dev/git-folder/build-loop-memory/projects/build-loop/lessons/closeout.md`
-- implementation: prior-art P4 digest source [atomize-news] — `projects/atomize-news/code/recall.py`
+- implementation: prior-art P4 digest source [sample-news] — `projects/sample-news/code/recall.py`
 
 ## Pointers
 

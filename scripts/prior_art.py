@@ -10,7 +10,7 @@
 Surfaces, in Phase 1, the implementations and decisions from OTHER projects
 that match the task's classified capability. The target scenario from
 ``bl-memory-overhaul-plan``: a cold task "build semantic search" produces
-a digest naming atomize-news / atomize-ai / AIDA's prior impls AND the
+    a digest naming sample-news / sample-rag / sample-assistant prior impls AND the
 decisions that explain them ("why") — without the human knowing to ask.
 
 Design (KISS+DRY):

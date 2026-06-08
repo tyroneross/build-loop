@@ -73,7 +73,7 @@ class BootstrapPriorArtIntegration(unittest.TestCase):
         # The headline scenario: ≥2 of the seeded projects must surface.
         projects = set(prior["stats"]["projects"])
         self.assertGreaterEqual(
-            len(projects & {"atomize-news", "atomize-ai", "aida"}), 2,
+            len(projects & {"sample-news", "sample-rag", "sample-assistant"}), 2,
             f"expected cross-project projects, got {projects}",
         )
         # Decisions ("why") and implementations both present.

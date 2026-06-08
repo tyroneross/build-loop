@@ -6,11 +6,11 @@
 Seeds a temp ``build-loop-memory`` root with the target scenario from
 ``bl-memory-overhaul-plan``:
 
-* ``atomize-news/lessons/semantic-search.md`` — prior impl write-up.
-* ``atomize-news/decisions/postgres-pgvector.md`` — the "why".
-* ``atomize-ai/lessons/rag-pipeline.md`` — second-project impl signal.
-* ``atomize-ai/decisions/dense-over-keyword.md`` — second "why".
-* ``aida/decisions/embedding-model-choice.md`` — third project, decision-only.
+* ``sample-news/lessons/semantic-search.md`` — prior impl write-up.
+* ``sample-news/decisions/postgres-pgvector.md`` — the "why".
+* ``sample-rag/lessons/rag-pipeline.md`` — second-project impl signal.
+* ``sample-rag/decisions/dense-over-keyword.md`` — second "why".
+* ``sample-assistant/decisions/embedding-model-choice.md`` — third project, decision-only.
 
 Then asserts that the prior-art digest for "build semantic search":
 1. Surfaces ≥2 of those projects (cross-project scope).
@@ -77,16 +77,16 @@ def _seed_lesson(root: Path, project: str, slug: str, name: str, body: str) -> P
 
 def _seed_target_scenario(root: Path) -> None:
     """Seed the 'build semantic search' scenario across 3 projects."""
-    # atomize-news — full pair (impl + decision).
+    # sample-news — full pair (impl + decision).
     _seed_lesson(
-        root, "atomize-news", "semantic-search-impl",
-        "atomize-news semantic search",
+        root, "sample-news", "semantic-search-impl",
+        "sample-news semantic search",
         "We built semantic search on top of pgvector for the article index. "
         "The vector index lives in Supabase Postgres; embeddings via bge-m3. "
         "RAG over the article corpus powers the article-recommend endpoint.",
     )
     _seed_decision(
-        root, "atomize-news", "postgres-pgvector",
+        root, "sample-news", "postgres-pgvector",
         "Use Postgres pgvector for semantic search",
         "We chose Postgres pgvector over a dedicated vector DB to keep one "
         "database. Tradeoffs: slower ANN at scale, but operational simplicity "
@@ -95,16 +95,16 @@ def _seed_target_scenario(root: Path) -> None:
         "2026-03-15",
     )
 
-    # atomize-ai — full pair.
+    # sample-rag — full pair.
     _seed_lesson(
-        root, "atomize-ai", "rag-pipeline",
-        "atomize-ai RAG pipeline",
+        root, "sample-rag", "rag-pipeline",
+        "sample-rag RAG pipeline",
         "RAG pipeline for chatbot grounding. Dense retrieval over knowledge "
         "base chunks, semantic search backed by an in-memory FAISS index "
         "rebuilt nightly from Postgres. retrieval-augmented generation.",
     )
     _seed_decision(
-        root, "atomize-ai", "dense-over-keyword",
+        root, "sample-rag", "dense-over-keyword",
         "Dense retrieval beats keyword for RAG",
         "Earlier we used BM25 keyword search; switched to dense retrieval "
         "after A/B showed +40% answer-quality. semantic search now drives "
@@ -112,11 +112,11 @@ def _seed_target_scenario(root: Path) -> None:
         "2026-04-02",
     )
 
-    # aida — decision-only project (still must surface).
+    # sample-assistant — decision-only project (still must surface).
     _seed_decision(
-        root, "aida", "embedding-model-choice",
+        root, "sample-assistant", "embedding-model-choice",
         "Pin embedding model to mxbai-embed-large-v1",
-        "AIDA semantic search uses MLX mxbai-embed-large-v1 for 1024-dim "
+        "The sample assistant semantic search uses MLX mxbai-embed-large-v1 for 1024-dim "
         "embeddings. We pin the model so the vector index stays comparable "
         "across releases.",
         "2026-04-20",
@@ -176,9 +176,9 @@ class TargetScenarioTests(unittest.TestCase):
         projects = set(digest["stats"]["projects"])
         # ≥2 projects from the seed must surface (the DoD scenario).
         self.assertGreaterEqual(
-            len(projects & {"atomize-news", "atomize-ai", "aida"}),
+            len(projects & {"sample-news", "sample-rag", "sample-assistant"}),
             2,
-            f"expected ≥2 of atomize-news/atomize-ai/aida; got {projects}",
+            f"expected ≥2 of sample-news/sample-rag/sample-assistant; got {projects}",
         )
 
     def test_decisions_surface_with_implementations(self) -> None:
@@ -207,16 +207,16 @@ class TargetScenarioTests(unittest.TestCase):
         self.assertLessEqual(len(digest["digest_text"]), cap + 64)
 
     def test_current_project_excluded(self) -> None:
-        # Seed an entry IN atomize-news and treat it as the current project —
+        # Seed an entry IN sample-news and treat it as the current project —
         # it must NOT appear in its own prior-art.
         digest = prior_art.build_prior_art(
             query="build semantic search",
             capabilities=["semantic-search"],
-            current_project="atomize-news",
+            current_project="sample-news",
             memory_root=self.root,
         )
         projects = set(digest["stats"]["projects"])
-        self.assertNotIn("atomize-news", projects)
+        self.assertNotIn("sample-news", projects)
 
     def test_unscoped_and_unsorted_excluded(self) -> None:
         digest = self._digest()
@@ -295,7 +295,7 @@ class CapTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="bl_pa_cap_")
         self.root = Path(self._tmp.name)
         # Seed 6 lessons + 6 decisions across 3 projects so cap behavior fires.
-        for proj in ("atomize-news", "atomize-ai", "aida"):
+        for proj in ("sample-news", "sample-rag", "sample-assistant"):
             for i in range(2):
                 _seed_lesson(
                     self.root, proj, f"impl-{i}",

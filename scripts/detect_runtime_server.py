@@ -144,7 +144,7 @@ def _walk_candidate_files(root: Path) -> Iterable[Path]:
     test fixture that imports ``BaseHTTPRequestHandler`` for mock-server
     purposes. example-app 2026-05-11 evidence: without this priority,
     ``tests/test_sse_cancellation.py`` was picked over
-    ``src/localsmartz/serve.py`` and the inline-UI was invisible.
+    ``src/example_app/serve.py`` and the inline-UI was invisible.
     """
     test_paths: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):

@@ -50,7 +50,7 @@ from typing import Any
 # Keep small. Recurrence-earned. Comment why each tag exists in this fleet.
 # --------------------------------------------------------------------------
 CAPABILITY_SYNONYMS: dict[str, list[Any]] = {
-    # Recurs across atomize-news, atomize-ai, AIDA (per overhaul plan target scenario).
+    # Recurs across sample-news, sample-rag, sample-assistant (per overhaul plan target scenario).
     "semantic-search": [
         "semantic search",
         "vector search",

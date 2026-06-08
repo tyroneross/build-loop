@@ -245,7 +245,7 @@ class ContextSnapshotPillar0Tests(EnvIsolationMixin, unittest.TestCase):
                 "implementations": [
                     {
                         "source": "scripts/semantic_index/hybrid.py",
-                        "project": "atomize-news",
+                        "project": "sample-news",
                         "snippet": "hybrid vector+sparse w/ RRF",
                     },
                 ],

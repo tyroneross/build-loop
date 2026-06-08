@@ -44,7 +44,7 @@ Three work/knowledge artifact types, each with a clear WRITE → READ → TRACK 
 **Segmentation contract (binding):**
 - The **slug folder** (`projects/<slug>/`) is the repo key; the **`repo` + `branch` frontmatter** on each issue/backlog item is the explicit scope tag (template: `templates/backlog-item.md`). Both must agree.
 - When working repo X on branch B, **read and write only** items where `repo == X` (and `branch == B` or unscoped). A cross-repo item discovered mid-work is recorded in **its** repo's scope, **never** the current repo's tracker.
-- **No shared/freeform cross-repo trackers.** (The retired `OPEN-ITEMS.md` was exactly this anti-pattern — one file that accreted rows from atomize-ai, local-smartz, etc. into build-loop's scope. Replaced by the slug-segmented `projects/<slug>/backlog.md`.)
+- **No shared/freeform cross-repo trackers.** (The retired `OPEN-ITEMS.md` was exactly this anti-pattern — one file that accreted rows from unrelated app repos into build-loop's scope. Replaced by the slug-segmented `projects/<slug>/backlog.md`.)
 - Reads are already enforced: `context_bootstrap` queue reads are repo-local `.build-loop/`, and lessons recall passes the resolved `project` so the query scopes to `(project OR _unscoped)` — `project=None` (all-projects) is never used for current-work context.
 
 ### When to write memory

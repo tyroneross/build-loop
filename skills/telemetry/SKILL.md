@@ -10,7 +10,7 @@ user-invocable: false
 
 **The rule:** default to **OpenTelemetry (OTel)**. Instrument with OTel SDKs + **GenAI semantic conventions**; export OTLP to whatever backend fits. Never lock telemetry to a single proprietary vendor, and **never roll your own tracing schema** — OTel conventions exist. This codifies the user's already-decided stack (`prefer-opentelemetry`); it is a default, not dogma — document an exception when a closed tool genuinely wins.
 
-Canonical working exemplar in-tree: **`local-smartz/src/localsmartz/observability.py`** (OTLP/HTTP → Phoenix, env-gated `LOCALSMARTZ_OBSERVE=1`, fails silent). Copy this pattern; don't reinvent it.
+Canonical working exemplar in-tree: **`sample-observability-app/src/observability.py`** (OTLP/HTTP → Phoenix, env-gated `SAMPLE_OBSERVE=1`, fails silent). Copy this pattern; don't reinvent it.
 
 ## Decision tree — pick the stack by app type
 
@@ -38,7 +38,7 @@ provider.add_span_processor(BatchSpanProcessor(
 LangchainInstrumentor().instrument(tracer_provider=provider)
 ```
 
-Use GenAI semconv attributes (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`) so the data is backend-agnostic. Gate observability behind an env flag, default-off on cheap tiers (OTel + batch processor adds ~10–50 ms/call). Probe the backend at startup and **warn without blocking** if it's down (fail-silent, like the local-smartz exemplar).
+Use GenAI semconv attributes (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`) so the data is backend-agnostic. Gate observability behind an env flag, default-off on cheap tiers (OTel + batch processor adds ~10–50 ms/call). Probe the backend at startup and **warn without blocking** if it's down (fail-silent, like the sample observability exemplar).
 
 ## Status (2026, cite before relying — these move)
 
@@ -48,10 +48,10 @@ Use GenAI semconv attributes (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.u
 
 ## Instrumentation gaps in this user's repos (audit 2026-05-31)
 
-Already instrumented (reference these): **local-smartz** (OTel+Phoenix+OpenInference, full), **atomize/atomize-ai** (OTel full + Sentry), **infisical** (OTel metrics).
+Already instrumented (reference these): **sample-observability-app** (OTel+Phoenix+OpenInference, full), **sample-reader/sample-rag** (OTel full + Sentry), **sample-secrets-service** (OTel metrics).
 
 **Gaps worth closing first** — LLM/agent apps with zero telemetry:
-1. **market-research-platform** — LangChain + LangGraph, nothing. Drop in the local-smartz pattern (~10 lines) for instant span/token visibility.
+1. **market-research-platform** — LangChain + LangGraph, nothing. Drop in the sample observability pattern (~10 lines) for instant span/token visibility.
 2. **stratagem** — has LangSmith dep but no OTel plumbing; unify with the OTel-first stack.
 3. **agent-builder** — LangGraph, no telemetry.
 

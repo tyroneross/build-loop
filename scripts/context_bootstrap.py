@@ -876,7 +876,7 @@ def prior_art_context(
     Classifies the task's capability(ies) from ``query`` and surfaces prior
     implementations + linked decisions from OTHER projects in the
     build-loop-memory store. Designed to answer the cold "build semantic
-    search" gap: the agent learns about atomize-news / atomize-ai / AIDA's
+    search" gap: the agent learns about sample-news / sample-rag / sample-assistant's
     prior approaches AND the "why" without the operator knowing to ask.
 
     Fail-soft contract:

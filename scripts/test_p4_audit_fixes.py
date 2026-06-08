@@ -78,19 +78,19 @@ class WriteIntentTests(unittest.TestCase):
 
     def test_creates_intent_md_when_absent(self) -> None:
         (self.workdir / ".build-loop").mkdir()
-        digest = "## Prior Art Across Projects\n- atomize-news: did semantic search\n"
+        digest = "## Prior Art Across Projects\n- sample-news: did semantic search\n"
         result = context_bootstrap.write_prior_art_to_intent(self.workdir, digest)
         self.assertTrue(result)
         content = self._intent_path().read_text(encoding="utf-8")
         self.assertIn("<!-- prior-art:start -->", content)
         self.assertIn("<!-- prior-art:end -->", content)
-        self.assertIn("atomize-news", content)
+        self.assertIn("sample-news", content)
 
     # -- idempotent: exactly one block on re-run --------------------------------
 
     def test_idempotent_second_run_no_duplicate(self) -> None:
         (self.workdir / ".build-loop").mkdir()
-        digest = "## Prior Art Across Projects\n- atomize-ai: rag pipeline\n"
+        digest = "## Prior Art Across Projects\n- sample-rag: rag pipeline\n"
         context_bootstrap.write_prior_art_to_intent(self.workdir, digest)
         context_bootstrap.write_prior_art_to_intent(self.workdir, digest)
 
@@ -334,7 +334,7 @@ class LessonQualifierTests(unittest.TestCase):
         from prior_art import _render_digest  # access internal for unit test
         impls = [
             {
-                "project": "atomize-news",
+                "project": "sample-news",
                 "capability": "semantic-search",
                 "kind": "lesson",
                 "source": "lessons/search.md",
@@ -354,7 +354,7 @@ class LessonQualifierTests(unittest.TestCase):
         from prior_art import _render_digest
         impls = [
             {
-                "project": "atomize-ai",
+                "project": "sample-rag",
                 "capability": "semantic-search",
                 "kind": "semantic",
                 "source": "memories/rag.md",
