@@ -48,7 +48,7 @@ For role boundaries (lead vs peer, coder/implementer, domain assessor, reviewer,
 
 - Load tools and skills on demand — do not pre-load.
 - Scope assessment to goal-relevant areas — not the full codebase.
-- Dispatch fact-checker and mock-scanner agents in parallel before reporting.
+- Dispatch fact-checker and mock-scanner agents in parallel before reporting; mock-scanner includes the public-surface privacy scan.
 - Treat user value as the primary decision rule: faster, clearer, more accurate, easier to navigate, more trustworthy, more scalable, less cognitively noisy.
 - Separate clean-sheet best answers from current-constraints answers for non-trivial recommendations.
 - Prefer high-cohesion, loose-coupling, stable-interface designs. Document `MODULARITY EXCEPTION: <reason>` if a simpler integrated approach is better.
@@ -117,7 +117,7 @@ Routing detail extracted to `references/phase-4-review.md`. Sub-step procedural 
   **Parent owes Phase 6 Learn + retrospective (mirror of the auditor ladder — E3).** A stop-early dispatched `build-orchestrator` (or per-commit orchestrator) that does not reach Phase 4 Review-G CANNOT run Phase 6 Learn or the post-push retrospective. Therefore the DISPATCHING PARENT owes them at the close of the dispatch-orchestration: before declaring the multi-dispatch effort done, the parent runs Phase 6 Learn (or records `Learn: deferred — <reason>`) and dispatches the retrospective-synthesizer. Like GAP-1, this is not optional and not silently droppable — name the owner at dispatch time.
 - **B. Validate** — `ui-validator`-first when `uiTarget != null`; UI input/output contract check; code graders; runtime smoke gate (`scripts/runtime_smoke.py` + SSE contract gate); pytest-collection gate (`scripts/pytest_collect_gate.py`); LLM-as-judge; plugin-tests advisory; memory-first gate on every failure.
 - **C. Optimize** (opt-in) — only when a mechanical metric exists.
-- **D. Fact-Check** — `fact-checker` + `mock-scanner` + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
+- **D. Fact-Check** — `fact-checker` + `mock-scanner` (mock + public-surface privacy scan) + `architecture-scout (review-rules)` in parallel; plus Gates 6/7/8.
 - **E. Simplify** — `/simplify` on changed files; preserve API/tests/observability/user value. Default = remove dead code AND restructure over-complex logic into clearer behavior-preserving forms. `complexity_detector.py` is a Python accelerator, not a gate.
 - **F. Auto-Resolve** — `scripts/autonomy_gate.py` against each candidate from A/D: `auto` executes, `warn` executes with `[warn]` prefix + autonomyEvents entry, `confirm` → `## Held`, `block` → `## Blocked`. Strong-checkpoint findings never enter this queue.
 - **G. Report** (final pass only) — scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate. Blocking no-critical/high exit gate (`review_finding_gate.py`), report-section spec (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` for structure), and auto-version-bump documented in `references/phase-gate-checklist.md` §"Sub-step G". **Mandatory `runs[]` write + `## Judge decisions` block + milestone append + post-push retrospective-synthesizer dispatch (non-gating, in-flow) + `## Self-modifications (readback)` block + post-deploy verification gate** — full procedures in `references/phase-4-review.md`. The `runs[]` write fires every Phase 4G regardless of dispatch path; `--scope build` arms the review-completeness gate.

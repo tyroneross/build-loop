@@ -46,6 +46,7 @@ Do not phrase advisory findings as hard blockers unless an existing blocking mec
 
 5. **Accuracy and evidence**
    - Verify package/release claims with the actual package or release command in dry-run mode when available.
+   - Include Review-D `mock-scanner` evidence for the public-surface privacy scan before recommending a push: API keys, secrets, absolute local paths, persona/profile exports, private notes, host/session/Rally runtime data, and other personal data. This reuses the existing mock-scanner path; do not add a separate git hook for this scan. If it finds an issue, keep working through Iterate/Auto-Resolve: prefer `.gitignore` plus untracking for runtime/generated files, archive or private-store relocation over deletion for useful evidence, and redaction/scrubbing over removing useful public documentation.
    - Verify memory/index/install claims with the repo's validator scripts.
    - For current external/API/package facts, cite the research packet or mark the claim unverified per `references/research-trigger-policy.md`.
    - State skipped checks explicitly with the reason.

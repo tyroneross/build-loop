@@ -180,7 +180,7 @@ Only when a mechanical metric exists AND user hasn't opted out. Load `build-loop
 
 ### Sub-step D — Fact-Check
 
-Dispatch `fact-checker` + `mock-scanner` in parallel. **Plus** when code changed in this build, dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: review-rules')` in parallel — the scout runs the rules check, diffs against `build-loop-memory/projects/<project>/architecture/known_violations.json` through the `_paths`/project resolver helpers, writes decisions for new violations via `scripts/capture_arch_violation.py`, and returns a `route:` recommendation in `follow_up`. If `route: "iterate"`, route the scout's findings into Iterate's prioritized work list. For cross-layer changes, escalate to `Skill("build-loop:architecture-review")` for the full 5-phase integrity review.
+Dispatch `fact-checker` + `mock-scanner` in parallel. The `mock-scanner` pass includes the public-surface privacy scan: API keys, secrets, absolute local paths, persona/profile exports, customer/user lists, private notes, host/session/Rally runtime data, and other personal data that should not ship in a public repo or package. **Plus** when code changed in this build, dispatch `Agent(subagent_type="build-loop:architecture-scout", prompt='task: review-rules')` in parallel — the scout runs the rules check, diffs against `build-loop-memory/projects/<project>/architecture/known_violations.json` through the `_paths`/project resolver helpers, writes decisions for new violations via `scripts/capture_arch_violation.py`, and returns a `route:` recommendation in `follow_up`. If `route: "iterate"`, route the scout's findings into Iterate's prioritized work list. For cross-layer changes, escalate to `Skill("build-loop:architecture-review")` for the full 5-phase integrity review.
 
 **Plus the new gates from `skills/build-loop/references/phase-4-review.md` §Sub-step D**:
 
@@ -188,7 +188,7 @@ Dispatch `fact-checker` + `mock-scanner` in parallel. **Plus** when code changed
 - **Gate 7 — UX Triage** (when `uiTarget != null`): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ux_triage.py --workdir "$PWD" --clear`. Each `blocker`/`major` finding becomes a queue entry in `.build-loop/ux-queue/`. Then dispatch `performance-assessor` (full-app sweep) and `fact-checker` (broader file glob, full rendered surface) in parallel for the agent-augmentation portion; merge their findings into the same queue.
 - **Gate 8 — UI Coverage-Gap** (when `uiTarget != null`): compare changed surfaces against existing project test files and the UI input/output contract. For each critical surface without render/interaction coverage, add a queue entry with `dimension: test-coverage` and a repo-native proposed test plan. Do not auto-draft `.ibr-test.json` files.
 
-Blocking (Gates 1–4) → Iterate. Queue entries (Gates 7–8) → flow into Phase 5's prioritized work list. Warnings → Report.
+Blocking (Gates 1-4) -> Iterate, not halt. For Gate 2 privacy findings, invoke the appropriate implementer, auditor, or specialist agent to remediate, then re-run validation. Prefer `.gitignore` plus untracking for runtime/generated files, archive or private-store relocation over deletion for useful evidence, and redaction/scrubbing over removing useful public documentation. Queue entries (Gates 7-8) -> flow into Phase 5's prioritized work list. Warnings -> Report.
 
 ### Sub-step E — Simplify
 

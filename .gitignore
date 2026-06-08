@@ -62,13 +62,9 @@ __pycache__/
 # See .private-slugs.example for the format.
 .private-slugs
 
-# Rally coordination: keep the canonical ledger, ignore derived/runtime cache.
-.rally/facts.db
-.rally/facts.db-shm
-.rally/facts.db-wal
-.rally/room.db
-.rally/cursors.json
-.rally/*.tmp-*
+# Rally coordination is local runtime state. Do not ship room ledgers,
+# inboxes, worktree bundles, host/session IDs, or derived caches publicly.
+.rally/
 
 # Tool-data directories — never tracked (CLAUDE.md: tool data under .<toolname>/).
 # Broadens the NavGator safety guard above to the whole dir — components.full.jsonl

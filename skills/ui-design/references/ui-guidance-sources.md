@@ -76,9 +76,9 @@ Calm Precision is the default structural doctrine for build-loop UI work.
 
 Calm Precision router sources checked:
 
-- `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/0_Router.md`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/1_Navigation_Structure.md`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/5_Motion_States_Identity.md`
+- `calm-precision-v1-1/0_Router.md`
+- `calm-precision-v1-1/1_Navigation_Structure.md`
+- `calm-precision-v1-1/5_Motion_States_Identity.md`
 
 Reusable router pattern:
 
@@ -117,7 +117,7 @@ In practice: start with Calm Precision for structure, then select the mode that 
 
 ## ui-guidance plugin (canonical home, 2026-05-27+)
 
-The cross-project design library is now a Claude Code plugin at `/Users/tyroneross/dev/git-folder/UI Guidance/` (plugin name `ui-guidance`). Prefer qualified Skill invocations over absolute paths:
+The cross-project design library is now available as the `ui-guidance` plugin. Prefer qualified Skill invocations over absolute paths:
 
 | What you need | Invocation |
 |---|---|
@@ -168,29 +168,29 @@ IBR has rich design and validation material, but build-loop does not auto-route 
 
 Additional router sources checked:
 
-- `/Users/tyroneross/dev/git-folder/interface-built-right/references/web-design/0_router.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/references/ios-design/0_router.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/ios-design-router/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/.codex-plugin/skills/ui-ux-guidance/SKILL.md`
+- `interface-built-right/references/web-design/0_router.md`
+- `interface-built-right/references/ios-design/0_router.md`
+- `interface-built-right/skills/ios-design-router/SKILL.md`
+- `interface-built-right/.codex-plugin/skills/ui-ux-guidance/SKILL.md`
 
 These reinforce the same split: archetype/router first, then platform/domain references, then validation contract.
 
 High-signal sources:
 
-- `/Users/tyroneross/dev/git-folder/interface-built-right/.codex-plugin/skills/design/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/.codex-plugin/skills/ui-ux-guidance/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/design-director/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/design-guidance/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/design-implementation/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/design-reference/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/design-system/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/design-validation/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/skills/ui-guidance-library/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/references/web-design/`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/references/ios-design/`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/mobile-ui/`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/templates/patterns/`
-- `/Users/tyroneross/dev/git-folder/interface-built-right/src/ui-guidance/`
+- `interface-built-right/.codex-plugin/skills/design/SKILL.md`
+- `interface-built-right/.codex-plugin/skills/ui-ux-guidance/SKILL.md`
+- `interface-built-right/skills/design-director/SKILL.md`
+- `interface-built-right/skills/design-guidance/SKILL.md`
+- `interface-built-right/skills/design-implementation/SKILL.md`
+- `interface-built-right/skills/design-reference/SKILL.md`
+- `interface-built-right/skills/design-system/SKILL.md`
+- `interface-built-right/skills/design-validation/SKILL.md`
+- `interface-built-right/skills/ui-guidance-library/SKILL.md`
+- `interface-built-right/references/web-design/`
+- `interface-built-right/references/ios-design/`
+- `interface-built-right/mobile-ui/`
+- `interface-built-right/templates/patterns/`
+- `interface-built-right/src/ui-guidance/`
 
 Use only when the user explicitly asks for IBR or when a selected IBR artifact is passed to the specialist as evidence. Do not make IBR the default build route.
 
@@ -198,14 +198,14 @@ Use only when the user explicitly asks for IBR or when a selected IBR artifact i
 
 Use for mockup drafting, selection, or review:
 
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/COMMON.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/DESIGN.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/DESIGN-SELECTED.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/AGENTS.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/commands/mockup-gallery.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/skills/mockup-review/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/.agents/skills/mockup-review/SKILL.md`
-- `/Users/tyroneross/dev/git-folder/mockup-gallery/memories/global/design-preferences.md`
+- `mockup-gallery/COMMON.md`
+- `mockup-gallery/DESIGN.md`
+- `mockup-gallery/DESIGN-SELECTED.md`
+- `mockup-gallery/AGENTS.md`
+- `mockup-gallery/commands/mockup-gallery.md`
+- `mockup-gallery/skills/mockup-review/SKILL.md`
+- `mockup-gallery/.agents/skills/mockup-review/SKILL.md`
+- `mockup-gallery/memories/global/design-preferences.md`
 
 Mockup Gallery helps create and judge candidate visuals. Build-loop still records the selected direction in `.build-loop/app-contract/ui.md`.
 
@@ -217,20 +217,20 @@ These sources are not UI routes, but they contain reusable information-design gu
 
 Claude local session sources inspected:
 
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_018devm9MHc4viTEy8PNz6yU/skills/deck-builder/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_01B9qBXwJFMZce4Tr79fyh6t/skills/calm-precision-pptx/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_01XXJmxLXPEhPMmnxmrgntNw/skills/design-system/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_01XXJmxLXPEhPMmnxmrgntNw/skills/accessibility-review/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/storyline-builder/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/pyramid-principle-core/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/pptx-design/SKILL.md`
-- `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/docx/SKILL.md`
+- `deck-builder/SKILL.md` (local Claude session snapshot; path redacted)
+- `calm-precision-pptx/SKILL.md` (local Claude session snapshot; path redacted)
+- `design-system/SKILL.md` (local Claude session snapshot; path redacted)
+- `accessibility-review/SKILL.md` (local Claude session snapshot; path redacted)
+- `storyline-builder/SKILL.md` (local Claude session snapshot; path redacted)
+- `pyramid-principle-core/SKILL.md` (local Claude session snapshot; path redacted)
+- `pptx-design/SKILL.md` (local Claude session snapshot; path redacted)
+- `docx/SKILL.md` (local Claude session snapshot; path redacted)
 
 Codex runtime sources inspected:
 
-- `/Users/tyroneross/.codex/plugins/cache/openai-primary-runtime/documents/26.521.10419/skills/documents/SKILL.md`
-- `/Users/tyroneross/.codex/plugins/cache/openai-primary-runtime/presentations/26.521.10419/skills/presentations/SKILL.md`
-- `/Users/tyroneross/.codex/plugins/cache/openai-primary-runtime/presentations/26.521.10419/skills/presentations/subagent-instructions.md`
+- `openai-primary-runtime/documents/.../skills/documents/SKILL.md` (Codex runtime snapshot; path redacted)
+- `openai-primary-runtime/presentations/.../skills/presentations/SKILL.md` (Codex runtime snapshot; path redacted)
+- `openai-primary-runtime/presentations/.../skills/presentations/subagent-instructions.md` (Codex runtime snapshot; path redacted)
 
 Reusable guidance captured into `universal-design-principles.md`:
 
@@ -244,7 +244,7 @@ Reusable guidance captured into `universal-design-principles.md`:
 - Rendered visual QA for decks and docs, not only structural extraction.
 - Accessibility as a design baseline across UI and documents.
 
-Note: the alternate no-space path `/Users/tyroneross/Library/ApplicationSupport/Claude/local-agent-mode-sessions/.../rpm` was checked and did not exist in this environment. Use the `Application Support` path with the space.
+Note: Local Claude session paths are intentionally redacted from this public package. Use the host's current plugin/session lookup rather than copying historical absolute paths.
 
 ## Research And Vault Corpus
 
@@ -252,32 +252,32 @@ Use for background, trend history, or long-term preference synthesis. Summarize 
 
 High-signal local research:
 
-- `/Users/tyroneross/research/topics/design/`
-- `/Users/tyroneross/research/projects/atomize-ai/design-brief-2026-04-20.md`
+- `research/topics/design/`
+- `research/projects/<project>/design-brief-2026-04-20.md`
 
 High-signal vault folders:
 
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-design-research-corpus-2026/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-ux-calm-precision/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-ux-central-library/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-ux-ibr-references/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-ux-spec-review-input-output-coverage-2026/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/native-ios-watchos-ui-research-2026/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-native-apple-platforms-v1-1-2026/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-ux-private-ios-guidance/`
-- `/Users/tyroneross/ObsidianVault/raw/engineering/ui-ux-misc-app-design/`
-- `/Users/tyroneross/ObsidianVault/outputs/drafts/2026-05-10-ui-preferences-mobile-first-web-apps-aggregate.md`
-- `/Users/tyroneross/ObsidianVault/outputs/drafts/2026-05-10-private-product-mobile-first-ui-guidance.md`
+- `vault/raw/engineering/ui-design-research-corpus-2026/`
+- `vault/raw/engineering/ui-ux-calm-precision/`
+- `vault/raw/engineering/ui-ux-central-library/`
+- `vault/raw/engineering/ui-ux-ibr-references/`
+- `vault/raw/engineering/ui-ux-spec-review-input-output-coverage-2026/`
+- `vault/raw/engineering/native-ios-watchos-ui-research-2026/`
+- `vault/raw/engineering/calm-precision-v1-1/`
+- `vault/raw/engineering/calm-precision-native-apple-platforms-v1-1-2026/`
+- `vault/raw/engineering/ui-ux-private-ios-guidance/`
+- `vault/raw/engineering/ui-ux-misc-app-design/`
+- `vault/outputs/drafts/2026-05-10-ui-preferences-mobile-first-web-apps-aggregate.md`
+- `vault/outputs/drafts/2026-05-10-private-product-mobile-first-ui-guidance.md`
 
 ## Build-Loop-Memory
 
 Durable long-term design memory belongs here:
 
-- `/Users/tyroneross/dev/git-folder/build-loop-memory/design/README.md`
-- `/Users/tyroneross/dev/git-folder/build-loop-memory/decisions/build-loop/0094-2026-05-24-build-loop-design-structure-memory-policy.md`
-- `/Users/tyroneross/dev/git-folder/build-loop-memory/projects/<project>/design/` when project-specific design memory exists.
-- `/Users/tyroneross/dev/git-folder/build-loop-memory/indexes/` for discovery after the migration structure settles.
+- `build-loop-memory/design/README.md`
+- `build-loop-memory/decisions/build-loop/0094-2026-05-24-build-loop-design-structure-memory-policy.md`
+- `build-loop-memory/projects/<project>/design/` when project-specific design memory exists.
+- `build-loop-memory/indexes/` for discovery after the migration structure settles.
 
 Build-loop's runtime references should be refreshed from build-loop-memory when a design structure becomes repeatedly used, explicitly selected/rejected, or materially changes the selection policy.
 
@@ -316,15 +316,15 @@ Use targeted scans instead of broad full-disk loads:
 ```bash
 rg -l --hidden \
   --glob '!**/.git/**' --glob '!**/node_modules/**' --glob '!**/.next/**' \
-  --glob '!**/dist/**' --glob '!**/build/**' --glob '!**/.build/**' \
-  -i '(ui guidance|ui/ux|ux guidance|design guidance|design system|calm precision|interface built right|visual style|design direction|mockup|wireframe|interaction|accessibility|touch target|design contract|app-contract|recent design|data visualization)' \
-  /Users/tyroneross/dev/git-folder/build-loop \
-  /Users/tyroneross/dev/git-folder/build-loop-memory \
-  /Users/tyroneross/dev/git-folder/interface-built-right \
-  '/Users/tyroneross/dev/git-folder/UI Guidance' \
-  /Users/tyroneross/dev/git-folder/mockup-gallery \
-  /Users/tyroneross/research \
-  /Users/tyroneross/ObsidianVault
+	  --glob '!**/dist/**' --glob '!**/build/**' --glob '!**/.build/**' \
+	  -i '(ui guidance|ui/ux|ux guidance|design guidance|design system|calm precision|interface built right|visual style|design direction|mockup|wireframe|interaction|accessibility|touch target|design contract|app-contract|recent design|data visualization)' \
+	  "$BUILD_LOOP_REPO" \
+	  "$BUILD_LOOP_MEMORY_REPO" \
+	  "$INTERFACE_BUILT_RIGHT_REPO" \
+	  "$UI_GUIDANCE_REPO" \
+	  "$MOCKUP_GALLERY_REPO" \
+	  "$RESEARCH_ROOT" \
+	  "$VAULT_ROOT"
 ```
 
 Record newly durable structures in build-loop-memory; record runtime choices in `.build-loop/app-contract/ui.md`.

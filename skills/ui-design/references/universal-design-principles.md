@@ -394,26 +394,26 @@ medium-specific execution.
 
 | Source | What it contributes |
 |---|---|
-| `/Users/tyroneross/.agents/skills/calm-precision/SKILL.md` | Cognitive predictability, grouping, hierarchy, disclosure, action weight, state/error rules, functional integrity |
-| `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/0_Router.md` | Router pattern: classify archetype, apply defaults, route to domain files, ask on high-impact choices, flag decisions |
-| `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/1_Navigation_Structure.md` | Task economy, step counting, one primary action, navigation continuity, transition semantics |
-| `/Users/tyroneross/ObsidianVault/raw/engineering/calm-precision-v1-1/5_Motion_States_Identity.md` | Purposeful motion, loading states by wait time, empty/error-state context matching, voice calibration |
-| `/Users/tyroneross/dev/git-folder/build-loop/skills/ui-design/references/ui-guidance-sources.md` | Build Loop design source map and runtime routing |
-| `/Users/tyroneross/dev/git-folder/interface-built-right/references/web-design/0_router.md` | Web archetypes, density defaults, validation-focus risks by product surface |
-| `/Users/tyroneross/dev/git-folder/interface-built-right/references/ios-design/0_router.md` | iOS archetype router and domain-reference split |
-| `/Users/tyroneross/dev/git-folder/interface-built-right/.codex-plugin/skills/ui-ux-guidance/SKILL.md` | Compact IBR guidance order, target roles, imagegen gates, interaction states, validation contract |
-| `/Users/tyroneross/dev/git-folder/UI Guidance/cross-platform-design-patterns.md` | Cross-platform foundational rules, mode selection, content-to-chrome, motion, status, responsive structure |
-| `/Users/tyroneross/dev/git-folder/UI Guidance/data-visualization-patterns.md` | Decision-first data, chart-title discipline, figure-ground contrast, direct labeling, source attribution |
-| `/Users/tyroneross/dev/git-folder/mockup-gallery/COMMON.md` | Mockup state model, scratch-first lifecycle, selection/implementation tracking, rating semantics |
-| `/Users/tyroneross/dev/git-folder/mockup-gallery/skills/mockup-review/SKILL.md` | Scratch-first Codex flow, approved-target guardrails, imagegen assist boundaries |
-| `/Users/tyroneross/ObsidianVault/outputs/drafts/2026-05-10-ui-preferences-mobile-first-web-apps-aggregate.md` | Durable mobile-first and desktop-expansion UI preferences |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_018devm9MHc4viTEy8PNz6yU/skills/deck-builder/SKILL.md` | Storyline-first deck workflow, template inheritance, native PowerPoint primitives, drift-check linter |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_01B9qBXwJFMZce4Tr79fyh6t/skills/calm-precision-pptx/SKILL.md` | Calm Precision for slides, action titles, one assertion per slide, semantic color, footnoted numeric claims |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/storyline-builder/SKILL.md` | Audience brief, governing thought, SCQA, MECE key line, claim contextualization |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/pyramid-principle-core/SKILL.md` | Pyramid grouping, vertical question/answer logic, horizontal deductive/inductive logic, SCQA |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/pptx-design/SKILL.md` | Encoded deck design systems, density by purpose, type ladder, visual QA, factual audit |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/a2656a3a-bc97-4eae-9598-a705fad2e796/d079a27d-83ff-4615-a11e-9eb6cad377f1/skills/docx/SKILL.md` | DOCX presets, form factor selection, real styles/numbering/tables, render-and-inspect workflow |
-| `/Users/tyroneross/.codex/plugins/cache/openai-primary-runtime/documents/26.521.10419/skills/documents/SKILL.md` | Codex document rendering contract, preset selection, Word/Google Docs structural QA |
-| `/Users/tyroneross/.codex/plugins/cache/openai-primary-runtime/presentations/26.521.10419/skills/presentations/SKILL.md` | Codex presentation workflow, claim spine, deck profiles, contact-sheet quality bar, source/asset provenance |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_01XXJmxLXPEhPMmnxmrgntNw/skills/design-system/SKILL.md` | Tokens, components, patterns, documentation, versioning, and migration discipline |
-| `/Users/tyroneross/Library/Application Support/Claude/local-agent-mode-sessions/d079a27d-83ff-4615-a11e-9eb6cad377f1/a2656a3a-bc97-4eae-9598-a705fad2e796/rpm/plugin_01XXJmxLXPEhPMmnxmrgntNw/skills/accessibility-review/SKILL.md` | WCAG 2.1 AA baseline, contrast, keyboard, focus, touch targets, name/role/value |
+| `calm-precision/SKILL.md` | Cognitive predictability, grouping, hierarchy, disclosure, action weight, state/error rules, functional integrity |
+| `calm-precision-v1-1/0_Router.md` | Router pattern: classify archetype, apply defaults, route to domain files, ask on high-impact choices, flag decisions |
+| `calm-precision-v1-1/1_Navigation_Structure.md` | Task economy, step counting, one primary action, navigation continuity, transition semantics |
+| `calm-precision-v1-1/5_Motion_States_Identity.md` | Purposeful motion, loading states by wait time, empty/error-state context matching, voice calibration |
+| `build-loop/skills/ui-design/references/ui-guidance-sources.md` | Build Loop design source map and runtime routing |
+| `interface-built-right/references/web-design/0_router.md` | Web archetypes, density defaults, validation-focus risks by product surface |
+| `interface-built-right/references/ios-design/0_router.md` | iOS archetype router and domain-reference split |
+| `interface-built-right/.codex-plugin/skills/ui-ux-guidance/SKILL.md` | Compact IBR guidance order, target roles, imagegen gates, interaction states, validation contract |
+| `ui-guidance/cross-platform-design-patterns.md` | Cross-platform foundational rules, mode selection, content-to-chrome, motion, status, responsive structure |
+| `ui-guidance/data-visualization-patterns.md` | Decision-first data, chart-title discipline, figure-ground contrast, direct labeling, source attribution |
+| `mockup-gallery/COMMON.md` | Mockup state model, scratch-first lifecycle, selection/implementation tracking, rating semantics |
+| `mockup-gallery/skills/mockup-review/SKILL.md` | Scratch-first Codex flow, approved-target guardrails, imagegen assist boundaries |
+| `vault/outputs/drafts/2026-05-10-ui-preferences-mobile-first-web-apps-aggregate.md` | Durable mobile-first and desktop-expansion UI preferences |
+| `deck-builder/SKILL.md` (local Claude session snapshot; path redacted) | Storyline-first deck workflow, template inheritance, native PowerPoint primitives, drift-check linter |
+| `calm-precision-pptx/SKILL.md` (local Claude session snapshot; path redacted) | Calm Precision for slides, action titles, one assertion per slide, semantic color, footnoted numeric claims |
+| `storyline-builder/SKILL.md` (local Claude session snapshot; path redacted) | Audience brief, governing thought, SCQA, MECE key line, claim contextualization |
+| `pyramid-principle-core/SKILL.md` (local Claude session snapshot; path redacted) | Pyramid grouping, vertical question/answer logic, horizontal deductive/inductive logic, SCQA |
+| `pptx-design/SKILL.md` (local Claude session snapshot; path redacted) | Encoded deck design systems, density by purpose, type ladder, visual QA, factual audit |
+| `docx/SKILL.md` (local Claude session snapshot; path redacted) | DOCX presets, form factor selection, real styles/numbering/tables, render-and-inspect workflow |
+| `openai-primary-runtime/documents/.../skills/documents/SKILL.md` (Codex runtime snapshot; path redacted) | Codex document rendering contract, preset selection, Word/Google Docs structural QA |
+| `openai-primary-runtime/presentations/.../skills/presentations/SKILL.md` (Codex runtime snapshot; path redacted) | Codex presentation workflow, claim spine, deck profiles, contact-sheet quality bar, source/asset provenance |
+| `design-system/SKILL.md` (local Claude session snapshot; path redacted) | Tokens, components, patterns, documentation, versioning, and migration discipline |
+| `accessibility-review/SKILL.md` (local Claude session snapshot; path redacted) | WCAG 2.1 AA baseline, contrast, keyboard, focus, touch targets, name/role/value |
