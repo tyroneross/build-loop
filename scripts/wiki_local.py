@@ -59,13 +59,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import pickle
 import re
 import sys
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -90,9 +91,10 @@ STATE_DIR = Path(
 ) / "build-loop"
 CACHE_FILE = STATE_DIR / "wiki-cache.pkl"
 # Bump when the cache layout changes (e.g. add new precomputed fields).
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 EXCERPT_MAX_CHARS = 400
+MAX_VECTOR_CANDIDATES = int(os.environ.get("BUILD_LOOP_WIKI_VECTOR_CANDIDATES", "800"))
 
 # Per-call query embed cache. Tiny (one entry) but saves ~12ms when the
 # same query embeds twice in the same process — recall.py does NOT
@@ -122,6 +124,9 @@ class _Store:
     provider: str
     model: str
     dim: int
+    embedding_norms: list[float] = field(default_factory=list)
+    lex_fields: list[dict[str, Any]] = field(default_factory=list)
+    term_index: dict[str, list[int]] = field(default_factory=dict)
 
 
 _STORE: _Store | None = None
@@ -209,6 +214,7 @@ def _load_store(force: bool = False) -> _Store:
     chunks = data.get("chunks") or []
     if not chunks:
         raise RuntimeError(f"vault store at {src} has no chunks")
+    embedding_norms, lex_fields, term_index = _build_store_index(chunks)
     store = _Store(
         chunks=chunks,
         embeddings_path=src,
@@ -216,6 +222,9 @@ def _load_store(force: bool = False) -> _Store:
         provider=data.get("provider", "ollama"),
         model=data.get("model", VAULT_EMBED_MODEL),
         dim=int(data.get("dimension", 768)),
+        embedding_norms=embedding_norms,
+        lex_fields=lex_fields,
+        term_index=term_index,
     )
     load_ms = int((time.monotonic() - t0) * 1000)
     _log.info(
@@ -310,32 +319,89 @@ def _chunk_identity_surface(chunk: dict) -> str:
     )
 
 
-def lexical_score(query: str, chunk: dict) -> float:
-    """Deterministic exact-match signal — verbatim port of vault_vector.py
-    `lexical_score` minus the `full_text` arg (we don't load full pages
-    into the in-process store; preview is enough for the in-loop signal).
-    """
-    terms = _match_terms(query)
-    if not terms:
-        return 0.0
+def _term_set(text: str) -> set[str]:
+    return set(_match_terms(text))
 
-    q_norm = _normalize_match_text(query)
+
+def _lexical_fields(chunk: dict) -> dict[str, Any]:
+    """Precompute normalized lexical surfaces for one chunk."""
     title = chunk.get("title", "") or ""
     page_id = chunk.get("page_id", "") or ""
     heading = chunk.get("heading", "") or ""
     path = chunk.get("page_path", "") or ""
     preview = chunk.get("content_preview", "") or ""
+    page_id_text = page_id.replace("-", " ")
+    page_id_terms = _match_terms(page_id_text)
+    page_id_no_type_terms = _drop_type_prefix(page_id_terms)
     identity = _chunk_identity_surface(chunk)
-    title_norm = _normalize_match_text(title)
-    page_id_norm = _normalize_match_text(page_id.replace("-", " "))
-    page_id_no_type_terms = _drop_type_prefix(
-        _match_terms(page_id.replace("-", " "))
-    )
-    page_id_no_type_norm = _normalize_match_text(
-        " ".join(page_id_no_type_terms)
-    )
-    heading_norm = _normalize_match_text(heading)
-    body_norm = _normalize_match_text(preview)
+    return {
+        "title_norm": _normalize_match_text(title),
+        "page_id_norm": _normalize_match_text(page_id_text),
+        "page_id_no_type_terms": page_id_no_type_terms,
+        "page_id_no_type_norm": _normalize_match_text(" ".join(page_id_no_type_terms)),
+        "path_norm": _normalize_match_text(path),
+        "heading_norm": _normalize_match_text(heading),
+        "body_norm": _normalize_match_text(preview),
+        "identity_terms": _term_set(identity),
+        "title_terms": _term_set(title),
+        "heading_terms": _term_set(heading),
+        "body_terms": _term_set(preview),
+        "path_terms": _term_set(path),
+        "title_term_count": len(_match_terms(title)),
+    }
+
+
+def _build_store_index(
+    chunks: list[dict[str, Any]],
+) -> tuple[list[float], list[dict[str, Any]], dict[str, list[int]]]:
+    """Build per-store caches used by the steady-state search path."""
+    embedding_norms: list[float] = []
+    lex_fields: list[dict[str, Any]] = []
+    term_index_sets: dict[str, set[int]] = {}
+    for idx, chunk in enumerate(chunks):
+        emb = chunk.get("embedding")
+        if isinstance(emb, list) and emb:
+            try:
+                embedding_norms.append(math.sqrt(sum(float(x) * float(x) for x in emb)))
+            except (TypeError, ValueError):
+                embedding_norms.append(0.0)
+        else:
+            embedding_norms.append(0.0)
+
+        fields = _lexical_fields(chunk)
+        lex_fields.append(fields)
+        terms: set[str] = set()
+        for key in ("identity_terms", "title_terms", "heading_terms", "body_terms", "path_terms"):
+            terms.update(fields.get(key, set()))
+        for term in terms:
+            term_index_sets.setdefault(term, set()).add(idx)
+    term_index = {term: sorted(indices) for term, indices in term_index_sets.items()}
+    return embedding_norms, lex_fields, term_index
+
+
+def _term_coverage_set(query_terms: list[str], surface_terms: set[str]) -> float:
+    if not query_terms:
+        return 0.0
+    if not surface_terms:
+        return 0.0
+    return sum(1 for t in query_terms if t in surface_terms) / len(query_terms)
+
+
+def _lexical_score_from_fields(
+    query_terms: list[str],
+    q_norm: str,
+    fields: dict[str, Any],
+) -> float:
+    if not query_terms:
+        return 0.0
+
+    title_norm = fields.get("title_norm", "")
+    page_id_norm = fields.get("page_id_norm", "")
+    page_id_no_type_terms = fields.get("page_id_no_type_terms", [])
+    page_id_no_type_norm = fields.get("page_id_no_type_norm", "")
+    path_norm = fields.get("path_norm", "")
+    heading_norm = fields.get("heading_norm", "")
+    body_norm = fields.get("body_norm", "")
 
     score = 0.0
     if q_norm in {title_norm, page_id_norm, page_id_no_type_norm}:
@@ -352,31 +418,57 @@ def lexical_score(query: str, chunk: dict) -> float:
         and page_id_no_type_norm in q_norm
     ):
         score += 1.15
-    if title_norm and len(_match_terms(title)) >= 2 and title_norm in q_norm:
+    if title_norm and fields.get("title_term_count", 0) >= 2 and title_norm in q_norm:
         score += 1.15
-    if q_norm and q_norm in _normalize_match_text(path):
+    if q_norm and q_norm in path_norm:
         score += 0.65
     if q_norm and q_norm in heading_norm:
         score += 0.45
     if q_norm and q_norm in body_norm:
         score += 0.35
 
-    identity_cov = _term_coverage(terms, identity)
-    title_cov = _term_coverage(terms, title)
-    heading_cov = _term_coverage(terms, heading)
-    body_cov = _term_coverage(terms, preview)
+    identity_cov = _term_coverage_set(query_terms, fields.get("identity_terms", set()))
+    title_cov = _term_coverage_set(query_terms, fields.get("title_terms", set()))
+    heading_cov = _term_coverage_set(query_terms, fields.get("heading_terms", set()))
+    body_cov = _term_coverage_set(query_terms, fields.get("body_terms", set()))
     score += 1.05 * identity_cov
     score += 0.60 * title_cov
     score += 0.35 * heading_cov
     score += 0.55 * body_cov
-    if len(terms) >= 3 and body_cov >= 0.9:
+    if len(query_terms) >= 3 and body_cov >= 0.9:
         score += 0.45
-    if body_cov >= 0.9 and _term_coverage(terms, identity) > 0:
+    if body_cov >= 0.9 and identity_cov > 0:
         score += 0.60
-    if len(terms) >= 2 and identity_cov >= 0.9:
+    if len(query_terms) >= 2 and identity_cov >= 0.9:
         score += 0.60
 
     return min(score, 3.0)
+
+
+def _normalize_vector(vec: list[float]) -> list[float]:
+    norm = math.sqrt(sum(float(x) * float(x) for x in vec))
+    if not norm:
+        return []
+    return [float(x) / norm for x in vec]
+
+
+def _cosine_unit_query(q_unit: list[float], emb: list[float], emb_norm: float) -> float:
+    if not q_unit or not emb or not emb_norm or len(q_unit) != len(emb):
+        return 0.0
+    return sum(q * float(e) for q, e in zip(q_unit, emb)) / emb_norm
+
+
+def lexical_score(query: str, chunk: dict) -> float:
+    """Deterministic exact-match signal — verbatim port of vault_vector.py
+    `lexical_score` minus the `full_text` arg (we don't load full pages
+    into the in-process store; preview is enough for the in-loop signal).
+    """
+    terms = _match_terms(query)
+    return _lexical_score_from_fields(
+        terms,
+        _normalize_match_text(query),
+        _lexical_fields(chunk),
+    )
 
 
 def _normalize_scores(values: dict[str, float]) -> dict[str, float]:
@@ -476,49 +568,43 @@ def search(query: str, k: int = 5) -> list[dict[str, Any]]:
         return []
     store = _load_store()
     q_vec = _ollama_embed_query(query)
+    q_unit = _normalize_vector(q_vec)
+    query_terms = _match_terms(query)
+    query_norm = _normalize_match_text(query)
 
-    # Score every chunk on cosine + lexical. Numpy is opportunistic:
-    # already on the wheel via sentence-transformers + torch (~33MB
-    # transitive dep, no incremental install cost). Vectorized cosine
-    # over 1962×768 takes ~3-5ms vs ~80-130ms for the pure-Python loop;
-    # crosses the wiki_ms <100ms acceptance gate decisively. Falls back
-    # to the per-chunk loop when numpy is missing (e.g. minimal install
-    # without retrieval extras).
-    scored: list[dict[str, Any]] = []
-    try:
-        import numpy as _np  # type: ignore  # noqa: PLC0415
-        _have_numpy = True
-    except ImportError:
-        _have_numpy = False
-
-    if _have_numpy:
-        valid: list[tuple[int, dict, list[float]]] = []
-        for i, c in enumerate(store.chunks):
-            emb = c.get("embedding")
-            if emb:
-                valid.append((i, c, emb))
-        if not valid:
-            return []
-        # Stack to a (N, D) matrix; normalize rows; dot with the
-        # normalized query to get cosines in one BLAS call.
-        mat = _np.asarray([emb for _i, _c, emb in valid], dtype=_np.float32)
-        norms = _np.linalg.norm(mat, axis=1, keepdims=True)
-        norms = _np.where(norms == 0, 1.0, norms)
-        mat = mat / norms
-        q = _np.asarray(q_vec, dtype=_np.float32)
-        q_norm = float(_np.linalg.norm(q)) or 1.0
-        cos_vec = (mat @ (q / q_norm)).tolist()
-        for (_i, c, _emb), cos in zip(valid, cos_vec):
-            lex = lexical_score(query, c)
-            scored.append({"cos": float(cos), "lex": lex, "chunk": c})
+    candidate_set: set[int] = set()
+    for term in query_terms:
+        candidate_set.update(store.term_index.get(term, []))
+    if candidate_set:
+        candidate_indices = list(candidate_set)
     else:
-        for c in store.chunks:
-            emb = c.get("embedding")
-            if not emb:
-                continue
-            cos = cosine(q_vec, emb)
-            lex = lexical_score(query, c)
-            scored.append({"cos": cos, "lex": lex, "chunk": c})
+        candidate_indices = list(range(len(store.chunks)))
+
+    # Score lexical surfaces first from precomputed fields. If a term query
+    # fans out broadly, bound vector scoring to the strongest lexical
+    # candidates; no-term semantic-only queries still fall back to full scan.
+    lex_by_idx: dict[int, float] = {}
+    for idx in candidate_indices:
+        if idx < len(store.lex_fields):
+            lex_by_idx[idx] = _lexical_score_from_fields(
+                query_terms,
+                query_norm,
+                store.lex_fields[idx],
+            )
+    if candidate_set and len(candidate_indices) > MAX_VECTOR_CANDIDATES:
+        limit = max(MAX_VECTOR_CANDIDATES, k * 80)
+        candidate_indices.sort(key=lambda i: lex_by_idx.get(i, 0.0), reverse=True)
+        candidate_indices = candidate_indices[:limit]
+
+    scored: list[dict[str, Any]] = []
+    for idx in candidate_indices:
+        c = store.chunks[idx]
+        emb = c.get("embedding")
+        if not emb:
+            continue
+        emb_norm = store.embedding_norms[idx] if idx < len(store.embedding_norms) else 0.0
+        cos = _cosine_unit_query(q_unit, emb, emb_norm)
+        scored.append({"cos": cos, "lex": lex_by_idx.get(idx, 0.0), "chunk": c})
     if not scored:
         return []
 

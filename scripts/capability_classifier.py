@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
+# capability:
+#   purpose: Classify task intents into capability tags for cross-project prior-art lookup.
+#   application: memory
+#   status: active
 """Deterministic capability classification for Phase 1 prior-art injection.
 
 Maps a free-text task intent (e.g. "build semantic search for the docs site")

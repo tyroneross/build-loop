@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
+# capability:
+#   purpose: Load pointer-dense short-term working context before Phase 1 memory bootstrap.
+#   application: memory
+#   status: active
 """Pre-Assess working-context loader (Pillar 0 short-term layer).
 
 Phase 1 Assess reads this BEFORE running ``context_bootstrap.py`` so the

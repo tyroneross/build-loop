@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
+# capability:
+#   purpose: Build the cross-project prior-art digest for Phase 1 Assess.
+#   application: memory
+#   status: active
 """Cross-project prior-art digest for Phase 1 Assess (P4).
 
 Surfaces, in Phase 1, the implementations and decisions from OTHER projects
