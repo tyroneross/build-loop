@@ -51,11 +51,11 @@ Use GenAI semconv attributes (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.u
 Already instrumented (reference these): **sample-observability-app** (OTel+Phoenix+OpenInference, full), **sample-reader/sample-rag** (OTel full + Sentry), **sample-secrets-service** (OTel metrics).
 
 **Gaps worth closing first** — LLM/agent apps with zero telemetry:
-1. **market-research-platform** — LangChain + LangGraph, nothing. Drop in the sample observability pattern (~10 lines) for instant span/token visibility.
-2. **stratagem** — has LangSmith dep but no OTel plumbing; unify with the OTel-first stack.
-3. **agent-builder** — LangGraph, no telemetry.
+1. **sample-research-app** — LangChain + LangGraph, nothing. Drop in the sample observability pattern (~10 lines) for instant span/token visibility.
+2. **sample-strategy-app** — has LangSmith dep but no OTel plumbing; unify with the OTel-first stack.
+3. **sample-agent-app** — LangGraph, no telemetry.
 
-Partial (error-only, no traces): ProductPilot, decision-doctor-cc, prompt-test-lab (Sentry only). **SpeakSavvy-iOS** — no telemetry; candidate for Embrace Apple SDK.
+Partial (error-only, no traces): sample-product-app, sample-decision-app, sample-prompt-lab (Sentry only). **sample-voice-ios** — no telemetry; candidate for Embrace Apple SDK.
 
 ## When build-loop fires this skill
 
@@ -63,4 +63,4 @@ Phase 1 Assess: if the build touches a server/LLM/mobile app with no telemetry, 
 
 ## Sources
 
-OTel GenAI semconv: opentelemetry.io/docs/specs/semconv/gen-ai/ · JS SDK 2.0: opentelemetry.io/blog/2025/otel-js-sdk-2-0/ · OpenLLMetry: github.com/traceloop/openllmetry · OpenInference: github.com/Arize-ai/openinference · Phoenix: arize.com/docs/phoenix · Langfuse OTel: langfuse.com/integrations/native/opentelemetry · Embrace Apple: github.com/embrace-io/embrace-apple-sdk · opentelemetry-swift: github.com/open-telemetry/opentelemetry-swift · Sentry OTLP: docs.sentry.io/concepts/otlp/ · Firebase: firebase.google.com/docs/crashlytics, /docs/perf-mon. User's prior decision: ~/dev/research/inbox/2026-04-23-stratagem-local-first-multi-agent-architecture.md.
+OTel GenAI semconv: opentelemetry.io/docs/specs/semconv/gen-ai/ · JS SDK 2.0: opentelemetry.io/blog/2025/otel-js-sdk-2-0/ · OpenLLMetry: github.com/traceloop/openllmetry · OpenInference: github.com/Arize-ai/openinference · Phoenix: arize.com/docs/phoenix · Langfuse OTel: langfuse.com/integrations/native/opentelemetry · Embrace Apple: github.com/embrace-io/embrace-apple-sdk · opentelemetry-swift: github.com/open-telemetry/opentelemetry-swift · Sentry OTLP: docs.sentry.io/concepts/otlp/ · Firebase: firebase.google.com/docs/crashlytics, /docs/perf-mon.
