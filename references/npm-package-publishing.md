@@ -51,6 +51,23 @@ credential. npm documents that Bypass 2FA takes precedence over account-level an
 package-level 2FA settings, so this is an explicit exception that must be
 recorded and rotated or revoked after use.
 
+For build-loop's npmjs fallback workflow, the secret name is `NPM_TOKEN`, and
+the workflow filename is `.github/workflows/publish-npmjs.yml`. Keep this
+separate from `.github/workflows/publish-npm.yml`, which publishes to GitHub
+Packages with `secrets.GITHUB_TOKEN`.
+
+Manual npmjs publish run:
+
+```bash
+gh workflow run publish-npmjs.yml --ref main -f dry_run=false
+```
+
+Manual npmjs dry-run:
+
+```bash
+gh workflow run publish-npmjs.yml --ref main -f dry_run=true
+```
+
 ## Validation
 
 Before tag or publish:
