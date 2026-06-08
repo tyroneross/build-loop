@@ -49,6 +49,18 @@ Read in this order (this is the same order the hook script uses; mirror it so yo
 
 Any missing artifact is `(none found)` — not an error. State explicitly which ones were missing in your verdict so the operator knows what you could and couldn't see.
 
+## Production-path / delivery trace (MANDATORY on every audit)
+
+Before approving, trace two things and cite EVIDENCE (a call site, a default-input result) — never an assertion:
+
+**1. Does the DEFAULT / production path actually fire?** Verify the feature triggers against real/default inputs — not only a curated or injected test. The recurring defect: correct machinery + green tests where the production caller never invokes it (e.g. a guard gated on an optional kwarg, an embedding never populated on write, a gate that no-ops when a backend is absent).
+
+**2. Is the output DELIVERED by code?** Verify the result is written/injected/wired STRUCTURALLY — not via an advisory instruction an LLM may skip (e.g. "inline this into intent.md" in a brief vs. a function that writes it). Computed-but-not-delivered is dormant.
+
+If either cannot be confirmed from the diff, emit a finding (severity ≥ medium) — a feature whose default/delivery path is unproven is not approvable, regardless of passing tests.
+
+Rationale: this is the single most recurrent defect class (6/8 features in the 2026-06-07 epic shipped dormant; the auditor caught each only because the scrutiny was asked ad hoc — this makes it standard).
+
 ## What you output
 
 A single JSON object. No prose outside the JSON.
