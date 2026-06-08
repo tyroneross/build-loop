@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Literal
@@ -91,14 +93,27 @@ def iter_version_dirs(
     return sorted(versions)
 
 
-def detect_in_use_versions(*, plugin_name: str) -> set[str]:
+def detect_in_use_versions(*, plugin_name: str, scan_peers: bool = True) -> set[str]:
     """Cache version dir name(s) a live host session is currently loaded from.
 
-    Read from the host plugin-root env vars. The path is intentionally NOT
-    resolved: an in-use version dir may itself be a symlink (e.g. a local-dev
-    override pointing at a working tree), and we must protect its *cache* name,
-    not the symlink target's name. Only a path whose parent is this plugin's
-    cache dir counts, so an unrelated env value can't over-protect.
+    Reads:
+      1. THIS process's env vars (CLAUDE_PLUGIN_ROOT / CODEX_PLUGIN_ROOT) —
+         original behaviour; always on.
+      2. PEER live host processes' env (when ``scan_peers``, default on) —
+         covers the multi-session case (cross-terminal Claude + Claude, or
+         Claude + Codex) where another session is bound to a different
+         version of the same plugin. The cross-user fix for
+         `bl-plugin-cache-gc-selfheal`.
+
+    The path is intentionally NOT resolved: an in-use version dir may itself
+    be a symlink (e.g. a local-dev override pointing at a working tree), and
+    we must protect its *cache* name, not the symlink target's name. Only a
+    path whose parent is this plugin's cache dir counts, so an unrelated env
+    value can't over-protect.
+
+    Peer scan is best-effort and fail-open: if ``ps -E`` / ``/proc`` are
+    unavailable or return nothing, we fall back to the current-process scan.
+    Never raises.
     """
     names: set[str] = set()
     for var in IN_USE_ENV_VARS:
@@ -108,7 +123,115 @@ def detect_in_use_versions(*, plugin_name: str) -> set[str]:
         p = Path(root)
         if p.parent.name == plugin_name:
             names.add(p.name)
+    if scan_peers:
+        try:
+            names.update(_detect_peer_in_use_versions(plugin_name=plugin_name))
+        except Exception:  # noqa: BLE001 - fail-open on ANY error
+            pass
     return names
+
+
+# Matches IN_USE_ENV_VARS values in a ps -E / /proc/environ blob. Captures
+# the path up to the first whitespace or NUL byte. Env-var values can't
+# legally contain whitespace via shell export, so this is safe and avoids
+# bleeding into an adjacent var.
+_ENV_VAR_PATTERN = re.compile(
+    r"(?:^|[ \t\0])(" + "|".join(re.escape(v) for v in IN_USE_ENV_VARS) + r")=([^\s\0]+)"
+)
+
+
+def _detect_peer_in_use_versions(*, plugin_name: str) -> set[str]:
+    """Scan peer live processes' environment for CLAUDE_PLUGIN_ROOT /
+    CODEX_PLUGIN_ROOT pinned to ``plugin_name``'s cache. Returns the version
+    dir names found.
+
+    Strategy by platform:
+      - Linux:  read /proc/<pid>/environ for every same-uid process.
+      - macOS:  ``ps -E`` (BSD) prints env vars after the command, restricted
+                to the current user.
+
+    Best-effort. Returns ``set()`` on any failure.
+    """
+    names: set[str] = set()
+    # Linux fast-path: /proc is the most reliable read.
+    proc_root = Path("/proc")
+    if proc_root.is_dir():
+        try:
+            my_uid = os.getuid()
+        except AttributeError:
+            my_uid = None
+        try:
+            entries = list(proc_root.iterdir())
+        except OSError:
+            return names
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            if entry.name == str(os.getpid()):
+                continue
+            if my_uid is not None:
+                try:
+                    if entry.stat().st_uid != my_uid:
+                        continue
+                except OSError:
+                    continue
+            environ_path = entry / "environ"
+            try:
+                blob = environ_path.read_bytes()
+            except OSError:
+                continue
+            try:
+                text = blob.decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                continue
+            for match in _ENV_VAR_PATTERN.finditer(text):
+                _name = _version_from_root(match.group(2), plugin_name)
+                if _name:
+                    names.add(_name)
+        return names
+
+    # macOS / BSD: `ps -E` shows env after the command. Restrict to current
+    # user (-u $USER); env-only for other users requires root.
+    user = os.environ.get("USER") or ""
+    cmd: list[str]
+    if user:
+        cmd = ["ps", "-E", "-o", "pid=,command=", "-u", user]
+    else:
+        cmd = ["ps", "-E", "-o", "pid=,command=", "-ax"]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=2, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return names
+    my_pid = str(os.getpid())
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        if parts[0] == my_pid:
+            continue
+        for match in _ENV_VAR_PATTERN.finditer(line):
+            _name = _version_from_root(match.group(2), plugin_name)
+            if _name:
+                names.add(_name)
+    return names
+
+
+def _version_from_root(root_value: str, plugin_name: str) -> str | None:
+    """Extract the version dir name from an env-var value when it points at
+    a cache dir for ``plugin_name``. Same un-resolved match rule as the
+    current-process detector — protect by NAME, not resolved target.
+    """
+    if not root_value:
+        return None
+    p = Path(root_value)
+    if p.parent.name == plugin_name:
+        return p.name
+    return None
 
 
 def installed_pinned_versions(*, plugin_name: str, host: Host) -> set[str]:
@@ -181,6 +304,7 @@ def prune_host(
     keep_version_override: str | None,
     protect: list[str] | None,
     detect_in_use: bool,
+    scan_peers: bool,
     protect_installed: bool,
     apply: bool,
 ) -> tuple[dict[str, Any], int]:
@@ -189,7 +313,9 @@ def prune_host(
     keep_version = keep_version_override or manifest["version"]
     protected_names: set[str] = set(protect or [])
     if detect_in_use:
-        protected_names.update(detect_in_use_versions(plugin_name=plugin_name))
+        protected_names.update(
+            detect_in_use_versions(plugin_name=plugin_name, scan_peers=scan_peers)
+        )
     if protect_installed:
         protected_names.update(installed_pinned_versions(plugin_name=plugin_name, host=host))
     version_dirs = iter_version_dirs(
@@ -250,6 +376,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable auto-protecting the version dir the running host session is "
         "loaded from (read from CLAUDE_PLUGIN_ROOT / CODEX_PLUGIN_ROOT).",
+    )
+    p.add_argument(
+        "--no-scan-peers",
+        action="store_true",
+        help="Don't scan PEER live host processes' env for in-use versions. "
+        "Default-on peer scan protects multi-session pins (Claude + Claude, "
+        "Claude + Codex) so a prune in one session doesn't kill another's hooks.",
     )
     p.add_argument(
         "--protect-installed",
@@ -338,6 +471,7 @@ def main() -> int:
                 keep_version_override=args.keep_version,
                 protect=args.protect,
                 detect_in_use=not args.no_detect_in_use,
+                scan_peers=not args.no_scan_peers,
                 protect_installed=args.protect_installed,
                 apply=args.apply,
             )
