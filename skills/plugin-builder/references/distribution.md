@@ -125,15 +125,19 @@ For team-internal distribution:
 
 Use this checklist when a plugin also ships as an npm package. Keep npmjs and
 GitHub Packages as separate release surfaces; a pass on one registry does not
-prove the other one shipped.
+prove the other one shipped. For the build-loop-wide package standard, also
+load `../../../references/npm-package-publishing.md`.
 
 ### npmjs Release Standard
 
 Every npmjs package publish uses provenance. Preferred path: trusted publishing
-with OIDC, which generates provenance without a stored npm token. Fallback path:
-a scoped npm access token plus `npm publish --provenance`. Do not add or edit an
+with OIDC, using explicit `npm publish --provenance` without a stored npm token.
+Fallback path: a scoped npm access token plus `npm publish --provenance`. Do not add or edit an
 npmjs publish workflow that omits provenance unless the user explicitly accepts
 that exception.
+If an npm token is pasted into chat, logs, docs, or shell history, treat it as
+compromised. Do not use it for publishing; revoke it and return to the Trusted
+Publisher path.
 
 Use npm CLI v11 command docs as the command reference for release work. The
 standard command set is:
@@ -142,7 +146,7 @@ standard command set is:
 npm whoami --registry=https://registry.npmjs.org
 npm view @scope/package version dist-tags --registry=https://registry.npmjs.org --json
 npx -y npm@11 pack --dry-run --json --registry=https://registry.npmjs.org
-npm publish --dry-run --access public --registry=https://registry.npmjs.org
+npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org
 npm publish --provenance --access public --registry=https://registry.npmjs.org
 npm token list
 npm audit signatures
@@ -192,7 +196,7 @@ Trusted Publisher settings before the real publish:
 - Provider: GitHub Actions.
 - Owner/user or organization and repository exactly match the GitHub repo.
 - Workflow filename exactly matches the publish workflow, for example
-  `publish-npmjs.yml`.
+  `publish-npm.yml`.
 - Environment is blank unless the workflow uses a GitHub environment.
 - Allowed actions include `npm publish`.
 
@@ -203,10 +207,12 @@ publishes. Remove obsolete `always-auth` inputs when using modern
 `setup-node`; use an explicit package-manager cache setting if the default
 cache detection is noisy.
 
-Run `npm publish --dry-run --access public --registry=https://registry.npmjs.org`
+Run `npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org`
 as a packaging check, but do not treat it as proof that the Trusted Publisher
 mapping is valid. A real publish can still fail after a successful dry-run when
-the npm package settings do not match the GitHub workflow.
+the npm package settings do not match the GitHub workflow. After publishing,
+verify the registry metadata includes
+`dist.attestations.provenance.predicateType = https://slsa.dev/provenance/v1`.
 
 ### Access Token Fallback Gate
 
@@ -223,9 +229,12 @@ If token fallback is approved:
   organization access and assume it allows package publishing.
 - Set an expiration date and record the rotation/removal follow-up.
 - Leave 2FA bypass off unless CI publishing cannot work without it and the user
-  accepts that exception.
+  accepts that exception. npm documents that Bypass 2FA takes precedence over
+  account-level and package-level 2FA, so record and rotate/revoke the exception.
 - Store the value as a GitHub secret such as `NPM_TOKEN`; never commit it to
   `.npmrc`, workflow files, docs, or shell history examples.
+- If a token value is pasted into chat, logs, docs, or shell history, treat it as
+  compromised: do not use it; revoke it and create a fresh token.
 - Run `npm token list` to audit tokens and revoke the fallback token after the
   release if it is no longer needed.
 
@@ -252,15 +261,14 @@ reason not to and that exception is recorded in the release notes. Provenance
 requires:
 
 - A supported cloud CI/CD provider and a cloud-hosted runner.
-- npm CLI `9.5.0+` at minimum; prefer current npm.
+- npm CLI `11.5.1+` for Trusted Publisher flows; prefer current npm.
 - `package.json.repository` set to the public source repository and matching the
   repository used by the workflow.
 - `permissions.id-token: write` in the workflow.
 
-Trusted publishing creates provenance attestations without adding `--provenance`
-to the command. Token-based fallback must add `--provenance` to every real
-npmjs `npm publish` command. After install, downstream consumers can verify
-registry signatures and attestations with:
+Trusted Publisher and token fallback publishes both use explicit `--provenance`
+on every real npmjs `npm publish` command. After install, downstream consumers
+can verify registry signatures and attestations with:
 
 ```bash
 npm audit signatures

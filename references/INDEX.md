@@ -27,6 +27,7 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 | [iterate-protocol.md](iterate-protocol.md) | Phase 5 Iterate — diagnosis cascade, work list, fan-out, autonomous loop | `agents/build-orchestrator.md` |
 | [learn-protocol.md](learn-protocol.md) | Phase 6 Learn — pattern detection, experiment drafting, promotion signoff | `agents/build-orchestrator.md` |
 | [push-readiness-checklist.md](push-readiness-checklist.md) | Advisory push recommendation checklist: policy, Rally state, dirt, validation, accuracy, architecture, efficiency | Closeout/reporting agents |
+| [npm-package-publishing.md](npm-package-publishing.md) | npmjs Trusted Publisher/OIDC provenance standard, pack/publish verification, GitHub Packages separation | Package/release implementers |
 
 ## Decision & escalation handling
 
