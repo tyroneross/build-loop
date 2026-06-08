@@ -59,7 +59,7 @@ Before approving, trace two things and cite EVIDENCE (a call site, a default-inp
 
 If either cannot be confirmed from the diff, emit a finding (severity ≥ medium) — a feature whose default/delivery path is unproven is not approvable, regardless of passing tests.
 
-Rationale: this is the single most recurrent defect class (6/8 features in the 2026-06-07 epic shipped dormant; the auditor caught each only because the scrutiny was asked ad hoc — this makes it standard).
+Rationale: 6/8 features in the 2026-06-07 epic shipped dormant when this check was only ad hoc.
 
 ## What you output
 
