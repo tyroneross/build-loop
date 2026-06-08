@@ -11,6 +11,10 @@ on:
         description: "Run 'npm publish --dry-run' instead of publishing"
         required: false
         default: "true"
+      verify_only:
+        description: "Only verify npmjs metadata for the package.json version"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -49,25 +53,35 @@ jobs:
           echo "Version match: $PKG_VERSION"
 
       - name: Install dependencies
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.verify_only != 'true'
         run: npm ci
 
       - name: Build
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.verify_only != 'true'
         run: npm run build
 
       - name: Publish to npmjs (dry-run)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org
 
       - name: Publish to npmjs
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run != 'true')
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public --registry=https://registry.npmjs.org
 
       - name: Verify npmjs metadata
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.verify_only == 'true' || github.event.inputs.dry_run != 'true'))
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          npm view "@tyroneross/build-loop@$PKG_VERSION" dist-tags dist.attestations --json --registry=https://registry.npmjs.org
+          for attempt in $(seq 1 12); do
+            if npm view "@tyroneross/build-loop@$PKG_VERSION" dist-tags dist.attestations --json --registry=https://registry.npmjs.org; then
+              exit 0
+            fi
+            echo "npmjs metadata not visible yet for $PKG_VERSION; retry $attempt/12"
+            sleep 30
+          done
+          echo "::error::npmjs metadata did not become visible for @tyroneross/build-loop@$PKG_VERSION"
+          exit 1

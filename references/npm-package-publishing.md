@@ -68,6 +68,12 @@ Manual npmjs dry-run:
 gh workflow run publish-npmjs.yml --ref main -f dry_run=true
 ```
 
+Manual npmjs metadata verification without publishing:
+
+```bash
+gh workflow run publish-npmjs.yml --ref main -f verify_only=true
+```
+
 ## Validation
 
 Before tag or publish:
@@ -82,6 +88,11 @@ After publish:
 ```bash
 npm view @scope/package@1.2.3 dist-tags dist.attestations --json --registry=https://registry.npmjs.org
 ```
+
+If a real publish step succeeds but the immediate `npm view` returns `E404`, do
+not rerun the real publish for the same version. npmjs metadata can lag for a
+few minutes after the successful `+ @scope/package@version` publish line. Poll
+the registry and use a verify-only workflow path when available.
 
 The registry is the source of truth. Provenance is present when npm metadata includes:
 

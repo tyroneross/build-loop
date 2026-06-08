@@ -213,6 +213,10 @@ mapping is valid. A real publish can still fail after a successful dry-run when
 the npm package settings do not match the GitHub workflow. After publishing,
 verify the registry metadata includes
 `dist.attestations.provenance.predicateType = https://slsa.dev/provenance/v1`.
+If the real publish step prints the final `+ @scope/package@version` line but
+the immediate metadata check returns `E404`, do not rerun the same publish.
+npmjs metadata can lag for a few minutes after acceptance; poll `npm view` or
+use a verify-only workflow path.
 
 ### Access Token Fallback Gate
 
@@ -286,6 +290,10 @@ npm audit signatures
 gh run rerun <run-id> --failed
 ```
 
+- If npmjs succeeds through the final `+ @scope/package@version` line but the
+  post-publish metadata check returns `E404`, treat it as a visibility lag until
+  registry polling proves otherwise. Do not rerun the publish for that version;
+  rerun a verify-only path or poll `npm view`.
 - Use local npm login or token publishing only as an explicit fallback decision,
   because it bypasses the trusted-publisher/provenance path.
 
