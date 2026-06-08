@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.30.2",
+  "version": "0.30.3",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
@@ -36,8 +36,6 @@
     "scripts/sync_plugin_cache.py",
     "scripts/prune_plugin_cache.py",
     "scripts/prune_codex_plugin_cache.py",
-    "!scripts/**/__pycache__",
-    "!scripts/**/*.pyc",
     "hooks",
     "agents",
     "docs/agent-surface-policy.md",
@@ -49,7 +47,10 @@
     ".agents",
     "README.md",
     "AGENTS.md",
-    "LICENSE"
+    "LICENSE",
+    "!**/__pycache__",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
   ],
   "scripts": {
     "build": "tsc",
