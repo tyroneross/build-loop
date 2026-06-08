@@ -53,10 +53,37 @@ Produces a repo-grounded research packet without committing to implementation. U
 [What could go wrong, what's uncertain]
 
 ## Confidence
-- Context coverage: high/medium/low
-- Verification coverage: high/medium/low
-- Evidence quality: high/medium/low
-- Overall: high/medium/low
+
+Rate each axis high/medium/low, then set Overall to the floor of the three —
+and never above Evidence quality when the packet rests on external claims:
+
+- Context coverage — how much of the relevant repo was actually read
+- Verification coverage — share of material claims checked against repo or source
+- Evidence quality — strength of the sources behind external claims (rubric below)
+- Overall — the floor of the above
+
+### Source & claim rubric (apply to every external claim)
+
+Tier each source: **T1** official docs / standards / primary data · **T2**
+recognized experts / official eng blogs · **T3** reputable industry press ·
+**T4** forums / SEO / unattributed. Then grade the claim's corroboration and
+mark it inline:
+
+- ✅ verified — ≥2 *independent* T1/T2 sources agree (independent = different
+  orgs, not mirrors or one syndicated wire)
+- ⚠️ partial — exactly one T1/T2, or only T3/T4 sources
+- ❓ inferred — single source, T4 only, or your own inference
+
+A claim's confidence can never exceed its corroboration.
+
+### Verify before stating (high-risk / max_accuracy)
+
+For security, auth, payment, legal, medical, finance, production, or any
+`max_accuracy` packet: decompose each external claim into atomic checkable
+facts (a number, a version, an API signature, a citation) and verify each
+against a source before the packet states it. An unverifiable atom is labeled
+❓ or removed — never stated as fact. This applies the cite-or-block rule in
+`references/research-trigger-policy.md` claim-by-claim.
 
 ## Next action
 [Concrete first step — could be "run /build-loop" or "investigate X further"]

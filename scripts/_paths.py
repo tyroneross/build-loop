@@ -149,6 +149,11 @@ def project_lessons_dir(project: str) -> Path:
     return project_root(project) / "lessons"
 
 
+def project_research_dir(project: str) -> Path:
+    """Return ``<project_root(project)>/research`` for pre-decision research packets."""
+    return project_root(project) / "research"
+
+
 def project_raw_dir(project: str) -> Path:
     """Return ``<project_root(project)>/raw`` for verbatim source material."""
     return project_root(project) / "raw"

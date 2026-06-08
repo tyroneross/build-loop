@@ -39,6 +39,18 @@ signals:
 No trigger means no Research plugin run by default. A large T-shirt size alone
 does not make a local mechanical edit research-worthy.
 
+## Source tiering & claim verification
+
+When a packet makes external claims, the host LLM tiers its sources and grades
+corroboration before stating anything as fact — self-contained, no external
+tool required. The rubric lives with packet generation in
+`skills/research/SKILL.md` § Confidence: tier each source T1–T4, classify each
+claim's corroboration (✅ ≥2 independent T1/T2 · ⚠️ one T1/T2 or T3/T4-only ·
+❓ single/T4/inferred), and never let a claim's confidence exceed its
+corroboration. High-risk and `max_accuracy` packets decompose claims into
+atomic facts and verify each before stating it. This is the cite-or-block rule
+below applied claim-by-claim.
+
 ## Depth Rules
 
 The Research plugin's own depth classifier remains authoritative when

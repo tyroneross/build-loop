@@ -81,7 +81,7 @@ DEFAULT_MEMORY_DIR = default_memory_dir()
 # rather than nesting beneath ``lessons/``. Match the lane helpers in _paths.py.
 PROJECT_SUBLANES = frozenset({
     "lessons", "issues", "decisions", "debugging", "design", "product",
-    "architecture", "raw",
+    "architecture", "raw", "research",
 })
 
 # Top-level lanes (siblings under ``build-loop-memory/``). Same idea: a

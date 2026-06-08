@@ -724,18 +724,46 @@ def build_research_packet(
 # Archive
 # ---------------------------------------------------------------------------
 
+def _resolve_research_dir(workdir: Path) -> Path:
+    """Resolve where a research packet should be written.
+
+    Prefers the central build-loop-memory store at
+    ``<memory_store_root>/projects/<slug>/research`` (the durable, slug-segmented
+    home for pre-decision packets). Falls back to the repo-local
+    ``<workdir>/.build-loop/research`` when the memory store is not set up
+    (root dir absent) or is unwritable, so research never hard-fails. The leaf
+    is created here for the central path so writability is probed before the
+    caller commits; the fallback dir is created by the caller.
+    """
+    fallback = workdir / ".build-loop" / "research"
+    try:
+        from _paths import memory_store_root, project_research_dir
+        from project_resolver import resolve_project
+
+        if not memory_store_root().is_dir():
+            return fallback  # store not bootstrapped → stay repo-local
+        target = project_research_dir(resolve_project(workdir))
+        target.mkdir(parents=True, exist_ok=True)  # probes writability
+        return target
+    except Exception:
+        return fallback
+
+
 def archive_packet(
     workdir: Path,
     topic: str,
     content: str,
     metadata: dict[str, Any] | None = None,
 ) -> Path:
-    """Save a packet to .build-loop/research/YYYY-MM-DD-<topic>.md.
+    """Save a packet to the central memory store's research lane.
 
-    Prepends a JSON metadata header block so callers can parse frontmatter.
-    Returns the path of the saved file.
+    Target: ``<memory_store_root>/projects/<slug>/research/YYYY-MM-DD-<topic>.md``
+    (slug derived from ``workdir``). Falls back to repo-local
+    ``<workdir>/.build-loop/research/`` when the memory store is absent or
+    unwritable. Prepends a JSON metadata header block so callers can parse
+    frontmatter. Returns the path of the saved file.
     """
-    research_dir = workdir / ".build-loop" / "research"
+    research_dir = _resolve_research_dir(workdir)
     research_dir.mkdir(parents=True, exist_ok=True)
 
     slug = re.sub(r"[^A-Za-z0-9_-]", "-", topic.strip().lower())
