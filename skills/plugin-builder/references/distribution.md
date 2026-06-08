@@ -187,6 +187,62 @@ as a packaging check, but do not treat it as proof that the Trusted Publisher
 mapping is valid. A real publish can still fail after a successful dry-run when
 the npm package settings do not match the GitHub workflow.
 
+### Access Token Fallback Gate
+
+Trusted publishing is preferred because it removes long-lived npm secrets from
+CI and automatically generates provenance attestations. Use an npm access token
+only when the user explicitly chooses a fallback after the trusted-publisher
+path is blocked.
+
+If token fallback is approved:
+
+- Use a granular access token, not a legacy token.
+- Grant read/write only to the package or scope being published; do not grant
+  organization access and assume it allows package publishing.
+- Set an expiration date and record the rotation/removal follow-up.
+- Leave 2FA bypass off unless CI publishing cannot work without it and the user
+  accepts that exception.
+- Store the value as a GitHub secret such as `NPM_TOKEN`; never commit it to
+  `.npmrc`, workflow files, docs, or shell history examples.
+- Run `npm token list` to audit tokens and revoke the fallback token after the
+  release if it is no longer needed.
+
+Token fallback workflow steps should set:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+```
+
+and publish with:
+
+```bash
+npm publish --provenance --access public --registry=https://registry.npmjs.org
+```
+
+using `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`.
+
+### Provenance Gate
+
+For npmjs packages, publish with provenance unless there is an explicit reason
+not to. Provenance requires:
+
+- A supported cloud CI/CD provider and a cloud-hosted runner.
+- npm CLI `9.5.0+` at minimum; prefer current npm.
+- `package.json.repository` set to the public source repository and matching the
+  repository used by the workflow.
+- `permissions.id-token: write` in the workflow.
+
+Trusted publishing creates provenance attestations without adding
+`--provenance`. Token-based fallback must add `--provenance` to `npm publish`.
+After install, downstream consumers can verify registry signatures and
+attestations with:
+
+```bash
+npm audit signatures
+```
+
 ### Failure Triage
 
 - If GitHub Packages publishes and installs but npmjs fails, report split
@@ -208,6 +264,10 @@ gh run rerun <run-id> --failed
   `https://docs.npmjs.com/cli/v11/commands/npm-publish`
 - npm Trusted Publishers:
   `https://docs.npmjs.com/trusted-publishers#supported-cicd-providers`
+- npm access tokens:
+  `https://docs.npmjs.com/about-access-tokens`
+- npm provenance:
+  `https://docs.npmjs.com/generating-provenance-statements`
 - GitHub Actions setup-node trusted-publisher OIDC:
   `https://github.com/actions/setup-node/blob/main/docs/advanced-usage.md#publishing-to-npm-with-trusted-publisher-oidc`
 
