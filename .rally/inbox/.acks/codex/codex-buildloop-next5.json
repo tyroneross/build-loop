@@ -1,0 +1,15 @@
+{
+  "acked_at": 1780822499.192941,
+  "broadcast": {
+    "last_message_ts": null,
+    "line_count": 0
+  },
+  "direct": {
+    "last_message_ts": 1780816113.672455,
+    "line_count": 4
+  },
+  "kind": "rally-inbox-ack-cursor",
+  "schema_version": "1.0",
+  "session_id": "codex-buildloop-next5",
+  "tool": "codex"
+}

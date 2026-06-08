@@ -1,4 +1,36 @@
 {
+  "fingerprint": [
+    {
+      "len": 2228,
+      "mtime_ns": 1780124307540130606,
+      "name": "2026-05-30.jsonl"
+    },
+    {
+      "len": 8568,
+      "mtime_ns": 1780581588212490731,
+      "name": "2026-05-31.jsonl"
+    },
+    {
+      "len": 8738,
+      "mtime_ns": 1780611947646562863,
+      "name": "2026-06-04.jsonl"
+    },
+    {
+      "len": 2151,
+      "mtime_ns": 1780728790400529417,
+      "name": "2026-06-06.jsonl"
+    },
+    {
+      "len": 146569,
+      "mtime_ns": 1780868980238508136,
+      "name": "2026-06-07.jsonl"
+    },
+    {
+      "len": 18906,
+      "mtime_ns": 1780897267915661478,
+      "name": "2026-06-08.jsonl"
+    }
+  ],
   "segments": [
     {
       "count": 2,
@@ -17,7 +49,43 @@
       "last_seq": 17,
       "last_ts": "2026-05-31T06:33:10Z",
       "segment": "2026-05-31.jsonl"
+    },
+    {
+      "count": 12,
+      "engagement": "2026-06-04",
+      "first_seq": 18,
+      "first_ts": "2026-06-04T20:17:56Z",
+      "last_seq": 29,
+      "last_ts": "2026-06-04T22:25:47Z",
+      "segment": "2026-06-04.jsonl"
+    },
+    {
+      "count": 3,
+      "engagement": "2026-06-06",
+      "first_seq": 30,
+      "first_ts": "2026-06-06T05:04:01Z",
+      "last_seq": 32,
+      "last_ts": "2026-06-06T06:53:10Z",
+      "segment": "2026-06-06.jsonl"
+    },
+    {
+      "count": 184,
+      "engagement": "2026-06-07",
+      "first_seq": 33,
+      "first_ts": "2026-06-07T00:24:00Z",
+      "last_seq": 216,
+      "last_ts": "2026-06-07T21:49:40Z",
+      "segment": "2026-06-07.jsonl"
+    },
+    {
+      "count": 27,
+      "engagement": "2026-06-08",
+      "first_seq": 217,
+      "first_ts": "2026-06-08T01:40:48Z",
+      "last_seq": 242,
+      "last_ts": "2026-06-08T05:41:07Z",
+      "segment": "2026-06-08.jsonl"
     }
   ],
-  "updated_at": "2026-05-31T06:46:41Z"
+  "updated_at": "2026-06-08T05:41:07Z"
 }
