@@ -53,7 +53,29 @@ VERSION_FILES = [
     REPO_ROOT / "package.json",
     REPO_ROOT / ".codex-plugin" / "plugin.json",
 ]
-EXPECTED_VERSION = "0.30.3"
+# The mandatory-Phase-6 doc rewrite landed in 0.30.0. The invariant this file
+# guards is that the rewrite has shipped (version >= 0.30.0) AND that all three
+# manifests stay in lockstep — NOT that the version is frozen at one exact
+# value. An exact pin breaks on every release; a floor + lockstep check does
+# not. ``MIN_PHASE6_VERSION`` is the floor the doctrine requires.
+MIN_PHASE6_VERSION = (0, 30, 0)
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    # Parse a dotted version, ignoring any pre-release/build suffix (e.g.
+    # "0.31.0-rc1" -> (0, 31, 0)). Non-numeric leading segments yield (0,).
+    parts: list[int] = []
+    for seg in str(v).split("."):
+        num = ""
+        for ch in seg:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        if num == "":
+            break
+        parts.append(int(num))
+    return tuple(parts) or (0,)
 
 
 def _read(p: Path) -> str:
@@ -167,10 +189,22 @@ def test_detector_agent_documents_second_signal_source() -> None:
 
 
 @pytest.mark.parametrize("path", VERSION_FILES, ids=lambda p: str(p.relative_to(REPO_ROOT)))
-def test_version_is_bumped_to_0_30_0(path: Path) -> None:
-    """Manifest files share version ``0.30.0``."""
+def test_manifest_version_at_or_above_phase6_floor(path: Path) -> None:
+    """Each manifest version is >= the mandatory-Phase-6 floor (0.30.0)."""
     data = json.loads(_read(path))
-    assert data.get("version") == EXPECTED_VERSION, (
-        f"{path.relative_to(REPO_ROOT)} has version={data.get('version')!r}, "
-        f"expected {EXPECTED_VERSION!r}."
+    version = data.get("version")
+    assert version is not None, f"{path.relative_to(REPO_ROOT)} has no version field"
+    assert _version_tuple(version) >= MIN_PHASE6_VERSION, (
+        f"{path.relative_to(REPO_ROOT)} has version={version!r}, "
+        f"below the mandatory-Phase-6 floor {'.'.join(map(str, MIN_PHASE6_VERSION))}."
     )
+
+
+def test_manifest_versions_are_in_lockstep() -> None:
+    """All three manifests must declare the exact same version."""
+    versions = {
+        str(p.relative_to(REPO_ROOT)): json.loads(_read(p)).get("version")
+        for p in VERSION_FILES
+    }
+    distinct = set(versions.values())
+    assert len(distinct) == 1, f"manifest versions diverged: {versions}"

@@ -92,7 +92,15 @@ CATEGORY_KEYWORDS = [
                       # Worktree GC + completed-but-uncommitted state + the
                       # operator-question resolver are single-run lifecycle infra:
                       "worktree-gc", "worktree gc", "commit_state",
-                      "uncommitted", "operator question")),
+                      "uncommitted", "operator question",
+                      # Session-start lifecycle hooks (plugin self-heal,
+                      # post-push memory-closeout baton drain) and the host
+                      # capability resolver (which wakeup/resume primitives a
+                      # host exposes) are run/host lifecycle infrastructure:
+                      "plugin-heal", "plugin self-heal", "self-heal",
+                      "closeout", "armed baton", "host capability",
+                      "host_capabilities", "wakeup", "resume primitive",
+                      "coding host")),
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.

@@ -135,9 +135,19 @@ def test_intent_routing_present() -> None:
 
 def test_model_tiering_block_present() -> None:
     text = _read()
+    lowered = text.lower()
     assert "Model Tiering" in text
-    assert "claude-opus-4-7" in text or "Opus 4.7" in text
-    assert "sonnet" in text.lower()
+    # The orchestrator must name a coordination/Thinking tier for itself and
+    # the Code (Sonnet) tier for implementers. Assert the tier vocabulary, not
+    # an exact model-version string — pinning e.g. "Opus 4.7" makes this test
+    # break on every model migration (it did: the Frontier-tier rewrite moved
+    # to the `opus` alias + `fable`). The durable invariant is that a
+    # coordination tier is named.
+    assert any(
+        token in lowered
+        for token in ("opus", "thinking", "coordination tier", "frontier")
+    ), "orchestrator must name its coordination/Thinking model tier"
+    assert "sonnet" in lowered
 
 
 def test_output_format_section_present() -> None:
