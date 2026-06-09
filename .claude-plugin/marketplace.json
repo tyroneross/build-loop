@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Official marketplace for build-loop \u2014 orchestrated 5-phase development loop with optional Learn phase",
-    "version": "0.31.0"
+    "version": "0.32.0"
   },
   "plugins": [
     {
       "name": "build-loop",
       "source": "./",
       "description": "Orchestrated 5-phase development loop (Assess \u2192 Plan \u2192 Execute \u2192 Review \u2192 Iterate) plus optional Learn phase. Review combines critic, validate, optimize, fact-check, simplify, and report as ordered sub-steps. Bundles native debug-loop, debugging-memory, and logging-tracer skills without a build-loop MCP server. Bridges (debugger-bridge, logging-tracer-bridge) are escalation hops that target skills can use to delegate to the standalone Coding Debugger supporting plugin for extended capability (cross-project memory, additional assessors). NavGator integration via cherry-pick bridge. Opus 4.7 orchestrator, Sonnet execution, Haiku pattern-matching.",
-      "version": "0.31.0",
+      "version": "0.32.0",
       "author": {
         "name": "Tyrone Ross"
       },
