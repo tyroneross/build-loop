@@ -259,7 +259,11 @@ def _read_recent_changes(channel_dir: Path, max_changes: int) -> list[dict[str, 
     return recs[-max_changes:] if len(recs) > max_changes else recs
 
 
-def _git_dirty_files(workdir: Path) -> list[str]:
+def _git_dirty_files(workdir: Path) -> tuple[list[str], bool]:
+    """Return (dirty_paths, unknown). ``unknown`` is True when the git probe
+    timed out — the caller must NOT read an empty list as 'clean' in that case
+    (a timed-out probe masking a real dirty repo would silently suppress a
+    peer-overlap warning)."""
     try:
         result = subprocess.run(
             # --no-optional-locks: never block on index.lock during concurrent
@@ -270,10 +274,12 @@ def _git_dirty_files(workdir: Path) -> list[str]:
             # Child budget < parent (session_probe) budget < outer hook budget.
             timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
+    except subprocess.TimeoutExpired:
+        return [], True  # could-not-determine — distinct from clean
     except (OSError, subprocess.SubprocessError):
-        return []
+        return [], False
     if result.returncode != 0:
-        return []
+        return [], False
     out: list[str] = []
     for line in result.stdout.splitlines():
         if not line:
@@ -282,7 +288,7 @@ def _git_dirty_files(workdir: Path) -> list[str]:
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
         out.append(path)
-    return out
+    return out, False
 
 
 def build_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -357,7 +363,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         if (v.get("verdict") or v.get("label", "")).upper() in BLOCKING_VERDICTS
     ]
 
-    dirty = _git_dirty_files(workdir)
+    dirty, dirty_unknown = _git_dirty_files(workdir)
     dirty_outside_owned = []
     for path in dirty:
         keys = _path_keys(path, workdir)
@@ -433,13 +439,16 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
             required_action = "resolve_escalations_and_coordination_verdicts"
         else:
             required_action = "resolve_unresolved_coordination_verdicts"
-    elif peer_overlap_files or dirty_outside_owned or heartbeat_warn:
+    elif peer_overlap_files or dirty_outside_owned or heartbeat_warn or dirty_unknown:
         # warn only when a peer's ``owns`` intersects our files_in_flight,
-        # OR when dirty files exist outside our owned set.  Raw peer count
-        # does NOT trigger warn (prevents false positives when peers share
-        # no files with us).
+        # OR when dirty files exist outside our owned set, OR when the dirty
+        # probe timed out (unknown != clean — never silently suppress).  Raw
+        # peer count does NOT trigger warn (prevents false positives when
+        # peers share no files with us).
         status = "warn"
-        if heartbeat_warn and not (peer_overlap_files or dirty_outside_owned):
+        if dirty_unknown and not (peer_overlap_files or dirty_outside_owned):
+            required_action = "dirty_probe_timed_out_rerun_status"
+        elif heartbeat_warn and not (peer_overlap_files or dirty_outside_owned):
             required_action = "review_task_heartbeat_health"
         else:
             required_action = "review_peer_overlap_or_dirty_files"
@@ -488,6 +497,7 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
         "latest_verdicts": verdict_entries,
         "unresolved": unresolved,
         "dirty_files": dirty,
+        "dirty_files_unknown": dirty_unknown,
         "dirty_outside_owned": dirty_outside_owned,
         "new_changes": new_changes,
     }

@@ -16,8 +16,12 @@ budget does. Derive every inner timeout from the one budget here, leaving a
 margin for process spawn + parse, and nest child margins larger than parent
 margins so parent_timeout > child_timeout > child_work.
 
-Env: ``RALLY_HOOK_BUDGET_MS`` (default 3000) — set by the binary that enforces
-the outer budget; read here so Python self-limits to fit.
+Env: ``RALLY_HOOK_BUDGET_MS`` (default 3000) — a FORWARD CONTRACT for the binary
+that enforces the outer budget to export so Python tracks a non-default budget.
+As of this writing the binary is NOT known to set it (TAG:UNVERIFIED — no Rust
+source in-repo), so the default applies: the hardcoded 2.5s/1.8s hierarchy is
+what actually fixes the inversion today, independent of the env var. If the
+binary's real budget ever differs from 3000ms, exporting this keeps us in sync.
 """
 from __future__ import annotations
 

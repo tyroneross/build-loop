@@ -53,6 +53,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+try:  # binary-probe timeouts must fit under the rally hook wall-clock budget
+    from rally_point import hook_budget
+except ImportError:
+    from . import hook_budget
+
 try:  # package import
     from . import channel_paths
 except ImportError:  # script import
@@ -312,7 +317,7 @@ def _rally_binary_supports_required_surface(binary: str) -> bool:
             [str(path)],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return False
@@ -330,7 +335,7 @@ def _rally_binary_supports_repo_local_surface(binary: str) -> bool:
             [str(path)],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return False
@@ -348,7 +353,7 @@ def _rally_setup_payload(binary: str, workdir: Path) -> dict[str, Any] | None:
             cwd=str(workdir),
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return None
@@ -399,7 +404,7 @@ def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
             cwd=str(workdir),
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return None
@@ -442,7 +447,7 @@ def _invoke_discover_binary(
             cwd=str(workdir),
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
         return None
