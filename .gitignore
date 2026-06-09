@@ -74,3 +74,6 @@ __pycache__/
 .claude-code-debugger/
 archive/*.bundle
 archive/**/*.bundle
+
+# Superseded git bundles — moved to build-loop-memory/archive/build-loop-bundles (GitHub-backed, segmented from package)
+archive/
