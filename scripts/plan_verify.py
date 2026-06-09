@@ -428,6 +428,51 @@ def rule_missing_evidence(plan_path: Path, lines: list[tuple[int, str]]) -> list
 PHASE_HEADING_RE = re.compile(r"^#{2,3}\s+Phase\s+\d", re.IGNORECASE)
 MILESTONE_RE = re.compile(r"\bmilestones?\b", re.IGNORECASE)
 
+# Decision-quality rule 8: a locked decision should name its falsifier — the
+# single observation that would prove it wrong. Fire ONLY on an explicit decision
+# heading (### Decision / ## Decision record / **Decision:**) to avoid false
+# positives on prose that merely uses the word "decide"; clear when a falsifier /
+# revisit-trigger phrase appears within the same section (window of 12 lines).
+DECISION_HEADING_RE = re.compile(
+    r"^\s*(?:#{2,4}\s+Decision\b|\*\*Decision(?:\s+record)?\b|Decision record\b)",
+    re.IGNORECASE,
+)
+FALSIFIER_RE = re.compile(
+    r"\b(falsifier|would prove (?:it|this) wrong|revisit trigger|revisit if|"
+    r"prove(?:n|s)? wrong if|disconfirm|invalidate(?:d|s)? if|overturn(?:ed|s)? if)\b",
+    re.IGNORECASE,
+)
+
+
+def rule_decision_without_falsifier(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN (advisory, doctrine rule 8): a Decision section that names no falsifier.
+
+    Advisory only — flagged in the report, never blocks (user-confirmed
+    2026-06-09). Heuristic kept tight to avoid rigidity (doctrine rule 6): fires
+    only on an explicit Decision heading with no falsifier/revisit-trigger phrase
+    within the next 12 lines.
+    """
+    out: list[dict[str, Any]] = []
+    n = len(lines)
+    for idx, (lineno, line) in enumerate(lines):
+        if not line or not DECISION_HEADING_RE.search(line):
+            continue
+        hi = min(n, idx + 13)
+        has_falsifier = any(FALSIFIER_RE.search(lines[j][1] or "") for j in range(idx, hi))
+        if has_falsifier:
+            continue
+        out.append(_finding(
+            claim_text=line.strip(),
+            claim_kind="decision_without_falsifier",
+            verification_command=None,
+            evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+            result="inconclusive",
+            severity="WARN",
+            confidence="low",
+            rule_id="decision-without-falsifier",
+        ))
+    return out
+
 
 def rule_scope_split(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
     """INFO when more than 5 Phase headings without a Milestone structure."""
@@ -1302,6 +1347,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_parallel_decision_record(plan_path, lines))
     findings.extend(rule_no_stop_language(plan_path, lines))
     findings.extend(rule_reads_from_dependency(plan_path, lines))
+    findings.extend(rule_decision_without_falsifier(plan_path, lines))
     return findings
 
 

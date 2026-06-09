@@ -471,5 +471,55 @@ class ReadsDependencyTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class DecisionWithoutFalsifierTests(unittest.TestCase):
+    """rule_decision_without_falsifier — doctrine rule 8 (WP-C), advisory WARN."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [f for f in run_all(self.plan, self.repo) if f["rule_id"] == "decision-without-falsifier"]
+
+    def test_decision_heading_without_falsifier_warns(self) -> None:
+        findings = self._findings(
+            "# Plan\n## Decision record\nStore the charter in memory; mirror to repo.\n"
+            "Chosen because memory reads are reliable.\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "WARN")
+
+    def test_decision_with_falsifier_is_silent(self) -> None:
+        findings = self._findings(
+            "# Plan\n## Decision record\nStore the charter in memory; mirror to repo.\n"
+            "Falsifier: if memory reads miss >5% of runs, revert to repo-canonical.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_decision_with_revisit_trigger_is_silent(self) -> None:
+        findings = self._findings(
+            "# Plan\n### Decision\nUse OpenRouter for the provider registry.\n"
+            "Revisit trigger: a second provider needs a different call shape.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_prose_decide_without_heading_does_not_fire(self) -> None:
+        # The word "decide" in prose must NOT trip the rule (only a Decision heading does).
+        findings = self._findings(
+            "# Plan\nWe will decide the storage layer during execution based on profiling.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

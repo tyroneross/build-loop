@@ -50,6 +50,10 @@ DEFAULT_CODEX_MEMORY_ROOT = Path("~/.codex/memories")
 DEFAULT_LIMIT = 6
 DEFAULT_MAX_EXCERPT_CHARS = 1600
 CONSTITUTION_TEMPLATE = HERE.parent / "templates" / "memory" / "constitution.md.template"
+# WP-C: the decision-quality doctrine reference, injected at Phase 1/2 so the
+# orchestrator's judgment rules are present when it decides — phase-gated
+# injection, not a prose "load X" instruction (reference-activation lesson).
+DECISION_QUALITY_REF = HERE.parent / "references" / "decision-quality.md"
 QUEUE_NAMES = ("issues", "backlog", "ux-queue", "followup", "proposals", "pending-lessons")
 SESSION_PREFS_VALID = ("ask", "always", "never")
 REPO_LOCAL_FILES = (
@@ -989,6 +993,14 @@ def agent_brief(packet: dict[str, Any]) -> str:
             f"- Staleness: {staleness.get('memory') or 'memory:?'} | {staleness.get('context') or 'context:ok'}"
         )
 
+    # WP-C: phase-gated decision-quality doctrine injection. Present the rules
+    # IN the brief (not a "load X" pointer) so they bind at Phase 1/2 decision
+    # time. Absence-tolerant — only injected when the reference loaded.
+    dq = packet.get("decision_quality") or {}
+    if dq.get("exists") and dq.get("text"):
+        lines.append("")
+        lines.append(dq["text"].rstrip())
+
     # Queue summary line — only when at least one queue has items.
     queue_parts = []
     for qname in QUEUE_NAMES:
@@ -1042,6 +1054,25 @@ def agent_brief(packet: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def decision_quality_doctrine() -> dict[str, Any]:
+    """Load the decision-quality doctrine for Phase-1/2 injection (WP-C).
+
+    Returns {exists, path, text, reason}. Absence-tolerant: a missing or
+    unreadable reference yields exists=False and never raises — the doctrine is
+    advisory context, never a hard dependency of the bootstrap.
+    """
+    try:
+        if not DECISION_QUALITY_REF.is_file():
+            return {"exists": False, "path": short_path(DECISION_QUALITY_REF),
+                    "text": "", "reason": f"missing: {DECISION_QUALITY_REF}"}
+        text = DECISION_QUALITY_REF.read_text(encoding="utf-8")
+        return {"exists": True, "path": short_path(DECISION_QUALITY_REF),
+                "text": text, "reason": None}
+    except OSError as exc:
+        return {"exists": False, "path": short_path(DECISION_QUALITY_REF),
+                "text": "", "reason": f"read_error: {exc}"}
+
+
 def build_packet(
     workdir: Path,
     query: str,
@@ -1080,6 +1111,7 @@ def build_packet(
         "query": query,
         "terms": terms,
         "working_context": working_context,
+        "decision_quality": decision_quality_doctrine(),
         "queues": queue_context(workdir),
         "lessons_progressive": lessons,
         "prior_art": prior_art_context(

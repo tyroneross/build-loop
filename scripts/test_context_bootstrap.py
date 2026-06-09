@@ -551,5 +551,42 @@ class ContinuationGateTests(EnvIsolationMixin, unittest.TestCase):
         self.assertFalse(cb.should_continue_into_queues(self.workdir))
 
 
+class DecisionQualityDoctrineTests(unittest.TestCase):
+    """WP-C: phase-gated decision-quality doctrine injection."""
+
+    def test_doctrine_loads_from_shipped_reference(self) -> None:
+        dq = cb.decision_quality_doctrine()
+        self.assertTrue(dq["exists"], dq.get("reason"))
+        self.assertIn("Decision-Quality Doctrine", dq["text"])
+        self.assertIn("Ground-truth before accepting any suggested fix", dq["text"])
+
+    def test_doctrine_missing_reference_is_absence_tolerant(self) -> None:
+        import context_bootstrap as _cb
+        saved = _cb.DECISION_QUALITY_REF
+        try:
+            _cb.DECISION_QUALITY_REF = saved.parent / "does-not-exist.md"
+            dq = _cb.decision_quality_doctrine()
+            self.assertFalse(dq["exists"])
+            self.assertEqual(dq["text"], "")
+            self.assertIsNotNone(dq["reason"])
+        finally:
+            _cb.DECISION_QUALITY_REF = saved
+
+    def test_agent_brief_injects_doctrine_when_present(self) -> None:
+        # A minimal packet with a present doctrine should surface it in the brief.
+        dq = cb.decision_quality_doctrine()
+        if not dq["exists"]:
+            self.skipTest("shipped doctrine reference absent")
+        packet = {
+            "project": "build-loop", "workdir": "/tmp", "query": "x",
+            "decision_quality": dq, "queues": {},
+            "sources": {
+                "canonical_memory": {}, "repo_local": {}, "codex_memory": {}, "rally": {},
+            },
+        }
+        brief = cb.agent_brief(packet)
+        self.assertIn("Decision-Quality Doctrine", brief)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
