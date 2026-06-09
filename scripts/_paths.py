@@ -11,7 +11,14 @@ Environment variable contract:
 - ``$BUILD_LOOP_MEMORY_STORE_ROOT``: override the build-loop-memory root.
 - ``$BUILD_LOOP_MEMORY_ROOT``: compatibility override for the same root.
 - ``$AGENT_MEMORY_ROOT``     : compatibility override for the same root.
-                                Defaults to ``~/dev/git-folder/build-loop-memory``.
+
+Default resolution (when no env override is set), in order:
+  1. If the legacy personal root ``~/dev/git-folder/build-loop-memory``
+     EXISTS on disk, keep using it. This makes machines that predate the
+     neutral default keep working with zero configuration.
+  2. Otherwise use the neutral per-user default ``~/.build-loop-memory``
+     (``.<toolname>`` storage convention). Fresh installs land here — no
+     author-specific directory layout is ever encoded.
 - ``$AGENT_MEMORY_SCHEMA``   : override the default Postgres schema.
                                 Defaults to ``personal_memory``.
 - ``$AGENT_MEMORY_DUAL_WRITE``: when set to ``"1"``, writers must produce
@@ -42,14 +49,27 @@ from pathlib import Path
 LEGACY_SCHEMA = "build_loop_memory"
 LEGACY_DECISIONS_REL = ".episodic/decisions"
 
-DEFAULT_MEMORY_STORE_ROOT = "~/dev/git-folder/build-loop-memory"
+# Neutral per-user default for fresh installs. Matches the `.<toolname>`
+# storage convention. NOTE: this is the HYPHENATED `~/.build-loop-memory`,
+# deliberately NOT the retired `~/.build-loop/memory` (see the legacy-root
+# note further down — that exact path has migration tooling that would fight
+# a new write there).
+NEUTRAL_MEMORY_STORE_ROOT = "~/.build-loop-memory"
+# Legacy personal default. Predates the neutral default; kept as the resolved
+# root when it already exists on disk so existing machines need zero config.
+LEGACY_PERSONAL_MEMORY_STORE_ROOT = "~/dev/git-folder/build-loop-memory"
+# Back-compat constant name. `DEFAULT_MEMORY_STORE_ROOT` now names the NEUTRAL
+# default (what a fresh install gets). Resolution at call time still prefers an
+# existing legacy root — see `memory_store_root()`.
+DEFAULT_MEMORY_STORE_ROOT = NEUTRAL_MEMORY_STORE_ROOT
 DEFAULT_AGENT_MEMORY_ROOT = DEFAULT_MEMORY_STORE_ROOT
 DEFAULT_SCHEMA = "personal_memory"
 
 CUTOVER_LOCK_PATH = "/tmp/agent-memory-cutover.lock"
 
 # Historical name retained as a compatibility alias. The active root is now
-# the sibling `build-loop-memory` repository, not `~/.build-loop/memory`.
+# the sibling `build-loop-memory` repository (or the neutral fresh-install
+# default), not `~/.build-loop/memory`.
 DEFAULT_BUILD_LOOP_MEMORY_ROOT = DEFAULT_MEMORY_STORE_ROOT
 
 # Sub-component patterns: paths under a project that count as a distinct
@@ -61,18 +81,31 @@ SUBCOMPONENT_PATTERNS: tuple[str, ...] = ("workers",)
 def memory_store_root() -> Path:
     """Return the canonical build-loop-memory root.
 
-    Reads, in order, ``$BUILD_LOOP_MEMORY_STORE_ROOT``,
-    ``$BUILD_LOOP_MEMORY_ROOT``, and ``$AGENT_MEMORY_ROOT`` (expanded for
-    ``~``). Falls back to ``~/dev/git-folder/build-loop-memory``. Path is
-    not required to exist; callers that need the directory should create it.
+    Resolution order:
+      1. ``$BUILD_LOOP_MEMORY_STORE_ROOT`` / ``$BUILD_LOOP_MEMORY_ROOT`` /
+         ``$AGENT_MEMORY_ROOT`` env override (first set wins, ``~`` expanded).
+      2. The legacy personal default ``~/dev/git-folder/build-loop-memory``
+         when it EXISTS on disk — keeps pre-neutral-default machines working
+         with zero config.
+      3. The neutral per-user default ``~/.build-loop-memory`` for fresh
+         installs.
+
+    The returned path is not required to exist (only the legacy branch checks
+    existence); callers that need the directory should create it.
     """
-    raw = (
+    env_raw = (
         os.environ.get("BUILD_LOOP_MEMORY_STORE_ROOT")
         or os.environ.get("BUILD_LOOP_MEMORY_ROOT")
         or os.environ.get("AGENT_MEMORY_ROOT")
-        or DEFAULT_MEMORY_STORE_ROOT
     )
-    return Path(os.path.expanduser(raw))
+    if env_raw:
+        return Path(os.path.expanduser(env_raw))
+
+    legacy = Path(os.path.expanduser(LEGACY_PERSONAL_MEMORY_STORE_ROOT))
+    if legacy.exists():
+        return legacy
+
+    return Path(os.path.expanduser(NEUTRAL_MEMORY_STORE_ROOT))
 
 
 def agent_memory_root() -> Path:
@@ -268,9 +301,11 @@ def cutover_lock_active() -> bool:
 # ---------------------------------------------------------------------------
 # Build-loop memory paths (global + per-project segmentation).
 #
-# Per the memory-consolidation PR series (2026-05-13):
-#   - ~/.build-loop/memory/                   global root (existing)
-#   - ~/.build-loop/memory/projects/<slug>/   project-scoped lessons (NEW)
+# HISTORICAL (the `~/.build-loop/memory/` paths below are RETIRED — do not
+# reintroduce them as a default). The memory-consolidation PR series
+# (2026-05-13) originally rooted the store at `~/.build-loop/memory/`:
+#   - ~/.build-loop/memory/                   global root
+#   - ~/.build-loop/memory/projects/<slug>/   project-scoped lessons
 #   - ~/.build-loop/memory/projects/_archive/<slug>/   retired projects
 #
 # PR 1 (read-path tolerance, 2026-05-13) added the projects/<slug>/ tier
@@ -279,6 +314,12 @@ def cutover_lock_active() -> bool:
 # is now the only path read. Slug derivation reuses _safe_project_tag so
 # the same normalization applies to filesystem dirs AND the Postgres
 # semantic_facts.project column (no split-brain by construction).
+#
+# The ACTIVE root is whatever `memory_store_root()` returns: an env override,
+# else the legacy personal `~/dev/git-folder/build-loop-memory` if present,
+# else the neutral fresh-install default `~/.build-loop-memory` (hyphenated,
+# distinct from the retired `~/.build-loop/memory`). All helpers below build
+# on `memory_store_root()`, so they follow that resolution automatically.
 # ---------------------------------------------------------------------------
 
 

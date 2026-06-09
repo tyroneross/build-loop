@@ -3,10 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """install_memory.py — bootstrap the build-loop memory directory.
 
-Creates the canonical build-loop-memory root (default:
-`~/dev/git-folder/build-loop-memory`) and seeds it with template
+Creates the canonical build-loop-memory root and seeds it with template
 `constitution.md` + `MEMORY.md` if either is missing. Idempotent — never
 overwrites existing files.
+
+The root is resolved by `_paths.memory_store_root()`: an env override
+(`$BUILD_LOOP_MEMORY_STORE_ROOT` / `$BUILD_LOOP_MEMORY_ROOT` /
+`$AGENT_MEMORY_ROOT`), else a pre-existing legacy
+`~/dev/git-folder/build-loop-memory` on disk, else the neutral fresh-install
+default `~/.build-loop-memory`.
 
 Optional: link the directory to a private git repo so user-specific memory
 content is versioned. The build-loop public repo ships ONLY the templates;
@@ -47,7 +52,10 @@ except Exception:  # noqa: BLE001
     memory_store_root = None  # type: ignore[assignment]
     _safe_project_relpath = None  # type: ignore[assignment]
 
-DEFAULT_DEST = memory_store_root() if memory_store_root is not None else Path.home() / "dev" / "git-folder" / "build-loop-memory"
+# Resolve via memory_store_root() (env → legacy-if-present → neutral default).
+# The import-failure fallback uses the neutral fresh-install default so a
+# degraded run never re-encodes a personal directory layout.
+DEFAULT_DEST = memory_store_root() if memory_store_root is not None else Path.home() / ".build-loop-memory"
 TEMPLATE_DIR_RELATIVE = "templates/memory"
 SEED_MANIFEST_FILENAME = "manifest.json"
 TEMPLATES = [

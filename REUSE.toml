@@ -21,3 +21,19 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>"
 SPDX-License-Identifier = "Apache-2.0"
+
+# Artifact templates whose BODY is copied/instantiated into OTHER people's
+# repos (e.g. .build-loop/retrospectives/, .build-loop/backlog/, Review-G
+# comprehension artifacts). Their bodies must NOT carry an inline SPDX header
+# — that would stamp the plugin author's name into a user's generated output.
+# Attribution lives here in the sidecar instead, keeping the repo's own source
+# REUSE-compliant while the instantiated artifact stays clean.
+[[annotations]]
+path = [
+    "templates/backlog-item.md",
+    "templates/retrospective.md",
+    "templates/comprehension-artifact.md",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>"
+SPDX-License-Identifier = "Apache-2.0"

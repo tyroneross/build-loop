@@ -24,16 +24,44 @@ import project_resolver  # type: ignore  # noqa: E402
 
 
 class PathsResolverTests(unittest.TestCase):
-    def test_default_root_uses_default_constant(self) -> None:
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AGENT_MEMORY_ROOT", None)
-            os.environ.pop("BUILD_LOOP_MEMORY_ROOT", None)
-            os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
-            root = _paths.memory_store_root()
-            self.assertEqual(
-                root,
-                Path(os.path.expanduser(_paths.DEFAULT_MEMORY_STORE_ROOT)),
-            )
+    def test_fresh_install_uses_neutral_default(self) -> None:
+        """No env override + no legacy dir on disk → neutral fresh-install root.
+
+        Drives a clean isolated HOME so the resolver cannot see the author's
+        real legacy store. Asserts the invariant (neutral root), not the
+        author's mutable filesystem state.
+        """
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.dict(os.environ, {"HOME": home}, clear=False):
+                os.environ.pop("AGENT_MEMORY_ROOT", None)
+                os.environ.pop("BUILD_LOOP_MEMORY_ROOT", None)
+                os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+                root = _paths.memory_store_root()
+                self.assertEqual(
+                    root,
+                    Path(os.path.expanduser(_paths.NEUTRAL_MEMORY_STORE_ROOT)),
+                )
+                # DEFAULT_MEMORY_STORE_ROOT is the back-compat alias for the
+                # neutral default.
+                self.assertEqual(
+                    _paths.DEFAULT_MEMORY_STORE_ROOT,
+                    _paths.NEUTRAL_MEMORY_STORE_ROOT,
+                )
+
+    def test_legacy_personal_root_detected_when_present(self) -> None:
+        """No env override + legacy personal dir EXISTS → resolves to legacy.
+
+        This is the zero-config path that keeps pre-neutral-default machines
+        working unchanged.
+        """
+        with tempfile.TemporaryDirectory() as home:
+            legacy = Path(home) / "dev" / "git-folder" / "build-loop-memory"
+            legacy.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"HOME": home}, clear=False):
+                os.environ.pop("AGENT_MEMORY_ROOT", None)
+                os.environ.pop("BUILD_LOOP_MEMORY_ROOT", None)
+                os.environ.pop("BUILD_LOOP_MEMORY_STORE_ROOT", None)
+                self.assertEqual(_paths.memory_store_root(), legacy)
 
     def test_root_env_override(self) -> None:
         with mock.patch.dict(os.environ, {"BUILD_LOOP_MEMORY_STORE_ROOT": "/tmp/custom-root"}, clear=False):

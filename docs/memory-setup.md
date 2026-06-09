@@ -1,12 +1,17 @@
 # Memory Setup
 
 Build-loop's advisory judges and the Phase 1 Assess memory-load step read from
-one consolidated tree under `~/dev/git-folder/build-loop-memory/` by default:
+one consolidated tree. The root (`<memory-root>` below) is resolved by
+`scripts/_paths.memory_store_root()`:
+
+1. an env override — `$BUILD_LOOP_MEMORY_STORE_ROOT` / `$BUILD_LOOP_MEMORY_ROOT` / `$AGENT_MEMORY_ROOT`;
+2. else a pre-existing legacy `~/dev/git-folder/build-loop-memory` if it is already on disk (installs that predate the neutral default keep their location with zero config);
+3. else the neutral fresh-install default `~/.build-loop-memory`.
 
 | Tier | Location | Owner | Versioning |
 |---|---|---|---|
-| Global | `~/dev/git-folder/build-loop-memory/` plus top-level lanes such as `lessons/` | This user | **Should be in a private git repo** (your lessons live here) |
-| Project | `~/dev/git-folder/build-loop-memory/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd` — basename of the git repo root, lowercased + normalized; `workers/` sub-component becomes `<slug>/workers`) | This user | Same private repo as global |
+| Global | `<memory-root>/` plus top-level lanes such as `lessons/` | This user | **Should be in a private git repo** (your lessons live here) |
+| Project | `<memory-root>/projects/<slug>/` (slug derived via `scripts/_paths.derive_slug_from_cwd` — basename of the git repo root, lowercased + normalized; `workers/` sub-component becomes `<slug>/workers`) | This user | Same private repo as global |
 
 > **History** — until PR 3 of the memory-consolidation series (merged 2026-05-13), the legacy per-repo location was also read by `memory_facade._resolve_memory_dirs` as a transitional shim. As of PR 3, only the consolidated tree is read; any pre-migration content still at the legacy path is invisible. Operators with such content should run `scripts/migrate_project_memory.py --apply` (idempotent), then `scripts/cleanup_legacy_memory_stubs.py --apply` to remove the now-inert `.MOVED.md` stubs.
 
@@ -20,10 +25,10 @@ operator preferences that are not appropriate for public distribution.
 
 ```bash
 # Guided terminal install. This validates the packaged public seed first, then
-# creates ~/dev/git-folder/build-loop-memory/ with scaffold-only files.
+# creates <memory-root>/ with scaffold-only files.
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --guided
 
-# Bootstrap with templates (creates ~/dev/git-folder/build-loop-memory/ if missing,
+# Bootstrap with templates (creates <memory-root>/ if missing,
 # seeds constitution.md + MEMORY.md from templates/memory/, plus indexes/ and projects/)
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
 
@@ -37,7 +42,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py --validate-seed
 This creates:
 
 ```
-~/dev/git-folder/build-loop-memory/
+<memory-root>/
 ├── constitution.md     # template — replace with your invariants
 ├── MEMORY.md           # template — index for entries you add
 ├── indexes/            # rebuildable local indexes, including semantic_facts.sqlite
@@ -79,7 +84,7 @@ The repo should contain `constitution.md` and `MEMORY.md` plus your existing les
 
 ```bash
 python3 scripts/install_memory.py
-cd ~/dev/git-folder/build-loop-memory
+cd <memory-root>   # default ~/.build-loop-memory on a fresh install
 git init
 git add constitution.md MEMORY.md
 git commit -m "init: build-loop memory scaffolding"
@@ -150,7 +155,7 @@ Keep `MEMORY.md` under ~200 lines; entries past that get truncated when loaded i
 ## What about decisions?
 
 The **canonical decision store** is
-`~/dev/git-folder/build-loop-memory/projects/<project>/decisions/`. It is
+`<memory-root>/projects/<project>/decisions/`. It is
 project-tagged and written by `scripts/write_decision.py` — it captures the
 discrete "we decided X" events of any project.
 
@@ -158,11 +163,11 @@ The top-level `lessons/` lane is for **cross-project lessons** — patterns and
 feedback that apply broadly, not project-specific decisions.
 
 ```
-~/dev/git-folder/build-loop-memory/                  # canonical root
-~/dev/git-folder/build-loop-memory/lessons/          # cross-project lessons
-~/dev/git-folder/build-loop-memory/indexes/updates.jsonl  # global update ledger
-~/dev/git-folder/build-loop-memory/projects/<slug>/  # project-local memory
-~/dev/git-folder/build-loop-memory/projects/_archive/<slug>/  # retired projects, still queryable
+<memory-root>/                  # canonical root
+<memory-root>/lessons/          # cross-project lessons
+<memory-root>/indexes/updates.jsonl  # global update ledger
+<memory-root>/projects/<slug>/  # project-local memory
+<memory-root>/projects/_archive/<slug>/  # retired projects, still queryable
 <repo>/.build-loop/memory/                           # legacy project location — no longer read (PR 3 removed the shim); migrate via scripts/migrate_project_memory.py
 <repo>/.episodic/decisions/                          # legacy local decision store (migration/archive)
 ```
@@ -215,7 +220,7 @@ If any of these fail, see `references/memory-systems.md` for the full backend to
 
 ## Privacy
 
-Treat `~/dev/git-folder/build-loop-memory/` as containing potentially-sensitive context:
+Treat `<memory-root>/` as containing potentially-sensitive context:
 
 - Operator preferences, project-specific decisions, client names if you write them in
 - Constitution rules may reveal architectural patterns from past projects
