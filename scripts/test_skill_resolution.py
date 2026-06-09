@@ -42,10 +42,11 @@ SKILLS_DIR = REPO_ROOT / "skills"
 # (user explicitly accepted these on 2026-05-01 — UX cost of rename
 # deemed not worth the unverified risk). Remove an entry here ONLY when
 # the corresponding command/skill pair has actually been renamed.
+# optimize / plan-verify / research were renamed away (commit 1521158, Option-2)
+# and no longer collide; their entries were stale config and have been removed.
+# The three remaining siblings below are fixed in WP-D's rename commit; once
+# that lands this set is empty and the suite enforces zero collisions.
 ACCEPTED_SIBLINGS: set[str] = {
-    "build-loop:optimize",
-    "build-loop:plan-verify",
-    "build-loop:research",
     # Phase 4 episodic memory review surface — slash command and skill
     # share a name by design: command loads the skill which holds the
     # full review-surface contract (read-only, four sections).

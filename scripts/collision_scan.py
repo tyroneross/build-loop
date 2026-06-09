@@ -68,10 +68,19 @@ def find_plugin_dirs(root: Path) -> list[Path]:
             return True
         return (p / "commands").is_dir() or (p / "skills").is_dir()
 
+    # When the scan root is itself a plugin dir, treat it as the single plugin
+    # and do not descend — a recursive walk of a repo that carries nested
+    # plugin-shaped copies (build-loop's .build-loop/worktrees/, .rally/worktrees/,
+    # .claude/, .agents/) would otherwise emit false duplicate findings.
+    if looks_like_plugin(root):
+        return [root]
+
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         d = Path(dirpath)
-        # skip hidden dirs except top-level .claude-plugin metadata
-        dirnames[:] = [n for n in dirnames if not n.startswith(".git")]
+        # Skip every hidden dir — a real plugin's commands/skills live at the
+        # plugin root, never inside a dotdir, so dropping all `.`-prefixed dirs
+        # cannot miss a legitimate plugin and prevents false nested-copy hits.
+        dirnames[:] = [n for n in dirnames if not n.startswith(".")]
         if d in seen:
             continue
         if looks_like_plugin(d):

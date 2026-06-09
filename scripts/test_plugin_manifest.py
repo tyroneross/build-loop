@@ -33,6 +33,10 @@ REPO_ROOT = HERE.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
 CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
+# Fourth manifest: the open-agents marketplace mirror. Carries a top-level
+# `version` and a `plugins[]` entry whose per-plugin version may be absent;
+# the version-sync check enforces consistency only where a version is present.
+AGENTS_MARKETPLACE_JSON = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
 SKILLS_DIR = REPO_ROOT / "skills"
 COMMANDS_DIR = REPO_ROOT / "commands"
 
@@ -130,6 +134,38 @@ class VersionShapeTests(unittest.TestCase):
                 self.assertEqual(
                     entry.get("version"), plugin_v,
                     f"marketplace.json plugins[name={entry['name']!r}].version "
+                    f"{entry.get('version')!r} != plugin.json version {plugin_v!r}",
+                )
+
+    def test_agents_marketplace_versions_match_plugin(self) -> None:
+        # Fourth manifest: .agents/plugins/marketplace.json. It mirrors the
+        # Claude marketplace for open-agents hosts. Enforce sync on whichever
+        # version fields it carries — a top-level `version`, a `metadata.version`,
+        # and any per-plugin `version` for the build-loop entry. A missing
+        # per-plugin version is allowed (this manifest declares the plugin set
+        # without re-stamping the version); a PRESENT-but-divergent one fails.
+        if not AGENTS_MARKETPLACE_JSON.is_file():
+            self.skipTest(f"{AGENTS_MARKETPLACE_JSON} not present (no open-agents marketplace)")
+        plugin = load_json(PLUGIN_JSON)
+        plugin_v = plugin["version"]
+        market = load_json(AGENTS_MARKETPLACE_JSON)
+        top_v = market.get("version")
+        if top_v is not None:
+            self.assertEqual(
+                top_v, plugin_v,
+                f".agents/plugins/marketplace.json version {top_v!r} != plugin.json version {plugin_v!r}",
+            )
+        meta_v = market.get("metadata", {}).get("version") if isinstance(market.get("metadata"), dict) else None
+        if meta_v is not None:
+            self.assertEqual(
+                meta_v, plugin_v,
+                f".agents/plugins/marketplace.json metadata.version {meta_v!r} != plugin.json version {plugin_v!r}",
+            )
+        for entry in market.get("plugins", []):
+            if entry.get("name") == plugin["name"] and entry.get("version") is not None:
+                self.assertEqual(
+                    entry.get("version"), plugin_v,
+                    f".agents/plugins/marketplace.json plugins[name={entry['name']!r}].version "
                     f"{entry.get('version')!r} != plugin.json version {plugin_v!r}",
                 )
 
