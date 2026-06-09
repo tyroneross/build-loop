@@ -118,9 +118,10 @@ Add to `~/.claude/settings.json`:
 ### Memory setup (one-time, per machine)
 
 Build-loop's advisory judges read from the canonical `build-loop-memory` store
-(`~/dev/git-folder/build-loop-memory` by default). Plugin writers also maintain
-a global update ledger at `<memory-root>/indexes/updates.jsonl` for audit and
-freshness. Bootstrap with templates:
+(at `<memory-root>` — the neutral `~/.build-loop-memory` on a fresh install;
+see `docs/memory-setup.md` for the full resolution order). Plugin writers also
+maintain a global update ledger at `<memory-root>/indexes/updates.jsonl` for
+audit and freshness. Bootstrap with templates:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/install_memory.py
@@ -261,7 +262,7 @@ Architecture and debugging are used on nearly every build, so build-loop ships n
 - `skills/architecture/{scan,impact,trace,rules,dead,review}/` — sourced from NavGator
 - `skills/debugging/{memory,store,assess,debug-loop}/` — build-loop-native RCA, investigation, memory, and storage workflows adapted from the debugger lineage
 
-Each sourced native SKILL.md frontmatter carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 at copy time). The orchestrator calls them directly in Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
+Each sourced native SKILL.md frontmatter carries `source:` (relative path from the sibling-repos root) and `source_hash:` (SHA-256 at copy time). The orchestrator calls them directly in Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
 
 Deep debugging remains first-class inside build-loop: causal-tree investigation, 5 Whys, fishbone categories, fault-tree branching, Kepner-Tregoe style problem boundaries, hypothesis falsification, fix verification, scorecards, and critique all live in native skills rather than an MCP process.
 
@@ -300,7 +301,7 @@ SessionStart fires an incremental scan when manifest > 24 h old. PreToolUse Edit
 116 capabilities indexed across 6 kinds (agent / skill / command / hook / mcp_tool / script) and 10 categories. Phase 1 invocation is **mandatory** — populates `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion, keeping the orchestrator below the empirical tool-selection ceiling. Phase 2 / 3 dispatchers read the cache instead of re-scoring.
 
 **Memory facade** (`scripts/memory_facade.py`)
-Unified `recall(query, kind, project, limit, skip_postgres)` over file-backed and optional database surfaces — `state.json.runs[]` · canonical `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/` plus migration-mode legacy decisions · local SQLite `indexes/semantic_facts.sqlite` · optional Postgres `semantic_facts` mirror. Debugging incident recall is native and file-backed by default; standalone Coding Debugger can provide cross-project MCP-backed recall when installed separately. Graceful degradation throughout; CLI accepts both `memory_facade.py --query ...` and the compatibility form `memory_facade.py recall --query ...`, including `--skip-postgres` for the optional Postgres path.
+Unified `recall(query, kind, project, limit, skip_postgres)` over file-backed and optional database surfaces — `state.json.runs[]` · canonical `<memory-root>/projects/<project>/decisions/` plus migration-mode legacy decisions · local SQLite `indexes/semantic_facts.sqlite` · optional Postgres `semantic_facts` mirror. Debugging incident recall is native and file-backed by default; standalone Coding Debugger can provide cross-project MCP-backed recall when installed separately. Graceful degradation throughout; CLI accepts both `memory_facade.py --query ...` and the compatibility form `memory_facade.py recall --query ...`, including `--skip-postgres` for the optional Postgres path.
 
 **Backend health probe** (`scripts/backend_health.py`)
 Phase 1 sub-step probes each memory backend with per-backend 5 s timeout. Output: `runs: OK N | decisions: OK <legacy> + <canonical> | semantic: ok|down | debugger: ok|down`. Envelope cached at `state.json.architecture.backendHealth`. Phase 5 Iterate consumes it to short-circuit Postgres lookups when down.

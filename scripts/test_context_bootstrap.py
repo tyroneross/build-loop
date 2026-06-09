@@ -206,6 +206,75 @@ class ContextBootstrapTests(EnvIsolationMixin, unittest.TestCase):
         self.assertFalse((out.parent / ".context-bootstrap.json.tmp").exists())
 
 
+class ReferenceFreshnessTests(EnvIsolationMixin, unittest.TestCase):
+    """Activation tests: a captured reference past its horizon surfaces as stale
+    in the read path (context bootstrap), routed through the env-overridden store.
+    """
+
+    def _capture(self, *, topic: str, retrieved_at: str | None = None,
+                 content_class: str | None = None,
+                 refresh_after_days: int | None = None) -> None:
+        from reference_capture import capture_reference  # local import (env-set)
+
+        capture_reference(
+            workdir=self.workdir,
+            topic=topic,
+            findings="extracted finding body",
+            source_urls=["https://docs.example.com/x"],
+            informed_decision="informed a build decision",
+            run_id="activation_run",
+            retrieved_at=retrieved_at,
+            content_class=content_class,
+            refresh_after_days=refresh_after_days,
+        )
+
+    def test_fresh_reference_not_flagged_stale(self) -> None:
+        # A reference captured today is fresh — no stale flag.
+        self._capture(topic="fresh thing today")
+        packet = cb.build_packet(
+            workdir=self.workdir, query="thing",
+            codex_memory_root=self.codex_root,
+            include_postgres=False, include_rally=False,
+        )
+        refresh = packet["reference_freshness"]
+        self.assertTrue(refresh["exists"])
+        self.assertEqual(refresh["stale_count"], 0)
+        self.assertEqual(refresh["total"], 1)
+        # Brief does NOT carry a stale line when nothing is stale.
+        self.assertNotIn("stale-needs-refresh", packet["agent_brief"])
+
+    def test_backdated_reference_flagged_stale_in_packet_and_brief(self) -> None:
+        from datetime import date, timedelta
+
+        old = (date.today() - timedelta(days=120)).isoformat()
+        # 120 days old, api-docs 7-day horizon → unambiguously stale.
+        self._capture(topic="stale api endpoint reference",
+                      retrieved_at=old, content_class="api-docs")
+        packet = cb.build_packet(
+            workdir=self.workdir, query="endpoint",
+            codex_memory_root=self.codex_root,
+            include_postgres=False, include_rally=False,
+        )
+        refresh = packet["reference_freshness"]
+        self.assertEqual(refresh["stale_count"], 1)
+        self.assertEqual(refresh["stale"][0]["content_class"], "api-docs")
+        self.assertGreater(refresh["stale"][0]["days_overdue"], 0)
+        # The read-path brief surfaces it (advisory, not an AskUserQuestion).
+        self.assertIn("stale-needs-refresh", packet["agent_brief"])
+        self.assertIn("Reference corpus:", packet["agent_brief"])
+
+    def test_no_reference_lane_degrades_quietly(self) -> None:
+        packet = cb.build_packet(
+            workdir=self.workdir, query="x",
+            codex_memory_root=self.codex_root,
+            include_postgres=False, include_rally=False,
+        )
+        refresh = packet["reference_freshness"]
+        self.assertFalse(refresh["exists"])
+        self.assertEqual(refresh["stale_count"], 0)
+        self.assertNotIn("stale-needs-refresh", packet["agent_brief"])
+
+
 class QueueContextTests(EnvIsolationMixin, unittest.TestCase):
     def _make_md(self, path: Path, title: str, body: str = "") -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

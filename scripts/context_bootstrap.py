@@ -42,6 +42,7 @@ from _paths import (  # type: ignore  # noqa: E402
     memory_store_root,
     project_decisions_dir,
     project_lessons_dir,
+    project_research_dir,
     top_level_lessons_dir,
 )
 
@@ -949,6 +950,56 @@ def prior_art_context(
     return digest
 
 
+def reference_freshness_context(workdir: Path, project: str) -> dict[str, Any]:
+    """Scan the project reference lane and surface references past their horizon.
+
+    Captured references (``<date>-reference-<slug>.md`` in the project ``research``
+    lane) carry ``retrieved_at`` + ``refresh_after``. This flags any that are now
+    stale so the read path warns instead of silently serving aged knowledge —
+    advisory only, never a block (deterministic-only-for-known-risks). Fail-soft:
+    a missing lane or an import error yields an empty, non-stale result.
+
+    Returns {exists, lane, total, stale_count, stale: [{file, content_class,
+    days_overdue}], reasons}.
+    """
+    out: dict[str, Any] = {
+        "exists": False, "lane": None, "total": 0,
+        "stale_count": 0, "stale": [], "reasons": [],
+    }
+    try:
+        lane = project_research_dir(project)
+    except Exception as exc:  # noqa: BLE001
+        out["reasons"].append(f"lane_resolve_failed: {exc}")
+        return out
+    out["lane"] = short_path(lane, workdir)
+    if not lane.is_dir():
+        out["reasons"].append("no_reference_lane")
+        return out
+    out["exists"] = True
+    try:
+        from reference_capture import scan_reference_lane  # type: ignore  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        out["reasons"].append(f"reference_capture_import_failed: {exc}")
+        return out
+    try:
+        records = scan_reference_lane(lane)
+    except Exception as exc:  # noqa: BLE001
+        out["reasons"].append(f"scan_error: {exc}")
+        return out
+    out["total"] = len(records)
+    stale = [r for r in records if r.get("stale")]
+    out["stale_count"] = len(stale)
+    out["stale"] = [
+        {
+            "file": r["file"],
+            "content_class": r.get("content_class"),
+            "days_overdue": -(r.get("days_remaining") or 0),
+        }
+        for r in stale
+    ]
+    return out
+
+
 def staleness_context(workdir: Path, timeout: float = 5.0) -> dict[str, Any]:
     """Capture the freshness probes' signals so they reach the packet + brief.
 
@@ -995,6 +1046,25 @@ def agent_brief(packet: dict[str, Any]) -> str:
     if staleness.get("memory") or staleness.get("context"):
         lines.append(
             f"- Staleness: {staleness.get('memory') or 'memory:?'} | {staleness.get('context') or 'context:ok'}"
+        )
+
+    # Reference-corpus freshness — advisory. Only surfaced when at least one
+    # captured reference is past its refresh horizon; lists the stale files so
+    # the orchestrator can route a refresh into the run, never an AskUserQuestion.
+    refresh = packet.get("reference_freshness") or {}
+    if refresh.get("stale_count"):
+        worst = sorted(
+            refresh.get("stale", []),
+            key=lambda r: r.get("days_overdue", 0),
+            reverse=True,
+        )[:3]
+        worst_str = "; ".join(
+            f"{r['file']} ({r.get('content_class') or '?'}, {r['days_overdue']}d overdue)"
+            for r in worst
+        )
+        lines.append(
+            f"- Reference corpus: {refresh['stale_count']}/{refresh.get('total', 0)} "
+            f"stale-needs-refresh — {worst_str}"
         )
 
     # WP-C: phase-gated decision-quality doctrine. The full text rides in the
@@ -1131,6 +1201,7 @@ def build_packet(
         ),
         "session_prefs": read_session_prefs(workdir),
         "staleness": staleness_context(workdir),
+        "reference_freshness": reference_freshness_context(workdir, project),
         "sources": {
             "canonical_memory": canonical_memory_context(
                 workdir=workdir,

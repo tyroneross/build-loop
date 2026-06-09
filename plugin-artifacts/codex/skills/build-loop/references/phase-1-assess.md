@@ -152,6 +152,19 @@
    returned depth (`light`/`standard`/`deep`) or record why it was unavailable.
    If `blocks_final_claims: true`, final current/external/API claims need
    citations or an explicit unavailable/unverified note.
+
+   **Reference capture (default-on, any phase/mode):** whenever this run fetches
+   external info (WebSearch/WebFetch/Context7/api-registry/official docs) AND uses
+   it in a decision, persist the EXTRACTED findings (not raw HTML) via
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/reference_capture.py" capture --workdir
+   "$PWD" --run-id "<run_id>" --topic "<topic>" --findings "<distilled>" --source
+   "<url>|<T1..T4>" --decision "<what it informed>" --json`. Routes through the
+   canonical memory writer into the project `research` lane with `retrieved_at` +
+   a per-content-class `refresh_after` horizon; the store is uncommitted by
+   default. `context_bootstrap.py` flags references past their horizon as
+   `stale-needs-refresh` in the brief (`packet.reference_freshness`, advisory).
+   Do not ask — capture is a default. Policy: `references/research-trigger-policy.md`
+   §"Reference Capture".
 14a. **Active task surface**: when the user asks what remains, when Phase 1
    surfaces open work, or before queue-continuation decisions, run:
 

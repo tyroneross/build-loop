@@ -93,3 +93,48 @@ is true:
 If `researchGate.packet_path` is non-null, Phase 2 records it in the plan under
 `## Research Context`, and Phase 4-G cites whether it was created, reused, or
 explicitly skipped with rationale.
+
+## Reference Capture (default-on corpus)
+
+Whenever build-loop fetches external information **in any phase or mode** —
+WebSearch, WebFetch, Context7, api-registry, or an official-docs read — and that
+information **informs a decision in the run**, capture the EXTRACTED findings as a
+dated reference file. This is not gated to research-run mode; it fires in normal
+build/fix/refactor runs the moment a web/doc fetch feeds a decision.
+
+Capture is routed through the canonical memory writer, never an ad-hoc Write:
+
+```bash
+python3 scripts/reference_capture.py capture \
+  --workdir "$PWD" --run-id "$RUN_ID" \
+  --topic "<short topic>" \
+  --findings "<distilled findings — not raw HTML>" \
+  --source "<url>|<T1|T2|T3|T4>" \
+  --decision "<what this informed>" --json
+```
+
+This writes `<YYYY-MM-DD>-reference-<slug>.md` into the central store's
+project `research` lane with `retrieved_at`, a per-content-class `refresh_after`
+horizon (api-docs/pricing age in days; ecosystem surveys hold for a quarter;
+specs for half a year), `content_class`, `source_urls` (each tier-tagged), and
+`informed_decision`. The store stays uncommitted by default — the corpus grows
+without touching the consumer repo's git.
+
+**When to capture (do, not ask):**
+
+- A `researchGate.research_required == true` run that actually consulted an
+  external source → capture each distinct finding that fed a decision.
+- Any phase that ran WebSearch/WebFetch/Context7/api-registry and used the result
+  (method signature, pricing, version/release fact, library syntax, model ID).
+
+**Freshness on read:** `context_bootstrap.py` scans the reference lane at Phase 1
+and flags any reference past its horizon as `stale-needs-refresh` in the agent
+brief (`packet.reference_freshness`). This is advisory — it routes to the run
+report/notes, never an `AskUserQuestion` and never a block. A stale reference is
+a signal to re-fetch when the topic is back in scope, not a gate.
+
+**Anti-dormancy:** capture is a default behavior, not a dormant feature. The
+activation test (`scripts/reference_capture/test_reference_capture.py` +
+`scripts/test_context_bootstrap.py::ReferenceFreshnessTests`) proves the default
+path writes a dated reference with the required fields and that the read path
+flags a backdated one as stale.
