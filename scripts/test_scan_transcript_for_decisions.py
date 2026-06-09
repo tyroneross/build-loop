@@ -409,5 +409,54 @@ class HardeningTests(MemIsolationMixin, unittest.TestCase):
             os.close(fd)
 
 
+class SteeringAnswerExtractionTests(unittest.TestCase):
+    """WP-G3: _render_turn must surface AskUserQuestion steering Q + A.
+
+    Pure (no LLM) — guards the fix for the bug where steering answers (the
+    highest-value verbatim human intent) were invisible to the scanner because
+    _render_turn only handled type==text content blocks.
+    """
+
+    def _mod(self):
+        import scan_transcript_for_decisions as s  # noqa: PLC0415
+        return s
+
+    def test_ask_user_question_tool_use_renders_question_and_options(self) -> None:
+        s = self._mod()
+        obj = {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "name": "AskUserQuestion", "input": {"questions": [
+                {"question": "Which storage?", "header": "Storage",
+                 "options": [{"label": "Memory"}, {"label": "Repo"}]}
+            ]}}
+        ]}}
+        out = s._render_turn(obj)
+        self.assertIn("STEERING QUESTION: Which storage?", out)
+        self.assertIn("Memory | Repo", out)
+
+    def test_tool_result_answer_renders_as_steering_answer(self) -> None:
+        s = self._mod()
+        obj = {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "x",
+             "content": 'Your questions have been answered: "Which storage?"="Memory".'}
+        ]}}
+        out = s._render_turn(obj)
+        self.assertIn("STEERING ANSWER:", out)
+        self.assertIn('"Which storage?"="Memory"', out)
+
+    def test_unrelated_tool_result_is_not_captured_as_steering(self) -> None:
+        s = self._mod()
+        obj = {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "y", "content": "exit 0\n12 passed"}
+        ]}}
+        out = s._render_turn(obj)
+        self.assertNotIn("STEERING", out)
+
+    def test_plain_text_still_works(self) -> None:
+        s = self._mod()
+        obj = {"type": "assistant", "message": {"role": "assistant",
+               "content": [{"type": "text", "text": "let's go with Memory"}]}}
+        self.assertEqual(s._render_turn(obj), "ASSISTANT: let's go with Memory")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

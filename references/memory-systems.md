@@ -40,6 +40,23 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 
 **Degradation**: every source carries `reasons[]`. Missing Codex memory, absent repo-local files, skipped or down Postgres, unavailable optional Coding Debugger, or Rally errors are context-quality signals, not blockers. Surface high-impact gaps in the Assess brief.
 
+### 1b. Re-read cadence — long/autonomous mode only (WP-G1)
+
+Short runs read once at Phase 1 (above). In **LONG / AUTONOMOUS mode ONLY**, re-read
+memory at each iterate-loop entry and each phase boundary, **gated by
+`scripts/memory_staleness_check.py`** so it is a no-op when nothing changed:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_staleness_check.py --workdir "$PWD" --json
+# stale=true → re-run the §1 bootstrap; stale=false → skip (cheap milestone-vs-HEAD read)
+```
+
+The staleness check is a single cheap file read (latest milestone `commit` sha vs
+commits-since count); it costs almost nothing when clean. The re-read catches two
+things: parallel-session writes landing in canonical memory mid-run, and the run's
+OWN accumulating decisions (see incremental writes, G2). Classic short runs skip
+this entirely — the once-at-Phase-1 read is sufficient when the run is brief.
+
 ### 1a. Live context snapshots (handoff/resume, not durable memory)
 
 After bootstrap, Build Loop keeps the current handoff state fresh through:
@@ -125,7 +142,25 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 
 ## Write protocol — Phase 4 Review sub-step F
 
-Runs only on the final Review pass.
+The **run entry + milestone** (the structured summary of the whole run) is written
+once on the final Review pass — that aggregate is correctly batch-at-Review-G.
+
+### Incremental durable writes — at discovery time (WP-G2, crash-resilience)
+
+Durable **lessons / decisions / falsifiers** are written INCREMENTALLY at discovery
+time, NOT batched to Review-G. The same total volume, written earlier:
+
+- When a lesson is learned, a decision is made, or a falsifier is named mid-run,
+  append it to canonical memory on the spot via `scripts/write_decision/` (decisions)
+  or `scripts/memory_writer.py` (lessons) — the append-immediately contract.
+- Review-G then does a final **dedup sweep** over what accumulated (it no longer
+  originates the writes, it reconciles them).
+
+Why: the batch-at-Review-G model loses every lesson when a run crashes before close
+(the resume / 529 / OOM scenario; documented closeout-never-fires-on-crashed-work
+class). Incremental append means a crash at iterate-3 still leaves iterate-1/2's
+lessons durable. Pairs with the G1 re-read: the run's own incremental writes are
+exactly what the staleness-gated re-read picks back up.
 
 ### Run entry — delegate to the deterministic writer
 

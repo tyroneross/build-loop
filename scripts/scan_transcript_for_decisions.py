@@ -261,6 +261,28 @@ def read_transcript(path: Path, max_chars: int = 60_000) -> str:
     return text
 
 
+def _render_ask_user_question(inp: Any) -> str:
+    """Render an AskUserQuestion tool_use input as the steering question text.
+
+    Shape: {"questions": [{"question": str, "header": str, "options": [...]}]}.
+    Returns a compact 'STEERING QUESTION: <q> [opts: a | b]' line per question so
+    the LLM scanner sees the choice that was put to the user (paired with the
+    user's STEERING ANSWER from the matching tool_result).
+    """
+    if not isinstance(inp, dict):
+        return ""
+    out: list[str] = []
+    for q in inp.get("questions", []) or []:
+        if not isinstance(q, dict):
+            continue
+        question = str(q.get("question", "")).strip()
+        opts = [str(o.get("label", "")).strip() for o in (q.get("options") or []) if isinstance(o, dict)]
+        opt_str = f" [opts: {' | '.join(o for o in opts if o)}]" if opts else ""
+        if question:
+            out.append(f"STEERING QUESTION: {question}{opt_str}")
+    return "\n".join(out)
+
+
 def _render_turn(obj: dict) -> str:
     """Render one transcript line as `ROLE: content`. Tolerant of shape variants.
 
@@ -277,13 +299,31 @@ def _render_turn(obj: dict) -> str:
         text_parts = []
         for c in content:
             if isinstance(c, dict):
-                if c.get("type") == "text":
+                ctype = c.get("type")
+                if ctype == "text":
                     text_parts.append(str(c.get("text", "")))
+                elif ctype == "tool_use" and c.get("name") == "AskUserQuestion":
+                    # WP-G3: the assistant's steering question(s). The user's answer
+                    # arrives as the matching tool_result (below). Both were
+                    # previously invisible to the scanner — steering answers are the
+                    # highest-value verbatim human intent, so render them explicitly.
+                    text_parts.append(_render_ask_user_question(c.get("input")))
+                elif ctype == "tool_result":
+                    # The AskUserQuestion answer is a plain string of the form
+                    # 'Your questions have been answered: "Q"="A", ...'. Capture any
+                    # tool_result string carrying that marker as a STEERING signal.
+                    rc = c.get("content")
+                    rc_text = rc if isinstance(rc, str) else (
+                        " ".join(str(x.get("text", "")) for x in rc if isinstance(x, dict))
+                        if isinstance(rc, list) else ""
+                    )
+                    if "questions have been answered" in rc_text:
+                        text_parts.append("STEERING ANSWER: " + rc_text.strip())
                 elif "text" in c:
                     text_parts.append(str(c["text"]))
             elif isinstance(c, str):
                 text_parts.append(c)
-        content_text = "\n".join(text_parts).strip()
+        content_text = "\n".join(p for p in text_parts if p).strip()
     elif isinstance(content, str):
         content_text = content.strip()
     else:
