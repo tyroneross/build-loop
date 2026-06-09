@@ -1,0 +1,96 @@
+{
+  "id": "source-ingestion-raw-data-audit",
+  "title": "Source Ingestion and Raw Data Audit Loop",
+  "summary": "Inventory, dedupe, preserve, and audit source artifacts before promoting claims or source cards.",
+  "inputs": [
+    "source folder",
+    "candidate files",
+    "spreadsheets or survey exports",
+    "artifact versions",
+    "project question"
+  ],
+  "outputs": [
+    "source inventory",
+    "duplicate and version map",
+    "raw-data manifest",
+    "ingestion priority list",
+    "source-card drafting queue"
+  ],
+  "phases": {
+    "assess": {
+      "goal": "Identify source roots, sensitive material, project questions, and raw-data-bearing files.",
+      "required": ["source_roots", "sensitivity_labels", "project_questions", "raw_data_candidates"]
+    },
+    "plan": {
+      "goal": "Prioritize ingestion by decision relevance, source quality, and dedupe risk.",
+      "required": ["ingestion_order", "duplicate_strategy", "raw_preservation_strategy"]
+    },
+    "produce": {
+      "goal": "Write inventory, duplicate map, raw-data manifest, and source-card queue.",
+      "required": ["hashes", "row_column_counts", "sheet_names", "filters_or_denominators"]
+    },
+    "review": {
+      "goal": "Verify version choices and that quantitative claims can trace to raw or surrogate data.",
+      "required": ["version_verdicts", "raw_trace_checks", "uncertain_items"]
+    },
+    "learn": {
+      "goal": "Capture source quirks and future ingestion rules.",
+      "required": ["source_quirks", "reusable_ingestion_rules"]
+    }
+  },
+  "validators": [
+    {
+      "id": "source_inventory_complete",
+      "pass_condition": "Every candidate source has path, type, size or count proxy, and ingestion status.",
+      "method": "code-or-review"
+    },
+    {
+      "id": "duplicate_resolution",
+      "pass_condition": "Same-title or same-hash files are grouped with an explicit keep/compare/defer verdict.",
+      "method": "review"
+    },
+    {
+      "id": "raw_data_trace",
+      "pass_condition": "Every quantitative source links to an original file or stable surrogate with sheet/table names and row/column counts.",
+      "method": "code-or-review"
+    },
+    {
+      "id": "uncertain_items_flagged",
+      "pass_condition": "Uncertain, inaccessible, or sensitive items are listed instead of silently skipped.",
+      "method": "review"
+    }
+  ],
+  "gates": {
+    "confirm": ["sensitive_data_exposure", "irreversible_source_change"],
+    "surface": ["legal_or_compliance_assertion"]
+  },
+  "skill_chain": {
+    "intake": {
+      "primary": ["research"],
+      "optional": ["doc"],
+      "fallback": "Run filesystem inventory and summarize file types manually.",
+      "handoff_artifact": "source_inventory.md"
+    },
+    "produce": {
+      "primary": [],
+      "optional": ["research"],
+      "fallback": "Use deterministic scripts or shell inventory for hashes and counts.",
+      "handoff_artifact": "raw_data_manifest.md"
+    },
+    "review": {
+      "primary": ["research"],
+      "optional": [],
+      "fallback": "Review duplicate/version choices against file metadata and source content.",
+      "handoff_artifact": "ingestion_review.md"
+    },
+    "learn": {
+      "primary": ["build-loop:knowledge"],
+      "optional": [],
+      "fallback": "Append durable ingestion lessons to the report.",
+      "handoff_artifact": "ingestion_lessons.md"
+    }
+  },
+  "learn": {
+    "store": ["source_quirks", "dedupe_rules", "raw_data_rules", "uncertain_item_patterns"]
+  }
+}

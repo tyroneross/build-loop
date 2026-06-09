@@ -1,0 +1,97 @@
+{
+  "id": "active-project-evidence",
+  "title": "Active Project Evidence Loop",
+  "summary": "Move live project material from active workspace state into a decision artifact and canonical knowledge.",
+  "inputs": [
+    "active project folder",
+    "live log",
+    "research notes",
+    "source artifacts",
+    "generated outputs",
+    "promotion queue"
+  ],
+  "outputs": [
+    "current-state summary",
+    "evidence map",
+    "decision artifact or sponsor update",
+    "promotion candidates",
+    "retrieval test plan"
+  ],
+  "phases": {
+    "assess": {
+      "goal": "Identify the project question, audience, live state, source roots, and canonical destination.",
+      "required": ["project_goal", "audience", "source_inventory", "current_outputs", "canonical_wiki_target"]
+    },
+    "plan": {
+      "goal": "Sequence source review, artifact production, validation, and promotion.",
+      "required": ["source_priority", "artifact_type", "validator_order", "promotion_rules"]
+    },
+    "produce": {
+      "goal": "Create the current-state synthesis, evidence map, and decision artifact.",
+      "required": ["known_unknown_map", "source_backed_claims", "open_questions"]
+    },
+    "review": {
+      "goal": "Validate claim support, audience fit, source traceability, and promotion readiness.",
+      "required": ["validator_results", "gate_check", "fix_list"]
+    },
+    "learn": {
+      "goal": "Promote stable source pages, reusable assets, and retrieval aliases.",
+      "required": ["promotion_candidates", "retrieval_probes", "reusable_patterns"]
+    }
+  },
+  "validators": [
+    {
+      "id": "source_trace",
+      "pass_condition": "Every material claim cites a source path, slide, row, transcript timestamp, or explicitly marked assumption.",
+      "method": "review"
+    },
+    {
+      "id": "current_state_integrity",
+      "pass_condition": "Knowns, unknowns, contradictions, and next evidence needs are separated.",
+      "method": "review"
+    },
+    {
+      "id": "promotion_readiness",
+      "pass_condition": "Each promoted item has a target wiki layer and evidence-backed reason for promotion.",
+      "method": "review"
+    },
+    {
+      "id": "retrieval_probe",
+      "pass_condition": "At least one future retrieval query is named for each durable output.",
+      "method": "review"
+    }
+  ],
+  "gates": {
+    "confirm": ["external_send", "sensitive_data_exposure", "irreversible_source_change"],
+    "surface": ["people_impacting_decision", "legal_or_compliance_assertion"]
+  },
+  "skill_chain": {
+    "intake": {
+      "primary": ["research"],
+      "optional": ["doc"],
+      "fallback": "Manual source inventory with file paths and confidence labels.",
+      "handoff_artifact": "source_inventory.md"
+    },
+    "produce": {
+      "primary": ["pyramid-principle:pyramid-short-form", "pyramid-principle:pyramid-presentation"],
+      "optional": ["research"],
+      "fallback": "Draft the artifact from the evidence map using answer-first structure.",
+      "handoff_artifact": "decision_artifact.md"
+    },
+    "review": {
+      "primary": ["pyramid-principle:pyramid-audit"],
+      "optional": ["research"],
+      "fallback": "Run binary validators in rubric.md manually.",
+      "handoff_artifact": "review_findings.md"
+    },
+    "learn": {
+      "primary": ["build-loop:knowledge"],
+      "optional": ["research"],
+      "fallback": "Write promotion candidates and retrieval probes into the report.",
+      "handoff_artifact": "promotion_candidates.md"
+    }
+  },
+  "learn": {
+    "store": ["source_quirks", "promotion_candidates", "retrieval_aliases", "reusable_assets", "rubric_failures"]
+  }
+}

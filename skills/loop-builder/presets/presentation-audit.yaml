@@ -1,0 +1,96 @@
+{
+  "id": "presentation-audit",
+  "title": "Presentation Audit Loop",
+  "summary": "Audit a deck for storyline, evidence, slide-level clarity, accessibility, and prioritized fixes.",
+  "inputs": [
+    "pptx or pdf",
+    "speaker notes",
+    "audience",
+    "meeting goal",
+    "source material"
+  ],
+  "outputs": [
+    "slide inventory",
+    "audit report",
+    "prioritized fix plan",
+    "claim/source map",
+    "reusable deck failure patterns"
+  ],
+  "phases": {
+    "assess": {
+      "goal": "Extract deck inventory and define audience, decision, timebox, and intended outcome.",
+      "required": ["deck_inventory", "audience", "decision_or_goal", "source_material"]
+    },
+    "plan": {
+      "goal": "Choose audit lenses and order deterministic checks before judgment checks.",
+      "required": ["audit_lenses", "slide_reference_scheme", "accessibility_scope"]
+    },
+    "produce": {
+      "goal": "Produce findings with slide references and ranked fixes.",
+      "required": ["slide_findings", "claim_gaps", "fix_priority"]
+    },
+    "review": {
+      "goal": "Check that findings are specific, evidenced, and separated by severity and type.",
+      "required": ["finding_evidence", "severity_ranking", "accessibility_split"]
+    },
+    "learn": {
+      "goal": "Capture recurring deck failure modes and reusable slide patterns.",
+      "required": ["failure_patterns", "template_candidates"]
+    }
+  },
+  "validators": [
+    {
+      "id": "slide_references",
+      "pass_condition": "Every finding cites a slide number, section, or notes location.",
+      "method": "review"
+    },
+    {
+      "id": "claim_support",
+      "pass_condition": "Material claims are mapped to a source or marked as unsupported/assumption.",
+      "method": "review"
+    },
+    {
+      "id": "audience_fit",
+      "pass_condition": "Recommendations are tied to the audience job and meeting decision, not taste alone.",
+      "method": "review"
+    },
+    {
+      "id": "accessibility_split",
+      "pass_condition": "Accessibility findings are separated from storyline/design judgment and labeled partial when automated extraction is limited.",
+      "method": "review"
+    }
+  ],
+  "gates": {
+    "confirm": ["external_send", "sensitive_data_exposure"],
+    "surface": ["legal_or_compliance_assertion", "people_impacting_decision"]
+  },
+  "skill_chain": {
+    "intake": {
+      "primary": [],
+      "optional": ["doc"],
+      "fallback": "Extract slide titles, notes, and visible text with available local tools.",
+      "handoff_artifact": "deck_inventory.md"
+    },
+    "produce": {
+      "primary": ["pyramid-principle:pyramid-presentation"],
+      "optional": ["research"],
+      "fallback": "Apply one-job-per-slide and answer-first storyline checks manually.",
+      "handoff_artifact": "audit_report.md"
+    },
+    "review": {
+      "primary": ["pyramid-principle:pyramid-audit"],
+      "optional": ["research"],
+      "fallback": "Run rubric.md validators against each slide finding.",
+      "handoff_artifact": "audit_verdict.md"
+    },
+    "learn": {
+      "primary": ["build-loop:knowledge"],
+      "optional": [],
+      "fallback": "Record recurring deck failure patterns in the report.",
+      "handoff_artifact": "deck_lessons.md"
+    }
+  },
+  "learn": {
+    "store": ["deck_failure_patterns", "reusable_slide_patterns", "source_quirks", "rubric_failures"]
+  }
+}
