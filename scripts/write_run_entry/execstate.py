@@ -24,6 +24,7 @@ EXECUTION_VALID_ACTIONS = {
     "iterate_attempt",  # increment iterate_attempt (preserves 5x cap across resume)
     "review_e_pass",    # append a Review Sub-step E telemetry row to state["reviewE"]
     "complete",         # phase=report; clean-completion sentinel
+    "heartbeat",        # pure liveness refresh — touch last_heartbeat_at, no state change
 }
 EXECUTION_RETURN_STATUSES = {
     "fixed", "partial", "scope_breach", "deferred_architecture",
@@ -110,6 +111,14 @@ def _noop_complete(execution: dict, _chunk: object, _status: object, _phase: obj
     execution["phase"] = "report"
 
 
+def _noop_heartbeat(execution: dict, _chunk: object, _status: object, _phase: object, _ts: str) -> None:
+    # Pure liveness: the shared tail of update_execution_state refreshes
+    # last_heartbeat_at; this action mutates nothing else. Used by the
+    # orchestrator-heartbeat wrapper at phase/commit boundaries on long runs so a
+    # watcher can see the run is alive even between the six M2 trigger points.
+    return None
+
+
 def _wrap_dispatch_chunk(execution: dict, chunk_id: object, _status: object, _phase: object, _ts: str) -> None:
     _mutate_dispatch_chunk(execution, chunk_id)  # type: ignore[arg-type]
 
@@ -128,6 +137,7 @@ _ACTION_TABLE: dict = {
     "phase_transition": _wrap_phase_transition,
     "iterate_attempt": _noop_iterate,
     "complete": _noop_complete,
+    "heartbeat": _noop_heartbeat,
 }
 
 

@@ -23,6 +23,18 @@ The orchestrator owns six trigger points that update `state.json.execution` via 
 
 Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
 
+### M2 liveness beat — phase/commit boundary heartbeat + rally presence (bl-orchestrator-heartbeat-rally-presence)
+
+The six trigger points above are chunk-centric (dispatch/return). A long run that sits between chunks, or an inline/background run that never fans out, can go a long time with `last_heartbeat_at` stale and NO rally presence — so a watcher can only reconstruct status from git + CI (the user-flagged defect). On **long or autonomous runs**, the orchestrator additionally beats at **every phase boundary AND every commit** via one fail-open call:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator_heartbeat.py \
+  --workdir "$PWD" --phase "<assess|plan|execute|review|iterate|report>" \
+  --label "<boundary one-liner>" [--files a.py,b.py] --json
+```
+
+This is a THIN wrapper over two existing fail-open mechanisms — it refreshes `state.execution.last_heartbeat_at` (via the `heartbeat` action) AND writes a `presence.write_presence` beat to the resolved rally channel — so any watcher (`coordination_status.py`, `rally room`) reads live status. NO new coordination surface. It never wedges the run (exit 0 always); a missing execution block or unresolvable channel is a clean skip. Call it right after each `phase_transition` write and right after each commit lands.
+
 ### M2 sidecar — working-state writes (NEW 2026-05-13, plan §15.2)
 
 At the same M2 trigger points 2 + 3 + 4 + 6, also write `.build-loop/working-state/current.json` + append `.build-loop/working-state/log.jsonl` via:

@@ -153,7 +153,7 @@ def test_review_e_pass_validates_args(tmp_path):
 def test_action_set_complete():
     """Sanity: every action documented in the plan is in the enum."""
     expected = {"start", "dispatch_chunk", "return_chunk", "phase_transition",
-                "iterate_attempt", "review_e_pass", "complete"}
+                "iterate_attempt", "review_e_pass", "complete", "heartbeat"}
     assert EXECUTION_VALID_ACTIONS == expected
 
 
