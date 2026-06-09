@@ -43,6 +43,11 @@ ARMED="${PROJECT_DIR}/.build-loop/closeout/armed.json"
 CLOSEOUT_LOG_DIR="${PROJECT_DIR}/.build-loop/closeout"
 mkdir -p "$CLOSEOUT_LOG_DIR" 2>/dev/null || true
 
+# Ensure the closeout package (scripts/closeout/) is importable in hook env.
+# PLUGIN_ROOT already resolves to the repo root (see above); scripts/ is the
+# package parent. Set once here so both the closeout call and surface_pending use it.
+export PYTHONPATH="${PLUGIN_ROOT}/scripts${PYTHONPATH:+:$PYTHONPATH}"
+
 # 1. Drain the armed baton if present.
 if [ -f "$ARMED" ]; then
     RID="armed-$(date -u +%Y%m%dT%H%M%SZ)"

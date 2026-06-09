@@ -40,6 +40,7 @@ fi
 printf '%s' "$CMD" | grep -qE '\bgit[[:space:]]+push\b' || exit 0
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${PWD}}"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PROJECT_DIR}}"
 
 # A closeout only makes sense inside a build-loop project.
 [ -d "${PROJECT_DIR}/.build-loop" ] || exit 0
@@ -62,6 +63,11 @@ done
 CLOSEOUT_LOG_DIR="${PROJECT_DIR}/.build-loop/closeout"
 mkdir -p "$CLOSEOUT_LOG_DIR" 2>/dev/null || true
 RID="postpush-$(date -u +%Y%m%dT%H%M%SZ)"
+
+# Ensure the closeout package (scripts/closeout/) is importable regardless of
+# the invoking environment's PYTHONPATH (hooks run under minimal PATH; the package
+# is not installed globally — it lives under PLUGIN_ROOT/scripts/).
+export PYTHONPATH="${PLUGIN_ROOT}/scripts${PYTHONPATH:+:$PYTHONPATH}"
 
 # Fire the existing closeout in the background; never block the turn. On success
 # the closeout module clears the armed baton, so the SessionStart fallback finds
