@@ -30,6 +30,7 @@ if str(HERE) not in sys.path:
 from rally_point import (  # noqa: E402
     changes,
     channel_paths,
+    hook_budget,
     inbox,
     presence,
     revision,
@@ -261,10 +262,13 @@ def _read_recent_changes(channel_dir: Path, max_changes: int) -> list[dict[str, 
 def _git_dirty_files(workdir: Path) -> list[str]:
     try:
         result = subprocess.run(
-            ["git", "-C", str(workdir), "status", "--porcelain"],
+            # --no-optional-locks: never block on index.lock during concurrent
+            # git/rally ops (the transient trigger of the 3s-budget overrun).
+            ["git", "--no-optional-locks", "-C", str(workdir), "status", "--porcelain"],
             capture_output=True,
             text=True,
-            timeout=2,
+            # Child budget < parent (session_probe) budget < outer hook budget.
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
         )
     except (OSError, subprocess.SubprocessError):
         return []

@@ -46,10 +46,10 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    from rally_point import channel_paths, inbox, post as _post_mod, presence, rally
+    from rally_point import channel_paths, hook_budget, inbox, post as _post_mod, presence, rally
     from rally_point.discovery_bridge import resolve as _bridge_resolve
 except ImportError:
-    from . import channel_paths, inbox
+    from . import channel_paths, hook_budget, inbox
     from . import post as _post_mod
     from . import presence, rally
     from .discovery_bridge import resolve as _bridge_resolve
@@ -132,7 +132,10 @@ def _run_status_subprocess(
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            # Derive from the rally hook wall-clock budget so this inner timeout
+            # can NEVER exceed the outer budget (was a fixed 5s under a 3s budget,
+            # which guaranteed a fail-open whenever the probe was slow).
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_PARENT),
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout)
