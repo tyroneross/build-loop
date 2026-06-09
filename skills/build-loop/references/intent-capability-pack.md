@@ -37,8 +37,12 @@ never a gate). Mirror into `state.json.intent.posture`.
   carries anything the vocab can't.
 - **acceptable_tradeoffs** — what is OK to cut under pressure.
 - **non_goals** — what is never cut. At `stakes: high`, a `non_goals` entry that
-  names a REAL risk graduates from advisory to an ENFORCED invariant (the single
-  deterministic carve-out — see the tiered charter below).
+  names a REAL risk is a candidate to **graduate to a constitution invariant** — but
+  only once it is **promoted into the project constitution** (`projects/<slug>/constitution.md`),
+  where the LLM enforces it as a hard line. Until promoted, it stays advisory like the
+  rest of the posture. There is no separate deterministic gate that reads `non_goals`
+  directly (`grep non_goals scripts/` is intentionally empty); enforcement rides the
+  constitution, not a parallel mechanism. See the tiered charter below.
 
 `priority_order` wires into the `alignment-checker` as the Phase-2-fork and
 Phase-5-queue-drain tie-breaker: not just "matches intent?" but "which viable path
@@ -58,13 +62,19 @@ does THIS user's priority order prefer?" — advisory data the LLM weighs, never
   canonical `authored_by: user` on next run via hash-mismatch detection).
 - **Depth scales by `stakes`**: low → intent line only (skills/agents/toys — do NOT
   force a charter, that's the anti-pattern); medium → thin charter (web/mobile);
-  high → full charter, and risk-naming `non_goals` graduate to ENFORCED invariants.
+  high → full charter, and risk-naming `non_goals` become candidates to promote into
+  the constitution as invariants (where the LLM enforces them). The promotion is the
+  enforcement; no `non_goals`-specific gate exists outside the constitution.
 - **PRD stance**: opt-in upfront via `start-prd`; accretion is the default; never
   required. A PRD, when present, PREFILLS the charter richer — input, not a gate.
 
-Enforcement philosophy (binding): all advisory EXCEPT risk-naming `non_goals` at
-`stakes: high`. Per `feedback_deterministic_only_for_known_risks` — posture/charter
-depth is the dial; the LLM weighs, never a gate, except the named-risk carve-out.
+Enforcement philosophy (binding): all advisory. The one stronger-than-advisory path
+is **constitution promotion** — a risk-naming `non_goals` at `stakes: high` graduates
+to a hard invariant only when it is written into `projects/<slug>/constitution.md`,
+which the LLM treats as a binding line. Per `feedback_deterministic_only_for_known_risks` —
+posture/charter depth is the dial; the LLM weighs, never a gate. The constitution, not
+a `non_goals`-specific script, carries any graduated invariant (no dormant determinism
+claim — there is no `non_goals` enforcement code to wire up).
 
 ## Intent restatement protocol (always-on)
 
