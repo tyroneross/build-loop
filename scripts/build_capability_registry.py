@@ -100,7 +100,11 @@ CATEGORY_KEYWORDS = [
                       "plugin-heal", "plugin self-heal", "self-heal",
                       "closeout", "armed baton", "host capability",
                       "host_capabilities", "wakeup", "resume primitive",
-                      "coding host")),
+                      "coding host",
+                      # Marketplace autoupdate compensator (plugin-cache drift
+                      # → registry reconcile) is plugin-lifecycle infra:
+                      "marketplace", "autoupdate", "installed_plugins",
+                      "catalog drift")),
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.
@@ -123,7 +127,8 @@ CATEGORY_KEYWORDS = [
                       # falling through to the 'unknown' keyword fallback.
                       "supply-chain", "dependency_cooldown",
                       "dependency-cooldown", "pre_bash_autonomy",
-                      "pre_bash_dependency", "autonomy_gate", "cooldown",
+                      "pre_bash_dependency", "pre_bash_dispatch",
+                      "autonomy_gate", "cooldown",
                       "risk_surface", "risk surface", "risksurfacechange",
                       # Commit/repo-hygiene guards + plugin-cache pruning +
                       # git-hook installation (all validation infrastructure):
