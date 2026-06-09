@@ -5,10 +5,26 @@
 marketplace_autoupdate.py — CANONICAL, version-controlled copy.
 
 This is the source of truth for the marketplace-autoupdate workaround. The
-host install at ``~/.claude/scripts/hooks/marketplace-autoupdate.py`` is a thin
-pure-exec shim that runs THIS file (per the hooks-hygiene lesson: loose wrappers
-desync silently, so the shim must be a bare exec, not a copy). Edit here; the
-shim picks up changes automatically. Colocated test: test_marketplace_autoupdate.py.
+host install at ``~/.claude/scripts/hooks/marketplace-autoupdate.py`` SHOULD be
+a thin pure-exec shim that runs THIS file (per the hooks-hygiene lesson: loose
+wrappers desync silently, so the shim must be a bare exec, not a copy). Once the
+shim is installed, edit here and the shim picks up changes automatically.
+
+Install (or re-install) the host shim — copy this canonical's repo-relative
+path into a runpy exec wrapper. From the build-loop repo root:
+
+    python3 scripts/install_marketplace_shim.py
+
+(or `--print` to dry-run the shim body). The installer is idempotent and
+fail-open: it refuses to clobber a host file that ISN'T already a shim unless
+``--force`` is given, so a hand-edited host copy is never silently lost.
+
+NOTE: until the shim is installed, the host file may still be a FULL COPY of an
+older revision of this script — verify with
+``head -12 ~/.claude/scripts/hooks/marketplace-autoupdate.py`` (a shim is ~15
+lines and contains ``runpy.run_path``; a stale copy is ~800 lines).
+
+Colocated test: test_marketplace_autoupdate.py.
 
 Compensates for Claude Code's broken `autoUpdate: true` flag on extra
 known marketplaces. Reads the registry at
