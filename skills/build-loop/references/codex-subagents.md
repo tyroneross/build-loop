@@ -70,6 +70,14 @@ Prefer explicit prompt packets over full context forks. Use full context only wh
 
 Shared reads should happen once in the lead session, then be condensed into worker prompts. This keeps workers focused and reduces contradictory interpretations.
 
+### Prompt Cache Discipline
+
+OpenAI prompt caching is automatic, so Build Loop cannot call the cache directly from Codex. The lever the Codex adapter controls is prompt shape: keep the reusable prefix stable, and move volatile task state later.
+
+For Codex CLI and Codex app runs, put reusable role rules, output contracts, validation expectations, and ownership schema before task-specific facts. Put Rally state, timestamps, command output, diffs, browser comments, thread IDs, worktree metadata, current claims, and task IDs after the stable contract.
+
+Do not reorder stable sections between worker prompts. Monitoring cached-token counters only detects prefix churn; the improvement comes from preserving the prefix and reducing noisy context before dispatch.
+
 ## Parallel Pattern
 
 1. Lead creates the plan and identifies parallel-safe groups.
