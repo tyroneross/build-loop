@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Static tests for the build-loop-memory MCP bridge."""
+"""Static tests for the build-loop-memory CLI packaging contract.
+
+The MCP-tool registration test was deleted when the Build Loop MCP surface
+itself was removed (commit cef120b "Remove Build Loop MCP surface and harden
+hooks"): there is no ``src/mcp/tools.ts`` to assert against, so the old test
+could only ever ``FileNotFoundError``. The surviving contract this file guards
+is that the blm CLI's Python dependencies ship in the npm package.
+"""
 from __future__ import annotations
 
 import json
@@ -12,16 +19,6 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class BlmMcpBridgeTests(unittest.TestCase):
-    def test_mcp_tools_are_registered(self) -> None:
-        text = (REPO / "src" / "mcp" / "tools.ts").read_text(encoding="utf-8")
-        for name in (
-            "build_loop_memory_status",
-            "build_loop_memory_context",
-            "build_loop_memory_open",
-        ):
-            self.assertIn(f"name: '{name}'", text)
-            self.assertIn(f"mcp:{name}", text)
-
     def test_package_includes_blm_cli_dependencies(self) -> None:
         package = json.loads((REPO / "package.json").read_text(encoding="utf-8"))
         files = set(package["files"])

@@ -159,19 +159,45 @@ def test_graceful_when_state_json_missing(
 
 
 def test_smoke_real_run_against_repo() -> None:
-    """Smoke test on the actual build-loop repo. Postgres known down + npx
-    may or may not be on PATH; runs + decisions must succeed."""
+    """Smoke test on the actual build-loop repo.
+
+    The real repo's ``.build-loop/state.json`` is gitignored runtime data: it
+    is ABSENT on a clean checkout (CI) and may be mid-write/corrupt locally.
+    The probe's invariant is therefore graceful classification, NOT a fixed
+    ``ok is True`` — asserting True coupled this test to live runtime state and
+    failed it in CI (state_json_missing) and locally (state_json_unreadable).
+    Every probe must return a structured verdict (``ok`` present; on failure a
+    ``reason``) and the health check must never crash on the real repo.
+    """
     bh.set_debugger_runner(None)
     bh.set_semantic_runner(None)
     # Don't write to the live state.json — just probe.
     env = bh.run_health_check(REPO)
-    assert env["runs"]["ok"] is True, f"runs probe failed: {env['runs']}"
-    # `.episodic/decisions/` may or may not exist on this repo. Either way, the
-    # probe must classify gracefully (ok or reason set).
-    assert "ok" in env["decisions"]
-    # Two backends must minimally be probable.
-    ok_count = sum(1 for k in ("runs", "decisions", "semantic", "debugger") if env[k]["ok"])
-    assert ok_count >= 1, f"no backends OK on this repo: {env['summary']}"
+    # runs probe: either OK (live state.json present + valid) or a KNOWN reason
+    # (missing on a clean checkout, unreadable if mid-write) — never a crash.
+    assert "ok" in env["runs"]
+    if not env["runs"]["ok"]:
+        assert env["runs"]["reason"] in {
+            "state_json_missing",
+            "state_json_unreadable: JSONDecodeError",
+        } or env["runs"]["reason"].startswith("state_json_unreadable")
+    # Every backend must classify gracefully (ok present).
+    for backend in ("runs", "decisions", "semantic", "debugger"):
+        assert "ok" in env[backend], f"{backend} probe did not classify: {env[backend]}"
+
+
+def test_smoke_runs_probe_ok_with_valid_state(workdir: Path) -> None:
+    """End-to-end: with a valid synthetic state.json, the runs probe is OK.
+
+    This is the CI-deterministic counterpart to the real-repo smoke test —
+    it proves the probe reports OK when state.json IS present and valid,
+    without depending on gitignored live runtime state.
+    """
+    bh.set_debugger_runner(None)
+    bh.set_semantic_runner(None)
+    env = bh.run_health_check(workdir)
+    assert env["runs"]["ok"] is True, f"runs probe failed on valid fixture: {env['runs']}"
+    assert env["runs"]["count"] == 2
 
 
 def test_exit_code_zero_when_backends_down(workdir: Path, capsys: pytest.CaptureFixture) -> None:
