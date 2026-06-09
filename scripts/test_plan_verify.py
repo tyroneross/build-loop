@@ -521,5 +521,65 @@ class DecisionWithoutFalsifierTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class TierSanityTests(unittest.TestCase):
+    """rule_tier_sanity — doctrine rule 12 (WP-B item 3), advisory WARN."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [f for f in run_all(self.plan, self.repo) if f["rule_id"].startswith("tier-sanity")]
+
+    def test_judgment_task_on_script_warns(self) -> None:
+        findings = self._findings(
+            "# Plan\n## Chunk 1\nAssess and decide the right rollback strategy.\n"
+            "dispatch_tier: script\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "WARN")
+        self.assertEqual(findings[0]["rule_id"], "tier-sanity-judgment-on-script")
+
+    def test_mechanical_task_on_opus_warns(self) -> None:
+        findings = self._findings(
+            "# Plan\n## Chunk 2\nRename the helper across all call sites.\n"
+            "dispatch_tier: opus\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["rule_id"], "tier-sanity-mechanical-on-opus")
+
+    def test_mechanical_task_on_script_is_silent(self) -> None:
+        # The aligned case — a rote rename on `script` — must not fire.
+        findings = self._findings(
+            "# Plan\n## Chunk 3\nRename the helper across all call sites.\n"
+            "dispatch_tier: script\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_judgment_task_on_opus_is_silent(self) -> None:
+        # The aligned case — a judgment task on `opus` — must not fire.
+        findings = self._findings(
+            "# Plan\n## Chunk 4\nAssess and decide the rollback strategy.\n"
+            "dispatch_tier: opus\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_no_dispatch_tier_is_silent(self) -> None:
+        findings = self._findings(
+            "# Plan\n## Chunk 5\nRename the helper across all call sites.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

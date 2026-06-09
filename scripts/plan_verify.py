@@ -16,7 +16,8 @@ tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
 synthesis-dim-vague-value, risk-reason-invalid-value,
 scope-audit-required, approach-lenses-missing, parallel-decision-record,
-no-stop-language, reads-from-dependency.
+no-stop-language, reads-from-dependency, decision-without-falsifier,
+tier-sanity-judgment-on-script, tier-sanity-mechanical-on-opus.
 
 Plan Evidence Contract (per finding):
 {
@@ -471,6 +472,64 @@ def rule_decision_without_falsifier(plan_path: Path, lines: list[tuple[int, str]
             confidence="low",
             rule_id="decision-without-falsifier",
         ))
+    return out
+
+
+# WP-B item 3: tier-sanity. A `dispatch_tier:` declaration (WP-B item 2) should
+# match the work's nature. Two smells, both ADVISORY WARN (doctrine rule 12 +
+# never-block, user-confirmed 2026-06-09): a judgment-flavored task pinned to
+# `script` (rigidity — a script can't judge), and a mechanical-flavored task
+# pinned to `opus` (waste — burning the top tier on a rote task). Heuristic kept
+# tight (doctrine rule 6): fire only when the SAME line / its label carries a
+# clear judgment or mechanical verb, so format variation never false-positives.
+_DISPATCH_TIER_RE = re.compile(r"dispatch_tier\s*[:=]\s*[`\"']?(script|haiku|sonnet|opus)\b", re.IGNORECASE)
+_JUDGMENT_VERB_RE = re.compile(
+    r"\b(judge|judgment|decide|design|assess|evaluate|weigh|tradeoff|trade-off|"
+    r"ambiguous|interpret|review|critique|synthesi[sz]e|recommend|choose)\b",
+    re.IGNORECASE,
+)
+_MECHANICAL_VERB_RE = re.compile(
+    r"\b(rename|move|copy|delete a line|bump|reformat|regenerate|find-and-replace|"
+    r"find and replace|sed|grep|stamp|sort|dedup(?:e|licate)?|whitespace|lint-fix|"
+    r"reorder|mechanical|boilerplate)\b",
+    re.IGNORECASE,
+)
+
+
+def rule_tier_sanity(plan_path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """WARN (advisory, doctrine rule 12): a dispatch_tier that fights the work.
+
+    Two smells, both never-block: judgment task on `script` (rigidity); mechanical
+    task on `opus` (waste). The judgment/mechanical signal is read from the same
+    line as the tier declaration AND the 2 lines above it (the task description
+    usually precedes the tier line), so the check stays tight.
+    """
+    out: list[dict[str, Any]] = []
+    for idx, (lineno, line) in enumerate(lines):
+        if not line:
+            continue
+        m = _DISPATCH_TIER_RE.search(line)
+        if not m:
+            continue
+        tier = m.group(1).lower()
+        # Window: the tier line plus up to 2 preceding lines (task description).
+        ctx = " ".join(lines[j][1] or "" for j in range(max(0, idx - 2), idx + 1))
+        if tier == "script" and _JUDGMENT_VERB_RE.search(ctx):
+            out.append(_finding(
+                claim_text=line.strip(),
+                claim_kind="tier_sanity_judgment_on_script",
+                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                result="inconclusive", severity="WARN", confidence="low",
+                rule_id="tier-sanity-judgment-on-script",
+            ))
+        elif tier == "opus" and _MECHANICAL_VERB_RE.search(ctx) and not _JUDGMENT_VERB_RE.search(ctx):
+            out.append(_finding(
+                claim_text=line.strip(),
+                claim_kind="tier_sanity_mechanical_on_opus",
+                evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                result="inconclusive", severity="WARN", confidence="low",
+                rule_id="tier-sanity-mechanical-on-opus",
+            ))
     return out
 
 
@@ -1348,6 +1407,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_no_stop_language(plan_path, lines))
     findings.extend(rule_reads_from_dependency(plan_path, lines))
     findings.extend(rule_decision_without_falsifier(plan_path, lines))
+    findings.extend(rule_tier_sanity(plan_path, lines))
     return findings
 
 

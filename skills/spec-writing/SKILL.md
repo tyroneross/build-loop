@@ -314,6 +314,24 @@ If no UI surface is in scope, write "N/A: no UI surface."
 
 ---
 
+### Item 18 — Dispatch tier per work item (WP-B)
+
+**Prompt:** Assign `dispatch_tier:` per work item — one of `script | haiku | sonnet | opus` — plus a one-line justification. The tier names which executor the orchestrator dispatches; the justification states why that tier fits the work's nature.
+
+**Eligibility test for `script` (ALL must hold):** machine-checkable output; fully enumerable inputs; the tool exists OR is ≤~50 LOC plus a colocated test. If any fails, the task needs a model tier (judgment), not a script. Escalate on evidence (2 failures or surfaced ambiguity) with the failure evidence attached; never patch a script mid-run to absorb ambiguity.
+
+**Effect:** `plan_verify.py` runs two ADVISORY checks (never block, user-confirmed 2026-06-09): `tier-sanity-judgment-on-script` (a judgment-flavored task pinned to `script` — rigidity) and `tier-sanity-mechanical-on-opus` (a rote task pinned to `opus` — waste). Both are WARN flags in the report, surfaced for the author to reconsider.
+
+**How to check:**
+
+```bash
+grep -n "dispatch_tier:" docs/plans/<feature-slug>.md
+```
+
+Each value must be exactly one of `script | haiku | sonnet | opus`. Omit the field for an item whose tier is obvious from context; the checks fire only on a declared tier that fights its task description.
+
+---
+
 ## Frontmatter fields used by routing
 
 These fields appear in plan or chunk frontmatter and affect orchestrator routing decisions. They are validated by `scripts/plan_verify.py`.
@@ -322,6 +340,7 @@ These fields appear in plan or chunk frontmatter and affect orchestrator routing
 |-------|------|--------|
 | `risk_reason:` | one of 5 canonical strings | Routes chunk to `tier: thinking` regardless of `synthesis_dimensions` count (see Item 16). |
 | `modifies_api: true\|false` | boolean | When `true`, the orchestrator runs a mandatory scope-auditor gate before Phase 3 dispatch. Any public function, component, type, route, or CLI-flag signature change qualifies. When set without a companion `scope_auditor_status:` field in the plan body, `plan_verify.py` emits a WARN (`scope-audit-required`) to surface the missing audit trail. |
+| `dispatch_tier:` | one of `script\|haiku\|sonnet\|opus` | Names the executor tier for the work item (Item 18). `plan_verify.py` emits an advisory WARN when the tier fights the task: judgment on `script` (`tier-sanity-judgment-on-script`) or a mechanical task on `opus` (`tier-sanity-mechanical-on-opus`). Never blocks. |
 
 ---
 
