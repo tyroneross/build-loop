@@ -43,6 +43,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-memory.sh\" </dev/null >/dev/null 2>&1; exit 0",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-closeout.sh\" </dev/null >/dev/null 2>&1; exit 0",
+            "timeout": 3000
           }
         ]
       }
