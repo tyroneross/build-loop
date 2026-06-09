@@ -169,9 +169,9 @@ Examples:
 
 Runs deep iterative root-cause investigation (causal-tree analysis, fix, verify, critique — up to 5 iterations). The build orchestrator also auto-invokes `Skill("build-loop:debug-loop")` on Review-B Validate failures and Iterate retries (attempts 2 and 3) — you don't have to call it manually during a build.
 
-**`/build-loop:optimize [target]`** — force optimize mode. Auto-routed from `/build-loop:run` on metric-improvement language.
+**`/build-loop:optimize-run [target]`** — force optimize mode. Auto-routed from `/build-loop:run` on metric-improvement language. (Renamed from `/build-loop:optimize` 2026-06-09 to clear the command↔skill namesake collision; `Skill("build-loop:optimize")` is unchanged.)
 
-**`/build-loop:research [topic]`** — force research mode. Auto-routed from `/build-loop:run` on evaluation/comparison language.
+**`/build-loop:research-run [topic]`** — force research mode. Auto-routed from `/build-loop:run` on evaluation/comparison language. (Renamed from `/build-loop:research` 2026-06-09; `Skill("build-loop:research")` is unchanged.)
 
 **`/build-loop:test [--strict] [test-name]`** — force plugin-test static analysis. Auto-routed from `/build-loop:run` on "test plugin"/"validate plugin" language.
 

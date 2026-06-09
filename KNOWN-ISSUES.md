@@ -85,13 +85,13 @@ This bypasses the resolver entirely and produces the same outcome.
 
 **Resolved:** 2026-05-01 — applied Option 2 (rename slash-command to `commands/run.md`). User surface is now `/build-loop:run [goal]`. Skill name unchanged at `skills/build-loop/SKILL.md`, so all `Skill("build-loop:build-loop")` callers (build-orchestrator agent, downstream plugins) continue to resolve correctly. README + CLAUDE.md updated.
 
-**Sibling colliders — latent risk accepted, 2026-05-01.** Three sibling command/skill pairs share the same namesake-collision shape but were intentionally NOT renamed. UX cost of a suffix was deemed not worth the unverified risk; none have been observed misbehaving in practice. If `Skill("build-loop:<name>")` ever returns the slash-command template for one of these, apply the same Option 2 rename pattern used for `build-loop:build-loop`.
+**Sibling colliders — RESOLVED 2026-06-09 (Option 2 rename).** Three sibling command/skill pairs shared the same namesake-collision shape. Rather than carry the latent risk further, the proven Option-2 rename (slash-command file renamed, skill name unchanged) was applied to all three so `/build-loop:<x>` can never shadow `Skill("build-loop:<x>")`:
 
-- `commands/optimize.md` ↔ `skills/optimize/SKILL.md` → `build-loop:optimize`
-- `commands/research.md` ↔ `skills/research/SKILL.md` → `build-loop:research`
-- `commands/plan-verify.md` ↔ `skills/plan-verify/SKILL.md` → `build-loop:plan-verify`
+- `commands/optimize.md` → `commands/optimize-run.md` (`/build-loop:optimize-run`); `skills/optimize/SKILL.md` unchanged → `Skill("build-loop:optimize")` resolves to the skill.
+- `commands/research.md` → `commands/research-run.md` (`/build-loop:research-run`); `skills/research/SKILL.md` unchanged → `Skill("build-loop:research")` resolves to the skill.
+- `commands/plan-verify.md` → `commands/verify-plan.md` (`/build-loop:verify-plan`); `skills/plan-verify/SKILL.md` unchanged → `Skill("build-loop:plan-verify")` resolves to the skill.
 
-`commands/promote-experiment.md` has no namesake skill and was not touched. `skills/self-improve/SKILL.md` has no namesake command and was not touched.
+`/build-loop:run` continues to auto-route to all three modes — the renamed commands are advanced overrides, so the slash-name change has minimal UX cost. Skill callers (orchestrator, README, downstream plugins) reference `Skill("build-loop:<name>")` and keep resolving unchanged. `commands/promote-experiment.md` has no namesake skill and was not touched. `skills/self-improve/SKILL.md` has no namesake command and was not touched.
 
 ---
 

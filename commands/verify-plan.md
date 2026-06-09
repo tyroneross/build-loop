@@ -1,5 +1,5 @@
 ---
-name: plan-verify
+name: verify-plan
 description: "Deterministic verifier for plan markdown — grep-checkable rules (delete-with-callers, numeric-drift, route-change-evidence, package-state, missing-evidence). Run before accepting a Phase 2 plan."
 argument-hint: "<plan.md>"
 ---

@@ -1,5 +1,5 @@
 ---
-name: research
+name: research-run
 description: "(Advanced override — `/build-loop:run` auto-routes here; use this only to force the mode.) Generate a repo-grounded research packet without committing to build. Pre-decision analysis."
 argument-hint: "[topic]"
 ---

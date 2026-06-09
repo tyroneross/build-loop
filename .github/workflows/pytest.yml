@@ -39,8 +39,10 @@ jobs:
       AGENT_RALLY_BINARY: /nonexistent
       BUILD_LOOP_DISABLE_SIBLING_RALLY: "1"
       # Isolate the rally apps-root to a runner-local dir so presence/where
-      # tests don't read a stale global ~/.agent-rally-point.
-      BUILD_LOOP_APPS_ROOT: ${{ runner.temp }}/rally-apps
+      # tests don't read a stale global ~/.agent-rally-point. $RUNNER_TEMP is a
+      # built-in env var available to every step (the `runner` *context* is not
+      # valid in a job-level env block — using it there breaks the workflow).
+      BUILD_LOOP_APPS_ROOT: ${{ github.workspace }}/.ci-rally-apps
     steps:
       - uses: actions/checkout@v6
 
