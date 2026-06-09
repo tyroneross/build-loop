@@ -26,7 +26,7 @@
     "causal-tree",
     "incident-memory"
   ],
-  "skills": "./codex-skills",
+  "skills": "./skills",
   "interface": {
     "displayName": "Build Loop",
     "shortDescription": "Multi-phase build orchestration with review gates, UI validation, debugging, and a Codex subagent adapter.",

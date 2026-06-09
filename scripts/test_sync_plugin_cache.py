@@ -89,6 +89,29 @@ class SyncPluginCacheTests(unittest.TestCase):
         data = json.loads(result.stdout)
         self.assertEqual(data["source_mode"], "head")
 
+    def test_default_sync_can_archive_plugin_subdirectory(self) -> None:
+        artifact = self.source / "plugin-artifacts/codex"
+        write(artifact / ".codex-plugin/plugin.json", json.dumps({
+            "name": "build-loop",
+            "version": "1.0.0",
+            "skills": "./skills",
+        }))
+        write(artifact / "skills/build-loop/SKILL.md", "---\nname: build-loop\n---\nartifact\n")
+        write(self.source / "skills/internal/SKILL.md", "---\nname: internal\n---\nnoisy\n")
+        commit_all(self.source, "add codex artifact")
+
+        result = run([
+            "--host", "codex",
+            "--source", str(artifact),
+            "--cache", str(self.codex_cache),
+            "--json",
+        ])
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertTrue((self.codex_cache / ".codex-plugin/plugin.json").is_file())
+        self.assertTrue((self.codex_cache / "skills/build-loop/SKILL.md").is_file())
+        self.assertFalse((self.codex_cache / "skills/internal/SKILL.md").exists())
+
     def test_dirty_sync_is_explicit(self) -> None:
         write(self.source / "README.md", "dirty\n")
 

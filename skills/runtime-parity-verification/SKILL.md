@@ -1,6 +1,7 @@
 ---
 name: runtime-parity-verification
 description: Use in Phase 4/5 (Validate/Iterate) for ANY change to a user-visible flow — web, macOS, iOS, agent, or CLI/TUI — before claiming "done". Verifies the RUNNING app's core flow by cross-checking the rendered/queryable UI against the backing source-of-truth (DB/API/daemon/tool-state), screen-independently. Triggers — "verify it works", "confirm the fix", "does X actually work", "nothing happens when I…", "not showing", "shows empty/wrong data", uiTarget != null, or any "action does nothing / data not displaying / stale projection" symptom. Compile-green and a passing unit test do NOT satisfy this; neither does a screenshot alone.
+user-invocable: false
 ---
 
 # Runtime Parity Verification

@@ -80,9 +80,15 @@ def safe_extract_tar(tar_bytes: bytes, target: Path) -> None:
 
 def materialize_head(source: Path) -> tempfile.TemporaryDirectory[str]:
     require_git_head(source)
+    top = Path(run_git(source, ["rev-parse", "--show-toplevel"])).resolve()
+    try:
+        rel = source.resolve().relative_to(top)
+    except ValueError as exc:
+        raise SyncError(f"{source} is not under git toplevel {top}") from exc
+    treeish = "HEAD" if str(rel) == "." else f"HEAD:{rel.as_posix()}"
     proc = subprocess.run(
-        ["git", "archive", "--format=tar", "HEAD"],
-        cwd=str(source),
+        ["git", "archive", "--format=tar", treeish],
+        cwd=str(top),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,

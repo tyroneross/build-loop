@@ -13,9 +13,14 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 CODEX_SKILLS_DIR = REPO_ROOT / "codex-skills"
+CODEX_ARTIFACT_DIR = REPO_ROOT / "plugin-artifacts" / "codex"
 SKILLS_DIR = REPO_ROOT / "skills"
 
-PUBLIC_ENTRYPOINTS = {
+CODEX_PUBLIC_ENTRYPOINTS = {
+    "build-loop",
+}
+
+CLAUDE_PUBLIC_ENTRYPOINTS = {
     "build-loop",
     "debug-loop",
     "optimize",
@@ -59,12 +64,33 @@ class CodexSurfaceTests(unittest.TestCase):
         data = json.loads(CODEX_PLUGIN_JSON.read_text(encoding="utf-8"))
         self.assertEqual(data.get("skills"), "./codex-skills")
 
-    def test_codex_public_wrappers_are_exact_entrypoint_set(self) -> None:
+    def test_codex_source_wrappers_are_exact_entrypoint_set(self) -> None:
         names = {
             read_name(path)
             for path in sorted(CODEX_SKILLS_DIR.glob("*/SKILL.md"))
         }
-        self.assertEqual(names, PUBLIC_ENTRYPOINTS)
+        self.assertEqual(names, CODEX_PUBLIC_ENTRYPOINTS)
+
+    def test_codex_marketplace_points_to_slim_artifact(self) -> None:
+        data = json.loads((REPO_ROOT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
+        entries = {entry["name"]: entry for entry in data.get("plugins", [])}
+        self.assertEqual(entries["build-loop"].get("source"), "./plugin-artifacts/codex")
+
+    def test_codex_artifact_exposes_one_skill(self) -> None:
+        data = json.loads((CODEX_ARTIFACT_DIR / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(data.get("skills"), "./skills")
+        skill_paths = sorted(
+            str(path.relative_to(CODEX_ARTIFACT_DIR))
+            for path in CODEX_ARTIFACT_DIR.rglob("SKILL.md")
+        )
+        self.assertEqual(skill_paths, ["skills/build-loop/SKILL.md"])
+        self.assertEqual(read_name(CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "SKILL.md"), "build-loop")
+
+    def test_codex_artifact_is_included_in_npm_package_files(self) -> None:
+        data = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+        self.assertIn("plugin-artifacts/codex", data.get("files", []))
+        self.assertIn(".agents/plugins", data.get("files", []))
+        self.assertNotIn(".agents", data.get("files", []))
 
 
 class ClaudeSurfaceTests(unittest.TestCase):
@@ -76,7 +102,7 @@ class ClaudeSurfaceTests(unittest.TestCase):
         violations: list[str] = []
         for rel_path, flag in actual.items():
             name = read_name(REPO_ROOT / rel_path)
-            expected = "true" if name in PUBLIC_ENTRYPOINTS else "false"
+            expected = "true" if name in CLAUDE_PUBLIC_ENTRYPOINTS else "false"
             if flag != expected:
                 violations.append(f"{rel_path}: user-invocable={flag!r}, expected {expected!r}")
 
