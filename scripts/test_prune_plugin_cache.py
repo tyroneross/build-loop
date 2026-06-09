@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -310,6 +311,234 @@ class PrunePluginCacheTests(unittest.TestCase):
         # were not scanned.
         self.assertEqual(data["protected"], [])
         self.assertFalse(self.claude_old.exists())
+
+
+class ArchiveNotHardDeleteTests(unittest.TestCase):
+    """A pruned version dir lands under <plugins>/removed/buildloop-prune-*
+    in the EXACT layout the SessionStart healer scans, so a peer session
+    pinned to that version can be restored on next-session start.
+
+    Part 4 of bl-plugin-cache-gc-selfheal.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.source = self.root / "source"
+        # `removed/` is a sibling of `cache/` under `<host>/plugins/`, so the
+        # cache root must be at depth `<plugins>/cache/` for the script's
+        # archive_root_for() to land it correctly.
+        self.plugins = self.root / "claude-plugins"
+        self.claude_cache = self.plugins / "cache"
+        self.removed_root = self.plugins / "removed"
+        write_source(self.source)
+        self.claude_current = write_cache(
+            self.claude_cache, "claude", "rosslabs-ai-toolkit", "build-loop", "1.2.0",
+        )
+        self.claude_old = write_cache(
+            self.claude_cache, "claude", "rosslabs-ai-toolkit", "build-loop", "1.0.0",
+        )
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _run_prune(self, *extra_args: str, env: dict[str, str] | None = None,
+                   ) -> subprocess.CompletedProcess:
+        if env is None:
+            env = env_without_plugin_roots()
+        return run([
+            "--host", "claude",
+            "--source", str(self.source),
+            "--cache-root", str(self.claude_cache),
+            "--apply",
+            "--json",
+            *extra_args,
+        ], env=env)
+
+    def _archive_dirs(self) -> list[Path]:
+        if not self.removed_root.is_dir():
+            return []
+        return sorted([p for p in self.removed_root.iterdir()
+                       if p.is_dir() and p.name.startswith("buildloop-prune-")])
+
+    def test_pruned_dir_archived_to_removed_in_healer_layout(self) -> None:
+        result = self._run_prune()
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertFalse(self.claude_old.exists(),
+                         "old version dir should have been moved out of cache")
+        archives = self._archive_dirs()
+        self.assertEqual(len(archives), 1, f"expected one archive tag dir, got {archives}")
+        # Layout: removed/buildloop-prune-<ts>/<plugin>/<version>/
+        archived_version = archives[0] / "build-loop" / "1.0.0"
+        self.assertTrue(archived_version.is_dir(),
+                        f"archived version dir missing: {archived_version}")
+        # The archived dir's manifest is intact so the healer's
+        # _is_plugin_version_dir() will match.
+        manifest = archived_version / ".claude-plugin" / "plugin.json"
+        self.assertTrue(manifest.exists())
+        self.assertEqual(json.loads(manifest.read_text())["version"], "1.0.0")
+        # Current version still present in cache.
+        self.assertTrue(self.claude_current.exists())
+
+    def test_symlink_entry_is_unlinked_never_archived(self) -> None:
+        """Symlinks (local-dev / heal symlinks) must be unlinked, never
+        followed and never archived — the target is a real dir that other
+        callers may still need.
+        """
+        # Manually retire the current version and replace it with a symlink to
+        # the source (mimics the live-remedy / heal-symlink case).
+        shutil.rmtree(self.claude_old)
+        link_target = self.root / "linked-source"
+        write_source(link_target, version="1.1.5")
+        symlink_entry = self.claude_cache / "rosslabs-ai-toolkit" / "build-loop" / "1.1.5"
+        symlink_entry.symlink_to(link_target, target_is_directory=True)
+
+        result = self._run_prune()
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        # Symlink gone, target preserved.
+        self.assertFalse(symlink_entry.exists())
+        self.assertTrue(link_target.exists())
+        # No archive tag was created (symlinks never go through the archive
+        # path), AND nothing inside `removed/` references the symlinked
+        # version.
+        archives = self._archive_dirs()
+        if archives:
+            for tag in archives:
+                for inner in tag.rglob("1.1.5"):
+                    self.fail(f"symlink target was archived under {inner}")
+                for inner in tag.rglob("linked-source"):
+                    self.fail(f"symlink was followed into {inner}")
+
+    def test_retention_cap_gcs_oldest_archives(self) -> None:
+        """N+1 archive tags → oldest is GC'd, newest ARCHIVE_RETENTION kept."""
+        import prune_plugin_cache as ppc  # noqa: PLC0415
+        # Seed ARCHIVE_RETENTION + 2 stale archive tags with deterministic
+        # mtimes (oldest first). The next real prune adds one MORE archive,
+        # leaving N+3 candidates before GC → expect exactly N after.
+        retention = ppc.ARCHIVE_RETENTION
+        archive_root = ppc.archive_root_for(self.claude_cache)
+        archive_root.mkdir(parents=True, exist_ok=True)
+        seeded: list[Path] = []
+        for i in range(retention + 2):
+            d = archive_root / f"buildloop-prune-seed-{i:02d}"
+            (d / "build-loop" / f"0.0.{i}").mkdir(parents=True)
+            # mtime: older i = older time. (1700000000 = 2023-11-14 baseline.)
+            t = 1700000000.0 + i
+            os.utime(d, (t, t))
+            seeded.append(d)
+        # An UNRELATED dir under removed/ must NOT be GC'd (only the
+        # buildloop-prune-* prefix is owned by this script).
+        unrelated = archive_root / "cc-core-archive-keep"
+        unrelated.mkdir()
+
+        # Trigger the real prune so the archive + GC fires through the
+        # public path (apply mode).
+        result = self._run_prune()
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+
+        remaining = sorted([p.name for p in archive_root.iterdir()
+                            if p.is_dir() and p.name.startswith("buildloop-prune-")])
+        self.assertEqual(len(remaining), retention,
+                         f"expected {retention} archive dirs after GC, got {remaining}")
+        # The unrelated dir is untouched.
+        self.assertTrue(unrelated.is_dir())
+
+    def test_cross_fs_fallback_uses_copytree_then_rmtree(self) -> None:
+        """When os.rename refuses (EXDEV / read-only fs), the archive path
+        falls back to copytree(symlinks=True) + rmtree. Force the fallback
+        by monkey-patching os.rename inside the module.
+        """
+        import prune_plugin_cache as ppc  # noqa: PLC0415
+        archive_root = ppc.archive_root_for(self.claude_cache)
+
+        original_rename = ppc.os.rename
+        calls: list[tuple[str, str]] = []
+
+        def fake_rename(src, dst):  # noqa: ANN001
+            # First call (the archive move) raises; any later call is real.
+            if not calls:
+                calls.append((str(src), str(dst)))
+                raise OSError(18, "EXDEV — simulated cross-fs move")
+            return original_rename(src, dst)
+
+        ppc.os.rename = fake_rename  # type: ignore[assignment]
+        try:
+            ppc.remove_cache_entry(
+                self.claude_old,
+                plugin_name="build-loop",
+                archive_root=archive_root,
+            )
+        finally:
+            ppc.os.rename = original_rename  # type: ignore[assignment]
+
+        self.assertEqual(len(calls), 1, "fallback should have been triggered exactly once")
+        self.assertFalse(self.claude_old.exists(), "source dir must be gone after fallback")
+        # The fallback-copied dir must still be discoverable by the healer.
+        archives = [p for p in archive_root.iterdir()
+                    if p.is_dir() and p.name.startswith("buildloop-prune-")]
+        self.assertEqual(len(archives), 1)
+        archived = archives[0] / "build-loop" / "1.0.0"
+        self.assertTrue(archived.is_dir())
+        self.assertTrue((archived / ".claude-plugin" / "plugin.json").exists())
+
+    def test_round_trip_prune_then_heal_restores_version(self) -> None:
+        """Integration: prune archives the dir; the plugin_dir_heal.py
+        SessionStart healer (the same one that ships in this plugin) reads
+        the registry, finds the archive under `removed/`, and moves it
+        back to its installPath. This is the contract that lets a peer
+        session bound to the pruned version recover at next start.
+        """
+        # 1) Prune — archive the old version.
+        result = self._run_prune()
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertFalse(self.claude_old.exists())
+        archives = self._archive_dirs()
+        self.assertEqual(len(archives), 1)
+
+        # 2) Build a synthetic ~/.claude tree the healer can read. The healer
+        # scopes everything off CLAUDE_HOME_OVERRIDE → `<home>/plugins/...`,
+        # so point it at our test `claude-plugins/` parent. The healer
+        # registry pins installPath at the missing claude_old path.
+        claude_home = self.root / "claude-home"
+        (claude_home / "plugins").mkdir(parents=True)
+        # Move the archive into the healer's expected location (it scans
+        # `<claude_home>/plugins/removed/`, which is exactly our self.removed_root
+        # already if we point CLAUDE_HOME_OVERRIDE at self.plugins's parent).
+        # Simpler: copy our archives + a registry under the healer's home.
+        healer_removed = claude_home / "plugins" / "removed"
+        shutil.copytree(self.removed_root, healer_removed)
+        registry = {
+            "plugins": {
+                "build-loop@rosslabs-ai-toolkit": [
+                    {
+                        "installPath": str(self.claude_old),
+                        "version": "1.0.0",
+                    }
+                ]
+            }
+        }
+        (claude_home / "plugins" / "installed_plugins.json").write_text(
+            json.dumps(registry), encoding="utf-8",
+        )
+
+        # 3) Invoke the healer.
+        healer = HERE / "hooks" / "plugin_dir_heal.py"
+        self.assertTrue(healer.exists(), f"healer not found at {healer}")
+        env = env_without_plugin_roots(CLAUDE_HOME_OVERRIDE=str(claude_home))
+        proc = subprocess.run(
+            [sys.executable, str(healer), "--verbose"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+
+        # 4) The previously-pruned version is back at its installPath, with
+        # an intact manifest.
+        self.assertTrue(self.claude_old.exists(),
+                        f"healer should have restored {self.claude_old}; "
+                        f"stdout={proc.stdout!r}")
+        manifest = self.claude_old / ".claude-plugin" / "plugin.json"
+        self.assertTrue(manifest.exists())
+        self.assertEqual(json.loads(manifest.read_text())["version"], "1.0.0")
 
 
 class PeerDetectorUnitTests(unittest.TestCase):
