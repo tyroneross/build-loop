@@ -276,13 +276,26 @@ def iter_user_turns_from_jsonl(transcript_path: Path) -> Iterable[tuple[int, str
             continue
 
         role = _extract_role(obj)
-        content = _extract_text(obj)
 
         if role == "assistant":
             # Detect tool-use signals (set the flag for the NEXT user turn).
             prior_assistant_acted = _assistant_used_tools(obj)
             continue
         if role == "user":
+            # Skip role:user messages that are purely a tool_result wrapper.
+            # The Claude Code harness re-injects tool output as a role:user
+            # record (with a tool_result content block), not a user utterance.
+            # Scanning the re-injected payload for correction patterns yields
+            # massive false positives on code-heavy corpora — source code
+            # containing words like "stop", "revert", "undo", "wrong" fires
+            # the regex set even though the human never spoke. Mirrors the
+            # _is_tool_result_only filter in build-loop-memory/golden/sample.py.
+            # Tool-result user messages are part of the assistant's action, so
+            # they MUST NOT reset prior_assistant_acted either.
+            msg_content = _raw_user_content(obj)
+            if _is_tool_result_only(msg_content):
+                continue
+            content = _extract_text(obj)
             user_turn_idx += 1
             yield user_turn_idx, content, prior_assistant_acted
             # Reset after consumption.
@@ -303,8 +316,56 @@ def _extract_role(obj: dict) -> str | None:
     return None
 
 
+def _raw_user_content(obj: dict):
+    """Return the raw message.content for a user record (string or list), unchanged.
+
+    Used by _is_tool_result_only to inspect the block structure before
+    _extract_text flattens it to text.
+    """
+    msg = obj.get("message", obj)
+    return msg.get("content") if isinstance(msg, dict) else None
+
+
+def _is_tool_result_only(content) -> bool:
+    """True iff a role:user message is purely a tool_result wrapper (no user text).
+
+    Claude Code re-injects tool output as `{role:"user", content:[{type:"tool_result", ...}]}`.
+    That record is harness machinery, not user speech, and scanning the
+    embedded payload for correction patterns fires false positives on any
+    source code containing words like "stop", "revert", "undo", "wrong".
+
+    Returns True when:
+      - content is a list of blocks, AND
+      - at least one block is a tool_result, AND
+      - no block carries non-empty user-authored text (type=="text").
+
+    Returns False for: plain string content, mixed content with real text,
+    or content with no tool_result blocks at all.
+    """
+    if not isinstance(content, list):
+        return False
+    has_tool_result = False
+    has_text = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        t = block.get("type")
+        if t == "tool_result":
+            has_tool_result = True
+        elif t == "text" and (block.get("text") or "").strip():
+            has_text = True
+    return has_tool_result and not has_text
+
+
 def _extract_text(obj: dict) -> str:
-    """Extract a plain-text content string from a transcript record."""
+    """Extract user-authored text from a transcript record.
+
+    Only `type=="text"` blocks contribute. tool_result blocks are deliberately
+    skipped — they carry tool output the harness re-injected as role:user, not
+    a user utterance. A previous fallback that grabbed any `block.content`
+    string leaked tool_result payloads into the correction scanner and was the
+    root cause of the false-positive class fixed here.
+    """
     msg = obj.get("message", obj)
     content = msg.get("content") if isinstance(msg, dict) else None
     if isinstance(content, str):
@@ -312,11 +373,11 @@ def _extract_text(obj: dict) -> str:
     if isinstance(content, list):
         parts: list[str] = []
         for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text" and isinstance(block.get("text"), str):
-                    parts.append(block["text"])
-                elif isinstance(block.get("content"), str):
-                    parts.append(block["content"])
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+            # NOTE: tool_result blocks intentionally excluded — see docstring.
         return "\n".join(parts)
     return ""
 

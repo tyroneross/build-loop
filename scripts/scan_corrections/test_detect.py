@@ -16,6 +16,7 @@ from scan_corrections.detect import (  # noqa: E402
     Candidate,
     CorrectionDetector,
     _dedup,
+    _is_tool_result_only,
     detect_candidates,
     iter_user_turns_from_jsonl,
 )
@@ -348,6 +349,145 @@ class TestF3FalsePositiveFixes:
         cs = d.scan_turn("revert that, it must work on any machine", 0)
         assert any(c.signal_type == "revert" for c in cs)
         assert any(c.signal_type == "must" for c in cs)
+
+
+class TestToolResultOnlyFilter:
+    """Tool-result-only role:user records are harness re-injections, not user speech.
+
+    Source code (or any tool output) containing words like "stop", "revert",
+    "undo", "wrong" must NOT fire correction candidates when it arrives as a
+    tool_result block under a role:user envelope. Mirrors the
+    `_is_tool_result_only` filter in build-loop-memory/golden/sample.py.
+    """
+
+    def test_helper_detects_tool_result_only(self) -> None:
+        content = [{"type": "tool_result", "tool_use_id": "x",
+                    "content": "if user_says == 'stop': revert_change()"}]
+        assert _is_tool_result_only(content) is True
+
+    def test_helper_rejects_mixed_content_with_text(self) -> None:
+        content = [
+            {"type": "tool_result", "tool_use_id": "x", "content": "output"},
+            {"type": "text", "text": "Revert that — wrong file."},
+        ]
+        assert _is_tool_result_only(content) is False
+
+    def test_helper_rejects_text_only(self) -> None:
+        content = [{"type": "text", "text": "Revert that."}]
+        assert _is_tool_result_only(content) is False
+
+    def test_helper_rejects_plain_string(self) -> None:
+        assert _is_tool_result_only("Revert that.") is False
+
+    def test_helper_rejects_empty_text_block_alongside_tool_result(self) -> None:
+        # An empty text block doesn't count as user speech — still tool-result-only.
+        content = [
+            {"type": "tool_result", "tool_use_id": "x", "content": "stop the build"},
+            {"type": "text", "text": "   "},
+        ]
+        assert _is_tool_result_only(content) is True
+
+    def test_tool_result_user_record_skipped_in_jsonl(self, tmp_path: Path) -> None:
+        """A role:user record that wraps a tool_result MUST NOT yield a turn.
+
+        Even when the tool_result payload contains 'stop', 'revert', 'undo',
+        'wrong' — code-heavy corpora trip every one of those.
+        """
+        t = tmp_path / "tx.jsonl"
+        records = [
+            # Real user turn.
+            {"type": "user", "message": {"role": "user", "content": "Hi"}},
+            # Assistant runs a tool.
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "tu1", "name": "Read"},
+            ]}},
+            # Harness re-injects the tool result as role:user. Body contains
+            # source code with 'stop', 'revert', 'undo' — must be ignored.
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu1", "content":
+                    "def stop_directive(): pass  # revert that  # undo the wrong call"},
+            ]}},
+            # Real user correction immediately after.
+            {"type": "user", "message": {"role": "user", "content": "Revert that."}},
+        ]
+        t.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+
+        turns = list(iter_user_turns_from_jsonl(t))
+        # Two real user turns — the tool_result-only re-injection is skipped.
+        assert len(turns) == 2, f"expected 2 real user turns, got {len(turns)}: {turns}"
+        assert turns[0] == (0, "Hi", False)
+        # prior_assistant_acted MUST still be True for the real 'Revert that.'
+        # turn — the tool_result re-injection in between is part of the
+        # assistant's action, not a user turn, and must not reset the flag.
+        assert turns[1] == (1, "Revert that.", True)
+
+    def test_tool_result_user_record_does_not_fire_correction(self, tmp_path: Path) -> None:
+        """End-to-end: code in a tool_result-only record never becomes a candidate."""
+        t = tmp_path / "tx.jsonl"
+        records = [
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "tu1", "name": "Read"},
+            ]}},
+            # Tool result re-injection — should produce ZERO candidates.
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu1", "content":
+                    "if x == 'stop the build': revert_change()  # that's wrong"},
+            ]}},
+        ]
+        t.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+        candidates = detect_candidates(transcript_path=t)
+        assert candidates == [], (
+            f"tool_result-only record leaked into candidates: {candidates}")
+
+    def test_genuine_correction_still_fires_after_tool_result(self, tmp_path: Path) -> None:
+        """The genuine user 'Revert that.' must still produce a candidate."""
+        t = tmp_path / "tx.jsonl"
+        records = [
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "tu1", "name": "Edit"},
+            ]}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu1", "content":
+                    "stop revert undo wrong — code excerpt"},
+            ]}},
+            # Real human correction.
+            {"type": "user", "message": {"role": "user", "content": "Revert that."}},
+        ]
+        t.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+        candidates = detect_candidates(transcript_path=t)
+        revert = [c for c in candidates if c.signal_type == "revert"]
+        assert len(revert) == 1, f"expected one revert candidate, got: {candidates}"
+        assert revert[0].extras.get("prior_assistant_acted") is True, (
+            "prior_assistant_acted must remain True across a tool_result re-injection")
+
+    def test_raw_hit_rate_drops_with_filter(self, tmp_path: Path) -> None:
+        """Before/after sanity: a code-heavy tool_result stream should not
+        drown the signal. Without the filter, every code-excerpt re-injection
+        with 'stop'/'revert'/'wrong' fires; with the filter, only the genuine
+        user correction does.
+        """
+        t = tmp_path / "code_heavy.jsonl"
+        records: list[dict] = []
+        # 20 assistant tool-uses, each followed by a tool_result re-injection
+        # containing correction-keyword-bearing code.
+        for i in range(20):
+            records.append({"type": "assistant", "message": {"role": "assistant",
+                "content": [{"type": "tool_use", "id": f"tu{i}", "name": "Read"}]}})
+            records.append({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": f"tu{i}", "content":
+                    "def stop_handler(): return 'wrong'  # revert that"},
+            ]}})
+        # One real user correction at the end.
+        records.append({"type": "user", "message": {"role": "user",
+            "content": "Revert that."}})
+        t.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+
+        candidates = detect_candidates(transcript_path=t)
+        # Exactly one candidate from the one real user correction.
+        assert len(candidates) == 1, (
+            f"expected 1 candidate post-filter, got {len(candidates)}: "
+            f"{[c.quote for c in candidates]}")
+        assert candidates[0].signal_type == "revert"
 
 
 class TestBoundaryConditions:
