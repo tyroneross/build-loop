@@ -115,7 +115,7 @@ Keep the Experiment section small otherwise: one metric, one decision rule, expl
 ## Constraints
 
 - **No invention**. If the pattern evidence is weak, flag it in your synthesis output (`warning: low-signal pattern, artifact is speculative`) and produce a minimal skill.
-- **No promotion authority**. You draft, never promote. Promotion is Opus 4.7 territory via build-orchestrator.
+- **No promotion authority**. You draft, never promote. Promotion verdict is `promotion-reviewer` (Fable) territory, dispatched via build-orchestrator.
 - **No changes outside `.build-loop/`**. Experimental artifacts are project-local.
 - **Include a removal pointer**. The user must be able to delete your artifact with one command.
 - **Use `plugin-dev` skills**. Do not wing the SKILL.md format. Load the reference.

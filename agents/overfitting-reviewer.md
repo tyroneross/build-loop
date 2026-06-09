@@ -1,7 +1,7 @@
 ---
 name: overfitting-reviewer
 description: Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.
-model: sonnet
+model: fable
 tools: ["Read", "Glob", "Grep"]
 ---
 

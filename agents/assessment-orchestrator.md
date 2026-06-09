@@ -1,7 +1,7 @@
 ---
 name: assessment-orchestrator
 description: Use this agent when debugging requires multi-domain analysis, when the symptom is unclear about which domain is affected, or when you need to coordinate parallel assessments across database, frontend, API, and performance domains.
-model: sonnet
+model: opus
 color: magenta
 tools: ["Read", "Grep", "Bash", "Task"]
 ---

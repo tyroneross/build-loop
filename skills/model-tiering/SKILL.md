@@ -17,18 +17,21 @@ skill answers "which tier should run the role?", not "who owns the work?".
 
 | Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
 |---|---|---|---|
-| **Thinking** | Opus 4.7 | Synthesis, planning, ambiguity resolution, severity ranking, audit/learnings, cross-file judgment | GPT-5 Thinking, Gemini 2.5 Pro, future Claude tier; any model >= Opus 4.6 on SWE-bench Verified + Frontier-class on ARC-AGI / MMLU-Pro |
-| **Code** | Sonnet 4.6 | Application — apply rule to bounded input, scoped implementation, adversarial critic, mechanical refactor | Sonnet 4.7+, GPT-5 Codex, qwen2.5-coder-32B (local); any model with SWE-bench Verified within ~5pt of Sonnet 4.6 (currently ~79.6%) |
+| **Frontier** | Fable 5 | Planning synthesis (Phase 1 Assess + Phase 2 Plan: frame goal, draft spec/ADRs, F-criteria, MECE partition) AND verification judgment (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer) | GPT-5.5 Thinking (or whichever tier scores above the prior Thinking-tier ceiling), future Claude tier above Opus; any model that benchmarks above the Thinking-tier contract on SWE-bench Verified AND ARC-AGI / GPQA Diamond |
+| **Thinking** | Opus 4.8 | Coordination — build-orchestrator, assessment-orchestrator — and the escalation target for execution (ambiguous spec, 2 consecutive failures, cross-file surprise) and audit/learnings synthesis when Frontier is unavailable | GPT-5 Thinking, Gemini 2.5 Pro; any model >= Opus 4.6 on SWE-bench Verified + Frontier-class on ARC-AGI / MMLU-Pro |
+| **Code** | Sonnet 4.6 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | Sonnet 4.7+, GPT-5 Codex, qwen2.5-coder-32B (local); any model with SWE-bench Verified within ~5pt of Sonnet 4.6 (currently ~79.6%) |
 | **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | Haiku 4.6, GPT-5 Mini, llama3.2-3b (local); any small/fast model that handles structured pattern matching |
 
-**Rule of substitution:** tier A's swap target must score within tolerance of the default on the benchmark relevant to its role. For Code tier that's SWE-bench Verified ≥75% AND tool-use accuracy ≥85%; for Thinking tier that's SWE-bench ≥78% AND ARC-AGI / GPQA Diamond competitive; for Pattern tier no benchmark — just "fast and cheap, doesn't hallucinate on bounded structured tasks."
+**Rule of substitution:** tier A's swap target must score within tolerance of the default on the benchmark relevant to its role. For Code tier that's SWE-bench Verified ≥75% AND tool-use accuracy ≥85%; for Thinking tier that's SWE-bench ≥78% AND ARC-AGI / GPQA Diamond competitive; for Frontier tier that's clearing the Thinking-tier contract AND scoring above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond; for Pattern tier no benchmark — just "fast and cheap, doesn't hallucinate on bounded structured tasks."
+
+**Why Frontier sits above Thinking for plan + verification (and not for execution):** wrong plans and wrong verdicts compound — a bad plan dispatches N implementers into the wrong work, and a bad verdict ships a regression. The user's standing priority is Accuracy > Speed > Cost (`feedback_accuracy_speed_cost_priority.md`), so the planning and verification surfaces — where one miscall poisons everything downstream — pay the Frontier premium. Execution and coordination stay on Sonnet/Opus because they're either bounded application (Sonnet implementer applies a settled plan) or routing (Opus orchestrator chooses which subagent runs next, with deterministic gates as the safety net).
 
 ## Provider-swap recipe
 
-Build-loop's agent frontmatter uses Anthropic model aliases (`opus`, `sonnet`, `haiku`) because Claude Code is the primary host. To run on a different provider:
+Build-loop's agent frontmatter uses Anthropic model aliases (`fable`, `opus`, `sonnet`, `haiku`) because Claude Code is the primary host. To run on a different provider:
 
-1. **One-time edit per agent:** open each `agents/*.md` and change the `model:` field to your provider's equivalent. The tier (Thinking/Code/Pattern) determines the substitution target.
-2. **Runtime override:** `.build-loop/config.json.modelOverrides` accepts `{ thinking: "<id>", code: "<id>", pattern: "<id>" }`. The orchestrator resolves this through `scripts/model_overrides.py` before dispatching subagents (see `references/model-tier-mapping.md` for full schema).
+1. **One-time edit per agent:** open each `agents/*.md` and change the `model:` field to your provider's equivalent. The tier (Frontier/Thinking/Code/Pattern) determines the substitution target.
+2. **Runtime override:** `.build-loop/config.json.modelOverrides` accepts `{ frontier: "<id>", thinking: "<id>", code: "<id>", pattern: "<id>" }`. The orchestrator resolves this through `scripts/model_overrides.py` before dispatching subagents (see `references/model-tier-mapping.md` for full schema). Configs without `frontier` resolve frontier → `fable` by default.
 3. **Per-dispatch override:** any orchestrator dispatch may pass `model: <id>` in the subagent prompt to force that call.
 
 The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
@@ -41,7 +44,7 @@ The role-and-task table below uses tier names. The Anthropic-default mapping in 
 - Deciding whether to escalate mid-flow after failures
 - Evaluating whether to swap providers (use the Tier abstraction table above as the contract)
 
-## Evidence base (2026 Q1)
+## Evidence base (2026 Q1–Q2)
 
 | Claim | Source | Certainty |
 |-------|--------|-----------|
@@ -49,42 +52,56 @@ The role-and-task table below uses tier names. The Anthropic-default mapping in 
 | Opus 4.6: 80.8% SWE-bench Verified (1.2pt gap — smallest in Claude history) | Same | ⚠️ T2, single-source |
 | Sonnet 4.6 uses 70% fewer tokens than 4.5 on complex file ops with +38% accuracy | Anthropic Sonnet 4.6 announcement | ⚠️ T2, single-source |
 | Pricing: Sonnet $3/$15 per MTok input/output | Anthropic pricing page | ⚠️ verify before billing |
-| Pricing: Opus $15/$75 per MTok input/output (5x gap) | Anthropic pricing page | ⚠️ verify before billing |
+| Pricing: Opus 4.8 $5/$25 per MTok input/output | Anthropic pricing page | ⚠️ verify before billing |
+| Pricing: Fable 5 $10/$50 per MTok input/output (1M context, capability tier above Opus 4.8) | claude-api skill cache 2026-05-26 (T1 — Anthropic) | ✅ T1 source, advisory until re-confirmed at next billing audit |
 
 ## MECE primitive: cognitive type of the task
 
-Before consulting the role table, classify the task by reasoning shape. The MECE cut is the kind of thinking the task requires; lifecycle stage (plan/execute/review) is a second-order cut that often mixes types.
+Before consulting the role table, classify the task by reasoning shape. The MECE cut is the kind of thinking the task requires; lifecycle stage (plan/execute/review) is a second-order cut that often mixes types. Within Synthesis, a second-order cut decides whether the task is a planning/verification decision (Frontier) or coordination/escalation/learnings (Thinking).
 
 | Reasoning shape | Model | What it means | Example tasks |
 |---|---|---|---|
-| **Synthesis** — combine N inputs into a novel decision; cross-file/cross-system reasoning; ambiguity resolution; severity ranking | **Opus** | The "what" and "why" calls. No single rule produces the answer. | Frame goal, draft spec/ADRs, trace call-paths across files, rank finding severity, escalate stuck iteration with causal-tree, write audit/learnings |
-| **Application** — apply a known rule, spec, or pattern to bounded input; produce an artifact that matches a contract | **Sonnet** | The "how" call when "what" is decided. Single-correct-answer derivable from a rule. | Implement a commit's owned files per spec, write tests for given F-criteria, adversarial critic vs rubric, mechanical simplify, fact-check with named source |
-| **Recognition** — pure regex/syntactic match; classify into known buckets; no judgment | **Haiku** | No gradient — matches or doesn't. | Mock-data scan, log pattern detection, file inventory, cross-run pattern detection, deterministic checklist verification |
+| **Planning + Verification synthesis** — frame the goal, draft the spec/ADRs, define F-criteria, MECE-partition the work, then later judge whether a plan, a commit, a fix, a claim, or a security/scope boundary actually holds | **Fable (Frontier)** | The "what to do" and "did it actually work" calls. Wrong calls poison every downstream dispatch. | Phase 1 Assess synthesis, Phase 2 Plan drafting, plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer |
+| **Coordination + escalation synthesis** — route work between subagents, ladder severity, run causal-tree on stuck iterations, write audit/learnings | **Opus (Thinking)** | The "who runs next" + "why did the rule run out" calls. Deterministic gates backstop the routing. | build-orchestrator, assessment-orchestrator, severity ranking after critic findings, causal-tree after 2 consecutive failures, Phase 6 Learn audit synthesis (when no Frontier escalation needed) |
+| **Application** — apply a known rule, spec, or pattern to bounded input; produce an artifact that matches a contract | **Sonnet (Code)** | The "how" call when "what" is decided. Single-correct-answer derivable from a rule. | Implement a commit's owned files per spec, write tests for given F-criteria, mechanical simplify, bounded domain assessment (api/db/frontend/perf), design-contract reconciliation, ui-validator, retrospective-synthesizer, self-improvement-architect drafting |
+| **Recognition** — pure regex/syntactic match; classify into known buckets; no judgment | **Haiku (Pattern)** | No gradient — matches or doesn't. | Mock-data scan, log pattern detection, file inventory, cross-run pattern detection, deterministic checklist verification |
 
-**Decision tree:** "Does this task have a single-correct answer derivable from a rule applied to bounded input?" → Yes = Application/Sonnet. Else "Is the answer pure pattern-match?" → Yes = Recognition/Haiku. Else = Synthesis/Opus.
+**Decision tree:** "Does this task have a single-correct answer derivable from a rule applied to bounded input?" → Yes = Application/Sonnet. Else "Is the answer pure pattern-match?" → Yes = Recognition/Haiku. Else, Synthesis. Then ask: "Is this a planning decision (what to build) or a verification verdict (did it hold)?" → Yes = Frontier/Fable. Else (routing, escalation, audit-synthesis when no verdict is being rendered) = Thinking/Opus.
 
 ## Default assignments
 
 | Task | Reasoning shape | Model | effort | Why |
 |------|------|-------|--------|-----|
-| Frame & plan: goal, ADRs, scope, F-criteria, MECE partition | Synthesis | Opus | medium | Ambiguity resolution; wrong plan compounds |
+| Frame & plan: goal, ADRs, scope, F-criteria, MECE partition | Planning synthesis | Fable | medium | A wrong plan dispatches N implementers into the wrong work; user's standing priority Accuracy > Speed > Cost |
 | Plan-verify deterministic checklist | Recognition | (script) | — | No model; runs `plan_verify.py` |
-| Plan-critic adversarial review against rubric+checklist | Application | Sonnet | high | Bounded — rubric is the rule. Separation drives quality |
-| **Scope auditor (NEW — Plan→Execute boundary)**: trace callers of every modified-API symbol; annotate `caller_audit:` per commit | Synthesis | Opus | medium | Cross-file call-path tracing that fanned-out implementers can't do (round-2 lesson) |
-| Code execution — bounded chunk, spec clear | Application | Sonnet | medium | Default. High accuracy, 5× cheaper |
-| Code execution — ambiguous spec | Synthesis | Opus | medium | Interpretation cost cheaper than rework |
-| Adversarial critic pass (read-only diff vs rubric) | Application | Sonnet | high | Bounded — rubric vs diff is rule-application; separation effect |
-| Code review — severity ranking + recommendation order (given findings) | Synthesis | Opus | medium | Cross-finding judgment about what matters most |
+| Plan-critic adversarial review against rubric+checklist | Verification synthesis | Fable | high | Verification verdict — separation drives quality; verdict gates Phase 3 dispatch |
+| Scope auditor (Plan→Execute boundary): trace callers of every modified-API symbol; annotate `caller_audit:` per commit | Verification synthesis | Fable | medium | Cross-file call-path tracing AND a gating verdict on whether a commit is `internal_only`; verification compound risk |
+| Code execution — bounded chunk, spec clear | Application | Sonnet | medium | Default workhorse. Spec is settled; apply the rule |
+| Code execution — ambiguous spec or cross-file surprise mid-execution | Coordination synthesis | Opus | medium | Escalation target; interpretation cost cheaper than rework |
+| Independent-auditor adversarial pass (read-only diff vs rubric at chunk + build scope) | Verification synthesis | Fable | high | Verdict gates the build's outcome line; a missed regression in production-impacting work is the most expensive miss in the loop |
+| Severity ranking + recommendation order (given findings) | Coordination synthesis | Opus | medium | Cross-finding routing; no per-finding verdict being rendered, the verdicts are upstream |
 | Mock data scanning | Recognition | Haiku | low | Regex only |
-| Fact-checking — trace metric → source, judge accuracy | Synthesis | Opus | medium | Cross-system; "is this number real?" requires cross-context judgment |
-| Fact-checking — trace metric → named-source pattern (rule-bound) | Application | Sonnet | medium | When the source-pattern rule is explicit |
+| Fact-checking — trace metric → source, judge accuracy | Verification synthesis | Fable | medium | Final read on "is this number real" before report ships; user-trust verdict |
+| Fix-critique — pressure-test a proposed fix before "resolved" | Verification synthesis | Fable | medium | Verdict on whether the fix addresses root cause vs symptom; wrong verdict reopens the bug downstream |
+| Security-reviewer — adversarial OWASP/ATLAS pass | Verification synthesis | Fable | high | Verdict gates riskSurfaceChange dispatch; missed exposure is the most expensive verification miss |
+| Overfitting-reviewer — Goodhart / test-gaming verdict on optimize runs | Verification synthesis | Fable | medium | Verdict on whether optimization is genuine; cheap to wrong-call into a regression |
+| Promotion-reviewer — Phase 6 Learn experimental promotion verdict | Verification synthesis | Fable | medium | Gates the move from `experimental/` to `active/`; durable surface |
 | Simplify — apply known simplifications | Application | Sonnet | medium | Inline single-use helper, delete dead branch — bounded |
 | Debugging — symptom-to-known-pattern match | Application | Sonnet | high | Memory-first gate's "Application until the rule runs out" |
-| Debugging — causal-tree after 2 consecutive failures | Synthesis | Opus | high | Synthesis takes over when rule-match exhausts |
-| Novel architecture decision | Synthesis | Opus | medium | Cross-file impact; wrong call is expensive |
-| Writing user-facing prose (copy, microcopy, errors) | Synthesis | Opus | medium | Tone, restraint, and nuance matter |
-| Audit / learnings / Phase 6 promotion-decision | Synthesis | Opus | medium | Cross-run synthesis |
+| Debugging — causal-tree after 2 consecutive failures | Coordination synthesis | Opus | high | Synthesis takes over routing when rule-match exhausts |
+| Novel architecture decision | Planning synthesis | Fable | medium | Cross-file impact; wrong call compounds |
+| Writing user-facing prose (copy, microcopy, errors) | Coordination synthesis | Opus | medium | Tone, restraint, and nuance matter; no verification verdict being rendered |
+| Audit / learnings / Phase 6 audit synthesis | Coordination synthesis | Opus | medium | Cross-run routing; promotion-reviewer carries the gating verdict separately |
 | Recurring-pattern detection across runs[] | Recognition | Haiku | low | Pattern-match across structured logs |
+
+### Deliberate exceptions (Sonnet retained for cost where the surface is high-frequency advisory)
+
+Two verification-shaped agents stay on Sonnet rather than escalating to Fable. The tension with round-2 evidence ("rubric-application = Sonnet is robust") is real; the user chose Fable for the rest of the verification surface anyway because the compound risk of a wrong verification verdict outweighs the per-call premium. Pins are defaults, not locks — these can be overridden per dispatch or re-tiered after telemetry.
+
+| Agent | Pin | Why retained on Sonnet |
+|---|---|---|
+| `alignment-checker` | Sonnet | Called once per queue item during autonomous iterate (up to 25× per run). Advisory only — flags drift, doesn't gate. Cost dominates value at this fan-out frequency. |
+| `synthesis-critic` | Sonnet | Per-UI-commit WARN-only check. Advisory only — never gates. Frequency × non-gating shape means a cheaper tier is the right tradeoff. |
 
 ## Round 2 evidence (2026-05-07, example-app news-podcast iteration 2)
 
@@ -105,16 +122,20 @@ Findings that updated the model tiering:
 3. **Inline-Opus is faster wall-clock** when there's no real parallelism to exploit. Fan-out parallelism is only a win when ≥3 chunks are truly independent.
 4. **Plan-critic on Sonnet caught 17 substantive findings** on a written spec — confirms "rubric-application = Sonnet" is robust.
 
-These findings inform the role assignments, especially the rubric-application=Sonnet vs severity-assessment=Opus split for code review.
+These findings informed the earlier rubric-application=Sonnet split for code review. The current org overrides that for the verification surface specifically — the user chose Fable for verification because a missed verdict at this stage compounds, even though round-2 showed Sonnet rubric-application was substantively robust on a 17-finding plan-critic pass. The exceptions table above (alignment-checker, synthesis-critic) preserves the Sonnet split where the surface is high-frequency advisory and non-gating.
 
-## Escalation triggers (stay on Sonnet UNLESS)
+## Escalation triggers (Sonnet execution → Opus, NOT to Fable)
 
-- 2 consecutive failures on the same chunk after a retry at effort=high
-- Spec is ambiguous and interpretation will materially change implementation
-- A cross-file architectural decision surfaces mid-execution that wasn't in the plan
-- Critic flags a "strong-checkpoint" finding that requires judgment, not just a fix
-- Novel error pattern not found in `.build-loop/issues/` or debugging memory
-- Task produces user-visible prose where tone and restraint are load-bearing
+Execution escalates to **Opus**, not Fable. Fable is reserved for planning and verification; execution under genuine ambiguity is a coordination call (interpret the spec, route to a new chunk, decide whether to re-plan) that the orchestrator owns.
+
+- 2 consecutive failures on the same chunk after a retry at effort=high → respawn implementer at Opus
+- Spec is ambiguous and interpretation will materially change implementation → Opus
+- A cross-file architectural decision surfaces mid-execution that wasn't in the plan → Opus, then route back to Plan if the decision changes the MECE partition
+- Critic flags a "strong-checkpoint" finding that requires judgment, not just a fix → Opus
+- Novel error pattern not found in `.build-loop/issues/` or debugging memory → Opus
+- Task produces user-visible prose where tone and restraint are load-bearing → Opus
+
+If the ambiguity surfaces a **planning** problem (the original plan no longer fits) rather than an execution problem, route back to Phase 2 Plan — Fable re-plans, then execution resumes on Sonnet/Opus.
 
 ## Techniques that work
 
@@ -149,19 +170,21 @@ These findings inform the role assignments, especially the rubric-application=So
 
 ## How the build-loop uses this
 
-Orchestrator (Opus 4.7) spawns implementer subagent (Sonnet, effort=medium) → external verification gate (tests/lint/types) → Sonnet critic agent (read-only, effort=high) → if strong-checkpoint flagged, escalate to Opus for judgment call. See `agents/build-orchestrator.md §Escalation Triggers`. The **tier mapping** is the policy; the cost numbers above are advisory context, not the basis for overrides.
+**Fable plans and verifies. Opus coordinates. Sonnet executes. Haiku recognizes.**
 
-Haiku is only used for Phase 7B mock scanning. Never for reasoning tasks.
+Phase 1 Assess + Phase 2 Plan run on **Fable** — frame the goal, draft the spec/ADRs, set F-criteria, MECE-partition the work. The orchestrator (**Opus**, `build-orchestrator`, `assessment-orchestrator`) coordinates: it routes dispatches, runs deterministic gates, manages parallel fan-out, and handles the escalation ladder. Phase 3 implementer subagents run on **Sonnet** at effort=medium (default workhorse) → external verification gate (tests/lint/types) → adversarial **Fable** verification surface (`plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, `promotion-reviewer`). If a strong-checkpoint finding or 2 consecutive chunk failures surface, execution escalates to **Opus** for judgment; if the failure traces back to a planning miss, route back to Fable to re-plan. See `agents/build-orchestrator.md §Escalation Triggers`. The **tier mapping** is the policy; the cost numbers above are advisory context, not the basis for overrides.
+
+Haiku is only used for Phase 7B mock scanning and recurring-pattern detection across `runs[]`. Never for reasoning tasks.
 
 ## Pin vs inherit in agent frontmatter
 
 Not every agent should hard-pin its model. Use this rule:
 
-- **Pin** (`model: opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. Examples: `independent-auditor` (Sonnet advisory judge across chunk + build scope, consolidated 2026-05-23 — replaces retired `commit-auditor` and earlier `sonnet-critic`), `mock-scanner` (pattern matching only), `build-orchestrator` (Opus judgment at plan/review boundaries).
-- **Inherit** (`model: inherit`) when user intent should flow through. The user's main-session choice is itself a cost/speed preference; respect it. Pair with a "recommended: X" note in this skill rather than forcing via frontmatter. Example: `fact-checker` — recommended Sonnet, but inherit honors whatever tier the user picked upstream.
-- **Override mechanism**: users can override any pin by passing `model:` when spawning the agent or by editing the frontmatter. Pins are defaults, not locks.
+- **Pin** (`model: fable | opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. Examples: `plan-critic` / `independent-auditor` / `scope-auditor` / `fact-checker` / `fix-critique` / `security-reviewer` / `overfitting-reviewer` / `promotion-reviewer` (Fable — verification verdicts gate downstream work), `mock-scanner` (Haiku, pattern matching only), `build-orchestrator` and `assessment-orchestrator` (Opus, coordination at plan/review boundaries), `implementer` (Sonnet, default execution workhorse).
+- **Inherit** (`model: inherit`) when user intent should flow through. The user's main-session choice is itself a cost/speed preference; respect it. Pair with a "recommended: X" note in this skill rather than forcing via frontmatter. Example: `root-cause-investigator` — recommended Opus on causal-tree work, but inherit honors whatever tier the user picked upstream.
+- **Override mechanism**: users can override any pin by passing `model:` when spawning the agent or by editing the frontmatter. Pins are defaults, not locks. The deliberate exceptions documented above (`alignment-checker`, `synthesis-critic` on Sonnet despite being verification-shaped) are exactly this kind of cost-vs-judgment pin and can be lifted if telemetry says so.
 
-Forward-compat note: pinned family aliases (`sonnet`, `opus`) auto-track latest versions (e.g., 4.6 → 4.7). `inherit` additionally picks up brand-new tiers (e.g., a future Flash-class model) without frontmatter edits.
+Forward-compat note: pinned family aliases (`fable`, `sonnet`, `opus`) auto-track latest versions in their tier (e.g., Sonnet 4.6 → 4.7, Opus 4.7 → 4.8, Fable 5 → 6). `inherit` additionally picks up brand-new tiers (e.g., a future Flash-class model) without frontmatter edits.
 
 ## Limitations of this guidance
 
@@ -212,5 +235,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_overrides.py \
   --fallback sonnet \
   --json
 ```
+
+Accepted tiers: `frontier` (default `fable`), `thinking` (default `opus`), `code` (default `sonnet`), `pattern` (default `haiku`). Configs without `frontier` resolve frontier → `fable` so older repos keep working without edits.
 
 Full contract and routing matrix: `~/dev/research/topics/llm/llm.build-loop-router-integration-2026-04.md`

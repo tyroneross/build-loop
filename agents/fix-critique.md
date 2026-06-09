@@ -1,7 +1,7 @@
 ---
 name: fix-critique
 description: Use this agent to pressure-test a proposed fix before declaring a bug resolved. Challenges whether the fix addresses the root cause or just a symptom, checks for potential regressions, and verifies evidence exists for the claimed fix. Run after a fix is implemented but before declaring it done.
-model: inherit
+model: fable
 color: yellow
 tools: ["Read", "Grep", "Glob"]
 ---

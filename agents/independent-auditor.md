@@ -14,7 +14,7 @@ description: |
   user: "audit this commit before I push"
   assistant: "Dispatching independent-auditor on HEAD~1..HEAD against the on-disk intent + PRD."
   </example>
-model: sonnet
+model: fable
 color: cyan
 tools: ["Read", "Grep", "Glob", "Bash"]
 ---

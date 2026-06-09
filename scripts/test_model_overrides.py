@@ -85,16 +85,63 @@ class ModelOverrideTests(unittest.TestCase):
             self.assertEqual(payload["source"], "fallback")
             self.assertFalse(payload["configured"])
 
-    def test_require_fails_without_override_or_fallback(self) -> None:
+    def test_tier_default_used_when_no_override_or_fallback(self) -> None:
+        # Without an explicit fallback, the tier's built-in default resolves.
+        # frontier -> fable, thinking -> opus, code -> sonnet, pattern -> haiku.
+        with tempfile.TemporaryDirectory() as td:
+            for tier, expected in (
+                ("frontier", "fable"),
+                ("thinking", "opus"),
+                ("code", "sonnet"),
+                ("pattern", "haiku"),
+            ):
+                with self.subTest(tier=tier):
+                    result = run_script(
+                        MODEL_OVERRIDES,
+                        "--workdir", td,
+                        "--tier", tier,
+                        "--json",
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    payload = json.loads(result.stdout)
+                    self.assertEqual(payload["model"], expected)
+                    self.assertEqual(payload["source"], "tier-default")
+                    self.assertFalse(payload["configured"])
+
+    def test_frontier_tier_accepts_override(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            build_loop = workdir / ".build-loop"
+            build_loop.mkdir()
+            (build_loop / "config.json").write_text(
+                json.dumps({"modelOverrides": {"frontier": "gpt-5-thinking-pro"}}),
+                encoding="utf-8",
+            )
+            result = run_script(
+                MODEL_OVERRIDES,
+                "--workdir", str(workdir),
+                "--tier", "frontier",
+                "--json",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "gpt-5-thinking-pro")
+            self.assertEqual(payload["source"], "config")
+            self.assertTrue(payload["configured"])
+
+    def test_explicit_fallback_beats_tier_default(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             result = run_script(
                 MODEL_OVERRIDES,
                 "--workdir", td,
-                "--tier", "thinking",
-                "--require",
+                "--tier", "code",
+                "--fallback", "gpt-5-codex",
                 "--json",
             )
-            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "gpt-5-codex")
+            self.assertEqual(payload["source"], "fallback")
 
 
 class RouteDecisionOverrideTests(unittest.TestCase):

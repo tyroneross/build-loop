@@ -3,9 +3,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Resolve build-loop model tier overrides.
 
-The orchestrator reasons in tiers (`thinking`, `code`, `pattern`) and resolves
-those tiers to concrete model ids at dispatch time. Repo config is the preferred
-source; state.json is accepted for older runs that snapshot config there.
+The orchestrator reasons in tiers (`frontier`, `thinking`, `code`, `pattern`)
+and resolves those tiers to concrete model ids at dispatch time. Repo config is
+the preferred source; state.json is accepted for older runs that snapshot
+config there.
+
+Tier defaults (Anthropic mapping, used as the fallback when no override
+is configured and no `--fallback` is supplied):
+
+    frontier  -> fable    (planning + verification verdicts)
+    thinking  -> opus     (coordination + escalation)
+    code      -> sonnet   (execution default)
+    pattern   -> haiku    (recognition / mock-scan)
+
+Configs that predate the `frontier` tier resolve `frontier` -> `fable` so older
+repos keep working without edits.
 """
 from __future__ import annotations
 
@@ -15,7 +27,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-TIERS = {"thinking", "code", "pattern"}
+TIERS = {"frontier", "thinking", "code", "pattern"}
+
+TIER_DEFAULTS = {
+    "frontier": "fable",
+    "thinking": "opus",
+    "code": "sonnet",
+    "pattern": "haiku",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -73,10 +92,31 @@ def resolve_model(
                 "configured": True,
             }
 
+    # Prefer the explicit caller-supplied fallback; otherwise fall back to the
+    # tier's built-in default so a config that predates a tier keeps working.
+    if fallback:
+        return {
+            "tier": tier,
+            "model": fallback,
+            "source": "fallback",
+            "path": None,
+            "configured": False,
+        }
+
+    default = TIER_DEFAULTS.get(tier)
+    if default:
+        return {
+            "tier": tier,
+            "model": default,
+            "source": "tier-default",
+            "path": None,
+            "configured": False,
+        }
+
     return {
         "tier": tier,
-        "model": fallback,
-        "source": "fallback" if fallback else "unresolved",
+        "model": None,
+        "source": "unresolved",
         "path": None,
         "configured": False,
     }

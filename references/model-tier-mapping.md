@@ -2,15 +2,24 @@
 
 # Model Tier Mapping — Multi-Provider Substitution Reference
 
-Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthropic aliases (`opus`, `sonnet`, `haiku`) by default because Claude Code is the primary host, but the **tier abstraction** (Thinking / Code / Pattern) is what governs the role assignment. This reference documents how to swap providers cleanly.
+Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthropic aliases (`fable`, `opus`, `sonnet`, `haiku`) by default because Claude Code is the primary host, but the **tier abstraction** (Frontier / Thinking / Code / Pattern) is what governs the role assignment. This reference documents how to swap providers cleanly.
 
 ## Canonical tier definitions
 
+### Frontier tier
+- **Role:** Planning synthesis AND verification verdicts. Phase 1 Assess + Phase 2 Plan (frame goal, draft spec/ADRs, F-criteria, MECE partition). Verification-shaped agents whose verdicts gate downstream work: plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer.
+- **Why this tier exists (above Thinking):** wrong plans dispatch N implementers into the wrong work, and wrong verdicts ship regressions. The user's standing priority is Accuracy > Speed > Cost; the compounding-risk surfaces pay the Frontier premium.
+- **Benchmark contract:** clears the Thinking-tier contract AND benchmarks above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond.
+- **Cost expectation:** highest. Use only on the planning + verification surface; never default for execution or coordination.
+- **Anthropic default:** Fable 5 (`claude-fable-5`)
+- **Verified equivalents (2026 Q2, advisory):** GPT-5.5 Thinking-class (whichever provider tier scores above the prior Thinking ceiling); future Claude generations above Opus
+- **Local equivalents:** none — Frontier-class capability is not yet matched locally
+
 ### Thinking tier
-- **Role:** Synthesis. Cross-file judgment. Ambiguity resolution. Plan drafting. Severity ranking after critic findings. Audit / learnings. The "what and why" decisions.
+- **Role:** Coordination + escalation. Routes work between subagents, ladders severity, runs causal-tree on stuck iterations, writes audit/learnings when no Frontier verdict is being rendered.
 - **Benchmark contract:** SWE-bench Verified ≥78% AND competitive on ARC-AGI / GPQA Diamond / MMLU-Pro.
-- **Cost expectation:** highest tier. Use sparingly — only for true synthesis tasks. Never default to Thinking for execution.
-- **Anthropic default:** Opus 4.7 (`claude-opus-4-7`)
+- **Cost expectation:** middle-high tier. Use for orchestration and the escalation target when execution hits ambiguity. Never default to Thinking for bounded execution.
+- **Anthropic default:** Opus 4.8 (`claude-opus-4-8`; alias `opus` auto-tracks the latest Opus generation)
 - **Verified equivalents (2026 Q1, advisory):** GPT-5 Thinking, Gemini 2.5 Pro
 - **Local equivalents:** none yet — Thinking-tier work needs frontier-class context length and judgment; local models lag
 
@@ -30,14 +39,14 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 - **Verified equivalents:** Haiku 4.6+ (when available), GPT-5 Mini
 - **Local equivalents:** llama3.2-3b, qwen2.5-3b
 
-## Substitution table (advisory, 2026 Q1)
+## Substitution table (advisory, 2026 Q2)
 
-| Provider | Thinking | Code | Pattern |
-|---|---|---|---|
-| Anthropic (default) | Opus 4.7 | Sonnet 4.6 | Haiku 4.5 |
-| OpenAI | GPT-5 Thinking | GPT-5 Codex | GPT-5 Mini |
-| Google | Gemini 2.5 Pro | Gemini 2.5 Flash | Gemini Flash Lite |
-| Local (Ollama / MLX) | n/a — none meets contract yet | qwen2.5-coder-32B | llama3.2-3b |
+| Provider | Frontier | Thinking | Code | Pattern |
+|---|---|---|---|---|
+| Anthropic (default) | Fable 5 | Opus 4.8 | Sonnet 4.6 | Haiku 4.5 |
+| OpenAI | GPT-5.5 Thinking-class (or whichever tier benchmarks above prior Thinking ceiling) | GPT-5 Thinking | GPT-5 Codex | GPT-5 Mini |
+| Google | next-gen Gemini Ultra (when it clears the contract) | Gemini 2.5 Pro | Gemini 2.5 Flash | Gemini Flash Lite |
+| Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | qwen2.5-coder-32B | llama3.2-3b |
 
 ⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying.
 
@@ -68,12 +77,15 @@ This is durable but requires re-editing on every plugin update. Prefer #2 below.
 ```json
 {
   "modelOverrides": {
+    "frontier": "gpt-5.5-thinking",
     "thinking": "gpt-5-thinking",
     "code": "gpt-5-codex",
     "pattern": "gpt-5-mini"
   }
 }
 ```
+
+Configs that predate the `frontier` tier resolve `frontier` → `fable` automatically (built-in tier default in `scripts/model_overrides.py`), so older repos keep working without edits.
 
 The orchestrator resolves this before dispatching each subagent with
 `scripts/model_overrides.py`. Frontmatter `model:` becomes the fallback when an
@@ -111,20 +123,21 @@ When you see a task in build-loop, classify it before assigning a tier:
 
 | Task | Reasoning shape | Tier |
 |---|---|---|
-| Frame goal, ADRs, scope | Synthesis | Thinking |
-| Plan-critic vs rubric | Application | Code |
+| Frame goal, ADRs, scope, MECE-partition | Planning synthesis | Frontier |
+| Plan-critic vs rubric | Verification synthesis | Frontier |
 | Implement commit's owned files | Application | Code |
-| Severity-rank findings | Synthesis | Thinking |
+| Severity-rank findings (post-verdict routing) | Coordination synthesis | Thinking |
 | Mock-data scan | Recognition | Pattern |
-| Trace caller-paths (scope-auditor) | Synthesis | Thinking |
-| Adversarial critic vs diff | Application | Code |
-| Audit / learnings write | Synthesis | Thinking |
+| Trace caller-paths (scope-auditor) | Verification synthesis | Frontier |
+| Independent-auditor vs diff | Verification synthesis | Frontier |
+| Audit / learnings write (no verdict being rendered) | Coordination synthesis | Thinking |
 | Recurring-pattern detection | Recognition | Pattern |
 
 The decision tree (from `model-tiering/SKILL.md`):
 1. "Single-correct answer derivable from a rule applied to bounded input?" → Application / Code tier
 2. Else "Pure pattern-match, no gradient?" → Recognition / Pattern tier
-3. Else → Synthesis / Thinking tier
+3. Else, Synthesis. Then: "Is this a planning decision (what to build) or a verification verdict (did it hold)?" → Frontier tier
+4. Else (routing, escalation, audit-synthesis without a verdict) → Thinking tier
 
 ## Dual-mode A/B test design (preserved)
 
@@ -167,8 +180,9 @@ The orchestrator **judges each subtask's complexity at dispatch time** and assig
 | Task shape | Tier |
 |---|---|
 | Pure recognition, extraction, classification, mechanical sweep — "find X", "list/grep Y", "scan for Z", "extract these fields", "run detector + summarize its JSON", "does this match the pattern". No rule-application, no cross-file reasoning. | **Pattern / Haiku** |
-| Apply a known rule or spec to bounded input. Scoped implementation per owned-files. Adversarial critique vs a rubric. The "how" when the "what" is settled. | **Code / Sonnet** — default workhorse; prefer Sonnet over Haiku when in doubt |
-| Synthesis, cross-file architectural decisions, ambiguous spec, novel design, hard refactor, user-trust prose. | **Thinking / Opus** — orchestrator default, AND available to accelerate genuinely complex subtasks |
+| Apply a known rule or spec to bounded input. Scoped implementation per owned-files. The "how" when the "what" is settled. | **Code / Sonnet** — default workhorse; prefer Sonnet over Haiku when in doubt |
+| Coordination, routing, ambiguous-spec interpretation, novel architecture decision mid-execution, causal-tree on stuck iterations, user-trust prose where no verification verdict is being rendered. | **Thinking / Opus** — orchestrator default, AND available to accelerate genuinely complex execution subtasks |
+| Planning synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) OR verification verdicts (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer). | **Frontier / Fable** — wrong plans and wrong verdicts compound; pays the premium |
 
 **Prefer Sonnet.** Sonnet is the workhorse for the bulk of build-loop's work. Down-tier to Haiku only for tasks that are genuinely trivial/mechanical — pure pattern-match, no judgment, no gradient. When in doubt, use Sonnet.
 

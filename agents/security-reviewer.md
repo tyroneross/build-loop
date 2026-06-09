@@ -14,7 +14,7 @@ description: |
   user: "Security check on the auth changes"
   assistant: "I'll use the security-reviewer agent — diff vs OWASP Web A01/A03 + LLM06 + ASI03 — and emit a structured findings report."
   </example>
-model: claude-sonnet-4-6
+model: fable
 color: red
 tools: ["Read", "Grep", "Glob"]
 ---
