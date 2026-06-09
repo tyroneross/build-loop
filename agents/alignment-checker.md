@@ -42,6 +42,7 @@ Read the spec FIRST, then the item. Same anti-position-bias rationale as indepen
 1. `Read(workdir + "/.build-loop/intent.md")` — north star, update intent, user value, **non-goals**.
 2. `Read(workdir + "/.build-loop/goal.md")` — the current goal text.
 3. `Read("~/dev/git-folder/build-loop-memory/constitution.md")` and `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md")` — global/project rules (must-not-violate). Phase 1 already eager-loaded; you re-read for current state.
+3a. `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/charter.md")` (or the repo mirror `.build-loop/charter.md`) — OPTIONAL (absent for low-stakes projects). Read its **Posture → priority_order** when present: the ranked tie-breaker (security/reliability/speed/cost/simplicity/polish + notes).
 4. `Read(workdir + "/.build-loop/prd.md")` — optional. Repo-level PRD if user dropped one. Skip silently if absent.
 5. `Read(workdir + "/prd.md")` — optional repo-root PRD. Same fallthrough.
 6. `Read(item_path)` — the candidate item itself. Read body only after anchors.
@@ -98,6 +99,16 @@ For `aligned` verdicts, `violated_non_goals` MUST be `[]` and `uncertainty_evide
 - Item directly serves `intent.update_intent` or `intent.user_value`
 - Item closes a `goal.criterion` enumerated in goal.md
 - Item is a faithful follow-up to a decision document linked from the item
+
+### Posture tie-breaker (advisory, WP-F)
+
+When two items are BOTH `aligned` and viable, or one item offers two viable
+approaches, and the charter declares a `priority_order`, prefer the path that
+ranks higher on it — not just "matches intent?" but "which viable path does THIS
+user's priority order prefer?". Cite the winning dimension in `reason` (e.g.
+`"both aligned; priority_order ranks reliability > speed, prefer the migration-safe
+path"`). This NEVER changes an `aligned`/`misaligned` verdict — it is ordering data
+the orchestrator weighs when scheduling, never a gate. Absent charter → skip silently.
 
 ## Bias and consistency safeguards
 

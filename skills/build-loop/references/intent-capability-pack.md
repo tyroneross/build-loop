@@ -17,6 +17,55 @@ Every build starts by capturing:
 
 Write the result to `.build-loop/intent.md` and mirror the compact version into `.build-loop/state.json.intent`.
 
+### Commander's-intent posture (WP-F, all OPTIONAL — LLM-inferred, confirm-on-ambiguity)
+
+North Star captures who/what; **posture** captures the tradeoff stance that drives
+autonomous forks when the agent loses comms (the Marine-Corps commander's-intent
+analog: purpose + key tasks + end state, so a subordinate who can't ask still
+chooses correctly). A walkie-talkie app for generals-on-ops, for kids, and for
+traders share North Star *fields* but differ entirely in *what to optimize when
+forced to choose*. All fields are OPTIONAL and LLM-inferred from the ask; confirm
+only on genuine ambiguity (reuse the restatement protocol — never `AskUserQuestion`,
+never a gate). Mirror into `state.json.intent.posture`.
+
+- **audience** + **stakes** — one line each (who the change serves; what a failure
+  costs). `stakes` ∈ {low, medium, high}.
+- **priority_order** — the ranked tie-breaker the agent applies when two viable
+  paths conflict. FIXED VOCAB (ordered subset of
+  `security / reliability / speed / cost / simplicity / polish`) plus a free-text
+  `notes` escape for expressiveness. The fixed vocab aids weak-LLM recall; `notes`
+  carries anything the vocab can't.
+- **acceptable_tradeoffs** — what is OK to cut under pressure.
+- **non_goals** — what is never cut. At `stakes: high`, a `non_goals` entry that
+  names a REAL risk graduates from advisory to an ENFORCED invariant (the single
+  deterministic carve-out — see the tiered charter below).
+
+`priority_order` wires into the `alignment-checker` as the Phase-2-fork and
+Phase-5-queue-drain tie-breaker: not just "matches intent?" but "which viable path
+does THIS user's priority order prefer?" — advisory data the LLM weighs, never a gate.
+
+### Tiered intent — `stakes` is the depth dial (WP-F/F2)
+
+- **Per-run intent** (ephemeral, `.build-loop/intent.md`): restated ask + this
+  change's posture. Unchanged lifecycle.
+- **Project charter** (persistent): stable North Star + posture + invariants + key
+  architecture decisions. ACCRETES via promotion — a fact promotes to durable when
+  user-confirmed OR stable/unchallenged across N runs; stays `inferred` until then;
+  carries the falsifier that would unseat it (doctrine rule 8). Storage + sync:
+  `scripts/charter.py` (canonical `build-loop-memory/projects/<slug>/charter.md`;
+  repo mirror `.build-loop/charter.md` with a `canonical:` pointer + content hash;
+  one writer = the run, from canonical; user hand-edit of the mirror promotes to
+  canonical `authored_by: user` on next run via hash-mismatch detection).
+- **Depth scales by `stakes`**: low → intent line only (skills/agents/toys — do NOT
+  force a charter, that's the anti-pattern); medium → thin charter (web/mobile);
+  high → full charter, and risk-naming `non_goals` graduate to ENFORCED invariants.
+- **PRD stance**: opt-in upfront via `start-prd`; accretion is the default; never
+  required. A PRD, when present, PREFILLS the charter richer — input, not a gate.
+
+Enforcement philosophy (binding): all advisory EXCEPT risk-naming `non_goals` at
+`stakes: high`. Per `feedback_deterministic_only_for_known_risks` — posture/charter
+depth is the dial; the LLM weighs, never a gate, except the named-risk carve-out.
+
 ## Intent restatement protocol (always-on)
 
 Run this protocol on every build, judged by the orchestrator LLM — never a regex, never a detector script, never a binary gate. Depth scales with ambiguity, not a threshold. The behavior is intrinsic to Phase 1; no separate skill, script, or routing step gates it.

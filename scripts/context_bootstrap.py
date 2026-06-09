@@ -605,6 +605,10 @@ def canonical_memory_files(
             [
                 (memory_root / "projects" / project / "MEMORY.md", "file", True),
                 (memory_root / "projects" / project / "constitution.md", "file", True),
+                # WP-F: the persistent project charter (North Star + posture +
+                # invariants + key arch decisions). Optional — absent for
+                # low-stakes projects by design (depth dial).
+                (memory_root / "projects" / project / "charter.md", "file", True),
                 (project_decisions_dir(project), "dir", True),
                 (project_lessons_dir(project), "dir", True),
             ]

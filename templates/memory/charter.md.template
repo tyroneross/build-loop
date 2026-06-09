@@ -1,0 +1,46 @@
+# Project Charter — {{PROJECT}}
+
+The durable North Star + posture + invariants + key architecture decisions that
+outlive any single run. Canonical here in memory; mirrored to `.build-loop/charter.md`
+each run. Facts ACCRETE: each carries provenance (`inferred` until user-confirmed
+or stable across N runs) and, where it locks a decision, the falsifier that would
+unseat it (decision-quality rule 8).
+
+This is a template — replace the bodies with the project's actual content. Depth
+scales by `stakes`: a low-stakes skill/agent/toy needs none of this; a thin charter
+(North Star + posture) suits medium-stakes web/mobile; a high-stakes system fills
+every section and graduates risk-naming non-goals to enforced invariants.
+
+## North Star
+
+- **Purpose**: <what this product is for and who it serves>
+- **Primary users**: <roles affected>
+- **Core jobs**: <the tasks users rely on most>
+
+## Posture (commander's intent)
+
+- **audience**: <who> — provenance: inferred
+- **stakes**: <low|medium|high> — provenance: inferred
+- **priority_order**: <ordered subset of security/reliability/speed/cost/simplicity/polish>
+  - notes: <free-text expressiveness the fixed vocab can't carry>
+- **acceptable_tradeoffs**: <what is OK to cut under pressure>
+- **non_goals**: <what is never cut>
+  - <at stakes:high, a non_goal that names a REAL risk is an ENFORCED invariant>
+
+## Invariants
+
+Stable rules cited by advisory judges via stable IDs (mirror the constitution
+shape). At `stakes: high`, risk-naming entries are deterministically enforced.
+
+- **INV-<DOMAIN>/<name>**: <rule body> — provenance: <inferred|user-confirmed>
+  - falsifier: <the observation that would unseat this>
+
+## Key architecture decisions
+
+- **<decision>**: <what was decided and why> — provenance: <inferred|user-confirmed>
+  - falsifier: <what would prove it wrong; the revisit trigger>
+
+<!-- Provenance legend: `inferred` (LLM-derived, not yet confirmed) graduates to
+     `user-confirmed` on explicit user statement OR to `stable` after N
+     unchallenged runs. The run is the single writer (from canonical); a user
+     hand-edit of the repo mirror promotes to canonical authored_by:user. -->
