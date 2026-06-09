@@ -44,6 +44,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,7 @@ if str(HERE) not in sys.path:
 
 from rally_point import boundary as _boundary
 from rally_point import (  # noqa: E402
+    changes,
     inbox,
     leadership,
     presence,
@@ -60,6 +62,7 @@ from rally_point import (  # noqa: E402
     task_heartbeat,
 )
 from rally_point.discovery_bridge import (  # noqa: E402
+    repo_local_rally_binary,
     resolve as _bridge_resolve,
     rust_rally_binary,
 )
@@ -96,6 +99,143 @@ def _resolve_channel(workdir: str) -> tuple[str, Path]:
     if envelope.resolved_via == "build-loop-internal":
         channel_dir.mkdir(parents=True, exist_ok=True)
     return envelope.app_slug, channel_dir
+
+
+def _run_repo_local_rally_json(
+    workdir: Path,
+    argv: list[str],
+    *,
+    timeout: int = 5,
+) -> subprocess.CompletedProcess[str] | None:
+    """Run the native repo-local Rally CLI when available.
+
+    The current standalone Rally surface owns `standby` / `wake` / `wake-due`.
+    Build-loop's adapter delegates to it first so both surfaces share the same
+    ledger semantics; embedded parsing below is only a degraded fallback.
+    """
+    binary = repo_local_rally_binary(workdir)
+    if not binary:
+        return None
+    try:
+        return subprocess.run(
+            [binary, *argv],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+        return None
+
+
+def _emit_completed_process(proc: subprocess.CompletedProcess[str]) -> int:
+    if proc.stdout:
+        sys.stdout.write(proc.stdout)
+    elif proc.stderr:
+        sys.stderr.write(proc.stderr)
+    return proc.returncode
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _record_event_id(record: dict[str, Any]) -> str:
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    return str(
+        record.get("event_id")
+        or payload.get("event_id")
+        or payload.get("standby_event_id")
+        or f"revision:{record.get('revision', 0)}"
+    )
+
+
+def _legacy_due_wakes(workdir: Path, tool: str, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Best-effort due standby reader for embedded legacy channels."""
+    now = now or datetime.now(timezone.utc)
+    _slug, channel_dir = _resolve_channel(str(workdir))
+    records, _offset = changes.read_changes_since(channel_dir, 0)
+    woken_refs: set[str] = set()
+    for record in records:
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if record.get("kind") != "wake":
+            continue
+        ref = (
+            record.get("ref")
+            or payload.get("ref")
+            or payload.get("ref_standby")
+            or payload.get("standby_event_id")
+        )
+        if ref:
+            woken_refs.add(str(ref))
+
+    standbys: list[dict[str, Any]] = []
+    for record in records:
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if record.get("kind") != "standby":
+            continue
+        owner = (
+            payload.get("owner")
+            or payload.get("to_tool")
+            or payload.get("target")
+            or record.get("tool")
+        )
+        if owner and str(owner) != tool:
+            continue
+        wake_after = payload.get("wake_after") or payload.get("wake-after")
+        due_at = _parse_iso_utc(str(wake_after) if wake_after else None)
+        if due_at is None or due_at > now:
+            continue
+        event_id = _record_event_id(record)
+        if event_id in woken_refs:
+            continue
+        standbys.append({
+            "owner": str(owner or tool),
+            "reason": str(payload.get("reason") or payload.get("summary") or ""),
+            "standby_event_id": event_id,
+            "suggested_command": f"python3 scripts/agent_rally.py wake --tool {tool} --ref-standby {event_id} --json",
+            "wake_after": wake_after,
+        })
+    return standbys
+
+
+def build_wake_due_envelope(workdir: str | Path, tool: str) -> dict[str, Any]:
+    """Return the canonical wake-due envelope for `tool`."""
+    wd = Path(workdir).expanduser().resolve()
+    native = _run_repo_local_rally_json(
+        wd,
+        ["wake-due", "--tool", tool, "--json"],
+    )
+    if native is not None and native.returncode == 0 and native.stdout.strip():
+        try:
+            parsed = json.loads(native.stdout)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("ok") is True:
+            return parsed
+
+    return {
+        "command": "wake-due",
+        "data": {
+            "wake-due": {
+                "due": _legacy_due_wakes(wd, tool),
+            }
+        },
+        "ok": True,
+        "product": "agent_rally",
+        "schema": "agent-rally.command.wake-due.v1",
+    }
 
 
 # --------------------------------------------------------------------------
@@ -428,6 +568,113 @@ def cmd_heartbeat(args: argparse.Namespace) -> int:
     })
 
 
+def cmd_standby(args: argparse.Namespace) -> int:
+    """Post a standby fact with a wake-after time."""
+    wd = Path(args.workdir).expanduser().resolve()
+    cmd = [
+        "say",
+        "standby",
+        "--tool",
+        args.tool,
+        "--reason",
+        args.reason,
+        "--wake-after",
+        args.wake_after,
+        "--json",
+    ]
+    if args.run_id:
+        cmd.extend(["--run", args.run_id])
+    if args.step:
+        cmd.extend(["--step", args.step])
+    if args.parent_step:
+        cmd.extend(["--parent-step", args.parent_step])
+    native = _run_repo_local_rally_json(wd, cmd)
+    if native is not None and (native.returncode == 0 or native.stdout.strip()):
+        return _emit_completed_process(native)
+
+    slug, channel_dir = _resolve_channel(str(wd))
+    payload = {
+        "session_id": args.session_id,
+        "owner": args.tool,
+        "reason": args.reason,
+        "wake_after": args.wake_after,
+        "subject": "agent standby",
+    }
+    if args.step:
+        payload["step"] = args.step
+    if args.parent_step:
+        payload["parent_step"] = args.parent_step
+    new_rev = post(
+        channel_dir=channel_dir,
+        kind="standby",
+        tool=args.tool,
+        model=args.model,
+        run_id=args.run_id,
+        app_slug=slug,
+        payload=payload,
+        workdir=wd,
+    )
+    return _emit({
+        "action": "standby-posted" if new_rev is not None else "standby-rejected",
+        "app_slug": slug,
+        "channel_revision": new_rev,
+        "accepted": new_rev is not None,
+        "wake_after": args.wake_after,
+    })
+
+
+def cmd_wake(args: argparse.Namespace) -> int:
+    """Post a wake fact that resolves a standby fact."""
+    wd = Path(args.workdir).expanduser().resolve()
+    cmd = [
+        "say",
+        "wake",
+        "--tool",
+        args.tool,
+        "--ref-standby",
+        args.ref_standby,
+        "--json",
+    ]
+    if args.run_id:
+        cmd.extend(["--run", args.run_id])
+    if args.step:
+        cmd.extend(["--step", args.step])
+    native = _run_repo_local_rally_json(wd, cmd)
+    if native is not None and (native.returncode == 0 or native.stdout.strip()):
+        return _emit_completed_process(native)
+
+    slug, channel_dir = _resolve_channel(str(wd))
+    payload = {
+        "session_id": args.session_id,
+        "ref_standby": args.ref_standby,
+        "subject": "wake intent",
+    }
+    if args.step:
+        payload["step"] = args.step
+    new_rev = post(
+        channel_dir=channel_dir,
+        kind="wake",
+        tool=args.tool,
+        model=args.model,
+        run_id=args.run_id,
+        app_slug=slug,
+        payload=payload,
+        workdir=wd,
+    )
+    return _emit({
+        "action": "wake-posted" if new_rev is not None else "wake-rejected",
+        "app_slug": slug,
+        "channel_revision": new_rev,
+        "accepted": new_rev is not None,
+        "ref_standby": args.ref_standby,
+    })
+
+
+def cmd_wake_due(args: argparse.Namespace) -> int:
+    """Read due standby facts for this tool."""
+    return _emit(build_wake_due_envelope(args.workdir, args.tool))
+
+
 def cmd_boundary(args: argparse.Namespace) -> int:
     """Validate the embedded agent-rally extraction boundary."""
     repo = (
@@ -745,6 +992,39 @@ def build_parser() -> argparse.ArgumentParser:
         default=task_heartbeat.DEFAULT_INTERVAL_SECONDS,
     )
     sp_heartbeat.set_defaults(func=cmd_heartbeat)
+
+    sp_standby = sub.add_parser(
+        "standby",
+        help="Post a standby fact with a wake-after time.",
+    )
+    _common(sp_standby)
+    sp_standby.add_argument("--reason", required=True)
+    sp_standby.add_argument(
+        "--wake-after",
+        required=True,
+        help="Relative +30m/+2h/+1d or ISO timestamp, matching native Rally.",
+    )
+    sp_standby.add_argument("--step", default=None)
+    sp_standby.add_argument("--parent-step", default=None)
+    sp_standby.set_defaults(func=cmd_standby)
+
+    sp_wake = sub.add_parser(
+        "wake",
+        help="Post a wake fact for a standby event.",
+    )
+    _common(sp_wake)
+    sp_wake.add_argument("--ref-standby", required=True)
+    sp_wake.add_argument("--step", default=None)
+    sp_wake.set_defaults(func=cmd_wake)
+
+    sp_wake_due = sub.add_parser(
+        "wake-due",
+        help="Read due standby facts for this tool.",
+    )
+    sp_wake_due.add_argument("--workdir", default=".")
+    sp_wake_due.add_argument("--tool", default="claude_code")
+    sp_wake_due.add_argument("--json", action="store_true")
+    sp_wake_due.set_defaults(func=cmd_wake_due)
 
     sp_boundary = sub.add_parser(
         "boundary",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import json
 import os
 
 import pytest
@@ -217,6 +218,54 @@ def test_explicit_parent_pid_alive_keeps_polling(monkeypatch):
     )
     assert rc == 0
     assert polled["n"] == 3
+
+
+def test_exit_on_wake_due_emits_due_event_and_exits(monkeypatch, capsys):
+    """Due Rally standby facts wake the watcher without polling status."""
+    monkeypatch.setattr(watch.os, "getppid", lambda: 4242)
+    monkeypatch.setattr(
+        watch.agent_rally,
+        "build_wake_due_envelope",
+        lambda _workdir, _tool: {
+            "command": "wake-due",
+            "data": {
+                "wake-due": {
+                    "due": [
+                        {
+                            "owner": "codex",
+                            "standby_event_id": "standby-1",
+                            "suggested_command": "rally next --tool codex --json",
+                            "wake_after": "2026-06-09T00:00:00Z",
+                        }
+                    ]
+                }
+            },
+            "ok": True,
+        },
+    )
+
+    def fail_if_called(_args):
+        raise AssertionError("due wake should exit before polling status")
+
+    monkeypatch.setattr(watch.coordination_status, "build_status", fail_if_called)
+
+    rc = watch.main(
+        [
+            "--session-id", "test-wake-due",
+            "--workdir", ".",
+            "--tool", "codex",
+            "--exit-on-wake-due",
+            "--jsonl",
+            "--iterations", "5",
+        ]
+    )
+
+    assert rc == 0
+    event = json.loads(capsys.readouterr().out)
+    assert event["event"] == "rally_wake_due"
+    assert event["tool"] == "codex"
+    assert event["due"][0]["standby_event_id"] == "standby-1"
+    assert event["suggested_commands"] == ["rally next --tool codex --json"]
 
 
 # ---- main() integration with --max-lifetime-seconds -----------------------

@@ -52,6 +52,8 @@ KNOWN_KINDS = (
     "lead-transfer",
     "lead-relinquish",
     "escalation",
+    "standby",
+    "wake",
 )
 
 _RECORD_KEYS = (

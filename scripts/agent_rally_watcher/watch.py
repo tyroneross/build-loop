@@ -19,6 +19,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import coordination_status  # noqa: E402
+import agent_rally  # noqa: E402
 
 # Backstop lifetime: even if PID-based liveness ever fails (race condition,
 # initial_ppid<=1 carve-out, OS oddity), the watcher self-exits after this
@@ -126,6 +127,24 @@ def _is_orphaned(initial_ppid: int, current_ppid: int) -> bool:
     return current_ppid != initial_ppid
 
 
+def _wake_due_event(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Return a watcher event when Rally has a due standby for this tool."""
+    envelope = agent_rally.build_wake_due_envelope(args.workdir, args.tool)
+    due = (((envelope.get("data") or {}).get("wake-due") or {}).get("due") or [])
+    if not due:
+        return None
+    return {
+        "event": "rally_wake_due",
+        "tool": args.tool,
+        "due": due,
+        "suggested_commands": [
+            item.get("suggested_command")
+            for item in due
+            if item.get("suggested_command")
+        ],
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--interval", type=float, default=3.0)
@@ -165,6 +184,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--exit-on-change",
         action="store_true",
         help="Exit 0 after emitting a changed state; useful for wake-on-change wrappers.",
+    )
+    p.add_argument(
+        "--exit-on-wake-due",
+        action="store_true",
+        help="Exit 0 after emitting a due Rally standby; host-portable wake tier.",
     )
     p.add_argument(
         "--parent-pid",
@@ -219,6 +243,14 @@ def main(argv: list[str] | None = None) -> int:
         # pass --parent-pid (rally watch, --interval N orchestrator path).
         if _is_orphaned(initial_ppid, os.getppid()):
             return 0
+        if args.exit_on_wake_due:
+            wake_event = _wake_due_event(args)
+            if wake_event:
+                if args.jsonl:
+                    print(json.dumps(wake_event, separators=(",", ":")), flush=True)
+                else:
+                    print(json.dumps(wake_event, indent=2, sort_keys=True), flush=True)
+                return 0
         status = coordination_status.build_status(args)
         sig = _signature(status)
         if sig != last_sig:
