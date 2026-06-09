@@ -65,11 +65,18 @@ def _repo_root() -> Path:
     return Path.cwd()
 
 
-def _fail_open(reason: str) -> int:
-    """Internal-error path: print to stderr, return 0 (allow push)."""
+def _fail_open(reason: str, *, repo: Path | None = None) -> int:
+    """Internal-error path: print to stderr, return 0 (allow push).
+
+    Even on the internal-error fail-open path we still ARM the post-push
+    closeout baton: a missing ``push_hold`` import shouldn't silently drop
+    the durable-memory contract for ad-hoc pushes.
+    """
     sys.stderr.write(
         f"[build-loop pre-push] internal error — allowing push: {reason}\n"
     )
+    if repo is not None:
+        _arm_post_push_closeout(repo)
     return 0
 
 
@@ -110,7 +117,59 @@ def _format_block_message(verdict: dict) -> str:
     )
 
 
+def _arm_post_push_closeout(repo: Path) -> None:
+    """Drop a tiny JSON baton at ``.build-loop/closeout/armed.json``.
+
+    Git has no native client-side post-push hook. We arm a baton here so the
+    next session-start handler (``hooks/session-start-closeout.sh``) drains it
+    by invoking ``python3 -m closeout --source post-push-armed``.
+
+    Fail-open by design — any error is silently swallowed; an armed baton is a
+    nice-to-have, never a push blocker.
+    """
+    try:
+        from datetime import datetime, timezone
+        import json as _json
+        import subprocess as _sp
+        import tempfile as _tf
+
+        bl_dir = repo / ".build-loop" / "closeout"
+        bl_dir.mkdir(parents=True, exist_ok=True)
+        head = ""
+        try:
+            head = _sp.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo),
+                stderr=_sp.DEVNULL,
+                text=True,
+            ).strip()
+        except (_sp.CalledProcessError, FileNotFoundError, OSError):
+            pass
+
+        payload = {
+            "armed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": "post-push-armed",
+            "head_sha": head or None,
+        }
+        target = bl_dir / "armed.json"
+        fd, tmp = _tf.mkstemp(dir=str(bl_dir), prefix=".armed-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                _json.dump(payload, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+            os.replace(tmp, target)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+    except Exception:  # noqa: BLE001 — never break a push for the baton
+        return
+
+
 def main() -> int:
+    repo: Path | None = None
     try:
         repo = _repo_root()
         scripts_dir = repo / "scripts"
@@ -119,22 +178,26 @@ def main() -> int:
         try:
             import push_hold  # type: ignore
         except Exception as exc:  # pragma: no cover — exercised by installer test
-            return _fail_open(f"could not import push_hold: {exc!r}")
+            return _fail_open(f"could not import push_hold: {exc!r}", repo=repo)
 
         try:
             stdin_lines = sys.stdin.readlines()
         except OSError as exc:
-            return _fail_open(f"could not read stdin: {exc!r}")
+            return _fail_open(f"could not read stdin: {exc!r}", repo=repo)
 
         verdict = push_hold.evaluate_push(repo, stdin_lines, env=os.environ)
         action = verdict.get("action", "allow")
         if action == "block":
             sys.stderr.write(_format_block_message(verdict))
             return int(verdict.get("exit_code") or 1)
-        # allow / bypass / anything else → exit 0
+        # allow / bypass / anything else → exit 0.
+        # Arm the post-push closeout baton BEFORE the push completes — git has
+        # no native client-side post-push hook, so the next session-start
+        # drains the baton via ``python3 -m closeout --source post-push-armed``.
+        _arm_post_push_closeout(repo)
         return 0
     except Exception as exc:  # noqa: BLE001 — broad on purpose; we MUST fail-open
-        return _fail_open(f"unhandled exception: {exc!r}")
+        return _fail_open(f"unhandled exception: {exc!r}", repo=repo)
 
 
 if __name__ == "__main__":

@@ -65,9 +65,23 @@ The Python pipeline produces deterministic bullets from captured signals. When y
 
 If you do enrich, re-write the active file using `Edit` (preserving the headers; only adding new bullets under existing section headers). Skip enrichment when the deterministic output already captures everything.
 
-## Step 3 — Return envelope
+## Step 3 — Emit closeout status (mandatory)
 
-Return the JSON envelope verbatim from Step 1 (plus an `enrichment_applied: true|false` flag if you modified the file in Step 2). Example shape:
+After Step 2, run the machine-readable closeout — this is the durable enforcement layer for the build-loop memory closeout contract:
+
+```bash
+python3 -m closeout \
+  --workdir "$WORKDIR" \
+  --run-id "$RUN_ID" \
+  --source post-push \
+  --json
+```
+
+The script emits exactly one `closeout_status`: `wrote_memory` | `queued_pending_lesson` | `no_durable_lesson`. Copy it into your envelope under `closeout_status` and `closeout_reason`. The script is non-raising; on degraded internal error it returns exit 0 with `error:` populated — surface that under `closeout_error` and continue. A skipped closeout on a run with durable signal is a DETECTABLE failure (asserted by `scripts/closeout/test_status.py`), so this step is non-optional.
+
+## Step 4 — Return envelope
+
+Return the JSON envelope verbatim from Step 1 (plus an `enrichment_applied: true|false` flag if you modified the file in Step 2, plus `closeout_status` / `closeout_reason` / `closeout_error` from Step 3). Example shape:
 
 ```json
 {
@@ -78,7 +92,10 @@ Return the JSON envelope verbatim from Step 1 (plus an `enrichment_applied: true
   "status":              "ok",
   "reason":              null,
   "meta":                { "run_id": "...", "prompt_count": 24, "cluster_count": 2, "transcript_present": true },
-  "enrichment_applied":  false
+  "enrichment_applied":  false,
+  "closeout_status":     "wrote_memory | queued_pending_lesson | no_durable_lesson",
+  "closeout_reason":     "human-readable reason",
+  "closeout_error":      null
 }
 ```
 
