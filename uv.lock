@@ -54,7 +54,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "networkx", specifier = ">=3" },
+    { name = "networkx", specifier = ">=3.1" },
     { name = "pathspec", specifier = ">=0.12" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'db'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
