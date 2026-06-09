@@ -65,7 +65,7 @@ Items classified `PRODUCTION` move to `.build-loop/followup/needs-confirm/` and 
 
 After the report is committed, enter a fresh Phase 5 iterate cycle to drain the queue using the same alignment-checker + scope-auditor + independent-auditor wiring as the in-run iterate loop. Stop conditions match Phase 5 — iterate-cap (25 autonomous / 5 classic), budget exhausted, PRODUCTION encounter, intent_anchor that does not resolve in current `intent.md` (escalate as DECISION), 5 consecutive iterate failures, or explicit user pause.
 
-C-FLOW/followup_auto_drain and C-FLOW/no_ask_at_chunk_boundary in `~/dev/git-folder/build-loop-memory/constitution.md` (or the template if not yet adopted) are the binding citations. Asking the user "want me to continue with the rest?" at a chunk boundary, when the items are same-shape and same-intent, is a workflow violation — return the queue-drain answer, not the question.
+C-FLOW/followup_auto_drain and C-FLOW/no_ask_at_chunk_boundary in `<memory-root>/constitution.md` (or the template if not yet adopted) are the binding citations. Asking the user "want me to continue with the rest?" at a chunk boundary, when the items are same-shape and same-intent, is a workflow violation — return the queue-drain answer, not the question.
 
 ## End-of-run continuation into issues + backlog (preference-gated)
 

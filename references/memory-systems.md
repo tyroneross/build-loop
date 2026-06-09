@@ -9,7 +9,7 @@ Build-loop reads/writes four memory stores. Loaded on demand at Phase 1 Assess a
 | Store | Path | Purpose | Scope |
 |---|---|---|---|
 | Run history | `.build-loop/state.json.runs[]` | Per-build outcome + diagnostic trail. Phase 6 Learn scans this for recurring patterns. | Project-local |
-| Episodic decisions | `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/*.md` (canonical); legacy paths only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1` | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
+| Episodic decisions | `<memory-root>/projects/<project>/decisions/*.md` (canonical); legacy paths only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1` | MADR-style decisions. Topic-identity supersession by `primary_tag + entity`. | Project-tagged, repo-deletion-survivable |
 | Semantic facts | Postgres `agent_memory.<schema>.semantic_facts` | Embeddings + structured facts for hybrid retrieval. | Project-tagged, opt-in |
 | Debugger incidents | `.build-loop/issues/*.md` plus optional standalone Coding Debugger MCP | Bug history with local recall; optional verdict-classifier feedback loop when Coding Debugger is installed. | Project-local by default; optional cross-project |
 
@@ -32,7 +32,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_bootstrap.py \
 **Return shape**: JSON packet with `{ generated_at, workdir, project, query, terms, sources, agent_brief }`.
 
 `sources` includes:
-- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `~/dev/git-folder/build-loop-memory`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. If the root `constitution.md` is missing, `scripts/context_bootstrap.py` seeds it once from `templates/memory/constitution.md.template` before reading; existing files and project-specific constitutions are never overwritten. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.
+- `canonical_memory`: root and project `MEMORY.md` / `constitution.md` from `<memory-root>`, plus `scripts/memory_facade.py recall()` results over canonical project files and local runs. If the root `constitution.md` is missing, `scripts/context_bootstrap.py` seeds it once from `templates/memory/constitution.md.template` before reading; existing files and project-specific constitutions are never overwritten. Semantic/Postgres reads are opt-in via `--include-postgres` so the default Phase 1 pass stays file-backed and fast.
 - Ephemeral project plans must be archived before cleanup removes them. Use `scripts/archive_project_plan.py <plan> --workdir "$PWD"` to copy them into `build-loop-memory/projects/<slug>/archive/plans/<YYYY-MM-DD>/`; pass `--remove-source` only when the local file should be deleted after the archive write succeeds.
 - `repo_local`: `.build-loop/feedback.md`, `.build-loop/state.json` summary including `runs[-3:]` and backend health when present, plus current `.build-loop/intent.md`, `.build-loop/goal.md`, and `.build-loop/plan.md`.
 - `codex_memory`: `~/.codex/memories/MEMORY.md` registry hits and bounded excerpts from linked `rollout_summaries/*` files.
@@ -194,8 +194,8 @@ Both steps are required to close the memory-first gate's feedback loop. Skipping
 
 Write new memory entries to the correct tier:
 
-- **Cross-project learnings** (new tool, deployment pattern, user preference) → `~/dev/git-folder/build-loop-memory/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope top-level write ...`.
-- **Project-specific learnings** (design decisions, internal conventions, gotchas) → `~/dev/git-folder/build-loop-memory/projects/<project>/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope project --project <project> write ...`.
+- **Cross-project learnings** (new tool, deployment pattern, user preference) → `<memory-root>/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope top-level write ...`.
+- **Project-specific learnings** (design decisions, internal conventions, gotchas) → `<memory-root>/projects/<project>/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope project --project <project> write ...`.
 
 Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory.
 
@@ -205,7 +205,7 @@ Decisions live under TWO paths today (canonical + legacy). The orchestrator and 
 
 | Path | Status | Notes |
 |---|---|---|
-| `~/dev/git-folder/build-loop-memory/projects/<project>/decisions/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
+| `<memory-root>/projects/<project>/decisions/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
 | `<repo>/.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` | Legacy migration/archive input | Pre-cutover decisions. Active reads include it only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1`. |
 
 **Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` reads canonical indexes/files and, only in migration mode, legacy paths. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover`; consume it through the facade instead of hard-coding the lesson-file path.

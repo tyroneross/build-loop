@@ -43,7 +43,7 @@ python3 scripts/dogfood_reload_checkpoint.py detect \
      --changed-file "<runtime-file>" \
      --expect-tool claude_code \
      --expect-tool codex \
-     --instructions "Claude Code: restart with claude --plugin-dir ~/dev/git-folder/build-loop; Codex: use source scripts from this checkout; run rally next/status after reload."
+     --instructions "Claude Code: restart with claude --plugin-dir <path-to>/build-loop; Codex: use source scripts from this checkout; run rally next/status after reload."
    ```
 
 3. Post the checkpoint path and instructions to Rally using
@@ -89,7 +89,7 @@ Fallback decisions are limited to `reassign`, `defer`, or `continue_solo`.
 
 Claude Code:
 
-- Working-tree dogfood path: `claude --plugin-dir ~/dev/git-folder/build-loop`.
+- Working-tree dogfood path: `claude --plugin-dir <path-to>/build-loop`.
 - `SKILL.md` edits may hot-reload with `/reload-plugins`.
 - Hook, agent, command, MCP, and manifest changes require `/reload-plugins` or a
   fresh session. Prefer a fresh session for self-recursive stage boundaries.

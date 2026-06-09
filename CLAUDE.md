@@ -89,10 +89,10 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 
 Architecture and debugging are load-bearing for nearly every build, so build-loop owns native copies under:
 
-- `skills/architecture/{scan,impact,trace,rules,dead,review}/SKILL.md` — copied from NavGator (`~/dev/git-folder/NavGator/`)
+- `skills/architecture/{scan,impact,trace,rules,dead,review}/SKILL.md` — copied from NavGator (a sibling repo checked out alongside build-loop, e.g. `<sibling-repos>/NavGator/`)
 - `skills/debugging/{memory,store,assess,debug-loop}/SKILL.md` — build-loop-native debugging workflows adapted from the standalone debugger lineage
 
-Each native SKILL.md carries `source:` (relative path from `~/dev/git-folder/`) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks both trees, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md.
+Each native SKILL.md carries `source:` (relative path from the sibling-repos root) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks both trees, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md.
 
 The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are now deprecation stubs that point at the native skills; remove after one release cycle. The orchestrator (`agents/build-orchestrator.md`) calls native skills directly — Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
 
@@ -128,7 +128,7 @@ For parity with non-Claude tools (which lack SessionStart hooks), the host-neutr
 - Test changes by installing locally: add repo path to `~/.claude/settings.json` under `projects.plugins`
 - Runtime data goes in `.build-loop/` in consumer projects, not in the plugin repo
 - Hooks are advisory and non-blocking by default. Stop hooks must emit valid JSON when they emit stdout, exit 0, and reserve blocking for explicit safety/security/integrity gates.
-- Dogfooding build-loop against itself (self-recursive runs that arm per-commit mode + self-mod safety): launch with `claude --plugin-dir ~/dev/git-folder/build-loop`. Background, alias, restart-boundary caveat: `skills/build-loop/references/self-recursive-dev.md`.
+- Dogfooding build-loop against itself (self-recursive runs that arm per-commit mode + self-mod safety): launch with `claude --plugin-dir <path-to>/build-loop` (your local checkout). Background, alias, restart-boundary caveat: `skills/build-loop/references/self-recursive-dev.md`.
 
 
 ## Debugging Memory
