@@ -256,6 +256,16 @@ or explicitly say the evidence was unavailable and the claim is unverified. If
 `packet_path` is non-null, add a compact `research_packet:` evidence item to
 `## Done` or `## Status markers`.
 
+Reference-capture report field (mirrors the researchGate citation contract):
+every run reports one `references captured:` line in `## Done` or `## Status
+markers` — `references captured: N (<files>)` when one or more external fetches
+informed a decision and were captured via the canonical writer, `none — no
+external fetch informed a decision` when no web/doc fetch fed a decision, or
+`skipped: <rationale>` when a fetch informed a decision but capture was
+intentionally not run. This makes the default-on capture trigger
+(`references/research-trigger-policy.md` §"Reference Capture") accountable in the
+run report instead of advisory-only.
+
 Before emitting the final report, write the draft to a temp file and run BOTH linters (orthogonal — structural vs style):
 
 ```bash

@@ -154,8 +154,7 @@ def capture_reference(
     )
 
     slug = _slugify(topic)
-    # Date-prefixed, reference-* naming class (recognized by scan_reference_lane
-    # and reference_activation_audit).
+    # Date-prefixed, reference-* naming class (recognized by scan_reference_lane).
     file_rel = f"{retrieved_at}-reference-{slug}.md"
 
     body = build_reference_body(
