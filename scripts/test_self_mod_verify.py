@@ -267,6 +267,28 @@ class TestScopeChanged(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn(payload["verdict"], ("no_tests", "pass"))
 
+    def test_changed_test_named_markdown_doc_is_not_run_as_pytest(self) -> None:
+        """A changed doc whose basename starts with `test_` (the per-script doc
+        convention, e.g. docs/scripts/test_foo.md) must NOT be handed to pytest.
+
+        Regression: pytest exits 4 on a .md path, which the gate surfaced as
+        verdict=error and falsely blocked a docs-only commit. A non-.py change
+        with no sibling .py test maps to no target → verdict no_tests, exit 0."""
+        docs = self.workdir / "docs" / "scripts"
+        docs.mkdir(parents=True)
+        doc = docs / "test_thing.md"
+        doc.write_text("# test_thing.py\n\nDocumentation, not a test.\n")
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", str(doc),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 0, msg=f"stderr={r.stderr!r}")
+        self.assertEqual(payload["verdict"], "no_tests")
+        self.assertEqual(payload["ran"], [])
+
 
 class TestNoPytest(unittest.TestCase):
     """When pytest is not available, verdict = no_tests, exit 0."""

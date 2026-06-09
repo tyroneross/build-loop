@@ -175,6 +175,15 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
             p = workdir / p
         p = p.resolve()
 
+        # Only Python files are pytest targets. A changed doc whose basename
+        # happens to start with `test_` (e.g. docs/scripts/test_foo.md, the
+        # per-script doc convention) must NOT be handed to pytest — pytest
+        # exits 4 ("file or directory not found"/usage) on a .md path, which
+        # the gate would surface as verdict=error. Non-.py changes map to no
+        # test target (verdict no_tests, exit 0) unless a sibling test exists.
+        if p.suffix != ".py":
+            continue
+
         if p.name.startswith("test_"):
             if p.exists() and str(p) not in seen:
                 discovered.append(str(p))

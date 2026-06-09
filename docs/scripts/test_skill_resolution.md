@@ -18,15 +18,21 @@ The test class composes three independent assertions:
 2. **`ZeroNewCollisionsTests.test_accepted_siblings_still_exist`** — for each entry in the allowlist, asserts that both `commands/<name>.md` and `skills/<name>/SKILL.md` exist on disk. Catches drift.
 3. **`StrictExitCodeTests.test_strict_exits_1_with_accepted_siblings`** — runs `python3 collision_scan.py --strict --path <repo>` as a subprocess and checks that exit code 1 fires when collisions exist. Catches regressions in the scanner's strict mode (which is what plugin authors actually use as a CI gate).
 
-The accepted-siblings allowlist for build-loop:
+The accepted-siblings allowlist for build-loop (these are **skill** qualified
+names — the skill names are unchanged; only the slash-command files were
+renamed, see below):
 
-| Qualified name | Reason accepted |
+| Qualified name | Status |
 |---|---|
-| `build-loop:optimize` | Slash-command and skill share intent; user has not observed misbehavior. Same shape as the buggy case but apparently resolves correctly in this specific runtime. Watched. |
-| `build-loop:research` | Same. |
-| `build-loop:plan-verify` | Same. |
+| `build-loop:optimize` | Command renamed `optimize.md` → `optimize-run.md` (2026-06-09) — slash `/build-loop:optimize-run`; skill name unchanged so `Skill("build-loop:optimize")` still resolves. No longer collides. |
+| `build-loop:research` | Command renamed `research.md` → `research-run.md`; slash `/build-loop:research-run`; skill name unchanged. No longer collides. |
+| `build-loop:plan-verify` | Command renamed `plan-verify.md` → `verify-plan.md`; slash `/build-loop:verify-plan`; skill name unchanged. No longer collides. |
 
-If any of these begin to misbehave, the documented fix is the same as for `build-loop:build-loop`: rename the slash-command file (e.g. `commands/optimize.md` → `commands/optimize-run.md`), keep the skill name unchanged so all `Skill()` callers continue to resolve.
+The renames already landed (the same Option 2 fix used for `build-loop:build-loop`):
+rename the slash-command file (e.g. `commands/optimize.md` → `commands/optimize-run.md`),
+keep the skill name unchanged so all `Skill()` callers continue to resolve. As a
+result `test_accepted_siblings_still_exist` now SKIPS with a "rename succeeded"
+notice; once the allowlist is trimmed the test enforces zero collisions.
 
 ## Inputs and outputs
 

@@ -19,8 +19,8 @@ A 5-phase development loop with a mandatory Phase 6: assess state and criteria, 
 Internal modes:
 
 - **Build** (default): Full 5-phase loop plus mandatory Phase 6 Learn — triggered by implementation, fix, refactor, migrate, or update language
-- **Optimize**: Metric-driven optimization loop — triggered by "speed up", "reduce", "improve" + a mechanical metric (`/build-loop:optimize` as a direct override)
-- **Research**: Pre-decision analysis, outputs a research packet, no commits — triggered by "research", "evaluate", "compare", "should I" (`/build-loop:research` as a direct override)
+- **Optimize**: Metric-driven optimization loop — triggered by "speed up", "reduce", "improve" + a mechanical metric (`/build-loop:optimize-run` as a direct override)
+- **Research**: Pre-decision analysis, outputs a research packet, no commits — triggered by "research", "evaluate", "compare", "should I" (`/build-loop:research-run` as a direct override)
 - **Debug**: Deep iterative root-cause investigation — triggered by symptom language; also auto-invoked inside the loop on Review-B failures (`/build-loop:debug` as a direct override)
 - **Test**: Static plugin-test suite — triggered by "test plugin", "validate plugin" (`/build-loop:test` as a direct override)
 

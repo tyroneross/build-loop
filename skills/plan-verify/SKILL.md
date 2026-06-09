@@ -1,6 +1,6 @@
 ---
 name: plan-verify
-description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:plan-verify`, asks to "verify the plan" or "lint the plan", or any plan markdown change touches evidence, synthesis-density, risk_reason, or modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.
+description: Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:verify-plan`, asks to "verify the plan" or "lint the plan", or any plan markdown change touches evidence, synthesis-density, risk_reason, or modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON.
 user-invocable: false
 ---
 
