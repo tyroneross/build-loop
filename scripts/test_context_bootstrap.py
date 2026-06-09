@@ -572,8 +572,11 @@ class DecisionQualityDoctrineTests(unittest.TestCase):
         finally:
             _cb.DECISION_QUALITY_REF = saved
 
-    def test_agent_brief_injects_doctrine_when_present(self) -> None:
-        # A minimal packet with a present doctrine should surface it in the brief.
+    def test_agent_brief_marks_doctrine_compactly_when_present(self) -> None:
+        # A present doctrine surfaces as a COMPACT one-line presence marker in
+        # the brief — not the full 12-rule text (that rides in the packet at
+        # decision_quality.text; inlining the full text blew the brief budget,
+        # prior-art regression 2026-06-09).
         dq = cb.decision_quality_doctrine()
         if not dq["exists"]:
             self.skipTest("shipped doctrine reference absent")
@@ -585,7 +588,12 @@ class DecisionQualityDoctrineTests(unittest.TestCase):
             },
         }
         brief = cb.agent_brief(packet)
-        self.assertIn("Decision-Quality Doctrine", brief)
+        # The compact presence marker is in the brief...
+        self.assertIn("Decision-quality doctrine: 12 rules loaded", brief)
+        # ...but the full rule text is NOT inlined (the brief stays a digest).
+        self.assertNotIn("Ground-truth before accepting any suggested fix", brief)
+        # The full text remains available to the orchestrator via the packet.
+        self.assertIn("Ground-truth before accepting any suggested fix", packet["decision_quality"]["text"])
 
 
 if __name__ == "__main__":

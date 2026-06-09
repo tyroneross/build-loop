@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Architecture snapshot promotion — live .navgator/ → durable memory lane (WP-H/G4).
+"""Architecture snapshot promotion — live dependency graph → durable cross-session lane (WP-H/G4).
 
 GOAL: a dynamic, ongoing, persistent dependency view that build-loop refreshes on
 major architecture changes, so any change's blast radius (what breaks / what it

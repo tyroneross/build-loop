@@ -997,13 +997,19 @@ def agent_brief(packet: dict[str, Any]) -> str:
             f"- Staleness: {staleness.get('memory') or 'memory:?'} | {staleness.get('context') or 'context:ok'}"
         )
 
-    # WP-C: phase-gated decision-quality doctrine injection. Present the rules
-    # IN the brief (not a "load X" pointer) so they bind at Phase 1/2 decision
-    # time. Absence-tolerant — only injected when the reference loaded.
+    # WP-C: phase-gated decision-quality doctrine. The full text rides in the
+    # packet at packet["decision_quality"]["text"] for Phase-1/2 consumption;
+    # the compact brief carries only a one-line presence marker so it stays
+    # small (the brief is a digest, not the doctrine — inlining the full 12
+    # rules blew the brief budget, prior-art regression 2026-06-09). The
+    # orchestrator reads the packet field directly when it decides.
+    # Absence-tolerant — only marked when the reference loaded.
     dq = packet.get("decision_quality") or {}
     if dq.get("exists") and dq.get("text"):
-        lines.append("")
-        lines.append(dq["text"].rstrip())
+        lines.append(
+            f"- Decision-quality doctrine: 12 rules loaded for Phase 1/2 "
+            f"(packet.decision_quality.text; {dq.get('path')})"
+        )
 
     # Queue summary line — only when at least one queue has items.
     queue_parts = []

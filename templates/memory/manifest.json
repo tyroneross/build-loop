@@ -15,6 +15,12 @@
       "target": "MEMORY.md",
       "required": true,
       "purpose": "Generic global-memory index scaffold for first-run installs."
+    },
+    {
+      "source": "charter.md.template",
+      "target": "charter.md",
+      "required": false,
+      "purpose": "Generic project-charter scaffold (North Star + commander's-intent posture + invariants). Placeholder bodies only; filled per project by the run (WP-F)."
     }
   ],
   "generated": [

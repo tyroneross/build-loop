@@ -179,25 +179,10 @@ Reads at Phase 1 Assess; writes at Phase 4 Review-G. Full protocol: `references/
 
 ## Deployment Policy
 
-Repo-local config at `.build-loop/config.json`:
-
-```json
-{
-  "deploymentPolicy": {
-    "preview": "auto",
-    "testflight": "auto",
-    "production": "confirm",
-    "unknown": "confirm"
-  }
-}
-```
-
-Targets: `preview` (preview deploys + non-prod branch pushes); `testflight` (Xcode/ASC/TestFlight upload/export); `production` (production deploys, releases, publishes, protected-branch pushes); `unknown` (anything the classifier can't identify). Actions: `auto`, `confirm`, `block`. Evaluate the exact command via `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`. Helper errors fail closed: require confirmation.
+Repo-local config at `.build-loop/config.json` `deploymentPolicy` — default `{preview:auto, testflight:auto, production:confirm, unknown:confirm}`. Targets: `preview` (preview deploys + non-prod branch pushes); `testflight` (Xcode/ASC/TestFlight upload/export); `production` (production deploys, releases, publishes, protected-branch pushes); `unknown` (anything the classifier can't identify). Actions: `auto`, `confirm`, `block`. Evaluate the exact command via `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`. Helper errors fail closed: require confirmation.
 
 ## Output Format
 
-After each phase (and each Review sub-step), output a brief status line:
-
-Use `[Phase N: Name] ✅ Complete — key finding`, `[Phase 4.B: Validate] ❌ Failed: criterion X — evidence ...`, and `[Iterate 2/5] ❌ Failed: system cause Y — fixing Z`. Final report uses ✅/⚠️/❓ markers per criterion.
+After each phase (and each Review sub-step), output a brief status line — e.g. `[Phase N: Name] ✅ Complete — key finding`, `[Phase 4.B: Validate] ❌ Failed: criterion X — evidence ...`, `[Iterate 2/5] ❌ Failed: system cause Y — fixing Z`. Final report uses ✅/⚠️/❓ markers per criterion.
 
 <!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->

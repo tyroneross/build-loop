@@ -47,7 +47,10 @@ class InstallMemoryPublicSeedTests(unittest.TestCase):
         self.assertTrue(result["ok"], result["issues"])
         self.assertEqual(result["kind"], "build-loop-memory-public-seed-validation")
         self.assertEqual(result["privacy_classification"], "scaffolding-only")
-        self.assertEqual(sorted(result["files"]), ["MEMORY.md.template", "constitution.md.template"])
+        self.assertEqual(
+            sorted(result["files"]),
+            ["MEMORY.md.template", "charter.md.template", "constitution.md.template"],
+        )
 
     def test_seed_validation_rejects_unlisted_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
