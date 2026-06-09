@@ -408,6 +408,16 @@ def _invoke_sync_navgator_lessons(
             f"sync_navgator_lessons exited {result.returncode}: {' | '.join(snippet)}",
         )
         return False
+
+    # rc==0 — but the production path returns 0 even when the optional Postgres
+    # mirror was skipped (postgres_unavailable, e.g. psycopg not installed). The
+    # child emits a one-time `[sync_navgator_lessons] psycopg not installed …`
+    # notice to its stderr; swallowing the captured stderr here made that
+    # actionable hint invisible on success. Forward the psycopg warn-once lines
+    # to our own stderr so the operator sees them.
+    for line in (result.stderr or "").splitlines():
+        if "psycopg" in line.lower():
+            sys.stderr.write(line + "\n")
     return True
 
 
