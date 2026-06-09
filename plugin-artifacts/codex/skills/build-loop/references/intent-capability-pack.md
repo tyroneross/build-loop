@@ -37,8 +37,12 @@ never a gate). Mirror into `state.json.intent.posture`.
   carries anything the vocab can't.
 - **acceptable_tradeoffs** — what is OK to cut under pressure.
 - **non_goals** — what is never cut. At `stakes: high`, a `non_goals` entry that
-  names a REAL risk graduates from advisory to an ENFORCED invariant (the single
-  deterministic carve-out — see the tiered charter below).
+  names a REAL risk is a candidate to **graduate to a constitution invariant** — but
+  only once it is **promoted into the project constitution** (`projects/<slug>/constitution.md`),
+  where the LLM enforces it as a hard line. Until promoted, it stays advisory like the
+  rest of the posture. There is no separate deterministic gate that reads `non_goals`
+  directly (`grep non_goals scripts/` is intentionally empty); enforcement rides the
+  constitution, not a parallel mechanism. See the tiered charter below.
 
 `priority_order` wires into the `alignment-checker` as the Phase-2-fork and
 Phase-5-queue-drain tie-breaker: not just "matches intent?" but "which viable path
@@ -58,13 +62,19 @@ does THIS user's priority order prefer?" — advisory data the LLM weighs, never
   canonical `authored_by: user` on next run via hash-mismatch detection).
 - **Depth scales by `stakes`**: low → intent line only (skills/agents/toys — do NOT
   force a charter, that's the anti-pattern); medium → thin charter (web/mobile);
-  high → full charter, and risk-naming `non_goals` graduate to ENFORCED invariants.
+  high → full charter, and risk-naming `non_goals` become candidates to promote into
+  the constitution as invariants (where the LLM enforces them). The promotion is the
+  enforcement; no `non_goals`-specific gate exists outside the constitution.
 - **PRD stance**: opt-in upfront via `start-prd`; accretion is the default; never
   required. A PRD, when present, PREFILLS the charter richer — input, not a gate.
 
-Enforcement philosophy (binding): all advisory EXCEPT risk-naming `non_goals` at
-`stakes: high`. Per `feedback_deterministic_only_for_known_risks` — posture/charter
-depth is the dial; the LLM weighs, never a gate, except the named-risk carve-out.
+Enforcement philosophy (binding): all advisory. The one stronger-than-advisory path
+is **constitution promotion** — a risk-naming `non_goals` at `stakes: high` graduates
+to a hard invariant only when it is written into `projects/<slug>/constitution.md`,
+which the LLM treats as a binding line. Per `feedback_deterministic_only_for_known_risks` —
+posture/charter depth is the dial; the LLM weighs, never a gate. The constitution, not
+a `non_goals`-specific script, carries any graduated invariant (no dormant determinism
+claim — there is no `non_goals` enforcement code to wire up).
 
 ## Intent restatement protocol (always-on)
 
@@ -122,9 +132,37 @@ Mirror the result to `.build-loop/state.json.intent`:
   "restated_intent": "<one sentence>",
   "approach_options": ["<label>", "<label>"],   // optional; empty when Step A alone fired
   "assumptions": ["<line>", "<line>"],          // optional; empty when no leaps were made
-  "confidence": "high" | "medium" | "low"       // LLM judgment, not a script
+  "confidence": "high" | "medium" | "low",      // LLM judgment, not a script
+  "run_id": "<current run_id>"                  // Step E: the run this intent was written for
 }
 ```
+
+### Step E — Run-id freshness stamp (per-run staleness guard)
+
+`intent.md` lives in `.build-loop/` and survives across runs in the same workdir, so a
+resumed or back-to-back run finds the PRIOR run's intent on disk. The "auto-execute fast
+path" (Step A: "write the line and move on" for a concrete goal) can be misread as
+"the present file already satisfies the protocol", so the rewrite gets skipped and the
+stale intent describes prior work — the exact bl-intent-refresh-per-run failure (the
+A–H consolidation run listed as a non-goal what WP-A shipped).
+
+Two cheap, deterministic moves close it:
+
+1. **Stamp on write.** Whenever Phase 1 (re)writes `intent.md`, embed the current
+   `run_id` as an HTML comment so the prose never has to carry it:
+   `<!-- intent_run_id: <run_id> -->` (helper: `intent_freshness.stamp_marker(run_id)`).
+   Mirror `run_id` into `state.json.intent.run_id`.
+2. **Check at Phase 1 start.** Run
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/intent_freshness.py --workdir "$PWD" --json`.
+   A `stale` (stamp ≠ current run) or `unstamped` verdict means the on-disk intent is
+   from a prior run — re-run Steps A–D and re-stamp. The check is **advisory** and exit-0
+   always: a run-id *mismatch* is an objective structural fact (equality, not a content
+   judgment), so detecting it respects "never a content gate" — only the refresh (the LLM
+   rewriting the prose) is judgment. Surface the verdict line in the run report; never
+   `AskUserQuestion`, never `## Held`, never block.
+
+This is detection-by-structure + refresh-by-LLM: it does not re-introduce the retired
+regex that judged intent *content*; it only answers "does this file belong to this run?".
 
 ### Hard guarantees (non-negotiable)
 
