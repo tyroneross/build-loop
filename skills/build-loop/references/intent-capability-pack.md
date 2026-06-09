@@ -132,9 +132,37 @@ Mirror the result to `.build-loop/state.json.intent`:
   "restated_intent": "<one sentence>",
   "approach_options": ["<label>", "<label>"],   // optional; empty when Step A alone fired
   "assumptions": ["<line>", "<line>"],          // optional; empty when no leaps were made
-  "confidence": "high" | "medium" | "low"       // LLM judgment, not a script
+  "confidence": "high" | "medium" | "low",      // LLM judgment, not a script
+  "run_id": "<current run_id>"                  // Step E: the run this intent was written for
 }
 ```
+
+### Step E — Run-id freshness stamp (per-run staleness guard)
+
+`intent.md` lives in `.build-loop/` and survives across runs in the same workdir, so a
+resumed or back-to-back run finds the PRIOR run's intent on disk. The "auto-execute fast
+path" (Step A: "write the line and move on" for a concrete goal) can be misread as
+"the present file already satisfies the protocol", so the rewrite gets skipped and the
+stale intent describes prior work — the exact bl-intent-refresh-per-run failure (the
+A–H consolidation run listed as a non-goal what WP-A shipped).
+
+Two cheap, deterministic moves close it:
+
+1. **Stamp on write.** Whenever Phase 1 (re)writes `intent.md`, embed the current
+   `run_id` as an HTML comment so the prose never has to carry it:
+   `<!-- intent_run_id: <run_id> -->` (helper: `intent_freshness.stamp_marker(run_id)`).
+   Mirror `run_id` into `state.json.intent.run_id`.
+2. **Check at Phase 1 start.** Run
+   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/intent_freshness.py --workdir "$PWD" --json`.
+   A `stale` (stamp ≠ current run) or `unstamped` verdict means the on-disk intent is
+   from a prior run — re-run Steps A–D and re-stamp. The check is **advisory** and exit-0
+   always: a run-id *mismatch* is an objective structural fact (equality, not a content
+   judgment), so detecting it respects "never a content gate" — only the refresh (the LLM
+   rewriting the prose) is judgment. Surface the verdict line in the run report; never
+   `AskUserQuestion`, never `## Held`, never block.
+
+This is detection-by-structure + refresh-by-LLM: it does not re-introduce the retired
+regex that judged intent *content*; it only answers "does this file belong to this run?".
 
 ### Hard guarantees (non-negotiable)
 
