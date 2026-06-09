@@ -170,6 +170,18 @@ class Violation:
 # Layers that must not import from layers later in the list.
 LAYER_ORDER = ["frontend", "backend", "tooling", "test", "docs", "unknown"]
 
+# Maximum cycle length reported as a circular-dependency violation, and the
+# maximum number of cycles materialized. `nx.simple_cycles` is a generator;
+# the hang on a large repo (measured: 11469 nodes / 29141 edges, 86 nontrivial
+# SCCs) came from materializing EVERY simple cycle — exponential growth with
+# length (bound=4 already yields >7000). Two caps make analysis terminate in
+# milliseconds: `length_bound` restricts the search to short, actionable loops,
+# and `MAX_CYCLES_REPORTED` stops iterating the generator after enough cycles
+# to surface the problem. A circular-dependency report is actionable from a
+# bounded sample; it does not need thousands of entries.
+CYCLE_LENGTH_BOUND = 12
+MAX_CYCLES_REPORTED = 200
+
 
 def _layer_index(layer: str) -> int:
     try:
@@ -208,9 +220,19 @@ def check_rules(
                 message=f"{c.name} has no incoming or outgoing imports",
             ))
 
-    # Cycles.
+    # Cycles. Bound the cycle length: unbounded `nx.simple_cycles` enumerates
+    # EVERY simple cycle via Johnson's algorithm, which is combinatorially
+    # explosive on a large, densely-connected dependency graph (the real
+    # build-loop repo hangs indefinitely). A circular-dependency violation is
+    # meaningful only for short cycles (A->B->A, A->B->C->A); longer chains are
+    # rarely actionable and never worth an unbounded search. The bounded path
+    # uses Gupta-Suzumura (polynomial-bounded), so `length_bound` caps both the
+    # work and the report. Confirmed signature: networkx>=3 simple_cycles(G,
+    # length_bound=None). See goal.md "networkx unbounded simple_cycles HANG".
     try:
-        for cycle in nx.simple_cycles(g):
+        for i, cycle in enumerate(nx.simple_cycles(g, length_bound=CYCLE_LENGTH_BOUND)):
+            if i >= MAX_CYCLES_REPORTED:
+                break
             violations.append(Violation(
                 rule="circular_dependency",
                 severity="error",

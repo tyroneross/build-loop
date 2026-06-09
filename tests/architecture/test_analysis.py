@@ -92,6 +92,44 @@ def test_check_rules_detects_cycle(synthetic_graph) -> None:
     assert {"A", "B", "C"}.issubset(members)
 
 
+def test_check_rules_cycle_search_is_bounded_and_fast() -> None:
+    """Regression: a large, densely-connected graph must NOT hang.
+
+    Before the fix, ``check_rules`` materialized EVERY simple cycle via an
+    unbounded ``nx.simple_cycles``, which is exponential in graph size and hung
+    indefinitely on the real build-loop repo (≈11k nodes / 29k edges). The fix
+    caps both cycle length (CYCLE_LENGTH_BOUND) and the number of cycles
+    reported (MAX_CYCLES_REPORTED). This builds a fully-connected directed
+    graph — a worst case for cycle enumeration — and asserts the call returns
+    quickly with a bounded number of circular-dependency violations.
+    """
+    import time
+
+    from build_loop.architecture.analysis import MAX_CYCLES_REPORTED
+
+    n = 40  # K_40 has 40*39 = 1560 edges and astronomically many simple cycles
+    ids = [f"N{i}" for i in range(n)]
+    components = [_comp(cid) for cid in ids]
+    connections = [
+        _conn(a, b)
+        for a in ids
+        for b in ids
+        if a != b
+    ]
+
+    start = time.monotonic()
+    violations = check_rules(components, connections, hotspot_threshold=10**9)
+    elapsed = time.monotonic() - start
+
+    # Must terminate fast — an unbounded search on K_40 never returns.
+    assert elapsed < 10.0, f"cycle search took {elapsed:.1f}s — bound regressed"
+    cycles = [v for v in violations if v.rule == "circular_dependency"]
+    assert len(cycles) <= MAX_CYCLES_REPORTED, (
+        f"reported {len(cycles)} cycles, cap is {MAX_CYCLES_REPORTED}"
+    )
+    assert cycles, "K_40 has cycles — at least one must be reported"
+
+
 def test_check_rules_detects_layer_violation() -> None:
     backend = _comp("X", layer="backend")
     frontend = _comp("Y", layer="frontend")
