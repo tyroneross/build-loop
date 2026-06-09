@@ -96,3 +96,13 @@ jobs:
         run: |
           uv run python scripts/hook_budget_lint.py --hooks hooks/hooks.json
           uv run python scripts/hook_hygiene_lint.py --hooks hooks/hooks.json
+
+      - name: Methodology drift lint
+        # WP-A single-source guard: every enforced invariant (the Review
+        # sub-step sequence today) must appear verbatim in all four methodology
+        # docs (CLAUDE.md, AGENTS.md, SKILL.md, build-orchestrator.md).
+        # Canonical source: references/methodology-core.md. Exit 1 = drift;
+        # exit 2 = the guard itself is broken (canonical missing/unparseable) —
+        # both fail CI.
+        run: |
+          uv run python scripts/methodology_drift_lint.py --strict

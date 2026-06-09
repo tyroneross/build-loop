@@ -4,7 +4,7 @@ Orchestrated 5-phase development loop with a mandatory Phase 6 Learn, for signif
 
 **Phases**: Assess → Plan → Execute → Review → Iterate (5x max). Mandatory: Phase 6 Learn (always runs, always emits a `## Learn` outcome line; accruing / deferred / full depending on run state).
 
-Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Report.
+Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report.
 
 ## Principles
 

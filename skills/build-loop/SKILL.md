@@ -357,7 +357,7 @@ Key steps: subagent-driven-development → model assignment (Sonnet default) →
 
 ## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Auto-Resolve, Report
 
-Seven sub-steps run in order: A Critic → B Validate → C Optimize (opt-in) → D Fact-Check → E Simplify → F Auto-Resolve → G Report. F drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G is final-pass-only.
+Seven sub-steps run in order (A–G): Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report. F (Auto-Resolve) drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G (Report) is final-pass-only.
 
 Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry → **non-gating post-push retrospective dispatch** (`build-loop:retrospective-synthesizer` writes the 9-section `.build-loop/retrospectives/<date>/<run-id>.md` + ≤5-line summary surfaced inline; enforce-candidates land at `.build-loop/proposals/enforce-from-retro/` for human review — never auto-promoted; fire-and-continue, run-close is NOT delayed). On self-recursive runs, G appends `## Self-modifications (readback)` listing every self-modification attempted this run — file, what/why, gate verdict, additional-review finding — so the human sees results at the end without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
 
