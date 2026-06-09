@@ -129,6 +129,14 @@ def test_check_rules_cycle_search_is_bounded_and_fast() -> None:
     )
     assert cycles, "K_40 has cycles — at least one must be reported"
 
+    # F5: a truncated report must be distinguishable from a complete one. K_40
+    # has far more than MAX_CYCLES_REPORTED short cycles, so the cap is hit and
+    # an info-level cycle_search_truncated marker must be emitted.
+    truncated = [v for v in violations if v.rule == "cycle_search_truncated"]
+    assert len(truncated) == 1, "expected exactly one cycle_search_truncated marker"
+    assert truncated[0].severity == "info"
+    assert truncated[0].details.get("max_cycles_reported") == MAX_CYCLES_REPORTED
+
 
 def test_check_rules_detects_layer_violation() -> None:
     backend = _comp("X", layer="backend")

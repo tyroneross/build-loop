@@ -230,14 +230,35 @@ def check_rules(
     # work and the report. Confirmed signature: networkx>=3 simple_cycles(G,
     # length_bound=None). See goal.md "networkx unbounded simple_cycles HANG".
     try:
+        cycle_cap_hit = False
         for i, cycle in enumerate(nx.simple_cycles(g, length_bound=CYCLE_LENGTH_BOUND)):
             if i >= MAX_CYCLES_REPORTED:
+                cycle_cap_hit = True
                 break
             violations.append(Violation(
                 rule="circular_dependency",
                 severity="error",
                 component_ids=list(cycle),
                 message=f"cycle of length {len(cycle)}: {' -> '.join(cycle)}",
+            ))
+        # Make a truncated report distinguishable from a complete one. The
+        # bounded search already excludes cycles longer than CYCLE_LENGTH_BOUND;
+        # if we ALSO stopped at MAX_CYCLES_REPORTED there are more short cycles
+        # than we materialized. Without this marker a capped report looks
+        # identical to "these are all the cycles," masking the truncation.
+        if cycle_cap_hit:
+            violations.append(Violation(
+                rule="cycle_search_truncated",
+                severity="info",
+                message=(
+                    f"cycle search truncated: reported the first {MAX_CYCLES_REPORTED} "
+                    f"cycles of length <= {CYCLE_LENGTH_BOUND}; more short cycles exist "
+                    f"and cycles longer than {CYCLE_LENGTH_BOUND} were not searched"
+                ),
+                details={
+                    "max_cycles_reported": MAX_CYCLES_REPORTED,
+                    "length_bound": CYCLE_LENGTH_BOUND,
+                },
             ))
     except nx.NetworkXNoCycle:
         pass
