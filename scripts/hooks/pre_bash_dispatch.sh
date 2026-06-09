@@ -82,14 +82,24 @@ fi
 # session to read — swallowing it would silently defeat the auditor. Sub-gates
 # that have nothing to say write nothing to stderr, so pass-through is quiet on
 # the common path.
+#
+# Side effect: the sub-gate's exit code is written to the file named by
+# $GATE_RC_FILE (when set), so a caller that runs `_run_gate` inside a `$(...)`
+# command substitution can still recover it — assignments inside a `$(...)`
+# subshell are lost to the parent, so a plain variable would always read 0.
+# Callers that enforce a hard-block exit code (the commit auditor's rc==2
+# secrets/conflict block) point GATE_RC_FILE at a temp file and read it back
+# after the call. ALL other rc values are advisory and stay fail-open.
 _run_gate() {
     local gate="$1"
     local out=""
+    local rc=0
     if [ -x "$gate" ]; then
-        out=$(printf '%s' "$INPUT" | "$gate") || out=""
+        out=$(printf '%s' "$INPUT" | "$gate") || rc=$?
     elif [ -f "$gate" ]; then
-        out=$(printf '%s' "$INPUT" | python3 "$gate") || out=""
+        out=$(printf '%s' "$INPUT" | python3 "$gate") || rc=$?
     fi
+    [ -n "${GATE_RC_FILE:-}" ] && printf '%s' "$rc" > "$GATE_RC_FILE" 2>/dev/null || true
     [ -z "$out" ] && out='{}'
     printf '%s' "$out"
 }
@@ -100,9 +110,16 @@ ENVELOPES=()
 # Autonomy gate: always the policy classifier.
 ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/hooks/pre_bash_autonomy.sh")")
 
-# Dependency cooldown: only on package installs/adds.
+# Dependency cooldown: only on package installs/adds. This pre-filter MUST be
+# a SUPERSET of the inner classifier in pre_bash_dependency_cooldown.sh
+# (regex `\bnpm\s+(i|install|add|update|ci)\b`); otherwise the dispatcher drops
+# a command the inner gate would have policed. Two cases the inner regex
+# matches that a naive list misses:
+#   - `npm update` (the inner `update` alternative)
+#   - a command ENDING in `npm i` (no trailing arg) — `*"npm i "*` requires a
+#     trailing space, so `*"npm i"` (no space) catches the bare/terminal form.
 case "$CMD" in
-    *"npm install"*|*"npm i "*|*"npm ci"*|*"npm add"*|\
+    *"npm install"*|*"npm i "*|*"npm i"|*"npm ci"*|*"npm add"*|*"npm update"*|\
     *"pnpm add"*|*"pnpm install"*|*"yarn add"*|*"yarn install"*|\
     *"bun add"*|*"bun install"*)
         ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/hooks/pre_bash_dependency_cooldown.sh")")
@@ -111,9 +128,27 @@ esac
 
 # Commit auditor: only when the command commits. This is the big win — the
 # 515-LOC auditor no longer spawns on every non-commit Bash call.
+#
+# HARD-BLOCK propagation: audit_before_commit.py returns rc==2 ONLY for
+# deterministic, zero-judgment violations (a staged secrets file with
+# credential-shaped content, or unresolved merge-conflict markers). This is the
+# ONE intentional enforcement path in the chain. When it fires the dispatcher
+# MUST exit 2 so Claude Code blocks the commit — consolidating the chain must
+# not demote this gate to advisory. The auditor's stderr (which names the
+# blocking reason) has already been passed through. Every OTHER rc (0, 1, a
+# crash, a missing python3) stays fail-open: we do not block on auditor errors.
+COMMIT_AUDIT_HARD_BLOCK=0
 case "$CMD" in
     *commit*)
+        GATE_RC_FILE=$(mktemp 2>/dev/null || echo "")
         ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/audit_before_commit.py")")
+        if [ -n "$GATE_RC_FILE" ] && [ -f "$GATE_RC_FILE" ]; then
+            if [ "$(cat "$GATE_RC_FILE" 2>/dev/null)" = "2" ]; then
+                COMMIT_AUDIT_HARD_BLOCK=1
+            fi
+            rm -f "$GATE_RC_FILE" 2>/dev/null || true
+        fi
+        unset GATE_RC_FILE
         ;;
 esac
 
@@ -141,5 +176,11 @@ for raw in sys.argv[1:]:
 
 print(json.dumps(best) if best else "{}")
 PY
+
+# Hard-block the commit if the auditor flagged a deterministic violation.
+# stderr was already emitted by the auditor; exit 2 tells Claude Code to deny.
+if [ "$COMMIT_AUDIT_HARD_BLOCK" = "1" ]; then
+    exit 2
+fi
 
 exit 0
