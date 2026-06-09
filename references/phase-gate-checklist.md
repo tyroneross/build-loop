@@ -208,6 +208,7 @@ The report markdown sections, in this order:
 - `## Held` — items the autonomy gate verdicted as `confirm`. Body: action label + the gate envelope's `reason` field verbatim. The user runs held commands manually if they want. Build-loop does NOT prompt or auto-execute these.
 - `## Blocked` — items the autonomy gate verdicted as `block`, same shape as Held.
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; preserve).
+- `## Net LOC` — one line from `scripts/run_loc_delta.py` over the run's diff range: lines added / deleted / net + files changed / created. Pure observability, NO gate — it surfaces growth so the "no additional code" goal is visible and Phase 6 can watch the trend. Compute via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/run_loc_delta.py --workdir "$PWD" --range "<base>..<head>"` (use the run's first commit's parent .. HEAD; fall back to `--working` when no range is known). Fail-open — an unavailable delta renders `_(loc delta unavailable: ...)_` and never blocks the report.
 
 **Forbidden in the report**:
 
