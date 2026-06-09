@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+name: Python test suite
+
+# Deterministic server-side test gate. 248 test files existed with ZERO CI
+# coverage before this workflow (rec 1, 2026-06-09 reliability research). The
+# local pre-commit / Stop hooks that run tests are bypassable (--no-verify,
+# fresh clones, hook-off); this job is not.
+#
+# Scope of this run: the deterministic subset only.
+#   - `live`-marked tests (Ollama on :11434) auto-skip via conftest.py — no
+#     Ollama on the runner.
+#   - `db`-marked tests (psycopg + live Postgres) auto-skip via conftest.py —
+#     the .[db] extra is intentionally NOT installed here.
+#   - A short deselect list covers tests coupled to live/global rally state
+#     (channel-routing divergence). Each entry cites a build-loop-memory backlog
+#     item; remove the deselect when that item lands. This is an explicit,
+#     reviewed carve-out — not a silent skip.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pytest-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Force the no-rally-binary discovery path so channel resolution is
+      # deterministic (the runner has no `rally` binary or sibling checkout).
+      AGENT_RALLY_BINARY: /nonexistent
+      BUILD_LOOP_DISABLE_SIBLING_RALLY: "1"
+      # Isolate the rally apps-root to a runner-local dir so presence/where
+      # tests don't read a stale global ~/.agent-rally-point.
+      BUILD_LOOP_APPS_ROOT: ${{ runner.temp }}/rally-apps
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Sync core + test dependencies
+        # Core deps (tree-sitter, networkx, pathspec) + the `test` extra
+        # (pytest) + pytest-timeout (dev group). The optional `db` extra is
+        # deliberately omitted so `db`-marked tests auto-skip.
+        run: |
+          uv sync --extra test
+          uv pip install pytest-timeout
+
+      - name: Run deterministic test suite
+        # --timeout caps any single test (thread method) so a hung test fails
+        # loudly instead of stalling the job. `live`/`db` auto-skip in
+        # conftest.py. The deselect list = tests coupled to live/global rally
+        # channel state; see build-loop-memory backlog
+        # `rally-channel-routing-divergence` and `rally-where-presence-env-coupled`.
+        run: |
+          uv run pytest scripts/ tests/ \
+            -p no:cacheprovider -q --no-header -rfE \
+            --timeout=60 --timeout-method=thread \
+            --deselect scripts/rally_point/test_post_commit.py::test_plain_commit_writes_one_record \
+            --deselect scripts/rally_point/test_post_commit.py::test_manifest_commit_also_writes_dep_change \
+            --deselect scripts/rally_point/test_acceptance_stage1.py::test_stage1_acceptance
+
+      - name: Hook reliability lints
+        # Deterministic enforcement of the hook runtime contract (WP2):
+        #   - hook_budget_lint: every internal subprocess timeout < its declared
+        #     hook timeout (no timeout-inversion fail-open).
+        #   - hook_hygiene_lint: minimal-PATH-safe binaries, fail-open, advisory
+        #     hooks never emit deny/block without a safety-gate marker.
+        run: |
+          uv run python scripts/hook_budget_lint.py --hooks hooks/hooks.json
+          uv run python scripts/hook_hygiene_lint.py --hooks hooks/hooks.json
