@@ -113,6 +113,26 @@ TOOL = "navgator"
 SOURCE = "migration"  # one-way external import per write_decision taxonomy
 SYNC_ERRORS_LOG = ".build-loop/sync_errors.log"
 
+# One-time-per-process guard for the psycopg-missing warning. The Postgres
+# mirror is OPTIONAL (SQLite is the source of truth); a missing psycopg should
+# degrade gracefully, but it had been failing SILENTLY — only a line in
+# .build-loop/sync_errors.log, which recurred 2026-05-05..2026-06-03 unseen.
+# Surface it ONCE on stderr with the actionable install hint, then stay quiet.
+_PSYCOPG_WARNED = False
+
+
+def _warn_psycopg_missing_once() -> None:
+    global _PSYCOPG_WARNED
+    if _PSYCOPG_WARNED:
+        return
+    _PSYCOPG_WARNED = True
+    _log(
+        "psycopg not installed — skipping the optional Postgres mirror "
+        "(SQLite remains the source of truth). Install with "
+        "`uv pip install -e .[db]` to enable the mirror. "
+        "(This notice prints once per run; details in .build-loop/sync_errors.log.)"
+    )
+
 # Make scripts/ importable as a sibling module (mirrors capture_arch_violation.py).
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -597,6 +617,11 @@ def main(argv: list[str] | None = None) -> int:
             _append_sync_error(workdir, msg)
             errors.append("postgres_unavailable")
             conn = None
+            # A MISSING psycopg module (vs. a reachable-but-down server) is the
+            # silent recurring case. Surface it visibly, once per run, with the
+            # install hint — don't bury it in the log file again.
+            if isinstance(exc, ModuleNotFoundError) or "psycopg" in str(exc).lower():
+                _warn_psycopg_missing_once()
 
         if conn is not None:
             try:
