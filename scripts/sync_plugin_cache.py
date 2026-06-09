@@ -330,33 +330,28 @@ def print_human(results: list[dict[str, Any]], source_mode: str, materialized_so
                 print(f"    [{diff.get('status')}] {diff.get('path')}")
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    source = Path(args.source).expanduser().resolve()
-    if not source.is_dir():
-        print(f"error: source is not a directory: {source}", file=sys.stderr)
-        return 2
+def emit_hook_install(installed: dict[str, Any], args: argparse.Namespace) -> None:
+    if args.json:
+        print(json.dumps(installed, indent=2, sort_keys=True))
+    elif not args.quiet:
+        print(f"installed plugin cache sync hooks for {args.host}:")
+        for hook in installed["hooks"]:
+            print(f"  {hook}")
 
+
+def materialize_source_for_sync(
+    source: Path,
+    args: argparse.Namespace,
+) -> tuple[Path, str, tempfile.TemporaryDirectory[str] | None]:
+    if args.dirty:
+        return source, "dirty", None
+    tmp = materialize_head(source)
+    return Path(tmp.name), "head", tmp
+
+
+def build_sync_payload(source: Path, args: argparse.Namespace) -> dict[str, Any]:
+    source_for_sync, source_mode, tmp = materialize_source_for_sync(source, args)
     try:
-        if args.install_git_hooks:
-            installed = install_git_hooks(source, args.host)
-            if args.json:
-                print(json.dumps(installed, indent=2, sort_keys=True))
-            elif not args.quiet:
-                print(f"installed plugin cache sync hooks for {args.host}:")
-                for hook in installed["hooks"]:
-                    print(f"  {hook}")
-            return 0
-
-        tmp: tempfile.TemporaryDirectory[str] | None = None
-        if args.dirty:
-            source_for_sync = source
-            source_mode = "dirty"
-        else:
-            tmp = materialize_head(source)
-            source_for_sync = Path(tmp.name)
-            source_mode = "head"
-
         explicit_host = args.host != "all"
         results = [
             sync_one_host(
@@ -368,25 +363,54 @@ def main(argv: list[str] | None = None) -> int:
             )
             for host in host_list(args.host)
         ]
-        payload = {
+        return {
             "ok": all(result.get("ok", True) for result in results),
             "source": str(source),
             "source_mode": source_mode,
             "materialized_source": str(source_for_sync),
             "results": results,
         }
-        if args.json:
-            print(json.dumps(payload, indent=2, sort_keys=True))
-        elif not args.quiet:
-            print_human(results, source_mode, source_for_sync)
+    finally:
         if tmp is not None:
             tmp.cleanup()
+
+
+def emit_sync_payload(payload: dict[str, Any], args: argparse.Namespace) -> None:
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif not args.quiet:
+        print_human(
+            payload["results"],
+            payload["source_mode"],
+            Path(payload["materialized_source"]),
+        )
+
+
+def emit_sync_error(exc: SyncError, args: argparse.Namespace) -> None:
+    if args.json:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
+    else:
+        print(f"error: {exc}", file=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    source = Path(args.source).expanduser().resolve()
+    if not source.is_dir():
+        print(f"error: source is not a directory: {source}", file=sys.stderr)
+        return 2
+
+    try:
+        if args.install_git_hooks:
+            installed = install_git_hooks(source, args.host)
+            emit_hook_install(installed, args)
+            return 0
+
+        payload = build_sync_payload(source, args)
+        emit_sync_payload(payload, args)
         return 0 if payload["ok"] else 1
     except SyncError as exc:
-        if args.json:
-            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True))
-        else:
-            print(f"error: {exc}", file=sys.stderr)
+        emit_sync_error(exc, args)
         return 2
 
 
