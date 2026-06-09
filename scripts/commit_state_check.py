@@ -31,7 +31,10 @@ def _git_status_porcelain(workdir: str) -> list[str] | None:
             ["git", "-C", workdir, "status", "--porcelain"],
             capture_output=True,
             text=True,
-            timeout=10,
+            # Must finish before the Stop-hook budget (5000ms). `git status
+            # --porcelain` is fast; 4s leaves margin for spawn+parse while
+            # staying under the hook timeout so the check never fails open.
+            timeout=4,
         )
         if result.returncode != 0:
             return None

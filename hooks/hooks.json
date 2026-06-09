@@ -42,7 +42,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/session-start-memory.sh\" </dev/null >/dev/null 2>&1; exit 0",
-            "timeout": 5000
+            "timeout": 6000
           },
           {
             "type": "command",
@@ -73,18 +73,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_autonomy.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
-            "timeout": 2000
-          },
-          {
-            "type": "command",
-            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_dependency_cooldown.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
-            "timeout": 2000
-          },
-          {
-            "type": "command",
-            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/audit_before_commit.py\"; if [ -f \"$hook\" ]; then python3 \"$hook\"; else printf '{}'; fi",
-            "timeout": 5000
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; hook=\"$root/scripts/hooks/pre_bash_dispatch.sh\"; if [ -x \"$hook\" ]; then \"$hook\"; else printf '{}'; fi",
+            "timeout": 9000
           },
           {
             "type": "command",
@@ -100,7 +90,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -f .build-loop/state.json ] || exit 0; python3 -c \"import json,sys; s=json.load(open('.build-loop/state.json')); p7=s.get('phases',{}).get('fact_check',{}).get('completed',False); active=s.get('active',False); sys.exit(0 if (not active or p7) else 1)\" 2>/dev/null && exit 0; echo \"$TOOL_INPUT\" | grep -qE '\\b(git\\s+push|npm\\s+publish|vercel\\s+deploy|gh\\s+release)\\b' && echo 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.'; exit 0"
+            "command": "[ -f .build-loop/state.json ] || exit 0; python3 -c \"import json,sys; s=json.load(open('.build-loop/state.json')); p7=s.get('phases',{}).get('fact_check',{}).get('completed',False); active=s.get('active',False); sys.exit(0 if (not active or p7) else 1)\" 2>/dev/null && exit 0; echo \"$TOOL_INPUT\" | grep -qE '\\b(git\\s+push|npm\\s+publish|vercel\\s+deploy|gh\\s+release)\\b' && echo 'Build loop Phase 7 (fact-check) has not completed. Run fact-check before deploying.'; exit 0",
+            "timeout": 3000
           }
         ]
       }
