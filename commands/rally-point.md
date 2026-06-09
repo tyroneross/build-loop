@@ -178,7 +178,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_bootstrap.py \
   --json
 ```
 
-Example invocation: `/agent-rally-point init v0130-feature-x "Add new feature X across orchestrator + bootstrap + tests"`
+Example invocation: `/build-loop:rally-point init v0130-feature-x "Add new feature X across orchestrator + bootstrap + tests"`
 
 Example output:
 
@@ -220,7 +220,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py lead <op> \
 - `relinquish` — give up the lead so the next `claim` succeeds immediately.
 - `status` — read the current lead + `lease_valid`.
 
-Example: `/agent-rally-point lead status`
+Example: `/build-loop:rally-point lead status`
 
 ### `escalate <reason>`
 
@@ -269,7 +269,7 @@ Shows the subcommand reference table (replaces what the no-args case used to do 
 Outputs:
 
 ```
-/agent-rally-point — inspect or invoke build-loop's multi-session coordination
+/build-loop:rally-point — inspect or invoke build-loop's multi-session coordination
 
 Subcommands:
   status (default)        Sensor poll: active peers, unresolved verdicts, coord file

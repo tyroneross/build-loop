@@ -42,24 +42,13 @@ SKILLS_DIR = REPO_ROOT / "skills"
 # (user explicitly accepted these on 2026-05-01 — UX cost of rename
 # deemed not worth the unverified risk). Remove an entry here ONLY when
 # the corresponding command/skill pair has actually been renamed.
-# optimize / plan-verify / research were renamed away (commit 1521158, Option-2)
-# and no longer collide; their entries were stale config and have been removed.
-# The three remaining siblings below are fixed in WP-D's rename commit; once
-# that lands this set is empty and the suite enforces zero collisions.
-ACCEPTED_SIBLINGS: set[str] = {
-    # Phase 4 episodic memory review surface — slash command and skill
-    # share a name by design: command loads the skill which holds the
-    # full review-surface contract (read-only, four sections).
-    "build-loop:knowledge-review",
-    # Rally Point has both a user-facing command and an internal substrate
-    # skill. The command is the supported entrypoint; the skill is hidden from
-    # user invocation and loaded only by explicit internal routing.
-    "build-loop:agent-rally-point",
-    # Handoff command + skill share a name by design: /build-loop:handoff loads the
-    # handoff skill. Command is the user entry; skill holds the full doc-composition
-    # template, source table, and host-agnostic design notes.
-    "build-loop:handoff",
-}
+# Empty by design: every namesake collision in build-loop has been fixed via the
+# Option-2 rename (rename the slash-command file; skill name unchanged). The last
+# three — agent-rally-point, handoff, knowledge-review — were renamed to
+# rally-point / compose-handoff / review-knowledge (WP-D, 2026-06-09). The suite
+# now enforces ZERO collisions: any new sibling pair fails CI. Add an entry here
+# ONLY with a written rationale AND a KNOWN-ISSUES.md note for an intentional pair.
+ACCEPTED_SIBLINGS: set[str] = set()
 
 FINDING_KEYS = (
     "plugin_path",

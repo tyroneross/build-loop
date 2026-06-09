@@ -44,7 +44,7 @@ CODEX_DEFAULT_MARKETPLACE = os.environ.get(
     "local-marketplace",
 )
 COORDINATION_EXACT_REFS = (
-    "commands/agent-rally-point.md",
+    "commands/rally-point.md",
     "references/rally-point-protocol.md",
     "references/coordination-rules.md",
     "references/multi-session-coordination.md",

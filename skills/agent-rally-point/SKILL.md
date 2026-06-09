@@ -19,7 +19,7 @@ is mechanical later.
 |---|---|
 | Substrate package | `${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/` |
 | Host-neutral CLI | `${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py` |
-| Slash command | `${CLAUDE_PLUGIN_ROOT}/commands/agent-rally-point.md` |
+| Slash command | `${CLAUDE_PLUGIN_ROOT}/commands/rally-point.md` |
 | Hook adapters | `${CLAUDE_PLUGIN_ROOT}/hooks/session-start-rally-point.sh`, `${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-rally-point.sh` |
 | Build-loop adapters | `${CLAUDE_PLUGIN_ROOT}/scripts/coordination_status.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/coordination_rally.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/coordination_bootstrap.py` |
 | Boundary manifest | `${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/plugin_boundary.json` |

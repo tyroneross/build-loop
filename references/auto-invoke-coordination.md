@@ -79,7 +79,7 @@ This protocol uses build-loop's current convention `.build-loop/coordination/<to
 
 ## User-facing manual invocation
 
-`/agent-rally-point status` runs the same poll; `/agent-rally-point init` runs the same bootstrap. The slash command is documented at `commands/agent-rally-point.md`.
+`/agent-rally-point status` runs the same poll; `/agent-rally-point init` runs the same bootstrap. The slash command is documented at `commands/rally-point.md`.
 
 ## Phase-1 trigger detail
 

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:handoff'."
+description: "Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'."
 user-invocable: true
 ---
 
@@ -55,7 +55,7 @@ Emits a JSON envelope `{document, sources, errors, ts}` for programmatic use.
 
 ## Usage — `--launch` (fresh session)
 
-The command surface (`/build-loop:handoff --launch`) handles this. The skill provides
+The command surface (`/build-loop:compose-handoff --launch`) handles this. The skill provides
 the doc; the command layer handles host-specific launch.
 
 **What `--launch` does:**
@@ -90,5 +90,5 @@ orchestrator already writes. Tests: `scripts/handoff/test_handoff.py` (13 tests)
 
 The skill provides **structured data + instructions**. The host coding agent's LLM
 interprets and acts on the handoff doc. No vendor-specific API calls. The `--launch`
-CLI path uses the host's own CLI, isolated in `commands/handoff.md`'s conditional
+CLI path uses the host's own CLI, isolated in `commands/compose-handoff.md`'s conditional
 block — the skill logic is identical across Claude Code, Codex, and future hosts.

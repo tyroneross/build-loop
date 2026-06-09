@@ -93,6 +93,14 @@ This bypasses the resolver entirely and produces the same outcome.
 
 `/build-loop:run` continues to auto-route to all three modes — the renamed commands are advanced overrides, so the slash-name change has minimal UX cost. Skill callers (orchestrator, README, downstream plugins) reference `Skill("build-loop:<name>")` and keep resolving unchanged. `commands/promote-experiment.md` has no namesake skill and was not touched. `skills/self-improve/SKILL.md` has no namesake command and was not touched.
 
+**Final three siblings — RESOLVED 2026-06-09 (WP-D, Option 2 rename).** A second set of three command/skill pairs carried the same collision shape (the first batch above renamed `optimize`/`research`/`plan-verify`; these three were the remaining latent pairs). All renamed via Option-2 so the namespace can never shadow:
+
+- `commands/agent-rally-point.md` → `commands/rally-point.md` (`/build-loop:rally-point`); `skills/agent-rally-point/SKILL.md` unchanged → `Skill("build-loop:agent-rally-point")` resolves to the skill.
+- `commands/handoff.md` → `commands/compose-handoff.md` (`/build-loop:compose-handoff`); `skills/handoff/SKILL.md` unchanged → `Skill("build-loop:handoff")` resolves to the skill. Self-referential slash mentions in the command + skill bodies were updated to the new name.
+- `commands/knowledge-review.md` → `commands/review-knowledge.md` (`/build-loop:review-knowledge`); `skills/knowledge-review/SKILL.md` unchanged → `Skill("build-loop:knowledge-review")` resolves to the skill.
+
+With this batch, build-loop has **zero** namesake collisions and `scripts/test_skill_resolution.py` enforces it (`ACCEPTED_SIBLINGS` is now empty; `collision_scan.py --strict` exits 0). Any new sibling pair fails CI. The guard suite (`collision_scan.py` + `test_skill_resolution.py` + `test_plugin_manifest.py`) runs in CI via the existing `pytest scripts/` invocation in `.github/workflows/pytest.yml`.
+
 ---
 
 ## Plugin merge — 2026-05-02

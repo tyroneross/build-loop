@@ -100,7 +100,7 @@ explicit extraction edges:
 
 | Future plugin | Embedded namespace | Build-loop compatibility entrypoints |
 |---|---|---|
-| `agent-rally-point` | `scripts/rally_point/**` | `scripts/agent_rally.py`, `commands/agent-rally-point.md`, `hooks/*rally-point.sh`, `scripts/coordination_status.py`, `scripts/coordination_rally.py`, `scripts/coordination_bootstrap.py` |
+| `agent-rally-point` | `scripts/rally_point/**` | `scripts/agent_rally.py`, `commands/rally-point.md`, `hooks/*rally-point.sh`, `scripts/coordination_status.py`, `scripts/coordination_rally.py`, `scripts/coordination_bootstrap.py` |
 | `agent-rally-watcher` | `scripts/agent_rally_watcher/**` | `scripts/coordination_watch.py` |
 
 The machine-readable contract lives at

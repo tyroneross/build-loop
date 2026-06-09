@@ -55,7 +55,7 @@ def write_dual_host_source(root: Path, *, version: str = "1.0.0") -> None:
     write(root / "scripts/rally_point/post.py", "print('post')\n")
     write(root / "scripts/coordination_status.py", "print('status')\n")
     write(root / "scripts/check_cache_sync.py", "print('sync')\n")
-    write(root / "commands/agent-rally-point.md", "# Rally\n")
+    write(root / "commands/rally-point.md", "# Rally\n")
     write(root / "references/coordination-rules.md", "# Rules\n")
 
 
@@ -163,7 +163,7 @@ class CoordinationCacheParityTests(unittest.TestCase):
             "scripts/rally_point/post.py",
             "scripts/coordination_status.py",
             "scripts/check_cache_sync.py",
-            "commands/agent-rally-point.md",
+            "commands/rally-point.md",
             "references/coordination-rules.md",
         ):
             text = (self.source / ref).read_text()

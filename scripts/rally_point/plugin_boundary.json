@@ -18,7 +18,7 @@
       ],
       "compatibility_entrypoints": [
         "scripts/agent_rally.py",
-        "commands/agent-rally-point.md",
+        "commands/rally-point.md",
         "hooks/session-start-rally-point.sh",
         "hooks/pre-edit-rally-point.sh"
       ],
@@ -36,7 +36,7 @@
       "grouped_dependencies": [
         "scripts/rally_point/**",
         "scripts/agent_rally.py",
-        "commands/agent-rally-point.md",
+        "commands/rally-point.md",
         "hooks/session-start-rally-point.sh",
         "hooks/pre-edit-rally-point.sh",
         "references/rally-point-protocol.md",
@@ -91,7 +91,7 @@
         "scripts/agent_rally_watcher/**",
         "scripts/coordination_watch.py",
         "scripts/coordination_status.py",
-        "commands/agent-rally-point.md",
+        "commands/rally-point.md",
         "skills/agent-rally-watcher/SKILL.md",
         "skills/build-loop/references/coordination.md",
         "scripts/README.md"

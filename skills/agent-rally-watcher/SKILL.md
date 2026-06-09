@@ -20,7 +20,7 @@ entrypoints thin.
 | Watcher package | `${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally_watcher/` |
 | Compatibility CLI | `${CLAUDE_PLUGIN_ROOT}/scripts/coordination_watch.py` |
 | Status dependency | `${CLAUDE_PLUGIN_ROOT}/scripts/coordination_status.py` |
-| Manual command | `${CLAUDE_PLUGIN_ROOT}/commands/agent-rally-point.md` `watch` subcommand |
+| Manual command | `${CLAUDE_PLUGIN_ROOT}/commands/rally-point.md` `watch` subcommand |
 | Boundary manifest | `${CLAUDE_PLUGIN_ROOT}/scripts/rally_point/plugin_boundary.json` |
 
 ## Operating Rules

@@ -79,7 +79,7 @@ Present the full output. Also note:
 
 To launch a fresh session after handoff, re-run with `--launch`:
 ```
-/build-loop:handoff --launch
+/build-loop:compose-handoff --launch
 ```
 
 {{/if}}
@@ -90,18 +90,18 @@ To launch a fresh session after handoff, re-run with `--launch`:
 
 **Emit to stdout (default)**
 ```
-/build-loop:handoff
+/build-loop:compose-handoff
 ```
 
 **Write to file**
 ```
-/build-loop:handoff --workdir /path/to/repo
+/build-loop:compose-handoff --workdir /path/to/repo
 ```
 (Use `--output` flag in the script directly for file output.)
 
 **Emit + launch fresh session**
 ```
-/build-loop:handoff --launch
+/build-loop:compose-handoff --launch
 ```
 
 **JSON envelope (for programmatic use)**
