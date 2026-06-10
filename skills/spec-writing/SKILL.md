@@ -316,7 +316,7 @@ If no UI surface is in scope, write "N/A: no UI surface."
 
 ### Item 18 — Dispatch tier per work item (WP-B)
 
-**Prompt:** Assign `dispatch_tier:` per work item — one of `script | haiku | sonnet | opus` — plus a one-line justification. The tier names which executor the orchestrator dispatches; the justification states why that tier fits the work's nature.
+**Prompt:** Assign `dispatch_tier:` per work item — one of `script | haiku | sonnet | opus | frontier` — plus a one-line justification. The tier names which executor the orchestrator dispatches; the justification states why that tier fits the work's nature. `frontier` requests the Frontier tier (resolves to Fable via `scripts/model_overrides.py`) for a work item whose generative reasoning compounds — plan synthesis / re-planning / a decomposition call where a wrong answer ripples downstream. It routes to the Advisor dispatch ladder (`references/advisor-dispatch-ladder.md`); use it sparingly, only on genuinely high-stakes generative work.
 
 **Eligibility test for `script` (ALL must hold):** machine-checkable output; fully enumerable inputs; the tool exists OR is ≤~50 LOC plus a colocated test. If any fails, the task needs a model tier (judgment), not a script. Escalate on evidence (2 failures or surfaced ambiguity) with the failure evidence attached; never patch a script mid-run to absorb ambiguity.
 
@@ -328,7 +328,7 @@ If no UI surface is in scope, write "N/A: no UI surface."
 grep -n "dispatch_tier:" docs/plans/<feature-slug>.md
 ```
 
-Each value must be exactly one of `script | haiku | sonnet | opus`. Omit the field for an item whose tier is obvious from context; the checks fire only on a declared tier that fights its task description.
+Each value must be exactly one of `script | haiku | sonnet | opus | frontier`. Omit the field for an item whose tier is obvious from context; the checks fire only on a declared tier that fights its task description. (`frontier` never trips a sanity WARN — it is the top judgment tier, never a "waste" smell.)
 
 ---
 
@@ -340,7 +340,7 @@ These fields appear in plan or chunk frontmatter and affect orchestrator routing
 |-------|------|--------|
 | `risk_reason:` | one of 5 canonical strings | Routes chunk to `tier: thinking` regardless of `synthesis_dimensions` count (see Item 16). |
 | `modifies_api: true\|false` | boolean | When `true`, the orchestrator runs a mandatory scope-auditor gate before Phase 3 dispatch. Any public function, component, type, route, or CLI-flag signature change qualifies. When set without a companion `scope_auditor_status:` field in the plan body, `plan_verify.py` emits a WARN (`scope-audit-required`) to surface the missing audit trail. |
-| `dispatch_tier:` | one of `script\|haiku\|sonnet\|opus` | Names the executor tier for the work item (Item 18). `plan_verify.py` emits an advisory WARN when the tier fights the task: judgment on `script` (`tier-sanity-judgment-on-script`) or a mechanical task on `opus` (`tier-sanity-mechanical-on-opus`). Never blocks. |
+| `dispatch_tier:` | one of `script\|haiku\|sonnet\|opus\|frontier` | Names the executor tier for the work item (Item 18). `frontier` resolves to Fable (`scripts/model_overrides.py`) and routes the item to the Advisor dispatch ladder for high-stakes generative work. `plan_verify.py` emits an advisory WARN when the tier fights the task: judgment on `script` (`tier-sanity-judgment-on-script`) or a mechanical task on `opus` (`tier-sanity-mechanical-on-opus`). `frontier` never trips a WARN. Never blocks. |
 
 ---
 

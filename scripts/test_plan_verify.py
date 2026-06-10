@@ -580,6 +580,21 @@ class TierSanityTests(unittest.TestCase):
         )
         self.assertEqual(findings, [])
 
+    def test_frontier_tier_is_recognized_by_regex(self) -> None:
+        # `frontier` is a legal tier value (routes to the Advisor ladder).
+        from plan_verify import _DISPATCH_TIER_RE  # type: ignore  # noqa: PLC0415
+        m = _DISPATCH_TIER_RE.search("dispatch_tier: frontier")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1).lower(), "frontier")
+
+    def test_frontier_on_judgment_task_never_warns(self) -> None:
+        # The top judgment tier on a judgment task is the aligned case — silent.
+        findings = self._findings(
+            "# Plan\n## Chunk 6\nSynthesize and decide the decomposition.\n"
+            "dispatch_tier: frontier\n"
+        )
+        self.assertEqual(findings, [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
