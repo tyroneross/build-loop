@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -32,6 +33,16 @@ Host = Literal["codex", "claude"]
 # session's plugin root and every one of its hooks fails mid-run with
 # "Plugin directory does not exist".
 IN_USE_ENV_VARS: tuple[str, ...] = ("CLAUDE_PLUGIN_ROOT", "CODEX_PLUGIN_ROOT")
+
+# Archive layout: pruned version dirs are MOVED, never deleted, so the
+# session-start healer (scripts/hooks/plugin_dir_heal.py) can move them
+# back if a peer session was pinned to that version. The healer scans
+# <plugins>/removed/<tag>/<plugin>/<version>/ (and the shallower
+# <plugins>/removed/<tag>/<version>/ shape) — `find_archived_match()` —
+# so the layout below MUST stay grandparent-of-cache = parent-of-removed.
+ARCHIVE_PREFIX = "buildloop-prune-"
+ARCHIVE_RETENTION = 5
+REMOVED_DIR_NAME = "removed"
 
 HOST_CONFIG: dict[Host, dict[str, str]] = {
     "codex": {
@@ -287,11 +298,75 @@ def classify_versions(
     return keep, stale, skipped
 
 
-def remove_cache_entry(path: Path) -> None:
+def archive_root_for(cache_root: Path) -> Path:
+    """Return the `removed/` sibling of cache_root, matching the layout the
+    SessionStart healer scans. cache_root is `<host>/plugins/cache`, so the
+    removed dir is `<host>/plugins/removed` — one level up + sibling.
+    """
+    return cache_root.parent / REMOVED_DIR_NAME
+
+
+def _archive_tag() -> str:
+    # Microsecond precision so multiple prunes inside one second don't collide.
+    return ARCHIVE_PREFIX + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def _gc_old_archives(archive_root: Path, retention: int) -> None:
+    """Keep only the newest `retention` `buildloop-prune-*` dirs under
+    archive_root; rmtree older ones. Fail-open: any unreadable entry skipped."""
+    if retention < 0 or not archive_root.is_dir():
+        return
+    try:
+        entries = [p for p in archive_root.iterdir()
+                   if p.is_dir() and p.name.startswith(ARCHIVE_PREFIX)]
+    except OSError:
+        return
+    if len(entries) <= retention:
+        return
+    entries.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in entries[retention:]:
+        try:
+            shutil.rmtree(stale)
+        except OSError:
+            continue
+
+
+def remove_cache_entry(
+    path: Path,
+    *,
+    plugin_name: str,
+    archive_root: Path,
+    retention: int = ARCHIVE_RETENTION,
+) -> None:
+    """Retire a cache entry safely.
+
+    Symlinks (local-dev / heal symlinks) → `unlink()` only. The link target is
+    a real dir the host may still need; following or archiving it would risk
+    nuking a live install. The link itself is cheap to recreate.
+
+    Real version dirs → MOVED into
+    `archive_root/buildloop-prune-<UTC-ts>/<plugin>/<basename>/` via atomic
+    `os.rename` (same-fs); cross-fs falls back to `copytree(symlinks=True)` +
+    `rmtree`. Hard delete is removed entirely so the SessionStart healer can
+    restore-from-removed when a peer session was pinned to the version.
+
+    After a successful archive, prune old `buildloop-prune-*` dirs under
+    archive_root down to `retention` so `removed/` does not grow unbounded.
+    """
     if path.is_symlink():
         path.unlink()
         return
-    shutil.rmtree(path)
+    tag_dir = archive_root / _archive_tag() / plugin_name
+    dest = tag_dir / path.name
+    tag_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(path, dest)
+    except OSError:
+        # Cross-filesystem move (or other rename refusal) — copy then remove.
+        # symlinks=True preserves any inner symlinks verbatim.
+        shutil.copytree(path, dest, symlinks=True)
+        shutil.rmtree(path)
+    _gc_old_archives(archive_root, retention)
 
 
 def prune_host(
@@ -333,12 +408,17 @@ def prune_host(
 
     deleted: list[Path] = []
     errors: list[dict[str, str]] = []
+    archive_root = archive_root_for(cache_root)
     if apply:
         for path in stale:
             try:
-                remove_cache_entry(path)
+                remove_cache_entry(
+                    path,
+                    plugin_name=plugin_name,
+                    archive_root=archive_root,
+                )
                 deleted.append(path)
-            except OSError as exc:
+            except (OSError, shutil.Error) as exc:
                 errors.append({"path": str(path), "error": str(exc)})
 
     return {
