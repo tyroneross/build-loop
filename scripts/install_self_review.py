@@ -36,8 +36,16 @@ from typing import Any
 # Constants
 # ---------------------------------------------------------------------------
 
-LABEL_LIGHT = "com.tyroneross.buildloop.selfreview-light"
-LABEL_DEEP = "com.tyroneross.buildloop.selfreview-deep"
+LABEL_LIGHT = "com.build-loop.selfreview-light"
+LABEL_DEEP = "com.build-loop.selfreview-deep"
+
+# Pre-rename labels (developer-identity prefix; scrubbed 2026-06-09). install
+# and uninstall both unload + remove any plist still carrying these so an
+# existing machine transitions cleanly to the neutral labels on the next run.
+LEGACY_LABELS = (
+    "com.tyroneross.buildloop.selfreview-light",
+    "com.tyroneross.buildloop.selfreview-deep",
+)
 
 _DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": True,
@@ -187,12 +195,47 @@ def _load(label: str, plist_path: Path) -> tuple[bool, str]:
 
 
 def _is_loaded(label: str) -> bool:
-    r = subprocess.run(
-        ["launchctl", "list", label],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        r = subprocess.run(
+            ["launchctl", "list", label],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False  # no launchctl on this platform (e.g. Linux CI)
     return r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Legacy-label migration
+# ---------------------------------------------------------------------------
+
+
+def _migrate_legacy_labels(plist_dir: Path) -> list[dict[str, Any]]:
+    """Unload + remove any job still installed under a LEGACY_LABELS name.
+
+    Idempotent and fail-soft: a label that was never installed reports
+    nothing; bootout of a not-loaded job is treated as success by _bootout.
+    """
+    migrated: list[dict[str, Any]] = []
+    for label in LEGACY_LABELS:
+        plist_path = plist_dir / f"{label}.plist"
+        plist_exists = plist_path.exists()
+        loaded = _is_loaded(label)
+        if not plist_exists and not loaded:
+            continue  # nothing from the old install on this machine
+        ok, detail = _bootout(label)
+        if plist_exists:
+            plist_path.unlink()
+        migrated.append(
+            {
+                "label": label,
+                "bootout": detail,
+                "plist_removed": plist_exists,
+                "status": "migrated" if ok else "error",
+            }
+        )
+    return migrated
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +250,11 @@ def cmd_install(args: argparse.Namespace) -> dict[str, Any]:
     plist_dir.mkdir(parents=True, exist_ok=True)
 
     result: dict[str, Any] = {"status": "ok", "enabled": config["enabled"], "jobs": []}
+
+    # Migrate any old-label jobs before (re)installing under the current labels.
+    legacy = _migrate_legacy_labels(plist_dir)
+    if legacy:
+        result["migrated"] = legacy
 
     if not config["enabled"]:
         result["status"] = "noop"
@@ -260,6 +308,11 @@ def cmd_install(args: argparse.Namespace) -> dict[str, Any]:
 def cmd_uninstall(args: argparse.Namespace) -> dict[str, Any]:
     plist_dir = Path(args.plist_dir) if args.plist_dir else Path.home() / "Library" / "LaunchAgents"
     result: dict[str, Any] = {"status": "ok", "jobs": []}
+
+    # Old-label jobs count as installed state: uninstall removes them too.
+    legacy = _migrate_legacy_labels(plist_dir)
+    if legacy:
+        result["migrated"] = legacy
 
     for label in (LABEL_LIGHT, LABEL_DEEP):
         job_result: dict[str, Any] = {"label": label}

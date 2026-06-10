@@ -77,9 +77,18 @@ jobs:
         #     lifecycle.py / semantic ordering) under default import mode; fixed
         #     by importmode=importlib but that needs a full-suite sweep first →
         #     `pytest-import-mode-collision`.
+        # `-m "not integration"` excludes `integration`-marked tests (also the
+        # pyproject addopts default, restated here so the gate is visible at
+        # the point it applies): they spawn real embed/rerank daemons, hit live
+        # services, download models, and carry timing gates (embed <100ms,
+        # rerank <200ms) that flake on shared runners — none of which exist in
+        # CI. Affected: test_embed_daemon, test_wiki_client,
+        # test_contextual_prepend, test_rerank, test_rerank_daemon. They run on
+        # demand with `pytest -m integration`.
         run: |
           uv run pytest scripts/ tests/ \
             -p no:cacheprovider -q --no-header -rfE \
+            -m "not integration" \
             --timeout=60 --timeout-method=thread \
             --deselect scripts/rally_point/test_post_commit.py::test_plain_commit_writes_one_record \
             --deselect scripts/rally_point/test_post_commit.py::test_manifest_commit_also_writes_dep_change \

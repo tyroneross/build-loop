@@ -81,7 +81,7 @@ Tie-breaker: if signals are mixed (an Apple project with both `ios/` and a macOS
 
 **Migration source**: if `.replit` / `replit.nix` present → `migrationSource: "replit"`. Lovable / Bolt / v0 export markers (e.g. `lovable.config`, `bolt.config`, `v0.dev` in comments) → corresponding source. `replit-migrate` skills generalize — load `migration-scan` for any of the above, override hints as needed.
 
-**Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds per `~/.claude/projects/-Users-tyroneross/memory/reference_asc_credentials.md`. Apply deployment policy first: TestFlight/App Store Connect upload/export defaults to `auto`; App Store production release/submission defaults to `confirm`.
+**Apple deploy**: when `platform: "apple"` AND goal includes "deploy", "TestFlight", or "App Store" → Phase 7/8 invoke `apple-dev` deploy flow using ASC creds from your harness memory store (e.g. `~/.claude/projects/<project-slug>/memory/reference_asc_credentials.md`). Apply deployment policy first: TestFlight/App Store Connect upload/export defaults to `auto`; App Store production release/submission defaults to `confirm`.
 
 **Web deploy verify**: fires when `.vercel/project.json` or `vercel.json` is present AND the build performed a push/deploy → Phase 4 Review-B invokes `scripts/verify_deploy.py` (preferred-tier upgrade: Vercel MCP only if the user has added it to `.mcp.json`). Infra failures return `skipped`, never block the build.
 
@@ -176,7 +176,7 @@ If Phase 1 detects that the task touches plugin components, Phase 3 must map eac
 
 | Source | When | How |
 |---|---|---|
-| `/cookbook` | Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, thinking, structured output, batch, caching | Invoke `/cookbook` or read `~/.claude/projects/-Users-tyroneross/memory/reference_claude_cookbook.md` |
+| `/cookbook` | Claude API patterns: tool calling, PTC, code execution, Agent SDK, RAG, thinking, structured output, batch, caching | Invoke `/cookbook` or read `reference_claude_cookbook.md` from your harness memory store (`~/.claude/projects/<project-slug>/memory/`) |
 | `RossLabs-AI-Toolkit/LESSONS-LEARNED.md` | Any plugin work | Read during Phase 1 ASSESS |
 | `context7` MCP | Any library/framework use | `query-docs` / `resolve-library-id` — do NOT code from training data |
 | `research` skill | Factual claims, pricing, versions | Run `scripts/research_trigger.py` first; T1 official docs → T4 forums; 2-source minimum |

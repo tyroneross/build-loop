@@ -58,7 +58,10 @@ python_files = ["test_*.py"]
 # gates (embed <100ms, rerank <200ms) that flake under machine load. They run
 # on demand with `pytest -m integration`. This is correct integration-test
 # gating, not a silent skip — the marker's own description names the cause.
-addopts = "-q -m 'not integration'"
+# CI (.github/workflows/pytest.yml) passes both `-q` and `-m "not integration"`
+# explicitly so the gate is visible at the point it applies; this addopts line
+# covers local default runs.
+addopts = "-m 'not integration'"
 markers = [
     "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
     "live: test that requires a live external service (Ollama/qwen on :11434, embed/rerank daemon, Postgres); auto-skipped when the service is unreachable",

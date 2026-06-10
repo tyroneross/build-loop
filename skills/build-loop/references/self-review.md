@@ -90,8 +90,10 @@ Deep mode digests include an `## Apply plan` section that separates SAFE-to-auto
 
 `python3 scripts/install_self_review.py install` writes two plists to `~/Library/LaunchAgents/`:
 
-- `com.tyroneross.buildloop.selfreview-light.plist` — daily at 09:00, invokes `scripts/self_review_run.sh light`
-- `com.tyroneross.buildloop.selfreview-deep.plist` — weekly Sunday at 03:00, invokes `scripts/self_review_run.sh deep`
+- `com.build-loop.selfreview-light.plist` — daily at 09:00, invokes `scripts/self_review_run.sh light`
+- `com.build-loop.selfreview-deep.plist` — weekly Sunday at 03:00, invokes `scripts/self_review_run.sh deep`
+
+`install` and `uninstall` also unload + remove any jobs still installed under the pre-rename legacy labels (developer-prefixed `*.buildloop.selfreview-*`), so an existing machine transitions to the neutral labels on the next run.
 
 Both jobs write output to `.build-loop/self-review/launchd-{light,deep}.log`.
 

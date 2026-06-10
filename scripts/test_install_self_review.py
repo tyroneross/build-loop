@@ -224,13 +224,98 @@ class TestInstallDisabledNoOp(unittest.TestCase):
         import unittest.mock as mock
 
         with mock.patch.object(installer, "_bootout", return_value=(True, "ok")), \
-             mock.patch.object(installer, "_load", return_value=(True, "ok")):
+             mock.patch.object(installer, "_load", return_value=(True, "ok")), \
+             mock.patch.object(installer, "_is_loaded", return_value=False):
             args = argparse.Namespace(plist_dir=str(plist_dir), repo=str(repo))
             result = installer.cmd_install(args)
 
         self.assertEqual(result["status"], "noop")
         plists = list(plist_dir.glob("*.plist"))
         self.assertEqual(plists, [], "no plists should be written when enabled=false")
+
+
+class TestLegacyLabelMigration(unittest.TestCase):
+    """install/uninstall unload + remove plists left by the pre-rename labels."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_labels_are_neutral(self) -> None:
+        """Distributed labels must not carry developer identity."""
+        for label in (installer.LABEL_LIGHT, installer.LABEL_DEEP):
+            self.assertTrue(label.startswith("com.build-loop."), label)
+
+    def test_install_migrates_legacy_plists(self) -> None:
+        import unittest.mock as mock
+
+        plist_dir = self.tmp / "launchagents"
+        plist_dir.mkdir()
+        repo = _make_repo(self.tmp)
+        # Simulate an existing old-label install.
+        legacy_paths = [plist_dir / f"{label}.plist" for label in installer.LEGACY_LABELS]
+        for path in legacy_paths:
+            path.write_text("<plist/>")
+
+        booted_out: list[str] = []
+
+        def fake_bootout(label: str) -> tuple[bool, str]:
+            booted_out.append(label)
+            return True, f"bootout {label}: ok"
+
+        with mock.patch.object(installer, "_bootout", side_effect=fake_bootout), \
+             mock.patch.object(installer, "_load", return_value=(True, "ok")), \
+             mock.patch.object(installer, "_is_loaded", return_value=False):
+            args = argparse.Namespace(plist_dir=str(plist_dir), repo=str(repo))
+            result = installer.cmd_install(args)
+
+        for path in legacy_paths:
+            self.assertFalse(path.exists(), f"legacy plist not removed: {path}")
+        for label in installer.LEGACY_LABELS:
+            self.assertIn(label, booted_out, f"legacy job not booted out: {label}")
+        migrated_labels = {j["label"] for j in result.get("migrated", [])}
+        self.assertEqual(migrated_labels, set(installer.LEGACY_LABELS))
+        # New-label plists were written as usual.
+        new_plists = sorted(p.name for p in plist_dir.glob("*.plist"))
+        self.assertEqual(
+            new_plists,
+            sorted(f"{label}.plist" for label in (installer.LABEL_LIGHT, installer.LABEL_DEEP)),
+        )
+
+    def test_install_no_migration_entry_when_clean(self) -> None:
+        import unittest.mock as mock
+
+        plist_dir = self.tmp / "launchagents"
+        plist_dir.mkdir()
+        repo = _make_repo(self.tmp)
+
+        with mock.patch.object(installer, "_bootout", return_value=(True, "ok")), \
+             mock.patch.object(installer, "_load", return_value=(True, "ok")), \
+             mock.patch.object(installer, "_is_loaded", return_value=False):
+            args = argparse.Namespace(plist_dir=str(plist_dir), repo=str(repo))
+            result = installer.cmd_install(args)
+
+        self.assertNotIn("migrated", result)
+
+    def test_uninstall_removes_legacy_plists(self) -> None:
+        import unittest.mock as mock
+
+        plist_dir = self.tmp / "launchagents"
+        plist_dir.mkdir()
+        legacy_path = plist_dir / f"{installer.LEGACY_LABELS[0]}.plist"
+        legacy_path.write_text("<plist/>")
+
+        with mock.patch.object(installer, "_bootout", return_value=(True, "ok")), \
+             mock.patch.object(installer, "_is_loaded", return_value=False):
+            args = argparse.Namespace(plist_dir=str(plist_dir))
+            result = installer.cmd_uninstall(args)
+
+        self.assertFalse(legacy_path.exists())
+        migrated_labels = {j["label"] for j in result.get("migrated", [])}
+        self.assertEqual(migrated_labels, {installer.LEGACY_LABELS[0]})
 
 
 import argparse  # noqa: E402  (imported here for the test above to find it)
