@@ -173,6 +173,15 @@ Room resolution can shift under you — a binary update, a repo-keying change, o
 - **A lead that posted then went quiet is idle** (same as any interactive CLI peer — see §Peer liveness). Do not block on it; absorb local lanes, leave a relay for its return.
 - **Never hand-append the hash-chain channel files** (`changes.jsonl`) to "reach" a peer — corruption risk. If the CLI cannot post, relay out-of-band; do not edit the chain.
 
+## Room-policy reconciliation (mission / envelopes vs dispatch brief)
+
+Named failure (2026-06-09, agent-rally-point): two orchestrator runs hit the same in-room mission guardrail ("No push to origin without Tyrone go") and split — one pushed past it without addressing it; the other held a finished build at push time even though the line was stale (superseded in practice by five operator-approved pushes). The rule below makes the reconciliation explicit and early.
+
+- **Read room policy at entry.** After `rally enter`/`ack`, read the room mission and this agent's autonomy envelope (`rally mission --json`) and reconcile them against the dispatch brief's authorizations for gated actions (push, deploy, destructive).
+- **Surface conflicts at Phase 1, not at push time.** A mission/brief conflict on a gated action is posted on-channel as a decision-needed fact AND returned to the dispatcher immediately — never first discovered after the work is done.
+- **Precedence when reconciling:** newer ledger decision facts supersede older mission text; a per-agent autonomy envelope `may` grant covers its named action; an operator-attributed decision fact satisfies a "without <operator> go" guardrail. Operator-attributed means posted by the operator or from an operator-present interactive session — a subagent cannot mint its own go signal by posting a decision fact mid-run.
+- **Genuine conflict after checking all three → hold the gated action and surface.** Holding is the correct terminal behavior; the failure mode this rule removes is holding late.
+
 ---
 
 ## MECE Packets (every write-handoff requires all six)
