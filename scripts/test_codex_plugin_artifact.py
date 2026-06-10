@@ -4,6 +4,7 @@
 """Tests for the generated Codex marketplace artifact."""
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,14 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 SCRIPT = HERE / "build_codex_plugin_artifact.py"
 ARTIFACT = REPO_ROOT / "plugin-artifacts" / "codex"
+
+
+def _load_builder():
+    spec = importlib.util.spec_from_file_location("build_codex_plugin_artifact", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class CodexPluginArtifactTests(unittest.TestCase):
@@ -58,6 +67,25 @@ class CodexPluginArtifactTests(unittest.TestCase):
             self.assertEqual(skill_paths, ["skills/build-loop/SKILL.md"])
             manifest = target / ".codex-plugin" / "plugin.json"
             self.assertIn('"skills": "./skills"', manifest.read_text(encoding="utf-8"))
+
+    def test_checked_in_artifact_reference_pointers_resolve(self) -> None:
+        """Every ``references/X.md`` pointer on the shipped bundle's primary
+        surface (AGENTS.md / README.md / the build-loop skill tree) must resolve
+        to a file under the bundle's top-level ``references/``. Guards against
+        the dangling-reference regression (codex-bundle-missing-references-dir)
+        and catches a stale or hand-edited artifact directly, not just the
+        builder. Foreign-skill prose refs and known source TBDs are allowlisted
+        in the builder module and excluded here too.
+        """
+        builder = _load_builder()
+        # Raises ArtifactError on any dangling primary-surface pointer.
+        builder.check_reference_pointers(ARTIFACT)
+
+        # Positive assertion: the issue's named example resolves.
+        self.assertTrue(
+            (ARTIFACT / "references" / "research-trigger-policy.md").is_file(),
+            "research-trigger-policy.md must be mirrored into the bundle references/",
+        )
 
 
 if __name__ == "__main__":
