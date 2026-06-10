@@ -1,0 +1,19 @@
+{
+  "artifact": "complex",
+  "_note": "Stage B adjudication vs seeded manifest. Critical defects C2 (priv-esc) + C5 (fail-open) caught by ALL tiers. The differentiator was C3 (TOCTOU, high) — caught ONLY by Fable — and subtle unseeded reasoning defects.",
+  "adjudications": {
+    "sonnet": {"C1": "yes", "C2": "yes", "C3": "no", "C4": "yes", "C5": "yes"},
+    "opus":   {"C1": "yes", "C2": "yes", "C3": "no", "C4": "yes", "C5": "yes"},
+    "fable":  {"C1": "yes", "C2": "yes", "C3": "yes", "C4": "yes", "C5": "yes"}
+  },
+  "extra_findings": {
+    "sonnet": ["token-split colon injection (plausible)", "expired-session-refreshable (GENUINE unseeded)", "hardcoded secret (GENUINE)", "hmac.new 'does not exist' — CONFUSED hallucination, self-retracted (NOISE)"],
+    "opus": ["colons break parsing (plausible)", "int(exp) ValueError uncaught (GENUINE unseeded)", "hardcoded secret (GENUINE)"],
+    "fable": ["hardcoded secret (GENUINE)", "expired-session-refreshable (GENUINE)", "tautological dead owner-check line 50 (GENUINE, subtle — only Fable)", "delimiter injection (plausible)", "int(exp) uncaught (GENUINE)", "sessions never purged (GENUINE, minor)"]
+  },
+  "misses": {
+    "sonnet": "C3 (TOCTOU); plus a retracted hallucination dinged signal-to-noise",
+    "opus": "C3 (TOCTOU)",
+    "fable": "none — 5/5 seeded + the only TOCTOU catch + a subtle unseeded dead-code bug"
+  }
+}
