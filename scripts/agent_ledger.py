@@ -92,7 +92,7 @@ def build_row(
     refs: dict[str, Any] | None = None,
     note: str | None = None,
     ts: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any]:  # noqa: D401
     """Construct a ledger row dict in canonical field order.
 
     Required: `run_id`, `agent`, `action`. Everything else is optional so a
@@ -112,6 +112,10 @@ def build_row(
         raise ValueError(f"unknown status {status!r}; expected one of {sorted(STATUSES)}")
     if rung is not None and not (0 <= int(rung) <= 3):
         raise ValueError(f"rung must be 0-3, got {rung!r}")
+    if refs is not None and not isinstance(refs, dict):
+        # `refs` is a {input/output: ...} object by contract; a list/string would
+        # silently corrupt downstream ledger consumers that index it as a dict.
+        raise ValueError(f"refs must be a JSON object (dict), got {type(refs).__name__}")
 
     return {
         "ts": ts or _utc_now_iso(),
@@ -274,7 +278,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         envelope = append(path, row)
         print(json.dumps(envelope, indent=2))
-        return 0 if envelope["ok"] else 1
+        # Fail-OPEN on I/O: a ledger (telemetry) outage must never wedge a build
+        # whose only "failure" was that the instrument couldn't write. The build is
+        # the product; the ledger is the instrument. Input/caller errors above
+        # (bad action / bad --refs JSON) still exit nonzero — those are author
+        # mistakes, not runtime outages — but a write failure here exits 0 with
+        # ok:false in the envelope so the orchestrator can surface it without halting.
+        return 0
 
     if args.cmd == "read":
         print(json.dumps(read(path), indent=2))

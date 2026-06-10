@@ -7,7 +7,7 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 ## Canonical tier definitions
 
 ### Frontier tier
-- **Role:** Planning synthesis AND verification verdicts. Phase 1 Assess + Phase 2 Plan (frame goal, draft spec/ADRs, F-criteria, MECE partition). Verification-shaped agents whose verdicts gate downstream work: plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer.
+- **Role:** Planning synthesis AND verification verdicts. **Phase 2 Plan synthesis reaches Fable via the stakes-gated Advisor dispatch ladder** (`advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise — `skills/build-loop/references/advisor-dispatch-ladder.md`); the Advisor v1 ladder is Phase 2 only, so Phase 1 Assess synthesis runs inline as today until v2. Plan content: frame goal, draft spec/ADRs, F-criteria, MECE partition. Verification-shaped agents whose verdicts gate downstream work: plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer.
 - **Why this tier exists (above Thinking):** wrong plans dispatch N implementers into the wrong work, and wrong verdicts ship regressions. The user's standing priority is Accuracy > Speed > Cost; the compounding-risk surfaces pay the Frontier premium.
 - **Benchmark contract:** clears the Thinking-tier contract AND benchmarks above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond.
 - **Cost expectation:** highest. Use only on the planning + verification surface; never default for execution or coordination.

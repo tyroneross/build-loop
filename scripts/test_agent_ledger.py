@@ -161,6 +161,26 @@ class CliTests(unittest.TestCase):
         r = run_cli("--path", "/tmp/x.jsonl", "append", "--run-id", "r1", "--agent", "x", "--action", "bogus")
         self.assertNotEqual(r.returncode, 0)
 
+    def test_cli_append_io_failure_is_fail_open(self) -> None:
+        # An I/O write failure (a file where the parent dir should be) must exit 0
+        # with ok:false — a telemetry outage never wedges the build. Input/caller
+        # errors (above) still exit nonzero; only runtime write failures fail open.
+        with tempfile.TemporaryDirectory() as td:
+            blocker = Path(td) / "blocker"
+            blocker.write_text("x", encoding="utf-8")
+            bad_path = str(blocker / "sub" / "ledger.jsonl")  # parent is a file
+            r = run_cli("--path", bad_path, "append", "--run-id", "r1", "--agent", "x", "--action", "author")
+            self.assertEqual(r.returncode, 0, "I/O write failure must fail open (exit 0)")
+            self.assertFalse(json.loads(r.stdout)["ok"])
+
+    def test_cli_rejects_non_object_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = run_cli(
+                "--path", str(Path(td) / "l.jsonl"), "append",
+                "--run-id", "r1", "--agent", "x", "--action", "author", "--refs", "[1,2,3]",
+            )
+            self.assertNotEqual(r.returncode, 0, "a non-object refs value must be rejected as a caller error")
+
     def test_cli_rejects_bad_refs_json(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             r = run_cli(
