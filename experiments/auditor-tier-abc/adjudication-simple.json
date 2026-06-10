@@ -1,0 +1,25 @@
+{
+  "artifact": "simple",
+  "_note": "My adjudication of the 3 Stage-A auditor outputs vs the seeded manifest. extra_findings flags whether each non-seeded finding is GENUINE (a real defect I didn't plant) or defensible-nit/noise.",
+  "adjudications": {
+    "sonnet": {"S1": "no", "S2": "yes", "S3": "yes", "S4": "yes"},
+    "opus":   {"S1": "yes", "S2": "yes", "S3": "yes", "S4": "yes"},
+    "fable":  {"S1": "yes", "S2": "yes", "S3": "no", "S4": "yes"}
+  },
+  "extra_findings": {
+    "sonnet": ["negative/zero price validation (defensible nit, low)"],
+    "opus": ["float-for-money rounding (defensible nit, low)"],
+    "fable": [
+      "float-for-money (defensible nit)",
+      "average_item_price ignores qty — GENUINE unseeded bug",
+      "banker's rounding on total (pedantic)",
+      "discount_rate depends on list ordering — genuine robustness issue",
+      "coupon accepted but never applied — GENUINE unseeded functional bug"
+    ]
+  },
+  "misses": {
+    "sonnet": "S1 (boundary > vs >=)",
+    "opus": "none",
+    "fable": "S3 (tax applied before discount — a high-severity logic bug Sonnet AND Opus both caught)"
+  }
+}
