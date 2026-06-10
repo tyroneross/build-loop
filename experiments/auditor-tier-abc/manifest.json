@@ -1,0 +1,25 @@
+{
+  "artifacts": {
+    "simple": {
+      "file": "artifacts/simple_cart.py",
+      "defects": [
+        {"id": "S1", "severity": "high", "line": 23, "construct": "discount_rate: `if amount > threshold`", "desc": "boundary bug: should be >= ; an order exactly at a tier threshold (100/250/500) misses its discount"},
+        {"id": "S2", "severity": "medium", "line": 29, "construct": "average_item_price: subtotal/len(items)", "desc": "empty cart -> ZeroDivisionError; no len==0 guard"},
+        {"id": "S3", "severity": "high", "line": "35-37", "construct": "cart_total: taxed before discount", "desc": "operation order: tax applied before discount, so discount is taken on the taxed amount -> wrong final total"},
+        {"id": "S4", "severity": "low", "line": 32, "construct": "cart_total(..., _seen=[])", "desc": "mutable default argument; accumulates across calls"}
+      ]
+    },
+    "complex": {
+      "file": "artifacts/complex_auth.py",
+      "defects": [
+        {"id": "C1", "severity": "high", "line": 27, "construct": "verify_token: `if sig != expected`", "desc": "non-constant-time signature comparison -> timing attack; should use hmac.compare_digest"},
+        {"id": "C2", "severity": "critical", "line": 38, "construct": "require_role: `role = claimed_role or ctx['role']`", "desc": "privilege escalation: trusts caller-supplied claimed_role over the verified token role"},
+        {"id": "C3", "severity": "high", "line": 49, "construct": "can_delete: re-reads SESSIONS after the role check", "desc": "TOCTOU: permission checked, then session re-read from mutable store before acting; role could be revoked/changed in between"},
+        {"id": "C4", "severity": "high", "line": 61, "construct": "refresh_session: `return session_id`", "desc": "spec/impl drift: docstring says returns new expiry timestamp; code returns session_id instead"},
+        {"id": "C5", "severity": "critical", "line": 69, "construct": "authenticate: `except Exception: return True`", "desc": "fail-open auth bypass: any exception during verification returns authenticated=True"}
+      ]
+    }
+  },
+  "severity_weights": {"critical": 4, "high": 3, "medium": 2, "low": 1},
+  "scoring": "weighted recall = sum(weight * caught) / sum(weight); caught in {yes:1, partial:0.5, no:0}"
+}
