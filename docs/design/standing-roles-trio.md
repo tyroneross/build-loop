@@ -1,8 +1,11 @@
 # Standing Roles: Orchestrator / Advisor / Judge
 
-> **Status:** DRAFT — pre-research. Sections tagged `⏳ PENDING RESEARCH` await the
-> deep-research pass (run `wf_5a528e5d-b6d`) before they harden. Everything else is
-> converged design from the 2026-06-10 design thread.
+> **Status:** RECONCILED with research (2026-06-10). The deep-research pass
+> (run `wf_5a528e5d-b6d`) search/fetch surfaced the canonical literature; its automated
+> verification layer was rate-limited and did NOT adjudicate (the "all refuted" summary is
+> a harness artifact, not a real refutation). Findings below rest on foundational sources
+> corroborated from first-party knowledge; 2026 papers are marked as un-corroborated leads.
+> See "Research findings" at the end.
 >
 > **Branch:** `experiment/advisor-judge-trio` (off `main` @ `3e50f44`). Kept separate
 > from `main` deliberately for A/B testing against the current build-loop. This is an
@@ -97,9 +100,12 @@ compounding verdicts).
 | 2b | **Advisor (Fable)** | **take over** — executes it | *execution miss*, still failing after Opus |
 | 3 | Frontier critics | verify the takeover | any Frontier-authored output |
 
-`⏳ PENDING RESEARCH` — **who diagnoses planning-miss vs execution-miss**, and **the exact
-escalation trigger** (self-reported confidence vs verifier signal vs retry-count). Research
-question 4 + the diagnosis question feed this.
+**Escalation trigger = objective verifier signal, NOT self-reported confidence** (research:
+models/judges are systematically overconfident; intrinsic self-judgment is unreliable). The
+ladder advances on: test/build failure, auditor verdict, retry-count, or scope-breach — never
+"the model says it's unsure." **Diagnosis of planning-miss vs execution-miss** is itself a
+Frontier judgment: made by the Advisor (or a quick Frontier call) reading the failure evidence
++ the diff against the plan, not by the failing executor.
 
 ## The Advisor dispatch ladder (how it's enforced without breaking)
 
@@ -119,6 +125,14 @@ only when **stakes-gating** trips (`synthesisDensity > 5`, `triggers.riskSurface
 better whenever a dispatch path is reachable. The handoff cost fires *only* in Rung 1/2 — i.e.,
 only when the active context isn't already Frontier — so you pay it exactly where it buys an upgrade
 and never where planning is already Frontier.
+
+**Research nuance — dispatch is a quality lever, not only cost.** Context-separation evidence
+(⚠️ 2026 cross-context-review result, un-corroborated lead, directionally consistent with the
+corroborated self-correction literature) indicates review/synthesis in a *fresh* context beats
+same-session work. So Rungs 1/2 (fresh-context dispatch) are plausibly *higher quality* than
+Rung 0/3 inline, not merely more expensive — inline is a genuine quality compromise, taken only
+when dispatch is unreachable. For pure *verification* (the Judge's bench) prefer dispatch whenever
+reachable.
 
 ## Enablers (small wiring changes)
 
@@ -172,17 +186,62 @@ when the provider does — only the resolution table does.
 | On repeated failure? | Ladder dead-ends at Opus; run stalls/ships partial | Advisor re-instructs (planning miss) or takes over (execution miss) |
 | Who did what, recorded? | Scattered, unjoinable | One append-only ledger, every action, with model + rung + outcome |
 
-## Open calls (to settle after research)
+## Decisions (settled, research-grounded)
 
-1. v1 scope — Phase 2 design only, or also the re-plan / take-over rungs in the first build?
-2. Who diagnoses planning-miss vs execution-miss — orchestrator, or a quick Frontier call? `⏳`
-3. Ledger first or last — argued **first** (it's the instrument that proves the rest works).
-4. `⏳ PENDING RESEARCH` — escalation trigger mechanism, advisor consult frequency, judge-trust
-   techniques (research questions 2 + 4).
+1. **v1 scope** = the foundational, A/B-able core: the **ledger** (instrument first), the **Advisor
+   agent (Fable) + dispatch ladder** for Phase 2 plan synthesis, the **`dispatch_tier: frontier`**
+   enum, **plan-critic gating** on stakes triggers, and **doc reconciliation**. The full
+   **take-over-execution rung (2b)** and proactive checkpoint check-ins are **v2** — land after the
+   A/B confirms the core pays. (Keeps the first build's blast radius bounded; respects the
+   multi-agent-overhead risk by not decomposing more than needed until measured.)
+2. **Diagnosis (planning-miss vs execution-miss)** = the Advisor's call (Frontier), reading failure
+   evidence + diff-vs-plan. Never the failing executor's self-report.
+3. **Escalation trigger** = objective verifier signal (test/build failure, auditor verdict,
+   retry-count, scope-breach). NOT self-reported confidence (overconfidence is documented).
+4. **Judge stays a multi-specialist panel** for compounding verdicts (security / factuality / plan
+   soundness), with chain-of-thought, not a single judge — single-judge bias + adversarial-injection
+   vulnerability is documented. Raw judge confidence is not a gate.
+5. **Ledger first** — it's the instrument that makes the A/B measurable.
 
-## Research pass (in flight)
+## Risks (from the contrarian evidence — surfaced, not buried)
 
-`deep-research` run `wf_5a528e5d-b6d` — pressure-tests: separate-advisor vs self-critique,
-LLM-judge reliability/biases, orchestrator-workers failure modes, model-cascade escalation evidence,
-and where multi-agent breaks vs a single strong model. Findings reconcile into this doc (task #20)
-before the build (task #21).
+- **Multi-agent handoff failure** is the real risk (Cognition "Don't Build Multi-Agents"; MAST
+  failure taxonomy, arXiv 2503.13657). Systems fail at handoffs via context loss / conflicting
+  decisions; a single full-context agent often beats a fragmented one. **Mitigations (in design):**
+  stakes-gating (most runs stay single-context), file-based artifact handoffs (plan doc + ledger,
+  not lossy summaries), inline fallback as the single-context default, and the ledger making every
+  handoff observable. The design sits on the **orchestrator-workers** side of the line Anthropic
+  endorses for multi-file coding — but handoff discipline is make-or-break. **The A/B test is the
+  resolution**: confirm net benefit vs the current single-context build, don't assume it.
+- **The quality delta of Frontier planning remains the open empirical question** — the ledger is how
+  the A/B answers it (compare outcomes by rung/model).
+
+## Research findings (sources)
+
+Search/fetch surfaced 23 sources (deep-research `wf_5a528e5d-b6d`); automated verification was
+rate-limited (did not adjudicate). Confidence marked per source class.
+
+**Corroborated from first-party knowledge (✅ foundational):**
+- Self-correction needs *external* feedback; intrinsic self-correction *decreases* reasoning
+  accuracy — Huang et al., "LLMs Cannot Self-Correct Reasoning Yet" (ICLR 2024, OpenReview
+  PAFEQQtDf8); Kamoi et al., MIT TACL "When Can LLMs Actually Correct Their Own Mistakes."
+- Tool/external-grounded correction works — Gou et al., CRITIC (arXiv 2305.11738).
+- LLM-as-judge: ~80% human agreement but position/verbosity/self-enhancement bias — Zheng et al.,
+  MT-Bench (arXiv 2306.05685).
+- Cascades cut cost at equal accuracy — FrugalGPT (arXiv 2305.05176); RouteLLM (LMSYS 2024).
+- Orchestrator-workers endorsed for dynamic multi-file coding — Anthropic, "Building Effective
+  Agents"; "Multi-Agent Research System."
+- Multi-agent failure taxonomy — "Why Do Multi-Agent LLM Systems Fail?" (MAST, arXiv 2503.13657);
+  Cognition, "Don't Build Multi-Agents."
+
+**Un-corroborated leads (⚠️ 2025–2026, specific stats unverified by me):**
+- Self-critique −1.8…−5.1% vs cross-critique +30–40%; stronger reasoner = better critic (o1-mini
+  88.9% vs Qwen2.5-72B 61.8% F1) — arXiv 2501.14492.
+- Cross-context (fresh-session) review > same-session review, widest on Critical errors —
+  arXiv 2603.12123.
+- Judge overconfidence; calibrated confidence enables tiered routing — arXiv 2512.22245.
+- Judge biases survey + multi-judge aggregation — arXiv 2411.16594; MT-Bench judge agreement
+  58.8–65.2%, CoT best debias — arXiv 2604.23178.
+
+> Re-running the verification layer (off-peak, to dodge the rate limit) would upgrade the ⚠️ leads;
+> not blocking for the build since the core decisions rest on the ✅ corroborated set.
