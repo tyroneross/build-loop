@@ -54,6 +54,13 @@ def temp_repo(tmp_path: Path) -> Path:
 def _run_where(workdir: Path, *extra: str, env_apps_root: Path | None = None):
     env = os.environ.copy()
     env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
+    # These tests pin the *internal-fallback* (apps-root) discovery contract.
+    # The bridge's documented test-isolation hook short-circuits all canonical
+    # sources — including any ``rally`` binary on PATH — so resolution can't be
+    # hijacked by a locally-installed rally CLI resolving the temp repo's
+    # ``.rally`` (resolved_via=repo-local-rally-cli). Without it the test passes
+    # only on a host with no ``rally`` binary (e.g. CI) and fails locally.
+    env["BUILD_LOOP_BRIDGE_INTERNAL_ONLY"] = "1"
     if env_apps_root is not None:
         env["BUILD_LOOP_APPS_ROOT"] = str(env_apps_root)
     return subprocess.run(
