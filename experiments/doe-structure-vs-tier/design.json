@@ -1,0 +1,137 @@
+{
+  "design": {
+    "type": "full",
+    "name": "2^3 full factorial",
+    "n_runs": 8,
+    "n_factors": 3
+  },
+  "factors": [
+    {
+      "name": "tier"
+    },
+    {
+      "name": "plan_first"
+    },
+    {
+      "name": "self_verify"
+    }
+  ],
+  "matrix": [
+    [
+      -1.0,
+      -1.0,
+      -1.0
+    ],
+    [
+      -1.0,
+      -1.0,
+      1.0
+    ],
+    [
+      -1.0,
+      1.0,
+      -1.0
+    ],
+    [
+      -1.0,
+      1.0,
+      1.0
+    ],
+    [
+      1.0,
+      -1.0,
+      -1.0
+    ],
+    [
+      1.0,
+      -1.0,
+      1.0
+    ],
+    [
+      1.0,
+      1.0,
+      -1.0
+    ],
+    [
+      1.0,
+      1.0,
+      1.0
+    ]
+  ],
+  "run_order": [
+    2,
+    4,
+    3,
+    6,
+    5,
+    0,
+    1,
+    7
+  ],
+  "runs": [
+    {
+      "_run_id": 0,
+      "_factors": {
+        "tier": "Sonnet",
+        "plan_first": "off",
+        "self_verify": "off"
+      }
+    },
+    {
+      "_run_id": 1,
+      "_factors": {
+        "tier": "Sonnet",
+        "plan_first": "off",
+        "self_verify": "on"
+      }
+    },
+    {
+      "_run_id": 2,
+      "_factors": {
+        "tier": "Sonnet",
+        "plan_first": "on",
+        "self_verify": "off"
+      }
+    },
+    {
+      "_run_id": 3,
+      "_factors": {
+        "tier": "Sonnet",
+        "plan_first": "on",
+        "self_verify": "on"
+      }
+    },
+    {
+      "_run_id": 4,
+      "_factors": {
+        "tier": "Fable",
+        "plan_first": "off",
+        "self_verify": "off"
+      }
+    },
+    {
+      "_run_id": 5,
+      "_factors": {
+        "tier": "Fable",
+        "plan_first": "off",
+        "self_verify": "on"
+      }
+    },
+    {
+      "_run_id": 6,
+      "_factors": {
+        "tier": "Fable",
+        "plan_first": "on",
+        "self_verify": "off"
+      }
+    },
+    {
+      "_run_id": 7,
+      "_factors": {
+        "tier": "Fable",
+        "plan_first": "on",
+        "self_verify": "on"
+      }
+    }
+  ]
+}
