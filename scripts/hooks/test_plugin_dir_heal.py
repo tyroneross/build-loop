@@ -61,17 +61,22 @@ def run_heal(home: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
-def write_registry(home: Path, plugin_key: str, install_path: Path, version: str) -> None:
-    registry = {
-        "plugins": {
-            plugin_key: [
-                {
-                    "installPath": str(install_path),
-                    "version": version,
-                }
-            ]
-        }
-    }
+def read_registry(home: Path) -> dict:
+    return json.loads(
+        (home / "plugins" / "installed_plugins.json").read_text(encoding="utf-8")
+    )
+
+
+def write_registry(
+    home: Path,
+    plugin_key: str,
+    install_path: Path | None,
+    version: str,
+) -> None:
+    entry = {"version": version}
+    if install_path is not None:
+        entry["installPath"] = str(install_path)
+    registry = {"plugins": {plugin_key: [entry]}}
     write(home / "plugins" / "installed_plugins.json", json.dumps(registry))
 
 
@@ -284,6 +289,129 @@ class PluginDirHealTests(unittest.TestCase):
         result = run_heal(self.home, "--verbose")
         self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
         self.assertIn("healthy=1", result.stdout)
+
+    def test_repairs_missing_install_path_from_matching_cache_dir(self) -> None:
+        version = "0.33.0"
+        cache_install = self.cache_dir / version
+        write_manifest(cache_install, self.plugin_name, version)
+        key = f"{self.plugin_name}@{self.marketplace}"
+        write_registry(self.home, key, None, version)
+
+        result = run_heal(self.home, "--verbose")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        registry = read_registry(self.home)
+        self.assertEqual(registry["plugins"][key][0]["installPath"], str(cache_install))
+        self.assertTrue(Path(registry["plugins"][key][0]["installPath"]).is_absolute())
+        self.assertIn("installpath_repaired=1", result.stdout)
+        self.assertIn("healthy=1", result.stdout)
+
+    def test_missing_install_path_dry_run_does_not_mutate_registry(self) -> None:
+        version = "0.33.0"
+        cache_install = self.cache_dir / version
+        write_manifest(cache_install, self.plugin_name, version)
+        key = f"{self.plugin_name}@{self.marketplace}"
+        write_registry(self.home, key, None, version)
+
+        result = run_heal(self.home, "--dry-run", "--verbose")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        registry = read_registry(self.home)
+        self.assertNotIn("installPath", registry["plugins"][key][0])
+        self.assertIn("installpath_repaired=1", result.stdout)
+
+    def test_missing_install_path_rejects_mismatched_manifest_version(self) -> None:
+        version = "0.33.0"
+        cache_install = self.cache_dir / version
+        write_manifest(cache_install, self.plugin_name, "9.9.9")
+        key = f"{self.plugin_name}@{self.marketplace}"
+        write_registry(self.home, key, None, version)
+
+        result = run_heal(self.home, "--verbose")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        registry = read_registry(self.home)
+        self.assertNotIn("installPath", registry["plugins"][key][0])
+        self.assertIn("missing_installpath_field=1", result.stdout)
+        self.assertNotIn("installpath_repaired=1", result.stdout)
+
+    def test_missing_install_path_does_not_use_other_marketplace_cache(self) -> None:
+        version = "0.33.0"
+        other_marketplace = (
+            self.home
+            / "plugins"
+            / "cache"
+            / "other-marketplace"
+            / self.plugin_name
+            / version
+        )
+        write_manifest(other_marketplace, self.plugin_name, version)
+        key = f"{self.plugin_name}@{self.marketplace}"
+        write_registry(self.home, key, None, version)
+
+        result = run_heal(self.home, "--verbose")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        registry = read_registry(self.home)
+        self.assertNotIn("installPath", registry["plugins"][key][0])
+        self.assertIn("missing_installpath_field=1", result.stdout)
+        self.assertNotIn("installpath_repaired=1", result.stdout)
+
+    def test_repairs_missing_install_path_from_backup_registry(self) -> None:
+        version = "0.33.0"
+        backup_install = self.tmp_path / "trusted-backup" / self.plugin_name / version
+        write_manifest(backup_install, self.plugin_name, version)
+        key = f"{self.plugin_name}@{self.marketplace}"
+        write_registry(self.home, key, None, version)
+        backup_registry = (
+            self.home
+            / "plugins"
+            / "_manual-reinstall-backup-1"
+            / "installed_plugins.json"
+        )
+        write(
+            backup_registry,
+            json.dumps(
+                {
+                    "plugins": {
+                        key: [
+                            {
+                                "installPath": str(backup_install),
+                                "version": version,
+                            }
+                        ]
+                    }
+                }
+            ),
+        )
+
+        result = run_heal(self.home, "--verbose")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        registry = read_registry(self.home)
+        self.assertEqual(registry["plugins"][key][0]["installPath"], str(backup_install))
+        self.assertIn("installpath_repaired=1", result.stdout)
+
+    def test_missing_install_path_archive_restore_failure_does_not_mutate_registry(
+        self,
+    ) -> None:
+        version = "0.33.0"
+        archived = (
+            self.home
+            / "plugins"
+            / "removed"
+            / "tag-2026-06-11"
+            / self.plugin_name
+            / version
+        )
+        write_manifest(archived, self.plugin_name, version)
+        # Make the canonical plugin cache parent impossible to create.
+        self.cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_dir.write_text("not a directory", encoding="utf-8")
+        key = f"{self.plugin_name}@{self.marketplace}"
+        write_registry(self.home, key, None, version)
+
+        result = run_heal(self.home, "--verbose")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        registry = read_registry(self.home)
+        self.assertNotIn("installPath", registry["plugins"][key][0])
+        self.assertIn("installpath_repaired=1", result.stdout)
+        self.assertIn("errors=1", result.stdout)
 
 
 class WrapperSmokeTests(unittest.TestCase):

@@ -127,6 +127,24 @@ def load_registry() -> Optional[dict]:
         return None
 
 
+def save_registry(registry: dict) -> bool:
+    P = _paths()
+    tmp = P["registry"].with_name(f"{P['registry'].name}.tmp.{os.getpid()}")
+    try:
+        P["registry"].parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, P["registry"])
+        return True
+    except OSError as e:
+        _log(f"ERROR: cannot write registry repair: {e}")
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
 def _is_plugin_version_dir(path: Path, plugin_name: str, version: str) -> bool:
     """True if path is a copy of <plugin>@<version>. Manifest match wins;
     falls back to dir-name == version."""
@@ -141,6 +159,114 @@ def _is_plugin_version_dir(path: Path, plugin_name: str, version: str) -> bool:
         if data.get("name") == plugin_name and str(data.get("version") or "") == str(version):
             return True
     return path.name == version
+
+
+def _is_trusted_plugin_version_dir(path: Path, plugin_name: str, version: str) -> bool:
+    """True only when the host manifest proves path is <plugin>@<version>.
+
+    Missing ``installPath`` repair mutates installed_plugins.json, so it uses a
+    stricter check than archive recovery: directory name alone is not enough.
+    """
+    if not path.is_dir():
+        return False
+    manifest = path / ".claude-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return False
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return data.get("name") == plugin_name and str(data.get("version") or "") == str(
+        version
+    )
+
+
+def _backup_registry_paths() -> list[Path]:
+    P = _paths()
+    plugins = P["plugins"]
+    if not plugins.is_dir():
+        return []
+    try:
+        candidates = sorted(plugins.glob("*/installed_plugins.json"), reverse=True)
+    except OSError:
+        return []
+    return [p for p in candidates if p != P["registry"]]
+
+
+def find_backup_install_path(
+    plugin_key: str,
+    plugin_name: str,
+    version: str,
+) -> Optional[Path]:
+    """Find a trusted absolute installPath from registry backups.
+
+    A backup entry is trusted only when it matches the same plugin key/version,
+    uses an absolute path, and that path's manifest exactly matches
+    ``plugin_name`` + ``version``.
+    """
+    for registry_path in _backup_registry_paths():
+        try:
+            data = json.loads(registry_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        entries = (data.get("plugins") or {}).get(plugin_key) or []
+        if not isinstance(entries, list):
+            entries = [entries]
+        for entry in entries:
+            if str(entry.get("version") or "") != str(version):
+                continue
+            raw = entry.get("installPath")
+            if not raw:
+                continue
+            candidate = Path(str(raw)).expanduser()
+            if not candidate.is_absolute():
+                continue
+            if _is_trusted_plugin_version_dir(candidate, plugin_name, version):
+                return candidate
+    return None
+
+
+def find_cache_install_path(
+    plugin_name: str,
+    marketplace: str,
+    version: str,
+) -> Optional[Path]:
+    """Find a trusted cache dir for <marketplace>/<plugin>/<version>."""
+    P = _paths()
+    exact = P["cache"] / marketplace / plugin_name / version
+    if _is_trusted_plugin_version_dir(exact, plugin_name, version):
+        return exact
+    return None
+
+
+def find_install_path_repair(
+    plugin_key: str,
+    plugin_name: str,
+    marketplace: str,
+    version: str,
+) -> Optional[Path]:
+    """Resolve a missing installPath to a trusted absolute path.
+
+    Sources, in order:
+      1. Matching current cache dir for the registry marketplace.
+      2. Matching absolute installPath from a backup installed_plugins.json.
+      3. Canonical cache path when a matching archived copy exists under removed/
+         so the existing restore path can move it back in the same run.
+    """
+    cached = find_cache_install_path(plugin_name, marketplace, version)
+    if cached is not None:
+        return cached
+    backup = find_backup_install_path(plugin_key, plugin_name, version)
+    if backup is not None:
+        return backup
+    archived = find_archived_match(plugin_name, version)
+    if archived is not None and _is_trusted_plugin_version_dir(
+        archived,
+        plugin_name,
+        version,
+    ):
+        return _paths()["cache"] / marketplace / plugin_name / version
+    return None
 
 
 def find_archived_match(plugin_name: str, version: str) -> Optional[Path]:
@@ -295,6 +421,7 @@ def heal_once(dry_run: bool) -> dict:
         "errors": 0,
         "symlink_skip": 0,
         "missing_installpath_field": 0,
+        "installpath_repaired": 0,
     }
 
     registry = load_registry()
@@ -307,6 +434,19 @@ def heal_once(dry_run: bool) -> dict:
 
     started = time.monotonic()
     deadline = started + BUDGET_SECONDS
+    registry_dirty = False
+
+    def finish() -> dict:
+        if registry_dirty and not dry_run and not save_registry(registry):
+            counts["errors"] += 1
+        return counts
+
+    def record_installpath_repair(entry: dict, install_path: Path, enabled: bool) -> None:
+        nonlocal registry_dirty
+        if not enabled or dry_run:
+            return
+        entry["installPath"] = str(install_path)
+        registry_dirty = True
 
     for plugin_key, entries in plugins_section.items():
         if "@" not in plugin_key:
@@ -318,23 +458,45 @@ def heal_once(dry_run: bool) -> dict:
         for entry in entries:
             if time.monotonic() > deadline:
                 _log("DEFER: budget exhausted mid-scan")
-                return counts
+                return finish()
 
             install_path_str = entry.get("installPath", "")
             version = str(entry.get("version") or "")
-            if not install_path_str or not version:
+            if not version:
                 counts["missing_installpath_field"] += 1
                 continue
+
+            repair_install_path = False
+            if not install_path_str:
+                repaired = find_install_path_repair(
+                    plugin_key,
+                    plugin_name,
+                    _marketplace,
+                    version,
+                )
+                if repaired is None:
+                    counts["missing_installpath_field"] += 1
+                    continue
+                install_path_str = str(repaired)
+                counts["installpath_repaired"] += 1
+                repair_install_path = True
+                _log(
+                    f"REPAIRED-INSTALLPATH {plugin_key}@{version}: "
+                    f"installPath={install_path_str}"
+                    + (" [dry-run]" if dry_run else "")
+                )
 
             install_path = Path(install_path_str)
 
             if install_path.is_symlink():
                 # Already symlinked — fine, even if target now differs.
                 # (Pruner protects by NAME, not by resolved target.)
+                record_installpath_repair(entry, install_path, repair_install_path)
                 counts["symlink_skip"] += 1
                 continue
 
             if install_path.exists():
+                record_installpath_repair(entry, install_path, repair_install_path)
                 counts["healthy"] += 1
                 continue
 
@@ -343,6 +505,7 @@ def heal_once(dry_run: bool) -> dict:
             if archived is not None:
                 ok = restore_dir(archived, install_path, dry_run=dry_run)
                 if ok:
+                    record_installpath_repair(entry, install_path, repair_install_path)
                     counts["restored_from_removed"] += 1
                     _log(
                         f"RESTORED {plugin_key}@{version}: "
@@ -361,6 +524,7 @@ def heal_once(dry_run: bool) -> dict:
             if sibling is not None:
                 ok = symlink_to_sibling(sibling, install_path, dry_run=dry_run)
                 if ok:
+                    record_installpath_repair(entry, install_path, repair_install_path)
                     counts["symlinked_to_sibling"] += 1
                     _log(
                         f"SYMLINKED {plugin_key}@{version}: "
@@ -381,7 +545,7 @@ def heal_once(dry_run: bool) -> dict:
                 f"({install_path}); no archive under removed/, no live sibling"
             )
 
-    return counts
+    return finish()
 
 
 def main(argv: list[str]) -> int:
