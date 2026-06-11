@@ -8,6 +8,19 @@
 
 Build-loop maintains one canonical long-term memory store at `~/dev/git-folder/build-loop-memory/`. Every build reads canonical indexes/folders; writes go to exactly one lane based on scope.
 
+### Recall-optimized memory discipline
+
+Canonical reference: `build-loop-memory/references/2026-06-11-memory-discipline-prompt.md` (`version: 2026-06-11.1`). Apply it to every non-trivial memory-relevant read or write.
+
+Operational contract:
+
+- Recall first for significant repo work, debugging, planning, and any memory write. Read the store-root `INDEX.md` first, then project context such as `projects/<slug>/context/CONTEXT.md` and generated `CURRENT.*`, plus `constitution.md` / `MEMORY.md` where present. Search `indexes/INDEX.jsonl`, scan `chronology.jsonl`, read the matching lane, and verify any remembered file/flag/API/script still exists before relying on it.
+- Write only durable facts that aid future recall: decisions + rationale, lessons, reusable references, gotchas, experiment results, product opportunities, and durable operational patterns. Do not write restated code, git-derivable facts, transient status, or handoff-only state.
+- Before writing, search `indexes/INDEX.jsonl` for an existing slug/title, update instead of duplicating, then check `indexes/duplicates.jsonl` after indexing. Use title and `description` as the recall hooks.
+- Do not hand-write project decisions. Use `scripts/write_decision/__main__.py`; it writes the decision lane and updates that lane's `INDEX.md` / update ledger. Generated master-index reachability is still incomplete for new `projects/<slug>/decisions/` files, so verify decisions through `memory_facade` or the decision lane until the scanner/map split is reconciled.
+- Current reference gap: `memory_writer.py` has `research` as a project sublane but not `references`; `reference_capture` writes to `projects/<slug>/research/`, while `build-loop-memory/scripts/rebuild_memory_indexes.py` scans `references/` and not `research/`. For generated-index recall today, write `type: reference` content under `projects/<slug>/lessons/references/`, or update both writer and indexer to agree on `references` or `research`.
+- After any memory write, run the relevant host index/check step when mutation is in scope and verify the entry is reachable from the proper recall surface: `INDEX.jsonl` for generated-index lanes, decision lane/index or `memory_facade` for decisions, or the host system's equivalent.
+
 **Cross-project memory**: `build-loop-memory/lessons/` plus the sibling top-level lanes `design/`, `debugging/`, and `product/`
 
 - Applies across every project this user builds.
@@ -87,7 +100,7 @@ last_updated_at: "ISO8601 UTC"
 ---
 ```
 
-### Writer side — use memory_writer.py, never write memory files directly
+### Writer side — use the canonical writer for normal memory writes
 
 **Top-level (cross-project) write** — `--scope top-level` routes to `build-loop-memory/lessons/` (or a sibling lane when `--file <lane>/x.md` is used):
 
@@ -121,7 +134,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py \
   --body-file /tmp/memory-body.md
 ```
 
-The writer auto-detects `source_repo` from the workdir's git remote, appends a row to the lane-local `INDEX.jsonl`, appends a row to the global update ledger at `indexes/updates.jsonl`, and (on update) preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits.
+The writer auto-detects `source_repo` from the workdir's git remote, appends a row to the lane-local `INDEX.jsonl`, appends a row to the global update ledger at `indexes/updates.jsonl`, and (on update) preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits. Direct writes are repair/fallback work only: use them only when no canonical writer exists or the current task is explicitly a memory-system repair, then run the host index/check step and verify reachability.
 
 ### Reader side — surface peer writes via INDEX.jsonl
 

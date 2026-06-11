@@ -142,6 +142,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/backend_health.py --workdir "$PWD"
 
 ## Write protocol — Phase 4 Review sub-step F
 
+Apply the canonical recall-optimized write rule in
+`build-loop-memory/references/2026-06-11-memory-discipline-prompt.md`
+(`version: 2026-06-11.1`) before every durable memory write: recall first,
+write only future-recallable facts, avoid duplicates, classify by indexed
+lane, stamp provenance through the writer in use, and verify reachability from
+the relevant recall surface.
+
 The **run entry + milestone** (the structured summary of the whole run) is written
 once on the final Review pass — that aggregate is correctly batch-at-Review-G.
 
@@ -151,8 +158,9 @@ Durable **lessons / decisions / falsifiers** are written INCREMENTALLY at discov
 time, NOT batched to Review-G. The same total volume, written earlier:
 
 - When a lesson is learned, a decision is made, or a falsifier is named mid-run,
-  append it to canonical memory on the spot via `scripts/write_decision/` (decisions)
-  or `scripts/memory_writer.py` (lessons) — the append-immediately contract.
+  append it to canonical memory on the spot via `scripts/write_decision/__main__.py`
+  (decisions) or `scripts/memory_writer.py` (lessons/reusable memories) — the
+  append-immediately contract.
 - Review-G then does a final **dedup sweep** over what accumulated (it no longer
   originates the writes, it reconciles them).
 
@@ -197,19 +205,34 @@ Write new memory entries to the correct tier:
 - **Cross-project learnings** (new tool, deployment pattern, user preference) → `<memory-root>/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope top-level write ...`.
 - **Project-specific learnings** (design decisions, internal conventions, gotchas) → `<memory-root>/projects/<project>/lessons/<type>_<slug>.md` via `scripts/memory_writer.py --scope project --project <project> write ...`.
 
+Do not hand-write project decision markdown. Use the paired decision writer. It
+writes `projects/<slug>/decisions/`, regenerates that lane's `INDEX.md`, and
+records `indexes/updates.jsonl`. Generated master-index reachability is still
+incomplete for project decisions: `rebuild_memory_indexes.py` does not
+content-scan `decisions/`, so verify through the `memory_facade` read API or the
+decision lane/index until the scanner/map split is reconciled.
+
+Reference capture has a lane mismatch today: `memory_writer.py` has `research`
+as a project sublane but not `references`; `reference_capture` writes to
+`projects/<slug>/research/`, while
+`build-loop-memory/scripts/rebuild_memory_indexes.py` scans `references/` and
+not `research/`. For generated-index recall, write `type: reference` content
+under `projects/<slug>/lessons/references/`, or update both writer and indexer
+to agree on `references` or `research`.
+
 Evaluate any skill authored during the build (Skill-on-Demand §SKILL.md): keep, promote, or drop. Record the decision in memory.
 
 ## Decision-store paths over time
 
-Decisions live under TWO paths today (canonical + legacy). The orchestrator and any verification check MUST go through `scripts/memory_facade.py` (the read API), not the raw filesystem.
+Decisions live under TWO paths today (canonical + legacy). The orchestrator and any verification check MUST go through the `scripts.memory_facade` read API, not raw filesystem assumptions.
 
 | Path | Status | Notes |
 |---|---|---|
 | `<memory-root>/projects/<project>/decisions/NNNN-YYYY-MM-DD-slug.md` | **Canonical (current)** | New writes land here. `<project>/` is resolved via `scripts/project_resolver.py` from `cwd → project tag`. |
 | `<repo>/.episodic/decisions/NNNN-YYYY-MM-DD-slug.md` | Legacy migration/archive input | Pre-cutover decisions. Active reads include it only when `BUILD_LOOP_MEMORY_MIGRATION_MODE=1`. |
 
-**Read path**: `python3 scripts/memory_facade.py recall --kind decision --query "<text>"` reads canonical indexes/files and, only in migration mode, legacy paths. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover`; consume it through the facade instead of hard-coding the lesson-file path.
+**Read path**: `scripts.memory_facade.recall(..., kind="decision", ...)` reads canonical indexes/files and, only in migration mode, legacy paths. **Direct filesystem reads are fragile** — a verification rule that `ls`'d only the legacy path returned a phantom miss because the new canonical was authoritative. Locked by lesson `lesson-bl-decision-store-path-cutover`; consume it through the facade instead of hard-coding the lesson-file path.
 
-**Write path**: `scripts/write_decision.py` writes to the canonical (new) path by default. The legacy path is only written when explicitly requested by tests fixturing pre-cutover state.
+**Write path**: `scripts/write_decision/__main__.py` writes to the canonical (new) path by default. The legacy path is only written when explicitly requested by tests fixturing pre-cutover state.
 
 **INDEX.md**: each decision-store directory has its own `INDEX.md`. The facade reads both indexes and merges by ID. Do NOT edit `INDEX.md` by hand — `write_decision.py` regenerates it atomically as part of the memory-triad write.
