@@ -482,7 +482,10 @@ def rule_decision_without_falsifier(plan_path: Path, lines: list[tuple[int, str]
 # pinned to `opus` (waste — burning the top tier on a rote task). Heuristic kept
 # tight (doctrine rule 6): fire only when the SAME line / its label carries a
 # clear judgment or mechanical verb, so format variation never false-positives.
-_DISPATCH_TIER_RE = re.compile(r"dispatch_tier\s*[:=]\s*[`\"']?(script|haiku|sonnet|opus)\b", re.IGNORECASE)
+# `frontier` is a recognized tier value (it routes to the Advisor dispatch ladder,
+# resolving to Fable) but never trips a sanity WARN — it is the top judgment tier,
+# the opposite of the `opus`-on-mechanical waste smell.
+_DISPATCH_TIER_RE = re.compile(r"dispatch_tier\s*[:=]\s*[`\"']?(script|haiku|sonnet|opus|frontier)\b", re.IGNORECASE)
 _JUDGMENT_VERB_RE = re.compile(
     r"\b(judge|judgment|decide|design|assess|evaluate|weigh|tradeoff|trade-off|"
     r"ambiguous|interpret|review|critique|synthesi[sz]e|recommend|choose)\b",
