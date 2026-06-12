@@ -33,7 +33,7 @@ if str(HERE) not in sys.path:
 import check_cache_sync as cache_sync  # type: ignore  # noqa: E402
 
 
-EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".build-loop"}
+EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".build-loop", ".rally"}
 HOOK_NAMES = ("post-commit", "post-merge", "post-checkout", "post-rewrite")
 HOOK_MARKER = "# --- BEGIN build-loop plugin-cache-sync ---"
 HOOK_MARKER_END = "# --- END build-loop plugin-cache-sync ---"
