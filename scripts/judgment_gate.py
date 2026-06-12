@@ -70,9 +70,16 @@ def resolve_run(state: dict, run_id: str | None) -> dict:
 def stakes_reasons(run: dict) -> list[str]:
     """Stakes read from THIS RUN's record only — never stale top-level/triggers."""
     reasons: list[str] = []
-    sd = run.get("synthesisDensity", 0)
+    # synthesisDensity is written by Phase 1 Assess as the dict {count, escalated,
+    # reason} (skills/build-loop/references/phase-1-assess.md). Accept both that
+    # canonical shape and a bare int so the gate reads the signal every writer
+    # actually produces — otherwise int({...}) → 0 and a stakes-gated run is
+    # silently treated as un-gated.
+    sd_raw = run.get("synthesisDensity", 0)
+    if isinstance(sd_raw, dict):
+        sd_raw = sd_raw.get("count", 0)
     try:
-        sd = int(sd)
+        sd = int(sd_raw)
     except (TypeError, ValueError):
         sd = 0
     if sd > 5:

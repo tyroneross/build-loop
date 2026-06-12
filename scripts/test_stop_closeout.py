@@ -68,6 +68,30 @@ def test_records_inline_run_and_warns_when_stakes_gated(tmp_path):
     assert (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").exists()
 
 
+def test_warns_on_production_synthesisdensity_dict_shape(tmp_path):
+    # Phase 1 Assess writes synthesisDensity as {count, escalated, reason} — the
+    # signal the INLINE path actually produces (riskSurfaceChange is orchestrator-
+    # only). The gate must read the dict, not int({...})→0. Regression for the
+    # dormant-WARN defect (f6 independent audit, finding f1).
+    st = _base_state(stakes_trigger=False)   # no riskSurfaceChange
+    st["synthesisDensity"] = {"count": 9, "escalated": True, "reason": "9 modules"}
+    _write_state(tmp_path, st)
+    out = stop_closeout.run_stop(tmp_path, SESSION)
+    assert "systemMessage" in out and "WARN" in out["systemMessage"]
+    assert _runs(tmp_path)[0]["synthesisDensity"]["count"] == 9
+
+
+def test_floor_auditor_status_never_inherits_stale_ran(tmp_path):
+    # A stale top-level/execution `ran:` from a PRIOR run must NOT be materialized
+    # as an earned status on this Stop-recorded run (f6 audit, finding f3).
+    st = _base_state()
+    st["auditor_status"] = "ran:dispatched-agent"
+    st["execution"]["auditor_status"] = "ran:dispatched-agent"
+    _write_state(tmp_path, st)
+    stop_closeout.run_stop(tmp_path, SESSION)
+    assert _runs(tmp_path)[0]["auditor_status"] == "not-run:parent-must-dispatch"
+
+
 def test_records_quietly_when_no_stakes_trigger(tmp_path):
     _write_state(tmp_path, _base_state(stakes_trigger=False))
     out = stop_closeout.run_stop(tmp_path, SESSION)
@@ -83,13 +107,28 @@ def test_outcome_partial_when_not_done(tmp_path):
 
 # --- idempotency -----------------------------------------------------------
 
-def test_second_stop_same_run_is_noop(tmp_path):
+def test_second_stop_same_run_no_double_record_no_repeat_warn(tmp_path):
     _write_state(tmp_path, _base_state())
+    out1 = stop_closeout.run_stop(tmp_path, SESSION)
+    assert "systemMessage" in out1                     # WARN surfaced once
+    out2 = stop_closeout.run_stop(tmp_path, SESSION)    # re-record (replace), not append
+    assert out2 == {}                                  # advisory not repeated
+    runs = _runs(tmp_path)
+    assert len(runs) == 1 and runs[0]["run_id"] == "bl-test-001"  # no double-record
+
+
+def test_later_stop_converges_outcome_to_terminal_state(tmp_path):
+    # Multi-turn inline run: first Stop mid-run (partial), final Stop done.
+    _write_state(tmp_path, _base_state(phase="execute"))
     stop_closeout.run_stop(tmp_path, SESSION)
-    first = _runs(tmp_path)
-    out2 = stop_closeout.run_stop(tmp_path, SESSION)   # marker now present
-    assert out2 == {}
-    assert _runs(tmp_path) == first                    # no double-record
+    assert _runs(tmp_path)[0]["outcome"] == "partial"
+    # run completes; phase advances; final Stop re-records.
+    st = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    st["phase"] = "done"
+    (tmp_path / ".build-loop" / "state.json").write_text(json.dumps(st))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    runs = _runs(tmp_path)
+    assert len(runs) == 1 and runs[0]["outcome"] == "pass"   # converged, not frozen
 
 
 def test_does_not_clobber_richer_orchestrator_record(tmp_path):
@@ -144,21 +183,36 @@ def test_no_session_id_stale_heartbeat_is_silent(tmp_path):
 
 # --- session-start surfacing ----------------------------------------------
 
-def test_session_start_surfaces_and_archives_marker(tmp_path):
+def test_session_start_surfaces_then_archives_after_emit(tmp_path):
     _write_state(tmp_path, _base_state())
     stop_closeout.run_stop(tmp_path, SESSION)          # writes the marker
-    out = stop_closeout.run_session_start(tmp_path)
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
     assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
     assert "bl-test-001" in out["hookSpecificOutput"]["additionalContext"]
-    # surfaced once: moved out of the live dir.
+    # Emit-before-archive: the marker is still live until the caller archives it.
+    assert (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").exists()
+    stop_closeout._archive_markers(tmp_path, to_archive)
     assert not (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").exists()
     assert (tmp_path / ".build-loop" / "closeout-pending" / "surfaced" / "bl-test-001.md").exists()
     # second surface → nothing left.
-    assert stop_closeout.run_session_start(tmp_path) == {}
+    assert stop_closeout.run_session_start(tmp_path) == ({}, [])
+
+
+def test_session_start_cli_archives_after_emit(tmp_path):
+    _write_state(tmp_path, _base_state())
+    stop_closeout.run_stop(tmp_path, SESSION)
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT), "--workdir", str(tmp_path), "--mode", "session-start", "--hook"],
+        capture_output=True, text=True,
+    )
+    assert res.returncode == 0
+    payload = json.loads(res.stdout)
+    assert "bl-test-001" in payload["hookSpecificOutput"]["additionalContext"]
+    assert (tmp_path / ".build-loop" / "closeout-pending" / "surfaced" / "bl-test-001.md").exists()
 
 
 def test_session_start_no_markers_is_silent(tmp_path):
-    assert stop_closeout.run_session_start(tmp_path) == {}
+    assert stop_closeout.run_session_start(tmp_path) == ({}, [])
 
 
 # --- CLI smoke (exit 0 + valid JSON always) --------------------------------

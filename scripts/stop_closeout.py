@@ -147,20 +147,27 @@ def _marker_path(workdir: Path, run_id: str) -> Path:
 
 
 def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
-    """Decide what the Stop closeout should do. Pure (no writes)."""
+    """Decide what the Stop closeout should do. Pure (no writes).
+
+    Idempotency model (no marker-as-record-sentinel — that froze a premature
+    mid-run snapshot on a multi-turn inline run):
+      * A non-``append_run`` record for this run already exists → Review-G owns
+        it; skip and never touch it.
+      * Otherwise record. ``append_run`` REPLACES its own prior ``append_run``
+        record, so re-recording on each later Stop converges the outcome to the
+        run's terminal state (the final Stop wins) without double-counting.
+    """
     execution = state.get("execution") or {}
     run_id = str(execution.get("build_loop_id") or "").strip()
     if not run_id:
         return {"action": "skip", "reason": "no build_loop_id — no run initialized in this repo"}
 
-    if _marker_path(workdir, run_id).exists():
-        return {"action": "skip", "reason": "closeout already done for this run (marker present)", "run_id": run_id}
-
     runs = state.get("runs")
     runs = runs if isinstance(runs, list) else []
-    if any(isinstance(r, dict) and r.get("run_id") == run_id for r in runs):
-        # Review-G (or a prior run-close) already recorded it. Idempotent no-op.
-        return {"action": "already_recorded", "reason": "run already in runs[]", "run_id": run_id}
+    for r in runs:
+        if isinstance(r, dict) and r.get("run_id") == run_id and r.get("source") != "append_run":
+            # A richer orchestrator (Review-G) record owns this run. Idempotent no-op.
+            return {"action": "already_recorded", "reason": "run recorded by the orchestrator", "run_id": run_id}
 
     ok, why = _this_session(execution, session_id, now)
     if not ok:
@@ -196,8 +203,12 @@ def _stakes_extra(state: dict) -> dict:
                 extra[key] = src.get(key)
                 break
 
-    existing_auditor = state.get("auditor_status") or execution.get("auditor_status")
-    extra["auditor_status"] = existing_auditor if existing_auditor else "not-run:parent-must-dispatch"
+    # A Stop hook CANNOT dispatch the auditor, so it never earns a `ran:` status.
+    # Always write the honest floor — never inherit a `ran:` from a prior run's
+    # stale top-level/execution field (that would assert an auditor pass this run
+    # did not earn). If a real auditor did run THIS run, the orchestrator's
+    # Review-G writes a richer non-append_run record, which decide() defers to.
+    extra["auditor_status"] = "not-run:parent-must-dispatch"
     # advisor_status deliberately left unset: the gate only flags the advisor when
     # advisor_status is non-null, and a Stop hook has no advisor signal to assert.
     return extra
@@ -277,42 +288,58 @@ def run_stop(workdir: Path, session_id: str) -> dict:
     decision = decide(workdir, state, session_id, _utc_now())
     if decision["action"] in ("skip", "already_recorded"):
         return {}
-    # action == "record"
+    # action == "record" — append_run appends the first time, replaces on later
+    # Stops (outcome converges to the run's terminal state).
     write_result = _record_run(workdir, decision, state)
     verdict = _run_gate(workdir, decision["run_id"])
-    _write_marker(workdir, decision, verdict)
-    if str(verdict.get("verdict")) in ("warn", "fail"):
+    _write_marker(workdir, decision, verdict)  # refreshed each Stop → tracks current outcome
+    # Surface the WARN advisory ONCE — on the first record only ("appended").
+    # Later Stops re-record silently ("replaced") so the advisory doesn't repeat
+    # every turn of a multi-turn inline run.
+    if write_result.get("action") == "appended" and str(verdict.get("verdict")) in ("warn", "fail"):
         return {"systemMessage": _stop_message(decision, verdict, write_result)}
-    # Recorded cleanly with no judgment gap to surface; stay quiet.
     return {}
 
 
-def run_session_start(workdir: Path) -> dict:
-    """SessionStart-mode entrypoint. Surface pending markers once, then archive them."""
+def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
+    """SessionStart-mode entrypoint. Return (hook JSON, markers to archive AFTER emit).
+
+    Archiving is deferred to the caller so it happens only once the reminder has
+    actually been printed — a hook-timeout kill before emit then re-surfaces the
+    reminder next session rather than losing it permanently.
+    """
     pending_dir = workdir / ".build-loop" / "closeout-pending"
     if not pending_dir.is_dir():
-        return {}
+        return {}, []
     markers = sorted(p for p in pending_dir.glob("*.md") if p.is_file())
     if not markers:
-        return {}
+        return {}, []
     lines = [
         "build-loop closeout-pending — inline run(s) recorded by the Stop hook still owe "
         "a retrospective-synthesizer pass + memory closeout (a Stop hook cannot dispatch agents):",
     ]
-    surfaced_dir = pending_dir / "surfaced"
-    surfaced_dir.mkdir(parents=True, exist_ok=True)
     for m in markers:
         lines.append(f"  - {m.stem} (see {m.relative_to(workdir)})")
-        try:
-            m.rename(surfaced_dir / m.name)
-        except OSError:
-            pass  # surfacing is best-effort; leave the marker if the move fails
-    return {
+    out = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": "\n".join(lines),
         }
     }
+    return out, markers
+
+
+def _archive_markers(workdir: Path, markers: list[Path]) -> None:
+    """Move surfaced markers out of the live dir (best-effort; called after emit)."""
+    if not markers:
+        return
+    surfaced_dir = workdir / ".build-loop" / "closeout-pending" / "surfaced"
+    surfaced_dir.mkdir(parents=True, exist_ok=True)
+    for m in markers:
+        try:
+            m.rename(surfaced_dir / m.name)
+        except OSError:
+            pass  # leave the marker so it re-surfaces; never crash the session start
 
 
 def _read_session_id(explicit: str) -> str:
@@ -340,16 +367,26 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     workdir = Path(args.workdir).resolve()
+    archive_after_emit: list[Path] = []
     try:
         if args.mode == "session-start":
-            out = run_session_start(workdir)
+            out, archive_after_emit = run_session_start(workdir)
         else:
             out = run_stop(workdir, _read_session_id(args.session_id))
-    except Exception:
-        # Fail-open: a closeout hook must never break a turn or a session start.
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        # Fail-open, hard: a closeout hook must never break a turn or a session
+        # start — not even on a SystemExit (append_run raises it on a richer-record
+        # race / unparseable state). The script honors its own "exit 0 always".
         out = {}
 
     print(json.dumps(out) if out else "{}")
+    # Archive surfaced markers only AFTER the reminder has been emitted.
+    try:
+        _archive_markers(workdir, archive_after_emit)
+    except BaseException:
+        pass
     return 0
 
 

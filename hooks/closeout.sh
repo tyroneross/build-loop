@@ -44,19 +44,10 @@ for _ in 1 2 3 4 5 6 7 8; do
 done
 [ -n "$_found" ] || exit 0
 
-# Resolve a python3 binary without depending on a populated PATH.
+# Resolve a python3 binary without depending on a populated PATH (shared helper).
+_HOOK_DIR="$(dirname "$0")"
 _py=""
-for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        _py="$candidate"
-        break
-    fi
-done
-for fallback in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
-    if [ -z "$_py" ] && [ -x "$fallback" ]; then
-        _py="$fallback"
-    fi
-done
+[ -f "${_HOOK_DIR}/_resolve_python.sh" ] && . "${_HOOK_DIR}/_resolve_python.sh"
 [ -n "$_py" ] || exit 0
 
 SCRIPT="${PLUGIN_ROOT}/scripts/stop_closeout.py"

@@ -50,6 +50,19 @@ def append_run_entry(state_path: Path, entry: dict) -> None:
         if runs is None:
             runs = []
             state["runs"] = runs
+        # A thin Stop-hook record (source: append_run) may already exist for this
+        # run_id (the structural inline closeout fired before this orchestrator
+        # Review-G write). Replace it in place rather than blind-appending a
+        # duplicate — two entries for one run_id would let judgment_gate resolve
+        # the thin one and FAIL a run whose auditor genuinely ran. A richer
+        # (non-append_run) existing record is left untouched.
+        run_id = entry.get("run_id")
+        if run_id:
+            for i, r in enumerate(runs):
+                if isinstance(r, dict) and r.get("run_id") == run_id and r.get("source") == "append_run":
+                    runs[i] = entry
+                    atomic_write_bytes(state_path, _encode(state))
+                    return
         runs.append(entry)
         atomic_write_bytes(state_path, _encode(state))
 

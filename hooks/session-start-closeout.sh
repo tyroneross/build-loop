@@ -24,19 +24,10 @@ set -u
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PROJECT_DIR}}"
 
-# Resolve a python3 binary without depending on PATH being populated.
+# Resolve a python3 binary without depending on PATH being populated (shared helper).
+_HOOK_DIR="$(dirname "$0")"
 _py=""
-for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-        _py="$candidate"
-        break
-    fi
-done
-for fallback in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3; do
-    if [ -z "$_py" ] && [ -x "$fallback" ]; then
-        _py="$fallback"
-    fi
-done
+[ -f "${_HOOK_DIR}/_resolve_python.sh" ] && . "${_HOOK_DIR}/_resolve_python.sh"
 [ -n "$_py" ] || exit 0
 
 ARMED="${PROJECT_DIR}/.build-loop/closeout/armed.json"
