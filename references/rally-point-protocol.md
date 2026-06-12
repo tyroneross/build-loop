@@ -130,7 +130,11 @@ reading the room async) has no built-in wait — so the discipline below is
 - **After posting a handoff, pull at least once.** While waiting on the ack,
   poll: `python3 scripts/rally_poll_gate.py wait --tool "$TOOL_NAME" --event-id <id> --timeout <s>`.
   On timeout (exit 4) the target is treated as unreachable → **fall to the
-  handoff's declared `fallback_plan`**, do not block forever.
+  handoff's declared `fallback_plan`**, do not block forever. Rally lets only the
+  TARGET resolve a handoff, so record the fallback with `rally_poll_gate.py
+  dispose --tool "$TOOL_NAME" --event-id <id>` (the `wait` timeout does this
+  automatically) — otherwise the completion gate below would deadlock on a
+  handoff you can never clear.
 - **Completion gate (before-complete / Phase D Closeout):**
   `python3 scripts/rally_poll_gate.py check --tool "$TOOL_NAME" --workdir "$PWD"`.
   Exit 3 means you still own an UNRESOLVED handoff you authored — pull/resolve it

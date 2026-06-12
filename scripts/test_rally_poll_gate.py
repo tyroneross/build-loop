@@ -80,5 +80,44 @@ class WaitTests(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout)["reason"], "timeout")
 
 
+class DisposeTests(unittest.TestCase):
+    """Poster-side fallback: rally won't let the poster resolve a handoff, so a
+    disposed marker must let `check` pass without deadlocking closeout."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.wd = Path(self.tmp.name)
+        (self.wd / ".build-loop").mkdir()
+        self.room = _room([{"event_id": "f9ce", "tool": "claude_code:assist", "target": "codex"}])
+        self.room_file = self.wd / "room.json"
+        self.room_file.write_text(json.dumps(self.room))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _cli(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, str(SCRIPT), *args], check=False,
+                              capture_output=True, text=True)
+
+    def test_dispose_then_check_passes(self) -> None:
+        d = self._cli("dispose", "--tool", "claude_code:assist", "--workdir", str(self.wd),
+                      "--event-id", "f9ce")
+        self.assertEqual(d.returncode, 0, d.stderr)
+        c = self._cli("check", "--tool", "claude_code:assist", "--workdir", str(self.wd),
+                      "--room-json", str(self.room_file))
+        self.assertEqual(c.returncode, 0, c.stdout)  # no longer deadlocks
+        self.assertFalse(json.loads(c.stdout)["gated"])
+
+    def test_wait_timeout_auto_disposes(self) -> None:
+        w = self._cli("wait", "--tool", "claude_code:assist", "--workdir", str(self.wd),
+                      "--event-id", "f9ce", "--timeout", "1", "--interval", "1",
+                      "--room-json", str(self.room_file))
+        self.assertEqual(w.returncode, 4, w.stderr)
+        # auto-recorded so a later check won't block
+        c = self._cli("check", "--tool", "claude_code:assist", "--workdir", str(self.wd),
+                      "--room-json", str(self.room_file))
+        self.assertFalse(json.loads(c.stdout)["gated"])
+
+
 if __name__ == "__main__":
     unittest.main()

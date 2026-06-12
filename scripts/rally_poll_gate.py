@@ -38,6 +38,38 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 
+# Poster-side fallback ledger. Rally only lets the TARGET resolve a handoff
+# (`resolve` is target-only, `release` is claims-only) — so a handoff to an
+# unreachable peer is permanently open and the poster cannot clear it. Without
+# this, `check` would deadlock closeout forever. The poster records "I pulled,
+# the target was unreachable, I fell to fallback_plan" here; `check` then treats
+# that handoff as disposed. This is the poster's half of the ack contract.
+FALLBACK_RELPATH = (".build-loop", "rally-handoff-fallbacks.json")
+
+
+def _fallback_path(workdir: Path) -> Path:
+    return workdir.joinpath(*FALLBACK_RELPATH)
+
+
+def load_disposed(workdir: Path) -> set[str]:
+    """Event-ids the poster has explicitly fallen-back-on (fail-open to empty)."""
+    try:
+        data = json.loads(_fallback_path(workdir).read_text())
+        return set(data) if isinstance(data, list) else set()
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def mark_disposed(workdir: Path, event_id: str) -> None:
+    disposed = load_disposed(workdir)
+    disposed.add(event_id)
+    p = _fallback_path(workdir)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(sorted(disposed), indent=2))
+    except OSError:
+        pass  # fail-open: a telemetry-ledger write must never wedge a build
+
 
 def mine_open(open_handoffs: list[dict[str, Any]], tool: str) -> list[dict[str, Any]]:
     """Pure: handoffs in the room's open list that THIS tool authored.
@@ -85,16 +117,19 @@ def _check(tool: str, workdir: Path, room_json: str | None) -> tuple[int, dict[s
     room, err = fetch_room(workdir, room_json)
     if err:  # fail-open on fetch — never wedge a build over a telemetry/coord outage
         return 0, {"ok": True, "warning": err, "mine_open": [], "gated": False}
-    mine = mine_open(_open_handoffs(room), tool)
+    disposed = load_disposed(workdir)
+    mine = [h for h in mine_open(_open_handoffs(room), tool)
+            if h.get("event_id") not in disposed]
     if mine:
         return 3, {
             "ok": False,
             "gated": True,
             "mine_open": [{"event_id": h.get("event_id"), "target": h.get("target"),
                            "subject": h.get("subject")} for h in mine],
-            "advice": "PULL the room and resolve these before completing: "
-                      "rally recent --json | rally room --json; if the target is idle, "
-                      "fall to your declared fallback_plan.",
+            "advice": "PULL the room (rally recent/room --json) and resolve these before "
+                      "completing. The TARGET resolves a handoff; you cannot. If the target "
+                      "is idle, fall to fallback_plan and record it: "
+                      "rally_poll_gate.py dispose --tool <you> --event-id <id>.",
         }
     return 0, {"ok": True, "gated": False, "mine_open": []}
 
@@ -115,8 +150,15 @@ def _wait(tool: str, workdir: Path, event_id: str | None, timeout: float,
                 return 0, {"ok": True, "resolved": True, "polls": polls}
         if time.monotonic() >= deadline or room_json is not None:
             # room_json is a static test fixture — never loop on it.
+            # Auto-record the fallback so `check` at closeout won't deadlock on a
+            # handoff the target (now confirmed unreachable) never resolved.
+            if not err and event_id is not None:
+                mine_now = mine_open(_open_handoffs(room), tool)
+                if any(h.get("event_id") == event_id for h in mine_now):
+                    mark_disposed(workdir, event_id)
             return 4, {"ok": False, "resolved": False, "polls": polls,
-                       "reason": "timeout", "advice": "fall to declared fallback_plan"}
+                       "reason": "timeout", "disposed": event_id,
+                       "advice": "fell to fallback_plan; recorded so closeout won't block"}
         time.sleep(interval)
 
 
@@ -137,11 +179,20 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--interval", type=float, default=30.0)
     w.add_argument("--room-json", default=None, help="Inject room JSON (path or '-') for tests.")
 
+    dp = sub.add_parser("dispose", help="Record that you fell to fallback on a handoff the target never resolved.")
+    dp.add_argument("--tool", required=True)
+    dp.add_argument("--workdir", default=".")
+    dp.add_argument("--event-id", required=True)
+
     args = p.parse_args(argv)
     workdir = Path(args.workdir).expanduser().resolve()
 
     if args.cmd == "check":
         code, env = _check(args.tool, workdir, args.room_json)
+    elif args.cmd == "dispose":
+        mark_disposed(workdir, args.event_id)
+        code, env = 0, {"ok": True, "disposed": args.event_id,
+                        "note": "recorded poster fallback; check will no longer block on this handoff"}
     else:
         code, env = _wait(args.tool, workdir, args.event_id, args.timeout, args.interval, args.room_json)
     print(json.dumps(env, indent=2, sort_keys=True))
