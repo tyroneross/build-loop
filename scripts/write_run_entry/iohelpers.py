@@ -13,6 +13,16 @@ from typing import Any
 from atomic_io import LockedFile, atomic_write_bytes  # type: ignore  # noqa: E402,F401
 
 
+# Stakes evidence that judgment_gate.stakes_reasons reads off the run record.
+# When a richer Review-G record replaces a thin Stop record (source: append_run),
+# these are carried forward if the incoming record omits them — they are facts of
+# the RUN (what it was gated on), not of whoever wrote the record, and erasing
+# them would flip the gate from a true WARN to a vacuous stakes_gated:false PASS.
+# Judgment STATUS fields (auditor_status/advisor_status) are deliberately NOT
+# carried — Review-G legitimately owns and overwrites those.
+_STAKES_CARRY_KEYS = ("synthesisDensity", "triggers", "stakes", "dispatch_tier", "riskSurfaceChange")
+
+
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
@@ -60,6 +70,11 @@ def append_run_entry(state_path: Path, entry: dict) -> None:
         if run_id:
             for i, r in enumerate(runs):
                 if isinstance(r, dict) and r.get("run_id") == run_id and r.get("source") == "append_run":
+                    # Preserve the run's stakes evidence the thin record captured,
+                    # unless this richer record already carries it.
+                    for k in _STAKES_CARRY_KEYS:
+                        if k in r and k not in entry:
+                            entry[k] = r[k]
                     runs[i] = entry
                     atomic_write_bytes(state_path, _encode(state))
                     return

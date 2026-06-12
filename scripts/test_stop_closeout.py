@@ -131,6 +131,34 @@ def test_later_stop_converges_outcome_to_terminal_state(tmp_path):
     assert len(runs) == 1 and runs[0]["outcome"] == "pass"   # converged, not frozen
 
 
+def test_reviewg_replace_preserves_stakes_evidence(tmp_path):
+    # Regression for f6 (introduced by the iohelpers replace fix): when Review-G's
+    # write_run_entry replaces the thin Stop record, the run's stakes evidence must
+    # survive so the gate still knows the run was stakes-gated.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import judgment_gate
+    from write_run_entry.iohelpers import append_run_entry
+
+    st = _base_state(stakes_trigger=False)
+    st["synthesisDensity"] = {"count": 9, "escalated": True, "reason": "9 modules"}
+    state_path = _write_state(tmp_path, st)
+    stop_closeout.run_stop(tmp_path, SESSION)                      # thin record w/ stakes
+    # Review-G writes its record (no stakes fields, real auditor verdict).
+    append_run_entry(state_path, {
+        "run_id": "bl-test-001", "date": "2026-06-12T01:00:00Z", "goal": "g",
+        "outcome": "pass", "phases": {}, "auditor_status": "ran:dispatched-agent",
+    })
+    runs = _runs(tmp_path)
+    assert len(runs) == 1                                          # replaced, not duplicated
+    assert runs[0]["synthesisDensity"]["count"] == 9              # stakes evidence preserved
+    assert runs[0]["auditor_status"] == "ran:dispatched-agent"    # judgment status owned by Review-G
+    res = judgment_gate.evaluate(
+        json.loads(state_path.read_text()),
+        tmp_path / ".build-loop" / "agent-ledger.jsonl", "bl-test-001", agent_tool_available=True,
+    )
+    assert res["stakes_gated"] is True and res["verdict"] == "pass"  # gated + auditor ran → clean pass
+
+
 def test_does_not_clobber_richer_orchestrator_record(tmp_path):
     rich = {"run_id": "bl-test-001", "date": "2026-06-12T00:00:00Z", "goal": "g",
             "outcome": "pass", "source": "review-g", "phases": {}}
