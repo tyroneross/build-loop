@@ -126,3 +126,11 @@ def test_not_a_git_repo_exits_2(tmp_path: Path) -> None:
 def test_path_match_uses_exact_segments() -> None:
     assert guard._is_blocked_path("foo/.episodic/bar.md")
     assert not guard._is_blocked_path(".episodic-plugin/bar.md")
+
+
+def test_codex_hooks_json_allowed_but_other_codex_runtime_blocked() -> None:
+    # Distributable config under .codex/ is intentionally tracked...
+    assert not guard._is_blocked_path(".codex/hooks.json")
+    # ...but real .codex/ runtime state is still blocked.
+    assert guard._is_blocked_path(".codex/memories/MEMORY.md")
+    assert guard._is_blocked_path(".codex/state.json")

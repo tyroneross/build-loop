@@ -1,0 +1,61 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx @tyroneross/bookmark precompact 2>/dev/null || echo '{}'",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx @tyroneross/bookmark restore 2>/dev/null || echo '{}'",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" session-start </dev/null 2>/dev/null || printf '{}'",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx @tyroneross/bookmark stop 2>/dev/null || echo '{\"decision\": \"approve\"}'",
+            "timeout": 10000
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/closeout.sh\" stop 2>/dev/null || printf '{}'",
+            "timeout": 6000
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx @tyroneross/claude-code-debugger mine --days 1 --store 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

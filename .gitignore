@@ -5,8 +5,10 @@ Thumbs.db
 # Runtime data (created in consumer projects)
 .build-loop/
 .claude/
-.codex/
 .agent-rally-point/
+# NOTE: .codex/ is intentionally TRACKED in this repo — .codex/hooks.json is a
+# distributable hook config (Codex Stop/SessionStart → hooks/closeout.sh), the
+# Codex-side counterpart to the tracked hooks/hooks.json.
 
 # Runtime memory/state. Durable memory belongs in the private
 # build-loop-memory repo, never in this public plugin repo.

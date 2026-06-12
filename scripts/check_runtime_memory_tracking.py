@@ -6,7 +6,10 @@
 The build-loop plugin repo is public. Project runtime state and memory must
 stay local or be promoted into the private build-loop-memory repo. This guard
 blocks accidental commits of those directories while allowing similarly named
-public plugin folders such as `.claude-plugin/` and `.codex-plugin/`.
+public plugin folders such as `.claude-plugin/` and `.codex-plugin/`, plus a
+small allowlist of distributable config files that live under an otherwise
+runtime segment (e.g. `.codex/hooks.json`, the Codex counterpart to the tracked
+`hooks/hooks.json`).
 """
 from __future__ import annotations
 
@@ -24,6 +27,12 @@ BLOCKED_SEGMENTS = {
     ".claude",
     ".codex",
     ".agent-rally-point",
+}
+
+# Exact repo-relative paths intentionally tracked despite living under a blocked
+# segment. Keep this tight — only distributable CONFIG, never runtime state.
+ALLOWED_PATHS = {
+    ".codex/hooks.json",  # Codex Stop/SessionStart hook wiring → hooks/closeout.sh
 }
 
 
@@ -69,6 +78,8 @@ def _all_tracked_files() -> list[str]:
 
 
 def _is_blocked_path(path: str) -> bool:
+    if PurePosixPath(path).as_posix() in ALLOWED_PATHS:
+        return False
     parts = PurePosixPath(path).parts
     return any(part in BLOCKED_SEGMENTS for part in parts)
 

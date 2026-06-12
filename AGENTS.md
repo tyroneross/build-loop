@@ -494,7 +494,7 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 
 2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
 
-3. **Codex wiring.** Claude Code gets this from the tracked `hooks/hooks.json`. `.codex/hooks.json` is a per-developer runtime file (gitignored), so wire the Codex `Stop` (and `SessionStart`) to the same shim locally: `root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`.
+3. **Codex wiring.** Both hosts ship in-repo: Claude via `hooks/hooks.json`, Codex via the tracked `.codex/hooks.json` — `Stop` and `SessionStart` entries call the same shim (`root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`).
 
 ## Post-Build
 
