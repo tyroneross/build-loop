@@ -117,6 +117,19 @@ def test_second_stop_same_run_no_double_record_no_repeat_warn(tmp_path):
     assert len(runs) == 1 and runs[0]["run_id"] == "bl-test-001"  # no double-record
 
 
+def test_idle_stop_skips_rewrite_when_record_current(tmp_path):
+    # A Stop fires every turn boundary; once the record carries the current
+    # outcome, later Stops must not rewrite state.json/marker (write amplification).
+    _write_state(tmp_path, _base_state())
+    stop_closeout.run_stop(tmp_path, SESSION)
+    sp = tmp_path / ".build-loop" / "state.json"
+    before = sp.read_text()
+    d = stop_closeout.decide(tmp_path, json.loads(before), SESSION, stop_closeout._utc_now())
+    assert d["action"] == "skip" and "unchanged" in d["reason"]
+    stop_closeout.run_stop(tmp_path, SESSION)
+    assert sp.read_text() == before        # byte-identical: no rewrite happened
+
+
 def test_later_stop_converges_outcome_to_terminal_state(tmp_path):
     # Multi-turn inline run: first Stop mid-run (partial), final Stop done.
     _write_state(tmp_path, _base_state(phase="execute"))

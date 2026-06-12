@@ -156,18 +156,27 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
       * Otherwise record. ``append_run`` REPLACES its own prior ``append_run``
         record, so re-recording on each later Stop converges the outcome to the
         run's terminal state (the final Stop wins) without double-counting.
+      * Skip-if-unchanged: a Stop fires at EVERY turn boundary; once our record
+        already carries the current outcome there is nothing to converge, so
+        skip rather than re-acquire the lock and rewrite state.json + marker
+        each idle turn.
     """
     execution = state.get("execution") or {}
     run_id = str(execution.get("build_loop_id") or "").strip()
     if not run_id:
         return {"action": "skip", "reason": "no build_loop_id — no run initialized in this repo"}
 
+    outcome = _derive_outcome(state)
     runs = state.get("runs")
     runs = runs if isinstance(runs, list) else []
     for r in runs:
-        if isinstance(r, dict) and r.get("run_id") == run_id and r.get("source") != "append_run":
-            # A richer orchestrator (Review-G) record owns this run. Idempotent no-op.
-            return {"action": "already_recorded", "reason": "run recorded by the orchestrator", "run_id": run_id}
+        if isinstance(r, dict) and r.get("run_id") == run_id:
+            if r.get("source") != "append_run":
+                # A richer orchestrator (Review-G) record owns this run. Idempotent no-op.
+                return {"action": "already_recorded", "reason": "run recorded by the orchestrator", "run_id": run_id}
+            if r.get("outcome") == append_run._OUTCOME_MAP[outcome]:
+                return {"action": "skip", "reason": "record already current (outcome unchanged)", "run_id": run_id}
+            break
 
     ok, why = _this_session(execution, session_id, now)
     if not ok:
@@ -178,7 +187,7 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
         "reason": why,
         "run_id": run_id,
         "goal": _derive_goal(workdir, state),
-        "outcome": _derive_outcome(state),
+        "outcome": outcome,
     }
 
 

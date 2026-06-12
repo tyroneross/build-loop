@@ -290,6 +290,12 @@ def generate_or_resume(
         return execution
 
     # Fresh-generate path.
+    # A fresh run must not inherit the PREVIOUS run's per-run assessment state:
+    # stale `phase: done` would let the Stop-hook closeout record a crashed new
+    # run as `pass`, and stale `triggers` would attribute the old run's stakes
+    # to the new one. Phase 1 Assess re-writes both for the new run.
+    for stale_key in ("phase", "triggers"):
+        state.pop(stale_key, None)
     when = now or _now_utc()
     started_at_iso = _ts_iso(when)
     build_loop_id = _new_unique_id(workdir_path, tool, when)

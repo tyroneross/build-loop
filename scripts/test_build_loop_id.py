@@ -64,6 +64,42 @@ def test_generate_at_phase_1_when_absent(tmp_path: Path):
     assert (runs / exec_block["build_loop_id"]).is_dir()
 
 
+def test_fresh_mint_clears_stale_per_run_state(tmp_path: Path):
+    # A fresh run must not inherit the previous run's phase/triggers: stale
+    # `phase: done` would let the Stop-hook closeout record a crashed new run
+    # as pass; stale triggers would attribute the old run's stakes to it.
+    workdir = tmp_path / "repo"
+    (workdir / ".build-loop").mkdir(parents=True)
+    _state_path(workdir).write_text(json.dumps({
+        "phase": "done",
+        "triggers": {"riskSurfaceChange": True},
+        "runs": [{"run_id": "bl-old"}],
+        "execution": {},  # no build_loop_id → fresh-mint path
+    }))
+    bli.generate_or_resume(workdir, tool="claude_code", session_id="s-new")
+    state = json.loads(_state_path(workdir).read_text())
+    assert "phase" not in state
+    assert "triggers" not in state
+    assert state["runs"] == [{"run_id": "bl-old"}]  # history untouched
+
+
+def test_resume_preserves_phase_and_triggers(tmp_path: Path):
+    # The clear fires ONLY on fresh mint; resuming an in-flight run must not
+    # wipe its own live phase/triggers.
+    workdir = tmp_path / "repo"
+    (workdir / ".build-loop").mkdir(parents=True)
+    _state_path(workdir).write_text(json.dumps({
+        "phase": "execute",
+        "triggers": {"riskSurfaceChange": True},
+        "execution": {"build_loop_id": "bl-live", "current_session_id": "s-old"},
+    }))
+    bli.generate_or_resume(workdir, tool="claude_code", session_id="s-new")
+    state = json.loads(_state_path(workdir).read_text())
+    assert state["phase"] == "execute"
+    assert state["triggers"] == {"riskSurfaceChange": True}
+    assert state["execution"]["current_session_id"] == "s-new"
+
+
 # ---------------------------------------------------------------------------
 # AC-A2
 # ---------------------------------------------------------------------------
