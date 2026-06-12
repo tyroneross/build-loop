@@ -51,6 +51,33 @@ def test_incomplete_phase_writes_annotation(tmp_path):
     assert state["execution"]["crash_signal"] == "stop_hook"
 
 
+def test_inline_top_level_done_no_annotation(tmp_path):
+    # Inline runs (skill-as-methodology) finish at TOP-LEVEL phase "done", not
+    # execution.phase "report". Honoring only the orchestrator convention stamped
+    # crash markers on every healthy inline run (observed live 2026-06-12).
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({
+        "phase": "done",
+        "execution": {"build_loop_id": "bl-inline-1"},
+    }))
+    assert annotate_if_incomplete(tmp_path) is False
+    assert "crashed_at" not in json.loads(state_path.read_text())["execution"]
+
+
+def test_already_annotated_is_idempotent(tmp_path):
+    # A Stop fires every turn; re-stamping crashed_at each idle turn rewrites
+    # state.json for no signal. Second call must be a no-op.
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    update_execution_state(state_path, "start",
+        run_id="r1", queued_chunks=["c1"], file_ownership={"c1": ["a"]})
+    assert annotate_if_incomplete(tmp_path) is True
+    before = state_path.read_text()
+    assert annotate_if_incomplete(tmp_path) is False
+    assert state_path.read_text() == before
+
+
 def test_custom_signal_value(tmp_path):
     state_path = tmp_path / ".build-loop" / "state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)

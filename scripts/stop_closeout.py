@@ -226,6 +226,7 @@ def _stakes_extra(state: dict) -> dict:
 def _record_run(workdir: Path, decision: dict, state: dict) -> dict:
     """Append the run via append_run (idempotent; refuses to clobber richer records)."""
     extra = _stakes_extra(state)
+    note = decision.get("note") or "closeout:fired-by-stop-hook (inline run did not reach Review-G)"
     ns = SimpleNamespace(
         run_id=decision["run_id"],
         goal=decision["goal"],
@@ -233,7 +234,7 @@ def _record_run(workdir: Path, decision: dict, state: dict) -> dict:
         host="claude_code",
         commit="",
         files_touched="",
-        manual_intervention=["closeout:fired-by-stop-hook (inline run did not reach Review-G)"],
+        manual_intervention=[note],
         phase=[],
         extra_json=json.dumps(extra),
     )
@@ -310,13 +311,61 @@ def run_stop(workdir: Path, session_id: str) -> dict:
     return {}
 
 
+def _sweep_orphan_run(workdir: Path) -> str | None:
+    """Record a crash-orphaned run the Stop path never caught (f6 residual gap).
+
+    A SIGKILL / 529 / network drop means no Stop fires, so the run never enters
+    ``runs[]`` and Learn never sees it. At the NEXT SessionStart the session-match
+    gate is moot (that session is dead), so sweep on staleness alone: the live
+    execution block has a ``build_loop_id`` that is NOT in ``runs[]`` AND its
+    heartbeat/started_at is older than the freshness window. A live concurrent
+    peer's run (fresh heartbeat) is never touched. Returns the swept run_id or
+    None. Writes the closeout-pending marker so the SAME session-start surfaces it.
+    """
+    state = _read_state(workdir)
+    if state is None:
+        return None
+    execution = state.get("execution") or {}
+    run_id = str(execution.get("build_loop_id") or "").strip()
+    if not run_id:
+        return None
+    runs = state.get("runs")
+    runs = runs if isinstance(runs, list) else []
+    if any(isinstance(r, dict) and r.get("run_id") == run_id for r in runs):
+        return None  # recorded (Stop path or Review-G) — nothing orphaned
+    ts = _parse_iso(str(execution.get("last_heartbeat_at") or "")) or _parse_iso(
+        str(execution.get("started_at") or "")
+    )
+    if ts is None:
+        return None  # can't prove it's dead — leave it for the Stop path
+    if (_utc_now() - ts).total_seconds() / 60.0 < _HEARTBEAT_FRESH_MINUTES:
+        return None  # possibly a live peer's in-flight run — never touch
+    decision = {
+        "action": "record",
+        "run_id": run_id,
+        "goal": _derive_goal(workdir, state),
+        "outcome": _derive_outcome(state) if str(state.get("phase") or "").strip() else "blocked",
+        "note": "closeout:recorded-by-sessionstart-sweep (crash-orphan; no Stop fired)",
+    }
+    _record_run(workdir, decision, state)
+    verdict = _run_gate(workdir, run_id)
+    _write_marker(workdir, decision, verdict)
+    return run_id
+
+
 def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     """SessionStart-mode entrypoint. Return (hook JSON, markers to archive AFTER emit).
 
-    Archiving is deferred to the caller so it happens only once the reminder has
-    actually been printed — a hook-timeout kill before emit then re-surfaces the
-    reminder next session rather than losing it permanently.
+    Sweeps crash-orphaned runs FIRST (their markers then surface in this same
+    pass), then surfaces pending markers. Archiving is deferred to the caller so
+    it happens only once the reminder has actually been printed — a hook-timeout
+    kill before emit then re-surfaces the reminder next session rather than
+    losing it permanently.
     """
+    try:
+        _sweep_orphan_run(workdir)
+    except Exception:
+        pass  # sweep is best-effort; never break marker surfacing
     pending_dir = workdir / ".build-loop" / "closeout-pending"
     if not pending_dir.is_dir():
         return {}, []

@@ -296,6 +296,19 @@ def generate_or_resume(
     # to the new one. Phase 1 Assess re-writes both for the new run.
     for stale_key in ("phase", "triggers"):
         state.pop(stale_key, None)
+    # Same rule for the execution block itself. On this path the block has no
+    # build_loop_id (an id would have taken the resume branch above), but it can
+    # still hold the PREVIOUS run's residue — crashed_at/crash_signal, stale
+    # run_worktree_path/branch, wp_progress, peer_integration — which must not
+    # leak onto the new identity (observed live: a fresh run wearing the prior
+    # run's crash markers and worktree path). Archive the residue to
+    # `historicalExecutions` (capped, for forensics) and start clean.
+    if execution:
+        hist = state.get("historicalExecutions")
+        hist = hist if isinstance(hist, list) else []
+        hist.append(execution)
+        state["historicalExecutions"] = hist[-10:]
+        execution = {}
     when = now or _now_utc()
     started_at_iso = _ts_iso(when)
     build_loop_id = _new_unique_id(workdir_path, tool, when)

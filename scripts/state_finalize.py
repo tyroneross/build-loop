@@ -56,8 +56,20 @@ def annotate_if_incomplete(workdir: Path, signal: str = "stop_hook") -> bool:
     execution = state.get("execution")
     if not isinstance(execution, dict):
         return False
-    if execution.get("phase") == "report":
+    # Two legitimate phase conventions: the orchestrator (M2 execstate) writes
+    # `execution.phase` and finishes at "report"; inline runs (skill-as-
+    # methodology) write TOP-LEVEL `state.phase` and finish at "done". Honoring
+    # only the first stamped crash markers on every healthy inline run.
+    exec_phase = str(execution.get("phase") or "").lower()
+    top_phase = str(state.get("phase") or "").lower()
+    if exec_phase == "report" or top_phase in ("report", "done"):
         # Clean exit — not a crash
+        return False
+    if execution.get("crashed_at"):
+        # Already annotated for this run — a Stop fires every turn; re-stamping
+        # adds no signal and rewrites state.json each idle turn. A fresh run
+        # starts with a clean execution block (build_loop_id fresh-mint), so
+        # this never suppresses a NEW run's first annotation.
         return False
     execution["crashed_at"] = _iso_utc()
     execution["crash_signal"] = signal

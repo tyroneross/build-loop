@@ -222,6 +222,59 @@ def test_no_session_id_stale_heartbeat_is_silent(tmp_path):
     assert _runs(tmp_path) == []
 
 
+# --- crash-orphan sweep (session-start) ------------------------------------
+
+def _orphan_state(minutes_stale=300, phase="execute"):
+    st = _base_state(phase=phase)
+    st["execution"]["last_heartbeat_at"] = _iso(_now() - timedelta(minutes=minutes_stale))
+    return st
+
+
+def test_sweep_records_crash_orphan_and_surfaces_marker(tmp_path):
+    # SIGKILL/529: no Stop ever fired — run absent from runs[], heartbeat stale.
+    _write_state(tmp_path, _orphan_state())
+    out, _ = stop_closeout.run_session_start(tmp_path)
+    runs = _runs(tmp_path)
+    assert len(runs) == 1 and runs[0]["run_id"] == "bl-test-001"
+    assert runs[0]["outcome"] == "partial"           # died mid-execute → honest
+    assert "sessionstart-sweep" in runs[0]["manualInterventions"][0]["note"]
+    # marker written by the sweep surfaces in the SAME session-start pass.
+    assert "bl-test-001" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_sweep_skips_live_peer_run(tmp_path):
+    # Fresh heartbeat = possibly a live concurrent session's run — never touch.
+    _write_state(tmp_path, _orphan_state(minutes_stale=5))
+    out, markers = stop_closeout.run_session_start(tmp_path)
+    assert _runs(tmp_path) == [] and (out, markers) == ({}, [])
+
+
+def test_sweep_skips_already_recorded_run(tmp_path):
+    st = _orphan_state()
+    st["runs"] = [{"run_id": "bl-test-001", "source": "review-g"}]
+    _write_state(tmp_path, st)
+    stop_closeout.run_session_start(tmp_path)
+    assert len(_runs(tmp_path)) == 1                 # untouched
+
+
+def test_sweep_idempotent_across_session_starts(tmp_path):
+    _write_state(tmp_path, _orphan_state())
+    out1, m1 = stop_closeout.run_session_start(tmp_path)
+    stop_closeout._archive_markers(tmp_path, m1)
+    out2, m2 = stop_closeout.run_session_start(tmp_path)
+    assert len(_runs(tmp_path)) == 1                 # recorded once
+    assert (out2, m2) == ({}, [])                    # surfaced once
+
+
+def test_sweep_no_phase_records_blocked(tmp_path):
+    # Run died before Phase 1 wrote phase (fresh-mint cleared it) → "blocked".
+    st = _orphan_state()
+    st.pop("phase", None)
+    _write_state(tmp_path, st)
+    stop_closeout.run_session_start(tmp_path)
+    assert _runs(tmp_path)[0]["outcome"] == "fail"   # blocked → canonical fail
+
+
 # --- session-start surfacing ----------------------------------------------
 
 def test_session_start_surfaces_then_archives_after_emit(tmp_path):

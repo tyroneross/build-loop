@@ -83,6 +83,44 @@ def test_fresh_mint_clears_stale_per_run_state(tmp_path: Path):
     assert state["runs"] == [{"run_id": "bl-old"}]  # history untouched
 
 
+def test_fresh_mint_displaces_execution_residue(tmp_path: Path):
+    # An execution block WITHOUT build_loop_id (an id would take the resume
+    # branch) can still carry the previous run's residue — crash markers, stale
+    # worktree paths, wp_progress. Fresh mint must start clean and archive the
+    # residue to historicalExecutions (observed live: a fresh run wearing the
+    # prior run's crashed_at and run_worktree_path).
+    workdir = tmp_path / "repo"
+    (workdir / ".build-loop").mkdir(parents=True)
+    residue = {
+        "crashed_at": "2026-06-09T00:00:00Z",
+        "crash_signal": "stop_hook",
+        "run_worktree_path": "/old/worktree",
+        "wp_progress": {"WP-A": "done"},
+    }
+    _state_path(workdir).write_text(json.dumps({"execution": dict(residue)}))
+    exec_block = bli.generate_or_resume(workdir, tool="claude_code", session_id="s-new")
+    for stale in residue:
+        assert stale not in exec_block
+    state = json.loads(_state_path(workdir).read_text())
+    assert state["historicalExecutions"][-1] == residue
+    assert state["execution"]["build_loop_id"] == exec_block["build_loop_id"]
+
+
+def test_historical_executions_capped_at_10(tmp_path: Path):
+    workdir = tmp_path / "repo"
+    (workdir / ".build-loop").mkdir(parents=True)
+    hist = [{"note": f"old-{i}"} for i in range(10)]
+    _state_path(workdir).write_text(json.dumps({
+        "historicalExecutions": hist,
+        "execution": {"crashed_at": "2026-06-09T00:00:00Z"},  # residue, no id
+    }))
+    bli.generate_or_resume(workdir, tool="claude_code", session_id="s")
+    state = json.loads(_state_path(workdir).read_text())
+    assert len(state["historicalExecutions"]) == 10
+    assert state["historicalExecutions"][-1] == {"crashed_at": "2026-06-09T00:00:00Z"}
+    assert state["historicalExecutions"][0] == {"note": "old-1"}  # oldest dropped
+
+
 def test_resume_preserves_phase_and_triggers(tmp_path: Path):
     # The clear fires ONLY on fresh mint; resuming an in-flight run must not
     # wipe its own live phase/triggers.

@@ -494,7 +494,7 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 
 2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
 
-3. **Codex wiring.** Both hosts ship in-repo: Claude via `hooks/hooks.json`, Codex via the tracked `.codex/hooks.json` — `Stop` and `SessionStart` entries call the same shim (`root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`).
+3. **Codex wiring.** Both hosts ship in-repo: Claude via `hooks/hooks.json`, Codex via the tracked `.codex/hooks.json` — `Stop` and `SessionStart` entries call the same shim (`root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`). ⚠ VERIFIED DORMANT under `codex exec` 0.139.0 (live probe 2026-06-12, `--dangerously-bypass-hook-trust`): codex fired global/built-in hooks but never the repo-level file. Until codex honors repo-level hooks, the working Codex path is the global `~/.codex/hooks.json` (the shim self-gates on `.build-loop/`, so a global install is safe — but global installs are user-opt-in, not shipped).
 
 ## Post-Build
 
