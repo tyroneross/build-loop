@@ -71,11 +71,13 @@ def append_run_entry(state_path: Path, entry: dict) -> None:
             for i, r in enumerate(runs):
                 if isinstance(r, dict) and r.get("run_id") == run_id and r.get("source") == "append_run":
                     # Preserve the run's stakes evidence the thin record captured,
-                    # unless this richer record already carries it.
+                    # unless this richer record already carries it. Merge into a
+                    # copy so the caller's entry dict is never mutated in place.
+                    merged = dict(entry)
                     for k in _STAKES_CARRY_KEYS:
-                        if k in r and k not in entry:
-                            entry[k] = r[k]
-                    runs[i] = entry
+                        if k in r and k not in merged:
+                            merged[k] = r[k]
+                    runs[i] = merged
                     atomic_write_bytes(state_path, _encode(state))
                     return
         runs.append(entry)
