@@ -18,6 +18,12 @@ is configured and no `--fallback` is supplied):
 
 Configs that predate the `frontier` tier resolve `frontier` -> `fable` so older
 repos keep working without edits.
+
+`MODEL_REGISTRY` lists the cross-vendor models known to fit each tier (e.g.
+GPT-5.5 for frontier, GPT-5 Nano for pattern). It is advisory: override
+resolution accepts any model id; the registry powers `--list-models` and an
+advisory `registered` flag on the envelope. `python3 scripts/model_overrides.py
+--list-models` prints it.
 """
 from __future__ import annotations
 
@@ -35,6 +41,56 @@ TIER_DEFAULTS = {
     "code": "sonnet",
     "pattern": "haiku",
 }
+
+# Selectable models per tier. TIER_DEFAULTS (above) is the Anthropic mapping used
+# when nothing is configured; this registry is the broader set of models known to
+# fit each tier's contract and therefore safe to select via
+# `.build-loop/config.json` modelOverrides[tier] or a per-dispatch model id.
+# `status`: default (the tier's Anthropic fallback) | verified (cross-vendor,
+# advisory) | local. Override resolution still accepts ANY string — the registry
+# is advisory (powers `--list-models` + the `registered` flag), never a gate.
+# Cross-vendor cells are best-effort; confirm current benchmarks before swapping.
+# Canonical detail + swap recipes: references/model-tier-mapping.md.
+MODEL_REGISTRY: dict[str, list[dict[str, str]]] = {
+    "frontier": [
+        {"id": "fable", "provider": "anthropic", "label": "Fable 5", "status": "default"},
+        {"id": "gpt-5.5", "provider": "openai", "label": "GPT-5.5 (Codex)", "status": "verified"},
+        {"id": "gpt-5.4", "provider": "openai", "label": "GPT-5.4", "status": "verified"},
+    ],
+    "thinking": [
+        {"id": "opus", "provider": "anthropic", "label": "Opus 4.8", "status": "default"},
+        {"id": "gpt-5.4", "provider": "openai", "label": "GPT-5.4", "status": "verified"},
+        {"id": "gemini-2.5-pro", "provider": "google", "label": "Gemini 2.5 Pro", "status": "verified"},
+    ],
+    "code": [
+        {"id": "sonnet", "provider": "anthropic", "label": "Sonnet 4.6", "status": "default"},
+        {"id": "gpt-5.4-mini", "provider": "openai", "label": "GPT-5.4 Mini", "status": "verified"},
+        {"id": "gemini-2.5-flash", "provider": "google", "label": "Gemini 2.5 Flash", "status": "verified"},
+        {"id": "qwen2.5-coder-32b", "provider": "local", "label": "Qwen2.5-Coder 32B", "status": "local"},
+    ],
+    "pattern": [
+        {"id": "haiku", "provider": "anthropic", "label": "Haiku 4.5", "status": "default"},
+        {"id": "gpt-5-nano", "provider": "openai", "label": "GPT-5 Nano", "status": "verified"},
+        {"id": "gemini-flash-lite", "provider": "google", "label": "Gemini Flash Lite", "status": "verified"},
+        {"id": "llama3.2-3b", "provider": "local", "label": "Llama 3.2 3B", "status": "local"},
+    ],
+}
+
+
+def registered_models(tier: str | None = None) -> dict[str, list[dict[str, str]]]:
+    """Return the selectable-model registry, optionally filtered to one tier."""
+    if tier is None:
+        return {t: list(MODEL_REGISTRY.get(t, [])) for t in sorted(TIERS)}
+    if tier not in TIERS:
+        raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(TIERS)}")
+    return {tier: list(MODEL_REGISTRY.get(tier, []))}
+
+
+def is_registered(tier: str, model: str | None) -> bool:
+    """True if `model` is a registered selectable model for `tier` (advisory)."""
+    if not model:
+        return False
+    return any(entry["id"] == model for entry in MODEL_REGISTRY.get(tier, []))
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -90,6 +146,7 @@ def resolve_model(
                 "source": source,
                 "path": str(path),
                 "configured": True,
+                "registered": is_registered(tier, model),
             }
 
     # Prefer the explicit caller-supplied fallback; otherwise fall back to the
@@ -101,6 +158,7 @@ def resolve_model(
             "source": "fallback",
             "path": None,
             "configured": False,
+            "registered": is_registered(tier, fallback),
         }
 
     default = TIER_DEFAULTS.get(tier)
@@ -111,6 +169,7 @@ def resolve_model(
             "source": "tier-default",
             "path": None,
             "configured": False,
+            "registered": is_registered(tier, default),
         }
 
     return {
@@ -119,6 +178,7 @@ def resolve_model(
         "source": "unresolved",
         "path": None,
         "configured": False,
+        "registered": False,
     }
 
 
@@ -142,14 +202,35 @@ def has_override(
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--workdir", default=".")
-    p.add_argument("--tier", required=True, choices=sorted(TIERS))
+    p.add_argument("--tier", default=None, choices=sorted(TIERS))
     p.add_argument("--fallback", default=None)
     p.add_argument("--config", default=None, help="Override config.json path.")
     p.add_argument("--state", default=None, help="Override state.json path.")
     p.add_argument("--require", action="store_true", help="Exit 1 if unresolved.")
     p.add_argument("--plain", action="store_true", help="Print only the model id.")
     p.add_argument("--json", action="store_true", help="Print a JSON envelope.")
+    p.add_argument(
+        "--list-models",
+        action="store_true",
+        help="List the selectable models per tier (the registry) and exit. "
+        "Honors --tier to filter and --json for machine output.",
+    )
     args = p.parse_args(argv)
+
+    if args.list_models:
+        registry = registered_models(args.tier)
+        if args.json:
+            print(json.dumps(registry, indent=2, sort_keys=True))
+        else:
+            for tier in sorted(registry):
+                print(f"{tier}:")
+                for entry in registry[tier]:
+                    flag = " (default)" if entry["status"] == "default" else f" [{entry['status']}]"
+                    print(f"  {entry['id']:<22} {entry['provider']:<10} {entry['label']}{flag}")
+        return 0
+
+    if not args.tier:
+        p.error("--tier is required unless --list-models is given")
 
     result = resolve_model(
         tier=args.tier,

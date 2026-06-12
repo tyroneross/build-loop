@@ -37,7 +37,7 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Model Tiering
 
-Build-loop is **multi-model**. Roles are assigned by **tier** (Frontier / Thinking / Code / Pattern), not provider-specific identifiers. The Anthropic mapping (Fable 5 / Opus 4.8 / Sonnet 4.6 / Haiku 4.5) is the default; equivalents from other providers (GPT-5, Gemini 2.5, qwen2.5-coder) substitute cleanly when their benchmarks meet the tier contract.
+Build-loop is **multi-model**. Roles are assigned by **tier** (Frontier / Thinking / Code / Pattern), not provider-specific identifiers. The Anthropic mapping (Fable 5 / Opus 4.8 / Sonnet 4.6 / Haiku 4.5) is the default; equivalents from other providers (GPT-5.5/5.4 incl. Codex, Gemini 2.5, qwen2.5-coder) substitute cleanly when their benchmarks meet the tier contract. The selectable models per tier are registered in `scripts/model_overrides.py` (`MODEL_REGISTRY`); list them with `python3 scripts/model_overrides.py --list-models`.
 
 | Tier | Anthropic default | Role | Substitution rule |
 |---|---|---|---|
@@ -47,7 +47,7 @@ Build-loop is **multi-model**. Roles are assigned by **tier** (Frontier / Thinki
 | **Pattern** | Haiku 4.5 | Mock-scanner, recurring-pattern-detector, transcript-pattern-miner | Fast/cheap; doesn't hallucinate on bounded structured tasks |
 | (inherit) | session model | root-cause-investigator | Inherits from caller — context-driven |
 
-Full provider substitution table + swap recipes: `references/model-tier-mapping.md`.
+Full provider substitution table + swap recipes + the selectable-model registry: `references/model-tier-mapping.md`.
 
 ## Dual-mode dispatch (intentional A/B test architecture)
 

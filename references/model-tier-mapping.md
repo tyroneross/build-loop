@@ -12,7 +12,7 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 - **Benchmark contract:** clears the Thinking-tier contract AND benchmarks above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond.
 - **Cost expectation:** highest. Use only on the planning + verification surface; never default for execution or coordination.
 - **Anthropic default:** Fable 5 (`claude-fable-5`)
-- **Verified equivalents (2026 Q2, advisory):** GPT-5.5 Thinking-class (whichever provider tier scores above the prior Thinking ceiling); future Claude generations above Opus
+- **Verified equivalents (2026 Q2, advisory):** GPT-5.5 (`gpt-5.5`, OpenAI's frontier Codex model — complex coding, agentic, 1.1M ctx), GPT-5.4 (`gpt-5.4`, lower-cost frontier); future Claude generations above Opus
 - **Local equivalents:** none — Frontier-class capability is not yet matched locally
 
 ### Thinking tier
@@ -20,7 +20,7 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 - **Benchmark contract:** SWE-bench Verified ≥78% AND competitive on ARC-AGI / GPQA Diamond / MMLU-Pro.
 - **Cost expectation:** middle-high tier. Use for orchestration and the escalation target when execution hits ambiguity. Never default to Thinking for bounded execution.
 - **Anthropic default:** Opus 4.8 (`claude-opus-4-8`; alias `opus` auto-tracks the latest Opus generation)
-- **Verified equivalents (2026 Q1, advisory):** GPT-5 Thinking, Gemini 2.5 Pro
+- **Verified equivalents (2026 Q2, advisory):** GPT-5.4 (`gpt-5.4`), Gemini 2.5 Pro
 - **Local equivalents:** none yet — Thinking-tier work needs frontier-class context length and judgment; local models lag
 
 ### Code tier
@@ -28,7 +28,7 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 - **Benchmark contract:** SWE-bench Verified ≥75% AND tool-use accuracy ≥85% AND multi-turn coding rollout ≥80%.
 - **Cost expectation:** ~3-5× cheaper than Thinking tier per token. The default for the bulk of build-loop work.
 - **Anthropic default:** Sonnet 4.6 (`claude-sonnet-4-6`)
-- **Verified equivalents:** Sonnet 4.7+ (when available), GPT-5 Codex
+- **Verified equivalents:** Sonnet 4.7+ (when available), GPT-5.4 Mini (`gpt-5.4-mini` — fast coding + subagents)
 - **Local equivalents:** qwen2.5-coder-32B-instruct (mid-quality), Codestral 22B (reasonable substitute for bounded refactor work)
 
 ### Pattern tier (a.k.a. Recognition)
@@ -36,19 +36,30 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 - **Benchmark contract:** none formal. Empirical: doesn't hallucinate on bounded structured tasks; runs fast.
 - **Cost expectation:** ~10-20× cheaper than Thinking tier. Use for high-volume mechanical sweeps.
 - **Anthropic default:** Haiku 4.5 (`claude-haiku-4-5-20251001`)
-- **Verified equivalents:** Haiku 4.6+ (when available), GPT-5 Mini
+- **Verified equivalents:** Haiku 4.6+ (when available), GPT-5 Nano (`gpt-5-nano` — fastest/cheapest, classify + summarize)
 - **Local equivalents:** llama3.2-3b, qwen2.5-3b
 
 ## Substitution table (advisory, 2026 Q2)
 
 | Provider | Frontier | Thinking | Code | Pattern |
 |---|---|---|---|---|
-| Anthropic (default) | Fable 5 | Opus 4.8 | Sonnet 4.6 | Haiku 4.5 |
-| OpenAI | GPT-5.5 Thinking-class (or whichever tier benchmarks above prior Thinking ceiling) | GPT-5 Thinking | GPT-5 Codex | GPT-5 Mini |
-| Google | next-gen Gemini Ultra (when it clears the contract) | Gemini 2.5 Pro | Gemini 2.5 Flash | Gemini Flash Lite |
-| Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | qwen2.5-coder-32B | llama3.2-3b |
+| Anthropic (default) | Fable 5 (`fable`) | Opus 4.8 (`opus`) | Sonnet 4.6 (`sonnet`) | Haiku 4.5 (`haiku`) |
+| OpenAI | `gpt-5.5` (Codex) | `gpt-5.4` | `gpt-5.4-mini` | `gpt-5-nano` |
+| Google | next-gen Gemini Ultra (when it clears the contract) | `gemini-2.5-pro` | `gemini-2.5-flash` | `gemini-flash-lite` |
+| Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | `qwen2.5-coder-32b` | `llama3.2-3b` |
 
 ⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying.
+
+### Selectable model registry (the machine-readable source of truth)
+
+The cells above are mirrored by `MODEL_REGISTRY` in `scripts/model_overrides.py`. List the selectable models per tier (and feed any tool) with:
+
+```bash
+python3 scripts/model_overrides.py --list-models          # all tiers
+python3 scripts/model_overrides.py --list-models --tier frontier --json
+```
+
+The registry is **advisory**: override resolution still accepts any model id, so a brand-new model works the moment you put it in `modelOverrides` — it is simply flagged `registered: false` on the resolve envelope until it is added here. `TIER_DEFAULTS` (the Anthropic mapping) stays the fallback; registering a model makes it *selectable*, not the default.
 
 ## Three ways to swap
 
@@ -60,13 +71,13 @@ Each `agents/*.md` carries a `model:` field. Replace `opus` / `sonnet` / `haiku`
 # agents/build-orchestrator.md
 ---
 name: build-orchestrator
-model: gpt-5-thinking      # was: opus (Thinking tier)
+model: gpt-5.4             # was: opus (Thinking tier)
 ---
 
 # agents/implementer.md
 ---
 name: implementer
-model: gpt-5-codex         # was: sonnet (Code tier)
+model: gpt-5.4-mini        # was: sonnet (Code tier)
 ---
 ```
 
@@ -77,10 +88,10 @@ This is durable but requires re-editing on every plugin update. Prefer #2 below.
 ```json
 {
   "modelOverrides": {
-    "frontier": "gpt-5.5-thinking",
-    "thinking": "gpt-5-thinking",
-    "code": "gpt-5-codex",
-    "pattern": "gpt-5-mini"
+    "frontier": "gpt-5.5",
+    "thinking": "gpt-5.4",
+    "code": "gpt-5.4-mini",
+    "pattern": "gpt-5-nano"
   }
 }
 ```

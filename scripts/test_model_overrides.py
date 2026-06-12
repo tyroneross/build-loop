@@ -144,6 +144,66 @@ class ModelOverrideTests(unittest.TestCase):
             self.assertEqual(payload["source"], "fallback")
 
 
+class ModelRegistryTests(unittest.TestCase):
+    def test_list_models_registers_codex_frontier_and_nano_pattern(self) -> None:
+        result = run_script(MODEL_OVERRIDES, "--list-models", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        registry = json.loads(result.stdout)
+        frontier_ids = [e["id"] for e in registry["frontier"]]
+        pattern_ids = [e["id"] for e in registry["pattern"]]
+        # Codex (GPT-5.5) selectable as frontier, alongside the Anthropic default.
+        self.assertIn("gpt-5.5", frontier_ids)
+        self.assertIn("fable", frontier_ids)
+        # nano selectable as pattern; other providers registered too.
+        self.assertIn("gpt-5-nano", pattern_ids)
+
+    def test_list_models_tier_filter(self) -> None:
+        result = run_script(MODEL_OVERRIDES, "--list-models", "--tier", "frontier", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        registry = json.loads(result.stdout)
+        self.assertEqual(set(registry), {"frontier"})
+
+    def test_registered_flag_true_for_registered_override(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = run_script(
+                MODEL_OVERRIDES,
+                "--workdir", td,
+                "--tier", "frontier",
+                "--fallback", "gpt-5.5",
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "gpt-5.5")
+            self.assertTrue(payload["registered"])
+
+    def test_unregistered_override_still_resolves(self) -> None:
+        # The registry is advisory — an unknown model id still resolves (any
+        # string is accepted), it is just flagged registered=false.
+        with tempfile.TemporaryDirectory() as td:
+            result = run_script(
+                MODEL_OVERRIDES,
+                "--workdir", td,
+                "--tier", "frontier",
+                "--fallback", "some-future-model-9000",
+                "--json",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "some-future-model-9000")
+            self.assertFalse(payload["registered"])
+
+    def test_tier_default_is_registered(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = run_script(MODEL_OVERRIDES, "--workdir", td, "--tier", "pattern", "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "haiku")
+            self.assertTrue(payload["registered"])
+
+    def test_tier_required_without_list(self) -> None:
+        result = run_script(MODEL_OVERRIDES, "--workdir", ".")
+        self.assertNotEqual(result.returncode, 0)
+
+
 class RouteDecisionOverrideTests(unittest.TestCase):
     def test_route_decision_reads_config_model_override(self) -> None:
         with tempfile.TemporaryDirectory() as td:
