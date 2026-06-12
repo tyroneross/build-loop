@@ -101,6 +101,56 @@ def test_iterate_attempt_increments(tmp_path):
     assert block["iterate_attempt"] == 2
 
 
+def test_item_iteration_records_attempts_and_stop_reason(tmp_path):
+    _start(tmp_path)
+    block = update_execution_state(
+        _state(tmp_path),
+        "item_iteration",
+        item_id="issue-1",
+        status="failed",
+        phase="iterate",
+        criterion="tests",
+        stop_reason="validator-failed",
+        validator="pytest",
+        model="code-tier",
+        now=datetime(2026, 5, 6, 10, 0, 5, tzinfo=timezone.utc),
+    )
+    block = update_execution_state(
+        _state(tmp_path),
+        "item_iteration",
+        item_id="issue-1",
+        status="passed",
+        phase="review",
+        criterion="tests",
+        validator="pytest",
+        now=datetime(2026, 5, 6, 10, 1, 5, tzinfo=timezone.utc),
+    )
+
+    attempts = block["item_iterations"]["issue-1"]
+    assert block["current_item_id"] == "issue-1"
+    assert attempts[0] == {
+        "attempt": 1,
+        "status": "failed",
+        "phase": "iterate",
+        "recorded_at": "2026-05-06T10:00:05Z",
+        "criterion": "tests",
+        "stop_reason": "validator-failed",
+        "validator": "pytest",
+        "model": "code-tier",
+    }
+    assert attempts[1]["attempt"] == 2
+    assert attempts[1]["status"] == "passed"
+    assert attempts[1]["phase"] == "review"
+    assert attempts[1]["criterion"] == "tests"
+    assert "stop_reason" not in attempts[1]
+
+
+def test_item_iteration_validates_status(tmp_path):
+    _start(tmp_path)
+    with pytest.raises(ValueError, match="status"):
+        update_execution_state(_state(tmp_path), "item_iteration", item_id="issue-1", status="bogus")
+
+
 def test_complete_sets_phase_report(tmp_path):
     _start(tmp_path)
     block = update_execution_state(_state(tmp_path), "complete")
@@ -153,7 +203,7 @@ def test_review_e_pass_validates_args(tmp_path):
 def test_action_set_complete():
     """Sanity: every action documented in the plan is in the enum."""
     expected = {"start", "dispatch_chunk", "return_chunk", "phase_transition",
-                "iterate_attempt", "review_e_pass", "complete", "heartbeat"}
+                "iterate_attempt", "item_iteration", "review_e_pass", "complete", "heartbeat"}
     assert EXECUTION_VALID_ACTIONS == expected
 
 

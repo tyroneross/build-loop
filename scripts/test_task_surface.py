@@ -42,6 +42,18 @@ class TaskSurfaceTests(unittest.TestCase):
                     "execution": {
                         "queued_chunks": ["T-2"],
                         "in_flight_chunks": ["T-1"],
+                        "item_iterations": {
+                            "T-1": [
+                                {
+                                    "attempt": 1,
+                                    "status": "failed",
+                                    "phase": "iterate",
+                                    "criterion": "tests",
+                                    "stop_reason": "validator-failed",
+                                    "recorded_at": "2026-06-12T12:00:00Z",
+                                }
+                            ]
+                        },
                     }
                 }
             ),
@@ -66,6 +78,12 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertEqual(payload["counts_by_surface"]["state.queued_chunks"], 1)
         self.assertEqual(payload["counts_by_surface"]["issues"], 1)
         self.assertEqual(payload["counts_by_surface"]["followup"], 1)
+        self.assertEqual(payload["dry_run"]["mode"], "rank-only")
+        self.assertEqual(payload["dry_run"]["next_item"]["id"], "T-1")
+        self.assertEqual(payload["dry_run"]["next_item"]["dry_run_action"], "continue_in_flight")
+        self.assertEqual(payload["dry_run"]["next_item"]["rank"], 1)
+        self.assertEqual(payload["iteration_summary"]["T-1"]["attempts"], 1)
+        self.assertEqual(payload["iteration_summary"]["T-1"]["stop_reason"], "validator-failed")
 
     def test_memory_backlog_is_project_scoped(self) -> None:
         memory = self.root / "memory"

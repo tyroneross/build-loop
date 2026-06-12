@@ -22,6 +22,7 @@ EXECUTION_VALID_ACTIONS = {
     "return_chunk",     # move chunk_id in_flight → completed with status; refresh heartbeat
     "phase_transition", # update phase field
     "iterate_attempt",  # increment iterate_attempt (preserves 5x cap across resume)
+    "item_iteration",   # append item-level iteration telemetry for dry-run/autonomous task review
     "review_e_pass",    # append a Review Sub-step E telemetry row to state["reviewE"]
     "complete",         # phase=report; clean-completion sentinel
     "heartbeat",        # pure liveness refresh — touch last_heartbeat_at, no state change
@@ -31,6 +32,7 @@ EXECUTION_RETURN_STATUSES = {
     "evidence_stale", "plan_malformed", "needs_dependency", "failed",
     "concurrent_modification_detected",
 }
+EXECUTION_ITEM_STATUSES = {"started", "passed", "failed", "blocked", "deferred", "stopped"}
 
 
 def _encode(state: Any) -> bytes:
@@ -93,6 +95,52 @@ def _mutate_phase_transition(execution: dict, phase: str | None) -> None:
     if phase not in EXECUTION_VALID_PHASES:
         raise ValueError(f"phase must be one of {sorted(EXECUTION_VALID_PHASES)}, got {phase!r}")
     execution["phase"] = phase
+
+
+def _mutate_item_iteration(
+    execution: dict,
+    *,
+    item_id: str | None,
+    status: str | None,
+    phase: str | None,
+    criterion: str | None,
+    stop_reason: str | None,
+    validator: str | None,
+    model: str | None,
+    ts: str,
+) -> None:
+    if not item_id:
+        raise ValueError("action='item_iteration' requires item_id")
+    item_status = status or "started"
+    if item_status not in EXECUTION_ITEM_STATUSES:
+        raise ValueError(f"status must be one of {sorted(EXECUTION_ITEM_STATUSES)}, got {status!r}")
+    item_phase = phase or execution.get("phase")
+    if item_phase not in EXECUTION_VALID_PHASES:
+        raise ValueError(f"phase must be one of {sorted(EXECUTION_VALID_PHASES)}, got {item_phase!r}")
+
+    iterations = execution.setdefault("item_iterations", {})
+    if not isinstance(iterations, dict):
+        raise ValueError("execution.item_iterations exists but is not an object")
+    attempts = iterations.setdefault(item_id, [])
+    if not isinstance(attempts, list):
+        raise ValueError(f"execution.item_iterations[{item_id!r}] exists but is not a list")
+
+    row: dict[str, Any] = {
+        "attempt": len(attempts) + 1,
+        "status": item_status,
+        "phase": item_phase,
+        "recorded_at": ts,
+    }
+    if criterion:
+        row["criterion"] = criterion
+    if stop_reason:
+        row["stop_reason"] = stop_reason
+    if validator:
+        row["validator"] = validator
+    if model:
+        row["model"] = model
+    attempts.append(row)
+    execution["current_item_id"] = item_id
 
 
 def _dispatch_action(action: str, execution: Any, chunk_id: str | None, status: str | None, phase: str | None, ts: str) -> dict:
@@ -181,8 +229,13 @@ def update_execution_state(
     *,
     run_id: str | None = None,
     chunk_id: str | None = None,
+    item_id: str | None = None,
     status: str | None = None,
     phase: str | None = None,
+    criterion: str | None = None,
+    stop_reason: str | None = None,
+    validator: str | None = None,
+    model: str | None = None,
     queued_chunks: list[str] | None = None,
     file_ownership: dict[str, list[str]] | None = None,
     files_scanned: list[str] | None = None,
@@ -196,8 +249,15 @@ def update_execution_state(
         action: one of EXECUTION_VALID_ACTIONS
         run_id: required for action='start'; ignored otherwise (read from existing block)
         chunk_id: required for dispatch_chunk / return_chunk
+        item_id: required for item_iteration; stable task or queue item id
         status: required for return_chunk; one of EXECUTION_RETURN_STATUSES
+            For item_iteration: one of EXECUTION_ITEM_STATUSES, default started
         phase: required for phase_transition; one of EXECUTION_VALID_PHASES
+            For item_iteration: optional override, defaults to current execution phase
+        criterion: optional failed/passed criterion label for item_iteration
+        stop_reason: optional stop/defer/block reason for item_iteration
+        validator: optional validator or judge id for item_iteration
+        model: optional model/tier label for item_iteration
         queued_chunks: required for action='start'; the initial work list
         file_ownership: required for action='start'; chunk_id → list[file]
         files_scanned: required for action='review_e_pass'; files E inspected this pass
@@ -229,6 +289,20 @@ def update_execution_state(
             )
         if action == "start":
             execution = _build_start_block(run_id, queued_chunks, file_ownership, ts)
+        elif action == "item_iteration":
+            if not isinstance(execution, dict):
+                raise ValueError("action='item_iteration' requires an existing execution block (run start first)")
+            _mutate_item_iteration(
+                execution,
+                item_id=item_id,
+                status=status,
+                phase=phase,
+                criterion=criterion,
+                stop_reason=stop_reason,
+                validator=validator,
+                model=model,
+                ts=ts,
+            )
         else:
             execution = _dispatch_action(action, execution, chunk_id, status, phase, ts)
         execution["last_heartbeat_at"] = ts
