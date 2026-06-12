@@ -117,6 +117,30 @@ should read full coordination context only when the script reports `warn` or
 moves to `verification-pending`, or the next action is a commit, version bump,
 archive/delete, or shared/high-risk file edit.
 
+## Poll-after-post (pull-only enforcement)
+
+Rally is **pull-only**: posting a `say`/`handoff` does NOT notify you when the
+target answers — you learn only by **pulling** the room. A *pull* is one fetch
+(`rally recent`/`rally room`); *polling* is pulling on an interval until ack or
+timeout. `rally inject --handoff --require-ack` already enforces the live-session
+path, but a handoff to a peer that is NOT an injectable session (idle, or
+reading the room async) has no built-in wait — so the discipline below is
+**enforced by a gate every agent runs**, not left to memory.
+
+- **After posting a handoff, pull at least once.** While waiting on the ack,
+  poll: `python3 scripts/rally_poll_gate.py wait --tool "$TOOL_NAME" --event-id <id> --timeout <s>`.
+  On timeout (exit 4) the target is treated as unreachable → **fall to the
+  handoff's declared `fallback_plan`**, do not block forever.
+- **Completion gate (before-complete / Phase D Closeout):**
+  `python3 scripts/rally_poll_gate.py check --tool "$TOOL_NAME" --workdir "$PWD"`.
+  Exit 3 means you still own an UNRESOLVED handoff you authored — pull/resolve it
+  (or fall to fallback) before declaring the run complete. Session-agnostic:
+  catches the forgot-to-pull case whether or not the target was ever injectable.
+  Fail-open on a rally outage (exit 0 + warning) so it never wedges a build.
+
+This applies to every agent (Claude, Codex, …) — the gate is the app logic, so
+no one has to remember to pull.
+
 ## Graceful absence
 
 An absent channel/dir yields an empty envelope (`changed: false`,
