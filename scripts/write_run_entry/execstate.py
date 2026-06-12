@@ -106,6 +106,7 @@ def _mutate_item_iteration(
     criterion: str | None,
     stop_reason: str | None,
     validator: str | None,
+    tier: str | None,
     model: str | None,
     ts: str,
 ) -> None:
@@ -137,6 +138,8 @@ def _mutate_item_iteration(
         row["stop_reason"] = stop_reason
     if validator:
         row["validator"] = validator
+    if tier:
+        row["tier"] = tier
     if model:
         row["model"] = model
     attempts.append(row)
@@ -235,6 +238,7 @@ def update_execution_state(
     criterion: str | None = None,
     stop_reason: str | None = None,
     validator: str | None = None,
+    tier: str | None = None,
     model: str | None = None,
     queued_chunks: list[str] | None = None,
     file_ownership: dict[str, list[str]] | None = None,
@@ -257,7 +261,8 @@ def update_execution_state(
         criterion: optional failed/passed criterion label for item_iteration
         stop_reason: optional stop/defer/block reason for item_iteration
         validator: optional validator or judge id for item_iteration
-        model: optional model/tier label for item_iteration
+        tier: optional tier label (frontier|thinking|code|pattern) for item_iteration
+        model: optional resolved model id for item_iteration
         queued_chunks: required for action='start'; the initial work list
         file_ownership: required for action='start'; chunk_id → list[file]
         files_scanned: required for action='review_e_pass'; files E inspected this pass
@@ -300,6 +305,7 @@ def update_execution_state(
                 criterion=criterion,
                 stop_reason=stop_reason,
                 validator=validator,
+                tier=tier,
                 model=model,
                 ts=ts,
             )
