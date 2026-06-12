@@ -488,6 +488,14 @@ created N · merged-to-main M (deleted) · kept-for-review R: [<branch-name>, ..
 ```
 When a run created zero refs: `Branch hygiene: clean — no run-created branches/worktrees; on main.`
 
+**Structural run-close (Stop hook).** Phase D above is the orchestrator path. An INLINE run (skill-as-methodology, no orchestrator dispatch) never reaches it, so a host `Stop` hook fires the minimum structural closeout with no human prompt — `hooks/closeout.sh stop` → `scripts/stop_closeout.py`:
+
+1. **Record + surface.** Records the run via `append_run.py` (so Phase 6 Learn's `runs[]` sees it) and runs `judgment_gate.py --agent-tool-available false`, surfacing a WARN `systemMessage` when a stakes-gated run skipped the Frontier judgment layer. A Stop hook cannot dispatch agents, so it auto-records + auto-surfaces the gap — it does not run the retrospective-synthesizer or memory closeout; it leaves `.build-loop/closeout-pending/<run-id>.md` for the next SessionStart (`hooks/closeout.sh session-start`) to surface once.
+
+2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
+
+3. **Codex wiring.** Claude Code gets this from the tracked `hooks/hooks.json`. `.codex/hooks.json` is a per-developer runtime file (gitignored), so wire the Codex `Stop` (and `SessionStart`) to the same shim locally: `root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`.
+
 ## Post-Build
 
 After every build, if something surprising happened, append one line to `.build-loop/feedback.md`:
