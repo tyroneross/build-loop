@@ -7,7 +7,7 @@ import argparse, json, shutil, sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from extensions_paths import pending_dir, plugin_dir  # noqa: E402
+from extensions_paths import pending_dir, plugin_dir, safe_name  # noqa: E402
 from extensions_check import check_skill  # noqa: E402
 
 def list_pending() -> list[str]:
@@ -15,6 +15,10 @@ def list_pending() -> list[str]:
     return sorted(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
 
 def approve(name: str, core_descriptions: list[str] | None = None) -> dict:
+    # trigger-overlap fires only when core_descriptions is supplied (programmatic callers / P4 doctor);
+    # the bare CLI runs schema+namespace+privacy gates only — overlap is advisory until P4 wires core discovery.
+    if not safe_name(name):
+        return {"approved": False, "issues": [{"code": "unsafe-name", "detail": f"invalid name {name!r}"}]}
     src = pending_dir() / "skills" / name
     if not (src / "SKILL.md").exists():
         return {"approved": False, "issues": [{"code": "missing", "detail": f"no pending skill {name!r}"}]}

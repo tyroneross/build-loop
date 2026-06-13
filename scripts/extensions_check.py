@@ -17,7 +17,12 @@ def _frontmatter(text: str) -> dict | None:
     fm = {}
     for line in m.group(1).splitlines():
         if ":" in line:
-            k, v = line.split(":", 1); fm[k.strip()] = v.strip()
+            k, v = line.split(":", 1)
+            val = v.strip()
+            # Guard: YAML block-scalar indicators as bare values are parse artifacts, not content.
+            if val in (">", "|"):
+                val = ""
+            fm[k.strip()] = val
     return fm
 
 def check_skill(skill_md: Path, core_descriptions: list[str]) -> list[dict]:

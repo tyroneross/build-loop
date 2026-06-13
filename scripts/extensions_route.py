@@ -7,9 +7,11 @@ import argparse, sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent; sys.path.insert(0, str(HERE))
 from extensions_init import ensure_scaffold  # noqa: E402
-from extensions_paths import pending_dir  # noqa: E402
+from extensions_paths import pending_dir, safe_name  # noqa: E402
 
 def route_draft(name: str, skill_md_text: str) -> str:
+    if not safe_name(name):
+        raise ValueError(f"invalid name {name!r}")
     ensure_scaffold(git_init=False)
     d = pending_dir() / "skills" / name; d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(skill_md_text)

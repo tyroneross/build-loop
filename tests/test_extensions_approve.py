@@ -26,5 +26,17 @@ class ApproveTests(unittest.TestCase):
         res = approve("no-namespace", core_descriptions=[])
         self.assertFalse(res["approved"]); self.assertTrue(res["issues"])
 
+    def test_approve_rejects_traversal(self):
+        res = approve("../../../PWNED", core_descriptions=[])
+        self.assertFalse(res["approved"])
+        codes = [i["code"] for i in res["issues"]]
+        self.assertIn("unsafe-name", codes)
+        # Nothing should have been created/moved outside the temp root
+        r = Path(self.tmp.name)
+        self.assertFalse(Path("/tmp/PWNED").exists())
+        # The traversal target must not exist anywhere inside or above the root
+        for p in r.rglob("PWNED"):
+            self.fail(f"Traversal created {p}")
+
 if __name__ == "__main__":
     unittest.main()

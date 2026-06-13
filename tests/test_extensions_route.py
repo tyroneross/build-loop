@@ -15,5 +15,9 @@ class RouteTests(unittest.TestCase):
         self.assertTrue(Path(dst).exists()); self.assertIn("pending", dst)
         self.assertEqual(pending_count(), 1)
 
+    def test_route_rejects_traversal(self):
+        with self.assertRaises(ValueError):
+            route_draft("../evil", "---\nname: ext-evil\ndescription: x\n---\n")
+
 if __name__ == "__main__":
     unittest.main()
