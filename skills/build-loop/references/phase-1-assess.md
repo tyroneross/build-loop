@@ -210,7 +210,7 @@
 
 15a. **Acceptance-probe contract** (deterministic gate #1 — binds Assess criteria to the Phase-4 re-run so a criterion's own repro can't silently fall out of scope). Every **defect/behavioral** criterion MUST carry three fields:
     - `acceptance_probe` — a **paste-ready command** that reproduces the failure (boundary-appropriate, not a cheaper proxy).
-    - `baseline` — the **captured failing value** the probe returns NOW, at Assess (the "before" signal Review re-checks). An empty string is valid when "empty output is the bug."
+    - `baseline` — the **captured failing value** the probe returns NOW, at Assess (the "before" signal Review re-checks). An empty string is valid when "empty output is the bug." Make it a **specific** failing signal (e.g. `"route":"keyword"` or the full `degradedReason`), NOT a generic token like `error`/`FAIL`/`0`: the Review re-run uses substring containment, which is biased toward a false `blocked` (safe — it never lets a still-failing criterion pass), so a generic baseline that a fixed output could incidentally still contain (a success output of `no error` contains `error`) spuriously blocks. Pick the narrowest string present only while the bug is present.
     - `boundary` — the boundary the probe observes: `data | api | render | console | visual`. Observe the boundary that matters, not a cheaper one (a render/console bug can pass a `data`-layer curl + DB query while still failing — atomize-ai 2026-06-13).
 
     Record the probes in a fenced ```` ```acceptance_probe ```` JSON block inside `.build-loop/goal.md` (single source of truth) OR a `.build-loop/acceptance-probes.json` sidecar. Schema and shape: `scripts/acceptance_probe.py` module docstring. Then validate:

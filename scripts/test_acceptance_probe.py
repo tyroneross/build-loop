@@ -232,6 +232,17 @@ class TestRerun(unittest.TestCase):
         self.assertTrue(still_at_baseline("Error: boom", "line1\n  Error:   boom \nline3"))
         self.assertFalse(still_at_baseline("Error: boom", "all good"))
 
+    def test_generic_baseline_over_blocks(self):
+        # PINNED KNOWN BEHAVIOR (not a logic bug): substring containment biases
+        # toward a false `blocked`, never a false `passed` (the safe direction).
+        # A generic baseline token that a FIXED output incidentally contains
+        # spuriously matches → blocks. This is why authors must pick a SPECIFIC
+        # failing signal (module "BASELINE SELECTION" note), not `error`/`FAIL`/`0`.
+        self.assertTrue(still_at_baseline("error", "no error"))   # over-blocks
+        self.assertTrue(still_at_baseline("0", "exit code: 0"))   # over-blocks
+        # A specific signal does NOT over-block: a fixed output no longer carries it.
+        self.assertFalse(still_at_baseline('"route":"keyword"', '"route":"vector"'))
+
     def test_rerun_all_blocks_when_any_still_failing(self):
         crits = [
             {"id": "OK", "acceptance_probe": "echo good", "baseline": "BADSIGNAL", "boundary": "api"},

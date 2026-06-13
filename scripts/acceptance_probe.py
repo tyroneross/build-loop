@@ -43,6 +43,17 @@ on the baseline text — the baseline is the *failing signal* to look for, not a
 exact full-output snapshot, so a probe that emits extra lines around the same
 error still counts as still-failing.
 
+BASELINE SELECTION (read this before authoring a probe)
+-------------------------------------------------------
+Substring containment biases toward a false ``blocked`` (safe direction: it can
+hold a genuinely-fixed criterion in ``## Held`` for an operator to clear, but it
+never lets a still-failing criterion slip to ``passed``). To avoid a *spurious*
+block, the baseline MUST be a SPECIFIC failing signal — e.g. ``"route":"keyword"``
+or the full ``degradedReason`` string — NOT a generic token like ``error``,
+``FAIL``, or ``0`` that a correct, fixed output could incidentally still contain
+(a fixed output emitting ``no error`` contains ``error`` and would block). Pick
+the narrowest string that is present only while the bug is present.
+
 CLI
 ===
   # Phase 1: validate that every criterion in goal.md carries a probe contract
@@ -273,6 +284,12 @@ def still_at_baseline(baseline: str, current_output: str) -> bool:
     current output (a probe emitting extra context around the same error still
     counts as still-failing). An empty baseline ("" — empty output is the bug)
     matches only when current output is also empty.
+
+    Containment biases toward a false ``blocked``, never a false ``passed`` (the
+    safe direction). Choose a SPECIFIC baseline signal (e.g. ``"route":"keyword"``
+    or the full degradedReason), NOT a generic token like ``error``/``FAIL``/``0``
+    that a fixed output could incidentally contain — see the module "BASELINE
+    SELECTION" note. ``error`` vs a success output of ``no error`` over-blocks.
     """
     nb = _normalize(baseline)
     nc = _normalize(current_output)
