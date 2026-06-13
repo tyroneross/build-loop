@@ -1397,12 +1397,14 @@ def rule_reads_from_dependency(
 # name, per dormant-risk component, the concrete host event / call site AND
 # whether activation was verified live (yes) or is still pending.
 #
-# Detection (kept tight to avoid false positives — a missed case costs one
-# critic catch, a false positive costs trust in the linter): mirror the
-# keyword-proximity approach of rule_risk_surface_change_without_threat_model
-# but require BOTH signals on the SAME line — an activation token AND a word
-# implying the component is being created. Doc-only / pure-refactor plans that
-# never propose new event-driven machinery are exempt (no false positives).
+# Detection (kept tight to avoid false positives, but honest about the cost:
+# when this rule misses a section-less plan, plan-critic grades only plans that
+# HAVE the section — a miss here means no catch anywhere — so recall on
+# realistic spec phrasing matters): mirror the keyword-proximity approach of
+# rule_risk_surface_change_without_threat_model — an activation token plus a
+# creation word within a ±1-line window (spec prose routinely splits the verb
+# from the component sentence). Doc-only / pure-refactor plans that never
+# propose new event-driven machinery are exempt (no false positives).
 #
 # The `## Activation Map` section format (per phase-2-plan.md step 3c):
 #   ## Activation Map
@@ -1419,7 +1421,10 @@ def rule_reads_from_dependency(
 # word on the same line).
 _ACTIVATION_STRONG_TOKEN_RE = re.compile(
     r"\b(?:stop\s+hook|sessionstart|pretooluse|posttooluse|cron|launchd|"
-    r"watcher|git\s+hook|pre-commit|post-commit|webhook)\b",
+    r"watcher|git\s+hook|pre-commit|post-commit|webhook|"
+    # qualified multiword hook forms (bare "hook(s)" stays out — React hooks):
+    r"(?:repo-level|lifecycle|codex|claude(?:\s+code)?|session|host)\s+hooks?|"
+    r"hooks?\.json)\b",
     re.IGNORECASE,
 )
 # Activation tokens — SOFT: overloaded words (`gate`, `fires on`, `triggered
@@ -1428,7 +1433,7 @@ _ACTIVATION_STRONG_TOKEN_RE = re.compile(
 # ALSO present on the line — otherwise an inline "relevance gate inside foo.ts"
 # would false-positive. False-positive suppression > recall (brief).
 _ACTIVATION_SOFT_TOKEN_RE = re.compile(
-    r"\b(?:gate|fires\s+on|triggered\s+by)\b",
+    r"\b(?:gate|fires\s+(?:on|for|at|when)|triggered\s+by)\b",
     re.IGNORECASE,
 )
 _ACTIVATION_CONTEXT_RE = re.compile(
@@ -1443,29 +1448,62 @@ _ACTIVATION_CONTEXT_RE = re.compile(
 _ACTIVATION_CREATE_RE = re.compile(
     r"\b(?:new|add|adds?|adding|create|creates?|creating|ship|ships?|"
     r"wire|wires?|wiring|install|installs?|installing|introduce|introduces?|"
-    r"introducing)\b",
+    r"introducing|build|builds?|building)\b",
+    re.IGNORECASE,
+)
+# Negation guard: a token line that explicitly says the machinery is NOT
+# changing must never fire, even when a neighboring line carries a create verb
+# ("Vercel cron … stays as-is" beside an unrelated "add X" bullet).
+_ACTIVATION_NEGATION_RE = re.compile(
+    r"\b(?:as-is|as\s+is|unchanged|stays?\s+as|no\s+(?:infra\s+)?changes?|"
+    r"off\s+the\s+critical\s+path|already\s+(?:exists?|wired|installed|present)|"
+    r"not\s+(?:change[ds]?|touch(?:ed)?|modif(?:y|ied)))\b",
     re.IGNORECASE,
 )
 
 
-def _line_has_dormant_signal(line: str) -> bool:
-    """True when `line` proposes new event-driven / call-site machinery: a
-    creation word AND (a strong activation token OR a soft token qualified by
-    an activation-context word)."""
-    if not _ACTIVATION_CREATE_RE.search(line):
-        return False
+def _line_has_activation_token(line: str) -> bool:
+    """A strong activation token, or a soft token qualified by context."""
     if _ACTIVATION_STRONG_TOKEN_RE.search(line):
         return True
-    if _ACTIVATION_SOFT_TOKEN_RE.search(line) and _ACTIVATION_CONTEXT_RE.search(line):
-        return True
+    return bool(_ACTIVATION_SOFT_TOKEN_RE.search(line) and _ACTIVATION_CONTEXT_RE.search(line))
+
+
+def _nearest_nonblank(lines: list[tuple[int, str]], idx: int, step: int) -> str:
+    """The nearest non-blank line in direction `step` (max 2 hops), else ''."""
+    j = idx + step
+    hops = 0
+    while 0 <= j < len(lines) and hops < 2:
+        if (lines[j][1] or "").strip():
+            return lines[j][1]
+        j += step
+        hops += 1
+    return ""
+
+
+def _dormant_signal_at(lines: list[tuple[int, str]], idx: int) -> bool:
+    """True when lines[idx] carries an activation token AND a creation word
+    appears on the line or its nearest non-blank neighbors (spec prose splits
+    verb from component: a '## What to build' heading above a blank line, or
+    'Ship:' headers). A token line that negates change never fires."""
+    line = lines[idx][1] or ""
+    if not _line_has_activation_token(line):
+        return False
+    if _ACTIVATION_NEGATION_RE.search(line):
+        return False
+    for cand in (line, _nearest_nonblank(lines, idx, -1), _nearest_nonblank(lines, idx, +1)):
+        if cand and _ACTIVATION_CREATE_RE.search(cand):
+            return True
     return False
 # Section heading — accepts optional leading `##` / any markdown heading depth.
 _ACTIVATION_MAP_HEADING_RE = re.compile(
     r"^\s*#{1,4}\s+Activation\s+Map\b",
     re.IGNORECASE,
 )
+# Anchored: only a line that IS the declaration counts — quoting the token in
+# prose ("Do NOT use `override: …`") must not silence the rule.
 _ACTIVATION_OVERRIDE_RE = re.compile(
-    r"override\s*:\s*activation-map-exempt",
+    r"^\s*(?:[-*]\s*)?override\s*:\s*activation-map-exempt",
     re.IGNORECASE,
 )
 # An entry inside the section: a bullet that names a trigger. The verified-live
@@ -1489,16 +1527,16 @@ def rule_activation_map_required(
     - An explicit `override: activation-map-exempt` line appears in the plan.
     """
     # Explicit override silences the rule.
-    if any(_ACTIVATION_OVERRIDE_RE.search(line) for _, line in lines if line):
+    if any(_ACTIVATION_OVERRIDE_RE.match(line) for _, line in lines if line):
         return []
 
     # Does the plan propose new dormant-risk machinery? Signal lives on a
     # single line (creation word + activation token, tight proximity).
     dormant_signal: tuple[int, str] | None = None
-    for lineno, line in lines:
+    for idx, (lineno, line) in enumerate(lines):
         if not line:
             continue
-        if _line_has_dormant_signal(line):
+        if _dormant_signal_at(lines, idx):
             dormant_signal = (lineno, line)
             break
     if dormant_signal is None:
@@ -1536,6 +1574,7 @@ def rule_activation_map_required(
     # `verified-live:` key. Scan from the heading to the next heading of depth ≤4.
     out: list[dict[str, Any]] = []
     in_section = False
+    saw_trigger_entry = False
     for lineno, line in lines:
         if not line:
             continue
@@ -1545,6 +1584,8 @@ def rule_activation_map_required(
         if in_section:
             if re.match(r"^\s*#{1,4}\s+\S", line):
                 break
+            if _ACTIVATION_TRIGGER_KEY_RE.search(line):
+                saw_trigger_entry = True
             if _ACTIVATION_TRIGGER_KEY_RE.search(line) and not _ACTIVATION_VERIFIED_KEY_RE.search(line):
                 out.append(_finding(
                     claim_text=line.strip(),
@@ -1558,6 +1599,25 @@ def rule_activation_map_required(
                     confidence="high",
                     rule_id="activation-map-required",
                 ))
+    if not saw_trigger_entry:
+        # A bare heading with zero entries is not a map — the dormant component
+        # the signal fired on is still unmapped.
+        sig_lineno, sig_line = dormant_signal
+        out.append(_finding(
+            claim_text=(
+                "`## Activation Map` section is present but empty — the plan's "
+                "dormant-risk component has no `trigger:`/`verified-live:` entry."
+            ),
+            claim_kind="activation_map_empty",
+            subject={"path": None, "symbol": None, "noun": "Activation Map"},
+            verification_command=None,
+            evidence={"file": str(plan_path), "line": sig_lineno, "snippet": sig_line.strip()},
+            result="no_match",
+            marker="❌",
+            severity="BLOCKER",
+            confidence="high",
+            rule_id="activation-map-required",
+        ))
     return out
 
 

@@ -30,6 +30,7 @@ def _full_ownership() -> dict:
         "integration_checkpoint": "foo() callable from bar",
         "allowed_tools": ["Read", "Edit", "Bash:pytest"],
         "denied_tools": ["Bash:git push"],
+        "acceptance_criteria": "tests pass and foo() returns 200 on the happy path",
     }
 
 
@@ -127,3 +128,18 @@ def test_empty_owns_rejected_when_interface_contract_empty():
     assert valid is False
     assert rej["reason"] == "empty_required_string"
     assert "interface_contract" in rej["missing_or_invalid"]
+
+
+def test_acceptance_criteria_optional_but_validated():
+    # 7th MECE field (2026-06-13): OPTIONAL on the rally surface (bootstrap and
+    # presence posts are not delegations); when present it must be non-empty.
+    # The hard requirement lives in brief_mece_validator (dispatch lint).
+    ownership = _full_ownership()
+    ownership.pop("acceptance_criteria")
+    valid, rej = mg.validate_handoff({"ownership": ownership}, tool="codex")
+    assert valid is True                      # absent → fine (not a delegation)
+    ownership = _full_ownership()
+    ownership["acceptance_criteria"] = "   "
+    valid, rej = mg.validate_handoff({"ownership": ownership}, tool="codex")
+    assert valid is False                     # present-but-empty → rejected
+    assert "acceptance_criteria" in str(rej)

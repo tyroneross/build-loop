@@ -412,6 +412,19 @@ def collapse(
     # selected run (or run_id=="latest") to avoid clobbering a still-active run.
     execution_block: dict[str, Any] | None = None
     raw_execution = state.get("execution") if isinstance(state.get("execution"), dict) else None
+    # The terminal Stop closeout releases run identity by archiving the
+    # execution block to historicalExecutions (stop_closeout._release_identity).
+    # When that fired before branch-hygiene collapse, the run-entry worktree
+    # pointer lives ONLY in the archive — recover it by build_loop_id so the
+    # worktree/branch still flow through bundle-then-collapse.
+    if (not raw_execution or not raw_execution.get("build_loop_id")) and run is not None:
+        run_bli = run.get("build_loop_id")
+        hist = state.get("historicalExecutions")
+        if run_bli and isinstance(hist, list):
+            for h in reversed(hist):
+                if isinstance(h, dict) and h.get("build_loop_id") == run_bli:
+                    raw_execution = h
+                    break
     if raw_execution and run is not None:
         # Match by build_loop_id when the run carries one; fall back to "latest"
         # semantics when the run was anonymous.

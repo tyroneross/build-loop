@@ -184,3 +184,45 @@ def test_collapse_skips_execution_worktree_when_bli_mismatch(tmp_path: Path) -> 
     assert _git(repo, "branch", "--list", wt_branch).stdout.strip(), (
         "active run's branch must remain"
     )
+
+
+# ---------------------------------------------------------------------------
+# Released identity (stop_closeout terminal release) → fallback to archive
+# ---------------------------------------------------------------------------
+
+
+def test_collapse_recovers_worktree_from_historical_executions(tmp_path: Path) -> None:
+    """Audit f4: after the terminal Stop closeout releases identity (execution
+    archived to historicalExecutions, cleared), collapse must still find the
+    run-entry worktree via the archive instead of stranding it."""
+    repo = _make_repo(tmp_path)
+    bli = "bl-20260613T000000Z-test-000111"
+    wt_path, wt_branch = _make_run_worktree(repo, bli)
+    # Merge the worktree branch so collapse classifies it MERGED → delete.
+    (wt_path / "f.txt").write_text("x\n")
+    _git(wt_path, "add", "f.txt")
+    _git(wt_path, "commit", "-m", "work")
+    _git(repo, "merge", "--no-ff", wt_branch, "-m", "merge run")
+    state = {
+        "execution": {},  # released by stop_closeout._release_identity
+        "historicalExecutions": [{
+            "build_loop_id": bli,
+            "run_worktree_path": str(wt_path.resolve()),
+            "run_worktree_branch": wt_branch,
+        }],
+        "runs": [{
+            "run_id": bli,
+            "build_loop_id": bli,
+            "createdRefs": [],
+        }],
+    }
+    (repo / ".build-loop").mkdir(exist_ok=True)
+    (repo / ".build-loop" / "state.json").write_text(json.dumps(state, indent=2))
+
+    result = collapse_run.collapse(repo, run_id=bli)
+
+    deleted_branches = [d.get("branch") for d in result["deleted"]]
+    assert wt_branch in deleted_branches, (
+        f"released-run worktree branch must be recovered from historicalExecutions; got {result}"
+    )
+    assert not wt_path.exists()

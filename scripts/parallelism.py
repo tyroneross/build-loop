@@ -94,7 +94,7 @@ def partition_overlap(assignments: dict[str, list[str]]) -> dict[str, list[str]]
 
     Parallel implementers must own DISJOINT file sets — two writers on the same
     file race on the working tree, and (without per-agent worktree isolation) on
-    HEAD/index. `brief_mece_validator.py` checks a single brief *has* the six
+    HEAD/index. `brief_mece_validator.py` checks a single brief *has* the seven
     ownership fields; this checks that the fields are *mutually exclusive* across
     the whole fan-out, BEFORE dispatch.
 

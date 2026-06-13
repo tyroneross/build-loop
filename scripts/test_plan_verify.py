@@ -492,6 +492,50 @@ class ActivationMapRequiredTests(unittest.TestCase):
             sys.path.pop(0)
         return [f for f in run_all(self.plan, self.repo) if f["rule_id"] == "activation-map-required"]
 
+    def test_audit_probe_f6_spec_phrasing_fires(self) -> None:
+        """Audit f1 probe A: the f6 spec's own phrasing — creation verb on the
+        ADJACENT line (±1 window), token mid-sentence — must fire."""
+        findings = self._findings(
+            "## What to build\n\n"
+            "A Stop hook (Claude Code) + the Codex Stop equivalent run the structural closeout on stop.\n"
+        )
+        self.assertEqual(len(findings), 1)  # "build" heading is within the ±1 window
+
+    def test_audit_probe_repo_level_codex_hooks_fires(self) -> None:
+        """Audit f1 probe B: qualified multiword hook form ('codex hooks')."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Ship repo-level codex hooks mirroring the Claude lifecycle hooks so closeout fires for Codex sessions too.\n"
+        )
+        self.assertEqual(len(findings), 1)
+
+    def test_bare_react_hooks_does_not_fire(self) -> None:
+        """Bare 'hooks' stays out — adding React hooks is not host machinery."""
+        findings = self._findings(
+            "## Plan\n\nAdd React hooks for the settings form state.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_empty_activation_map_section_is_blocker(self) -> None:
+        """Audit f2: a bare heading with zero trigger entries is not a map."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Add a new Stop hook that records the run.\n\n"
+            "## Activation Map\n\n"
+            "## Next section\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["claim_kind"], "activation_map_empty")
+
+    def test_override_quoted_in_prose_does_not_silence(self) -> None:
+        """Audit f8: the override only counts as a declaration line."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Add a new Stop hook that records the run.\n\n"
+            "Do NOT use `override: activation-map-exempt` here.\n"
+        )
+        self.assertEqual(len(findings), 1)
+
     def test_dormant_component_without_section_is_blocker(self) -> None:
         """A plan that adds an event-driven component but omits the section → exactly one BLOCKER."""
         findings = self._findings(

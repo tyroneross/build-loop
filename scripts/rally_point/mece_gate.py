@@ -45,6 +45,12 @@ from typing import Any
 # Fields that must exist in payload.ownership
 _LIST_FIELDS = ("owns", "does_not_own", "allowed_tools", "denied_tools")
 _NONEMPTY_STRING_FIELDS = ("interface_contract", "integration_checkpoint")
+# 7th MECE field (2026-06-13): OPTIONAL on the rally surface — bootstrap and
+# presence posts are not delegations and legitimately have no acceptance
+# criteria. When the key IS present it must be a non-empty string. The HARD
+# seven-field requirement lives in brief_mece_validator.py (the Phase 3
+# write-handoff dispatch lint), where the evidenced gap was.
+_OPTIONAL_STRING_FIELDS = ("acceptance_criteria",)
 
 
 def validate_handoff(payload: dict[str, Any], *, tool: str) -> tuple[bool, dict]:
@@ -83,6 +89,13 @@ def validate_handoff(payload: dict[str, Any], *, tool: str) -> tuple[bool, dict]
             elif not ownership[field].strip():
                 missing_or_invalid.append(field)
                 reason = "empty_required_string"
+
+        for field in _OPTIONAL_STRING_FIELDS:
+            if field in ownership:
+                value = ownership.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    missing_or_invalid.append(field)
+                    reason = "empty_required_string"
 
         if missing_or_invalid:
             # If we saw both missing-field and type/empty errors, pick the

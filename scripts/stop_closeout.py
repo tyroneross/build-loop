@@ -173,7 +173,13 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
         if isinstance(r, dict) and r.get("run_id") == run_id:
             if r.get("source") != "append_run":
                 # A richer orchestrator (Review-G) record owns this run. Idempotent no-op.
-                return {"action": "already_recorded", "reason": "run recorded by the orchestrator", "run_id": run_id}
+                # Surface terminal outcome so run_stop's skip-path release also
+                # closes a richer-recorded (Review-G / write_run_entry) run —
+                # otherwise its identity lingers and the next effort resumes it.
+                d = {"action": "already_recorded", "reason": "run recorded by the orchestrator", "run_id": run_id}
+                if r.get("outcome") == "pass":
+                    d["outcome"] = "done"
+                return d
             if r.get("outcome") == append_run._OUTCOME_MAP[outcome]:
                 # outcome included so run_stop can still release identity when
                 # the already-current record is terminal (e.g. an explicit
@@ -333,7 +339,10 @@ def run_stop(workdir: Path, session_id: str) -> dict:
     if decision["action"] in ("skip", "already_recorded"):
         # Even on a skip, a terminal already-current record still closes the
         # run's identity (covers: record landed via explicit append_run /
-        # Review-G before this Stop, so the record path never runs).
+        # Review-G before this Stop, so the record path never runs). Deliberate
+        # asymmetry: this fires without the session-match gate — the record is
+        # terminal, so the run is finished by definition regardless of which
+        # session observes it; releasing a finished run's identity is safe.
         if decision.get("outcome") == "done" and decision.get("run_id"):
             _release_identity(workdir, decision["run_id"])
         return {}

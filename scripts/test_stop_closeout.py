@@ -172,6 +172,30 @@ def test_skip_path_releases_when_already_recorded_terminal(tmp_path):
     assert len(st2["runs"]) == 1                      # record untouched
 
 
+def test_skip_path_releases_richer_terminal_record(tmp_path):
+    # Audit f3: a Review-G/write_run_entry record (NO source key) with outcome
+    # pass must also close identity via the already_recorded arm.
+    st = _base_state(phase="done")
+    st["runs"] = [{"run_id": "bl-test-001", "outcome": "pass",
+                   "date": "2026-06-13T00:00:00Z", "goal": "g", "phases": {}}]
+    _write_state(tmp_path, st)
+    assert stop_closeout.run_stop(tmp_path, SESSION) == {}
+    st2 = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert st2["execution"] == {}
+    assert st2["historicalExecutions"][-1]["build_loop_id"] == "bl-test-001"
+
+
+def test_already_recorded_nonterminal_keeps_identity(tmp_path):
+    # A richer PARTIAL record must NOT release (run may resume).
+    st = _base_state(phase="execute")
+    st["runs"] = [{"run_id": "bl-test-001", "outcome": "partial",
+                   "date": "2026-06-13T00:00:00Z", "goal": "g", "phases": {}}]
+    _write_state(tmp_path, st)
+    stop_closeout.run_stop(tmp_path, SESSION)
+    st2 = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert st2["execution"].get("build_loop_id") == "bl-test-001"
+
+
 def test_converge_then_release(tmp_path):
     # partial Stop keeps identity; the later Stop that converges to pass
     # re-records AND releases.
