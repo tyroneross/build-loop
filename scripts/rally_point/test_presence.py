@@ -118,7 +118,14 @@ def test_stale_presence_regression_across_presence_status_and_lifecycle(tmp_path
     assert pr.read_active_presence(channel, exclude_session="me") == []
     assert not old.exists()
 
-    old = _write_stale_presence(channel, "stale-status", age_seconds=16 * 60)
+    # build_status resolves its channel via the discovery bridge (post-cutover
+    # behavior), which may differ from the legacy BUILD_LOOP_APPS_ROOT channel
+    # used above (e.g. it resolves to <repo>/.rally for a repo-local workdir).
+    # Seed the stale file into the channel build_status will actually READ so
+    # the reaping assertion exercises build_status's real read path.
+    _bs_slug, bs_channel, _via = cs._resolve_channel_dir(workdir.resolve())
+    bs_channel.mkdir(parents=True, exist_ok=True)
+    old = _write_stale_presence(bs_channel, "stale-status", age_seconds=16 * 60)
     args = cs.parse_args([
         "--workdir", str(workdir),
         "--session-id", "me",
