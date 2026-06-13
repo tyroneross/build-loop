@@ -184,7 +184,7 @@ Named failure (2026-06-09, agent-rally-point): two orchestrator runs hit the sam
 
 ---
 
-## MECE Packets (every write-handoff requires all six)
+## MECE Packets (every write-handoff requires all seven)
 
 **Every implementation handoff to a peer MUST spell out six elements: `owns / does-not-own / interface-contract / integration-checkpoint / allowed-tools / denied-tools`.** Anything less is "informational handoff" — produces drift, two writers on the same file, ambiguous "done" definitions.
 
@@ -199,9 +199,9 @@ Named failure (2026-06-09, agent-rally-point): two orchestrator runs hit the sam
 
 Both `allowed-tools` and `denied-tools` MUST be present on every `kind=handoff` post; either MAY be an empty list. An empty `allowed_tools` is a valid explicit "no lateral limits" declaration — only a missing or non-list field is rejected by `mece_gate.validate_handoff`. These fields are the G2 lateral-limits feature (`feat(rally): tool-level lateral limits on handoff packets`, 2026-05-22).
 
-**Enforcement:** `python3 scripts/brief_mece_validator.py --brief-file <path> --json`. Exit 0 → all six present. Exit 1 → at least one missing; orchestrator surfaces a `[warn]` and may still dispatch (C-FLOW pattern — non-blocking lint). The orchestrator wires this lint into every `Agent(subagent_type=..., ...)` dispatch site for peer-handoff briefs.
+**Enforcement:** `python3 scripts/brief_mece_validator.py --brief-file <path> --json`. Exit 0 → all seven present. Exit 1 → at least one missing; orchestrator surfaces a `[warn]` and may still dispatch (C-FLOW pattern — non-blocking lint). The orchestrator wires this lint into every `Agent(subagent_type=..., ...)` dispatch site for peer-handoff briefs.
 
-**Carve-out:** pure-read handoffs ("go look at this and tell me what you find") skip MECE. All write-handoffs need all six. Memory citation: `feedback_handoffs_require_mece_packets`.
+**Carve-out:** pure-read handoffs ("go look at this and tell me what you find") skip MECE. All write-handoffs need all seven. Memory citation: `feedback_handoffs_require_mece_packets`.
 
 ---
 

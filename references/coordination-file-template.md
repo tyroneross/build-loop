@@ -67,7 +67,7 @@ Per-run amendments: {{ANY_RUN_SPECIFIC_OPERATING_AMENDMENTS_OR_NONE}}
 
 ## MECE Ownership Packets per Piece
 
-<!-- TEMPLATE NOTE: Repeat this block once per piece. Every write-handoff requires all six. Skip ONLY for pure-read handoffs. -->
+<!-- TEMPLATE NOTE: Repeat this block once per piece. Every write-handoff requires all seven. Skip ONLY for pure-read handoffs. -->
 
 ### {{PIECE_ID}} — {{PIECE_TITLE}}
 
@@ -165,7 +165,7 @@ Before committing your filled-in coord file:
 
 1. Every `{{PLACEHOLDER}}` replaced with a real value.
 2. Every `<!-- TEMPLATE NOTE: ... -->` block deleted.
-3. Every piece has a MECE packet (all six elements: owns / does-not-own / interface-contract / integration-checkpoint / allowed-tools / denied-tools).
+3. Every piece has a MECE packet (all seven elements: owns / does-not-own / interface-contract / integration-checkpoint / allowed-tools / denied-tools / acceptance-criteria).
 4. Every piece has an acceptance-criteria sub-section.
 5. Step-status table rows match piece IDs in MECE packets.
 6. Run `python3 scripts/coordination_status.py --workdir . --session-id <id> --coordination-file <this-file> --json` — should report `status: clear` initially.

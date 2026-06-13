@@ -26,6 +26,7 @@ class BriefMeceValidatorTests(unittest.TestCase):
             "- **Integration checkpoint**: test file passes\n"
             "- **Allowed tools**: []\n"
             "- **Denied tools**: []\n"
+            "- **Acceptance criteria**: all 7 fields present → valid\n"
         )
 
         self.assertTrue(result["valid"])
@@ -39,9 +40,49 @@ class BriefMeceValidatorTests(unittest.TestCase):
             "### integration-checkpoint\norchestrator can parse JSON\n"
             "### allowed-tools\n[]\n"
             "### denied-tools\n[]\n"
+            "### acceptance-criteria\nreturning envelope satisfies the oracle\n"
         )
 
         self.assertTrue(result["valid"])
+
+    def test_rejects_six_field_brief_missing_acceptance_criteria(self):
+        """A previously-valid 6-field brief is now rejected for missing acceptance-criteria."""
+        result = bmv.validate_brief(
+            "- **Owns** (Codex): scripts/brief_mece_validator.py\n"
+            "- **Does not own**: agents/build-orchestrator.md\n"
+            "- **Interface contract**: validate_brief returns JSON-ready dict\n"
+            "- **Integration checkpoint**: test file passes\n"
+            "- **Allowed tools**: []\n"
+            "- **Denied tools**: []\n"
+        )
+
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["missing"], ["acceptance-criteria"])
+
+    def test_six_pre_existing_field_checks_unchanged(self):
+        """The original six field labels still resolve in their canonical order."""
+        result = bmv.validate_brief(
+            "- **Owns**: scripts/x.py\n"
+            "- **Does not own**: agents/y.md\n"
+            "- **Interface contract**: CLI exits 0/1\n"
+            "- **Integration checkpoint**: tests pass\n"
+            "- **Allowed tools**: []\n"
+            "- **Denied tools**: []\n"
+        )
+
+        self.assertEqual(
+            result["present"],
+            [
+                "owns",
+                "does_not_own",
+                "interface_contract",
+                "integration_checkpoint",
+                "allowed_tools",
+                "denied_tools",
+            ],
+        )
+        # Only the new 7th field is missing — the six legacy checks are intact.
+        self.assertEqual(result["missing"], ["acceptance-criteria"])
 
     def test_reports_missing_fields(self):
         result = bmv.validate_brief(
@@ -52,7 +93,13 @@ class BriefMeceValidatorTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertEqual(
             result["missing"],
-            ["does-not-own", "interface-contract", "allowed-tools", "denied-tools"],
+            [
+                "does-not-own",
+                "interface-contract",
+                "allowed-tools",
+                "denied-tools",
+                "acceptance-criteria",
+            ],
         )
 
     def test_rejects_four_field_brief_missing_tool_limits(self):
