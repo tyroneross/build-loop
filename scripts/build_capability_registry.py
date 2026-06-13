@@ -133,7 +133,14 @@ CATEGORY_KEYWORDS = [
                       # Commit/repo-hygiene guards + plugin-cache pruning +
                       # git-hook installation (all validation infrastructure):
                       "audit_before_commit", "attribution", "private slug",
-                      "private app slug", "prune", "plugin cache", "git-hooks")),
+                      "private app slug", "prune", "plugin cache", "git-hooks",
+                      # Acceptance-probe contract (gate #1: binds an Assess
+                      # criterion to a deterministic Review re-run) and the
+                      # reference-activation audit gate (a reference is
+                      # reachable when needed) are both validation gates:
+                      "acceptance_probe", "acceptance-probe", "acceptance probe",
+                      "reference activation", "activation audit",
+                      "reference_activation")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
