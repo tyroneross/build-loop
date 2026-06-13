@@ -120,7 +120,8 @@ def test_second_stop_same_run_no_double_record_no_repeat_warn(tmp_path):
 def test_idle_stop_skips_rewrite_when_record_current(tmp_path):
     # A Stop fires every turn boundary; once the record carries the current
     # outcome, later Stops must not rewrite state.json/marker (write amplification).
-    _write_state(tmp_path, _base_state())
+    # Non-terminal phase: terminal outcomes release identity instead (below).
+    _write_state(tmp_path, _base_state(phase="execute"))
     stop_closeout.run_stop(tmp_path, SESSION)
     sp = tmp_path / ".build-loop" / "state.json"
     before = sp.read_text()
@@ -128,6 +129,64 @@ def test_idle_stop_skips_rewrite_when_record_current(tmp_path):
     assert d["action"] == "skip" and "unchanged" in d["reason"]
     stop_closeout.run_stop(tmp_path, SESSION)
     assert sp.read_text() == before        # byte-identical: no rewrite happened
+
+
+# --- terminal identity release (W5) -----------------------------------------
+
+def test_terminal_stop_releases_identity(tmp_path):
+    # A recorded `pass` closes the run: identity archived + cleared so the next
+    # effort mints fresh instead of resuming a finished run (which would then
+    # be silently swallowed by skip-if-unchanged).
+    _write_state(tmp_path, _base_state(phase="done"))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    st = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert st["execution"] == {}
+    assert st["historicalExecutions"][-1]["build_loop_id"] == "bl-test-001"
+    assert _runs(tmp_path)[0]["outcome"] == "pass"      # record survives release
+    # next Stop: no identity → silent skip, record untouched.
+    assert stop_closeout.run_stop(tmp_path, SESSION) == {}
+    assert len(_runs(tmp_path)) == 1
+
+
+def test_partial_stop_keeps_identity_for_resume(tmp_path):
+    # Crash-resume contract: resume_resolver reads execution — a non-terminal
+    # outcome must NOT release identity.
+    _write_state(tmp_path, _base_state(phase="execute"))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    st = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert st["execution"].get("build_loop_id") == "bl-test-001"
+
+
+def test_skip_path_releases_when_already_recorded_terminal(tmp_path):
+    # A pass record that landed BEFORE this Stop (explicit append_run with judge
+    # decisions, or replay) takes the skip-unchanged path — identity must still
+    # close, else the next effort resumes a finished run.
+    st = _base_state(phase="done")
+    st["runs"] = [{"run_id": "bl-test-001", "outcome": "pass", "source": "append_run",
+                   "date": "2026-06-13T00:00:00Z", "goal": "g", "phases": {}}]
+    _write_state(tmp_path, st)
+    assert stop_closeout.run_stop(tmp_path, SESSION) == {}
+    st2 = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert st2["execution"] == {}
+    assert st2["historicalExecutions"][-1]["build_loop_id"] == "bl-test-001"
+    assert len(st2["runs"]) == 1                      # record untouched
+
+
+def test_converge_then_release(tmp_path):
+    # partial Stop keeps identity; the later Stop that converges to pass
+    # re-records AND releases.
+    _write_state(tmp_path, _base_state(phase="execute"))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    sp = tmp_path / ".build-loop" / "state.json"
+    st = json.loads(sp.read_text())
+    assert st["execution"].get("build_loop_id") == "bl-test-001"
+    st["phase"] = "done"
+    sp.write_text(json.dumps(st))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    st2 = json.loads(sp.read_text())
+    assert st2["execution"] == {}
+    runs = _runs(tmp_path)
+    assert len(runs) == 1 and runs[0]["outcome"] == "pass"
 
 
 def test_later_stop_converges_outcome_to_terminal_state(tmp_path):

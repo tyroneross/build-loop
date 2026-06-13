@@ -175,7 +175,11 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
                 # A richer orchestrator (Review-G) record owns this run. Idempotent no-op.
                 return {"action": "already_recorded", "reason": "run recorded by the orchestrator", "run_id": run_id}
             if r.get("outcome") == append_run._OUTCOME_MAP[outcome]:
-                return {"action": "skip", "reason": "record already current (outcome unchanged)", "run_id": run_id}
+                # outcome included so run_stop can still release identity when
+                # the already-current record is terminal (e.g. an explicit
+                # append_run with judge decisions landed before this Stop).
+                return {"action": "skip", "reason": "record already current (outcome unchanged)",
+                        "run_id": run_id, "outcome": outcome}
             break
 
     ok, why = _this_session(execution, session_id, now)
@@ -290,6 +294,36 @@ def _stop_message(decision: dict, verdict: dict, write_result: dict) -> str:
     return base
 
 
+def _release_identity(workdir: Path, run_id: str) -> None:
+    """Release the run identity after a TERMINAL outcome is recorded.
+
+    Without this, the completed run's ``build_loop_id`` stays in ``execution``,
+    the next inline effort in the repo silently RESUMES it (``generate_or_resume``
+    keys on id presence), and skip-if-unchanged then never records that new
+    effort (observed twice live, 2026-06-12/13). Archive the block to
+    ``historicalExecutions`` (forensics, capped) and clear it so the next run
+    mints fresh. ONLY a terminal ``pass`` Stop releases: partial/blocked runs
+    keep identity because ``resume_resolver``'s crash-resume prompt reads
+    ``execution`` — the sweep likewise never releases for the same reason.
+    """
+    state_path = workdir / ".build-loop" / "state.json"
+    with append_run.LockedFile(state_path):
+        state = _read_state(workdir)
+        if state is None:
+            return
+        execution = state.get("execution")
+        if not isinstance(execution, dict) or execution.get("build_loop_id") != run_id:
+            return  # identity changed under us — never clear someone else's run
+        hist = state.get("historicalExecutions")
+        hist = hist if isinstance(hist, list) else []
+        hist.append(execution)
+        state["historicalExecutions"] = hist[-10:]
+        state["execution"] = {}
+        append_run.atomic_write_bytes(
+            state_path, (json.dumps(state, indent=2) + "\n").encode()
+        )
+
+
 def run_stop(workdir: Path, session_id: str) -> dict:
     """Stop-mode entrypoint. Returns a Stop-hook JSON dict (always exit 0 upstream)."""
     state = _read_state(workdir)
@@ -297,12 +331,21 @@ def run_stop(workdir: Path, session_id: str) -> dict:
         return {}
     decision = decide(workdir, state, session_id, _utc_now())
     if decision["action"] in ("skip", "already_recorded"):
+        # Even on a skip, a terminal already-current record still closes the
+        # run's identity (covers: record landed via explicit append_run /
+        # Review-G before this Stop, so the record path never runs).
+        if decision.get("outcome") == "done" and decision.get("run_id"):
+            _release_identity(workdir, decision["run_id"])
         return {}
     # action == "record" — append_run appends the first time, replaces on later
     # Stops (outcome converges to the run's terminal state).
     write_result = _record_run(workdir, decision, state)
     verdict = _run_gate(workdir, decision["run_id"])
     _write_marker(workdir, decision, verdict)  # refreshed each Stop → tracks current outcome
+    if decision["outcome"] == "done":
+        # Terminal outcome recorded → close the run's identity so the next
+        # effort mints a fresh build_loop_id instead of resuming this one.
+        _release_identity(workdir, decision["run_id"])
     # Surface the WARN advisory ONCE — on the first record only ("appended").
     # Later Stops re-record silently ("replaced") so the advisory doesn't repeat
     # every turn of a multi-turn inline run.
