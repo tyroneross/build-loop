@@ -16,7 +16,8 @@ tool-without-permission-tier, external-call-without-budget-ceiling,
 risk-surface-change-without-threat-model, schema-migration-full-chain,
 synthesis-dim-vague-value, risk-reason-invalid-value,
 scope-audit-required, approach-lenses-missing, parallel-decision-record,
-no-stop-language, reads-from-dependency, decision-without-falsifier,
+no-stop-language, reads-from-dependency, activation-map-required,
+decision-without-falsifier,
 tier-sanity-judgment-on-script, tier-sanity-mechanical-on-opus.
 
 Plan Evidence Contract (per finding):
@@ -1381,6 +1382,186 @@ def rule_reads_from_dependency(
 
 
 # ---------------------------------------------------------------------------
+# Rule: activation-map-required (2026-06-12) — BLOCKER when a plan proposes a
+# NEW event-driven / call-site-dependent component (stop hook, SessionStart,
+# PreToolUse/PostToolUse, cron, launchd, watcher, git hook, webhook, gate, …)
+# but omits an `## Activation Map` section, OR the section's entries omit the
+# `verified-live:` key.
+#
+# Motivation: build-loop's recurring failure class is "machinery built,
+# activation path never verified" — 4 live instances in one week (a WARN gated
+# on a dict that int()'d to 0; state_finalize reading execution.phase when
+# inline runs write top-level phase; repo-level codex hooks that never fired;
+# run-identity reuse silently skipping records). Each was machinery that
+# compiled green but whose trigger never fired. This rule forces the plan to
+# name, per dormant-risk component, the concrete host event / call site AND
+# whether activation was verified live (yes) or is still pending.
+#
+# Detection (kept tight to avoid false positives — a missed case costs one
+# critic catch, a false positive costs trust in the linter): mirror the
+# keyword-proximity approach of rule_risk_surface_change_without_threat_model
+# but require BOTH signals on the SAME line — an activation token AND a word
+# implying the component is being created. Doc-only / pure-refactor plans that
+# never propose new event-driven machinery are exempt (no false positives).
+#
+# The `## Activation Map` section format (per phase-2-plan.md step 3c):
+#   ## Activation Map
+#   - <component> — trigger: <event-or-call-site> — verified-live: yes|pending
+#
+# Each entry must carry `trigger:` AND `verified-live:`. An entry missing
+# `verified-live:` triggers a BLOCKER (the whole point is to make the
+# verified/pending state explicit). An explicit override line
+# `override: activation-map-exempt` silences the entire rule.
+# ---------------------------------------------------------------------------
+
+# Activation tokens — STRONG: each names host-event / scheduled / call-site
+# machinery whose trigger is unambiguous. Fire on their own (with a creation
+# word on the same line).
+_ACTIVATION_STRONG_TOKEN_RE = re.compile(
+    r"\b(?:stop\s+hook|sessionstart|pretooluse|posttooluse|cron|launchd|"
+    r"watcher|git\s+hook|pre-commit|post-commit|webhook)\b",
+    re.IGNORECASE,
+)
+# Activation tokens — SOFT: overloaded words (`gate`, `fires on`, `triggered
+# by`) that also describe inline algorithmic branches. They fire only when an
+# activation-context word (hook/event/trigger/host/scheduler/lifecycle/…) is
+# ALSO present on the line — otherwise an inline "relevance gate inside foo.ts"
+# would false-positive. False-positive suppression > recall (brief).
+_ACTIVATION_SOFT_TOKEN_RE = re.compile(
+    r"\b(?:gate|fires\s+on|triggered\s+by)\b",
+    re.IGNORECASE,
+)
+_ACTIVATION_CONTEXT_RE = re.compile(
+    r"\b(?:hook|event|lifecycle|session|host|scheduler|scheduled|"
+    r"startup|shutdown|commit|deploy|webhook|cron|launchd|watcher|"
+    r"posttooluse|pretooluse|sessionstart)\b",
+    re.IGNORECASE,
+)
+# Words implying the component is being created in THIS plan (not merely
+# referenced as existing machinery). Required on the same line as an
+# activation token for the dormant-risk signal to fire.
+_ACTIVATION_CREATE_RE = re.compile(
+    r"\b(?:new|add|adds?|adding|create|creates?|creating|ship|ships?|"
+    r"wire|wires?|wiring|install|installs?|installing|introduce|introduces?|"
+    r"introducing)\b",
+    re.IGNORECASE,
+)
+
+
+def _line_has_dormant_signal(line: str) -> bool:
+    """True when `line` proposes new event-driven / call-site machinery: a
+    creation word AND (a strong activation token OR a soft token qualified by
+    an activation-context word)."""
+    if not _ACTIVATION_CREATE_RE.search(line):
+        return False
+    if _ACTIVATION_STRONG_TOKEN_RE.search(line):
+        return True
+    if _ACTIVATION_SOFT_TOKEN_RE.search(line) and _ACTIVATION_CONTEXT_RE.search(line):
+        return True
+    return False
+# Section heading — accepts optional leading `##` / any markdown heading depth.
+_ACTIVATION_MAP_HEADING_RE = re.compile(
+    r"^\s*#{1,4}\s+Activation\s+Map\b",
+    re.IGNORECASE,
+)
+_ACTIVATION_OVERRIDE_RE = re.compile(
+    r"override\s*:\s*activation-map-exempt",
+    re.IGNORECASE,
+)
+# An entry inside the section: a bullet that names a trigger. The verified-live
+# key is what the rule audits — an entry with `trigger:` but no `verified-live:`
+# is a defect (activation state left implicit).
+_ACTIVATION_TRIGGER_KEY_RE = re.compile(r"\btrigger\s*:", re.IGNORECASE)
+_ACTIVATION_VERIFIED_KEY_RE = re.compile(r"\bverified-live\s*:", re.IGNORECASE)
+
+
+def rule_activation_map_required(
+    plan_path: Path, lines: list[tuple[int, str]]
+) -> list[dict[str, Any]]:
+    """BLOCKER: a plan proposes a NEW event-driven / call-site-dependent
+    component (activation token + creation word on the same line) but omits an
+    `## Activation Map` section, OR a section entry that names a `trigger:`
+    omits the `verified-live:` key.
+
+    Exempt when:
+    - The plan proposes no new dormant-risk machinery (no line carries both an
+      activation token and a creation word) — doc-only / refactor-only plans.
+    - An explicit `override: activation-map-exempt` line appears in the plan.
+    """
+    # Explicit override silences the rule.
+    if any(_ACTIVATION_OVERRIDE_RE.search(line) for _, line in lines if line):
+        return []
+
+    # Does the plan propose new dormant-risk machinery? Signal lives on a
+    # single line (creation word + activation token, tight proximity).
+    dormant_signal: tuple[int, str] | None = None
+    for lineno, line in lines:
+        if not line:
+            continue
+        if _line_has_dormant_signal(line):
+            dormant_signal = (lineno, line)
+            break
+    if dormant_signal is None:
+        return []
+
+    # Find the section heading.
+    section_lineno: int | None = None
+    for lineno, line in lines:
+        if line and _ACTIVATION_MAP_HEADING_RE.match(line):
+            section_lineno = lineno
+            break
+
+    if section_lineno is None:
+        # Section missing entirely on a dormant-risk plan — exactly one finding.
+        sig_lineno, sig_line = dormant_signal
+        return [_finding(
+            claim_text=(
+                "Plan proposes a new event-driven / call-site-dependent component "
+                "but has no `## Activation Map` section. Add the section listing "
+                "every dormant-risk component with `trigger: <event-or-call-site>` "
+                "and `verified-live: yes|pending`."
+            ),
+            claim_kind="activation_map_missing",
+            subject={"path": None, "symbol": None, "noun": "Activation Map"},
+            verification_command=None,
+            evidence={"file": str(plan_path), "line": sig_lineno, "snippet": sig_line.strip()},
+            result="no_match",
+            marker="❌",
+            severity="BLOCKER",
+            confidence="high",
+            rule_id="activation-map-required",
+        )]
+
+    # Section exists — every entry that names a `trigger:` must also carry a
+    # `verified-live:` key. Scan from the heading to the next heading of depth ≤4.
+    out: list[dict[str, Any]] = []
+    in_section = False
+    for lineno, line in lines:
+        if not line:
+            continue
+        if lineno == section_lineno:
+            in_section = True
+            continue
+        if in_section:
+            if re.match(r"^\s*#{1,4}\s+\S", line):
+                break
+            if _ACTIVATION_TRIGGER_KEY_RE.search(line) and not _ACTIVATION_VERIFIED_KEY_RE.search(line):
+                out.append(_finding(
+                    claim_text=line.strip(),
+                    claim_kind="activation_map_entry_missing_verified_live",
+                    subject={"path": None, "symbol": None, "noun": "Activation Map entry"},
+                    verification_command=None,
+                    evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                    result="no_match",
+                    marker="❌",
+                    severity="BLOCKER",
+                    confidence="high",
+                    rule_id="activation-map-required",
+                ))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -1409,6 +1590,7 @@ def run_all(plan_path: Path, repo: Path | None) -> list[dict[str, Any]]:
     findings.extend(rule_parallel_decision_record(plan_path, lines))
     findings.extend(rule_no_stop_language(plan_path, lines))
     findings.extend(rule_reads_from_dependency(plan_path, lines))
+    findings.extend(rule_activation_map_required(plan_path, lines))
     findings.extend(rule_decision_without_falsifier(plan_path, lines))
     findings.extend(rule_tier_sanity(plan_path, lines))
     return findings

@@ -471,6 +471,99 @@ class ReadsDependencyTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class ActivationMapRequiredTests(unittest.TestCase):
+    """rule_activation_map_required — Phase 2 gate for the dormant-machinery
+    failure class (machinery built, activation path never verified)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self.plan = self.repo / "plan.md"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _findings(self, text: str) -> list[dict]:
+        self.plan.write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(HERE))
+        try:
+            from plan_verify import run_all  # type: ignore  # noqa: PLC0415
+        finally:
+            sys.path.pop(0)
+        return [f for f in run_all(self.plan, self.repo) if f["rule_id"] == "activation-map-required"]
+
+    def test_dormant_component_without_section_is_blocker(self) -> None:
+        """A plan that adds an event-driven component but omits the section → exactly one BLOCKER."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Add a new Stop hook that records the run outcome on terminal close.\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "BLOCKER")
+        self.assertEqual(findings[0]["claim_kind"], "activation_map_missing")
+
+    def test_dormant_component_with_section_passes(self) -> None:
+        """Same dormant-risk plan WITH a well-formed Activation Map → no finding."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Add a new Stop hook that records the run outcome on terminal close.\n\n"
+            "## Activation Map\n\n"
+            "- closeout.sh — trigger: Stop hook on terminal-outcome record — verified-live: pending\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_override_silences_rule(self) -> None:
+        """Explicit override suppresses the rule even on a dormant-risk plan."""
+        findings = self._findings(
+            "override: activation-map-exempt\n\n"
+            "## Plan\n\n"
+            "Add a new PostToolUse hook that lints every Bash invocation.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_entry_missing_verified_live_is_blocker(self) -> None:
+        """A section entry that names a trigger but omits verified-live → BLOCKER."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Wire a new cron watcher that scans recent runs.\n\n"
+            "## Activation Map\n\n"
+            "- run-scanner — trigger: launchd cron every 15m\n"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "BLOCKER")
+        self.assertEqual(findings[0]["claim_kind"], "activation_map_entry_missing_verified_live")
+
+    def test_doc_only_plan_with_no_dormant_language_is_exempt(self) -> None:
+        """Negative test: a plan with no new-event-driven-machinery language → no finding,
+        even though it never has an Activation Map section."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Update the README and rename the helper across all call sites.\n"
+            "Refactor the report renderer for clarity.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_existing_hook_reference_without_creation_word_is_exempt(self) -> None:
+        """No false positive: merely referencing an existing hook/trigger (no creation
+        word on the same line) does not fire the rule."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "The PostToolUse hook already lints Bash; we only adjust its message text.\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_real_plan_with_activation_map_passes(self) -> None:
+        """A plan whose dormant components all carry trigger + verified-live → no finding."""
+        findings = self._findings(
+            "## Intent\n\nAdd a new SessionStart hook and a new git pre-commit gate.\n\n"
+            "## Activation Map\n\n"
+            "- preflight — trigger: SessionStart hook in hooks/hooks.json — verified-live: yes\n"
+            "- lint-gate — trigger: pre-commit hook in .pre-commit-config.yaml — verified-live: pending\n\n"
+            "## Next\n\nUnrelated section.\n"
+        )
+        self.assertEqual(findings, [])
+
+
 class DecisionWithoutFalsifierTests(unittest.TestCase):
     """rule_decision_without_falsifier — doctrine rule 8 (WP-C), advisory WARN."""
 

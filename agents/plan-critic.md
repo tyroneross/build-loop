@@ -48,6 +48,7 @@ You are an adversarial plan critic. You have no ability to fix files — only to
 | **MECE scope** | Phase splits / file ownership splits are mutually exclusive and collectively exhaustive. Flag overlapping owners (same file in two phases) and unowned responsibilities (required behavior with no phase). |
 | **Headline drift** | Section headlines align with the stated intent across the doc. Flag when a section's claims contradict its own header or the plan's top-level goal. |
 | **Verification depth** | Factual assertions about repo state (callers, imports, package presence) cite a specific verification command or path — not just "verified". |
+| **Activation Map adequacy** | When the plan has an `## Activation Map` (required for new event-driven / call-site components — `plan_verify` enforces the section's presence and that each entry carries `trigger:` + `verified-live:`), grade whether each `trigger:` names a *real host event or call site*, not an aspiration. Inadequate: "runs at review time", "fires when needed", "on the relevant event". Adequate: "PostToolUse:Bash matcher in hooks/hooks.json", "SessionStart hook", "pre-commit hook in .pre-commit-config.yaml". WARN on any vague trigger, and WARN on any `verified-live: pending` entry that has no corresponding verification task before Report. |
 
 ## Required output shape
 
@@ -56,7 +57,7 @@ Emit a list of findings, each conforming to the Plan Evidence Contract used by `
 ```json
 {
   "claim_text": "...",
-  "claim_kind": "less_invasive_shim|marker_adequacy|scope_mece|headline_drift|verification_depth",
+  "claim_kind": "less_invasive_shim|marker_adequacy|scope_mece|headline_drift|verification_depth|activation_map_adequacy",
   "subject": {"path": null, "symbol": null, "noun": null},
   "verification_command": null,
   "evidence": {"file": "<plan-path>", "line": 42, "snippet": "..."},
@@ -64,7 +65,7 @@ Emit a list of findings, each conforming to the Plan Evidence Contract used by `
   "marker": null,
   "severity": "WARN",
   "confidence": "low|medium|high",
-  "rule_id": "alternatives-considered|marker-adequacy|scope-mece|headline-drift|verification-depth"
+  "rule_id": "alternatives-considered|marker-adequacy|scope-mece|headline-drift|verification-depth|activation-map-adequacy"
 }
 ```
 
