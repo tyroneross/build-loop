@@ -50,6 +50,8 @@ Phase 6 has NO "skip entirely" condition. Three outcome states cover every run:
 - Promotion to `active/` STILL requires explicit `/build-loop:promote-experiment <name>` (decision-3 safety boundary preserved — auto-promote of unreviewed drafts never happens).
 - Auto-promote defaults to OFF — set `"autoPromote": true` to enable (requires effective sample ≥ 8).
 
+- Consumer default — learned drafts route to `~/.build-loop-extensions/pending/` via `scripts/extensions_route.py --name <ext-slug> --file <draft>`; they do not load until `scripts/extensions_approve.py` moves them into `plugin/`. (Maintainer routing: P2.)
+
 **What this phase will NOT do**:
 - Modify the build-loop plugin repo
 - Promote artifacts cross-project without explicit `/build-loop:promote-experiment <name>`
