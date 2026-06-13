@@ -86,6 +86,40 @@ Every peer host/session must:
 - Use `heartbeat --task-ref` during long-running tasks so other sessions can
   distinguish "process alive" from "still on task".
 
+## Core vs Sub-Agent — the classification rule
+
+External analyses tend to classify by model tier ("`model: fable` ⇒ core") or by
+blocking power ("core agents halt the loop"). Both are wrong as definitions:
+
+- **Core = produces a verdict some pipeline step is contingent on.** The
+  independent-auditor's `nay`, plan-verify's blocking findings, and
+  `judgment_gate`'s `fail` gate specific steps; that contingency is what makes
+  the role core. Most Frontier critics are advisory by charter
+  (synthesis-critic is WARN-only, alignment-checker never blocks) — high tier,
+  not core. "Can halt the loop" misclassifies: build-loop verdicts gate steps;
+  they never hard-halt the loop outside the defined stop conditions.
+- **Tier follows role, never the reverse.** The role's responsibility row
+  (above) plus `references/model-tier-mapping.md` selects the tier. A future
+  re-tiering (e.g., a cheaper model clearing the Frontier contract) must not
+  reclassify an agent's authority.
+
+## Delegation depth is a security property
+
+The no-sub-sub-agents rule (subagents never dispatch agents) is not just
+context hygiene: it caps the delegation chain at depth 2
+(orchestrator → worker). Enterprise NHI guidance flags 3–5-hop delegation
+chains as the silent-privilege-escalation surface; build-loop designs that
+class out structurally. Treat any proposal to let a subagent dispatch
+(including "just this once" orchestration conveniences) as a security-surface
+change → `triggers.riskSurfaceChange: true`, security-reviewer in scope.
+
+The one sanctioned agent-initiated escalation is `status: blocked` +
+`novel_decisions[]` (the C5 backstop) — build-loop's handoff *detection phase*.
+A worker that detects out-of-scope work returns it for routing; it never
+self-routes. Keep C5 healthy instead of adding peer-to-peer routing fabric;
+recovery from failed handoffs likewise stays centralized in the orchestrator's
+status-routing + stuck-cascade, never per-worker.
+
 ## When To Add A New Agent
 
 Add a new agent only when all are true:

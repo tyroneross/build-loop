@@ -87,6 +87,10 @@ Does not own:
 
 - <function/route/schema/component/CLI/doc contract to preserve or expose>
 
+### Acceptance Criteria
+
+- <testable conditions the returning envelope must satisfy — the verifier's per-chunk oracle>
+
 ### Validation
 
 Run if feasible:

@@ -246,6 +246,8 @@ Run once after this version of build-loop is installed; the migration completes 
 
 Every build-loop run appends a single milestone record at **Review-G** via `scripts/append_milestone.py`. Each record captures what shipped and the repo HEAD sha at write time.
 
+The milestone (durable `milestones.jsonl` in build-loop-memory) is **distinct from** `state.json.runs[]`, which Phase 6 Learn scans for pain signals. The orchestrator's Review-G writes both; an **inline run or the closeout** writes neither unless it calls them explicitly. So at run-close, in addition to the milestone, record the run for Learn with `python3 scripts/append_run.py --workdir "$PWD" --run-id <id> --goal "..." --outcome <done|partial|blocked>` (append-only, idempotent on `run_id`; capture `--manual-intervention "<phase>:<note>"` for any step the user had to re-prompt). Without it, inline work never reaches the `runs[] >= 3` Learn threshold. See `references/phase-6-learn.md` §Detect.
+
 JSONL contract (frozen — sibling staleness-check reads this):
 
 ```

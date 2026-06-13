@@ -261,7 +261,7 @@ Full provider substitution table (Thinking / Code / Pattern → each host's mode
 - Break work into tasks with exact file paths
 - Identify dependency order — what must complete before what?
 - Flag parallel-safe groups: files that don't import each other can be written simultaneously
-- Partition files and agents MECE: every changed file has exactly one owner, every required responsibility has an owner, and each group declares `owns`, `does not own`, `interface contract`, and `integration checkpoint`
+- Partition files and agents MECE: every changed file has exactly one owner, every required responsibility has an owner, and each group declares all seven ownership fields — `owns`, `does not own`, `interface contract`, `integration checkpoint`, `allowed tools`, `denied tools`, and `acceptance criteria` (the testable conditions the returning envelope must satisfy — the verifier's per-chunk oracle)
 - Define checkpoints where work should be verified before continuing
 - Optimize: remove unnecessary steps, combine related changes, eliminate redundant work
 - **Two-lens approach gate**: for non-trivial architecture, workflow, dependency, UI/product, or long-lived interface decisions, add a `## Approach Lenses` section before implementation tasks. It must include:
@@ -308,7 +308,7 @@ Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrato
 ### Phase 3: Execute
 
 - Dispatch parallel work for independent file groups
-- Each worker gets minimal context + integration contract (what interfaces to implement) + an intent packet explaining how the subtask fits the north star + a MECE ownership packet defining owned files, non-owned files, interface contracts, and integration checkpoints
+- Each worker gets minimal context + integration contract (what interfaces to implement) + an intent packet explaining how the subtask fits the north star + a MECE ownership packet defining all seven fields: owned files, non-owned files, interface contracts, integration checkpoints, allowed tools, denied tools, and acceptance criteria (the testable conditions the returning envelope must satisfy — the verifier's per-chunk oracle)
 - If the host supports typed subagents, map read-only codebase questions to explorer-style agents and disjoint implementation slices to worker-style agents. If the host requires explicit user authorization for subagents, identify parallel-safe groups but execute locally unless the user asked for delegation, parallelization, workers, or a `--parallel` mode.
 - **Single-entry routing (host-neutral):** every coding task enters through one build-loop invocation; the runtime auto-classifies intent (build / optimize / research / debug / test) and routes accordingly. The host does not pick a mode — classification is internal. This applies equally across coding hosts (Claude Code, Codex, Cursor, Gemini CLI, others).
 - **Subagent scaling (host-neutral):** when the host supports parallel delegation (e.g. Codex with `--parallel` authorization), dispatch up to `scripts/parallelism.py effective_max_implementers()` workers — machine-aware cap, default 8, ceiling 12 — decomposing work into the maximum number of independent MECE chunks. The permission gate still applies: workers only on explicit `--parallel` / delegation authorization. When parallel delegation is unavailable, execute sequentially without asking.
@@ -487,6 +487,14 @@ created N · merged-to-main M (deleted) · kept-for-review R: [<branch-name>, ..
 · surfaced-unmerged U: [<branch-name>, ...] (ask keep/discard) · bundle: <path>
 ```
 When a run created zero refs: `Branch hygiene: clean — no run-created branches/worktrees; on main.`
+
+**Structural run-close (Stop hook).** Phase D above is the orchestrator path. An INLINE run (skill-as-methodology, no orchestrator dispatch) never reaches it, so a host `Stop` hook fires the minimum structural closeout with no human prompt — `hooks/closeout.sh stop` → `scripts/stop_closeout.py`:
+
+1. **Record + surface.** Records the run via `append_run.py` (so Phase 6 Learn's `runs[]` sees it) and runs `judgment_gate.py --agent-tool-available false`, surfacing a WARN `systemMessage` when a stakes-gated run skipped the Frontier judgment layer. A Stop hook cannot dispatch agents, so it auto-records + auto-surfaces the gap — it does not run the retrospective-synthesizer or memory closeout; it leaves `.build-loop/closeout-pending/<run-id>.md` for the next SessionStart (`hooks/closeout.sh session-start`) to surface once. A terminal (`pass`) record also releases the run identity — the `execution` block is archived to `historicalExecutions` and cleared — so the next inline effort mints a fresh `build_loop_id` instead of silently resuming a finished run (partial/blocked outcomes keep identity for crash-resume).
+
+2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
+
+3. **Codex wiring.** Both hosts ship in-repo: Claude via `hooks/hooks.json`, Codex via the tracked `.codex/hooks.json` — `Stop` and `SessionStart` entries call the same shim (`root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`). ⚠ VERIFIED DORMANT under `codex exec` 0.139.0 (live probe 2026-06-12, `--dangerously-bypass-hook-trust`): codex fired global/built-in hooks but never the repo-level file. Until codex honors repo-level hooks, the working Codex path is the global `~/.codex/hooks.json` (the shim self-gates on `.build-loop/`, so a global install is safe — but global installs are user-opt-in, not shipped).
 
 ## Post-Build
 
