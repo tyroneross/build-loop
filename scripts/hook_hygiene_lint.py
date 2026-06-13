@@ -220,6 +220,28 @@ def _strip_quoted_literals(cmd: str) -> str:
     return out
 
 
+def _strip_shell_comment(line: str) -> str:
+    """Blank an unquoted ``#`` comment (to end of line) with same-length spaces.
+
+    A ``#`` that begins a word (start of line or after whitespace) starts a
+    shell comment; everything after it is documentation, not live code. We
+    blank quoted literals first so a ``#`` inside a string (e.g. a regex or a
+    URL fragment) is not mistaken for a comment. Offsets are preserved so the
+    caller can keep using line/column positions.
+
+    Without this, a hook that *documents* avoiding ``set -e`` in a comment
+    (``# no bare `set -e```) trips HH002's strict-mode detector — a false
+    positive against the very hooks that follow the rule.
+    """
+    scrubbed = _strip_quoted_literals(line)
+    # First unquoted `#` at start-of-line or following whitespace.
+    m = re.search(r"(?:^|\s)#", scrubbed)
+    if m is None:
+        return line
+    cut = m.start() + (0 if m.group(0).startswith("#") else 1)
+    return line[:cut] + " " * (len(line) - cut)
+
+
 def _strip_guards(cmd: str) -> str:
     # Strip quoted literals FIRST so guard regexes don't match inside strings.
     out = _strip_quoted_literals(cmd)
@@ -316,9 +338,12 @@ def rule_hh002(cmd: str, ctx: dict[str, Any],
     findings: list[dict[str, Any]] = []
 
     def _check(text: str, source_path: str | None) -> None:
-        if not SET_E_RE.search(text):
+        # Reason over comment-stripped lines: a `set -e` / risky binary that
+        # appears only inside a `#` comment is documentation, not live code,
+        # and must not trip the strict-mode detector.
+        lines = [_strip_shell_comment(ln) for ln in text.splitlines()]
+        if not any(SET_E_RE.search(ln) for ln in lines):
             return
-        lines = text.splitlines()
         set_e_line: int | None = None
         for i, line in enumerate(lines, start=1):
             if SET_E_RE.search(line):
