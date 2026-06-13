@@ -123,7 +123,9 @@ Required before Phase 2 done:
 
 ### Sub-step B — Validate
 
-Order: UI-validator-first (when `uiTarget != null`) → code graders → runtime smoke gate (see below) → LLM-as-judge → plugin-tests advisory check → memory-first gate on every failure.
+Order: UI-validator-first (when `uiTarget != null`) → code graders → **acceptance-probe re-run gate (deterministic gate #1)** → runtime smoke gate (see below) → LLM-as-judge → plugin-tests advisory check → memory-first gate on every failure.
+
+**Acceptance-probe re-run gate (gate #1 — runs before any criterion is marked passed)**: re-execute every probe captured at Assess: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/acceptance_probe.py rerun --goal .build-loop/goal.md --workdir "$PWD" --json`. Per-criterion `gate_verdict`: `passed` (probe no longer at baseline → proceed); `blocked` (probe still at baseline → CANNOT mark passed, CANNOT inline-defer; routes to Iterate; any deferral routes through `autonomy_gate.py --command "<decision_command>"` as a DECISION → `## Held`, reusing Sub-step F wiring, never a parallel surface); `unverifiable` (no probe → falls through to LLM judges, flagged in Review-G); `error` (probe couldn't run → surfaced, re-attempt/Iterate). Exit 0 = none blocked; exit 1 = ≥1 blocked. Skips cleanly when goal.md has no probe block (`no_probes`, legacy/opt-in). Observe the criterion's declared `boundary`, not a cheaper proxy. Full procedure: `skills/build-loop/references/phase-4-review.md` §Sub-step B.
 
 **UI-validator-first when `uiTarget != null`**: dispatch `ui-validator` with `triggerPoint: "phase4-review-b"`; see `agents/ui-validator.md`. This is the build-loop-owned validation route and does not auto-invoke IBR.
 

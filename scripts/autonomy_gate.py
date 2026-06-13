@@ -72,6 +72,11 @@ DEFAULT_CONFIRM_FOR: list[str] = [
     "git push * --delete *",
     "git push --delete *",
     "rm -rf *",
+    # Acceptance-probe contract (gate #1): deferring a criterion whose probe still
+    # returns its baseline-failure is a DECISION-class surface — explicit operator
+    # confirmation, never an inline prose defer. acceptance_probe.decision_command()
+    # builds this label so the deferral lands in the report's ## Held section.
+    "defer acceptance criterion *",
 ]
 
 DEFAULT_WARN_FOR: list[str] = []  # empty by default; operators add patterns to observe match-rate before promoting to confirmFor
@@ -427,6 +432,7 @@ def _run_self_tests() -> bool:
         ("DROP DATABASE*", "DROP DATABASE app"),
         ("TRUNCATE *", "TRUNCATE logs"),
         ("rm -rf *", "rm -rf ./build-output"),
+        ("defer acceptance criterion *", "defer acceptance criterion C1"),
     ]:
         env = classify(tmp, "test", cmd)
         check(

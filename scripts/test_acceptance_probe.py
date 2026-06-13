@@ -254,24 +254,19 @@ class TestDecisionRouting(unittest.TestCase):
         cmd = decision_command({"id": "C9"})
         self.assertEqual(cmd, "defer acceptance criterion C9")
 
-    def test_blocked_deferral_routes_to_confirm(self):
-        """A blocked criterion's deferral, run through autonomy_gate with the repo
-        confirmFor pattern, must verdict `confirm` (DECISION → ## Held), proving the
-        gate reuses the existing autonomy surface rather than inventing a new one."""
+    def test_blocked_deferral_routes_to_confirm_by_default(self):
+        """A blocked criterion's deferral, run through autonomy_gate with NO repo
+        config, must verdict `confirm` (DECISION → ## Held) via DEFAULT_CONFIRM_FOR —
+        the gate reuses the existing autonomy surface and is DECISION-class by default,
+        with no per-repo wiring required."""
         with tempfile.TemporaryDirectory() as d:
-            tmp = Path(d)
-            cfg_dir = tmp / ".build-loop"
-            cfg_dir.mkdir(parents=True, exist_ok=True)
-            # Repo opts the deferral pattern into confirmFor (the documented wiring).
-            (cfg_dir / "config.json").write_text(
-                json.dumps({"autonomy": {"confirmFor": ["defer acceptance criterion *"]}})
-            )
+            tmp = Path(d)  # no .build-loop/config.json — pure defaults
             cmd = decision_command({"id": "BUG"})
             r = subprocess.run(
                 [
                     sys.executable, str(GATE_SCRIPT),
                     "--workdir", str(tmp),
-                    "--action", f"defer acceptance criterion BUG",
+                    "--action", "defer acceptance criterion BUG",
                     "--command", cmd,
                     "--json",
                 ],
@@ -281,6 +276,7 @@ class TestDecisionRouting(unittest.TestCase):
             self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
             env = json.loads(r.stdout)
             self.assertEqual(env["action"], "confirm")
+            self.assertEqual(env["matched_rule"], "defer acceptance criterion *")
 
 
 # ---------------------------------------------------------------------------
