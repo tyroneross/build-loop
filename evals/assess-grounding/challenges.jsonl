@@ -1,0 +1,10 @@
+# Assess-grounding challenge set (JSONL; one challenge per line, # lines ignored).
+# Each challenge = a PRIOR REAL build-loop run replayed as a test case. Ground
+# truth is the run's OBJECTIVELY RECORDED outcome from .build-loop/state.json
+# runs[] (triggers / synthesisDensity / filesTouched / outcome) — never prose.
+# Replay materializes the repo at `sha` via `git worktree add <tmp> <sha>`.
+# Fields: id, goal, repo, sha, goal_type, ground_truth{triggers, synthesis_count,
+#   synthesis_escalated, files_touched, outcome}. null = not recorded -> not gradable.
+{"id": "blr-agent-spec-w1w5", "goal": "Bake in agent-spec research improvements W1-W5 (activation map gate, acceptance-criteria brief field, taxonomy corrections, identity release)", "repo": "/Users/tyroneross/dev/git-folder/build-loop", "sha": "35e3cd3", "goal_type": "feature", "ground_truth": {"triggers": {"riskSurfaceChange": false}, "synthesis_count": 6, "synthesis_escalated": true, "files_touched": ["scripts/plan_verify.py", "scripts/brief_mece_validator.py", "scripts/stop_closeout.py", "scripts/collapse_run.py", "scripts/rally_point/mece_gate.py", "references/agent-role-taxonomy.md"], "outcome": "pass"}}
+{"id": "blr-f6-stop-closeout", "goal": "build f6 — structural Stop-hook closeout gate for inline build-loop runs", "repo": "/Users/tyroneross/dev/git-folder/build-loop", "sha": "5995943", "goal_type": "feature", "ground_truth": {"triggers": {"riskSurfaceChange": true}, "synthesis_count": null, "synthesis_escalated": null, "files_touched": [], "outcome": "pass"}}
+{"id": "blr-append-run-judgment-gate", "goal": "append_run + judgment_gate, hardened after Fable found 5 HIGH the inline self-tests (15/15) missed", "repo": "/Users/tyroneross/dev/git-folder/build-loop", "sha": "bdf7cdf", "goal_type": "refactor", "ground_truth": {"triggers": {}, "synthesis_count": null, "synthesis_escalated": null, "files_touched": ["scripts/append_run.py", "scripts/judgment_gate.py", "scripts/test_append_run.py", "scripts/test_judgment_gate.py"], "outcome": "pass"}}
