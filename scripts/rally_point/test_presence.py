@@ -26,8 +26,14 @@ if str(_HERE) not in sys.path:
 if str(_HERE.parent) not in sys.path:
     sys.path.append(str(_HERE.parent))
 
-import lifecycle as lc  # noqa: E402
-import presence as pr  # noqa: E402
+# Import via the rally_point package, NOT the bare top-level name. Three
+# different `lifecycle.py` modules exist in the tree (rally_point/,
+# app_pulse/, memory_consolidate/lifecycle/); a bare `import lifecycle`
+# resolves to whichever landed in sys.modules first, so in a full run an
+# earlier test could leave the wrong `lifecycle` cached (symptom:
+# AttributeError: module 'lifecycle' has no attribute 'reap_stale_sessions').
+from rally_point import lifecycle as lc  # noqa: E402
+from rally_point import presence as pr  # noqa: E402
 import coordination_status as cs  # noqa: E402
 
 
