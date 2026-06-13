@@ -67,6 +67,8 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 18. **Define goal + criteria**: state goal concretely; suggest 3-5 scoring criteria; write to `.build-loop/goal.md`. See `skills/build-loop/references/phase-1-assess.md` §"Define goal and scoring criteria".
 
+18a. **Acceptance-probe contract** (deterministic gate #1): every defect/behavioral criterion in `goal.md` carries `acceptance_probe` (paste-ready repro command) + `baseline` (the failing value captured NOW) + `boundary` (`data|api|render|console|visual`). Record them in a fenced ```` ```acceptance_probe ```` JSON block in `goal.md` (or a `.build-loop/acceptance-probes.json` sidecar), then run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/acceptance_probe.py classify --goal .build-loop/goal.md --json`. `ok` → proceed; `flagged` → surface each `[UNVERIFIABLE] <id>` in the Assess brief (never silently passed); `invalid` (exit 1) → a defect-class criterion has no probe, add it before proceeding; `no_probes` → legacy/opt-in run, gate dormant. The captured baselines bind into Phase 4 Review-B's re-run gate. Full contract: `skills/build-loop/references/phase-1-assess.md` §"Acceptance-probe contract".
+
 19. **Synthesis-density routing** (REVISED 2026-05-07 round-4 — Phase 1 routing rule with explicit speed/quality lanes): when a plan exists at this point in Phase 1, count its `synthesis_dimensions:` entries by calling `count_synthesis_dimensions()` from `scripts/plan_verify.py` (do NOT invent a second parser; share the block-walker with the vague-value lint). Then resolve the routing tier in this priority order:
     1. **Explicit user override** — if `.build-loop/config.json.modelOverrides.thinking` or `state.json.config.modelOverrides.thinking` is set OR the plan declares `tier: thinking` in its frontmatter, route to thinking-tier regardless of count.
     2. **Auto-escalate on density** — if `count > 5` (6+ entries), the commit is synthesis-dense at the COMMIT level; route to `tier: thinking` automatically. Fan-out loses cross-dimension coherence at this density even with each individual dimension well-specified.
@@ -81,7 +83,7 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 20. **Downstream consultation rule**: every downstream phase consults `availablePlugins` and `triggers` before dispatching a subagent.
 
-21. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md`, populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, approachLenses, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
+21. **Phase 1 done**: Phase 1 produces `.build-loop/intent.md`, `.build-loop/goal.md` (with the `acceptance_probe` block for any defect/behavioral criterion), populated `.build-loop/state.json` (triggers, availablePlugins, observability, runtimeServer, preCommit, approachLenses, synthesisDensity, architecture.backendHealth, selfRecursive, versionDrift, workingCopy, activeCapabilities[1], constitution.loadedRuleIds, riskSurfaceEvidence, uiIOContract, acceptanceProbes), and the architecture baseline cache at `.build-loop/architecture/scout-cache/baseline.json`. Proceed to Phase 2 Plan.
 
 ## Phase 2 Plan detail (full protocol)
 

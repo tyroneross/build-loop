@@ -208,6 +208,22 @@
 
    These exist because mockup-parity ≠ design-rule compliance, and component polish does not prove the UI handles the right data. Code that matches the mockup but omits an input, output, state, validation layer, or fallback is not production-ready. See `phases/ui-validation.md` and `references/ui-io-contract.md`.
 
+15a. **Acceptance-probe contract** (deterministic gate #1 — binds Assess criteria to the Phase-4 re-run so a criterion's own repro can't silently fall out of scope). Every **defect/behavioral** criterion MUST carry three fields:
+    - `acceptance_probe` — a **paste-ready command** that reproduces the failure (boundary-appropriate, not a cheaper proxy).
+    - `baseline` — the **captured failing value** the probe returns NOW, at Assess (the "before" signal Review re-checks). An empty string is valid when "empty output is the bug."
+    - `boundary` — the boundary the probe observes: `data | api | render | console | visual`. Observe the boundary that matters, not a cheaper one (a render/console bug can pass a `data`-layer curl + DB query while still failing — atomize-ai 2026-06-13).
+
+    Record the probes in a fenced ```` ```acceptance_probe ```` JSON block inside `.build-loop/goal.md` (single source of truth) OR a `.build-loop/acceptance-probes.json` sidecar. Schema and shape: `scripts/acceptance_probe.py` module docstring. Then validate:
+    ```bash
+    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/acceptance_probe.py classify --goal .build-loop/goal.md --json
+    ```
+    - `verdict: ok` — all criteria verifiable; proceed.
+    - `verdict: flagged` — at least one criterion is missing a probe/baseline/boundary; that criterion is `unverifiable` and is **flagged in the Assess brief, not silently passed**. Surface each as `[UNVERIFIABLE] <id> — missing <fields>`. Additive/opt-in: a net-new behavioral criterion with no probe yet degrades to `unverifiable`, it does NOT hard-fail.
+    - `verdict: invalid` (exit 1) — a **defect-class** criterion (`defect_class: true`) has NO probe. This is a hard failure: a fix for an observed bug must carry its reproducible repro. Add the probe before proceeding.
+    - `verdict: no_probes` — goal.md has no probe block at all (legacy/opt-in run). Proceed; the gate is dormant.
+
+    The captured baselines bind forward into Phase 4 Review-B, where the same probes are re-run (`scripts/acceptance_probe.py rerun`). See `references/phase-4-review.md` §Sub-step B.
+
 16. **Design eval graders per criterion** using the grading hierarchy:
     - **Prefer code-based graders** (fast, deterministic, cheap): test suite pass/fail, lint/type check, build succeeds, schema validation, accessibility audit
     - **Use LLM-as-judge graders** when code can't check the criterion:
