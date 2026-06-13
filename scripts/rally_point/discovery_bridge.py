@@ -56,7 +56,10 @@ from typing import Any
 try:  # binary-probe timeouts must fit under the rally hook wall-clock budget
     from rally_point import hook_budget
 except ImportError:
-    from . import hook_budget
+    try:  # package-relative import
+        from . import hook_budget
+    except ImportError:  # script import (post-commit capture: dir on sys.path)
+        import hook_budget  # type: ignore
 
 try:  # package import
     from . import channel_paths
