@@ -24,8 +24,56 @@ is 0.5s.
 from __future__ import annotations
 
 import socket
+import sys
 
 import pytest
+
+
+# Modules that some fixtures intentionally ``del sys.modules[...]`` so a new
+# env var (BUILD_LOOP_MEMORY_ROOT / _STORE_ROOT) takes effect on re-import
+# (e.g. tests/test_migrate_project_memory.py, tests/test_memory_consolidation_pr1.py).
+# Those deletions are NOT restored by ``monkeypatch`` — monkeypatch tracks env
+# and attributes, never ``sys.modules`` membership. The leak corrupts module
+# IDENTITY for any LATER test that holds a module-global reference or calls
+# ``importlib.reload`` on one of these (the symptom: scripts/test_memory_writer.py
+# P2 tests + scripts/semantic_index/test_hybrid.py pass in isolation but fail in
+# the full run with "module memory_writer not in sys.modules"). Restoring these
+# entries after every test makes the deletion self-contained — one source of
+# truth instead of patching each polluting fixture.
+_SHARED_MUTABLE_MODULES = (
+    "_paths",
+    "memory_writer",
+    "memory_facade",
+    "project_resolver",
+    "audit_memory_invocation",
+    "semantic_index",
+    "recall",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_shared_module_identity():
+    """Snapshot + restore ``sys.modules`` for shared memory modules per test.
+
+    Cheap: captures at most a handful of dict entries. If a test (or its
+    fixtures) deletes or re-imports one of these, the original object is put
+    back so the next test sees a consistent module identity. Modules absent
+    before the test are removed again if a test imported them.
+    """
+    before = {name: sys.modules.get(name) for name in _SHARED_MUTABLE_MODULES}
+    try:
+        yield
+    finally:
+        for name, original in before.items():
+            current = sys.modules.get(name)
+            if original is None:
+                # Was absent before; drop anything the test imported so a later
+                # test re-imports fresh rather than inheriting test-scoped env.
+                if current is not None:
+                    sys.modules.pop(name, None)
+            elif current is not original:
+                # Deleted or replaced during the test — restore the original.
+                sys.modules[name] = original
 
 
 def _ollama_reachable() -> bool:
