@@ -49,7 +49,7 @@ class InstallMemoryPublicSeedTests(unittest.TestCase):
         self.assertEqual(result["privacy_classification"], "scaffolding-only")
         self.assertEqual(
             sorted(result["files"]),
-            ["MEMORY.md.template", "charter.md.template", "constitution.md.template"],
+            ["MEMORY.md.template", "README.md", "charter.md.template", "constitution.md.template"],
         )
 
     def test_seed_validation_rejects_unlisted_files(self) -> None:
@@ -119,7 +119,7 @@ class InstallMemoryPublicSeedTests(unittest.TestCase):
             status = json.loads(stdout.getvalue())
             self.assertFalse(status["exists"])
             self.assertTrue(status["public_seed"]["ok"])
-            self.assertEqual(status["public_seed"]["seed_version"], "2026-06-07")
+            self.assertEqual(status["public_seed"]["seed_version"], "2026-06-12")
 
 
 if __name__ == "__main__":
