@@ -70,10 +70,12 @@ residual risk explicitly."
   concise-output principle. Extend the envelope with 3 fields instead.
 - **Separate factual-timeline artifact.** DEFERRED — run records + transcripts already
   carry timeline; a dedicated section earns nothing observed.
-- **Root-cause LAYER taxonomy** (input/spec/prompt/model/tool/state/…). DEFERRED to a
-  backlog watch item — plausible value (lets `recurring-pattern-detector` cluster RCAs
-  by layer across runs) but no observed "couldn't cluster" failure yet. Revisit if
-  Phase-6 pattern detection shows demand.
+- ~~Root-cause LAYER taxonomy~~ → **PROMOTED to W4** (user request 2026-06-13). Demand
+  is now evidenced, and there is a concrete consumer: `recurring-pattern-detector`
+  already clusters `runs[]` signals across 3+ runs and the run record already carries
+  free-text `root_cause` per phase — a structured `root_cause_layer` enum lets it
+  surface "the implementer keeps re-introducing State/memory bugs" as a project-shaped
+  blind spot, exactly like its existing `security_finding` cross-run pattern. See W4.
 
 ## Approach Lenses
 
@@ -97,6 +99,7 @@ residual risk explicitly."
 | 1 | W1 — counterfactual closure | `agents/root-cause-investigator.md` (Step-6 stop rule + envelope `counterfactual` field), `agents/fix-critique.md` (rubric line: reject a fix that wouldn't have caught THIS failure), `skills/build-loop/SKILL.md` + `AGENTS.md` (C-RCA: one sentence — "not closed until the lever would have prevented/detected/contained this exact failure") | false (additive field + prompt text) | none |
 | 2 | W2 — creation/escape split | `agents/root-cause-investigator.md` (envelope `creation_path` + `escape_path` alongside `failure_map`; Step-2 prompts both axes), `skills/build-loop/references/phase-5-iterate.md` (failure-brief gains the two-question split) | false (additive fields) | none |
 | 3 | W3 — fix-strength + de-risk wording | `agents/root-cause-investigator.md` (`prevention_control` guidance gains the strength order), `skills/build-loop/SKILL.md` + `AGENTS.md` (C-RCA fix taxonomy: add strength order; replace any "ignore" with isolate/validate/monitor/degrade/escalate/accept-residual-risk), `agents/fix-critique.md` (rubric: prefer-stronger-control check) | false (prompt text) | none |
+| 4 | W4 — root-cause layer taxonomy | `agents/root-cause-investigator.md` (envelope `root_cause_layer` enum + classification step), `agents/recurring-pattern-detector.md` (new cross-run cluster signal `root_cause_layer`), `agents/build-orchestrator.md` (Review-G carries `root_cause_layer` into the `runs[]` phase record — additive), `scripts/test_recurring_pattern_detector.py` (or the detector's colocated test — cluster-by-layer case) | false (additive enum field; consumers ignore unknowns) | none |
 
 No `## Activation Map` is required: the plan introduces no event-driven component —
 it sharpens prompt discipline on existing agents fired at their existing call sites,
@@ -121,6 +124,27 @@ Envelope gains `"counterfactual": "if <lever+actuator> had existed, it would hav
 `fix-critique` rejects (verdict: needs-work) any fix whose counterfactual is absent or
 fails on the real reproduction.
 
+## W4 detail — root-cause layer taxonomy
+
+The investigator classifies each confirmed root cause by exactly one layer (the bug's
+true origin layer, not the symptom's surface). Twelve layers, tailored to build-loop's
+actual failure modes (agent-/code-shaped, not generic SRE):
+
+`input-data` · `requirements-spec` · `prompt-instruction` · `model-reasoning` ·
+`tool-api` · `state-memory-cache` · `orchestration-workflow` · `permission-security` ·
+`test-eval-gate` · `observability-alerting` · `human-handoff-process` ·
+`external-dependency`
+
+Envelope gains `"root_cause_layer": "<one enum>"` per confirmed root cause (multi-root
+trees carry one per confirmed branch). Review-G carries it into the `runs[]` phase
+record beside the existing free-text `root_cause`. `recurring-pattern-detector` adds a
+cross-run signal: a layer recurring across ≥3 runs emits a `root_cause_layer` pattern
+(same shape as its existing `security_finding` pattern) — surfacing a project-shaped
+blind spot a project-local rule could catch earlier. Worked dogfood: this week's misses
+classify `test-eval-gate` (hand-injected fixtures) + `model-reasoning`/`tool-api`
+(`int(dict)→0`); three more `test-eval-gate` roots would flag fixtures as the systemic
+weak point — the layer field makes that detectable, free-text `root_cause` does not.
+
 ## Acceptance
 
 - **W1:** root-cause-investigator envelope carries a non-empty `counterfactual`; its
@@ -136,13 +160,19 @@ fails on the real reproduction.
   state → automated block → detect → contain → decision-support → docs); no "ignore"
   wording survives `grep -rn "ignore it\|wrap / ignore"`; fix-critique prefers the
   stronger control where feasible.
+- **W4:** investigator envelope carries a valid `root_cause_layer` enum per confirmed
+  root cause; `recurring-pattern-detector` emits a `root_cause_layer` pattern when one
+  layer recurs across ≥3 runs (test proves the cluster fires at 3, not at 2); Review-G
+  writes the field into `runs[]` (additive — existing run-record validators still pass).
 - Self-mod gate pass per commit (prompt-only chunks: tests are the existing agent/skill
   consistency checks + any envelope-schema test); Fable independent-auditor on the full
   diff before Report; plan-verify clean on this plan.
 
 ## Effort
 
-S (3 prompt/doc chunks, all additive). W1 ‖ W2 ‖ W3 are independent (different sections
-of shared files — single-writer sequences them, or one implementer does all three since
-they co-touch root-cause-investigator.md). Suggested: one Opus implementer for the three
-co-located edits + Fable auditor; cheaper than fan-out given the file overlap.
+S–M (4 chunks). W1–W3 are prompt/doc-only and co-touch `root-cause-investigator.md`;
+W4 adds the enum + a real `recurring-pattern-detector` cluster rule + a test. All four
+co-touch `root-cause-investigator.md`, so a single Opus implementer doing W1–W4
+sequentially beats fan-out (the file overlap would force serialization anyway).
+Fable auditor on the full diff. The only non-additive-prose change is W4's detector
+cluster rule + its test; everything else is additive fields and prompt text.
