@@ -5,10 +5,13 @@
 
 Pre-registration: `2026-06-14-rca-live-test-preregistration.md` (committed before any arm ran).
 Arms: control = `root-cause-investigator` as-is; treatment = same + W1–W3 levers injected. Both Sonnet.
-Judge: independent, blind to arm identity. **Tier deviation:** pre-registered Fable judge was
-inaccessible this session → judge ran on Opus. Blinding + independent-ground-truth preserved; tier noted.
+Judge: independent agent, NOT given the arm→output mapping. **Blinding was PARTIAL, not clean:**
+treatment outputs carried labeled fields (creation_path/escape_path/counterfactual/fix_strength_rung)
+the control outputs lacked, so the judge could likely INFER which was the upgrade from structure.
+We only withheld the explicit label. **Tier deviation:** pre-registered Fable judge was inaccessible
+→ judge ran on Opus.
 
-## Blind map (revealed after judging)
+## Arm→label map (revealed after judging)
 - S1: RCA-1 = control · RCA-2 = treatment → judge winner RCA-2 = **treatment**
 - S2: RCA-1 = treatment · RCA-2 = control → judge winner RCA-1 = **treatment**
 

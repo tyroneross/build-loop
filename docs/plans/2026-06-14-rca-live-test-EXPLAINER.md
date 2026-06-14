@@ -5,8 +5,8 @@
 
 ## Bottom line (read this first)
 
-We ran a fair, blind head-to-head between build-loop's CURRENT root-cause method and
-a PROPOSED upgrade, on two real bugs. The upgrade won both. It mattered most on the
+We ran a head-to-head between build-loop's CURRENT root-cause method and a PROPOSED
+upgrade, on two real bugs. The upgrade won both. It mattered most on the
 hard, ambiguous bug, where it reached the correct cause with half the effort and was
 honest about what it could not verify. It added overhead with no correctness gain on
 the easy bug. Conclusion: build the upgrade, but keep its full weight for hard bugs.
@@ -49,8 +49,10 @@ the easy bug. Conclusion: build the upgrade, but keep its full weight for hard b
   of overclaiming.
 
 ### Judge
-- **What it was:** an independent reviewer agent, blind to which output came from which
-  arm. (Planned as Fable; ran on Opus because Fable was unavailable this session.)
+- **What it was:** an independent reviewer agent that was NOT given the arm labels.
+  Blinding was PARTIAL: the treatment's outputs carried distinctive labeled fields the
+  control's lacked, so the reviewer could likely infer which was the upgrade. (Planned
+  as Fable; ran on Opus because Fable was unavailable.)
 - **What it did:** read the actual code to establish the TRUE cause for each bug, scored
   both outputs on five measures, and picked the stronger.
 - **Expected:** neutral adjudication on ground truth, not style.
