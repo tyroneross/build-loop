@@ -15,6 +15,17 @@ We only withheld the explicit label. **Tier deviation:** pre-registered Fable ju
 - S1: RCA-1 = control · RCA-2 = treatment → judge winner RCA-2 = **treatment**
 - S2: RCA-1 = treatment · RCA-2 = control → judge winner RCA-1 = **treatment**
 
+## How to read the scores (legend)
+
+- **M1, M2, M4, M5 are grades: higher is better, max 2** (0 = bad/absent, 1 = partial, 2 = best).
+  - M1 root cause: 0 missed · 1 partial · 2 fully correct.
+  - M2 creation+escape: 0 neither · 1 one · 2 both ("why it existed" AND "why controls missed it").
+  - M4 counterfactual: 0 none · 1 stated but weak · 2 stated and would catch THIS bug on the real input.
+  - M5 system-level: 0 stopped at surface · 1 reached a system cause.
+- **M3 fix-strength = rung 1–7, higher is stronger** (1 docs … 7 eliminate the failure mode).
+- **tool_calls / wall = COST, not quality. Lower is better — but only counts when correctness (M1) is equal or better.** A fast wrong answer loses to a slow right one (standing order: Accuracy > Speed > Cost).
+- **No statistical significance / correlation / fit** is computed: n=2 is too small. These numbers are directional, not measured signal vs chance.
+
 ## Scores (judge, ground-truth from code)
 | | M1 root | M2 create+escape | M3 rung | M4 counterfactual | M5 system | tool_calls | wall |
 |---|---|---|---|---|---|---|---|
