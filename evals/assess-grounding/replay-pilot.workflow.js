@@ -37,7 +37,9 @@ const VARIANTS = [
   { id: 'G0', desc: 'baseline: phase-1-assess.md protocol as-is; step-5 architecture tier = raw-read fallback; no mandatory citation' },
   { id: 'G1', desc: 'grounded: step-5 = navgator-full architecture map injected; step-5b reads-deps enumerated; EVERY trigger must carry a file:line citation or be dropped' },
 ]
-const reps = (args && args.reps) || 1
+// args may arrive as a JSON string depending on host; normalize to an object.
+const ARGS = (typeof args === 'string') ? JSON.parse(args || '{}') : (args || {})
+const reps = ARGS.reps || 1
 
 const ASSESS_SCHEMA = {
   type: 'object',
@@ -77,11 +79,13 @@ const GROUNDED_SCHEMA = {
 }
 
 // 1) Load challenges (agent reads the file; sandbox has no fs).
-const all = await agent(
-  `Read ${CHALLENGES}. Parse every line that is not blank and does not start with '#' as JSON. Return the array.`,
-  { label: 'load-challenges', phase: 'Replay', schema: { type: 'array', items: { type: 'object' } } }
-) || []
-const challenges = (args && args.challengeIds) ? all.filter(c => args.challengeIds.includes(c.id)) : all
+// StructuredOutput requires a top-level object schema, so wrap the array.
+const loaded = await agent(
+  `Read ${CHALLENGES}. Parse every line that is not blank and does not start with '#' as JSON. Return {"challenges": [ ...those objects ]}.`,
+  { label: 'load-challenges', phase: 'Replay', schema: { type: 'object', required: ['challenges'], properties: { challenges: { type: 'array', items: { type: 'object' } } } } }
+)
+const all = (loaded && loaded.challenges) || []
+const challenges = ARGS.challengeIds ? all.filter(c => ARGS.challengeIds.includes(c.id)) : all
 log(`replaying ${challenges.length} challenge(s) x ${VARIANTS.length} variant(s) x ${reps} rep(s)`)
 
 // 2) Build the (challenge x variant x rep) cell list.
@@ -101,13 +105,24 @@ Do NOT read .build-loop/state.json or any recorded outcome for this run — that
     { label: `replay:${ch.id}:${v.id}#${r}`, phase: 'Replay', schema: ASSESS_SCHEMA }
   ).then(assessment => ({ challenge_id: ch.id, variant: v.id, rep: r, ch, assessment })),
 
-  (cand) => cand && agent(
-    `Judge GROUNDEDNESS of an Assess output (binary per trigger, per eval-guide.md). For each TRUE trigger in this assessment, decide PASS (the cited file:line evidence genuinely supports the trigger) or FAIL (no/weak/wrong citation). groundedness = PASS count / TRUE-trigger count (1.0 if no true triggers). Assessment: ${JSON.stringify(cand.assessment)}. The repo checkout is /tmp/agr-${cand.challenge_id}-${cand.variant}-${cand.rep} — verify each citation against it. Do not consult any recorded outcome.`,
-    { label: `judge:${cand.challenge_id}:${cand.variant}#${cand.rep}`, phase: 'Judge', model: 'fable', schema: GROUNDED_SCHEMA }
-  ).then(j => ({
-    challenge_id: cand.challenge_id, variant: cand.variant, rep: cand.rep,
-    assessment: cand.assessment, cost: cand.assessment.cost || {}, groundedness: j.groundedness,
-  }))
+  (cand) => {
+    if (!cand) return null
+    const base = {
+      challenge_id: cand.challenge_id, variant: cand.variant, rep: cand.rep,
+      assessment: cand.assessment, cost: (cand.assessment && cand.assessment.cost) || {},
+    }
+    // Groundedness is the OPTIONAL judge-graded objective — a judge failure must
+    // NOT discard the (expensive) replay assessment. Fall back to null; the
+    // scorer treats null groundedness as not-gradable, never 0. (Org standard
+    // pins the judge to Fable, but 'claude-fable-5' is unreachable from workflow
+    // subagents in this environment, so the judge inherits the session model.
+    // Re-pin model:'fable' once it is reachable.)
+    return agent(
+      `Judge GROUNDEDNESS of an Assess output (binary per trigger; eval-guide.md doctrine). For each TRUE trigger, decide PASS (its cited file:line evidence genuinely supports it) or FAIL. groundedness = PASS count / TRUE-trigger count, or 1.0 if there are no true triggers. Verify each citation by reading the file at the challenge commit with \`git -C ${REPO} show ${cand.ch.sha}:<path>\` (no worktree needed). Assessment: ${JSON.stringify(cand.assessment)}. Do not consult any recorded outcome — grounding must come only from the cited repo content.`,
+      { label: `judge:${cand.challenge_id}:${cand.variant}#${cand.rep}`, phase: 'Judge', schema: GROUNDED_SCHEMA }
+    ).then(j => ({ ...base, groundedness: (j && typeof j.groundedness === 'number') ? j.groundedness : null }))
+     .catch(() => ({ ...base, groundedness: null }))
+  }
 )
 
 const clean = candidates.filter(Boolean)
