@@ -236,7 +236,16 @@ missing, return a slower but honest result with explicit degradation status.
   audit/event logs.
 - Medium-term incorporation: add a deterministic checklist that flags designs
   where vector search is treated as source of truth, cache keys omit permission
-  or index versions, or AI-visible files lack metadata records.
+  or index versions, or AI-visible files lack metadata records. A first
+  conservative slice ships as `scripts/db_substrate_lint.py --workdir
+  <target-repo> --json` — an **advisory, WARN-only** lint (wired into no
+  blocking gate) covering two grep-able patterns: version-less
+  embedding/retrieval rows or cache keys (Retrieval rules #4/#5) and AI-visible
+  artifacts lacking a metadata record (File And Artifact Rule). It is seeded
+  from two observed atomize-ai failures (evidence sample 1) and cites the rule +
+  evidence per finding. The semantic items above (vector-as-truth,
+  derived-summary-as-authoritative) stay an assessor-LLM lens — a grep would
+  false-positive and rot — until repeated runs prove a narrower rule.
 - Later incorporation: only add a dedicated database/vector agent or memory
   guardian after repeated runs show a stable input/output envelope that cannot
   be covered by this reference plus `database-assessor` and `implementer`.
