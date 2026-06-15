@@ -66,6 +66,12 @@ SYMPTOM: API returns empty array for search
 - If I ruled out my first guess, what would I investigate next?
 - Could this be caused by something upstream? Downstream? Environmental?
 
+**Trace two distinct axes, not one chain — creation and escape:**
+- **Creation** — why did the defect exist at all? (its origin)
+- **Escape** — why did no control catch it before it reached the surface? (the detection gap)
+
+A bug often needs both fixed, and a single chain nudges toward fixing only one. Worked example: a value was computed wrong (`int(dict)→0` — *creation*) AND the test injected that value by hand, so the gate's blindness to the real shape never surfaced (*escape*). Fixing only the gate, or only the writer, leaves half the bug live.
+
 ### Step 3: Prioritize — Rank Branches by Evidence
 
 Before investigating any branch, quickly assess each:
@@ -122,7 +128,7 @@ Add environment findings as branches in the causal tree with `evidence_type: "en
 
 Stop investigating a branch when you reach one of:
 
-- **Actionable system cause**: A concrete, fixable control failure (missing check, weak contract, ambiguous ownership, stale model/cache, missing feedback, wrong assumption) with evidence
+- **Actionable system cause that passes the counterfactual**: A concrete, fixable control failure (missing check, weak contract, ambiguous ownership, stale model/cache, missing feedback, wrong assumption) with evidence — **and it is not closed until the named lever + actuator would have prevented, detected, or contained THIS exact failure before it reached the surface.** State this as a one-line counterfactual with the evidence that the lever fires on the *real* input, not a hand-constructed one. A control that is "actionable" but dormant on the real signal — a rule that exists yet never fires on the actual phrasing/shape that triggered the bug — does NOT close the branch. (Observed: a shipped `activation-map-required` rule was dormant on 2 of its 4 motivating phrasings; the counterfactual is the test that catches that.)
 - **External boundary**: The cause is outside the codebase (OS behavior, library bug, third-party API change) — document and flag
 - **Depth limit**: After 5 levels deep on any branch, the problem may be architectural — report findings and recommend broader investigation
 - **All branches pruned**: Every plausible cause has been rejected with evidence — the symptom may have an unusual or environmental cause. Flag for user input
@@ -167,6 +173,28 @@ Common traps where surface-level diagnosis stops too early:
 | "The component re-renders" | Why does the dependency change? | Object identity not stable across renders |
 | "It works locally but not in CI" | What differs between environments? | Missing env var in CI config |
 
+## Fix Strength — Prefer the Stronger Control (W3)
+
+When you name the `prevention_control`, prefer the strongest *feasible* rung — do not default to "add a detect-gate." Strength order, strongest first:
+
+1. **eliminate** — remove the failure mode entirely (delete the code path / dependency)
+2. **impossible-state** — make the invalid state unrepresentable (normalize at the *writer* so the bad shape can never exist, vs. coercing at the gate)
+3. **automated-block** — a gate that hard-fails the bad input before it propagates
+4. **detect** — surface/alert on the bad state after it occurs
+5. **contain** — limit blast radius (isolate, validate, monitor, degrade gracefully, escalate, or accept residual risk *explicitly*)
+6. **decision-support** — give a human the signal to decide
+7. **docs** — record the hazard for future readers
+
+Name the rung you chose in `fix_strength` and, if you did not pick the strongest, say why it was infeasible. **Never** route a dependency you don't own to "ignore it" — route it to isolate / validate / monitor / degrade / escalate / accept-residual-risk-explicitly.
+
+## Root-Cause Layer — Classify the Origin (W4)
+
+For each confirmed root cause, classify its true origin layer (where the defect was *born*, not where the symptom surfaced) as exactly one of:
+
+`input-data` · `requirements-spec` · `prompt-instruction` · `model-reasoning` · `tool-api` · `state-memory-cache` · `orchestration-workflow` · `permission-security` · `test-eval-gate` · `observability-alerting` · `human-handoff-process` · `external-dependency`
+
+A multi-root tree carries one layer per confirmed branch. This field lets `recurring-pattern-detector` surface a project-shaped blind spot (e.g. three `test-eval-gate` roots across runs → fixtures are the systemic weak point) that free-text `root_cause` cannot cluster.
+
 ## Output Format
 
 Return a structured JSON assessment:
@@ -183,8 +211,13 @@ Return a structured JSON assessment:
   },
   "tradeoffs": "What the fix improves, what it risks, and what it does not solve",
   "impact": "User impact, engineering impact, recurrence risk",
-  "prevention_control": "Durable control: test, verifier, lint, trace, smoke gate, protocol, memory, or routing rule",
+  "prevention_control": "Durable control: test, verifier, lint, trace, smoke gate, protocol, memory, or routing rule — at the strongest feasible rung (see Fix Strength)",
   "system_control_failure": "The first controllable system control that failed or was missing",
+  "counterfactual": "If <lever+actuator> had existed, it would have <prevented|detected|contained> this because <evidence the lever fires on the REAL input, not a hand-constructed one>",
+  "creation_path": "Why the defect existed at all — the origin axis",
+  "escape_path": "Why no control caught it before the surface — the detection axis",
+  "fix_strength": "eliminate | impossible-state | automated-block | detect | contain | decision-support | docs — the rung of prevention_control; if not the strongest, why the stronger rung was infeasible",
+  "root_cause_layer": "input-data | requirements-spec | prompt-instruction | model-reasoning | tool-api | state-memory-cache | orchestration-workflow | permission-security | test-eval-gate | observability-alerting | human-handoff-process | external-dependency",
   "failure_map": [
     "User-visible symptom",
     "Immediate technical failure",

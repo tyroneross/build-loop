@@ -36,7 +36,7 @@ Read `.build-loop/state.json`. The `runs` array contains entries like:
   "phases": {
     "1": { "status": "pass", "duration_s": 40 },
     "4": { "status": "pass", "duration_s": 300 },
-    "5": { "status": "fail", "duration_s": 80, "root_cause": "type error in middleware", "attempts": 2 },
+    "5": { "status": "fail", "duration_s": 80, "root_cause": "type error in middleware", "root_cause_layer": "model-reasoning", "attempts": 2 },
     "6": { "status": "pass", "duration_s": 120 }
   },
   "diagnosticCommands": ["npm run type-check", "npm run lint --fix"],
@@ -89,6 +89,7 @@ Emit a pattern entry when ANY of these thresholds hit:
 | `phase_failure` | Same phase (1..8) fails ≥3 times across runs | phase id + top root_cause | Real rework signal: a repeatedly-failing phase costs iterations and model tokens. |
 | `manual_intervention` | Same note (or near-duplicate) at same phase ≥2 times | phase + canonical note | User time is the most expensive signal in the stack; two is sufficient. |
 | `security_finding` | Same OWASP/ASI/ATLAS risk ID appears in `security_findings[]` across ≥3 runs | mapped_risk ID + dominant severity | Recurring security risk class signals a project-shaped blind spot the implementer keeps re-introducing. A project-local rule catching it earlier is high-leverage. |
+| `root_cause_layer` | Same `phases[].root_cause_layer` enum value appears across ≥3 DISTINCT runs | the layer enum + dominant phase | A layer recurring across runs (e.g. three `test-eval-gate` roots → fixtures are the systemic weak point) is a project-shaped blind spot that free-text `root_cause` cannot cluster. Same shape and bar as `security_finding`. Skip silently if no phase carries `root_cause_layer`. |
 | `enforce_recurrence` | Same normalized retro enforce-candidate signature appears across ≥2 DISTINCT run-ids in `.build-loop/proposals/enforce-from-retro/` | normalized candidate text (lowercased, whitespace-collapsed, first 120 chars) | The retro flagged it as worth enforcing in TWO separate runs — that is a real cross-session signal: anything prompted/needed repeatedly should become a default. Threshold matches `manual_intervention` (≥2) for the same "expensive signal" rationale. Confidence: high at ≥4 distinct run-ids; medium at 2–3. |
 
 ### Removed (were present in v0.1.0)

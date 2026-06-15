@@ -73,6 +73,7 @@ __pycache__/
 # carries env-parsed hostnames (infra identity). Nothing here is currently tracked.
 .navgator/
 .ibr/
+.spectra/
 .claude-code-debugger/
 archive/*.bundle
 archive/**/*.bundle
