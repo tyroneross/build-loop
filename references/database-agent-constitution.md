@@ -14,6 +14,68 @@ New infrastructure, new execution paths, and new caches must earn their place
 by reducing total complexity, improving correctness, or serving observed query
 shapes.
 
+## AI-First Database Principle
+
+For AI systems, the database is not memory. The database is the storage and
+retrieval substrate. Memory is the logical layer that decides what should be
+remembered, forgotten, updated, retrieved, trusted, and injected into context.
+
+An AI-first database stack should answer:
+
+```text
+What information should the agent use, why, from where, with what permission,
+at what freshness level, and with what evidence?
+```
+
+The default stack is:
+
+```text
+canonical database
++ raw artifact store
++ searchable indexes
++ explicit memory records
++ cache
++ audit/event log
+```
+
+Do not make a vector database the system of record. Store truth in a
+transactional database, append-only log, or object store, then build vector,
+keyword, graph, cache, and summary layers around it.
+
+## AI-First Capability Model
+
+| Capability | Agent requirement |
+|---|---|
+| Truth | Canonical records remain stable, durable, and auditable. |
+| Meaning | Summaries, metadata, tags, embeddings, and relationships are derived from truth. |
+| Retrieval | Exact search, semantic search, filters, ranking, and reranking can be combined. |
+| Memory | Scoped facts, preferences, procedures, and episodes can be updated or superseded. |
+| State | Runs, steps, tool calls, approvals, retries, and resumable work are represented. |
+| Governance | Permissions, lineage, evidence, retention, deletion, and audit are enforceable. |
+
+## Substrate Selection
+
+Use the simplest substrate that satisfies the query, governance, and scale
+requirements:
+
+| Need | Prefer | Avoid |
+|---|---|---|
+| Canonical app data, users, permissions, agent runs | Postgres/Supabase/MySQL | Vector-only truth |
+| Local-first or offline agent workspace | SQLite/SwiftData/Room/IndexedDB plus files | Raw files as the only index |
+| Raw files, media, PDFs, source evidence | Object store or filesystem plus metadata DB | Filenames as semantic truth |
+| Moderate semantic search inside app data | Postgres plus pgvector plus full-text search | Separate vector infra by default |
+| Large semantic corpus or high retrieval QPS | Dedicated vector DB with metadata filters | Unsynced side index |
+| Exact terms, facets, product/legal/log search | Search engine or Postgres FTS | Pure vector search |
+| Durable relationships, lineage, dependencies | Relational edges or graph DB | Graph for unstable extracted entities |
+| Fast working state, locks, idempotency, caches | Redis/KV with versioned keys | Cache as durable memory |
+| Replay, audit, rebuildable projections | Event log, JSONL, Kafka, or event table | CRUD-only state for agent actions |
+| Historical analytics and batch enrichment | Warehouse/lakehouse feeding a serving layer | Warehouse as runtime memory |
+
+For many AI apps, the default recommendation is Postgres/Supabase with pgvector,
+full-text search, object storage, row-level permissions, and event/audit tables.
+Add a dedicated vector database, search engine, graph database, or warehouse only
+when query shape, scale, governance, or economics requires it.
+
 ## General Software Rules
 
 1. **Prefer simple systems over clever integrations.** Avoid adding queues,
@@ -75,6 +137,45 @@ retrieval, reranking, object storage, or search-specific storage tiers.
 6. **Make ingestion replay-safe.** Duplicate ingestion, interrupted uploads, and
    replays must not corrupt manifests or lose indexed data.
 
+## Retrieval And Metadata Rules
+
+1. **Route by query type.** Exact IDs, SKUs, dates, names, and legal clauses
+   should use SQL or keyword search first. Conceptual similarity should use
+   vector search. Relationship questions should use joins or graph traversal.
+   Recent activity should use the event log. Personal preferences should use
+   explicit memory records.
+2. **Use hybrid retrieval by default in production.** Combine metadata filters,
+   keyword search, vector search, and reranking when correctness matters.
+3. **Filter before ranking when security or scope matters.** Tenant, user,
+   project, status, source, classification, version, and permission filters are
+   correctness controls, not ranking hints.
+4. **Track embedding and index versions.** Store `embedding_model`,
+   `embedding_version`, `index_version`, chunking version, and source version so
+   stale retrieval can be explained and rebuilt.
+5. **Version cache keys.** Retrieval, embedding, permission, tool-result, and
+   prompt-fragment caches need version keys such as `index_version` and
+   `permission_version`; otherwise stale or unauthorized context can leak.
+6. **Treat summaries as derived.** Summary tables and materialized context views
+   are useful, but they must link back to source evidence.
+
+## File And Artifact Rule
+
+File structure rarely dictates one specific database. It creates query and
+governance requirements that make some substrates better than others.
+
+Every AI-visible artifact should have a database record with the relevant subset
+of:
+
+```text
+artifact_id, owner, tenant, project, source, mime_type, checksum, version,
+permissions, status, classification, summary, entities, topics,
+extracted_text_pointer, embedding_status, retention_policy
+```
+
+The raw file remains evidence. The database row supplies ownership, permissions,
+freshness, retrieval status, and lineage. The indexes are rebuildable
+derivatives.
+
 ## Required Assessment Fields
 
 When a database or retrieval agent uses this reference, include:
@@ -89,6 +190,9 @@ When a database or retrieval agent uses this reference, include:
   messages, out-of-order updates, stale caches, and rollback behavior.
 - `tests`: invariant-level checks, replay tests, migration tests, query-result
   stability tests, or fuzz/property tests.
+- `substrate_boundary`: which store is canonical truth, which stores are
+  derived indexes/caches, and which layer is memory policy.
+- `governance`: permission, lineage, retention, deletion, and audit controls.
 
 ## Prompt Blocks
 
@@ -127,6 +231,15 @@ missing, return a slower but honest result with explicit degradation status.
   candidate, with source doc, affected runs, and evidence.
 - For wholesale memory intake, write a docs/source summary and coverage artifact
   first; promote only the stable, evidence-backed rules.
+- Near-term incorporation: require database/retrieval assessments to distinguish
+  canonical substrate, derived indexes/caches, explicit memory records, and
+  audit/event logs.
+- Medium-term incorporation: add a deterministic checklist that flags designs
+  where vector search is treated as source of truth, cache keys omit permission
+  or index versions, or AI-visible files lack metadata records.
+- Later incorporation: only add a dedicated database/vector agent or memory
+  guardian after repeated runs show a stable input/output envelope that cannot
+  be covered by this reference plus `database-assessor` and `implementer`.
 
 ## Reference Reading
 

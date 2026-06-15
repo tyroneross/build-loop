@@ -4,6 +4,29 @@
 
 Build-loop reads/writes four memory stores. Loaded on demand at Phase 1 Assess and Phase 4 Review sub-step F.
 
+## Substrate vs memory policy
+
+The database is not memory. Databases, files, object stores, vector indexes,
+keyword indexes, caches, and event logs are storage/retrieval substrates. Memory
+is the policy layer that decides what should be remembered, forgotten,
+superseded, trusted, refreshed, retrieved, and injected into the model context.
+
+When changing build-loop memory, keep these layers explicit:
+
+| Layer | Build-loop examples | Rule |
+|---|---|---|
+| Canonical truth | `<memory-root>/projects/<project>/decisions/*.md`, project lessons, `.build-loop/state.json.runs[]` | Durable facts must be evidenced, scoped, and supersedable. |
+| Raw artifacts | archived plans, source docs, run artifacts, attachments | Preserve evidence separately from promoted memory. |
+| Derived indexes | `INDEX.md`, `INDEX.jsonl`, semantic/Postgres rows, SQLite/FTS projections | Rebuildable; never the sole source of truth. |
+| Explicit memory records | decisions, lessons, preferences, gotchas, run summaries | Small, structured, and future-recallable. |
+| Cache/working state | context bootstrap packet, backend health, run-local snapshots | Useful for current work; not durable memory by default. |
+| Audit/event log | milestones, telemetry, JSONL ledgers, Rally facts | Explains what happened and supports replay/debugging. |
+
+Design implication: do not promote raw transcripts, vector hits, cache entries,
+or retrieved chunks directly into memory. Promote only the distilled rule,
+decision, preference, or lesson, with source evidence and freshness/supersession
+metadata.
+
 ## The four stores
 
 | Store | Path | Purpose | Scope |
