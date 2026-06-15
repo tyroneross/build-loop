@@ -40,6 +40,12 @@ This index is descriptive, not authoritative: it points at canonical docs, it do
 | [m-series-protocol.md](m-series-protocol.md) | M1 envelope persist, M2 heartbeat, M3 cost-ledger; crash-recovery snapshots | `agents/build-orchestrator.md` |
 | [resume-protocol.md](resume-protocol.md) | §0 crash-recovery flow when a build is re-dispatched mid-Execute | `agents/build-orchestrator.md` |
 
+## Agent/domain guidance
+
+| Doc | Answers | Primary caller |
+|---|---|---|
+| [database-agent-constitution.md](database-agent-constitution.md) | SQLite-style database/vector/retrieval agent guidance: invariants, shared primitives, durability, failure modes, and memory-promotion path | `agents/database-assessor.md`, database/retrieval implementer briefs |
+
 ## Multi-session coordination
 
 Three docs with distinct audiences — they are NOT duplicates. The split is registered in `scripts/check_cache_sync.py` (`COORDINATION_EXACT_REFS`) and `scripts/rally_point/plugin_boundary.json`, and the integration-map rationale lives in `skills/build-loop/references/coordination.md`.
