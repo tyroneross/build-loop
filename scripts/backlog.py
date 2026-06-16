@@ -441,6 +441,59 @@ def make_item_id(repo: Path, area: str, counter: int) -> str:
     return f"{proj_id_prefix(repo)}-{area_slug(area)}-{counter:03d}"
 
 
+# Bounded retry cap for the atomic-create race loop. 50 is far above any
+# realistic concurrent-`new` fan-out (a handful of agents), yet still terminates
+# instead of spinning forever if something pathological keeps colliding.
+_CREATE_MAX_ATTEMPTS = 50
+
+
+def atomic_create_item(repo: Path, area: str, render: "Any") -> tuple[str, Path]:
+    """Allocate the next sequential ID and create its file ATOMICALLY.
+
+    The naive read-max-then-write path is a TOCTOU race: N concurrent ``new``
+    processes all read the same highest-NNN, all compute the same next ID, and
+    all write the same file — N-1 silently clobber each other (reproduced: 6
+    concurrent creates → only 2 survivors). This breaks the core multi-agent
+    use case (Claude + Codex / parallel fan-out adding items at once).
+
+    Fix: the filesystem is the lock. We ``os.open`` the candidate path with
+    ``O_CREAT | O_EXCL`` so creation fails loudly (``FileExistsError``) if any
+    peer already took that ID. On collision we recompute max-NNN+1 and retry,
+    bounded to ``_CREATE_MAX_ATTEMPTS``. IDs stay sequential and readable.
+
+    ``render`` is a callable ``(item_id: str) -> str`` returning the full file
+    text — deferred so the ID (and any ID-derived body) is only materialised
+    once we know which ID we actually won.
+
+    Returns ``(item_id, path)``. Raises ``RuntimeError`` if every attempt within
+    the cap lost the race (pathological contention).
+    """
+    items = items_dir(repo)
+    items.mkdir(parents=True, exist_ok=True)
+    last_exc: OSError | None = None
+    for _ in range(_CREATE_MAX_ATTEMPTS):
+        counter = next_counter(repo, area)
+        item_id = make_item_id(repo, area, counter)
+        path = items / f"{item_id}.md"
+        try:
+            # O_EXCL makes this the atomic test-and-set: exactly one concurrent
+            # caller can create a given path; the rest raise FileExistsError and
+            # loop to recompute a fresh (higher) counter.
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError as exc:
+            last_exc = exc
+            continue
+        try:
+            os.write(fd, render(item_id).encode("utf-8"))
+        finally:
+            os.close(fd)
+        return item_id, path
+    raise RuntimeError(
+        f"atomic_create_item exhausted {_CREATE_MAX_ATTEMPTS} attempts for "
+        f"area {area!r} under contention"
+    ) from last_exc
+
+
 # ----------------------------------------------------------------------------
 # `new`
 # ----------------------------------------------------------------------------
@@ -466,9 +519,6 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
     if args.gated not in GATED_VALUES:
         raise ValueError(f"--gated must be one of {GATED_VALUES}, got {args.gated!r}")
 
-    counter = next_counter(repo, args.area)
-    item_id = make_item_id(repo, args.area, counter)
-
     provenance: dict[str, Any] = {}
     if args.provenance_source or args.provenance_ref:
         provenance = {
@@ -476,35 +526,40 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             "ref": args.provenance_ref or None,
         }
 
-    data: dict[str, Any] = {
-        "id": item_id,
-        "title": args.title,
-        "status": args.status,
-        "priority": args.priority,
-        "type": args.type,
-        "area": args.area,
-        "entities": _csv(args.entities),
-        "gated": args.gated,
-        "provenance": provenance,
-        "evidence": _csv(args.evidence),
-        "supersedes": None,
-        "superseded_by": None,
-        "created": today,
-        "updated": today,
-        "review_by": add_days(today, review_days),
-        "owner": args.owner or "unassigned",
-    }
-
     body = _BODY_TEMPLATE.format(
         context=(args.context or "<why this matters / what's the situation>"),
         notes=(args.notes or "<additional detail>"),
     )
-    doc = render_frontmatter(data) + "\n\n" + body
-    if not doc.endswith("\n"):
-        doc += "\n"
 
-    path = items_dir(repo) / f"{item_id}.md"
-    path.write_text(doc, encoding="utf-8")
+    def _render(item_id: str) -> str:
+        data: dict[str, Any] = {
+            "id": item_id,
+            "title": args.title,
+            "status": args.status,
+            "priority": args.priority,
+            "type": args.type,
+            "area": args.area,
+            "entities": _csv(args.entities),
+            "gated": args.gated,
+            "provenance": provenance,
+            "evidence": _csv(args.evidence),
+            "supersedes": None,
+            "superseded_by": None,
+            "created": today,
+            "updated": today,
+            "review_by": add_days(today, review_days),
+            "owner": args.owner or "unassigned",
+        }
+        doc = render_frontmatter(data) + "\n\n" + body
+        if not doc.endswith("\n"):
+            doc += "\n"
+        return doc
+
+    # Atomic, race-safe allocation: the next sequential ID is claimed via an
+    # O_EXCL create so N concurrent `new` calls in the same area never clobber
+    # each other (the read-max-then-write TOCTOU defect). The ID is only known
+    # once we win the create, so the body is rendered lazily inside the helper.
+    item_id, path = atomic_create_item(repo, args.area, _render)
     return {
         "command": "new",
         "id": item_id,

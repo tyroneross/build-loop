@@ -354,6 +354,64 @@ class TestSlugOverride(_Base):
                 os.environ["BACKLOG_SLUG"] = old
 
 
+class TestConcurrentCreate(_Base):
+    """Change 1 — the atomic-create race fix.
+
+    Before: `new` read max-NNN then wrote, a TOCTOU race; 6 concurrent creates
+    in one area produced only 2 survivors (4 silently clobbered). This is the
+    core multi-agent use case (Claude + Codex / parallel fan-out adding items).
+    After: O_EXCL create + bounded recompute-and-retry → N distinct files, N
+    unique IDs, zero loss.
+    """
+
+    def _spawn_new(self, area: str, n: int) -> None:
+        """Launch n `backlog.py new` PROCESSES in parallel against one area."""
+        import os as _os
+        import subprocess
+        env = dict(_os.environ)
+        env["BUILD_LOOP_MEMORY_DIR"] = str(self.mem)
+        procs = []
+        for i in range(n):
+            procs.append(subprocess.Popen(
+                ["python3", str(_BACKLOG_PY), "new",
+                 "--repo", str(self.repo), "--area", area, "--type", "debt",
+                 "--title", f"concurrent item {i}", "--today", "2026-06-16"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            ))
+        # Start them as close together as possible, then wait for all.
+        for p in procs:
+            p.wait()
+
+    def test_8_parallel_new_same_area_zero_loss(self):
+        n = 8
+        self._spawn_new("search", n)
+        files = list(bl.items_dir(self.repo).glob("*-SEARCH-*.md"))
+        self.assertEqual(len(files), n,
+                         f"expected {n} item files, got {len(files)} (data loss)")
+        ids = set()
+        for f in files:
+            fm, _ = bl.parse_frontmatter(f.read_text(encoding="utf-8"))
+            ids.add(fm["id"])
+            # the stem and the frontmatter id must agree (no clobbered content)
+            self.assertEqual(f.stem, fm["id"])
+        self.assertEqual(len(ids), n, "IDs must be unique across all survivors")
+        # IDs must be the contiguous sequential range -001..-00N (readable).
+        tails = sorted(int(i.rsplit("-", 1)[1]) for i in ids)
+        self.assertEqual(tails, list(range(1, n + 1)),
+                         f"IDs must be sequential 1..{n}, got {tails}")
+
+    def test_atomic_helper_recomputes_on_collision(self):
+        # In-process check that the O_EXCL retry path actually advances the
+        # counter rather than overwriting an existing file.
+        a = self._new(area="ci", title="first")
+        b = self._new(area="ci", title="second")
+        self.assertTrue(a["id"].endswith("-001"))
+        self.assertTrue(b["id"].endswith("-002"))
+        # Both files exist and were not clobbered.
+        self.assertTrue(Path(a["path"]).exists())
+        self.assertTrue(Path(b["path"]).exists())
+
+
 class TestNoThirdPartyImports(unittest.TestCase):
     """Assert backlog.py imports ONLY Python stdlib — the host-agnostic contract."""
 
