@@ -304,6 +304,65 @@ def backlog_summary(workdir: Path) -> dict[str, Any]:
     }
 
 
+def backlog_discoverability(workdir: Path) -> dict[str, Any]:
+    """One-time Phase-1 discoverability nudge for the backlog system.
+
+    Two cheap, non-fatal signals — neither raises, ever:
+
+    1. **Adoptable**: the repo has scattered work in
+       ``.build-loop/{followup,issues}`` but NO ``.build-loop/backlog/INDEX.md``
+       yet. Surfaces: "run ``backlog.py adopt --dry-run``" so the user triages
+       it into the durable, travelling backlog.
+    2. **Won't travel**: ``.build-loop/backlog/`` exists but is gitignored (the
+       default), so the backlog would not commit/travel with the repo. Surfaces:
+       "run adopt to fix .gitignore".
+
+    Returns ``{"notice": <str|None>, "adoptable": bool, "gitignored": bool}``.
+    A ``None`` notice means nothing to surface (the common case).
+    """
+    bl_dir = workdir / ".build-loop"
+    index = bl_dir / "backlog" / "INDEX.md"
+    backlog_dir = bl_dir / "backlog"
+
+    def _has_md(name: str) -> bool:
+        d = bl_dir / name
+        try:
+            return d.is_dir() and any(d.glob("*.md"))
+        except OSError:
+            return False
+
+    adoptable = (not index.is_file()) and (_has_md("followup") or _has_md("issues"))
+
+    # Is the backlog dir gitignored? Pure text inspection of .gitignore (no git
+    # call — works in any harness). Ignored when a broad `.build-loop/` rule is
+    # present and the `!.build-loop/backlog/` un-ignore is NOT.
+    gitignored = False
+    if backlog_dir.is_dir():
+        gi = workdir / ".gitignore"
+        if gi.is_file():
+            try:
+                stripped = [ln.strip() for ln in gi.read_text(encoding="utf-8").splitlines()]
+                ignores = any(
+                    s in (".build-loop/", ".build-loop", "/.build-loop/", "/.build-loop")
+                    for s in stripped
+                )
+                gitignored = ignores and ("!.build-loop/backlog/" not in stripped)
+            except OSError:
+                gitignored = False
+
+    notice: str | None = None
+    if adoptable:
+        notice = ("Backlog available — run `python3 scripts/backlog.py adopt "
+                  "--dry-run --repo .` to triage followup/issues into a durable, "
+                  "travelling backlog.")
+    elif gitignored:
+        notice = ("Backlog won't travel — `.build-loop/backlog/` is gitignored. "
+                  "Run `python3 scripts/backlog.py adopt --apply --repo .` to fix "
+                  ".gitignore so it commits with the repo.")
+
+    return {"notice": notice, "adoptable": adoptable, "gitignored": gitignored}
+
+
 def lessons_progressive_context(
     query: str,
     project: str,
@@ -1145,6 +1204,13 @@ def agent_brief(packet: dict[str, Any]) -> str:
             f"gated={backlog.get('gated', 0)})"
         )
 
+    # Discoverability nudge (adoptable scattered work, or a gitignored backlog
+    # that won't travel). Surfaced only when actionable; never when a healthy
+    # backlog already exists.
+    discover = packet.get("backlog_discoverability") or {}
+    if discover.get("notice"):
+        lines.append(f"- ⚠ {discover['notice']}")
+
     # Progressive lessons — top 3 names when present.
     lessons = packet.get("lessons_progressive", [])
     if lessons:
@@ -1242,6 +1308,7 @@ def build_packet(
         "decision_quality": decision_quality_doctrine(),
         "queues": queue_context(workdir),
         "backlog": backlog_summary(workdir),
+        "backlog_discoverability": backlog_discoverability(workdir),
         "lessons_progressive": lessons,
         "prior_art": prior_art_context(
             workdir=workdir,

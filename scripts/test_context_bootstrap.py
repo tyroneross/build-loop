@@ -665,5 +665,82 @@ class DecisionQualityDoctrineTests(unittest.TestCase):
         self.assertIn("Ground-truth before accepting any suggested fix", packet["decision_quality"]["text"])
 
 
+class TestBacklogDiscoverability(unittest.TestCase):
+    """Change 4 — Phase-1 backlog discoverability nudge (non-fatal, cheap).
+
+    The production logic lives in context_bootstrap.backlog_discoverability and
+    is consumed by agent_brief. Pure filesystem — no memory/env rigging needed.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        (self.repo / ".build-loop").mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _seed(self, kind: str, name: str = "x.md") -> None:
+        d = self.repo / ".build-loop" / kind
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text("# item\n", encoding="utf-8")
+
+    def _backlog_with_index(self) -> None:
+        bdir = self.repo / ".build-loop" / "backlog"
+        bdir.mkdir(parents=True, exist_ok=True)
+        (bdir / "INDEX.md").write_text("# Backlog\n", encoding="utf-8")
+
+    def test_adoptable_when_scattered_work_and_no_index(self):
+        self._seed("followup")
+        res = cb.backlog_discoverability(self.repo)
+        self.assertTrue(res["adoptable"])
+        self.assertIsNotNone(res["notice"])
+        self.assertIn("adopt --dry-run", res["notice"])
+
+    def test_not_adoptable_when_index_exists(self):
+        self._seed("issues")
+        self._backlog_with_index()
+        res = cb.backlog_discoverability(self.repo)
+        self.assertFalse(res["adoptable"])
+        if res["notice"]:
+            self.assertNotIn("adopt --dry-run", res["notice"])
+
+    def test_gitignored_backlog_flagged_wont_travel(self):
+        self._backlog_with_index()
+        (self.repo / ".gitignore").write_text(".build-loop/\n", encoding="utf-8")
+        res = cb.backlog_discoverability(self.repo)
+        self.assertTrue(res["gitignored"])
+        self.assertIn("won't travel", res["notice"])
+
+    def test_gitignored_false_when_unignore_present(self):
+        self._backlog_with_index()
+        (self.repo / ".gitignore").write_text(
+            ".build-loop/\n!.build-loop/backlog/\n", encoding="utf-8")
+        res = cb.backlog_discoverability(self.repo)
+        self.assertFalse(res["gitignored"])
+
+    def test_silent_when_nothing_to_surface(self):
+        res = cb.backlog_discoverability(self.repo)
+        self.assertIsNone(res["notice"])
+        self.assertFalse(res["adoptable"])
+        self.assertFalse(res["gitignored"])
+
+    def test_never_raises_on_missing_workdir(self):
+        ghost = Path(self._tmp.name) / "does-not-exist"
+        res = cb.backlog_discoverability(ghost)  # must not raise
+        self.assertIsNone(res["notice"])
+
+    def test_notice_surfaces_in_agent_brief(self):
+        self._seed("followup")
+        packet = {
+            "project": "repo", "workdir": str(self.repo), "query": "",
+            "backlog_discoverability": cb.backlog_discoverability(self.repo),
+            "sources": {"canonical_memory": {}, "repo_local": {},
+                        "codex_memory": {}, "rally": {}},
+        }
+        brief = cb.agent_brief(packet)
+        self.assertIn("adopt --dry-run", brief)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
