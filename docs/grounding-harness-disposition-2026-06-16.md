@@ -26,11 +26,12 @@ Folding would add maintenance cost without present payoff. The *durable value* �
 already captured canonically.
 
 ## Durability & resume path
-- ⚠️ The harness **code is local-only** (no remote) → at risk of loss. If grounding work resumes —
-  the untested frontiers where gaps actually live: **long-context (lost-in-the-middle),
-  adversarial/contradictory evidence, multi-source synthesis** — push grounding-harness as its own
-  standalone repo at that point and reuse the scripts above.
-- Until then, the durable capture is sufficient:
+- The harness **code is now backed up** as its own private repo:
+  `github.com/tyroneross/grounding-harness` (pushed 2026-06-16, after stripping `.rally`/`.build-loop`
+  runtime state). Cheap insurance against losing the reusable tool. If grounding work resumes — the
+  untested frontiers where gaps actually live: **long-context (lost-in-the-middle),
+  adversarial/contradictory evidence, multi-source synthesis** — reuse the scripts there.
+- Durable capture (lessons):
   - Canonical lesson: `build-loop-memory/projects/build-loop/lessons/2026-06-16-lesson-grounding-eval-measures-its-instruments.md`
   - Harness memory: `reference_opus_grounding_at_ceiling`, `reference_llm_judge_grades_from_prior`
   - Full detail + retrospective: `grounding-harness/docs/2026-06-13-grounding-harness-design.md`, `…/2026-06-14-grounding-harness-retrospective.md` (local)
