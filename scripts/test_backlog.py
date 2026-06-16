@@ -473,6 +473,130 @@ class TestSchemaVersioning(_Base):
         self.assertEqual(item["title"], "future item")
 
 
+class TestAdopt(_Base):
+    """Change 2 — `adopt`: safe, idempotent migration of existing data.
+
+    Additive and never-destructive: gitignore-fix + scaffold + import existing
+    followup/issues/proposals as items that LINK to (never move) their source.
+    Dry-run by default; --apply executes; re-apply is a no-op (idempotent).
+    """
+
+    def _seed_queue(self, kind: str, name: str, body: str) -> Path:
+        qdir = self.repo / ".build-loop" / kind
+        qdir.mkdir(parents=True, exist_ok=True)
+        p = qdir / name
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def _adopt(self, apply=False, today="2026-06-16", no_mirror=True):
+        ns = _NS(repo=str(self.repo), apply=apply, today=today,
+                 review_days=30, no_mirror=no_mirror, slug="")
+        return bl.cmd_adopt(ns)
+
+    def test_dry_run_writes_nothing(self):
+        self._seed_queue("followup", "stuck-thing.md", "# Stuck thing\n\nbody\n")
+        res = self._adopt(apply=False)
+        self.assertEqual(res["mode"], "dry-run")
+        # No items dir materialised, no INDEX, no BACKLOG.md written.
+        self.assertFalse(bl.items_dir(self.repo).exists())
+        self.assertFalse((self.repo / "BACKLOG.md").exists())
+        # But the planned import IS reported.
+        self.assertEqual(len(res["imported"]), 1)
+        self.assertFalse(res["imported"][0]["applied"])
+
+    def test_apply_imports_with_provenance_and_evidence(self):
+        src = self._seed_queue("issues", "broken-login.md",
+                               "# Broken login\n\nrepro steps\n")
+        res = self._adopt(apply=True)
+        self.assertEqual(res["mode"], "apply")
+        self.assertEqual(len(res["imported"]), 1)
+        item_path = Path(res["imported"][0]["path"])
+        fm, _ = bl.parse_frontmatter(item_path.read_text(encoding="utf-8"))
+        rel = src.relative_to(self.repo).as_posix()
+        self.assertEqual(fm["provenance"]["source"], "issues")
+        self.assertEqual(fm["provenance"]["ref"], rel)
+        self.assertIn(rel, fm["evidence"])
+        self.assertEqual(fm["imported_from"], rel)
+        self.assertEqual(fm["status"], "open")
+        self.assertEqual(fm["type"], "fix")  # issues -> fix
+        self.assertEqual(fm["title"], "Broken login")  # first heading
+        # Source file is UNTOUCHED (still present, still its original content).
+        self.assertTrue(src.exists())
+        self.assertEqual(src.read_text(encoding="utf-8"),
+                         "# Broken login\n\nrepro steps\n")
+
+    def test_apply_is_idempotent_no_dupes(self):
+        self._seed_queue("followup", "a.md", "# A\n")
+        self._seed_queue("proposals", "b.md", "# B\n")
+        r1 = self._adopt(apply=True)
+        self.assertEqual(len(r1["imported"]), 2)
+        items_after_first = sorted(p.name for p in bl.items_dir(self.repo).glob("*.md"))
+        # Second run: nothing new imported, both sources skipped.
+        r2 = self._adopt(apply=True)
+        self.assertEqual(len(r2["imported"]), 0)
+        self.assertEqual(sorted(r2["skipped_already_imported"]),
+                         [".build-loop/followup/a.md", ".build-loop/proposals/b.md"])
+        items_after_second = sorted(p.name for p in bl.items_dir(self.repo).glob("*.md"))
+        self.assertEqual(items_after_first, items_after_second,
+                         "re-adopt must not create duplicate items")
+
+    def test_gitignore_guard_appends_unignore(self):
+        # Simulate the default-ignored case (build-loop + atomize both do this).
+        (self.repo / ".gitignore").write_text(".build-loop/\nnode_modules/\n",
+                                              encoding="utf-8")
+        res = self._adopt(apply=True)
+        self.assertTrue(res["gitignore"]["was_ignored"])
+        self.assertIn("!.build-loop/backlog/", res["gitignore"]["added"])
+        gi = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("!.build-loop/backlog/", gi)
+        self.assertIn("!BACKLOG.md", gi)
+
+    def test_gitignore_guard_idempotent(self):
+        (self.repo / ".gitignore").write_text(".build-loop/\n", encoding="utf-8")
+        self._adopt(apply=True)
+        gi1 = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        # Re-run: the un-ignore block must not be appended twice.
+        self._adopt(apply=True)
+        gi2 = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertEqual(gi1, gi2, "un-ignore rules must not duplicate on re-adopt")
+        # Exact-line count (avoid the !.build-loop/backlog/** substring match).
+        exact = [ln.strip() for ln in gi2.splitlines() if ln.strip() == "!.build-loop/backlog/"]
+        self.assertEqual(len(exact), 1)
+
+    def test_gitignore_not_ignored_is_noop(self):
+        # No .gitignore at all -> nothing to fix.
+        res = self._adopt(apply=True)
+        self.assertFalse(res["gitignore"]["was_ignored"])
+        self.assertEqual(res["gitignore"]["added"], [])
+
+    def test_cli_dry_run_flag_accepted_and_is_noop(self):
+        # The literal `adopt --dry-run --repo .` form (per the docs/notice) must
+        # parse and behave as the read-only default — no writes.
+        import os as _os
+        import subprocess
+        self._seed_queue("followup", "x.md", "# X\n")
+        env = dict(_os.environ)
+        env["BUILD_LOOP_MEMORY_DIR"] = str(self.mem)
+        out = subprocess.run(
+            ["python3", str(_BACKLOG_PY), "adopt", "--dry-run",
+             "--repo", str(self.repo), "--today", "2026-06-16"],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        import json as _json
+        rep = _json.loads(out.stdout)
+        self.assertEqual(rep["mode"], "dry-run")
+        self.assertFalse(bl.items_dir(self.repo).exists())
+
+    def test_scaffold_creates_pointer_and_dirs(self):
+        res = self._adopt(apply=True)
+        self.assertTrue(bl.items_dir(self.repo).is_dir())
+        self.assertTrue(bl.archive_dir(self.repo).is_dir())
+        self.assertTrue((self.repo / "BACKLOG.md").exists())
+        self.assertTrue((bl.backlog_root(self.repo) / "README.md").exists())
+        self.assertTrue((bl.backlog_root(self.repo) / "INDEX.md").exists())  # sync ran
+
+
 class TestNoThirdPartyImports(unittest.TestCase):
     """Assert backlog.py imports ONLY Python stdlib — the host-agnostic contract."""
 
