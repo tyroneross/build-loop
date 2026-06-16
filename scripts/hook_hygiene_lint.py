@@ -525,6 +525,167 @@ def _referenced_script(cmd: str, hooks_dir: Path) -> Path | None:
     return None
 
 
+# Stop-hook re-entry + stdin-contention detectors (HH005 / HH006).
+STOP_HOOK_ACTIVE_RE = re.compile(r"stop_hook_active")
+REOPEN_RE = re.compile(r"additionalContext|hookSpecificOutput")
+# Only signals that drain the *shared stdin payload*. Deliberately excludes
+# `$(cat FILE)` (reads a file), `read -r ... <<EOF` (heredoc), and `read ... <f`
+# (file) — those don't touch the hook's stdin, so flagging them is noise.
+STDIN_READ_RE = re.compile(
+    r"\$\(\s*cat\s*-?\s*\)"   # INPUT=$(cat) / $(cat -) — bare, drains stdin
+    r"|`\s*cat\s*-?\s*`"      # INPUT=`cat`
+    r"|\bcat\s*<&0"           # cat <&0
+    r"|/dev/stdin"
+    r"|\bsys\.stdin\b"
+    r"|\bstdin\.read"
+)
+DEVNULL_IN_RE = re.compile(r"<\s*/dev/null|0<\s*/dev/null")
+PY_SCRIPT_REF_RE = re.compile(
+    r"""python[0-9.]*\s+["']?
+        (?:\$\{CLAUDE_PLUGIN_ROOT(?::-\$CLAUDE_PROJECT_DIR)?\})?
+        (/?[\w./@-]+\.py)
+        ["']?""",
+    re.VERBOSE,
+)
+# Repo-relative path tail for indirectly-invoked scripts (`"$hook"` pattern).
+PATH_TAIL_RE = re.compile(r"(?:scripts|hooks)/[\w./@-]+\.(?:sh|py)")
+
+
+def _referenced_scripts(cmd: str, hooks_dir: Path | None) -> list[Path]:
+    """All resolvable bash(.sh)/python(.py) scripts the command invokes —
+    directly (`bash X.sh`) or indirectly (`hook="$root/X.sh"; "$hook"`)."""
+    out: list[Path] = []
+    if not hooks_dir:
+        return out
+    repo_root = hooks_dir.parent if hooks_dir.name == "hooks" else hooks_dir
+    for rx in (SCRIPT_REF_RE, PY_SCRIPT_REF_RE):
+        for m in rx.finditer(cmd):
+            raw = m.group(1)
+            pre = cmd[: m.start(1)]
+            if "${" in pre and pre.rstrip().endswith("}"):
+                cand = (repo_root / raw.lstrip("/")).resolve()
+            elif raw.startswith("/"):
+                cand = Path(raw).resolve()
+            else:
+                cand = (repo_root / raw).resolve()
+            if cand.is_file() and cand not in out:
+                out.append(cand)
+    # Indirect invocation: a script assigned to a var (`hook="$root/scripts/
+    # hooks/x.sh"`) then run as `"$hook"` escapes the bash/python regexes.
+    # Resolve any repo-relative scripts//hooks/ path tail against the repo root.
+    for m in PATH_TAIL_RE.finditer(cmd):
+        cand = (repo_root / m.group(0)).resolve()
+        if cand.is_file() and cand not in out:
+            out.append(cand)
+    return out
+
+
+def _effective_text(cmd: str, hooks_dir: Path | None) -> str:
+    """Inline command plus the text of any script it resolvably invokes."""
+    text = cmd
+    for p in _referenced_scripts(cmd, hooks_dir):
+        try:
+            text += "\n" + p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+    return text
+
+
+def _reads_stdin(cmd: str, hooks_dir: Path | None) -> bool:
+    """True when the hook consumes the shared stdin payload (and is not
+    explicitly redirected from /dev/null)."""
+    if DEVNULL_IN_RE.search(cmd):
+        return False
+    return STDIN_READ_RE.search(_effective_text(cmd, hooks_dir)) is not None
+
+
+def rule_hh005(cmd: str, ctx: dict[str, Any],
+                hooks_dir: Path | None) -> list[dict[str, Any]]:
+    """Stop/SubagentStop hook can re-open the turn but never checks
+    `stop_hook_active` — re-fires on every re-entry to the harness block cap."""
+    if ctx["event"] not in ("Stop", "SubagentStop"):
+        return []
+    text = _effective_text(cmd, hooks_dir)
+    # Reason over comment-stripped code: a contract comment that says
+    # "never `decision: block`" must not trip the re-open detector.
+    code = "\n".join(_strip_shell_comment(ln) for ln in text.splitlines())
+    can_reopen = (
+        REOPEN_RE.search(code) is not None
+        or DENY_RE.search(code) is not None
+        or BLOCK_RE.search(code) is not None
+        or EXIT_2_RE.search(code) is not None
+    )
+    if not can_reopen or STOP_HOOK_ACTIVE_RE.search(code):
+        return []
+    return [{
+        "rule_id": "HH005",
+        "severity": "warn",
+        "event": ctx["event"],
+        "matcher": ctx.get("matcher"),
+        "command": _truncate(cmd),
+        "script_path": None,
+        "message": (
+            "Stop/SubagentStop hook can re-open the turn (emits "
+            "`additionalContext` / `decision` / `exit 2`) but never checks "
+            "`stop_hook_active` — it re-fires on every re-entry until the "
+            "harness block cap. Read stdin and exit silently (`printf '{}'`) "
+            "when `stop_hook_active` is true."
+        ),
+        "evidence": {"binary": None, "line": None, "snippet": None},
+    }]
+
+
+def rule_hh006(event: str, matcher: str | None, cmds: list[str],
+                hooks_dir: Path | None) -> list[dict[str, Any]]:
+    """>1 stdin-reading hook in one hooks-array — array hooks run in parallel
+    sharing ONE stdin fd, so the first reader drains it and starves the rest
+    (the commit_state_check vs stop_finalize loop)."""
+    readers = [c for c in cmds if _reads_stdin(c, hooks_dir)]
+    if len(readers) < 2:
+        return []
+    return [{
+        "rule_id": "HH006",
+        "severity": "warn",
+        "event": event,
+        "matcher": matcher,
+        "command": _truncate(readers[1]),
+        "script_path": None,
+        "message": (
+            f"{len(readers)} hooks in one `{event}` hooks-array read stdin — "
+            "array hooks run in parallel sharing ONE stdin fd, so the first "
+            "reader (e.g. `INPUT=$(cat)`) drains it and the rest get empty "
+            "input (breaking any `stop_hook_active` guard). Put each "
+            "stdin-reading hook in its OWN block (separate matcher object)."
+        ),
+        "evidence": {"binary": None, "line": None, "snippet": None},
+    }]
+
+
+def _walk_groups(
+    payload: dict[str, Any],
+) -> list[tuple[str, str | None, list[str]]]:
+    """Walk a payload yielding (event, matcher, [commands]) per hooks-array."""
+    out: list[tuple[str, str | None, list[str]]] = []
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return out
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            cmds = [
+                h["command"]
+                for h in (group.get("hooks") or [])
+                if isinstance(h, dict)
+                and isinstance(h.get("command"), str)
+                and h["command"].strip()
+            ]
+            out.append((event, group.get("matcher"), cmds))
+    return out
+
+
 def lint_payload(payload: dict[str, Any],
                   hooks_dir: Path | None = None) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
@@ -535,6 +696,9 @@ def lint_payload(payload: dict[str, Any],
         findings.extend(rule_hh002(cmd, ctx, script_path))
         findings.extend(rule_hh003(cmd, ctx))
         findings.extend(rule_hh004(cmd, ctx))
+        findings.extend(rule_hh005(cmd, ctx, hooks_dir))
+    for event, matcher, cmds in _walk_groups(payload):
+        findings.extend(rule_hh006(event, matcher, cmds, hooks_dir))
     return findings
 
 
@@ -571,6 +735,27 @@ SELF_TEST_BAD = {
                 "matcher": "",
                 "hooks": [
                     {"type": "command", "command": "rally announce stop"},
+                ],
+            },
+            {
+                # HH006: two stdin-reading hooks in one array (drain race).
+                "matcher": "",
+                "hooks": [
+                    {"type": "command",
+                     "command": 'INPUT=$(cat); echo "$INPUT"; exit 0'},
+                    {"type": "command",
+                     "command": 'data=$(cat); printf \'{}\''},
+                ],
+            },
+        ],
+        "SubagentStop": [
+            {
+                # HH005: re-opens the turn, no stop_hook_active guard.
+                "matcher": "",
+                "hooks": [
+                    {"type": "command",
+                     "command": ('printf \'{"hookSpecificOutput":'
+                                 '{"additionalContext":"x"}}\'')},
                 ],
             }
         ],
@@ -611,7 +796,7 @@ def run_self_test() -> int:
 
     findings = lint_payload(SELF_TEST_BAD)
     by_rule = {f["rule_id"] for f in findings}
-    for required in ("HH001", "HH003", "HH004"):
+    for required in ("HH001", "HH003", "HH004", "HH005", "HH006"):
         if required not in by_rule:
             failures.append(
                 f"SELF_TEST_BAD: expected {required} in findings, "
