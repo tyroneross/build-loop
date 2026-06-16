@@ -412,6 +412,67 @@ class TestConcurrentCreate(_Base):
         self.assertTrue(Path(b["path"]).exists())
 
 
+class TestSchemaVersioning(_Base):
+    """Change 3 — schema versioning + tolerant reader (download/upgrade compat).
+
+    The reader must DEFAULT missing fields and PRESERVE unknown fields so an
+    item written by a newer OR older build-loop still reads cleanly.
+    """
+
+    def test_new_item_carries_schema_version(self):
+        res = self._new(area="search", title="x")
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        # On disk every scalar is text; compare against the string form.
+        self.assertEqual(str(fm["schema_version"]), str(bl.SCHEMA_VERSION))
+
+    def test_item_missing_new_fields_reads_with_defaults(self):
+        # An OLD-style item: no schema_version, no owner, no entities.
+        old_text = (
+            "---\n"
+            "id: OLD-SEARCH-001\n"
+            "title: legacy item\n"
+            "status: open\n"
+            "area: search\n"
+            "---\n\n## Context\nlegacy\n"
+        )
+        item, body = bl.read_item(old_text)
+        self.assertEqual(item["id"], "OLD-SEARCH-001")
+        self.assertEqual(item["title"], "legacy item")
+        # defaulted fields present despite being absent in the source.
+        # Absent -> the int default from item_defaults() is supplied.
+        self.assertEqual(item["schema_version"], bl.SCHEMA_VERSION)
+        self.assertEqual(item["priority"], "P2")
+        self.assertEqual(item["owner"], "unassigned")
+        self.assertEqual(item["entities"], [])
+        self.assertEqual(item["gated"], "none")
+        self.assertEqual(item["provenance"], {})
+        self.assertIn("legacy", body)
+
+    def test_item_with_unknown_future_field_reads_without_error(self):
+        # A NEWER-style item carrying a field this version doesn't know.
+        future_text = (
+            "---\n"
+            "id: NEW-SEARCH-002\n"
+            "schema_version: 99\n"
+            "title: future item\n"
+            "status: open\n"
+            "area: search\n"
+            "horizon_score: 0.91\n"          # unknown future field (scalar)
+            "linked_runs: [r1, r2]\n"        # unknown future field (list)
+            "---\n\n## Context\nfuture\n"
+        )
+        item, _ = bl.read_item(future_text)
+        # unknown fields preserved intact
+        self.assertEqual(item["horizon_score"], 0.91 if isinstance(item["horizon_score"], float) else "0.91")
+        self.assertEqual(item["linked_runs"], ["r1", "r2"])
+        # newer schema_version preserved (explicit value wins over default).
+        # On disk it's text, so the explicit "99" is preserved as-is.
+        self.assertEqual(str(item["schema_version"]), "99")
+        # known fields still readable
+        self.assertEqual(item["id"], "NEW-SEARCH-002")
+        self.assertEqual(item["title"], "future item")
+
+
 class TestNoThirdPartyImports(unittest.TestCase):
     """Assert backlog.py imports ONLY Python stdlib — the host-agnostic contract."""
 

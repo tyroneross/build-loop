@@ -49,6 +49,14 @@ from typing import Any
 # Schema constants
 # ----------------------------------------------------------------------------
 
+# Item schema version. Bump when the frontmatter contract changes in a way a
+# reader must know about. The reader is deliberately TOLERANT (forward/back
+# compatible): it DEFAULTS missing fields and IGNORES unknown fields, so an item
+# written by a newer OR older build-loop still reads cleanly. This is the
+# download/upgrade-safety contract — a downloaded item never crashes a reader
+# just because the two sides are a version apart.
+SCHEMA_VERSION = 1
+
 STATUS_VALUES = ("open", "in-progress", "blocked", "deferred", "done", "dropped")
 PRIORITY_VALUES = ("P0", "P1", "P2", "P3")
 TYPE_VALUES = ("feature", "fix", "debt", "infra", "decision", "cleanup", "research")
@@ -60,10 +68,40 @@ ARCHIVE_STATUSES = ("done", "dropped")
 # Frontmatter field order — deterministic INDEX + item rendering depend on a
 # stable key order.
 FIELD_ORDER = (
-    "id", "title", "status", "priority", "type", "area", "entities",
-    "gated", "provenance", "evidence", "supersedes", "superseded_by",
+    "id", "schema_version", "title", "status", "priority", "type", "area",
+    "entities", "gated", "provenance", "evidence", "supersedes", "superseded_by",
     "created", "updated", "review_by", "owner",
 )
+
+# Default values for every schema field. The tolerant reader fills these in for
+# any field a (possibly older) item omits, so downstream code can rely on the
+# keys existing. Mutable defaults are produced fresh per call via item_defaults().
+def item_defaults() -> dict[str, Any]:
+    """Return a fresh dict of default values for every known schema field.
+
+    Used by ``read_item`` to fill in fields an older/foreign item may omit.
+    Unknown fields present on the item are preserved as-is (forward compat);
+    missing known fields are defaulted here (backward compat).
+    """
+    return {
+        "id": None,
+        "schema_version": SCHEMA_VERSION,
+        "title": "",
+        "status": "open",
+        "priority": "P2",
+        "type": "debt",
+        "area": "general",
+        "entities": [],
+        "gated": "none",
+        "provenance": {},
+        "evidence": [],
+        "supersedes": None,
+        "superseded_by": None,
+        "created": None,
+        "updated": None,
+        "review_by": None,
+        "owner": "unassigned",
+    }
 
 DEFAULT_REVIEW_DAYS = 30
 
@@ -308,6 +346,23 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return data, body
 
 
+def read_item(text: str) -> tuple[dict[str, Any], str]:
+    """Tolerant item read: parse frontmatter, then DEFAULT missing known fields
+    and PRESERVE unknown fields.
+
+    This is the download/upgrade-safety contract in one place. An item written
+    by an older build-loop (missing newer fields like ``schema_version``) reads
+    back with those fields defaulted; an item written by a NEWER build-loop
+    (carrying fields this version doesn't know) reads back with those extra
+    fields intact and untouched. Either way the read never raises on a
+    well-formed file. Returns ``(item_dict, body)``.
+    """
+    fm, body = parse_frontmatter(text)
+    merged = item_defaults()
+    merged.update(fm)  # explicit values (incl. unknown future fields) win
+    return merged, body
+
+
 def _dump_scalar(value: Any) -> str:
     """Render a scalar for frontmatter output (deterministic)."""
     if value is None:
@@ -534,6 +589,7 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
     def _render(item_id: str) -> str:
         data: dict[str, Any] = {
             "id": item_id,
+            "schema_version": SCHEMA_VERSION,
             "title": args.title,
             "status": args.status,
             "priority": args.priority,
