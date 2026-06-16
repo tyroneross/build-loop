@@ -141,3 +141,89 @@ data + the convention — it never calls a vendor API.
 when `.build-loop/backlog/INDEX.md` exists: open P0/P1 count, past-`review_by`
 stale count, and gated count. Cheap (reads the generated INDEX summary only) and
 non-fatal when the file is absent.
+
+It also surfaces a one-time **discoverability nudge** (`backlog_discoverability`)
+when there's something to act on:
+
+- **Adoptable** — the repo has scattered work in `.build-loop/{followup,issues}`
+  but no `INDEX.md` yet → *"Backlog available — run `backlog.py adopt
+  --dry-run --repo .`"*.
+- **Won't travel** — `.build-loop/backlog/` exists but is gitignored → *"Backlog
+  won't travel — run `adopt --apply` to fix `.gitignore`"*.
+
+Both are silent when there's nothing to surface, and neither ever raises.
+
+## Download & upgrade safety
+
+This is the contract that makes the backlog safe to **download** with a fresh
+build-loop and **upgrade** in place over an existing one. The guiding rule:
+*every adoption/upgrade step is additive and reversible; nothing the user
+already had is moved, deleted, or rewritten in a lossy way.*
+
+**1. Additive / never-destructive.** Adoption never touches the existing work
+surfaces. `.build-loop/followup/`, `.build-loop/issues/`, `.build-loop/proposals/`,
+and the personal `build-loop-memory` store are read-only inputs to `adopt` — an
+imported item *links* to its source (`provenance.ref` + `evidence[]` +
+`imported_from`); the source file stays exactly where it was as the inbox /
+provenance record. `sync` likewise only ever archives (`done`/`dropped` →
+`archive/`) and regenerates the derived `INDEX.md`; it never deletes a live item.
+
+**2. Lazy / opt-in scaffolding.** A repo gets backlog dirs and pointer files
+*only* when the user runs `adopt` (or `new`). A downloaded build-loop does not
+litter every repo with an empty `backlog/` on first run — the structure
+materialises on demand. `adopt --dry-run` (the default) reports exactly what it
+*would* create without writing anything, so the user previews before opting in.
+
+**3. The `.gitignore` dependency — and how `adopt` fixes it.** `.build-loop/` is
+gitignored by default (confirmed in both `build-loop` and `atomize-ai`). That is
+correct for transient run state — but it means the backlog would **not commit
+and therefore would not travel** with the repo (no team-sharing, lost on a fresh
+clone). `adopt` detects this by inspecting `.gitignore` (pure text, no git call)
+and, on `--apply`, appends un-ignore rules so the durable backlog escapes the
+broad ignore:
+
+```gitignore
+# build-loop backlog (added by `backlog.py adopt` — keep so the backlog travels)
+!.build-loop/backlog/
+!.build-loop/backlog/**
+!BACKLOG.md
+```
+
+It reports this loudly (`gitignore.was_ignored: true`, `added: [...]`) and is
+idempotent — re-running never appends the block twice. If `.build-loop/` is not
+ignored, `adopt` leaves `.gitignore` untouched.
+
+**4. Idempotent, dry-run-first migration.** `adopt` defaults to a read-only
+dry-run; `--apply` executes. Re-running `--apply` is a no-op: each imported item
+records `imported_from: <source path>`, and a re-run reads that field across
+`items/` **and** `archive/` and skips any source already imported. No duplicate
+items, no churned `.gitignore`. Verified contract: `adopt --apply` twice → the
+second run's diff (items + `.gitignore`) is empty.
+
+**5. Schema-version tolerance (forward/back compatible).** Every item carries
+`schema_version` (current = `1`). The reader (`read_item`) is deliberately
+tolerant: it **defaults missing known fields** and **preserves unknown fields**.
+An item written by an *older* build-loop (no `schema_version`) reads back with
+defaults filled in; an item written by a *newer* build-loop (carrying fields
+this version doesn't know) reads back without error and with those fields intact.
+So a backlog written by one build-loop version always reads on another — neither
+a downgrade nor an upgrade corrupts or rejects it. Bump `SCHEMA_VERSION` only for
+a contract change a reader must actively know about; the tolerant reader absorbs
+purely-additive field changes without a bump.
+
+**6. `build-loop-memory` is the per-user cross-repo long-term store.** The
+per-repo backlog travels *with the repo* (committed, team-shareable). `sync`
+additionally mirrors active items one-way into
+`build-loop-memory/projects/<slug>/backlog/` — the user's private, cross-repo
+aggregate view. The mirror writes to the `backlog/` **subdir**, so it never
+collides with the legacy single-table `backlog.md`, with `lessons/`, or with
+`decisions/` in that project's memory lane. The mirror is additive: its only
+delete path is pruning orphaned item mirrors (ID-shaped stems whose source item
+was removed), and it never touches a hand-dropped note. If the memory root is
+absent or unwritable, `sync` still succeeds and reports `mirror.skipped`.
+
+**Concurrency note (multi-agent).** Item creation is atomic (`O_EXCL` create +
+bounded recompute-and-retry), so N agents (Claude + Codex, or parallel fan-out)
+running `new`/`adopt` against the same area at the same time each get a distinct,
+sequential ID with zero data loss. This is what makes the backlog safe as a
+shared multi-agent work surface, not just a single-writer file.
