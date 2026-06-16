@@ -132,13 +132,18 @@
           },
           {
             "type": "command",
-            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; else printf '{}'; fi",
-            "timeout": 5000
-          },
-          {
-            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" stop 2>/dev/null; exit 0",
             "timeout": 6000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; else printf '{}'; fi",
+            "timeout": 5000
           }
         ]
       }

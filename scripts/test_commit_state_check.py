@@ -41,6 +41,17 @@ def _run(*extra_args: str, workdir: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _run_with_input(
+    input_data: dict, *extra_args: str, workdir: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--workdir", workdir, *extra_args],
+        input=json.dumps(input_data),
+        capture_output=True,
+        text=True,
+    )
+
+
 def _json_result(workdir: str) -> dict:
     cp = _run("--json", workdir=workdir)
     return json.loads(cp.stdout)
@@ -84,6 +95,19 @@ class TestModifiedTrackedFile(unittest.TestCase):
             context = data["hookSpecificOutput"]["additionalContext"]
             self.assertIn("Advisory only", context)
             self.assertIn("README", context)
+
+    def test_hook_noop_json_when_stop_hook_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(tmp)
+            (root / "README").write_text("changed\n")
+            cp = _run_with_input(
+                {"hook_event_name": "Stop", "stop_hook_active": True},
+                "--hook",
+                workdir=tmp,
+            )
+            self.assertEqual(cp.returncode, 0)
+            self.assertEqual(json.loads(cp.stdout), {})
+            self.assertEqual(cp.stderr, "")
 
 
 class TestUntrackedOnlyFile(unittest.TestCase):

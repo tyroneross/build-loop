@@ -111,6 +111,23 @@ def check(workdir: str) -> dict[str, object]:
     return _classify(lines)
 
 
+def _stop_hook_active() -> bool:
+    """Return True when Claude re-enters Stop because a Stop hook already fired."""
+    if sys.stdin.isatty():
+        return False
+    try:
+        raw = sys.stdin.read()
+    except OSError:
+        return False
+    if not raw.strip():
+        return False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    return payload.get("stop_hook_active") is True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Check for uncommitted tracked changes in a git repo.",
@@ -136,6 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Emit full JSON envelope to stdout.",
     )
     args = parser.parse_args(argv)
+
+    if args.hook and _stop_hook_active():
+        print("{}")
+        return 0
 
     workdir = str(Path(args.workdir).resolve())
     result = check(workdir)
