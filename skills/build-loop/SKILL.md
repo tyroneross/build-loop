@@ -348,6 +348,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
 - `references/research-trigger-policy.md` — Research plugin trigger/depth gate, t-shirt depth lower bounds, and final-claim citation/unavailable rule
 - `references/task-capture-policy.md` — Read-only active task surface over existing plan/state/queue/backlog surfaces; no new task ledger by default
+- `references/backlog-system.md` — Host-agnostic, multi-repo backlog system: MD+YAML items (canonical truth) + regenerable INDEX, pure-stdlib `scripts/backlog.py` (new/sync/list), one-way mirror to personal memory. Read via `BACKLOG.md`→`INDEX.md`→grep; write via the CLI
 - `references/agent-role-taxonomy.md` — Lead/peer/coder-assessor/reviewer/skill responsibility map; use before adding or renaming agents.
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
 - `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.

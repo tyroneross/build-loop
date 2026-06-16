@@ -267,6 +267,43 @@ def queue_context(workdir: Path) -> dict[str, Any]:
     return result
 
 
+def backlog_summary(workdir: Path) -> dict[str, Any]:
+    """Surface a compact backlog signal at Phase 1 Assess.
+
+    Reads ONLY the generated ``.build-loop/backlog/INDEX.md`` summary block (the
+    derived view), not the individual items — cheap and non-fatal. Returns
+    ``{"exists": False}`` when the INDEX is absent (the common case for repos
+    without a backlog). Never raises.
+
+    Returns on success::
+
+        {"exists": True, "open_p01": int, "stale": int, "gated": int,
+         "active": int}
+
+    The counts are parsed from the INDEX summary lines written by
+    ``scripts/backlog.py``; if a line is missing the count defaults to 0.
+    """
+    index_path = workdir / ".build-loop" / "backlog" / "INDEX.md"
+    if not index_path.is_file():
+        return {"exists": False}
+    try:
+        text = index_path.read_text(encoding="utf-8")
+    except OSError:
+        return {"exists": False}
+
+    def _grab(label: str) -> int:
+        m = re.search(rf"{re.escape(label)}:\s*(\d+)", text)
+        return int(m.group(1)) if m else 0
+
+    return {
+        "exists": True,
+        "active": _grab("Active items"),
+        "open_p01": _grab("Open P0/P1"),
+        "stale": _grab("Past review_by (stale)"),
+        "gated": _grab("Gated"),
+    }
+
+
 def lessons_progressive_context(
     query: str,
     project: str,
@@ -1097,6 +1134,17 @@ def agent_brief(packet: dict[str, Any]) -> str:
         top_str = "; ".join(t for t in top_titles[:3] if t)
         lines.append(f"- Queues: {' '.join(queue_parts)}{' — top: ' + top_str if top_str else ''}")
 
+    # Backlog summary line — only when a backlog INDEX exists. Compact signal:
+    # open P0/P1, past-review_by (stale), and gated counts.
+    backlog = packet.get("backlog") or {}
+    if backlog.get("exists"):
+        lines.append(
+            f"- Backlog: {backlog.get('active', 0)} active "
+            f"(P0/P1={backlog.get('open_p01', 0)}, "
+            f"stale={backlog.get('stale', 0)}, "
+            f"gated={backlog.get('gated', 0)})"
+        )
+
     # Progressive lessons — top 3 names when present.
     lessons = packet.get("lessons_progressive", [])
     if lessons:
@@ -1193,6 +1241,7 @@ def build_packet(
         "working_context": working_context,
         "decision_quality": decision_quality_doctrine(),
         "queues": queue_context(workdir),
+        "backlog": backlog_summary(workdir),
         "lessons_progressive": lessons,
         "prior_art": prior_art_context(
             workdir=workdir,
