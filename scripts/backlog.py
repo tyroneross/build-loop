@@ -578,12 +578,15 @@ def _b32_crockford(n: int, width: int) -> str:
     return "".join(reversed(chars))
 
 
-# Time component width: 8 Crockford base32 digits encode 32**8 ≈ 1.1e12 ms ≈ 34
-# years of millisecond timestamps, so an 8-char time prefix stays fixed-width
-# (lexical order == chronological order) until ~2055 and degrades gracefully
-# after (it just wraps the high digit; uniqueness is carried by the random tail
-# regardless). Random component: 3 bytes of os.urandom -> ~4.8 Crockford digits;
-# we render 5 digits (25 bits) for headroom.
+# Time component width: 8 Crockford base32 digits encode 32**8 = 2**40 ms ≈ 34.8
+# years from epoch zero. `_b32_crockford` keeps only the low 40 bits of the ms
+# clock, so the time prefix is lexical==chronological WITHIN one such window;
+# the window boundary (a single ordering discontinuity, NOT a degradation) falls
+# at 2039-09-07. After it, the prefix wraps the high digit once and ordering
+# resumes — and uniqueness is never affected, since the random tail carries that
+# regardless. The time prefix is navigational-only (`ls` sort), not a uniqueness
+# guarantee. Random component: 3 bytes of os.urandom -> ~4.8 Crockford digits; we
+# render 5 digits (25 bits) for headroom.
 _TOKEN_TIME_WIDTH = 8
 _TOKEN_RAND_BYTES = 3
 _TOKEN_RAND_WIDTH = 5
