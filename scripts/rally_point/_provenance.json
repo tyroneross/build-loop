@@ -1,0 +1,71 @@
+{
+  "_doc": "Provenance manifest for vendored Rally Point substrate. Maps each scripts/rally_point/<name>.py to its upstream agent-rally-point counterpart (path relative to the ARP repo root) and the SHA-256 of that UPSTREAM file at last reconcile. The drift-detector (sync_rally.py) recomputes the CURRENT upstream hash and flags DRIFT when upstream moved since this baseline — i.e. 'review whether to port upstream changes into the (intentionally diverged) build-loop copy'. source: null marks a build-loop-original file with no upstream counterpart; the detector skips it cleanly. Read-only; never auto-updates a vendored file. Mirrors scripts/sync_skills.py exactly.",
+  "_upstream_repo": "agent-rally-point",
+  "_baseline_set_at": "2026-06-17",
+  "files": {
+    "changes.py": {
+      "source": "build/lib/agent_rally_point/changes.py",
+      "source_hash": "c4cd726004bf0100799a7ad6276cb8959d1914e47c61548183b92c4680356d27"
+    },
+    "post.py": {
+      "source": "build/lib/agent_rally_point/post.py",
+      "source_hash": "0120d2caad27d3ec312ca22f6daaacfb59a157f7bcba5aa328d9ac43d448b36a"
+    },
+    "channel_paths.py": {
+      "source": "build/lib/agent_rally_point/channel_paths.py",
+      "source_hash": "93e34bc96020bb05a88ecb9bbf7319a932038626b36b37c5fc34614c0755a670"
+    },
+    "presence.py": {
+      "source": "build/lib/agent_rally_point/presence.py",
+      "source_hash": "ab01d5f545ce7531f83eb83907693cd0fb6428640573369bc01df3f9e1dec944"
+    },
+    "revision.py": {
+      "source": "build/lib/agent_rally_point/revision.py",
+      "source_hash": "3b76fe28d8dd198f4fedef41c4a9ba0df98bd8c7013b71dbb94a997d57c27857"
+    },
+    "checkpoint.py": {
+      "source": "build/lib/agent_rally_point/checkpoint.py",
+      "source_hash": "88b28d3bbb6a16b1a03efe383185242c101ed383789660b1bc96b8c74dacae3b"
+    },
+    "lifecycle.py": {
+      "source": "build/lib/agent_rally_point/lifecycle.py",
+      "source_hash": "fc848e236625b289ef2ad7125583ba13a3d249502564e31619ab20e88c893d2a"
+    },
+    "install_git_hook.py": {
+      "source": "build/lib/agent_rally_point/install_git_hook.py",
+      "source_hash": "e5a90c9464489784c7b594cc23ab8ba582df0224c5227029f7ed66d7fd1f5c83"
+    },
+    "repo_id.py": {
+      "source": "build/lib/agent_rally_point/repo_id.py",
+      "source_hash": "0012fb1ba8c3ef16cf678b4a4b61e0111b84f5973b28e868bf9d2c414ffa7057"
+    },
+    "__init__.py": {
+      "source": "build/lib/agent_rally_point/__init__.py",
+      "source_hash": "16cba174b01218a45892207560104962147d473a1f44dd219a2d45d378514d45"
+    },
+    "discovery_bridge.py": { "source": null, "source_hash": null },
+    "build_loop_id.py": { "source": null, "source_hash": null },
+    "producer_metadata.py": { "source": null, "source_hash": null },
+    "boundary.py": { "source": null, "source_hash": null },
+    "roster.py": { "source": null, "source_hash": null },
+    "session_probe.py": { "source": null, "source_hash": null },
+    "leadership.py": { "source": null, "source_hash": null },
+    "inbox.py": { "source": null, "source_hash": null },
+    "rally.py": { "source": null, "source_hash": null },
+    "agent_autoreg.py": { "source": null, "source_hash": null },
+    "hook_budget.py": { "source": null, "source_hash": null },
+    "hooks.py": { "source": null, "source_hash": null },
+    "mece_gate.py": { "source": null, "source_hash": null },
+    "task_heartbeat.py": { "source": null, "source_hash": null },
+    "fact_v1.py": {
+      "_doc": "Tracks the REAL wire contract the emitter must match: FACT_SCHEMA is defined in the Rust lib.rs (lib.rs:40) and migrate-legacy SILENTLY skips any line whose schema != it (discovery.rs:712-714). Drift here = a future silent-data-loss seam, so the detector watches the Rust source — not a Python mirror — read-only/report-only.",
+      "source": "crates/rally-cli/src/lib.rs",
+      "source_hash": "43e6beb9b69d19766ee847064fa87da3d347e147c343db1d1687177c9ea5059e"
+    },
+    "fact_v1_struct": {
+      "_doc": "The Fact struct wire shape the emitter targets (store.rs). Additive-tolerant (no deny_unknown_fields) — tracked so a struct-level contract move surfaces for review.",
+      "source": "crates/rally-cli/src/store.rs",
+      "source_hash": "06555bb13711b906923809cd1ec78988bf97609ffcde0a7d387e64aecbbc3fa0"
+    }
+  }
+}

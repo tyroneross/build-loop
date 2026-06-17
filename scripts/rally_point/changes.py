@@ -74,10 +74,29 @@ def _int_or_zero(value) -> int:
     return parsed if parsed >= 0 else 0
 
 
+try:  # package import
+    from .fact_v1 import FACT_SCHEMA
+except ImportError:  # script import (sys.path-inserted, no parent package)
+    from fact_v1 import FACT_SCHEMA  # type: ignore
+
+# Single source of truth: the schema string lives in fact_v1.FACT_SCHEMA (the
+# emitter). ``FACT_V1_SCHEMA`` is kept as the local read-back alias so the
+# detection below and any importer of changes.FACT_V1_SCHEMA stay stable, while
+# the literal can never drift from the emitter's constant.
+FACT_V1_SCHEMA = FACT_SCHEMA
+
+
 def normalize_record(record: dict) -> dict:
-    """Return a legacy-shaped change record for both Rally log formats."""
+    """Return a legacy-shaped change record for all Rally log formats."""
     if not isinstance(record, dict):
         return record
+    # fact.v1 lines (build-loop's own ARP-ingestible fallback shape) are caught
+    # FIRST: the fallback writes these via ``fact_v1.write_fact_v1_line`` so the
+    # store is losslessly readable by ``rally migrate-legacy``. Build-loop-private
+    # ``bl_*`` keys carry the original revision / payload / kind for lossless
+    # read-back; ARP ignores them on its side (no deny_unknown_fields).
+    if record.get("schema") == FACT_V1_SCHEMA:
+        return _normalize_fact_v1_record(record)
     if "event_type" in record and isinstance(record.get("payload"), dict):
         return _normalize_repo_local_record(record)
     event = record.get("event")
@@ -138,6 +157,63 @@ def _normalize_repo_local_record(record: dict) -> dict:
         "subject": fact.get("subject"),
         "_source_format": "repo-local-rally",
     }
+    return normalized
+
+
+def _normalize_fact_v1_record(record: dict) -> dict:
+    """Normalize a build-loop fact.v1 line back to the legacy reader shape.
+
+    The fallback emits fact.v1 (``fact_v1.to_fact_v1``) so the store is
+    ARP-ingestible. Build-loop's 7 production readers consume the legacy
+    ``{ts, kind, tool, model, run_id, app_slug, payload, revision}`` shape via
+    this single chokepoint, so the fact.v1 line is mapped back here.
+
+    ``revision`` comes from the private ``bl_revision`` key (NOT ``seq``, which is
+    0 in fallback stores) so the ``revision == channel_rev`` equality that
+    ``coordination_rally.py`` handoff-verify relies on is preserved. ``kind``
+    comes from the private ``bl_kind`` (the original build-loop kind) when present,
+    falling back to the fact.v1 wire kind.
+    """
+    payload = record.get("bl_payload")
+    if not isinstance(payload, dict):
+        # Reconstruct a minimal payload from the fact fields so readers that
+        # inspect payload (e.g. subject/status/target) still work.
+        payload = {
+            k: v for k, v in (
+                ("subject", record.get("subject")),
+                ("summary", record.get("summary")),
+                ("status", record.get("status")),
+                ("to_tool", record.get("target")),
+            ) if v is not None
+        }
+    normalized = {
+        "ts": record.get("created_at") or record.get("ts"),
+        "kind": record.get("bl_kind") or record.get("kind") or "unknown",
+        "tool": record.get("tool") or "unknown",
+        "model": record.get("bl_model") or "unknown",
+        "run_id": record.get("thread_id") or (payload.get("run_id") if isinstance(payload, dict) else None) or "unknown",
+        "app_slug": record.get("bl_app_slug") or "",
+        "payload": payload,
+        "revision": _int_or_zero(record.get("bl_revision")),
+        "subject": record.get("subject"),
+        "_source_format": "fact-v1",
+    }
+    if record.get("event_id"):
+        normalized["event_id"] = record["event_id"]
+    # Splice back the two orthogonal identity axes as TOP-LEVEL keys. The
+    # emitter stores producer metadata in ``bl_producer`` (runtime identity)
+    # and the per-run fields in ``bl_build_loop`` (run-instance identity);
+    # both are flattened to siblings here so readers/tests see e.g.
+    # producer_name AND build_loop_id at the top level — never one nested in
+    # the other. Each is additive: absent key → nothing spliced.
+    producer = record.get("bl_producer")
+    if isinstance(producer, dict):
+        for k, v in producer.items():
+            normalized.setdefault(k, v)
+    build_loop = record.get("bl_build_loop")
+    if isinstance(build_loop, dict):
+        for k, v in build_loop.items():
+            normalized.setdefault(k, v)
     return normalized
 
 

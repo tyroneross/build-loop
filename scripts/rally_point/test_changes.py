@@ -154,6 +154,59 @@ def test_read_normalizes_repo_local_rally_log(chan: Path):
     assert recs[0]["payload"]["subject"] == "Workbench glass redesign LANDED"
 
 
+def test_read_normalizes_fact_v1_record(chan: Path):
+    # A fact.v1 line (build-loop's ARP-ingestible fallback shape) must read back
+    # to the legacy reader shape, with revision sourced from bl_revision (NOT seq)
+    # so coordination_rally.py's `revision == channel_rev` equality survives.
+    row = {
+        "schema": "agent-rally.fact.v1",
+        "event_id": "blf_abc123",
+        "seq": 0,
+        "thread_id": "run-9",
+        "kind": "handoff",
+        "subject": "review this",
+        "scope": ["file.py"],
+        "created_at": "2026-06-17T00:00:00Z",
+        "evidence": [],
+        "tool": "claude_code",
+        "target": "codex",
+        "bl_revision": 5,
+        "bl_kind": "handoff",
+        "bl_model": "opus",
+        "bl_app_slug": "build-loop",
+        "bl_payload": {"subject": "review this", "to_tool": "codex", "run_id": "run-9"},
+    }
+    (chan / "changes.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    recs, off = ch.read_changes_since(chan, 0)
+
+    assert off > 0
+    assert len(recs) == 1
+    r = recs[0]
+    assert r["_source_format"] == "fact-v1"
+    assert r["kind"] == "handoff"
+    assert r["tool"] == "claude_code"
+    assert r["model"] == "opus"
+    assert r["run_id"] == "run-9"
+    assert r["app_slug"] == "build-loop"
+    assert r["revision"] == 5  # from bl_revision, NOT seq=0 — the regression guard
+    assert r["payload"]["to_tool"] == "codex"
+
+
+def test_fact_v1_revision_match_regression_guard(chan: Path):
+    # The exact pattern coordination_rally.py uses: filter records by revision == channel_rev.
+    # With bl_revision preserved, the match holds after the fact.v1 write-flip.
+    import fact_v1 as fv  # noqa: PLC0415
+    channel_rev = 11
+    f = fv.to_fact_v1(kind="handoff", tool="claude_code", model="m", run_id="run-x",
+                      app_slug="a", payload={"subject": "h", "to": "codex"}, revision=channel_rev)
+    fv.write_fact_v1_line(chan, f)
+    recs, _ = ch.read_changes_since(chan, 0)
+    matching = [r for r in recs if r.get("revision") == channel_rev
+                and r.get("kind") == "handoff" and r.get("tool") == "claude_code"]
+    assert len(matching) == 1, "revision-match handoff verify must still find the record"
+
+
 def test_repo_local_rally_log_offset_is_sequence(chan: Path):
     log_dir = chan / "log"
     log_dir.mkdir()
