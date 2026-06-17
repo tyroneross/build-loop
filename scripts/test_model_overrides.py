@@ -144,6 +144,96 @@ class ModelOverrideTests(unittest.TestCase):
             self.assertEqual(payload["source"], "fallback")
 
 
+class TierFallbackTests(unittest.TestCase):
+    """Standing tier->tier fallback policy (TIER_FALLBACK) and its invariant."""
+
+    def _resolve(self, td: str, tier: str, unavailable: str) -> dict:
+        result = run_script(
+            MODEL_OVERRIDES,
+            "--workdir", td,
+            "--tier", tier,
+            "--unavailable", unavailable,
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_no_fallback_when_tier_model_available(self) -> None:
+        # unavailable set doesn't touch this tier's default -> base resolution.
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "code", "fable,opus")
+            self.assertEqual(payload["model"], "sonnet")
+            self.assertEqual(payload["source"], "tier-default")
+
+    def test_thinking_walks_to_code(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "thinking", "opus")
+            self.assertEqual(payload["model"], "sonnet")  # code default
+            self.assertEqual(payload["source"], "tier-fallback")
+            self.assertEqual(payload["fallback_tier"], "code")
+
+    def test_code_walks_to_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "code", "sonnet")
+            self.assertEqual(payload["model"], "haiku")  # pattern default
+            self.assertEqual(payload["source"], "tier-fallback")
+            self.assertEqual(payload["fallback_tier"], "pattern")
+
+    def test_thinking_keeps_walking_to_pattern_when_code_also_unavailable(self) -> None:
+        # Non-frontier tiers may walk multiple edges down the graph.
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "thinking", "opus,sonnet")
+            self.assertEqual(payload["model"], "haiku")  # pattern default
+            self.assertEqual(payload["source"], "tier-fallback")
+            self.assertEqual(payload["fallback_tier"], "pattern")
+
+    def test_frontier_falls_back_to_thinking(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "frontier", "fable")
+            self.assertEqual(payload["model"], "opus")  # thinking default
+            self.assertEqual(payload["source"], "tier-fallback")
+            self.assertEqual(payload["fallback_tier"], "thinking")
+
+    def test_invariant_frontier_never_resolves_below_thinking(self) -> None:
+        # HARD INVARIANT: even when BOTH the frontier default (fable) AND the
+        # thinking default (opus) are unavailable, a frontier (judgment) role
+        # must NOT silently resolve to the code (sonnet) or pattern (haiku) tier.
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "frontier", "fable,opus")
+            self.assertEqual(payload["fallback_tier"], "thinking")
+            self.assertNotEqual(payload["model"], "sonnet")  # never code tier
+            self.assertNotEqual(payload["model"], "haiku")  # never pattern tier
+            self.assertNotIn(payload.get("fallback_tier"), {"code", "pattern"})
+            # The walk stopped at thinking — code/pattern were never visited.
+            self.assertNotIn("code", payload.get("fallback_path", []))
+            self.assertNotIn("pattern", payload.get("fallback_path", []))
+
+    def test_explicit_fallback_overrides_standing_policy(self) -> None:
+        # An explicit caller --fallback wins; the standing walk is skipped even
+        # when the tier default is unavailable.
+        with tempfile.TemporaryDirectory() as td:
+            result = run_script(
+                MODEL_OVERRIDES,
+                "--workdir", td,
+                "--tier", "frontier",
+                "--unavailable", "fable",
+                "--fallback", "gpt-5.5",
+                "--json",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "gpt-5.5")
+            self.assertEqual(payload["source"], "fallback")
+
+    def test_pattern_has_no_lower_fallback(self) -> None:
+        # pattern is the bottom of the graph; an unavailable pattern default
+        # returns the base resolution unchanged (no further walk).
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "pattern", "haiku")
+            self.assertEqual(payload["model"], "haiku")
+            self.assertEqual(payload["source"], "tier-default")
+
+
 class ModelRegistryTests(unittest.TestCase):
     def test_list_models_registers_codex_frontier_and_nano_pattern(self) -> None:
         result = run_script(MODEL_OVERRIDES, "--list-models", "--json")

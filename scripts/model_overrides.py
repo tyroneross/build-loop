@@ -42,6 +42,30 @@ TIER_DEFAULTS = {
     "pattern": "haiku",
 }
 
+# Standing tier-fallback graph: when a tier's resolved model is unavailable and
+# the caller supplied no explicit `fallback`, resolution walks DOWN this graph to
+# the fallback tier's default. This is the durable POLICY (tier -> tier edges);
+# concrete model ids live ONLY in TIER_DEFAULTS / MODEL_REGISTRY, never here —
+# the rule is expressed in tier/role terms so a model swap never touches it.
+#
+#     frontier -> thinking   (judgment role degrades to the THINKING tier)
+#     thinking -> code
+#     code     -> pattern
+#     pattern  -> (none; nothing lower)
+#
+# HARD INVARIANT: the frontier (judgment) tier's ONLY permitted standing
+# fallback is thinking. A frontier role must NEVER silently resolve below
+# thinking (i.e. never to code or pattern). `resolve_with_tier_fallback`
+# enforces this by walking AT MOST one edge from frontier; if the thinking
+# tier's default is itself unavailable, frontier resolution stops at thinking
+# rather than degrading further. See feedback_model_org_fable5.md.
+TIER_FALLBACK = {
+    "frontier": "thinking",
+    "thinking": "code",
+    "code": "pattern",
+    "pattern": None,
+}
+
 # Selectable models per tier. TIER_DEFAULTS (above) is the Anthropic mapping used
 # when nothing is configured; this registry is the broader set of models known to
 # fit each tier's contract and therefore safe to select via
@@ -182,6 +206,94 @@ def resolve_model(
     }
 
 
+def resolve_with_tier_fallback(
+    *,
+    tier: str,
+    workdir: Path,
+    unavailable: set[str] | frozenset[str] | None = None,
+    fallback: str | None = None,
+    config_path: Path | None = None,
+    state_path: Path | None = None,
+) -> dict[str, Any]:
+    """Resolve a tier to a model, applying the STANDING tier-fallback policy.
+
+    First resolves via `resolve_model` (config/state override -> caller fallback
+    -> tier default). If that model is in `unavailable` AND the caller supplied
+    no explicit `fallback`, walk the standing `TIER_FALLBACK` graph to the
+    fallback tier's default, labelling the result `source: "tier-fallback"`.
+
+    An explicit caller `fallback` is honoured as-is (per-call intent wins over the
+    standing policy) and the standing walk is skipped.
+
+    HARD INVARIANT — frontier never resolves below thinking: the frontier
+    (judgment) tier walks AT MOST one edge, to thinking. If the thinking default
+    is also unavailable, frontier resolution STOPS at the thinking default rather
+    than degrading to code/pattern. Every other tier may keep walking down the
+    graph until a usable default is found or the graph bottoms out.
+    """
+    if tier not in TIERS:
+        raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(TIERS)}")
+
+    unavailable = set(unavailable or ())
+
+    base = resolve_model(
+        tier=tier,
+        workdir=workdir,
+        fallback=fallback,
+        config_path=config_path,
+        state_path=state_path,
+    )
+
+    model = base.get("model")
+    # Usable as-is when there's a model and it's not declared unavailable.
+    if model and model not in unavailable:
+        return base
+    # An explicit caller fallback is intentional — don't override it with the
+    # standing policy. If it's unavailable that's the caller's problem to know.
+    if fallback:
+        return base
+
+    # Walk the standing tier-fallback graph. `frontier` walks at most one edge.
+    visited = [tier]
+    current = tier
+    max_steps = 1 if tier == "frontier" else len(TIERS)
+    for _ in range(max_steps):
+        nxt = TIER_FALLBACK.get(current)
+        if nxt is None:
+            break
+        candidate = TIER_DEFAULTS.get(nxt)
+        visited.append(nxt)
+        if candidate and candidate not in unavailable:
+            return {
+                "tier": tier,
+                "model": candidate,
+                "source": "tier-fallback",
+                "fallback_tier": nxt,
+                "fallback_path": visited,
+                "path": None,
+                "configured": False,
+                "registered": is_registered(nxt, candidate),
+            }
+        # frontier stops at thinking even if thinking's default is unavailable
+        # (invariant: never resolve a judgment role below thinking).
+        if tier == "frontier":
+            return {
+                "tier": tier,
+                "model": candidate,  # thinking default (may itself be unavailable)
+                "source": "tier-fallback",
+                "fallback_tier": nxt,
+                "fallback_path": visited,
+                "path": None,
+                "configured": False,
+                "registered": is_registered(nxt, candidate),
+            }
+        current = nxt
+
+    # No usable fallback tier (e.g. pattern, or every default unavailable):
+    # return the base resolution unchanged.
+    return base
+
+
 def has_override(
     *,
     tier: str,
@@ -204,6 +316,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--workdir", default=".")
     p.add_argument("--tier", default=None, choices=sorted(TIERS))
     p.add_argument("--fallback", default=None)
+    p.add_argument(
+        "--unavailable",
+        default=None,
+        help="Comma-separated model ids that are unavailable. When set, "
+        "resolution applies the standing TIER_FALLBACK policy "
+        "(frontier never resolves below thinking).",
+    )
     p.add_argument("--config", default=None, help="Override config.json path.")
     p.add_argument("--state", default=None, help="Override state.json path.")
     p.add_argument("--require", action="store_true", help="Exit 1 if unresolved.")
@@ -232,13 +351,24 @@ def main(argv: list[str] | None = None) -> int:
     if not args.tier:
         p.error("--tier is required unless --list-models is given")
 
-    result = resolve_model(
-        tier=args.tier,
-        workdir=Path(args.workdir),
-        fallback=args.fallback,
-        config_path=Path(args.config) if args.config else None,
-        state_path=Path(args.state) if args.state else None,
-    )
+    if args.unavailable is not None:
+        unavailable = {m.strip() for m in args.unavailable.split(",") if m.strip()}
+        result = resolve_with_tier_fallback(
+            tier=args.tier,
+            workdir=Path(args.workdir),
+            unavailable=unavailable,
+            fallback=args.fallback,
+            config_path=Path(args.config) if args.config else None,
+            state_path=Path(args.state) if args.state else None,
+        )
+    else:
+        result = resolve_model(
+            tier=args.tier,
+            workdir=Path(args.workdir),
+            fallback=args.fallback,
+            config_path=Path(args.config) if args.config else None,
+            state_path=Path(args.state) if args.state else None,
+        )
     if args.require and not result.get("model"):
         print(json.dumps(result, indent=2), file=sys.stderr)
         return 1
