@@ -61,6 +61,28 @@ python3 scripts/model_overrides.py --list-models --tier frontier --json
 
 The registry is **advisory**: override resolution still accepts any model id, so a brand-new model works the moment you put it in `modelOverrides` — it is simply flagged `registered: false` on the resolve envelope until it is added here. `TIER_DEFAULTS` (the Anthropic mapping) stays the fallback; registering a model makes it *selectable*, not the default.
 
+### Standing tier-fallback policy (when a tier's model is unavailable)
+
+When a tier's resolved model is **unavailable** at dispatch time (provider outage, quota, region gate) and the caller supplied no explicit per-call fallback, resolution walks DOWN a fixed **tier-to-tier** graph to the fallback tier's default. The policy is expressed in tier/role terms — `TIER_FALLBACK` in `scripts/model_overrides.py` holds the edges; the concrete model ids live only in `TIER_DEFAULTS`/`MODEL_REGISTRY`, so swapping a model never touches the rule.
+
+| Tier (role) | Standing fallback tier |
+|---|---|
+| **Frontier** (judgment) | **Thinking** — and no further (invariant below) |
+| **Thinking** (coordination) | **Code** |
+| **Code** (execution) | **Pattern** |
+| **Pattern** (recognition) | none — bottom of the graph |
+
+**HARD INVARIANT — a frontier/judgment role never resolves below the Thinking tier.** Frontier's only permitted standing fallback is Thinking; it must NEVER silently degrade to the Code or Pattern tier. Resolution enforces this by walking at most one edge from Frontier: if the Thinking-tier default is itself unavailable, Frontier resolution STOPS at Thinking rather than walking on to Code/Pattern. Every other tier may keep walking down the graph until a usable default is found or the graph bottoms out. The rationale is durable: a verification/planning verdict produced by a Code- or Pattern-tier model is worse than a delayed verdict, so the judgment surface degrades only to the next reasoning-class tier (Thinking), never to an execution/recognition tier. See `feedback_model_org_fable5.md` (Frontier-unavailable → Thinking tier, never Code).
+
+An **explicit per-call fallback wins** over the standing policy — passing `--fallback <model>` (or a `fallback=` argument) is treated as deliberate caller intent and skips the standing walk entirely.
+
+```bash
+# Drive the standing policy explicitly (frontier default unavailable):
+python3 scripts/model_overrides.py --workdir "$PWD" --tier frontier \
+  --unavailable fable --json
+# -> { "model": "<thinking default>", "source": "tier-fallback", "fallback_tier": "thinking" }
+```
+
 ## Three ways to swap
 
 ### 1. Edit agent frontmatter (one-time, per-host)
