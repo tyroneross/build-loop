@@ -23,8 +23,11 @@ Key fidelity points (verified against the upstream Rust source this run):
   - The Fact struct has NO ``deny_unknown_fields`` (verified store.rs), so additive private
     keys are tolerated on deserialize: the emitter carries build-loop's own ``revision`` as
     ``bl_revision`` and the original producer/payload signal as ``bl_payload`` /
-    ``bl_producer`` so nothing is lost. ``changes.normalize_record`` reads these back; ARP
-    ignores them.
+    ``bl_producer`` so nothing is lost. The per-run identity fields (build_loop_id,
+    build_loop_started_at, build_loop_run_label) ride in a SEPARATE ``bl_build_loop`` key —
+    orthogonal to ``bl_producer`` (producer = runtime identity; build_loop = run-instance
+    identity), so neither nests the other. ``changes.normalize_record`` reads ALL of these
+    back to TOP-LEVEL keys; ARP ignores them.
 
 Pure / stdlib-only. NEVER imports agent-rally-point.
 """
@@ -88,14 +91,20 @@ def to_fact_v1(
     subject: str | None = None,
     revision: int = 0,
     producer: dict | None = None,
+    build_loop_fields: dict | None = None,
     created_at: str | None = None,
 ) -> dict:
     """Build a fact.v1-shaped dict from a build-loop coordination write.
 
     The returned dict serializes (json.dumps) to a line ``rally migrate-legacy``
     ingests losslessly. Build-loop-private signal (revision, original payload,
-    producer metadata) rides along as additive ``bl_*`` keys that ARP ignores and
-    ``changes.normalize_record`` reads back.
+    producer metadata, run identity) rides along as additive ``bl_*`` keys that
+    ARP ignores and ``changes.normalize_record`` reads back to top-level.
+
+    ``producer`` (runtime identity) and ``build_loop_fields`` (per-run identity:
+    build_loop_id / build_loop_started_at / build_loop_run_label) are stored as
+    DISTINCT keys (``bl_producer`` / ``bl_build_loop``), never nested in each
+    other, so the two identity axes stay orthogonal on read-back.
     """
     payload = payload or {}
     if kind in _NON_EMITTED_KINDS:
@@ -159,6 +168,11 @@ def to_fact_v1(
         fact["bl_payload"] = payload
     if producer:
         fact["bl_producer"] = producer
+    if build_loop_fields:
+        # Per-run identity, orthogonal to producer (runtime) identity. Stored
+        # in its own key so normalize splices it back as TOP-LEVEL siblings of
+        # the producer_* keys — never nested under bl_producer.
+        fact["bl_build_loop"] = build_loop_fields
     return fact
 
 

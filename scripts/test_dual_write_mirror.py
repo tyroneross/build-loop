@@ -34,16 +34,28 @@ from unittest.mock import patch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from rally_point import changes as _changes  # noqa: E402
 from rally_point import discovery_bridge as bridge  # noqa: E402
 from rally_point import inbox  # noqa: E402
 from rally_point.post import post  # noqa: E402
 
 
 def _read_changes(channel_dir: Path) -> list[dict]:
+    # Read through the canonical normalize chokepoint. The canonical channel
+    # now stores the agent-rally.fact.v1 shape (top-level revision/kind/run_id
+    # live under bl_revision/bl_kind/thread_id until normalized); the legacy
+    # mirror stores the already-legacy reader shape (normalize_record is a
+    # pass-through for it). Reading raw json here would assert an obsolete
+    # pre-fact.v1 canonical shape — normalize is the contract every real reader
+    # (rally.py, leadership.py, checkpoint.py) uses.
     p = channel_dir / "changes.jsonl"
     if not p.exists():
         return []
-    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    return [
+        _changes.normalize_record(json.loads(l))
+        for l in p.read_text().splitlines()
+        if l.strip()
+    ]
 
 
 def _read_revision(channel_dir: Path) -> int:

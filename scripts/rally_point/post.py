@@ -176,8 +176,14 @@ def post(
         except ImportError:  # script import
             from fact_v1 import to_fact_v1, write_fact_v1_line  # type: ignore
 
+        # Two orthogonal identity axes, kept as SEPARATE dicts: producer =
+        # runtime identity (what code/version is writing), build_loop fields =
+        # per-run identity (which build-loop run this is). Merging them (the
+        # prior ``producer.update(...)``) nested the run-identity fields inside
+        # bl_producer, so normalize never recovered them top-level. to_fact_v1
+        # now stores each in its own bl_* key and normalize splices both back.
         producer = producer_metadata()
-        producer.update(rally_fields_for(workdir))
+        build_loop_fields = rally_fields_for(workdir)
         fact = to_fact_v1(
             kind=kind,
             tool=tool,
@@ -187,6 +193,7 @@ def post(
             payload=payload,
             revision=new_rev,
             producer=producer,
+            build_loop_fields=build_loop_fields,
         )
         write_fact_v1_line(d, fact)
         if kind == "phase" and (payload or {}).get("phase") == "rally-start":
@@ -223,10 +230,29 @@ def post(
                 ):
                     legacy_dir = Path(legacy)
                     legacy_dir.mkdir(parents=True, exist_ok=True)
-                    # Mirror the same fact.v1 line AND bump legacy's revision so
-                    # legacy-side readers see a fresh signal.
+                    # The migration window exists for NON-UPGRADED peers (e.g. a
+                    # Codex poller predating the fact.v1 emitter) reading the
+                    # legacy channel. Those raw readers expect the legacy
+                    # ``{ts, kind, tool, model, run_id, app_slug, payload, revision}``
+                    # shape and KeyError on a fact.v1 line, so mirror the
+                    # NORMALIZED (legacy-shaped) record — not the fact.v1 fact.
+                    # The canonical store above stays fact.v1; only the legacy
+                    # mirror is down-converted. normalize_record is the same
+                    # read chokepoint build-loop's own readers use, so the
+                    # mirrored line is bit-identical to what they'd reconstruct.
+                    try:  # package import
+                        from .changes import (
+                            append_change as _legacy_append,
+                            normalize_record as _legacy_normalize,
+                        )
+                    except ImportError:  # script import
+                        from changes import (  # type: ignore
+                            append_change as _legacy_append,
+                            normalize_record as _legacy_normalize,
+                        )
+                    # Bump legacy's revision so its readers see a fresh signal.
                     bump_revision(legacy_dir)
-                    write_fact_v1_line(legacy_dir, fact)
+                    _legacy_append(legacy_dir, _legacy_normalize(fact))
             except Exception:
                 # Fire-and-forget per protocol; mirror failure is silent.
                 pass

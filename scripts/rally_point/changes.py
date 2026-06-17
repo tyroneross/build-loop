@@ -200,6 +200,20 @@ def _normalize_fact_v1_record(record: dict) -> dict:
     }
     if record.get("event_id"):
         normalized["event_id"] = record["event_id"]
+    # Splice back the two orthogonal identity axes as TOP-LEVEL keys. The
+    # emitter stores producer metadata in ``bl_producer`` (runtime identity)
+    # and the per-run fields in ``bl_build_loop`` (run-instance identity);
+    # both are flattened to siblings here so readers/tests see e.g.
+    # producer_name AND build_loop_id at the top level — never one nested in
+    # the other. Each is additive: absent key → nothing spliced.
+    producer = record.get("bl_producer")
+    if isinstance(producer, dict):
+        for k, v in producer.items():
+            normalized.setdefault(k, v)
+    build_loop = record.get("bl_build_loop")
+    if isinstance(build_loop, dict):
+        for k, v in build_loop.items():
+            normalized.setdefault(k, v)
     return normalized
 
 
