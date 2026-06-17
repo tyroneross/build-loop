@@ -58,6 +58,26 @@ def _read_changes(channel_dir: Path) -> list[dict]:
     ]
 
 
+def _read_changes_raw(channel_dir: Path) -> list[dict]:
+    # Raw on-disk reader — NO normalize. Guards the literal record shape each
+    # channel persists, so the legacy-mirror assertions catch a regression that
+    # reverts the mirror to a fact.v1 line (which normalize would silently
+    # launder back into the legacy reader shape, masking the f3 contract break).
+    p = channel_dir / "changes.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
+def _read_inbox_raw(channel_dir: Path, tool: str) -> list[dict]:
+    # Raw on-disk inbox reader (same contract as _read_inbox, named for
+    # parity with _read_changes_raw / intent at the call site).
+    p = inbox.inbox_path(channel_dir, tool)
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+
+
 def _read_revision(channel_dir: Path) -> int:
     p = channel_dir / "revision"
     if not p.exists():
@@ -174,6 +194,34 @@ class TestPostDualWrite(DualWriteMirrorBase):
         # Records carry the same kind + run_id (mirror is bit-identical).
         self.assertEqual(canonical_changes[0]["kind"], legacy_changes[0]["kind"])
         self.assertEqual(canonical_changes[0]["run_id"], legacy_changes[0]["run_id"])
+
+        # f3 contract guard (raw, NO normalize): raw legacy peers cannot read a
+        # fact.v1 line — they KeyError on a missing top-level revision/kind/run_id.
+        # The mirror MUST therefore write the down-converted legacy reader shape
+        # directly. Asserting through normalize would pass either way (normalize
+        # reconstructs these from a fact.v1 line too), so this reads RAW.
+        legacy_raw = _read_changes_raw(self.legacy)
+        self.assertEqual(len(legacy_raw), 1, "Raw legacy mirror has 1 on-disk record")
+        lr = legacy_raw[0]
+        # Legacy shape carries the contract fields at the TOP LEVEL, on disk.
+        self.assertEqual(lr["revision"], rev, "raw legacy record has top-level revision")
+        self.assertEqual(lr["kind"], "handoff", "raw legacy record has top-level kind")
+        self.assertEqual(lr["run_id"], "r-test-1", "raw legacy record has top-level run_id")
+        # NOT a fact.v1 line: a regression to write_fact_v1_line would carry the
+        # FACT_V1_SCHEMA marker and stash the contract fields under bl_revision/
+        # bl_kind/thread_id instead. Assert the fact.v1 carriers are ABSENT so a
+        # fact.v1-shaped mirror FAILS this test.
+        self.assertNotIn("schema", lr, "raw legacy record is NOT a fact.v1 line")
+        self.assertNotIn("bl_revision", lr, "revision is top-level, not a fact.v1 carrier")
+        self.assertNotIn("thread_id", lr, "run_id is top-level, not a fact.v1 carrier")
+        # Sanity: the CANONICAL channel intentionally IS fact.v1 on disk — proves
+        # the assertions above target the down-conversion, not a no-op equality.
+        canonical_raw = _read_changes_raw(self.canonical)
+        self.assertEqual(
+            canonical_raw[0].get("schema"),
+            _changes.FACT_V1_SCHEMA,
+            "canonical channel stores the fact.v1 shape on disk",
+        )
 
     # ------------------------------------------------------------------
     # AC-B1.2-2: non-migration policy → no mirror
@@ -293,6 +341,24 @@ class TestInboxDualWrite(DualWriteMirrorBase):
         self.assertEqual(len(legacy_inbox), 1, "Legacy inbox mirror has 1 message")
         self.assertEqual(canonical_inbox[0]["payload"], legacy_inbox[0]["payload"])
         self.assertEqual(canonical_inbox[0]["id"], legacy_inbox[0]["id"])
+
+        # f3 contract guard (raw, NO normalize): the inbox mirror writes the
+        # SAME message bytes to both channels, so the legacy inbox record MUST be
+        # the legacy inbox message shape on disk — top-level id/payload/kind, NOT
+        # a fact.v1 line. _read_inbox already reads raw json; _read_inbox_raw is
+        # named at the call site to make the on-disk-shape intent explicit.
+        legacy_raw = _read_inbox_raw(self.legacy, "codex")
+        self.assertEqual(len(legacy_raw), 1, "Raw legacy inbox mirror has 1 on-disk record")
+        lr = legacy_raw[0]
+        self.assertIn("id", lr, "raw legacy inbox record has top-level id")
+        self.assertIn("payload", lr, "raw legacy inbox record has top-level payload")
+        self.assertEqual(lr["kind"], "phase", "raw legacy inbox record has top-level kind")
+        self.assertEqual(lr["payload"], {"checkpoint_id": "B1_2_TEST"})
+        # NOT a fact.v1 line: a regression that routed the inbox mirror through
+        # the fact.v1 emitter would carry FACT_V1_SCHEMA and stash fields under
+        # bl_*; assert those carriers are absent so such a regression FAILS here.
+        self.assertNotIn("schema", lr, "raw legacy inbox record is NOT a fact.v1 line")
+        self.assertNotIn("bl_revision", lr, "inbox fields are top-level, not fact.v1 carriers")
 
     def test_inbox_write_no_mirror_when_canonical(self) -> None:
         env = self._envelope(policy="canonical")
