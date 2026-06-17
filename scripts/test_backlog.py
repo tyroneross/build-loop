@@ -462,8 +462,9 @@ class TestSchemaVersioning(_Base):
             "---\n\n## Context\nfuture\n"
         )
         item, _ = bl.read_item(future_text)
-        # unknown fields preserved intact
-        self.assertEqual(item["horizon_score"], 0.91 if isinstance(item["horizon_score"], float) else "0.91")
+        # unknown fields preserved intact (present, non-None, carry the value)
+        self.assertIn("horizon_score", item)
+        self.assertEqual(str(item["horizon_score"]), "0.91")
         self.assertEqual(item["linked_runs"], ["r1", "r2"])
         # newer schema_version preserved (explicit value wins over default).
         # On disk it's text, so the explicit "99" is preserved as-is.
@@ -471,6 +472,37 @@ class TestSchemaVersioning(_Base):
         # known fields still readable
         self.assertEqual(item["id"], "NEW-SEARCH-002")
         self.assertEqual(item["title"], "future item")
+
+    def test_load_items_applies_tolerant_defaults_on_disk(self):
+        # Closure proof for the wiring fix: the PRODUCTION read path (load_items)
+        # — not just read_item in isolation — must default missing fields and
+        # preserve unknown ones. An old-style item on disk with no schema_version
+        # / owner / entities must come back defaulted; an unknown field survives.
+        old_item = (
+            "---\n"
+            "id: OLD-SEARCH-001\n"
+            "title: legacy on disk\n"
+            "status: open\n"
+            "area: search\n"
+            "future_field: keep-me\n"
+            "---\n\n## Context\nlegacy\n"
+        )
+        bl.items_dir(self.repo).mkdir(parents=True, exist_ok=True)
+        (bl.items_dir(self.repo) / "OLD-SEARCH-001.md").write_text(
+            old_item, encoding="utf-8")
+        items = bl.load_items(self.repo)
+        self.assertEqual(len(items), 1)
+        it = items[0]
+        # defaulted-but-absent known fields are present
+        self.assertEqual(it["owner"], "unassigned")
+        self.assertEqual(it["priority"], "P2")
+        self.assertEqual(it["entities"], [])
+        self.assertEqual(it["schema_version"], bl.SCHEMA_VERSION)
+        # unknown future field preserved through the production read
+        self.assertEqual(it["future_field"], "keep-me")
+        # the read still works for INDEX rendering (no None-status crash)
+        idx = bl.render_index(self.repo, items, "2026-06-16")
+        self.assertIn("OLD-SEARCH-001", idx)
 
 
 class TestAdopt(_Base):

@@ -494,7 +494,12 @@ def load_items(repo: Path, include_archive: bool = False) -> list[dict[str, Any]
                 text = path.read_text(encoding="utf-8")
             except OSError:
                 continue
-            fm, body = parse_frontmatter(text)
+            # Route through the tolerant reader so EVERY consumer (sync, list,
+            # mirror, adopt's idempotency anchor) gets missing known fields
+            # defaulted and unknown future fields preserved — the download/
+            # upgrade-safety contract applied on the real production read path,
+            # not just in read_item's unit tests.
+            fm, body = read_item(text)
             fm["_path"] = str(path)
             fm["_body"] = body
             fm["_archived"] = (d == archive_dir(repo))
