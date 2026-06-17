@@ -47,12 +47,10 @@ from pathlib import Path
 
 try:  # package import
     from .build_loop_id import rally_fields_for
-    from .changes import append_change, make_record
     from .producer_metadata import producer_metadata
     from .revision import bump_revision
 except ImportError:  # script import (sys.path-inserted, no parent package)
     from build_loop_id import rally_fields_for  # type: ignore
-    from changes import append_change, make_record  # type: ignore
     from producer_metadata import producer_metadata  # type: ignore
     from revision import bump_revision  # type: ignore
 
