@@ -57,6 +57,15 @@
     "hooks.py": { "source": null, "source_hash": null },
     "mece_gate.py": { "source": null, "source_hash": null },
     "task_heartbeat.py": { "source": null, "source_hash": null },
-    "fact_v1.py": { "source": null, "source_hash": null }
+    "fact_v1.py": {
+      "_doc": "Tracks the REAL wire contract the emitter must match: FACT_SCHEMA is defined in the Rust lib.rs (lib.rs:40) and migrate-legacy SILENTLY skips any line whose schema != it (discovery.rs:712-714). Drift here = a future silent-data-loss seam, so the detector watches the Rust source — not a Python mirror — read-only/report-only.",
+      "source": "crates/rally-cli/src/lib.rs",
+      "source_hash": "43e6beb9b69d19766ee847064fa87da3d347e147c343db1d1687177c9ea5059e"
+    },
+    "fact_v1_struct": {
+      "_doc": "The Fact struct wire shape the emitter targets (store.rs). Additive-tolerant (no deny_unknown_fields) — tracked so a struct-level contract move surfaces for review.",
+      "source": "crates/rally-cli/src/store.rs",
+      "source_hash": "06555bb13711b906923809cd1ec78988bf97609ffcde0a7d387e64aecbbc3fa0"
+    }
   }
 }

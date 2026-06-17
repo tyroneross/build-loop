@@ -199,3 +199,62 @@ def test_lossless_round_trip(tmp_path):
     assert data2["facts_read"] == len(facts)
     assert data2["facts_skipped_existing"] == len(facts)
     assert data2["facts_migrated"] == 0
+
+
+@pytest.mark.skipif(_rally_binary() is None, reason="rally binary not installed")
+def test_wrong_schema_silently_skipped(tmp_path):
+    """SILENT-SKIP CONTRACT TRIPWIRE.
+
+    migrate-legacy SILENTLY skips any JSONL line whose ``schema`` != the upstream
+    ``FACT_SCHEMA`` (discovery.rs:712-714: ``if schema != FACT_SCHEMA { continue; }``
+    with no warning, and ``facts_read`` NOT incremented). That means a future drift
+    between build-loop's emitter constant and the real wire contract = silent data
+    loss (facts written but never migrated, no error surfaced).
+
+    This test pins the contract from the REAL binary's perspective: a store whose
+    ONLY line carries a deliberately-wrong schema migrates ZERO facts and reads
+    ZERO. It pairs with ``fact_v1.write_fact_v1_line`` emitting ``fact_v1.FACT_SCHEMA``
+    (now the single source of truth, deduped into changes.py) and the provenance
+    drift-detector watching ``lib.rs``: if the emitter ever stops matching the wire
+    contract, the round-trip test reads zero facts and this tripwire documents WHY.
+
+    Isolated: temp HOME + throwaway repo basename so the live store/room are untouched.
+    """
+    rally = _rally_binary()
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "rp-wrongschema-throwaway"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.x"], cwd=str(repo), check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=str(repo), check=True)
+
+    slug = repo.name
+    apps = home / ".agent-rally-point" / "apps" / slug
+    apps.mkdir(parents=True)
+
+    # A line that is byte-for-byte a valid fact EXCEPT its schema is wrong — exactly
+    # the shape a drifted emitter constant would produce.
+    good = fv.to_fact_v1(kind="handoff", tool="claude", model="m", run_id="ws1",
+                         app_slug=slug, payload={"subject": "wrong-schema"}, revision=1)
+    assert good["schema"] == fv.FACT_SCHEMA  # emitter still matches the source of truth
+    wrong = dict(good)
+    wrong["schema"] = "agent-rally.fact.v0-DRIFTED"
+    (apps / "changes.jsonl").write_text(
+        json.dumps(wrong, separators=(",", ":")) + "\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    proc = subprocess.run(
+        [rally, "migrate-legacy", "--json"],
+        cwd=str(repo), env=env, capture_output=True, text=True, timeout=20,
+    )
+    assert proc.returncode == 0, f"stderr: {proc.stderr}"
+    data = json.loads(proc.stdout)["data"]["migrate-legacy"]
+    # The wrong-schema line is silently skipped: read 0, migrated 0, skipped 0.
+    assert data["facts_read"] == 0, (
+        f"wrong-schema line was NOT silently skipped (facts_read={data['facts_read']}); "
+        "the silent-skip contract this tripwire pins has changed"
+    )
+    assert data["facts_migrated"] == 0
+    assert data["facts_skipped_existing"] == 0

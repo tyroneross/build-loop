@@ -74,7 +74,16 @@ def _int_or_zero(value) -> int:
     return parsed if parsed >= 0 else 0
 
 
-FACT_V1_SCHEMA = "agent-rally.fact.v1"
+try:  # package import
+    from .fact_v1 import FACT_SCHEMA
+except ImportError:  # script import (sys.path-inserted, no parent package)
+    from fact_v1 import FACT_SCHEMA  # type: ignore
+
+# Single source of truth: the schema string lives in fact_v1.FACT_SCHEMA (the
+# emitter). ``FACT_V1_SCHEMA`` is kept as the local read-back alias so the
+# detection below and any importer of changes.FACT_V1_SCHEMA stay stable, while
+# the literal can never drift from the emitter's constant.
+FACT_V1_SCHEMA = FACT_SCHEMA
 
 
 def normalize_record(record: dict) -> dict:
