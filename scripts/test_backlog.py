@@ -92,29 +92,58 @@ class TestCreate(_Base):
 
     def test_id_format(self):
         res = self._new(area="search")
-        # PROJSLUG prefix (MYPR from myproj-app) - AREA - NNN
-        self.assertRegex(res["id"], r"^[A-Z]+-SEARCH-\d{3}$")
-        self.assertTrue(res["id"].endswith("-001"))
+        # PROJSLUG prefix (MYPR from myproj-app) - AREA - <token>. The token is
+        # lowercase Crockford base32 (no coordination), NOT a sequential -NNN.
+        self.assertRegex(res["id"], r"^[A-Z]+-SEARCH-[0-9a-z]{6,}$")
+        # The suffix is a token, not the legacy zero-padded counter.
+        self.assertFalse(res["id"].endswith("-001"))
+        # And the ID-shape regex (the single membership test) accepts it.
+        self.assertRegex(res["id"], bl._ITEM_ID_RE)
 
 
 class TestIdIncrement(_Base):
-    def test_increment_and_uniqueness(self):
+    def test_ids_are_unique_per_area_and_across_areas(self):
         a = self._new(area="search")
         b = self._new(area="search")
         c = self._new(area="ci")
+        # Uniqueness — not sequence — is the contract now.
         self.assertNotEqual(a["id"], b["id"])
-        self.assertTrue(a["id"].endswith("-001"))
-        self.assertTrue(b["id"].endswith("-002"))
-        self.assertTrue(c["id"].endswith("-001"))  # separate area counter
+        self.assertNotEqual(a["id"], c["id"])
+        # Prefix is still readable + area-scoped.
+        self.assertIn("-SEARCH-", a["id"])
+        self.assertIn("-SEARCH-", b["id"])
+        self.assertIn("-CI-", c["id"])
 
-    def test_counter_survives_archive(self):
-        # done items move to archive; the counter must still increment past them
-        self._new(area="search")  # 001
-        d = self._new(area="search", status="done")  # 002, will archive
-        self._sync()  # archives 002
-        e = self._new(area="search")  # must be 003, not 002 again
-        self.assertTrue(e["id"].endswith("-003"))
+    def test_ids_unique_even_after_archive(self):
+        # An archived item never frees or collides with a later item's ID — but
+        # now that's guaranteed by token uniqueness, not by a monotonic counter.
+        self._new(area="search")
+        d = self._new(area="search", status="done")  # will archive
+        self._sync()  # archives the done item
+        e = self._new(area="search")
         self.assertNotEqual(e["id"], d["id"])
+        # All three distinct.
+        archived = list(bl.archive_dir(self.repo).glob("*.md"))
+        self.assertEqual(len(archived), 1)
+
+    def test_ids_roughly_time_ordered(self):
+        # The time-prefixed token makes IDs sort roughly by creation, so `ls`
+        # navigation stays useful. Ordering is carried by the TIME PREFIX (first
+        # _TOKEN_TIME_WIDTH chars); the random tail breaks ties WITHIN a
+        # millisecond (expected, and irrelevant to navigation). Assert the time
+        # prefixes are monotonic non-decreasing.
+        ids = [self._new(area="search")["id"] for _ in range(5)]
+        time_prefixes = [
+            i.rsplit("-", 1)[1][:bl._TOKEN_TIME_WIDTH] for i in ids
+        ]
+        self.assertEqual(time_prefixes, sorted(time_prefixes),
+                         "time-prefix must be monotonic (roughly creation-ordered)")
+
+    def test_mint_id_token_monotonic_time_prefix(self):
+        # Direct: a later timestamp yields a lexically >= time prefix.
+        t1 = bl.mint_id_token(now_ms=1_000_000_000_000)
+        t2 = bl.mint_id_token(now_ms=1_000_000_001_000)
+        self.assertLess(t1[:bl._TOKEN_TIME_WIDTH], t2[:bl._TOKEN_TIME_WIDTH])
 
 
 class TestFrontmatterRoundTrip(_Base):
@@ -168,21 +197,49 @@ class TestIndexDeterminism(_Base):
         self.assertEqual(idx1, idx2, "INDEX must be byte-identical on re-sync")
 
     def test_index_independent_of_creation_order(self):
-        # Same logical item set created in two different orders -> same INDEX.
+        # Same logical item set created in two different orders -> same ROW
+        # ORDERING. IDs are now random per-mint, so the INDEX is no longer
+        # byte-identical across two creation runs (that property belonged to the
+        # sequential counter). The durable contract is that sort order
+        # (status -> area -> priority) is independent of creation order; assert
+        # that on the rendered rows minus the random id column.
+        def _ordered_rows(idx_text: str) -> list[str]:
+            # Keep table rows, strip the first (id) cell so random IDs don't
+            # defeat the comparison. A table row looks like `| id | ... |`.
+            rows = []
+            for ln in idx_text.splitlines():
+                if ln.startswith("| ") and "----" not in ln and " id " not in f" {ln} ":
+                    cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+                    rows.append("|".join(cells[1:]))  # drop id cell
+            return rows
+
         self._new(area="search", title="A", priority="P1")
         self._new(area="ci", title="B", priority="P0")
         idx_a = bl.render_index(self.repo, bl.load_items(self.repo), "2026-06-16")
 
-        # Fresh repo, reverse creation order
-        repo2 = self.repo.parent / "myproj-app"  # same slug for ID parity
-        # Use a distinct dir but identical basename to keep IDs comparable
+        # Fresh repo, reverse creation order.
         import shutil
         shutil.rmtree(self.repo)
         self.repo.mkdir(parents=True)
         self._new(area="ci", title="B", priority="P0")
         self._new(area="search", title="A", priority="P1")
         idx_b = bl.render_index(self.repo, bl.load_items(self.repo), "2026-06-16")
-        self.assertEqual(idx_a, idx_b)
+
+        self.assertEqual(_ordered_rows(idx_a), _ordered_rows(idx_b),
+                         "row ordering must be independent of creation order")
+
+    def test_index_byte_identical_for_same_items(self):
+        # Determinism still holds for a FIXED item set: re-rendering the same
+        # items (same IDs on disk) is byte-identical. This is the property `sync`
+        # relies on to be diff-clean; only the cross-creation-run identity was
+        # lost to random IDs.
+        self._new(area="search", title="A", priority="P1")
+        self._new(area="ci", title="B", priority="P0")
+        items = bl.load_items(self.repo)
+        self.assertEqual(
+            bl.render_index(self.repo, items, "2026-06-16"),
+            bl.render_index(self.repo, items, "2026-06-16"),
+        )
 
     def test_index_flags_stale(self):
         self._new(area="search", title="old", review_days=10, today="2026-01-01")
@@ -383,6 +440,8 @@ class TestConcurrentCreate(_Base):
             p.wait()
 
     def test_8_parallel_new_same_area_zero_loss(self):
+        # The O_EXCL fix (kept) must still guarantee 8/8 survivors on ONE
+        # filesystem — the token change must not regress same-fs concurrency.
         n = 8
         self._spawn_new("search", n)
         files = list(bl.items_dir(self.repo).glob("*-SEARCH-*.md"))
@@ -394,22 +453,40 @@ class TestConcurrentCreate(_Base):
             ids.add(fm["id"])
             # the stem and the frontmatter id must agree (no clobbered content)
             self.assertEqual(f.stem, fm["id"])
+            # every survivor is a valid token-shaped item ID
+            self.assertRegex(fm["id"], bl._ITEM_ID_RE)
         self.assertEqual(len(ids), n, "IDs must be unique across all survivors")
-        # IDs must be the contiguous sequential range -001..-00N (readable).
-        tails = sorted(int(i.rsplit("-", 1)[1]) for i in ids)
-        self.assertEqual(tails, list(range(1, n + 1)),
-                         f"IDs must be sequential 1..{n}, got {tails}")
 
-    def test_atomic_helper_recomputes_on_collision(self):
-        # In-process check that the O_EXCL retry path actually advances the
-        # counter rather than overwriting an existing file.
+    def test_atomic_helper_distinct_ids_no_clobber(self):
+        # In-process check that two creates in one area produce two distinct,
+        # non-clobbered files (the O_EXCL path holds with token IDs).
         a = self._new(area="ci", title="first")
         b = self._new(area="ci", title="second")
-        self.assertTrue(a["id"].endswith("-001"))
-        self.assertTrue(b["id"].endswith("-002"))
-        # Both files exist and were not clobbered.
+        self.assertNotEqual(a["id"], b["id"])
         self.assertTrue(Path(a["path"]).exists())
         self.assertTrue(Path(b["path"]).exists())
+
+    def test_atomic_create_remints_on_forced_token_collision(self):
+        # Force the rare same-token clash: a stubbed minter returns a duplicate
+        # token once, then a unique one. The O_EXCL retry must catch the clash
+        # and re-mint rather than clobber the existing file.
+        import os as _os
+        repo = self.repo
+        bl.items_dir(repo).mkdir(parents=True, exist_ok=True)
+        seq = iter(["aaaaaaaaaaaaa", "aaaaaaaaaaaaa", "bbbbbbbbbbbbb"])
+        prefix = f"{bl.proj_id_prefix(repo)}-{bl.area_slug('ci')}-"
+        orig = bl.make_item_id
+        try:
+            bl.make_item_id = lambda r, area: prefix + next(seq)  # type: ignore
+            id1, p1 = bl.atomic_create_item(repo, "ci", lambda i: f"---\nid: {i}\n---\n")
+            id2, p2 = bl.atomic_create_item(repo, "ci", lambda i: f"---\nid: {i}\n---\n")
+        finally:
+            bl.make_item_id = orig
+        self.assertEqual(id1, prefix + "aaaaaaaaaaaaa")
+        # Second create's first token collided with id1 -> re-minted to the next.
+        self.assertEqual(id2, prefix + "bbbbbbbbbbbbb")
+        self.assertNotEqual(p1, p2)
+        self.assertTrue(p1.exists() and p2.exists())
 
 
 class TestSchemaVersioning(_Base):
@@ -629,13 +706,268 @@ class TestAdopt(_Base):
         self.assertTrue((bl.backlog_root(self.repo) / "INDEX.md").exists())  # sync ran
 
 
+class TestDistributedCollision(_Base):
+    """THE reproduction: two INDEPENDENT repo dirs (different worktrees/clones,
+    e.g. Claude on branch A, Codex on branch B) each create items in the SAME
+    area. With the retired sequential counter both minted `...-001/002/003` for
+    DIFFERENT items, so a `git merge` of the two trees collided filenames/IDs and
+    lost or conflicted items. The token scheme must make the two ID sets DISJOINT
+    with zero coordination.
+    """
+
+    def _new_in(self, repo: Path, area: str, title: str) -> dict:
+        ns = _NS(repo=str(repo), area=area, type="debt", title=title,
+                 priority="P2", status="open", gated="none", entities="",
+                 evidence="", provenance_source="", provenance_ref="",
+                 owner="", context="", notes="", review_days=30,
+                 today="2026-06-16")
+        return bl.cmd_new(ns)
+
+    def test_two_independent_repos_zero_id_overlap(self):
+        # Same slug on BOTH (identical basename) so the PREFIX-AREA part is
+        # identical — the worst case where the old counter guaranteed collision.
+        repo_a = Path(self._tmp.name) / "wt-a" / "myproj-app"
+        repo_b = Path(self._tmp.name) / "wt-b" / "myproj-app"
+        repo_a.mkdir(parents=True)
+        repo_b.mkdir(parents=True)
+
+        ids_a = {self._new_in(repo_a, "search", f"a{i}")["id"] for i in range(3)}
+        ids_b = {self._new_in(repo_b, "search", f"b{i}")["id"] for i in range(3)}
+
+        # Each side minted 3 distinct items.
+        self.assertEqual(len(ids_a), 3)
+        self.assertEqual(len(ids_b), 3)
+        # The reproduction assertion: ZERO overlap across the two repos.
+        overlap = ids_a & ids_b
+        self.assertEqual(overlap, set(),
+                         f"distributed ID collision (the bug): {overlap}")
+        # Filenames are therefore disjoint too -> a merge of items/ from both
+        # trees lands 6 distinct files, nothing clobbered.
+        names_a = {p.name for p in bl.items_dir(repo_a).glob("*.md")}
+        names_b = {p.name for p in bl.items_dir(repo_b).glob("*.md")}
+        self.assertEqual(names_a & names_b, set(),
+                         "item filenames must not overlap across worktrees")
+
+    def test_simulated_merge_of_two_worktrees_no_loss(self):
+        # Concretely simulate the post-merge state: copy both trees' items into
+        # one dir (what `git merge` does for non-conflicting paths). All 6 must
+        # coexist; a sync over the merged tree reports 6 active items.
+        import shutil
+        repo_a = Path(self._tmp.name) / "wt-a" / "myproj-app"
+        repo_b = Path(self._tmp.name) / "wt-b" / "myproj-app"
+        repo_a.mkdir(parents=True)
+        repo_b.mkdir(parents=True)
+        for i in range(3):
+            self._new_in(repo_a, "search", f"a{i}")
+            self._new_in(repo_b, "search", f"b{i}")
+
+        merged = Path(self._tmp.name) / "merged" / "myproj-app"
+        bl.items_dir(merged).mkdir(parents=True)
+        for src in (repo_a, repo_b):
+            for p in bl.items_dir(src).glob("*.md"):
+                shutil.copy2(p, bl.items_dir(merged) / p.name)
+
+        merged_items = bl.load_items(merged)
+        self.assertEqual(len(merged_items), 6, "merge must preserve all 6 items")
+        # No duplicate IDs in the merged tree.
+        idx = bl.render_index(merged, merged_items, "2026-06-16")
+        self.assertNotIn("Duplicate IDs", idx)
+
+
+class TestLegacyIdBackCompat(_Base):
+    """Back-compat: legacy `-NNN` items (the 8 seeded atomize-ai items + anything
+    already created before the token switch) must still read/list/sync. Parsing
+    must not assume a numeric suffix; legacy and token items must coexist.
+    """
+
+    def _seed_legacy(self, item_id: str, title: str, status: str = "open",
+                     area: str = "search") -> Path:
+        bl.items_dir(self.repo).mkdir(parents=True, exist_ok=True)
+        text = (
+            "---\n"
+            f"id: {item_id}\n"
+            "schema_version: 1\n"
+            f"title: {title}\n"
+            f"status: {status}\n"
+            "priority: P2\n"
+            "type: debt\n"
+            f"area: {area}\n"
+            "gated: none\n"
+            "provenance: {}\n"
+            "created: 2026-05-01\n"
+            "updated: 2026-05-01\n"
+            "review_by: 2026-06-01\n"
+            "owner: unassigned\n"
+            "---\n\n## Context\nlegacy seed\n"
+        )
+        p = bl.items_dir(self.repo) / f"{item_id}.md"
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    def test_legacy_id_matches_item_id_regex(self):
+        # The membership regex must still accept the legacy -NNN shape.
+        self.assertRegex("ATOM-SEARCH-001", bl._ITEM_ID_RE)
+        self.assertRegex("ATOM-SEARCH-008", bl._ITEM_ID_RE)
+
+    def test_legacy_items_read_and_list(self):
+        self._seed_legacy("ATOM-SEARCH-001", "legacy one")
+        self._seed_legacy("ATOM-SEARCH-002", "legacy two", status="blocked")
+        res = bl.cmd_list(_NS(repo=str(self.repo), status="", area="",
+                              priority="", include_archive=False))
+        ids = {r["id"] for r in res["items"]}
+        self.assertIn("ATOM-SEARCH-001", ids)
+        self.assertIn("ATOM-SEARCH-002", ids)
+
+    def test_legacy_and_token_coexist_in_sync(self):
+        # Mix: 2 legacy + 2 freshly-minted token items. sync must consolidate,
+        # render INDEX, and mirror all four without choking on either shape.
+        self._seed_legacy("ATOM-SEARCH-001", "legacy one")
+        self._seed_legacy("ATOM-SEARCH-002", "legacy two")
+        self._new(area="search", title="token one")
+        self._new(area="search", title="token two")
+        res = self._sync()
+        self.assertEqual(res["index"]["active_count"], 4)
+        idx = Path(res["index"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("ATOM-SEARCH-001", idx)
+        self.assertIn("token one", idx)
+        # Mirror copied all four (legacy IDs are item-ID-shaped, so not pruned).
+        self.assertGreaterEqual(res["mirror"]["written"], 4)
+
+    def test_legacy_done_item_archives(self):
+        # A legacy item moving to done must still consolidate to archive/.
+        self._seed_legacy("ATOM-SEARCH-003", "finishing legacy", status="done")
+        self._sync()
+        self.assertTrue((bl.archive_dir(self.repo) / "ATOM-SEARCH-003.md").exists())
+        self.assertFalse((bl.items_dir(self.repo) / "ATOM-SEARCH-003.md").exists())
+
+    def test_legacy_mirror_prune_still_targets_legacy_shape(self):
+        # An orphaned LEGACY mirror file must still be pruned (the prune regex
+        # must accept -NNN), while a non-item note survives.
+        self._seed_legacy("ATOM-SEARCH-004", "will orphan")
+        res = self._sync()
+        mem_dir = Path(res["mirror"]["dir"])
+        self.assertTrue((mem_dir / "ATOM-SEARCH-004.md").exists())
+        (bl.items_dir(self.repo) / "ATOM-SEARCH-004.md").unlink()
+        self._sync()
+        self.assertFalse((mem_dir / "ATOM-SEARCH-004.md").exists(),
+                         "orphaned legacy mirror must be pruned")
+
+
+class TestDuplicateIdDetection(_Base):
+    """Defense in depth: if two items ever share an id (a bad merge, a hand-edit),
+    sync must surface it LOUDLY in the INDEX rather than silently rendering one.
+    """
+
+    def _seed(self, item_id: str, title: str, name: str) -> Path:
+        bl.items_dir(self.repo).mkdir(parents=True, exist_ok=True)
+        text = (
+            "---\n"
+            f"id: {item_id}\n"
+            f"title: {title}\n"
+            "status: open\n"
+            "priority: P2\n"
+            "type: debt\n"
+            "area: search\n"
+            "gated: none\n"
+            "created: 2026-06-16\n"
+            "updated: 2026-06-16\n"
+            "review_by: 2026-07-16\n"
+            "---\n\n## Context\nx\n"
+        )
+        p = bl.items_dir(self.repo) / name
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    def test_duplicate_ids_surface_in_index(self):
+        # Two DIFFERENT files carrying the SAME id (what a merge collision looks
+        # like once both sides minted the same legacy -NNN).
+        self._seed("ATOM-SEARCH-001", "first claim", "ATOM-SEARCH-001.md")
+        self._seed("ATOM-SEARCH-001", "second claim", "ATOM-SEARCH-001-dup.md")
+        res = self._sync()
+        idx = Path(res["index"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("Duplicate IDs", idx)
+        self.assertIn("ATOM-SEARCH-001", idx)
+        # BOTH titles are surfaced — neither is silently hidden.
+        self.assertIn("first claim", idx)
+        self.assertIn("second claim", idx)
+
+    def test_no_duplicate_section_when_clean(self):
+        self._new(area="search", title="solo")
+        res = self._sync()
+        idx = Path(res["index"]["path"]).read_text(encoding="utf-8")
+        self.assertNotIn("Duplicate IDs", idx)
+
+    def test_duplicate_helper_groups_across_archive(self):
+        # A collision visible even after one side archived.
+        active = self._seed("ATOM-SEARCH-002", "active dup", "ATOM-SEARCH-002.md")
+        bl.archive_dir(self.repo).mkdir(parents=True, exist_ok=True)
+        (bl.archive_dir(self.repo) / "ATOM-SEARCH-002.md").write_text(
+            active.read_text(encoding="utf-8"), encoding="utf-8")
+        items = bl.load_items(self.repo, include_archive=True)
+        groups = bl._duplicate_id_groups(items)
+        self.assertIn("ATOM-SEARCH-002", groups)
+        self.assertEqual(len(groups["ATOM-SEARCH-002"]), 2)
+
+
+class TestTokenUniquenessAtVolume(unittest.TestCase):
+    """Token uniqueness at volume — mint many IDs in-process, assert all unique."""
+
+    def test_1000_tokens_all_unique(self):
+        tokens = {bl.mint_id_token() for _ in range(1000)}
+        self.assertEqual(len(tokens), 1000, "all 1000 minted tokens must be unique")
+
+    def test_token_is_lowercase_crockford(self):
+        tok = bl.mint_id_token()
+        self.assertRegex(tok, r"^[0-9a-z]+$")
+        # No ambiguous Crockford-excluded letters (i, l, o, u).
+        for bad in ("i", "l", "o", "u"):
+            self.assertNotIn(bad, tok)
+
+    def test_token_entropy_uses_urandom_not_clock(self):
+        # Same millisecond, many mints -> the random tail must vary (otherwise
+        # the ID would be clock-only and collide). Pin now_ms; the tails differ.
+        fixed = 1_700_000_000_000
+        tails = {bl.mint_id_token(now_ms=fixed)[bl._TOKEN_TIME_WIDTH:]
+                 for _ in range(200)}
+        # With 25 random bits, 200 draws are essentially always distinct.
+        self.assertGreater(len(tails), 190,
+                           "random tail must vary within one millisecond")
+
+
+class TestGitattributesScaffold(_Base):
+    """INDEX.md merge handling — the .gitattributes rule is scaffolded by both
+    the `adopt` scaffold path AND any backlog materialisation (new/sync)."""
+
+    def test_new_drops_gitattributes(self):
+        self._new(area="search", title="x")
+        ga = bl.backlog_root(self.repo) / ".gitattributes"
+        self.assertTrue(ga.exists(), "ensure_dirs must drop the INDEX merge rule")
+        self.assertIn("INDEX.md merge=ours", ga.read_text(encoding="utf-8"))
+
+    def test_adopt_scaffolds_gitattributes(self):
+        ns = _NS(repo=str(self.repo), apply=True, today="2026-06-16",
+                 review_days=30, no_mirror=True, slug="")
+        bl.cmd_adopt(ns)
+        ga = bl.backlog_root(self.repo) / ".gitattributes"
+        self.assertTrue(ga.exists())
+        self.assertIn("INDEX.md merge=ours", ga.read_text(encoding="utf-8"))
+
+    def test_gitattributes_not_overwritten_if_customised(self):
+        # ensure_dirs writes once; a user customisation survives a later sync.
+        self._new(area="search", title="x")
+        ga = bl.backlog_root(self.repo) / ".gitattributes"
+        ga.write_text("INDEX.md merge=ours\n# my custom note\n", encoding="utf-8")
+        self._sync()
+        self.assertIn("my custom note", ga.read_text(encoding="utf-8"))
+
+
 class TestNoThirdPartyImports(unittest.TestCase):
     """Assert backlog.py imports ONLY Python stdlib — the host-agnostic contract."""
 
     # Python 3.10+ stdlib top-level module allowlist used by backlog.py.
     _STDLIB = {
         "__future__", "argparse", "datetime", "json", "os", "re",
-        "sys", "pathlib", "typing",
+        "secrets", "sys", "time", "pathlib", "typing",
     }
 
     def test_only_stdlib_imports(self):
