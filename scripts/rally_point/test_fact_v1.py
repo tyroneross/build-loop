@@ -58,6 +58,22 @@ def test_lead_and_commit_map_to_artifact():
     assert fv.map_kind("handoff") == "handoff"
 
 
+def test_phase_subject_matches_native_subject():
+    # Subject derivation must agree with post._native_subject (DRY) so a phase
+    # event yields "phase: rally-start", not the bare "phase".
+    payload = {"phase": "rally-start"}
+    f = fv.to_fact_v1(kind="phase", tool="t", model="m", run_id="r",
+                      app_slug="a", payload=payload)
+    assert f["subject"] == "phase: rally-start"
+    assert f["subject"] == _post._native_subject("phase", payload)
+
+
+def test_explicit_subject_wins():
+    f = fv.to_fact_v1(kind="phase", tool="t", model="m", run_id="r",
+                      app_slug="a", payload={"phase": "rally-start"}, subject="override")
+    assert f["subject"] == "override"
+
+
 def test_ref_is_wire_name_not_ref_id():
     f = fv.to_fact_v1(kind="handoff", tool="t", model="m", run_id="r",
                       app_slug="a", payload={"ref_id": "evt_99", "subject": "x"})

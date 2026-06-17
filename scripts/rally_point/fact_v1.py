@@ -37,9 +37,9 @@ import time
 from pathlib import Path
 
 try:  # package import
-    from .post import _native_kind
+    from .post import _native_kind, _native_subject
 except ImportError:  # script import (sys.path-inserted, no parent package)
-    from post import _native_kind  # type: ignore
+    from post import _native_kind, _native_subject  # type: ignore
 
 FACT_SCHEMA = "agent-rally.fact.v1"
 _LOG_NAME = "changes.jsonl"
@@ -105,8 +105,11 @@ def to_fact_v1(
     else:
         wire_kind = map_kind(kind)
 
-    subj = subject or payload.get("subject") or payload.get("message") or kind
-    subj = str(subj)
+    # Subject derivation delegates to post._native_subject (DRY — same source of
+    # truth the native-CLI post path uses), so a phase event yields
+    # "phase: rally-start" rather than the bare "phase", and the event_id hash
+    # stays consistent with the native path. An explicit subject arg still wins.
+    subj = str(subject) if subject else _native_subject(kind, payload)
     ts = created_at or _iso_now()
 
     fact: dict = {

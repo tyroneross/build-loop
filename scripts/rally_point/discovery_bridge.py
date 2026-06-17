@@ -657,7 +657,11 @@ def maybe_auto_migrate(
         except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
             return None
 
-        # Mark attempted regardless of parse outcome so we do not retry-loop.
+        # Process guard suppresses per-session retries (efficiency, not correctness)
+        # and is set even on a non-zero/timeout result so a transient failure does
+        # not retry-loop within this session. The .migrated file is the CROSS-session
+        # durability marker; it is written below only after the subprocess returns,
+        # so a failed run leaves it absent and a future process re-attempts.
         _MIGRATED_THIS_PROCESS.add(store_key)
         try:
             marker.write_text(_utc_iso(), encoding="utf-8")
