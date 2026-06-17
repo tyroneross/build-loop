@@ -594,6 +594,114 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
+# Once-per-process guard so the seam does not re-shell on every coordination
+# write. migrate-legacy is itself idempotent (event_id dedup), so this is an
+# efficiency layer, not a correctness one. Keyed by resolved channel dir.
+_MIGRATED_THIS_PROCESS: set[str] = set()
+
+
+def maybe_auto_migrate(
+    workdir: Path | str, envelope: "DiscoveryEnvelope | None" = None
+) -> dict | None:
+    """Auto-run ``rally migrate-legacy`` on the fallback→ARP transition seam.
+
+    Fires when (a) the resolved envelope is ``rust-cli`` (an ARP binary is installed
+    AND owns the active channel) AND (b) a stranded global fallback store exists at
+    the embedded apps path (``channel_paths.app_channel_dir(slug)/changes.jsonl``)
+    holding ≥1 ``agent-rally.fact.v1`` line. Shells out to ``rally migrate-legacy
+    --json`` (binary from ``rust_rally_binary``), which losslessly + idempotently
+    replays the stranded store into the ARP repo ledger.
+
+    Returns the parsed migrate result dict (``slugs_found``, ``facts_read``,
+    ``facts_migrated``, ``facts_skipped_existing``, ``warnings``) on success, or
+    ``None`` when not applicable / on any error. Fire-and-forget — never raises into
+    the caller, never imports agent-rally-point.
+
+    A per-process marker (``<fallback_channel>/.migrated``) + an in-memory set skip
+    re-invocation; migrate-legacy's own event_id dedup is the correctness backstop.
+    """
+    try:
+        env = envelope if envelope is not None else resolve(workdir)
+        if env.resolved_via != "rust-cli":
+            return None
+
+        # Locate the stranded global fallback store for this repo's slug.
+        slug = channel_paths.app_slug(workdir)
+        fallback_dir = channel_paths.app_channel_dir(slug)
+        store = fallback_dir / "changes.jsonl"
+        if not store.exists():
+            return None
+
+        marker = fallback_dir / ".migrated"
+        store_key = str(store.resolve())
+        if store_key in _MIGRATED_THIS_PROCESS or marker.exists():
+            return None
+
+        # Require ≥1 fact.v1 line — otherwise migrate-legacy would migrate zero
+        # (it silently skips non-fact.v1 lines).
+        if not _has_fact_v1_line(store):
+            return None
+
+        binary = rust_rally_binary(workdir)
+        if not binary:
+            return None
+
+        try:
+            proc = subprocess.run(
+                [binary, "migrate-legacy", "--json"],
+                cwd=str(Path(workdir)),
+                capture_output=True,
+                text=True,
+                timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
+            )
+        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+            return None
+
+        # Mark attempted regardless of parse outcome so we do not retry-loop.
+        _MIGRATED_THIS_PROCESS.add(store_key)
+        try:
+            marker.write_text(_utc_iso(), encoding="utf-8")
+        except OSError:
+            pass
+
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        try:
+            out = json.loads(proc.stdout)
+        except (ValueError, TypeError):
+            return None
+        if isinstance(out, dict) and isinstance(out.get("data"), dict):
+            data = out["data"]
+            # Live rally emits the result under the hyphenated command name.
+            return (
+                data.get("migrate-legacy")
+                or data.get("migrate_legacy")
+                or data
+            )
+        return out if isinstance(out, dict) else None
+    except Exception:  # noqa: BLE001 — fire-and-forget seam, never block a host action
+        return None
+
+
+def _has_fact_v1_line(store: Path) -> bool:
+    """Return True if ``store`` holds ≥1 ``agent-rally.fact.v1`` line."""
+    try:
+        with open(store, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(obj, dict) and obj.get("schema") == "agent-rally.fact.v1":
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 # --------------------------------------------------------------------------
 # CLI for ad-hoc debugging (not part of the supported entry surface).
 # --------------------------------------------------------------------------

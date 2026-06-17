@@ -110,6 +110,18 @@ def post(
                     envelope.resolved_via == "rust-cli"
                     and str(Path(envelope.channel_dir).resolve()) == str(d.resolve())
                 ):
+                    # Zero-seam transition: on the first coordination write after an
+                    # ARP binary is detected, replay any stranded global fact.v1
+                    # fallback store into the ARP ledger (lossless + idempotent).
+                    # Fire-and-forget; never blocks this post.
+                    try:
+                        try:  # package import
+                            from .discovery_bridge import maybe_auto_migrate
+                        except ImportError:  # script import
+                            from discovery_bridge import maybe_auto_migrate  # type: ignore
+                        maybe_auto_migrate(workdir, envelope)
+                    except Exception:
+                        pass
                     return _post_via_rust_rally(
                         binary=rust_rally_binary(workdir),
                         workdir=workdir,
@@ -154,7 +166,21 @@ def post(
         # Bump first so the new record's revision matches what readers see
         new_rev = bump_revision(d)
 
-        record = make_record(
+        # Local-fallback writes now emit the agent-rally.fact.v1 shape so the
+        # store is losslessly ingestible by ``rally migrate-legacy`` (which
+        # silently skips any non-fact.v1 line). Build-loop's own readers consume
+        # it back through the single ``changes.read_changes_since`` →
+        # ``changes.normalize_record`` chokepoint; build-loop-private signal
+        # (revision, payload, producer metadata) rides along as additive bl_*
+        # keys that ARP ignores (no deny_unknown_fields).
+        try:  # package import
+            from .fact_v1 import to_fact_v1, write_fact_v1_line
+        except ImportError:  # script import
+            from fact_v1 import to_fact_v1, write_fact_v1_line  # type: ignore
+
+        producer = producer_metadata()
+        producer.update(rally_fields_for(workdir))
+        fact = to_fact_v1(
             kind=kind,
             tool=tool,
             model=model,
@@ -162,23 +188,21 @@ def post(
             app_slug=app_slug,
             payload=payload,
             revision=new_rev,
+            producer=producer,
         )
-        # β1: attach producer identity to every outgoing record.
-        record.update(producer_metadata())
-        # build_loop_id: top-level run-instance identity, orthogonal to
-        # producer_metadata (runtime identity). Merge AFTER producer so
-        # no producer_* field can shadow it. Absent when workdir is None
-        # or state.json lacks ``execution.build_loop_id`` — write proceeds.
-        record.update(rally_fields_for(workdir))
-        append_change(d, record)
+        write_fact_v1_line(d, fact)
         if kind == "phase" and (payload or {}).get("phase") == "rally-start":
             try:
                 try:  # package import
                     from . import rally
+                    from .changes import normalize_record
                 except ImportError:  # script import
                     import rally  # type: ignore
+                    from changes import normalize_record  # type: ignore
 
-                rally.write_current(d, record)
+                # write_current expects the legacy reader shape (payload+revision);
+                # reuse the read chokepoint to convert the fact.v1 record.
+                rally.write_current(d, normalize_record(fact))
             except Exception:
                 pass
 
@@ -201,10 +225,10 @@ def post(
                 ):
                     legacy_dir = Path(legacy)
                     legacy_dir.mkdir(parents=True, exist_ok=True)
-                    # Mirror the same record AND bump legacy's revision so
+                    # Mirror the same fact.v1 line AND bump legacy's revision so
                     # legacy-side readers see a fresh signal.
                     bump_revision(legacy_dir)
-                    append_change(legacy_dir, record)
+                    write_fact_v1_line(legacy_dir, fact)
             except Exception:
                 # Fire-and-forget per protocol; mirror failure is silent.
                 pass
