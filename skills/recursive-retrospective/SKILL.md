@@ -1,6 +1,7 @@
 ---
 name: recursive-retrospective
 description: Run a recursive-learning retrospective on an app/agent/plugin/build-loop project — analyze build history, behavior, and current state to extract reusable learning objects and encode them into memory, agents, skills, plugins, evals, preflights, and approval gates. Use after a substantial build, when reviewing a project's trajectory, when deciding preserve/refine/redirect/reset, or when converting a session into durable system improvement. Discovery-first (observe behavior → cluster patterns → encode learning); RCA is one module, not the whole job.
+user-invocable: false
 ---
 
 # Recursive Learning Retrospective
