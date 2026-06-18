@@ -118,6 +118,18 @@ When you elaborate causal trees in section 9 during Step 2 enrichment:
 - Name the missing system control (a check, gate, default, schema constraint, contract).
 - Do NOT phrase the cause as agent error ("the agent should have caught this"). The agent IS the system; the missing control is the systems issue.
 - Cite the issue evidence (line in transcript, judge verdict, iterate-failure record).
+- **Meta-cause synthesis.** When **≥3 issues share a suspected single root cause**, name the ONE meta-cause and recommend ONE preflight family — do not file N disconnected enforce-candidates. (Worked example: a placeholder secret nearly deployed, a gitignored CI config absent, and a subagent miscount all reduce to "trusted asserted state over actual state" → one verify-state preflight family.) The shared-root signal is also a "contested-meaning" trigger; see *Conditional depth* below.
+
+# Conditional depth — recursive-learning lenses (opt-in, default OFF)
+
+The 9 sections are the default and are sufficient for bounded execution / infra / audit runs. **Do NOT add sections.** Only when the run is **contested-meaning** — ANY of: (a) the product/feature is pre-public or at an architecture-direction decision point, (b) the run recommends redirect/reset on a major area, (c) ≥3 issues share a suspected single root cause — additionally apply these four lenses, each folded into an EXISTING section as enrichment bullets:
+
+1. **Project-maturity posture** → *Key takeaways*: one line — preserve / refine / redirect / reset — with the reason, and an explicit "from-scratch redesign NOT warranted" when the work is shipped/validated (guards against over-redesign).
+2. **Spec → current → desired gap** → *Lessons learned*: name any gap between intent, what shipped, and the desired end state that the pass/fail outcome hides (e.g. a v1 tradeoff with a deferred hardening successor).
+3. **Counterfactual intervention-savings** → *What could be done better*: quantify which tool-calls/questions a preflight would have removed — AND state which human gates would remain (never propose automating a production/irreversible gate away).
+4. **Emergent meta-cause** → *Issues §9*: the single root behind clustered near-misses (see the meta-cause rule above).
+
+Evidence for keeping this gated rather than always-on: a head-to-head judge test (decision `0095` in build-loop-memory) found only 4 of the deep 16-section format's sections net-new-useful on a bounded run; the rest restated the standard 9. When the `recursive-retrospective` skill is available, invoke it for the FULL pipeline on contested-meaning runs instead of inlining these four lenses.
 
 # Output discipline
 
