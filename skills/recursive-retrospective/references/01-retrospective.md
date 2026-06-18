@@ -92,7 +92,7 @@ Encoding-target reference (examples, not quotas): **Memory** (preferences, decis
 
 ## 8. Diagnostic RCA Module (selective)
 Use RCA ONLY for major gaps/failures/regressions/repeated steering loops/brittle architecture/verification escapes/misaligned outcomes. Not on every minor issue. Expect 1–3 RCAs for a typical session; if you find yourself writing more than ~4, you are over-applying it.
-For each RCA, make the **escape path** explicit, not just the cause: did the control that should have caught this exist? did it fire? if it fired, was it ignored / misread / bypassed / too weak? (This is where "the decision existed but was never encoded as code/gate" failures surface.) For a full L2 diagnosis, delegate to the `root-cause-analysis` skill rather than expanding this module.
+For each RCA, make the **escape path** explicit, not just the cause: did the control that should have caught this exist? did it fire? if it fired, was it ignored / misread / bypassed / too weak? (This is where "the decision existed but was never encoded as code/gate" failures surface.) For a full L2 diagnosis, delegate to the shared `references/root-cause-analysis/` RCA suite (it is reference material, not a sibling skill) rather than expanding this module.
 Per major issue `## RCA-n: [Issue]`: Symptom · Expected · Actual · Evidence (files/logs/chats/tests/commits/screenshots/NavGator) · Creation path · Escape path (why it survived planning/implementation/review/testing/interaction) · Root cause category (Spec/context/planning/memory/code/tool/agent/eval/permission/UX/external dependency/other) · Learning object (LO-id) · Encoding target · Preserve/refine/replace implication · Residual risk · Confidence.
 
 ## 9. Early Discovery and Preflight Improvements
