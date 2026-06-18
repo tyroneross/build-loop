@@ -51,16 +51,27 @@ class ConvertTests(unittest.TestCase):
         out = l2d.convert([_obj(encoding_target="memory")])
         self.assertEqual(out["proposals"], [])
         self.assertEqual(out["summary"]["skipped"], 1)
-        self.assertEqual(out["summary"]["unrouted_no_producer"], 0)
+        self.assertEqual(out["summary"]["enforcement_specs"], 0)
 
-    def test_gate_and_eval_targets_are_unrouted_not_silently_dropped(self):
-        # Gap #3: real targets with no producer must surface, not vanish.
+    def test_gate_and_eval_targets_become_prevention_pattern_specs(self):
+        # Gap #3: real targets with no producer route to a routable spec, not a
+        # dead end and not silently dropped.
         out = l2d.convert([_obj(encoding_target="gate"), _obj(encoding_target="eval")])
         self.assertEqual(out["proposals"], [])
-        self.assertEqual(out["summary"]["unrouted_no_producer"], 2)
-        self.assertEqual(out["summary"]["unrouted_targets"], ["eval", "gate"])
-        for u in out["unrouted"]:
-            self.assertIn("gap #3", u["note"])
+        self.assertEqual(out["summary"]["enforcement_specs"], 2)
+        self.assertEqual(out["summary"]["enforcement_targets"], ["eval", "gate"])
+        for s in out["enforcement_specs"]:
+            pp = s["prevention_pattern"]
+            self.assertIn("enforced by", pp)
+            self.assertIn("verified by", pp)
+            self.assertTrue(s["lever"] and s["actuator"] and s["verification"])
+            self.assertEqual(s["status"], "spec_ready_no_producer")
+
+    def test_gate_lever_differs_from_eval_lever(self):
+        specs = {s["encoding_target"]: s for s in
+                 l2d.convert([_obj(encoding_target="gate"), _obj(encoding_target="eval")])["enforcement_specs"]}
+        self.assertNotEqual(specs["gate"]["lever"], specs["eval"]["lever"])
+        self.assertIn("verified by a regression check", specs["gate"]["prevention_pattern"])
 
     def test_defaults_when_trigger_and_purpose_missing(self):
         p = l2d.convert([_obj(title="X", trigger=None, purpose=None)])["proposals"][0]

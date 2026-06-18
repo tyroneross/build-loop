@@ -10,10 +10,12 @@ targeted ``skill`` or ``agent`` and marked ``encode: yes``. The Learn phase then
 hands each proposal to the drafter, which authors the experimental SKILL.md /
 agent .md. Capture -> auto-draft, no human re-keying.
 
-Honest scope (gap #3): targets that are NOT skill/agent (eval, gate, preflight,
-approval, memory) have no producer yet. This converter does NOT drop them
-silently — it reports them as ``unrouted`` with their target so the gap is
-visible, not hidden. Stdlib only; no deps.
+Honest scope (gap #3): targets that are NOT skill/agent — eval, gate, preflight,
+approval — have no auto-producer yet, but this converter does NOT dead-end them.
+It emits a routable ``enforcement_spec`` per the agentic-coding RCA Prevention
+Pattern (condition -> required behavior -> lever -> actuator -> verifying
+artifact) that a producer or a human turns into the actual check. ``memory`` /
+``do_not_encode`` route elsewhere. Stdlib only; no deps.
 
 Input  (``--in`` JSON, or stdin): a list of learning-objects, each:
     {"title": str, "evidence": [str, ...], "encoding_target": str,
@@ -69,9 +71,53 @@ def to_proposal(obj: dict) -> dict:
     }
 
 
+_LEVER = {"gate": "a verify/merge gate", "eval": "an eval-suite case",
+          "preflight": "a preflight check", "approval": "an approval gate"}
+_ACTUATOR = {"gate": "blocks 'done'/merge until the check passes",
+             "eval": "the eval run fails on the prior behavior",
+             "preflight": "asked and resolved before work starts",
+             "approval": "requires explicit human approval to proceed"}
+
+
+def to_enforcement_spec(obj: dict) -> dict:
+    """Map a gate/eval/preflight/approval object to a routable Prevention Pattern.
+
+    No auto-producer yet (gap #3), but instead of a dead end we emit the structured
+    spec a producer (or a human) turns into the actual check: condition -> required
+    behavior -> lever -> actuator -> verifying artifact. Mirrors the agentic-coding
+    RCA Prevention Pattern.
+    """
+    target = str(obj.get("encoding_target") or "").lower()
+    title = str(obj.get("title") or "").strip()
+    condition = str(obj.get("trigger") or "").strip() or f"the conditions in: {title}"
+    behavior = str(obj.get("purpose") or "").strip() or title
+    lever = _LEVER.get(target, "an enforced check")
+    actuator = _ACTUATOR.get(target, "fires automatically when the condition holds")
+    ev = obj.get("evidence") or []
+    if not isinstance(ev, list):
+        ev = [str(ev)]
+    artifact = "a regression check that fails on the prior behavior"
+    if ev:
+        artifact += f" (basis: {ev[0]})"
+    return {
+        "encoding_target": target,
+        "prevention_pattern": (
+            f"When {condition}, the system must {behavior}, "
+            f"enforced by {lever}, verified by {artifact}."
+        ),
+        "condition": condition,
+        "required_behavior": behavior,
+        "lever": lever,
+        "actuator": actuator,
+        "verification": artifact,
+        "evidence": [str(e) for e in ev],
+        "status": "spec_ready_no_producer",
+    }
+
+
 def convert(objects: list[dict]) -> dict:
     proposals: list[dict] = []
-    unrouted: list[dict] = []
+    enforcement_specs: list[dict] = []
     skipped: list[dict] = []
     for obj in objects:
         if not isinstance(obj, dict):
@@ -85,9 +131,8 @@ def convert(objects: list[dict]) -> dict:
         if target in DRAFTABLE:
             proposals.append(to_proposal(obj))
         elif target in _NO_PRODUCER:
-            # Gap #3: a real target with no producer yet. Surface it loudly.
-            unrouted.append({"title": title, "encoding_target": target,
-                             "note": "no producer wired (gap #3: needs an enforced-check path)"})
+            # Gap #3: no auto-producer yet -> emit a routable Prevention-Pattern spec.
+            enforcement_specs.append(to_enforcement_spec(obj))
         elif target in _ELSEWHERE:
             skipped.append({"title": title, "reason": f"target={target} (routed elsewhere)"})
         else:
@@ -95,11 +140,12 @@ def convert(objects: list[dict]) -> dict:
     summary = {
         "total": len(objects),
         "drafted": len(proposals),
-        "unrouted_no_producer": len(unrouted),
+        "enforcement_specs": len(enforcement_specs),
         "skipped": len(skipped),
-        "unrouted_targets": sorted({u["encoding_target"] for u in unrouted}),
+        "enforcement_targets": sorted({s["encoding_target"] for s in enforcement_specs}),
     }
-    return {"proposals": proposals, "unrouted": unrouted, "skipped": skipped, "summary": summary}
+    return {"proposals": proposals, "enforcement_specs": enforcement_specs,
+            "skipped": skipped, "summary": summary}
 
 
 def _load(path: str | None) -> list[dict]:
