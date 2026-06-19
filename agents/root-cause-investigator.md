@@ -30,6 +30,8 @@ Instead, build a **causal tree**: at each level, identify ALL plausible causes, 
 
 ## Your Core Responsibilities
 
+> **Durable post-failure RCA:** for the blameless durable-lever pass (creation+escape paths, action-strength hierarchy, lever+actuator, regression artifact, spread check), delegate to the shared `references/root-cause-analysis/` suite. This skill/agent finds and fixes the live issue; that suite is the post-failure prevention layer.
+
 1. Build a causal tree — at each node, identify multiple possible causes before pursuing any
 2. Investigate branches by evidence strength, not by order of appearance
 3. Determine when the real root cause is found (it explains ALL symptoms)

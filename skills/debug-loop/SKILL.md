@@ -168,6 +168,8 @@ Every item in the report gets one marker:
 
 ### After Reporting
 
+> **Durable post-failure RCA:** for the blameless durable-lever pass (creation+escape paths, action-strength hierarchy, lever+actuator, regression artifact, spread check), delegate to the shared `references/root-cause-analysis/` suite. This skill/agent finds and fixes the live issue; that suite is the post-failure prevention layer.
+
 - **Store the incident** as a native `.build-loop/issues/*.md` note for future retrieval
 - **Record the outcome** through standalone Coding Debugger only if that optional plugin supplied the prior incident
 - **Write state** to `.build-loop/debug-loop/scorecard.md`
