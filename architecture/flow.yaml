@@ -78,7 +78,7 @@ hook_overrides:
 
 phases:
   - id: p1
-    no: "Phase 1"
+    "no": "Phase 1"
     name: Assess
     lane: Orchestrator
     desc: "Reads live repo, memory, docs. Writes intent + goal + acceptance probes + triggers. NEW: emits a per-chunk risk score that feeds the auditor's sampling weight."
@@ -93,7 +93,7 @@ phases:
       - { id: "p1.scout", name: "Dispatch baseline scans", kind: dispatch, desc: "architecture map + design contract baseline", hooks: [], agents: [["architecture-scout", "", "Orchestrator"], ["design-contract-specialist", "", "Orchestrator"]] }
 
   - id: p2
-    no: "Phase 2"
+    "no": "Phase 2"
     name: Plan
     lane: "Orchestrator + Advisor (Frontier)"
     hasGate: true
@@ -109,7 +109,7 @@ phases:
       - { id: gate, name: "Plan-Review gate", kind: gate, tier: "T1", desc: "PROPOSED. Auditor (independent peer) reviews the plan and posts the verdict; orchestrator cannot enter Execute until PASS (coordination-protocol block, not a hook). TODAY: there is no mandatory auditor plan-gate — current Plan gating is plan-verify + plan-critic + scope-auditor, and the independent-auditor runs later, at Review-A (build scope).", hooks: [], agents: [["independent-auditor", "", "Auditor (independent)"]], branches: "PASS → Execute\nfail → re-plan" }
 
   - id: p3
-    no: "Phase 3"
+    "no": "Phase 3"
     name: Execute
     lane: "Orchestrator + Auditor (sampled)"
     hasGate: true
@@ -125,7 +125,7 @@ phases:
       - { id: "p3.audit", name: "Commit audit", kind: gate, tier: "T2", desc: "PROPOSED sampling: 100% on riskSurface, else risk-weighted random draw. TODAY: the independent-auditor runs per-commit as an advisory check with a trivial-change bypass (consolidated from the retired commit-auditor in PR #47) — it is not sampled.", hooks: [], agents: [["independent-auditor", "", "Auditor (independent)"]], branches: "audited → seal\nelse → T0 only" }
 
   - id: p4
-    no: "Phase 4"
+    "no": "Phase 4"
     name: Review
     lane: "Orchestrator + Auditor (seal)"
     hasGate: true
@@ -140,7 +140,7 @@ phases:
       - { id: "p4.fg", name: "F · Auto-resolve → G · Report", kind: process, desc: "autonomy_gate routes variances; report_lint · version_advisor · ## Learn line", hooks: [], agents: [] }
 
   - id: p5
-    no: "Phase 5"
+    "no": "Phase 5"
     name: Iterate
     lane: Orchestrator
     loop: true
@@ -155,7 +155,7 @@ phases:
       - { id: "p5.fix", name: "Apply fix → loop to Review", kind: process, desc: "pass → Report; cap hit → followup/ + ## Blocked", hooks: [], agents: [["implementer", "", "Orchestrator"]] }
 
   - id: pd
-    no: "Phase D"
+    "no": "Phase D"
     name: Closeout
     lane: Orchestrator
     hasGate: true
@@ -168,7 +168,7 @@ phases:
       - { id: "pd.push", name: "Production push?", kind: gate, tier: "T1", desc: "human-confirm gate — never sampled, never auto", hooks: ["(post) post-push-closeout.sh"], agents: [], branches: "approved → push\nelse → hold" }
 
   - id: p6
-    no: "Phase 6"
+    "no": "Phase 6"
     name: Learn
     lane: "Orchestrator + Fable signoff"
     hasGate: true
