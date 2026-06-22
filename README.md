@@ -127,41 +127,66 @@ Codex-specific delegation is opt-in. Build-loop planning language such as
 workers only when the user explicitly asks for parallel delegation or passes a
 parallel flag.
 
-## Top-Level Agents
+## Agent Roles
 
-These files live under `agents/`. Descriptions and models come from the current
-frontmatter and are the source of truth for Claude Code agent routing.
+This is a role index, not a list of autonomous commands. Build-loop routes work
+through a lead orchestrator, invokes bounded subagents with scoped context, and
+accepts output only after verification. Core authority follows
+`references/agent-role-taxonomy.md`: **core means a pipeline step is contingent
+on the verdict**, not that the agent is top-level or expensive. Model tier
+follows role; it does not define authority.
+
+Deterministic judge surfaces also exist outside `agents/`, including
+`scripts/plan_verify.py`, `scripts/judgment_gate.py`, and release/package
+verifiers. Agent roles below are the LLM-side surfaces.
+
+### Lead / Workflow Agents
 
 | Agent | Description | Model |
 |---|---|---|
-| `advisor` | Frontier planning advisor for hard decisions, approach tradeoffs, and scope framing. | `fable` |
-| `alignment-checker` | Checks whether planned or completed work still matches the stated goal and intent. | `sonnet` |
-| `api-assessor` | Assesses API, route, auth, rate-limit, CORS, and request/response failures. | `sonnet` |
-| `architecture-scout` | Read-only architecture analyst for baseline, impact, rules, iterate subgraph, and learn-sync tasks. | `sonnet` |
-| `assessment-orchestrator` | Coordinates multi-domain debugging assessment across database, frontend, API, and performance lanes. | `opus` |
-| `build-orchestrator` | Drives the full build-loop workflow and dispatches specialists. | `opus` |
-| `database-assessor` | Assesses query, migration, schema, connection, vector index, and data integrity failures. | `sonnet` |
-| `design-contract-specialist` | Writes and checks UI input/output contracts before UI implementation. | `sonnet` |
-| `fact-checker` | Traces claims, metrics, and rendered facts to their real data sources. | `fable` |
-| `fix-critique` | Pressure-tests whether a proposed fix addresses root cause and avoids regressions. | `fable` |
-| `frontend-assessor` | Assesses React, rendering, hydration, state, component, and client performance issues. | `sonnet` |
-| `implementer` | Applies one bounded Phase 5 fix plan or criterion-targeted implementation packet. | `sonnet` |
+| `build-orchestrator` | Lead workflow owner for Assess -> Plan -> Execute -> Review -> Iterate -> Learn; owns dispatch, phase transitions, commits, and report. | `opus` |
+| `assessment-orchestrator` | Multi-domain debugging coordinator for unclear symptoms across database, frontend, API, and performance lanes. | `opus` |
+| `optimize-runner` | Optimization-loop coordinator for metric-driven experiments, measurement, and regression handling. | `sonnet` |
+
+### Judgment / Review Agents
+
+| Agent | Description | Model |
+|---|---|---|
+| `advisor` | Frontier planning author or re-planner when Phase 2 needs deeper synthesis. | `fable` |
+| `plan-critic` | Plan critique for dependencies, scope drift, validation, ownership, alternatives, and MECE quality. | `fable` |
+| `scope-auditor` | Plan-to-Execute boundary check and public-signature caller coverage. | `fable` |
 | `independent-auditor` | Independent adversarial review for chunk and build-scope completion claims. | `fable` |
-| `mock-scanner` | Scans production paths for placeholder, fake, fixture, and mock data. | `haiku` |
-| `optimize-runner` | Runs metric-driven optimization loops with measurement and regression handling. | `sonnet` |
-| `overfitting-reviewer` | Reviews optimization results for test gaming, Goodhart effects, and overfitting. | `fable` |
-| `performance-assessor` | Assesses latency, memory, CPU, timeout, and bottleneck symptoms. | `sonnet` |
-| `plan-critic` | Reviews plans for missing dependencies, scope drift, weak validation, and unclear ownership. | `fable` |
-| `promotion-reviewer` | Reviews proposed skill, agent, or enforcement promotions before activation. | `fable` |
-| `recurring-pattern-detector` | Detects repeated run patterns and Learn candidates from run history and retro signals. | `haiku` |
-| `retrospective-synthesizer` | Writes the nine-section post-build retrospective and enforce-candidate summary. | `sonnet` |
-| `root-cause-investigator` | Builds causal trees for persistent or ambiguous failures and identifies research boundaries. | `inherit` |
-| `scope-auditor` | Checks Plan-to-Execute boundaries and public signature caller coverage. | `fable` |
-| `security-reviewer` | Reviews auth, secrets, trust boundaries, injection, and other security-sensitive changes. | `fable` |
-| `self-improvement-architect` | Drafts experimental skills, agents, and workflow improvements from recurring lessons. | `sonnet` |
-| `synthesis-critic` | Reviews synthesis-heavy outputs for coherence across multiple dimensions. | `sonnet` |
-| `transcript-pattern-miner` | Mines transcripts for repeated patterns and candidate self-improvement signals. | `haiku` |
-| `ui-validator` | Validates changed UI behavior, states, accessibility, and rendering evidence. | `sonnet` |
+| `fix-critique` | Root-cause and regression pressure-test after a proposed fix. | `fable` |
+| `fact-checker` | Claim, metric, and rendered-data provenance checks before completion. | `fable` |
+| `security-reviewer` | Security review for auth, secrets, trust boundaries, injection, and adjacent risks. | `fable` |
+| `overfitting-reviewer` | Optimization review for test gaming, Goodhart effects, and overfitting. | `fable` |
+| `promotion-reviewer` | Review of proposed skill, agent, or enforcement promotions before activation. | `fable` |
+| `synthesis-critic` | Advisory coherence review for synthesis-heavy outputs across multiple dimensions. | `sonnet` |
+| `alignment-checker` | Advisory queue-item alignment check against current intent, goal, and non-goals. | `sonnet` |
+
+### Worker / Specialist Agents
+
+| Agent | Description | Model |
+|---|---|---|
+| `implementer` | Bounded coding worker for one Phase 5 fix plan or criterion-targeted implementation packet. | `sonnet` |
+| `api-assessor` | API, route, auth, rate-limit, CORS, and request/response failure assessment. | `sonnet` |
+| `database-assessor` | Query, migration, schema, connection, vector index, and data integrity failure assessment. | `sonnet` |
+| `frontend-assessor` | React, rendering, hydration, state, component, and client performance assessment. | `sonnet` |
+| `performance-assessor` | Latency, memory, CPU, timeout, and bottleneck assessment. | `sonnet` |
+| `architecture-scout` | Read-only architecture baseline, impact, rules, iterate subgraph, and learn-sync tasks. | `sonnet` |
+| `design-contract-specialist` | UI/data input-output contracts, design direction, and traceability artifacts. | `sonnet` |
+| `ui-validator` | UI behavior, state, accessibility, layout, console, and rendering evidence validation. | `sonnet` |
+| `root-cause-investigator` | Causal-tree investigation for persistent or ambiguous failures. | `inherit` |
+| `mock-scanner` | Production-path scan for placeholder, fake, fixture, and mock data. | `haiku` |
+
+### Learning Agents
+
+| Agent | Description | Model |
+|---|---|---|
+| `recurring-pattern-detector` | Repeated run-pattern and Learn-candidate detection from run history and retro signals. | `haiku` |
+| `retrospective-synthesizer` | Background post-build retrospective and enforce-candidate summary. | `sonnet` |
+| `self-improvement-architect` | Experimental skill, agent, and workflow drafts from recurring lessons. | `sonnet` |
+| `transcript-pattern-miner` | Transcript mining for repeated patterns and self-improvement candidates. | `haiku` |
 
 ## Phase Summary
 
