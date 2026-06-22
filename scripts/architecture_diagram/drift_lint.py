@@ -30,6 +30,8 @@ from pathlib import Path
 
 import yaml
 
+import generate  # shared flow loader (reads architecture/ARCHITECTURE.md)
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -63,7 +65,7 @@ def hook_basenames(repo: Path) -> set[str]:
 
 
 def lint(repo: Path) -> dict:
-    flow = yaml.safe_load((repo / "architecture" / "flow.yaml").read_text(encoding="utf-8"))
+    flow = generate.load_flow(repo)  # authored flow yaml block in architecture/ARCHITECTURE.md
     real_agents = agent_names(repo)
     real_hooks = hook_basenames(repo)
     aliases = flow.get("agent_aliases", {})

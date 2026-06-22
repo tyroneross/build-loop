@@ -1,3 +1,422 @@
+# build-loop architecture — source of truth for the living diagram
+
+You maintain THIS file. The diagram (`docs/build-loop-flow-mockup.html`) regenerates from it
+via `python3 scripts/architecture_diagram/generate.py`. Two layers:
+
+- **Components (auto)** — agents, skills, scripts, hooks are discovered from the repo on every
+  regenerate. You never hand-list them; the section below is generated.
+- **Flow (authored)** — the phases / sub-steps / gates / dispatch-edges / current-vs-proposed
+  wiring lives in the fenced `yaml` block under "## Flow". Edit that block, then regenerate.
+  References to components are by name; the generator enriches them (model tier, etc.) from the
+  repo and the drift-linter rejects any name that doesn't exist.
+
+Format spec + drift gate: `architecture/README.md`.
+
+## Components (auto-generated — do not edit by hand)
+
+<!-- ARCH_COMPONENTS_START -->
+<!-- run: python3 scripts/architecture_diagram/generate.py -->
+**28 agents · 46 skills · 310 scripts · 17 hooks** (auto-discovered 46cd7359)
+
+<details><summary>agents</summary>
+
+- `advisor` — fable
+- `alignment-checker` — sonnet
+- `api-assessor` — sonnet
+- `architecture-scout` — sonnet
+- `assessment-orchestrator` — opus
+- `build-orchestrator` — opus
+- `database-assessor` — sonnet
+- `design-contract-specialist` — sonnet
+- `fact-checker` — fable
+- `fix-critique` — fable
+- `frontend-assessor` — sonnet
+- `implementer` — sonnet
+- `independent-auditor` — fable
+- `mock-scanner` — haiku
+- `optimize-runner` — sonnet
+- `overfitting-reviewer` — fable
+- `performance-assessor` — sonnet
+- `plan-critic` — fable
+- `promotion-reviewer` — fable
+- `recurring-pattern-detector` — haiku
+- `retrospective-synthesizer` — sonnet
+- `root-cause-investigator` — inherit
+- `scope-auditor` — fable
+- `security-reviewer` — fable
+- `self-improvement-architect` — sonnet
+- `synthesis-critic` — sonnet
+- `transcript-pattern-miner` — haiku
+- `ui-validator` — sonnet
+</details>
+<details><summary>skills</summary>
+
+- `agent-rally-point`
+- `agent-rally-watcher`
+- `api-registry-bridge`
+- `architecture-dead`
+- `architecture-impact`
+- `architecture-review`
+- `architecture-rules`
+- `architecture-scan`
+- `architecture-trace`
+- `attribution-standard`
+- `authentication`
+- `auto-decision-capture`
+- `build-loop`
+- `building-with-deepagents`
+- `capabilities`
+- `debug-loop`
+- `debugging-assess`
+- `debugging-debug-loop`
+- `debugging-memory`
+- `debugging-memory-search`
+- `debugging-store`
+- `defenseclaw-bridge`
+- `handoff`
+- `ibr-bridge`
+- `knowledge`
+- `knowledge-review`
+- `logging-tracer`
+- `logging-tracer-bridge`
+- `loop-builder`
+- `mcp-builder`
+- `model-tiering`
+- `native-ax-driver`
+- `optimize`
+- `plan-verify`
+- `plugin-builder`
+- `plugin-tests`
+- `prd-bridge`
+- `recursive-retrospective`
+- `research`
+- `runtime-parity-verification`
+- `security-methodology`
+- `self-improve`
+- `spec-writing`
+- `sync-skills`
+- `telemetry`
+- `ui-design`
+</details>
+<details><summary>scripts</summary>
+
+- `scripts/_db_url.py`
+- `scripts/_paths.py`
+- `scripts/_test_helpers.py`
+- `scripts/acceptance_probe.py`
+- `scripts/agent_ledger.py`
+- `scripts/agent_rally.py`
+- `scripts/agent_rally_watcher/__init__.py`
+- `scripts/agent_rally_watcher/watch.py`
+- `scripts/app_pulse/__init__.py`
+- `scripts/app_pulse/_alias.py`
+- `scripts/app_pulse/changes.py`
+- `scripts/app_pulse/channel_paths.py`
+- `scripts/app_pulse/checkpoint.py`
+- `scripts/app_pulse/inbox.py`
+- `scripts/app_pulse/install_git_hook.py`
+- `scripts/app_pulse/lifecycle.py`
+- `scripts/app_pulse/mece_gate.py`
+- `scripts/app_pulse/post.py`
+- `scripts/app_pulse/presence.py`
+- `scripts/app_pulse/rally.py`
+- `scripts/app_pulse/revision.py`
+- `scripts/append_milestone.py`
+- `scripts/append_run.py`
+- `scripts/apple_sourcekit_triage.py`
+- `scripts/architecture_diagram/drift_lint.py`
+- `scripts/architecture_diagram/generate.py`
+- `scripts/architecture_freshness.py`
+- `scripts/architecture_snapshot.py`
+- `scripts/archive_project_plan.py`
+- `scripts/assess_grounding_score.py`
+- `scripts/atomic_io.py`
+- `scripts/attestation_lint.py`
+- `scripts/attribution_stamp.py`
+- `scripts/audit_before_commit.py`
+- `scripts/audit_memory_invocation.py`
+- `scripts/audit_record_verdict.py`
+- `scripts/autonomy_gate.py`
+- `scripts/backend_health.py`
+- `scripts/backlog.py`
+- `scripts/backlog/__init__.py`
+- `scripts/backlog/assess.py`
+- `scripts/backlog/triage.py`
+- `scripts/blm.py`
+- `scripts/blm_api.py`
+- `scripts/bridge_lesson_to_harness.py`
+- `scripts/brief_mece_validator.py`
+- `scripts/budget_check.py`
+- `scripts/build_acp.py`
+- `scripts/build_capability_index.py`
+- `scripts/build_capability_registry.py`
+- `scripts/build_codex_plugin_artifact.py`
+- `scripts/build_report_lint.py`
+- `scripts/capability_classifier.py`
+- `scripts/capability_shortlist.py`
+- `scripts/capture_arch_violation.py`
+- `scripts/charter.py`
+- `scripts/check_cache_sync.py`
+- `scripts/check_private_slugs.py`
+- `scripts/check_runtime_memory_tracking.py`
+- `scripts/classify_action.py`
+- `scripts/cleanup_legacy_memory_stubs.py`
+- `scripts/closeout/__init__.py`
+- `scripts/closeout/__main__.py`
+- `scripts/closeout/status.py`
+- `scripts/codex_preflight.py`
+- `scripts/collapse_run.py`
+- `scripts/collision_scan.py`
+- `scripts/commit_state_check.py`
+- `scripts/complexity_detector.py`
+- `scripts/consolidate_memory.py`
+- `scripts/context_bootstrap.py`
+- `scripts/context_snapshot.py`
+- `scripts/contextual_prepend.py`
+- `scripts/coordination_bootstrap.py`
+- `scripts/coordination_rally.py`
+- `scripts/coordination_status.py`
+- `scripts/coordination_watch.py`
+- `scripts/credential_preflight.py`
+- `scripts/db.py`
+- `scripts/db_substrate_lint.py`
+- `scripts/deployment_policy.py`
+- `scripts/detect_attribution_layers.py`
+- `scripts/detect_decision_rot.py`
+- `scripts/detect_runtime_server.py`
+- `scripts/detect_self_recursive.py`
+- `scripts/dev-tools/experiment_metrics.py`
+- `scripts/dispatch_identity.py`
+- `scripts/dogfood_reload_checkpoint.py`
+- `scripts/embed_backend.py`
+- `scripts/embed_daemon.py`
+- `scripts/enforce_canonical_memory.py`
+- `scripts/enforce_retro_signals.py`
+- `scripts/exec_state.py`
+- `scripts/gate_builder.py`
+- `scripts/handoff/__main__.py`
+- `scripts/hook_budget_lint.py`
+- `scripts/hook_hygiene_lint.py`
+- `scripts/hooks/plugin_dir_heal.py`
+- `scripts/host_capabilities.py`
+- `scripts/ibr_quickpass.py`
+- `scripts/infer_risk_surface.py`
+- `scripts/inject_dependency_cooldown.py`
+- `scripts/install_git_hooks.py`
+- `scripts/install_marketplace_shim.py`
+- `scripts/install_memory.py`
+- `scripts/install_self_review.py`
+- `scripts/intent_freshness.py`
+- `scripts/judgment_gate.py`
+- `scripts/keyword_search.py`
+- `scripts/knowledge_review.py`
+- `scripts/learning_to_draft.py`
+- `scripts/lessons_index/__init__.py`
+- `scripts/lessons_index/__main__.py`
+- `scripts/lessons_index/ingest.py`
+- `scripts/lessons_index/query.py`
+- `scripts/lessons_index/schema.py`
+- `scripts/list_projects.py`
+- `scripts/load_current.py`
+- `scripts/log_decision.py`
+- `scripts/markdown_graph_parser.py`
+- `scripts/marketplace_autoupdate.py`
+- `scripts/memory_consolidate/__init__.py`
+- `scripts/memory_consolidate/__main__.py`
+- `scripts/memory_consolidate/async_runner.py`
+- `scripts/memory_consolidate/backlinks/__init__.py`
+- `scripts/memory_consolidate/backlinks/backlinks.py`
+- `scripts/memory_consolidate/classify.py`
+- `scripts/memory_consolidate/distill/__init__.py`
+- `scripts/memory_consolidate/distill/distill.py`
+- `scripts/memory_consolidate/intake.py`
+- `scripts/memory_consolidate/lifecycle/__init__.py`
+- `scripts/memory_consolidate/lifecycle/lifecycle.py`
+- `scripts/memory_consolidate/place.py`
+- `scripts/memory_consolidate/promote/__init__.py`
+- `scripts/memory_consolidate/promote/promote.py`
+- `scripts/memory_context/__init__.py`
+- `scripts/memory_facade/__init__.py`
+- `scripts/memory_facade/common.py`
+- `scripts/memory_facade/debugger.py`
+- `scripts/memory_facade/decisions.py`
+- `scripts/memory_facade/lessons.py`
+- `scripts/memory_facade/runs.py`
+- `scripts/memory_facade/semantic.py`
+- `scripts/memory_graph/__init__.py`
+- `scripts/memory_index.py`
+- `scripts/memory_staleness_check.py`
+- `scripts/memory_telemetry.py`
+- `scripts/memory_update_ledger.py`
+- `scripts/memory_writer.py`
+- `scripts/mermaid_render.py`
+- `scripts/methodology_drift_lint.py`
+- `scripts/metric_runner.py`
+- `scripts/migrate_add_chunk_context_column.py`
+- `scripts/migrate_add_fts_column.py`
+- `scripts/migrate_extend_search_vector_with_context.py`
+- `scripts/migrate_feedback_to_decisions.py`
+- `scripts/migrate_playbooks_to_procedural.py`
+- `scripts/migrate_project_memory.py`
+- `scripts/migrate_reembed_to_bgem3.py`
+- `scripts/migrate_state_schema.py`
+- `scripts/model_overrides.py`
+- `scripts/optimize_doe.py`
+- `scripts/optimize_loop.py`
+- `scripts/optimize_suggest_factors.py`
+- `scripts/orchestrator_heartbeat.py`
+- `scripts/parallelism.py`
+- `scripts/plan_verify.py`
+- `scripts/prior_art.py`
+- `scripts/procedural_governance.py`
+- `scripts/project_resolver.py`
+- `scripts/promote_violation_to_lesson.py`
+- `scripts/prune_codex_plugin_cache.py`
+- `scripts/prune_plugin_cache.py`
+- `scripts/push_hold.py`
+- `scripts/pytest_collect_gate.py`
+- `scripts/question_timeout.py`
+- `scripts/rally_merge_gate.py`
+- `scripts/rally_point/__init__.py`
+- `scripts/rally_point/agent_autoreg.py`
+- `scripts/rally_point/boundary.py`
+- `scripts/rally_point/build_loop_id.py`
+- `scripts/rally_point/changes.py`
+- `scripts/rally_point/channel_paths.py`
+- `scripts/rally_point/checkpoint.py`
+- `scripts/rally_point/discovery_bridge.py`
+- `scripts/rally_point/fact_v1.py`
+- `scripts/rally_point/hook_budget.py`
+- `scripts/rally_point/hooks.py`
+- `scripts/rally_point/inbox.py`
+- `scripts/rally_point/install_git_hook.py`
+- `scripts/rally_point/leadership.py`
+- `scripts/rally_point/lifecycle.py`
+- `scripts/rally_point/mece_gate.py`
+- `scripts/rally_point/post.py`
+- `scripts/rally_point/presence.py`
+- `scripts/rally_point/producer_metadata.py`
+- `scripts/rally_point/rally.py`
+- `scripts/rally_point/revision.py`
+- `scripts/rally_point/roster.py`
+- `scripts/rally_point/session_probe.py`
+- `scripts/rally_point/sync_rally.py`
+- `scripts/rally_point/task_heartbeat.py`
+- `scripts/rally_poll_gate.py`
+- `scripts/recall.py`
+- `scripts/recall_graph.py`
+- `scripts/recall_multipliers.py`
+- `scripts/reference_activation_audit.py`
+- `scripts/reference_capture.py`
+- `scripts/reference_capture/__init__.py`
+- `scripts/reference_capture/capture.py`
+- `scripts/reference_capture/horizons.py`
+- `scripts/reference_capture/staleness.py`
+- `scripts/reference_graph_orphans.py`
+- `scripts/regenerate_knowledge_index.py`
+- `scripts/report_lint.py`
+- `scripts/rerank.py`
+- `scripts/rerank_daemon.py`
+- `scripts/research_packet.py`
+- `scripts/research_trigger.py`
+- `scripts/resume_resolver.py`
+- `scripts/retrospective/__init__.py`
+- `scripts/retrospective/__main__.py`
+- `scripts/retrospective/conftest.py`
+- `scripts/retrospective/locate.py`
+- `scripts/retrospective/sections.py`
+- `scripts/retrospective/synthesize.py`
+- `scripts/retrospective/write.py`
+- `scripts/review_finding_gate.py`
+- `scripts/review_trigger.py`
+- `scripts/revoke_decision.py`
+- `scripts/route_decision.py`
+- `scripts/rrf.py`
+- `scripts/run_loc_delta.py`
+- `scripts/runtime_smoke.py`
+- `scripts/runtime_smoke_adapters/__init__.py`
+- `scripts/runtime_smoke_adapters/nextjs.py`
+- `scripts/runtime_smoke_adapters/sse_consumer.py`
+- `scripts/scan_corrections/__init__.py`
+- `scripts/scan_corrections/__main__.py`
+- `scripts/scan_corrections/detect.py`
+- `scripts/scan_transcript_for_decisions.py`
+- `scripts/script_relevance.py`
+- `scripts/self_mod_verify.py`
+- `scripts/self_review/__init__.py`
+- `scripts/self_review/__main__.py`
+- `scripts/self_review/efficiency.py`
+- `scripts/self_review/gather.py`
+- `scripts/self_review/output.py`
+- `scripts/self_review/selfscan.py`
+- `scripts/semantic_index/__init__.py`
+- `scripts/semantic_index/_bench_hybrid.py`
+- `scripts/semantic_index/backfill.py`
+- `scripts/semantic_index/hybrid.py`
+- `scripts/slice_acp.py`
+- `scripts/stale_context_check.py`
+- `scripts/state_finalize.py`
+- `scripts/stop_closeout.py`
+- `scripts/supersede_decision.py`
+- `scripts/surface_pending_lessons.py`
+- `scripts/sync_db_from_files.py`
+- `scripts/sync_navgator_lessons.py`
+- `scripts/sync_plugin_cache.py`
+- `scripts/sync_skills.py`
+- `scripts/systemic_rca_doe.py`
+- `scripts/systemic_rca_eval.py`
+- `scripts/task_surface.py`
+- `scripts/transcript-pattern-miner.py`
+- `scripts/transcript_pattern_miner/__init__.py`
+- `scripts/transcript_pattern_miner/__main__.py`
+- `scripts/transcript_pattern_miner/categories.py`
+- `scripts/transcript_pattern_miner/io_cache.py`
+- `scripts/transcript_pattern_miner/report.py`
+- `scripts/transcript_pattern_miner/secrets_scan.py`
+- `scripts/transcript_pattern_miner/session.py`
+- `scripts/transcript_pattern_miner/textproc.py`
+- `scripts/ux_triage.py`
+- `scripts/validate_knowledge.py`
+- `scripts/verify_deploy.py`
+- `scripts/verify_release_surface.py`
+- `scripts/version_advisor.py`
+- `scripts/version_drift_warning.py`
+- `scripts/wake_scheduler.py`
+- `scripts/wiki_client.py`
+- `scripts/wiki_local.py`
+- `scripts/working_branch_echo.py`
+- `scripts/working_state_writer.py`
+- `scripts/worktree_guard.py`
+- `scripts/worktree_reaper/__init__.py`
+- `scripts/worktree_reaper/__main__.py`
+- `scripts/worktree_reaper/reaper.py`
+- `scripts/worktree_reaper/tests/__init__.py`
+- `scripts/write_cost_ledger_row.py`
+- `scripts/write_decision/__init__.py`
+- `scripts/write_decision/__main__.py`
+- `scripts/write_decision/cli.py`
+- `scripts/write_decision/constants.py`
+- `scripts/write_decision/dbwrite.py`
+- `scripts/write_decision/frontmatter.py`
+- `scripts/write_decision/ids.py`
+- `scripts/write_decision/io_ops.py`
+- `scripts/write_decision/schema.py`
+- `scripts/write_decision/taxonomy.py`
+- `scripts/write_decision/writer.py`
+- `scripts/write_run_entry/__init__.py`
+- `scripts/write_run_entry/__main__.py`
+- `scripts/write_run_entry/execstate.py`
+- `scripts/write_run_entry/idtime.py`
+- `scripts/write_run_entry/iohelpers.py`
+- `scripts/write_run_entry/validators.py`
+- `scripts/write_subagent_result.py`
+</details>
+<!-- ARCH_COMPONENTS_END -->
+
+## Flow (authored — edit the yaml below, then regenerate)
+
+<!-- arch:flow -->
+```yaml
 # Authored architecture manifest — the semantic source of truth for the build-loop flow diagram.
 # Phases / sub-steps / gates / dispatch-edges / current-vs-proposed live here (not grep-able from prose).
 # The AUTO-DERIVED layer (agent model tiers, hook events) is merged in by scripts/architecture_diagram/generate.py
@@ -202,3 +621,4 @@ coverage_exempt:
   - fix-critique              # debug mode only
   - alignment-checker         # autonomous-iterate queue only
   - transcript-pattern-miner  # offline pattern mining
+```

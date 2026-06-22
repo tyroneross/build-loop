@@ -24,7 +24,9 @@ def _mk_repo(tmp: Path, flow_yaml: str, agents: dict[str, str]):
     (tmp / "hooks").mkdir()
     (tmp / "hooks" / "hooks.json").write_text(MIN_HOOKS)
     (tmp / "architecture").mkdir()
-    (tmp / "architecture" / "flow.yaml").write_text(flow_yaml)
+    # the flow now lives in a fenced yaml block in ARCHITECTURE.md under the arch:flow marker
+    (tmp / "architecture" / "ARCHITECTURE.md").write_text(
+        "# test\n\n<!-- arch:flow -->\n```yaml\n" + flow_yaml + "\n```\n")
 
 
 BASE_FLOW = """
