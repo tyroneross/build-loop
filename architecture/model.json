@@ -1,0 +1,905 @@
+{
+  "_provenance": {
+    "source_commit": "a8d46d3e2404521eaf85f6f2611db5a6c05ad063",
+    "working_tree_dirty": true,
+    "generator": "scripts/architecture_diagram/generate.py@1.0.0",
+    "sources": [
+      "architecture/flow.yaml",
+      "agents/*.md (frontmatter)",
+      "hooks/hooks.json",
+      "scripts/model_overrides.py (tier names)"
+    ]
+  },
+  "pipe_in": [
+    "user goal / prompt",
+    "repo + git state",
+    "build-loop memory"
+  ],
+  "pipe_out": [
+    "committed, validated change",
+    "## Learn outcome + drafts"
+  ],
+  "proposed": {
+    "hook": 1,
+    "auditor": 1,
+    "gate": 1,
+    "p1.risk": 1,
+    "p2.threat": 1,
+    "p3.impl": 1,
+    "p3.audit": 1,
+    "p4.cov": 1,
+    "p6.chart": 1
+  },
+  "gate_after": {
+    "p2": {
+      "step": "gate",
+      "label": "Plan-review",
+      "tier": "T1 · block",
+      "prop": true
+    },
+    "p3": {
+      "step": "p3.audit",
+      "label": "Commit audit",
+      "tier": "T2 · T1 risk",
+      "prop": true
+    },
+    "p4": {
+      "step": "p4.b",
+      "label": "Validate",
+      "tier": "T0",
+      "note": "fail → Iterate"
+    },
+    "pd": {
+      "step": "pd.push",
+      "label": "Prod push",
+      "tier": "T1 · human"
+    },
+    "p6": {
+      "step": "p6.signoff",
+      "label": "Promote?",
+      "tier": "T1 · human"
+    }
+  },
+  "roles": {
+    "hook": {
+      "proposed": true,
+      "type": "Input · the one new hook",
+      "name": "⎇ SessionStart · auditor launch",
+      "desc": "session-start-auditor.sh — fires once per session, spawns the auditor peer. Framework-owned activation."
+    },
+    "orch": {
+      "type": "Top-level role #1",
+      "name": "① Orchestrator",
+      "desc": "The only dispatcher. Owns phases, file-ownership, commits, final call. Does NOT dispatch the auditor — only reads its verdict and blocks."
+    },
+    "auditor": {
+      "proposed": true,
+      "type": "Top-level role #2",
+      "name": "② Independent Auditor",
+      "desc": "TODAY (current code): the independent-auditor is DISPATCHED by the orchestrator at Review-A (scope:build) via the auditor ladder, consolidated from commit-auditor in PR #47. PROPOSED (this redesign): co-launch it as a separate peer process via the SessionStart hook so it can't be dispatched or skipped — reviews the plan (the gate), spot-audits, checks coverage, seals the build; verdicts ride the vendored coord channel (no agent-rally-point needed)."
+    }
+  },
+  "phases": [
+    {
+      "id": "p1",
+      "false": "Phase 1",
+      "name": "Assess",
+      "lane": "Orchestrator",
+      "desc": "Reads live repo, memory, docs. Writes intent + goal + acceptance probes + triggers. NEW: emits a per-chunk risk score that feeds the auditor's sampling weight.",
+      "in": [
+        "repo + prompt",
+        "memory",
+        "docs"
+      ],
+      "out": [
+        "intent.md",
+        "goal.md",
+        "probes",
+        "triggers",
+        "risk score"
+      ],
+      "agents": [
+        [
+          "architecture-scout",
+          "sonnet",
+          "Orchestrator"
+        ],
+        [
+          "design-contract-specialist",
+          "sonnet",
+          "Orchestrator"
+        ]
+      ],
+      "steps": [
+        {
+          "id": "p1.read",
+          "name": "Read live state",
+          "kind": "process",
+          "desc": "repo, memory, Rally, docs",
+          "hooks": [
+            "session-start-retrieval.sh",
+            "session-start-memory.sh"
+          ],
+          "agents": []
+        },
+        {
+          "id": "p1.intent",
+          "name": "Write intent.md",
+          "kind": "process",
+          "desc": "north star, non-goals, commander's-intent posture",
+          "hooks": [],
+          "agents": []
+        },
+        {
+          "id": "p1.goal",
+          "name": "Write goal.md + acceptance probes",
+          "kind": "process",
+          "desc": "3–5 pass/fail F-criteria + deterministic probes",
+          "hooks": [],
+          "agents": []
+        },
+        {
+          "id": "p1.risk",
+          "name": "Emit risk score per chunk",
+          "kind": "new",
+          "desc": "churn · blast-radius · defect-history → drives T2 sampling",
+          "hooks": [],
+          "agents": []
+        },
+        {
+          "id": "p1.scout",
+          "name": "Dispatch baseline scans",
+          "kind": "dispatch",
+          "desc": "architecture map + design contract baseline",
+          "hooks": [],
+          "agents": [
+            [
+              "architecture-scout",
+              "sonnet",
+              "Orchestrator"
+            ],
+            [
+              "design-contract-specialist",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2",
+      "false": "Phase 2",
+      "name": "Plan",
+      "lane": "Orchestrator + Advisor (Frontier)",
+      "hasGate": true,
+      "desc": "MECE partition + dependency order. Advisor ladder synthesizes at Frontier (Fable) when stakes-gated. NEW: security threat-model shifts left here. Ends with the mandatory Plan-Review gate.",
+      "in": [
+        "intent.md",
+        "goal.md",
+        "architecture baseline"
+      ],
+      "out": [
+        "plan (MECE + dep order)",
+        "PASS → Execute"
+      ],
+      "agents": [
+        [
+          "advisor",
+          "fable",
+          "Orchestrator"
+        ],
+        [
+          "plan-critic",
+          "fable",
+          "Orchestrator"
+        ],
+        [
+          "scope-auditor",
+          "fable",
+          "Orchestrator"
+        ],
+        [
+          "independent-auditor",
+          "fable",
+          "Auditor (independent)"
+        ]
+      ],
+      "steps": [
+        {
+          "id": "p2.mece",
+          "name": "MECE partition + dependency order",
+          "kind": "process",
+          "desc": "one owner per file/chunk; ordered graph",
+          "hooks": [],
+          "agents": []
+        },
+        {
+          "id": "p2.advisor",
+          "name": "Advisor plan synthesis",
+          "kind": "dispatch",
+          "desc": "Frontier synthesis via the dispatch ladder (rung 0–3)",
+          "hooks": [],
+          "agents": [
+            [
+              "advisor",
+              "fable",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p2.threat",
+          "name": "Security threat-model",
+          "kind": "new",
+          "desc": "design-level boundaries/auth NOW; code-level stays at Review",
+          "hooks": [],
+          "agents": [
+            [
+              "security-reviewer",
+              "fable",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p2.verify",
+          "name": "plan-verify + plan-critic + scope-auditor",
+          "kind": "dispatch",
+          "desc": "deterministic plan rules, then non-deterministic critique + caller coverage",
+          "hooks": [],
+          "agents": [
+            [
+              "plan-critic",
+              "fable",
+              "Orchestrator"
+            ],
+            [
+              "scope-auditor",
+              "fable",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "gate",
+          "name": "Plan-Review gate",
+          "kind": "gate",
+          "tier": "T1",
+          "desc": "PROPOSED. Auditor (independent peer) reviews the plan and posts the verdict; orchestrator cannot enter Execute until PASS (coordination-protocol block, not a hook). TODAY: there is no mandatory auditor plan-gate — current Plan gating is plan-verify + plan-critic + scope-auditor, and the independent-auditor runs later, at Review-A (build scope).",
+          "hooks": [],
+          "agents": [
+            [
+              "independent-auditor",
+              "fable",
+              "Auditor (independent)"
+            ]
+          ],
+          "branches": "PASS → Execute\nfail → re-plan"
+        }
+      ]
+    },
+    {
+      "id": "p3",
+      "false": "Phase 3",
+      "name": "Execute",
+      "lane": "Orchestrator + Auditor (sampled)",
+      "hasGate": true,
+      "desc": "N implementers on owned files. Single-writer commit protocol. NEW: per-commit audit is sampled. BUG FIX: protocol still names the retired commit-auditor (PR #47) — repoint to independent-auditor.",
+      "in": [
+        "approved plan"
+      ],
+      "out": [
+        "commits",
+        "implementer envelopes"
+      ],
+      "agents": [
+        [
+          "implementer ×N",
+          "sonnet",
+          "Orchestrator"
+        ],
+        [
+          "synthesis-critic",
+          "sonnet",
+          "Orchestrator"
+        ],
+        [
+          "independent-auditor",
+          "fable",
+          "Auditor (independent)"
+        ]
+      ],
+      "steps": [
+        {
+          "id": "p3.impl",
+          "name": "Dispatch N implementers (parallel)",
+          "kind": "dispatch",
+          "desc": "PROPOSED: no fixed cap on parallel implementers — scale to as many as the work supports (10, 20, 50+) gated by: clean MECE file/chunk segmentation, a per-implementer spec (goal · owned files · test criteria · standards · expected outcome), and a defined merge + acceptance plan. TODAY: capped at ≤4 parallel (Mode A fan-out limit + the standing '4 parallel max' rule). Implementers edit owned files only, return envelopes, never commit.",
+          "hooks": [
+            "pre-edit-architecture.sh",
+            "pre-edit-rally-point.sh"
+          ],
+          "agents": [
+            [
+              "implementer ×N",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p3.commit",
+          "name": "Single-writer commit (per chunk)",
+          "kind": "process",
+          "desc": "orchestrator is sole writer to .git",
+          "hooks": [
+            "pre_bash_dispatch.sh",
+            "(post) state.json updater"
+          ],
+          "agents": []
+        },
+        {
+          "id": "p3.verify",
+          "name": "verify-scope / verify-landed",
+          "kind": "gate",
+          "tier": "T0",
+          "desc": "deterministic: did the edit land in scope?",
+          "hooks": [],
+          "agents": []
+        },
+        {
+          "id": "p3.synth",
+          "name": "synthesis-critic (UI commits)",
+          "kind": "dispatch",
+          "desc": "WARN-only coherence check",
+          "hooks": [],
+          "agents": [
+            [
+              "synthesis-critic",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p3.audit",
+          "name": "Commit audit",
+          "kind": "gate",
+          "tier": "T2",
+          "desc": "PROPOSED sampling: 100% on riskSurface, else risk-weighted random draw. TODAY: the independent-auditor runs per-commit as an advisory check with a trivial-change bypass (consolidated from the retired commit-auditor in PR #47) — it is not sampled.",
+          "hooks": [],
+          "agents": [
+            [
+              "independent-auditor",
+              "fable",
+              "Auditor (independent)"
+            ]
+          ],
+          "branches": "audited → seal\nelse → T0 only"
+        }
+      ]
+    },
+    {
+      "id": "p4",
+      "false": "Phase 4",
+      "name": "Review",
+      "lane": "Orchestrator + Auditor (seal)",
+      "hasGate": true,
+      "desc": "Seven sub-steps A–G. Verdict subagents are orchestrator-dispatched children; the auditor seals at build scope and runs the coverage check.",
+      "in": [
+        "commits"
+      ],
+      "out": [
+        "verdicts",
+        "report"
+      ],
+      "agents": [
+        [
+          "independent-auditor",
+          "fable",
+          "Auditor (independent)"
+        ],
+        [
+          "security-reviewer",
+          "fable",
+          "Orchestrator"
+        ],
+        [
+          "fact-checker",
+          "fable",
+          "Orchestrator"
+        ],
+        [
+          "mock-scanner",
+          "haiku",
+          "Orchestrator"
+        ],
+        [
+          "ui-validator",
+          "sonnet",
+          "Orchestrator"
+        ]
+      ],
+      "steps": [
+        {
+          "id": "p4.a",
+          "name": "A · Critic (+ coverage check)",
+          "kind": "dispatch",
+          "desc": "CURRENT: independent-auditor at build scope + security-reviewer when riskSurfaceChange (dispatched here via the auditor ladder — this is the auditor's real engagement today). PROPOSED add-on: a coverage check that verifies every required verdict agent actually fired.",
+          "hooks": [],
+          "agents": [
+            [
+              "independent-auditor",
+              "fable",
+              "Auditor (independent)"
+            ],
+            [
+              "security-reviewer",
+              "fable",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p4.b",
+          "name": "B · Validate",
+          "kind": "gate",
+          "tier": "T0",
+          "desc": "acceptance-probe rerun · runtime-smoke · pytest-collect gates → LLM judge",
+          "hooks": [],
+          "agents": [
+            [
+              "ui-validator",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p4.d",
+          "name": "D · Fact-check + mock-scan",
+          "kind": "dispatch",
+          "desc": "provenance of rendered data + residual mock scan",
+          "hooks": [],
+          "agents": [
+            [
+              "fact-checker",
+              "fable",
+              "Orchestrator"
+            ],
+            [
+              "mock-scanner",
+              "haiku",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p4.fg",
+          "name": "F · Auto-resolve → G · Report",
+          "kind": "process",
+          "desc": "autonomy_gate routes variances; report_lint · version_advisor · ## Learn line",
+          "hooks": [],
+          "agents": []
+        }
+      ]
+    },
+    {
+      "id": "p5",
+      "false": "Phase 5",
+      "name": "Iterate",
+      "lane": "Orchestrator",
+      "loop": true,
+      "desc": "Phase 5 is a LOOP, not a forward stage: on a Review failure it escalates a stuck cascade by failure count, applies a fix, and loops BACK to Review (up to 5 classic / 25 autonomous). On pass, the run proceeds to Closeout. Current behavior — accurate as drawn.",
+      "in": [
+        "review failures"
+      ],
+      "out": [
+        "fixes → back to Review",
+        "followup/ overflow"
+      ],
+      "agents": [
+        [
+          "architecture-scout",
+          "sonnet",
+          "Orchestrator"
+        ],
+        [
+          "domain-assessors",
+          "",
+          "Orchestrator"
+        ],
+        [
+          "root-cause-investigator",
+          "inherit",
+          "Orchestrator"
+        ],
+        [
+          "implementer",
+          "sonnet",
+          "Orchestrator"
+        ]
+      ],
+      "steps": [
+        {
+          "id": "p5.cascade",
+          "name": "Stuck cascade",
+          "kind": "process",
+          "desc": "evidence-gap → memory → architecture-scout",
+          "hooks": [],
+          "agents": [
+            [
+              "architecture-scout",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p5.domain",
+          "name": "2-fail: domain assessors",
+          "kind": "dispatch",
+          "desc": "parallel db/api/frontend/perf diagnosis",
+          "hooks": [],
+          "agents": [
+            [
+              "domain-assessors",
+              "",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p5.rca",
+          "name": "3-fail: causal-tree investigation",
+          "kind": "dispatch",
+          "desc": "root-cause-investigator (WebSearch)",
+          "hooks": [],
+          "agents": [
+            [
+              "root-cause-investigator",
+              "inherit",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p5.fix",
+          "name": "Apply fix → loop to Review",
+          "kind": "process",
+          "desc": "pass → Report; cap hit → followup/ + ## Blocked",
+          "hooks": [],
+          "agents": [
+            [
+              "implementer",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pd",
+      "false": "Phase D",
+      "name": "Closeout",
+      "lane": "Orchestrator",
+      "hasGate": true,
+      "desc": "Runs by default. 9-step closeout; collapses branches to main and reaps the auditor peer.",
+      "in": [
+        "run state"
+      ],
+      "out": [
+        "collapsed branch → main",
+        "archived coord"
+      ],
+      "agents": [],
+      "steps": [
+        {
+          "id": "pd.reap",
+          "name": "Reap presence + collapse branches",
+          "kind": "process",
+          "desc": "stop watchers, relinquish lease, reap auditor; collapse_run.py → main",
+          "hooks": [
+            "(stop) state_finalize.py",
+            "(stop) commit_state_check.py",
+            "(stop) closeout.sh"
+          ],
+          "agents": []
+        },
+        {
+          "id": "pd.push",
+          "name": "Production push?",
+          "kind": "gate",
+          "tier": "T1",
+          "desc": "human-confirm gate — never sampled, never auto",
+          "hooks": [
+            "(post) post-push-closeout.sh"
+          ],
+          "agents": [],
+          "branches": "approved → push\nelse → hold"
+        }
+      ]
+    },
+    {
+      "id": "p6",
+      "false": "Phase 6",
+      "name": "Learn",
+      "lane": "Orchestrator + Fable signoff",
+      "hasGate": true,
+      "desc": "Always emits a ## Learn line. NEW: feeds the per-phase escape-rate control chart that adapts T2 sampling.",
+      "in": [
+        "run history (runs[])"
+      ],
+      "out": [
+        "## Learn line",
+        "experimental drafts",
+        "control-chart update"
+      ],
+      "agents": [
+        [
+          "recurring-pattern-detector",
+          "haiku",
+          "Orchestrator"
+        ],
+        [
+          "self-improvement-architect",
+          "sonnet",
+          "Orchestrator"
+        ],
+        [
+          "promotion-reviewer",
+          "fable",
+          "Orchestrator"
+        ],
+        [
+          "retrospective-synthesizer",
+          "sonnet",
+          "Orchestrator"
+        ]
+      ],
+      "steps": [
+        {
+          "id": "p6.detect",
+          "name": "Cheap detector + consolidate (always)",
+          "kind": "process",
+          "desc": "recurring-pattern-detector + consolidate_memory",
+          "hooks": [],
+          "agents": [
+            [
+              "recurring-pattern-detector",
+              "haiku",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p6.draft",
+          "name": "Draft experimental artifact",
+          "kind": "dispatch",
+          "desc": "self-improvement-architect (Sonnet)",
+          "hooks": [],
+          "agents": [
+            [
+              "self-improvement-architect",
+              "sonnet",
+              "Orchestrator"
+            ]
+          ]
+        },
+        {
+          "id": "p6.signoff",
+          "name": "Promotion signoff",
+          "kind": "gate",
+          "tier": "T1",
+          "desc": "promotion-reviewer (Fable); promote to active = user confirm",
+          "hooks": [],
+          "agents": [
+            [
+              "promotion-reviewer",
+              "fable",
+              "Orchestrator"
+            ]
+          ],
+          "branches": "approve → promote\nelse → keep experimental"
+        },
+        {
+          "id": "p6.chart",
+          "name": "Update escape-rate control chart",
+          "kind": "new",
+          "desc": "phase drift past control limit → raise T2 sample rate",
+          "hooks": [],
+          "agents": []
+        }
+      ]
+    }
+  ],
+  "subagents": {
+    "architecture-scout": [
+      "Keep the orchestrator's model of the codebase current.",
+      "Read-only architecture baseline / impact / iterate-subgraph / learn-sync scans; escalates to NavGator when needed."
+    ],
+    "design-contract-specialist": [
+      "Keep UI + data contracts truthful.",
+      "Writes the app-contract (ui.md / data.md / traceability); reconciles deltas after implementation."
+    ],
+    "advisor": [
+      "Produce the best possible plan on hard work.",
+      "Frontier plan synthesis / re-plan: frames the goal, decomposes, builds the dependency graph, MECE-partitions ownership."
+    ],
+    "plan-critic": [
+      "Catch plan defects grep can't.",
+      "Adversarial read-only critique of the plan — alternatives, MECE quality, marker adequacy, headline drift."
+    ],
+    "scope-auditor": [
+      "Stop fan-out scope blindness.",
+      "Traces every caller of a changed public signature; expands owned-files so nothing downstream is missed."
+    ],
+    "security-reviewer": [
+      "Catch security regressions before they ship.",
+      "Adversarial review vs OWASP LLM / Agentic / Web + ATLAS when riskSurfaceChange is set."
+    ],
+    "independent-auditor": [
+      "Be the un-skippable proof the build is real.",
+      "Reviews the plan (the gate), runs risk-weighted random spot-audits, verifies coverage, seals chunk/build scope, self-calibrates."
+    ],
+    "implementer": [
+      "Apply one bounded change correctly.",
+      "Edits only owned files against a written spec, returns an envelope, never commits. Fan-out scales with the work — PROPOSED: no fixed cap (10/20/50+), bounded only by clean MECE segmentation + per-implementer goal/test-criteria/standards/outcome + a defined merge-and-acceptance plan; TODAY capped at ≤4."
+    ],
+    "synthesis-critic": [
+      "Judge subjective UI synthesis.",
+      "WARN-only check that claimed copy_tone / empty_state actually show up in the diff."
+    ],
+    "fact-checker": [
+      "No false or unverifiable data reaches users.",
+      "Traces every rendered metric / claim to its real data source."
+    ],
+    "mock-scanner": [
+      "No mock / placeholder data in production paths.",
+      "Fast scan for fake / fixture / secret data in public code."
+    ],
+    "ui-validator": [
+      "Prove the UI actually works.",
+      "Deterministic scans on the running dev server: collisions, touch targets, console errors, hydration, SSIM."
+    ],
+    "domain-assessors": [
+      "Diagnose a failure in one domain.",
+      "Read-only evidence in database / api / frontend / performance; hands the fix to implementer, never ships code."
+    ],
+    "root-cause-investigator": [
+      "Find the real cause when a fix won't hold.",
+      "Builds a causal tree across candidate causes; carries WebSearch for upstream-bug research."
+    ],
+    "alignment-checker": [
+      "Keep queued work on-intent.",
+      "Advisory aligned / misaligned / uncertain verdict per drained queue item; never blocks."
+    ],
+    "recurring-pattern-detector": [
+      "Surface what's worth automating.",
+      "Scans runs[] for patterns recurring across 3+ runs; emits structured proposals."
+    ],
+    "self-improvement-architect": [
+      "Turn a pattern into a usable artifact.",
+      "Drafts an experimental SKILL / agent with A/B tracking that the user keeps or removes."
+    ],
+    "promotion-reviewer": [
+      "Gate experimental → active honestly.",
+      "Variance-shaped verdict (approve / rethink / new_approach) on a promotion candidate; advisory."
+    ],
+    "retrospective-synthesizer": [
+      "Capture durable run lessons.",
+      "Writes the 9-section retrospective + auto-drafts enforce-candidates from anything prompted ≥2×."
+    ],
+    "overfitting-reviewer": [
+      "Stop test-gaming in optimize mode.",
+      "Read-only review of optimization results for Goodhart effects and overfitting shortcuts."
+    ]
+  },
+  "hook_desc": {
+    "session-start-auditor.sh": [
+      "Hook",
+      "⊕ PROPOSED — launches the independent auditor peer process once per session."
+    ],
+    "session-start-retrieval.sh": [
+      "SessionStart",
+      "load memory + retrieval context at session start"
+    ],
+    "session-start-memory.sh": [
+      "SessionStart",
+      "bootstrap the build-loop memory root"
+    ],
+    "pre-edit-architecture.sh": [
+      "PreToolUse",
+      "architecture impact pre-check before an edit"
+    ],
+    "pre-edit-rally-point.sh": [
+      "PreToolUse",
+      "rally claim / deconflict before a write"
+    ],
+    "pre_bash_dispatch.sh": [
+      "PreToolUse",
+      "guard / classify bash + dispatch actions"
+    ],
+    "(post) state.json updater": [
+      "PostToolUse · Bash",
+      "track changed files into state.json"
+    ],
+    "(stop) state_finalize.py": [
+      "Stop",
+      "finalize run state"
+    ],
+    "(stop) commit_state_check.py": [
+      "Stop",
+      "verify commit / state consistency"
+    ],
+    "(stop) closeout.sh": [
+      "Stop",
+      "run closeout at stop"
+    ],
+    "(post) post-push-closeout.sh": [
+      "PostToolUse · Bash",
+      "trigger closeout + retrospective after a push"
+    ]
+  },
+  "registries": {
+    "agents": {
+      "advisor": "fable",
+      "alignment-checker": "sonnet",
+      "api-assessor": "sonnet",
+      "architecture-scout": "sonnet",
+      "assessment-orchestrator": "opus",
+      "build-orchestrator": "opus",
+      "database-assessor": "sonnet",
+      "design-contract-specialist": "sonnet",
+      "fact-checker": "fable",
+      "fix-critique": "fable",
+      "frontend-assessor": "sonnet",
+      "implementer": "sonnet",
+      "independent-auditor": "fable",
+      "mock-scanner": "haiku",
+      "optimize-runner": "sonnet",
+      "overfitting-reviewer": "fable",
+      "performance-assessor": "sonnet",
+      "plan-critic": "fable",
+      "promotion-reviewer": "fable",
+      "recurring-pattern-detector": "haiku",
+      "retrospective-synthesizer": "sonnet",
+      "root-cause-investigator": "inherit",
+      "scope-auditor": "fable",
+      "security-reviewer": "fable",
+      "self-improvement-architect": "sonnet",
+      "synthesis-critic": "sonnet",
+      "transcript-pattern-miner": "haiku",
+      "ui-validator": "sonnet"
+    },
+    "hooks_by_event": {
+      "SessionStart": [
+        "session-start-architecture.sh",
+        "session-start-retrieval.sh",
+        "session-start-rally-point.sh",
+        "session-start-worktree-gc.sh",
+        "session-start-git-hooks.sh",
+        "session-start-plugin-drift.sh",
+        "session-start-plugin-heal.sh",
+        "session-start-memory.sh",
+        "session-start-closeout.sh",
+        "closeout.sh"
+      ],
+      "PreToolUse": [
+        "pre-edit-architecture.sh",
+        "pre-edit-rally-point.sh",
+        "pre_bash_dispatch.sh",
+        "pre-edit-rally-point.sh"
+      ],
+      "PostToolUse": [
+        "post-push-closeout.sh"
+      ],
+      "Stop": [
+        "stop_finalize.sh",
+        "closeout.sh"
+      ]
+    }
+  }
+}
