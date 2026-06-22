@@ -203,6 +203,23 @@ verifiers. Agent roles below are the LLM-side surfaces.
 | Iterate | Fix review failures until pass or a real blocker is reached. |
 | Learn | Always emit the Learn outcome and capture durable lessons when warranted. |
 
+## Architecture diagram (living)
+
+An interactive, version-controlled diagram of how build-loop actually works — phases,
+sub-steps, gates, and which agent does what — that regenerates from source so it cannot
+drift. Agents, skills, scripts, and hooks are auto-discovered from the repo; the flow is
+authored in one markdown doc.
+
+- **View it:** open `docs/build-loop-flow-mockup.html` in any browser (standalone).
+- **Edit it / how it stays in sync:** `architecture/README.md` (format spec + drift gate).
+- **Source of truth:** `architecture/ARCHITECTURE.md` (auto Components + authored Flow).
+- **Regenerate:** `python3 scripts/architecture_diagram/generate.py`; gate via
+  `bash scripts/architecture_diagram/check.sh`.
+
+Each agent in the diagram carries its description and `last updated by` (from git). Comments
+left on the diagram can be turned into backlog items with
+`scripts/architecture_diagram/comments_to_backlog.py`.
+
 ## Release Checklist
 
 For a plugin/package release, keep these version surfaces in lockstep:
