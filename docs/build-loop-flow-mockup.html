@@ -154,7 +154,7 @@
 <header>
   <h1>build-loop · proposed flow</h1>
   <span class="proto">prototype</span>
-  <span class="sub">click a phase to expand/collapse · click a sub-step or subagent for detail</span>
+  <span class="sub">click a phase to expand/collapse · click a sub-step or subagent for detail · <a href="../architecture/README.md" style="color:var(--mut)">generated — how it updates ↗</a></span>
   <span class="spacer"></span>
   <span class="saved" id="saved">autosaved</span>
   <span class="count" id="count">0 comments</span>
@@ -196,6 +196,7 @@
   <div class="pipe" id="pipe"></div>
   <div class="detail" id="detail"></div>
 
+  <p class="foot"><b>Living diagram.</b> This view is generated from source by <code>scripts/architecture_diagram/generate.py</code> and re-renders from <code>architecture/model.json</code> — agent tiers come from <code>agents/*.md</code>, hooks from <code>hooks/hooks.json</code>, the flow from <code>architecture/flow.yaml</code>. How it stays in sync, the drift gate, and how to update it: <a href="../architecture/README.md">architecture/README.md</a>.</p>
   <p class="foot">Prototype for design review. <b>Overview</b> = phases left→right (input → output, agents, hooks). <b>Click a phase</b> to expand its sub-steps in place; click again to collapse. <b>◇ gates</b> are rendered as bars inside a phase, not as peer phases. <b>Click a subagent</b> chip to see its goal. Comments autosave; <b>⬇ Backup</b> for a portable file, <b>Export → copy</b> to send back.</p>
 </main>
 

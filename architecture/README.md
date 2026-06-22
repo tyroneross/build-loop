@@ -3,6 +3,8 @@
 A version-controlled, self-updating diagram of the build-loop flow. It regenerates
 from source so it cannot silently drift from the real agents, hooks, and tiers.
 
+**Open the diagram:** [`docs/build-loop-flow-mockup.html`](../docs/build-loop-flow-mockup.html) — open in any browser (it's standalone; the model is inlined).
+
 ## Layers
 
 1. **Auto-derived (mechanical):** agent model tiers from `agents/*.md` frontmatter,
