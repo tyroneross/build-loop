@@ -24,7 +24,9 @@ or an enforced check), not a memo that depends on an agent recalling it.
 3. **Produce**
    - skill/agent → `self-improvement-architect` drafts → `experimental/` → human promote. **(EXISTING.)**
    - gate/eval → `scripts/gate_builder.py` scaffolds a DRAFT check + test into a pending
-     area → human approve. **(THIS — move C.)**
+     area → human approve. **(WIRED — move C.)** The Learn protocol now pipes
+     `learning_to_draft.py` output into `gate_builder.py` automatically
+     (`references/learn-protocol.md` step 2 source-(c)); live gate activation stays human-gated.
 
 ## Design decisions + rationale
 - **Prevention Pattern is the contract** between route and produce. It carries everything a
