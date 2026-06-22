@@ -31,29 +31,41 @@ emit_empty() {
 INPUT=$(cat)
 export _BL_INPUT="$INPUT"
 
-# Step 1: skip subagent stops + extract session_id, cwd
-read -r AGENT_ID SESSION_ID CWD <<EOF_VARS
+# Step 1: skip re-entered Stop hooks, subagent stops, then extract session_id/cwd
+read -r STOP_HOOK_ACTIVE AGENT_ID SESSION_ID CWD <<EOF_VARS
 $(python3 <<'PY'
 import json, os, sys
 try:
     d = json.loads(os.environ.get('_BL_INPUT', '{}'))
 except Exception:
     d = {}
+stop_hook_active = bool(d.get('stop_hook_active', False))
 agent_id = d.get('agent_id', '') or ''
 session_id = d.get('session_id', '') or ''
 cwd = d.get('cwd', '') or ''
 # Tab-separated, no special chars in JSON-derived values would survive python's print()
 # But guard against newlines / tabs anyway by replacing them with spaces.
 def safe(v): return str(v).replace('\t', ' ').replace('\n', ' ')
-print(f"{safe(agent_id) or '-'}\t{safe(session_id) or '-'}\t{safe(cwd) or '-'}")
+print(
+    f"{'true' if stop_hook_active else 'false'}\t"
+    f"{safe(agent_id) or '-'}\t"
+    f"{safe(session_id) or '-'}\t"
+    f"{safe(cwd) or '-'}"
+)
 PY
 )
 EOF_VARS
 
 # Convert "-" sentinels back to empty strings
+[ "$STOP_HOOK_ACTIVE" = "-" ] && STOP_HOOK_ACTIVE="false"
 [ "$AGENT_ID" = "-" ] && AGENT_ID=""
 [ "$SESSION_ID" = "-" ] && SESSION_ID=""
 [ "$CWD" = "-" ] && CWD=""
+
+if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
+    emit_empty
+    exit 0
+fi
 
 if [ -n "$AGENT_ID" ]; then
     emit_empty

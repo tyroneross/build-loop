@@ -17,12 +17,13 @@ vectors are NOT comparable, so callers writing rows must record
 written by a different model. See research entry
 `build-loop-search-architecture` for rationale.
 
-The active backend is chosen on first call from $EMBED_BACKEND
-({"mlx","ollama"}, default "mlx"). If MLX init fails (import error,
-model load error, first-call failure), the module logs a warning to
-stderr and falls through to Ollama for the rest of the process. Once
-fallen through, MLX is not retried — keeps stop-hook latency
-predictable.
+The active backend is chosen on first call. When $EMBED_BACKEND is unset,
+a warm local daemon is preferred; an explicit $EMBED_BACKEND
+({"mlx","ollama"}) bypasses the daemon and selects the requested in-process
+backend. If MLX init fails (import error, model load error, first-call
+failure), the module logs a warning to stderr and falls through to Ollama
+for the rest of the process. Once fallen through, MLX is not retried —
+keeps stop-hook latency predictable.
 
 Public API:
   embed(text)                -> list[float]              (single text)
@@ -372,15 +373,18 @@ def _select_backend():
     if _BACKEND is not None:
         return _BACKEND
 
-    # Phase H: try the daemon FIRST. When it's up, this is the entire
-    # selection — we don't load MLX/Ollama in-process at all.
-    daemon = _probe_daemon()
-    if daemon is not None:
-        _BACKEND = daemon
-        return _BACKEND
-
+    explicit_backend = "EMBED_BACKEND" in os.environ
     requested = os.environ.get("EMBED_BACKEND", "mlx").lower().strip()
     custom_model = os.environ.get("EMBED_MODEL")
+
+    # Phase H: default selection may use the warm daemon. An explicit
+    # EMBED_BACKEND is a caller override and must select the requested
+    # in-process backend even when a daemon is already warm.
+    if not explicit_backend:
+        daemon = _probe_daemon()
+        if daemon is not None:
+            _BACKEND = daemon
+            return _BACKEND
 
     if requested == "ollama":
         _BACKEND = OllamaBackend(model=custom_model or OLLAMA_DEFAULT_MODEL)

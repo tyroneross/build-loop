@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.35.0",
+  "version": "0.36.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
@@ -8,6 +8,9 @@
   "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate.",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
+  "bin": {
+    "build-loop-install": "bin/build-loop-install.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
@@ -17,6 +20,7 @@
   },
   "files": [
     "dist",
+    "bin",
     "codex-skills",
     "plugin-artifacts/codex",
     "commands",
@@ -58,7 +62,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py && bash scripts/hooks/test_hooks.sh",
+    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py scripts/test_build_loop_install_cli.py && bash scripts/hooks/test_hooks.sh",
     "benchmark": "node benchmark-scoring.js",
     "clean": "rm -rf dist",
     "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",

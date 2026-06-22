@@ -111,20 +111,22 @@ fi
 rm -rf "$BL_DIR_3"
 
 # ---------------------------------------------------------------------------
-# Case 3b: scope-guard — benign command with cwd:/tmp (NO .build-loop/ marker)
+# Case 3b: scope-guard — benign command in an unmarked cwd (NO .build-loop/ marker)
 # -> silent {}. Locks in the autonomy hook's scope-guard hardening so the
-# pre-hardening /tmp expectation cannot silently regress. Mirrors the
+# pre-hardening expectation cannot silently regress. Mirrors the
 # cooldown-hook scope-guard assertion (Case 11 below).
 # ---------------------------------------------------------------------------
+TMPDIR_3B=$(mktemp -d)
 RESULT=$(printf '%s' \
-    '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"/tmp"}' \
+    "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls -la\"},\"cwd\":\"${TMPDIR_3B}\"}" \
     | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$PRE_BASH")
 
 if [ "$RESULT" = "{}" ]; then
-    pass "Case 3b: non-build-loop cwd (/tmp) -> scope-guarded silent {}"
+    pass "Case 3b: unmarked cwd -> scope-guarded silent {}"
 else
-    fail "Case 3b: non-build-loop cwd (/tmp) -> silent {}" "got: ${RESULT}"
+    fail "Case 3b: unmarked cwd -> silent {}" "got: ${RESULT}"
 fi
+rm -rf "$TMPDIR_3B"
 
 # ---------------------------------------------------------------------------
 # Case 4: Stop hook with subagent agent_id -> valid no-op JSON
