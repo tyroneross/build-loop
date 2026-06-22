@@ -13,15 +13,18 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PY="$(command -v python3 || echo /usr/bin/python3)"
 rc=0
 
-if ! "$PY" "$ROOT/scripts/architecture_diagram/drift_lint.py"; then
-  echo "✖ architecture drift: flow.yaml references an agent/hook that does not exist. Fix architecture/flow.yaml." >&2
+# Capture each tool's output and surface it ONLY on failure — silent on success (no spam).
+drift_out="$("$PY" "$ROOT/scripts/architecture_diagram/drift_lint.py" 2>&1)" || {
+  printf '%s\n' "$drift_out" >&2
+  echo "✖ architecture drift: the flow references an agent/hook that does not exist. Fix architecture/ARCHITECTURE.md." >&2
   rc=1
-fi
+}
 
-if ! "$PY" "$ROOT/scripts/architecture_diagram/generate.py" --check; then
+fresh_out="$("$PY" "$ROOT/scripts/architecture_diagram/generate.py" --check 2>&1)" || {
+  printf '%s\n' "$fresh_out" >&2
   echo "✖ architecture diagram stale vs source. Run: python3 scripts/architecture_diagram/generate.py" >&2
   rc=1
-fi
+}
 
 if [ "$rc" -ne 0 ] && [ "${BL_ARCH_ADVISORY:-0}" = "1" ]; then
   echo "⚠ advisory mode (BL_ARCH_ADVISORY=1) — not blocking the commit." >&2
