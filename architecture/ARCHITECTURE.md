@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 46 skills · 311 scripts · 17 hooks** (auto-discovered c3204d5a)
+**28 agents · 46 skills · 311 scripts · 17 hooks** (auto-discovered f6dfdd73)
 
 <details><summary>agents</summary>
 
@@ -506,11 +506,11 @@ phases:
     out: ["intent.md", "goal.md", "probes", "triggers", "risk score"]
     agents: [["architecture-scout", "", "Orchestrator"], ["design-contract-specialist", "", "Orchestrator"]]
     steps:
-      - { id: "p1.read", name: "Read live state", kind: process, desc: "repo, memory, Rally, docs", hooks: ["session-start-retrieval.sh", "session-start-memory.sh"], agents: [] }
-      - { id: "p1.intent", name: "Write intent.md", kind: process, desc: "north star, non-goals, commander's-intent posture", hooks: [], agents: [] }
-      - { id: "p1.goal", name: "Write goal.md + acceptance probes", kind: process, desc: "3–5 pass/fail F-criteria + deterministic probes", hooks: [], agents: [] }
-      - { id: "p1.risk", name: "Emit risk score per chunk", kind: new, desc: "churn · blast-radius · defect-history → drives T2 sampling", hooks: [], agents: [] }
-      - { id: "p1.scout", name: "Dispatch baseline scans", kind: dispatch, desc: "architecture map + design contract baseline", hooks: [], agents: [["architecture-scout", "", "Orchestrator"], ["design-contract-specialist", "", "Orchestrator"]] }
+      - { id: "p1.read", name: "Read live state", kind: process, desc: "The orchestrator reads the live repo, past build-loop memory, and any docs so the plan is grounded in the project's current state.", hooks: ["session-start-retrieval.sh", "session-start-memory.sh"], agents: [] }
+      - { id: "p1.intent", name: "Write intent.md", kind: process, desc: "The orchestrator writes intent.md: the goal, what is explicitly out of scope, and which priorities to optimize for.", hooks: [], agents: [] }
+      - { id: "p1.goal", name: "Write goal.md + acceptance probes", kind: process, desc: "The orchestrator writes goal.md with three to five pass-or-fail criteria, plus repeatable probes that will later prove each one.", hooks: [], agents: [] }
+      - { id: "p1.risk", name: "Emit risk score per chunk", kind: new, desc: "The orchestrator scores each planned chunk for risk (how much it changes, how far its effects reach, its past defect rate) so the auditor can later inspect the riskier chunks more often.", hooks: [], agents: [] }
+      - { id: "p1.scout", name: "Dispatch baseline scans", kind: dispatch, desc: "The orchestrator sends architecture-scout to map how the code fits together and design-contract-specialist to record the current UI and data contracts, giving later changes a baseline to check against.", hooks: [], agents: [["architecture-scout", "", "Orchestrator"], ["design-contract-specialist", "", "Orchestrator"]] }
 
   - id: p2
     "no": "Phase 2"
@@ -522,10 +522,10 @@ phases:
     out: ["plan (MECE + dep order)", "PASS → Execute"]
     agents: [["advisor", "", "Orchestrator"], ["plan-critic", "", "Orchestrator"], ["scope-auditor", "", "Orchestrator"], ["independent-auditor", "", "Auditor (independent)"]]
     steps:
-      - { id: "p2.mece", name: "MECE partition + dependency order", kind: process, desc: "one owner per file/chunk; ordered graph", hooks: [], agents: [] }
-      - { id: "p2.advisor", name: "Advisor plan synthesis", kind: dispatch, desc: "Frontier synthesis via the dispatch ladder (rung 0–3)", hooks: [], agents: [["advisor", "", "Orchestrator"]] }
-      - { id: "p2.threat", name: "Security threat-model", kind: new, desc: "design-level boundaries/auth NOW; code-level stays at Review", hooks: [], agents: [["security-reviewer", "", "Orchestrator"]] }
-      - { id: "p2.verify", name: "plan-verify + plan-critic + scope-auditor", kind: dispatch, desc: "deterministic plan rules, then non-deterministic critique + caller coverage", hooks: [], agents: [["plan-critic", "", "Orchestrator"], ["scope-auditor", "", "Orchestrator"]] }
+      - { id: "p2.mece", name: "MECE partition + dependency order", kind: process, desc: "The orchestrator splits the work so each file has exactly one owning agent (so two agents never edit the same file) and orders the chunks by what depends on what.", hooks: [], agents: [] }
+      - { id: "p2.advisor", name: "Advisor plan synthesis", kind: dispatch, desc: "On high-stakes work the orchestrator hands plan-writing to the advisor agent, which runs on the strongest reasoning tier; on routine work the orchestrator writes the plan itself.", hooks: [], agents: [["advisor", "", "Orchestrator"]] }
+      - { id: "p2.threat", name: "Security threat-model", kind: new, desc: "When the change touches security, security-reviewer threat-models the design now (trust boundaries and who is allowed to do what), because design flaws are far cheaper to fix before any code is written; the code-level security check still runs later at Review.", hooks: [], agents: [["security-reviewer", "", "Orchestrator"]] }
+      - { id: "p2.verify", name: "plan-verify + plan-critic + scope-auditor", kind: dispatch, desc: "A script first checks the plan against fixed rules; then plan-critic reads it for problems a script cannot catch (missing alternatives, vague scope); then scope-auditor confirms the plan already lists every file that callers of the changed code will force you to touch.", hooks: [], agents: [["plan-critic", "", "Orchestrator"], ["scope-auditor", "", "Orchestrator"]] }
       - { id: gate, name: "Plan-Review gate", kind: gate, tier: "T1", desc: "PROPOSED. Auditor (independent peer) reviews the plan and posts the verdict; orchestrator cannot enter Execute until PASS (coordination-protocol block, not a hook). TODAY: there is no mandatory auditor plan-gate — current Plan gating is plan-verify + plan-critic + scope-auditor, and the independent-auditor runs later, at Review-A (build scope).", hooks: [], agents: [["independent-auditor", "", "Auditor (independent)"]], branches: "PASS → Execute\nfail → re-plan" }
 
   - id: p3
@@ -539,9 +539,9 @@ phases:
     agents: [["implementer ×N", "", "Orchestrator"], ["synthesis-critic", "", "Orchestrator"], ["independent-auditor", "", "Auditor (independent)"]]
     steps:
       - { id: "p3.impl", name: "Dispatch N implementers (parallel)", kind: dispatch, desc: "PROPOSED: no fixed cap on parallel implementers — scale to as many as the work supports (10, 20, 50+) gated by: clean MECE file/chunk segmentation, a per-implementer spec (goal · owned files · test criteria · standards · expected outcome), and a defined merge + acceptance plan. TODAY: capped at ≤4 parallel (Mode A fan-out limit + the standing '4 parallel max' rule). Implementers edit owned files only, return envelopes, never commit.", hooks: ["pre-edit-architecture.sh", "pre-edit-rally-point.sh"], agents: [["implementer ×N", "", "Orchestrator"]] }
-      - { id: "p3.commit", name: "Single-writer commit (per chunk)", kind: process, desc: "orchestrator is sole writer to .git", hooks: ["pre_bash_dispatch.sh", "(post) state.json updater"], agents: [] }
-      - { id: "p3.verify", name: "verify-scope / verify-landed", kind: gate, tier: "T0", desc: "deterministic: did the edit land in scope?", hooks: [], agents: [] }
-      - { id: "p3.synth", name: "synthesis-critic (UI commits)", kind: dispatch, desc: "WARN-only coherence check", hooks: [], agents: [["synthesis-critic", "", "Orchestrator"]] }
+      - { id: "p3.commit", name: "Single-writer commit (per chunk)", kind: process, desc: "Only the orchestrator commits to git; the implementer agents hand back their changes for the orchestrator to commit, so two agents never collide on the same commit.", hooks: ["pre_bash_dispatch.sh", "(post) state.json updater"], agents: [] }
+      - { id: "p3.verify", name: "verify-scope / verify-landed", kind: gate, tier: "T0", desc: "A deterministic check confirms each implementer's edit actually landed in the files it was assigned and nowhere else.", hooks: [], agents: [] }
+      - { id: "p3.synth", name: "synthesis-critic (UI commits)", kind: dispatch, desc: "On UI commits, synthesis-critic checks that the tone and empty-states the implementer claimed actually appear in the change; it warns but never blocks.", hooks: [], agents: [["synthesis-critic", "", "Orchestrator"]] }
       - { id: "p3.audit", name: "Commit audit", kind: gate, tier: "T2", desc: "PROPOSED sampling: 100% on riskSurface, else risk-weighted random draw. TODAY: the independent-auditor runs per-commit as an advisory check with a trivial-change bypass (consolidated from the retired commit-auditor in PR #47) — it is not sampled.", hooks: [], agents: [["independent-auditor", "", "Auditor (independent)"]], branches: "audited → seal\nelse → T0 only" }
 
   - id: p4
@@ -555,9 +555,9 @@ phases:
     agents: [["independent-auditor", "", "Auditor (independent)"], ["security-reviewer", "", "Orchestrator"], ["fact-checker", "", "Orchestrator"], ["mock-scanner", "", "Orchestrator"], ["ui-validator", "", "Orchestrator"]]
     steps:
       - { id: "p4.a", name: "A · Critic (+ coverage check)", kind: dispatch, desc: "CURRENT: independent-auditor at build scope + security-reviewer when riskSurfaceChange (dispatched here via the auditor ladder — this is the auditor's real engagement today). PROPOSED add-on: a coverage check that verifies every required verdict agent actually fired.", hooks: [], agents: [["independent-auditor", "", "Auditor (independent)"], ["security-reviewer", "", "Orchestrator"]] }
-      - { id: "p4.b", name: "B · Validate", kind: gate, tier: "T0", desc: "acceptance-probe rerun · runtime-smoke · pytest-collect gates → LLM judge", hooks: [], agents: [["ui-validator", "", "Orchestrator"]] }
-      - { id: "p4.d", name: "D · Fact-check + mock-scan", kind: dispatch, desc: "provenance of rendered data + residual mock scan", hooks: [], agents: [["fact-checker", "", "Orchestrator"], ["mock-scanner", "", "Orchestrator"]] }
-      - { id: "p4.fg", name: "F · Auto-resolve → G · Report", kind: process, desc: "autonomy_gate routes variances; report_lint · version_advisor · ## Learn line", hooks: [], agents: [] }
+      - { id: "p4.b", name: "B · Validate", kind: gate, tier: "T0", desc: "The orchestrator re-runs the Assess probes and smoke-tests the running app to prove each criterion passes, and ui-validator checks the UI; only what these cannot decide is escalated to an LLM judge.", hooks: [], agents: [["ui-validator", "", "Orchestrator"]] }
+      - { id: "p4.d", name: "D · Fact-check + mock-scan", kind: dispatch, desc: "fact-checker traces every number and claim the app shows back to a real source, and mock-scanner sweeps for leftover fake or placeholder data, so nothing false reaches users.", hooks: [], agents: [["fact-checker", "", "Orchestrator"], ["mock-scanner", "", "Orchestrator"]] }
+      - { id: "p4.fg", name: "F · Auto-resolve → G · Report", kind: process, desc: "The orchestrator auto-resolves the safe leftover issues, then writes the final report: the scorecard, a version-bump recommendation, and a one-line Learn outcome.", hooks: [], agents: [] }
 
   - id: p5
     "no": "Phase 5"
@@ -569,10 +569,10 @@ phases:
     out: ["fixes → back to Review", "followup/ overflow"]
     agents: [["architecture-scout", "", "Orchestrator"], ["domain-assessors", "", "Orchestrator"], ["root-cause-investigator", "", "Orchestrator"], ["implementer", "", "Orchestrator"]]
     steps:
-      - { id: "p5.cascade", name: "Stuck cascade", kind: process, desc: "evidence-gap → memory → architecture-scout", hooks: [], agents: [["architecture-scout", "", "Orchestrator"]] }
-      - { id: "p5.domain", name: "2-fail: domain assessors", kind: dispatch, desc: "parallel db/api/frontend/perf diagnosis", hooks: [], agents: [["domain-assessors", "", "Orchestrator"]] }
-      - { id: "p5.rca", name: "3-fail: causal-tree investigation", kind: dispatch, desc: "root-cause-investigator (WebSearch)", hooks: [], agents: [["root-cause-investigator", "", "Orchestrator"]] }
-      - { id: "p5.fix", name: "Apply fix → loop to Review", kind: process, desc: "pass → Report; cap hit → followup/ + ## Blocked", hooks: [], agents: [["implementer", "", "Orchestrator"]] }
+      - { id: "p5.cascade", name: "Stuck cascade", kind: process, desc: "When a check fails, the orchestrator escalates in steps: first add the missing logging, then re-check past incidents in memory, then send architecture-scout if the failure crosses code layers.", hooks: [], agents: [["architecture-scout", "", "Orchestrator"]] }
+      - { id: "p5.domain", name: "2-fail: domain assessors", kind: dispatch, desc: "After two failures on the same criterion, the orchestrator dispatches the matching domain assessors (database, API, frontend, performance) in parallel to diagnose the cause.", hooks: [], agents: [["domain-assessors", "", "Orchestrator"]] }
+      - { id: "p5.rca", name: "3-fail: causal-tree investigation", kind: dispatch, desc: "After three failures, root-cause-investigator builds a cause tree and may search the web for known upstream bugs before another attempt is made.", hooks: [], agents: [["root-cause-investigator", "", "Orchestrator"]] }
+      - { id: "p5.fix", name: "Apply fix → loop to Review", kind: process, desc: "An implementer applies the fix and the loop returns to Review; on pass the run continues, and if the attempt cap is reached the remaining work is parked as follow-up.", hooks: [], agents: [["implementer", "", "Orchestrator"]] }
 
   - id: pd
     "no": "Phase D"
@@ -584,8 +584,8 @@ phases:
     out: ["collapsed branch → main", "archived coord"]
     agents: []
     steps:
-      - { id: "pd.reap", name: "Reap presence + collapse branches", kind: process, desc: "stop watchers, relinquish lease, reap auditor; collapse_run.py → main", hooks: ["(stop) state_finalize.py", "(stop) commit_state_check.py", "(stop) closeout.sh"], agents: [] }
-      - { id: "pd.push", name: "Production push?", kind: gate, tier: "T1", desc: "human-confirm gate — never sampled, never auto", hooks: ["(post) post-push-closeout.sh"], agents: [], branches: "approved → push\nelse → hold" }
+      - { id: "pd.reap", name: "Reap presence + collapse branches", kind: process, desc: "The orchestrator shuts down its watchers, releases its coordination lease, stops the auditor peer, and collapses the run's branches back into a single main branch.", hooks: ["(stop) state_finalize.py", "(stop) commit_state_check.py", "(stop) closeout.sh"], agents: [] }
+      - { id: "pd.push", name: "Production push?", kind: gate, tier: "T1", desc: "Pushing to production always asks a human first; this gate is never sampled and never auto-approved.", hooks: ["(post) post-push-closeout.sh"], agents: [], branches: "approved → push\nelse → hold" }
 
   - id: p6
     "no": "Phase 6"
@@ -597,10 +597,10 @@ phases:
     out: ["## Learn line", "experimental drafts", "control-chart update"]
     agents: [["recurring-pattern-detector", "", "Orchestrator"], ["self-improvement-architect", "", "Orchestrator"], ["promotion-reviewer", "", "Orchestrator"], ["retrospective-synthesizer", "", "Orchestrator"]]
     steps:
-      - { id: "p6.detect", name: "Cheap detector + consolidate (always)", kind: process, desc: "recurring-pattern-detector + consolidate_memory", hooks: [], agents: [["recurring-pattern-detector", "", "Orchestrator"]] }
-      - { id: "p6.draft", name: "Draft experimental artifact", kind: dispatch, desc: "self-improvement-architect (Sonnet)", hooks: [], agents: [["self-improvement-architect", "", "Orchestrator"]] }
-      - { id: "p6.signoff", name: "Promotion signoff", kind: gate, tier: "T1", desc: "promotion-reviewer (Fable); promote to active = user confirm", hooks: [], agents: [["promotion-reviewer", "", "Orchestrator"]], branches: "approve → promote\nelse → keep experimental" }
-      - { id: "p6.chart", name: "Update escape-rate control chart", kind: new, desc: "phase drift past control limit → raise T2 sample rate", hooks: [], agents: [] }
+      - { id: "p6.detect", name: "Cheap detector + consolidate (always)", kind: process, desc: "recurring-pattern-detector scans recent runs for repeating problems and the orchestrator consolidates the lessons into memory; this step always runs.", hooks: [], agents: [["recurring-pattern-detector", "", "Orchestrator"]] }
+      - { id: "p6.draft", name: "Draft experimental artifact", kind: dispatch, desc: "When a pattern recurs often enough, self-improvement-architect drafts a candidate new skill or agent to address it.", hooks: [], agents: [["self-improvement-architect", "", "Orchestrator"]] }
+      - { id: "p6.signoff", name: "Promotion signoff", kind: gate, tier: "T1", desc: "promotion-reviewer judges the draft, but turning it on for real always requires your confirmation.", hooks: [], agents: [["promotion-reviewer", "", "Orchestrator"]], branches: "approve → promote\nelse → keep experimental" }
+      - { id: "p6.chart", name: "Update escape-rate control chart", kind: new, desc: "build-loop tracks how often defects slip past each phase; when a phase's escape rate climbs too high, the auditor samples that phase more often on future runs.", hooks: [], agents: [] }
 
 # canonical aliases: chip display name -> agents/*.md basename (or "group" for synthetic multi-agent chips)
 agent_aliases:

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c3204d5a64b669d53a3c6034e1494f35ce6a6a68b59706843105b27b5aa52dd8"
+    "content_sha256": "f6dfdd7303828b999afab7543b9da5c08cdd23ff98c9f73e10c860b500b93279"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -115,7 +115,7 @@
           "id": "p1.read",
           "name": "Read live state",
           "kind": "process",
-          "desc": "repo, memory, Rally, docs",
+          "desc": "The orchestrator reads the live repo, past build-loop memory, and any docs so the plan is grounded in the project's current state.",
           "hooks": [
             "session-start-retrieval.sh",
             "session-start-memory.sh"
@@ -126,7 +126,7 @@
           "id": "p1.intent",
           "name": "Write intent.md",
           "kind": "process",
-          "desc": "north star, non-goals, commander's-intent posture",
+          "desc": "The orchestrator writes intent.md: the goal, what is explicitly out of scope, and which priorities to optimize for.",
           "hooks": [],
           "agents": []
         },
@@ -134,7 +134,7 @@
           "id": "p1.goal",
           "name": "Write goal.md + acceptance probes",
           "kind": "process",
-          "desc": "3–5 pass/fail F-criteria + deterministic probes",
+          "desc": "The orchestrator writes goal.md with three to five pass-or-fail criteria, plus repeatable probes that will later prove each one.",
           "hooks": [],
           "agents": []
         },
@@ -142,7 +142,7 @@
           "id": "p1.risk",
           "name": "Emit risk score per chunk",
           "kind": "new",
-          "desc": "churn · blast-radius · defect-history → drives T2 sampling",
+          "desc": "The orchestrator scores each planned chunk for risk (how much it changes, how far its effects reach, its past defect rate) so the auditor can later inspect the riskier chunks more often.",
           "hooks": [],
           "agents": []
         },
@@ -150,7 +150,7 @@
           "id": "p1.scout",
           "name": "Dispatch baseline scans",
           "kind": "dispatch",
-          "desc": "architecture map + design contract baseline",
+          "desc": "The orchestrator sends architecture-scout to map how the code fits together and design-contract-specialist to record the current UI and data contracts, giving later changes a baseline to check against.",
           "hooks": [],
           "agents": [
             [
@@ -210,7 +210,7 @@
           "id": "p2.mece",
           "name": "MECE partition + dependency order",
           "kind": "process",
-          "desc": "one owner per file/chunk; ordered graph",
+          "desc": "The orchestrator splits the work so each file has exactly one owning agent (so two agents never edit the same file) and orders the chunks by what depends on what.",
           "hooks": [],
           "agents": []
         },
@@ -218,7 +218,7 @@
           "id": "p2.advisor",
           "name": "Advisor plan synthesis",
           "kind": "dispatch",
-          "desc": "Frontier synthesis via the dispatch ladder (rung 0–3)",
+          "desc": "On high-stakes work the orchestrator hands plan-writing to the advisor agent, which runs on the strongest reasoning tier; on routine work the orchestrator writes the plan itself.",
           "hooks": [],
           "agents": [
             [
@@ -232,7 +232,7 @@
           "id": "p2.threat",
           "name": "Security threat-model",
           "kind": "new",
-          "desc": "design-level boundaries/auth NOW; code-level stays at Review",
+          "desc": "When the change touches security, security-reviewer threat-models the design now (trust boundaries and who is allowed to do what), because design flaws are far cheaper to fix before any code is written; the code-level security check still runs later at Review.",
           "hooks": [],
           "agents": [
             [
@@ -246,7 +246,7 @@
           "id": "p2.verify",
           "name": "plan-verify + plan-critic + scope-auditor",
           "kind": "dispatch",
-          "desc": "deterministic plan rules, then non-deterministic critique + caller coverage",
+          "desc": "A script first checks the plan against fixed rules; then plan-critic reads it for problems a script cannot catch (missing alternatives, vague scope); then scope-auditor confirms the plan already lists every file that callers of the changed code will force you to touch.",
           "hooks": [],
           "agents": [
             [
@@ -332,7 +332,7 @@
           "id": "p3.commit",
           "name": "Single-writer commit (per chunk)",
           "kind": "process",
-          "desc": "orchestrator is sole writer to .git",
+          "desc": "Only the orchestrator commits to git; the implementer agents hand back their changes for the orchestrator to commit, so two agents never collide on the same commit.",
           "hooks": [
             "pre_bash_dispatch.sh",
             "(post) state.json updater"
@@ -344,7 +344,7 @@
           "name": "verify-scope / verify-landed",
           "kind": "gate",
           "tier": "T0",
-          "desc": "deterministic: did the edit land in scope?",
+          "desc": "A deterministic check confirms each implementer's edit actually landed in the files it was assigned and nowhere else.",
           "hooks": [],
           "agents": []
         },
@@ -352,7 +352,7 @@
           "id": "p3.synth",
           "name": "synthesis-critic (UI commits)",
           "kind": "dispatch",
-          "desc": "WARN-only coherence check",
+          "desc": "On UI commits, synthesis-critic checks that the tone and empty-states the implementer claimed actually appear in the change; it warns but never blocks.",
           "hooks": [],
           "agents": [
             [
@@ -446,7 +446,7 @@
           "name": "B · Validate",
           "kind": "gate",
           "tier": "T0",
-          "desc": "acceptance-probe rerun · runtime-smoke · pytest-collect gates → LLM judge",
+          "desc": "The orchestrator re-runs the Assess probes and smoke-tests the running app to prove each criterion passes, and ui-validator checks the UI; only what these cannot decide is escalated to an LLM judge.",
           "hooks": [],
           "agents": [
             [
@@ -460,7 +460,7 @@
           "id": "p4.d",
           "name": "D · Fact-check + mock-scan",
           "kind": "dispatch",
-          "desc": "provenance of rendered data + residual mock scan",
+          "desc": "fact-checker traces every number and claim the app shows back to a real source, and mock-scanner sweeps for leftover fake or placeholder data, so nothing false reaches users.",
           "hooks": [],
           "agents": [
             [
@@ -479,7 +479,7 @@
           "id": "p4.fg",
           "name": "F · Auto-resolve → G · Report",
           "kind": "process",
-          "desc": "autonomy_gate routes variances; report_lint · version_advisor · ## Learn line",
+          "desc": "The orchestrator auto-resolves the safe leftover issues, then writes the final report: the scorecard, a version-bump recommendation, and a one-line Learn outcome.",
           "hooks": [],
           "agents": []
         }
@@ -526,7 +526,7 @@
           "id": "p5.cascade",
           "name": "Stuck cascade",
           "kind": "process",
-          "desc": "evidence-gap → memory → architecture-scout",
+          "desc": "When a check fails, the orchestrator escalates in steps: first add the missing logging, then re-check past incidents in memory, then send architecture-scout if the failure crosses code layers.",
           "hooks": [],
           "agents": [
             [
@@ -540,7 +540,7 @@
           "id": "p5.domain",
           "name": "2-fail: domain assessors",
           "kind": "dispatch",
-          "desc": "parallel db/api/frontend/perf diagnosis",
+          "desc": "After two failures on the same criterion, the orchestrator dispatches the matching domain assessors (database, API, frontend, performance) in parallel to diagnose the cause.",
           "hooks": [],
           "agents": [
             [
@@ -554,7 +554,7 @@
           "id": "p5.rca",
           "name": "3-fail: causal-tree investigation",
           "kind": "dispatch",
-          "desc": "root-cause-investigator (WebSearch)",
+          "desc": "After three failures, root-cause-investigator builds a cause tree and may search the web for known upstream bugs before another attempt is made.",
           "hooks": [],
           "agents": [
             [
@@ -568,7 +568,7 @@
           "id": "p5.fix",
           "name": "Apply fix → loop to Review",
           "kind": "process",
-          "desc": "pass → Report; cap hit → followup/ + ## Blocked",
+          "desc": "An implementer applies the fix and the loop returns to Review; on pass the run continues, and if the attempt cap is reached the remaining work is parked as follow-up.",
           "hooks": [],
           "agents": [
             [
@@ -600,7 +600,7 @@
           "id": "pd.reap",
           "name": "Reap presence + collapse branches",
           "kind": "process",
-          "desc": "stop watchers, relinquish lease, reap auditor; collapse_run.py → main",
+          "desc": "The orchestrator shuts down its watchers, releases its coordination lease, stops the auditor peer, and collapses the run's branches back into a single main branch.",
           "hooks": [
             "(stop) state_finalize.py",
             "(stop) commit_state_check.py",
@@ -613,7 +613,7 @@
           "name": "Production push?",
           "kind": "gate",
           "tier": "T1",
-          "desc": "human-confirm gate — never sampled, never auto",
+          "desc": "Pushing to production always asks a human first; this gate is never sampled and never auto-approved.",
           "hooks": [
             "(post) post-push-closeout.sh"
           ],
@@ -664,7 +664,7 @@
           "id": "p6.detect",
           "name": "Cheap detector + consolidate (always)",
           "kind": "process",
-          "desc": "recurring-pattern-detector + consolidate_memory",
+          "desc": "recurring-pattern-detector scans recent runs for repeating problems and the orchestrator consolidates the lessons into memory; this step always runs.",
           "hooks": [],
           "agents": [
             [
@@ -678,7 +678,7 @@
           "id": "p6.draft",
           "name": "Draft experimental artifact",
           "kind": "dispatch",
-          "desc": "self-improvement-architect (Sonnet)",
+          "desc": "When a pattern recurs often enough, self-improvement-architect drafts a candidate new skill or agent to address it.",
           "hooks": [],
           "agents": [
             [
@@ -693,7 +693,7 @@
           "name": "Promotion signoff",
           "kind": "gate",
           "tier": "T1",
-          "desc": "promotion-reviewer (Fable); promote to active = user confirm",
+          "desc": "promotion-reviewer judges the draft, but turning it on for real always requires your confirmation.",
           "hooks": [],
           "agents": [
             [
@@ -708,7 +708,7 @@
           "id": "p6.chart",
           "name": "Update escape-rate control chart",
           "kind": "new",
-          "desc": "phase drift past control limit → raise T2 sample rate",
+          "desc": "build-loop tracks how often defects slip past each phase; when a phase's escape rate climbs too high, the auditor samples that phase more often on future runs.",
           "hooks": [],
           "agents": []
         }
