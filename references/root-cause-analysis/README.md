@@ -1,12 +1,13 @@
-# Root-Cause-Analysis — shared reference material
+# Root-Cause-Analysis — shared references
 
-> NOT a public skill. Per the consolidation decision (codex `fact_faa2`), the RCA suite is **shared debug/RCA reference material**, not a standalone sibling skill. The **public diagnose entry stays `debug-loop` / `debugging-memory`**. These prompts are the blameless post-failure durable-prevention layer that those consumers delegate to.
+These are the shared RCA reference prompts consumed by multiple consumers. The canonical entry point for users is the `root-cause-analysis` skill (`skills/root-cause-analysis/SKILL.md`).
 
 ## Consumers (who delegates here)
+- `skills/root-cause-analysis` — the user-invocable skill; links directly to these files.
 - `skills/debug-loop` — its report/closeout step, for the durable-lever + regression-artifact + spread-check pass after a live fix.
+- `skills/recursive-retrospective` §8 (Diagnostic RCA Module) — delegates L2 diagnosis to the `root-cause-analysis` skill, which in turn references these files.
 - `agents/root-cause-investigator` — for the structured creation+escape-path + lever/actuator analysis.
 - `agents/fix-critique` — to pressure-test that a fix is a system lever, not an exhortation.
-- `skills/recursive-retrospective` §8 (Diagnostic RCA Module) — delegates L2 diagnosis here instead of carrying an inline mini-RCA.
 
 ## Boundary
 - `debug-loop` / `debugging-memory` = **live, fix-this-bug-now** (iterative investigate→fix→verify).
