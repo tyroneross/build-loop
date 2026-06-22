@@ -106,9 +106,13 @@ class TestGenerate(unittest.TestCase):
                     seen_filled = True
         self.assertTrue(seen_filled)
 
-    def test_provenance_has_commit(self):
+    def test_provenance_is_content_hash_not_git(self):
         model = generate.build_model(REPO)
-        self.assertIn("source_commit", model["_provenance"])
+        prov = model["_provenance"]
+        self.assertIn("content_sha256", prov)
+        self.assertNotIn("source_commit", prov)  # must not embed volatile git state
+        # deterministic: same source -> same hash
+        self.assertEqual(prov["content_sha256"], generate.build_model(REPO)["_provenance"]["content_sha256"])
 
 
 if __name__ == "__main__":

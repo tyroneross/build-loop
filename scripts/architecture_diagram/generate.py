@@ -17,9 +17,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -85,18 +85,12 @@ def parse_hooks(repo: Path) -> tuple[dict[str, list[str]], dict[str, str]]:
     return by_event, basename_event
 
 
-def provenance(repo: Path) -> dict:
-    def git(*args: str) -> str:
-        try:
-            return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
-        except Exception:
-            return ""
-
-    sha = git("rev-parse", "HEAD")
-    dirty = bool(git("status", "--porcelain"))
+def _static_provenance() -> dict:
+    # NO git sha / dirty flag here on purpose: those move on every commit and would make
+    # model.json perpetually "stale", failing the drift gate after each commit. Provenance
+    # is content-derived (content_sha256, set in build_model) so it changes ONLY when the
+    # derived architecture changes.
     return {
-        "source_commit": sha,
-        "working_tree_dirty": dirty,
         "generator": f"scripts/architecture_diagram/generate.py@{GEN_VERSION}",
         "sources": ["architecture/flow.yaml", "agents/*.md (frontmatter)",
                     "hooks/hooks.json", "scripts/model_overrides.py (tier names)"],
@@ -157,8 +151,7 @@ def build_model(repo: Path) -> dict:
 
     proposed = {pid: 1 for pid in flow.get("proposed", [])}
 
-    return {
-        "_provenance": provenance(repo),
+    body = {
         "pipe_in": flow["pipeline"]["in"],
         "pipe_out": flow["pipeline"]["out"],
         "proposed": proposed,
@@ -172,6 +165,10 @@ def build_model(repo: Path) -> dict:
             "hooks_by_event": hooks_by_event,      # auto-derived: event -> [scripts]
         },
     }
+    prov = _static_provenance()
+    prov["content_sha256"] = hashlib.sha256(
+        json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {"_provenance": prov, **body}
 
 
 def inject_html(html: str, model: dict) -> str:
@@ -207,7 +204,7 @@ def main() -> int:
     result = {"ok": True, "stale_model_json": stale_json, "stale_html": stale_html,
               "agents": len(model["registries"]["agents"]),
               "phases": len(model["phases"]),
-              "source_commit": model["_provenance"]["source_commit"][:8]}
+              "content_sha": model["_provenance"]["content_sha256"][:8]}
 
     if args.check:
         result["ok"] = not (stale_json or stale_html)
@@ -219,7 +216,7 @@ def main() -> int:
     html_path.write_text(new_html, encoding="utf-8")
     print(json.dumps(result) if args.json else
           f"wrote architecture/model.json ({result['agents']} agents, {result['phases']} phases) "
-          f"+ injected into {_rel(html_path)} @ {result['source_commit']}")
+          f"+ injected into {_rel(html_path)} @ sha {result['content_sha']}")
     return 0
 
 
