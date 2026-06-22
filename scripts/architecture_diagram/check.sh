@@ -27,5 +27,5 @@ if [ "$rc" -ne 0 ] && [ "${BL_ARCH_ADVISORY:-0}" = "1" ]; then
   echo "⚠ advisory mode (BL_ARCH_ADVISORY=1) — not blocking the commit." >&2
   exit 0
 fi
-[ "$rc" -eq 0 ] && echo "✅ architecture diagram fresh + no drift"
+# Silent on success (no per-commit "all good" spam); only speaks when it blocks.
 exit "$rc"

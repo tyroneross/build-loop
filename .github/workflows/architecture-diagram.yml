@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+name: Architecture diagram
+
+# Quiet, scoped enforcement of the living architecture diagram.
+# This job runs ONLY when architecture-relevant files change (the `paths:` filter),
+# so unrelated commits produce no run and no noise. It fails when the diagram drifted
+# from source (flow references a missing agent/hook) or wasn't regenerated after a
+# change. Mirrors scripts/architecture_diagram/check.sh — the same gate run locally.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agents/**'
+      - 'hooks/hooks.json'
+      - 'skills/**'
+      - 'scripts/**'
+      - 'architecture/**'
+      - 'docs/build-loop-flow-mockup.html'
+  pull_request:
+    paths:
+      - 'agents/**'
+      - 'hooks/hooks.json'
+      - 'skills/**'
+      - 'scripts/**'
+      - 'architecture/**'
+      - 'docs/build-loop-flow-mockup.html'
+
+concurrency:
+  group: arch-diagram-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git_last_updated reads file history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - name: Drift + freshness gate
+        run: bash scripts/architecture_diagram/check.sh
+      - name: Architecture-diagram unit tests
+        run: python3 scripts/architecture_diagram/test_drift_lint.py

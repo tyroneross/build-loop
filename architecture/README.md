@@ -107,6 +107,19 @@ Mirrors the `scripts/sync_skills.py` drift-detector contract. Read-only, structu
 
 `BL_ARCH_ADVISORY=1 bash scripts/architecture_diagram/check.sh` warns instead of blocking (local use).
 
+### Enforcement (wired, quiet)
+
+- **CI (primary):** `.github/workflows/architecture-diagram.yml` runs the gate on push/PR —
+  but **only when** architecture-relevant files change (`agents/`, `hooks/hooks.json`,
+  `skills/`, `scripts/`, `architecture/`, the HTML). Unrelated commits trigger no run, so
+  there's no noise. `check.sh` is **silent on success** and speaks only when it blocks.
+- **Local pre-commit (opt-in, not auto-installed):** if you want the same guard before each
+  commit, install it yourself — it stays quiet unless the diagram is stale/drifted:
+  ```bash
+  ln -sf ../../scripts/architecture_diagram/check.sh .git/hooks/pre-commit
+  ```
+  This is intentionally opt-in: no hook is added to your git config automatically.
+
 ---
 
 ## Source-of-truth detail + version control
