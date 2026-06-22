@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,11 +54,37 @@ def _short(text: str, n: int = 110) -> str:
     return text[: n - 1] + "…" if len(text) > n else text
 
 
+def git_last_updated(repo: Path, relpath: str) -> dict:
+    """Last commit that touched a file -> {author, date}. Stable unless the file changes
+    (component files are never modified by the generator), so it doesn't churn model.json."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(repo), "log", "-1", "--format=%an|%aI", "--", relpath],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        if out and "|" in out:
+            a, d = out.split("|", 1)
+            return {"author": a, "date": d[:10]}
+    except Exception:
+        pass
+    return {"author": "", "date": ""}
+
+
+def _extract_desc(fm: str) -> str:
+    """Pull the human description out of agent/skill frontmatter (drops <example> blocks)."""
+    dm = re.search(r"^description:\s*\|?\s*(.+?)(?=\n[a-z_]+:\s|\Z)", fm, re.DOTALL | re.M)
+    raw = dm.group(1) if dm else ""
+    raw = raw.split("<example>")[0].split("<commentary>")[0]
+    return _short(raw, 420)
+
+
 # ---------------- auto-discovered inventories ----------------
 
-def parse_agents(repo: Path) -> dict[str, str]:
-    """agents/*.md frontmatter -> {agent name (namespace-stripped): model tier}."""
-    out: dict[str, str] = {}
+def parse_agents(repo: Path) -> dict[str, dict]:
+    """agents/*.md -> {name: {model, description, file, last_updated{author,date}}}.
+
+    Rich enough that the diagram is a source of truth for what each agent does.
+    """
+    out: dict[str, dict] = {}
     for md in sorted((repo / "agents").glob("*.md")):
         m = FRONTMATTER_RE.match(md.read_text(encoding="utf-8"))
         if not m:
@@ -65,31 +92,35 @@ def parse_agents(repo: Path) -> dict[str, str]:
         nm = NAME_RE.search(m.group(1))
         if not nm:
             continue
+        name = _strip(nm.group(1)).split(":")[-1]
         mo = MODEL_RE.search(m.group(1))
-        out[_strip(nm.group(1)).split(":")[-1]] = _strip(mo.group(1)) if mo else ""
+        rel = str(md.relative_to(repo))
+        out[name] = {
+            "model": _strip(mo.group(1)) if mo else "",
+            "description": _extract_desc(m.group(1)),
+            "file": rel,
+            "last_updated": git_last_updated(repo, rel),
+        }
     return out
 
 
-def parse_skills(repo: Path) -> dict[str, str]:
-    """skills/**/SKILL.md -> {skill name: short description}."""
-    out: dict[str, str] = {}
+def parse_skills(repo: Path) -> dict[str, dict]:
+    """skills/**/SKILL.md -> {name: {description, file, last_updated{author,date}}}."""
+    out: dict[str, dict] = {}
     sk = repo / "skills"
     if not sk.exists():
         return out
     for md in sorted(sk.glob("**/SKILL.md")):
         m = FRONTMATTER_RE.match(md.read_text(encoding="utf-8"))
-        name = None
-        desc = ""
+        name, desc = None, ""
         if m:
             nm = NAME_RE.search(m.group(1))
             if nm:
                 name = _strip(nm.group(1)).split(":")[-1]
-            dm = DESC_RE.search(m.group(1))
-            if dm:
-                desc = _short(_strip(dm.group(1)))
-        if not name:
-            name = md.parent.name
-        out[name] = desc
+            desc = _extract_desc(m.group(1))
+        name = name or md.parent.name
+        rel = str(md.relative_to(repo))
+        out[name] = {"description": desc, "file": rel, "last_updated": git_last_updated(repo, rel)}
     return out
 
 
@@ -171,12 +202,13 @@ def build_model(repo: Path) -> dict:
     scripts = parse_scripts(repo)
     hooks_by_event, hook_event = parse_hooks(repo)
     aliases = flow.get("agent_aliases", {})
+    tier_map = {n: d.get("model", "") for n, d in agents.items()}  # for chip tier-fill
 
     phases = []
     for p in flow["phases"]:
         p = dict(p)
-        p["agents"] = _fill_tiers(p.get("agents", []), agents, aliases)
-        p["steps"] = [{**s, "agents": _fill_tiers(s.get("agents", []), agents, aliases)}
+        p["agents"] = _fill_tiers(p.get("agents", []), tier_map, aliases)
+        p["steps"] = [{**s, "agents": _fill_tiers(s.get("agents", []), tier_map, aliases)}
                       for s in p.get("steps", [])]
         phases.append(p)
 
@@ -239,7 +271,9 @@ def components_md(model: dict) -> str:
         "",
         "<details><summary>agents</summary>",
         "",
-        *[f"- `{n}` — {t or '—'}" for n, t in sorted(a.items())],
+        *[f"- `{n}` — {d.get('model') or '—'} · _updated {d['last_updated']['date']} "
+          f"by {d['last_updated']['author'] or '—'}_ — {d.get('description', '')}"
+          for n, d in sorted(a.items())],
         "</details>",
         "<details><summary>skills</summary>",
         "",

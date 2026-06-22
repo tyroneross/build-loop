@@ -16,38 +16,38 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 46 skills · 310 scripts · 17 hooks** (auto-discovered 46cd7359)
+**28 agents · 46 skills · 311 scripts · 17 hooks** (auto-discovered c3204d5a)
 
 <details><summary>agents</summary>
 
-- `advisor` — fable
-- `alignment-checker` — sonnet
-- `api-assessor` — sonnet
-- `architecture-scout` — sonnet
-- `assessment-orchestrator` — opus
-- `build-orchestrator` — opus
-- `database-assessor` — sonnet
-- `design-contract-specialist` — sonnet
-- `fact-checker` — fable
-- `fix-critique` — fable
-- `frontend-assessor` — sonnet
-- `implementer` — sonnet
-- `independent-auditor` — fable
-- `mock-scanner` — haiku
-- `optimize-runner` — sonnet
-- `overfitting-reviewer` — fable
-- `performance-assessor` — sonnet
-- `plan-critic` — fable
-- `promotion-reviewer` — fable
-- `recurring-pattern-detector` — haiku
-- `retrospective-synthesizer` — sonnet
-- `root-cause-investigator` — inherit
-- `scope-auditor` — fable
-- `security-reviewer` — fable
-- `self-improvement-architect` — sonnet
-- `synthesis-critic` — sonnet
-- `transcript-pattern-miner` — haiku
-- `ui-validator` — sonnet
+- `advisor` — fable · _updated 2026-06-10 by Tyrone Ross_ — The Frontier (Fable) standing role that AUTHORS and RE-PLANS the Phase 2 plan synthesis. Generating a plan is harder than evaluating one, so the deepest reasoning pays here. The Advisor frames the goal, decomposes the work, builds the dependency graph, MECE-partitions file ownership, and — on a diagnosed *planning miss* — re-plans and issues CORRECTED INSTRUCTIONS (a diff vs the prior plan + the failure evidence), n…
+- `alignment-checker` — sonnet · _updated 2026-06-09 by Tyrone Ross_ — Advisory alignment judge for autonomous-iterate-loop queue items (plan §14.4 A). For each candidate item drained from `.build-loop/ux-queue/` + `.build-loop/issues/` + `.build-loop/proposals/`, reads the build's stated intent (`intent.md`, `goal.md`, canonical build-loop-memory constitution context, optional repo `.build-loop/prd.md`) plus the item body and returns a structured verdict (`aligned | misaligned | uncer…
+- `api-assessor` — sonnet · _updated 2026-06-04 by Tyrone Ross_ — Use this agent when the debugging symptom involves API endpoints, REST/GraphQL errors, request/response issues, authentication, rate limiting, or server-side route handlers. Examples - "500 error", "endpoint not found", "auth failed", "CORS error".
+- `architecture-scout` — sonnet · _updated 2026-06-06 by Tyrone Ross_ — Read-only architecture analyst. Dispatched by build-loop orchestrator with a task type ('baseline', 'chunk-impact', 'review-rules', 'iterate-subgraph', 'learn-sync'). Decides native engine vs NavGator escalation per task. Returns ≤500-word structured JSON envelope. Owns architecture-related side effects (violation capture, lessons sync).
+- `assessment-orchestrator` — opus · _updated 2026-06-09 by Tyrone Ross_ — Use this agent when debugging requires multi-domain analysis, when the symptom is unclear about which domain is affected, or when you need to coordinate parallel assessments across database, frontend, API, and performance domains.
+- `build-orchestrator` — opus · _updated 2026-06-13 by Tyrone Ross_ — Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.
+- `database-assessor` — sonnet · _updated 2026-06-15 by Tyrone Ross_ — Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - "slow query", "migration failed", "constraint error", "Prisma error", "connection timeout", "vector search is stale".
+- `design-contract-specialist` — sonnet · _updated 2026-06-07 by Tyrone Ross_ — Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill("build-loop:ui-design")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing…
+- `fact-checker` — fable · _updated 2026-06-09 by Tyrone Ross_ — Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
+- `fix-critique` — fable · _updated 2026-06-18 by Tyrone Ross_ — Use this agent to pressure-test a proposed fix before declaring a bug resolved. Challenges whether the fix addresses the root cause or just a symptom, checks for potential regressions, and verifies evidence exists for the claimed fix. Run after a fix is implemented but before declaring it done.
+- `frontend-assessor` — sonnet · _updated 2026-06-04 by Tyrone Ross_ — Use this agent when the debugging symptom involves React, hooks, rendering, UI components, state management, hydration errors, or client-side performance. Examples - "useEffect infinite loop", "component not rendering", "hydration mismatch", "state not updating".
+- `implementer` — sonnet · _updated 2026-05-24 by Tyrone Ross_ — Apply a single ux-fix-plan.md (or per-criterion targeted fix plan) from the build-loop Phase 5 work list. One queue entry per invocation. Returns changed files + status. Designed for parallel fan-out (≤4 in flight per orchestrator pass).
+- `independent-auditor` — fable · _updated 2026-06-09 by Tyrone Ross_ — LLM-grade escalation path for the boundary-gated commit auditor. The primary mechanism is the deterministic PreToolUse hook script (`scripts/audit_before_commit.py`); this agent fires only when the orchestrator wants a deeper read on a specific commit (e.g., before squash-merge of a multi-chunk build, or when a chunk's diff is unusually large or crosses an architectural boundary). Gathers the same on-disk context th…
+- `mock-scanner` — haiku · _updated 2026-06-08 by Tyrone Ross_ — Fast, lightweight scan for residual mock, placeholder, fake, private, or secret data in production/public code paths.
+- `optimize-runner` — sonnet · _updated 2026-05-22 by Tyrone Ross_ — Executes the optimization loop. Generates hypotheses, makes atomic changes within scope, measures metrics, keeps improvements or reverts regressions. Runs autonomously until convergence or budget exhaustion.
+- `overfitting-reviewer` — fable · _updated 2026-06-09 by Tyrone Ross_ — Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.
+- `performance-assessor` — sonnet · _updated 2026-06-04 by Tyrone Ross_ — Use this agent when the debugging symptom involves slowness, latency, timeouts, memory leaks, CPU usage, bottlenecks, or optimization needs. Examples - "app is slow", "memory keeps increasing", "timeout errors", "high CPU usage".
+- `plan-critic` — fable · _updated 2026-06-12 by Tyrone Ross_ — Adversarial read-only critique of a Phase 2 plan markdown file for non-deterministic issues that grep cannot catch — alternatives considered, MECE scope quality, marker adequacy, and headline drift across sections. Pair with `scripts/plan_verify.py` (deterministic verifier) — run plan-verify first, feed its JSON output to this agent so it doesn't re-derive what's already been checked.
+- `promotion-reviewer` — fable · _updated 2026-06-09 by Tyrone Ross_ — Advisory judge for Phase 6 Learn experimental-artifact promotion. Reads a candidate experimental skill or agent (drafted by `self-improvement-architect`), its A/B track record, and the build-loop constitution, then returns a variance-shaped verdict (`approve | rethink | new_approach`). Never blocks — orchestrator policy still requires async user confirmation on the move from `experimental/` to `active/` per the irre…
+- `recurring-pattern-detector` — haiku · _updated 2026-06-15 by Tyrone Ross_ — Scans `.build-loop/state.json.runs[]` for patterns that recur across 3+ runs (same phase failing, same diagnostic command, same file churn, same manual user intervention). Emits a structured JSON proposal list. Pattern-matching only — no authoring, no judgment.
+- `retrospective-synthesizer` — sonnet · _updated 2026-06-18 by Tyrone Ross_ — Post-push retrospective synthesizer. Reads the session transcript JSONL + state.json + intent + plan after the Phase 4 Report closing push, and writes a structured 9-section retrospective to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` plus a ≤5-line `<run-id>.summary.md` surfaced inline. Anything prompted ≥2× in the thread, or surfaced for the "what should be enforced" section, becomes an auto-drafted enfo…
+- `root-cause-investigator` — inherit · _updated 2026-06-18 by Tyrone Ross_ — Use this agent when a debugging symptom needs deep causal analysis beyond surface-level diagnosis. Builds a causal tree (not a single chain) to explore multiple potential root causes in parallel. Flags when investigation reaches external/environmental boundaries or when internet research is needed. Examples - "why does this keep failing", "what's the real cause", "dig deeper into this error", "this fix didn't stick".
+- `scope-auditor` — fable · _updated 2026-06-09 by Tyrone Ross_ — Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the "fan-out scope-blindness" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-0…
+- `security-reviewer` — fable · _updated 2026-06-09 by Tyrone Ross_ — Adversarial read-only security review of implementer output against OWASP LLM Top 10, OWASP Agentic Top 10, OWASP Web Top 10 (HTTP boundary only), and starter MITRE ATLAS techniques. Runs in Phase 4 Review sub-step A in parallel with `independent-auditor` at `scope: "build"`, but only when Assess flagged `triggers.riskSurfaceChange: true`.
+- `self-improvement-architect` — sonnet · _updated 2026-06-09 by Tyrone Ross_ — Takes a pattern proposal from `recurring-pattern-detector` and drafts a concrete experimental SKILL.md (or agent definition) the build-loop can use immediately. Uses the `plugin-dev:skill-development` or `plugin-dev:agent-development` skill as the authoring reference. Writes output to `.build-loop/skills/experimental/<name>/SKILL.md` — project-local, clearly marked experimental, easy for the user to remove.
+- `synthesis-critic` — sonnet · _updated 2026-05-22 by Tyrone Ross_ — Read-only model-based critic for the subjective synthesis dimensions (`copy_tone`, `empty_state`) that `attestation_lint.py` cannot grade deterministically. Runs in Phase 4.5 after the attestation lint, only on commits that touch UI files. WARN-only — never blocks a commit.
+- `transcript-pattern-miner` — haiku · _updated 2026-05-22 by Tyrone Ross_ — Scans local Claude Code session transcripts for recurring patterns worth promoting to skills, agents, hooks, or feedback notes. Pure stdlib regex miner — no LLM calls, no network. Five categories: user corrections, repeated tool sequences, cross-project file patterns, manual command rituals, and observed secrets (rotation tracker). Output is markdown report + candidates JSON consumed by self-improvement-architect.
+- `ui-validator` — sonnet · _updated 2026-05-24 by Tyrone Ross_ — Run deterministic UI scans against the running dev server: layout collisions, touch-target violations, console errors, hydration stability, computed-style diffs vs prior baseline, and per-route visual SSIM. Used at Phase 3 chunk-close on UI-touching chunks and at Phase 4 Review sub-step B on every build that has `uiTarget != null`. Owns its own browser session so authed routes scan correctly.
 </details>
 <details><summary>skills</summary>
 
@@ -124,6 +124,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/append_milestone.py`
 - `scripts/append_run.py`
 - `scripts/apple_sourcekit_triage.py`
+- `scripts/architecture_diagram/comments_to_backlog.py`
 - `scripts/architecture_diagram/drift_lint.py`
 - `scripts/architecture_diagram/generate.py`
 - `scripts/architecture_freshness.py`

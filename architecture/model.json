@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "46cd7359a31b8a2a5288579009650349d5e51f3d5e0b37d03df91fd0015d4cdb"
+    "content_sha256": "c3204d5a64b669d53a3c6034e1494f35ce6a6a68b59706843105b27b5aa52dd8"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -845,82 +845,628 @@
   },
   "registries": {
     "agents": {
-      "advisor": "fable",
-      "alignment-checker": "sonnet",
-      "api-assessor": "sonnet",
-      "architecture-scout": "sonnet",
-      "assessment-orchestrator": "opus",
-      "build-orchestrator": "opus",
-      "database-assessor": "sonnet",
-      "design-contract-specialist": "sonnet",
-      "fact-checker": "fable",
-      "fix-critique": "fable",
-      "frontend-assessor": "sonnet",
-      "implementer": "sonnet",
-      "independent-auditor": "fable",
-      "mock-scanner": "haiku",
-      "optimize-runner": "sonnet",
-      "overfitting-reviewer": "fable",
-      "performance-assessor": "sonnet",
-      "plan-critic": "fable",
-      "promotion-reviewer": "fable",
-      "recurring-pattern-detector": "haiku",
-      "retrospective-synthesizer": "sonnet",
-      "root-cause-investigator": "inherit",
-      "scope-auditor": "fable",
-      "security-reviewer": "fable",
-      "self-improvement-architect": "sonnet",
-      "synthesis-critic": "sonnet",
-      "transcript-pattern-miner": "haiku",
-      "ui-validator": "sonnet"
+      "advisor": {
+        "model": "fable",
+        "description": "The Frontier (Fable) standing role that AUTHORS and RE-PLANS the Phase 2 plan synthesis. Generating a plan is harder than evaluating one, so the deepest reasoning pays here. The Advisor frames the goal, decomposes the work, builds the dependency graph, MECE-partitions file ownership, and — on a diagnosed *planning miss* — re-plans and issues CORRECTED INSTRUCTIONS (a diff vs the prior plan + the failure evidence), n…",
+        "file": "agents/advisor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-10"
+        }
+      },
+      "alignment-checker": {
+        "model": "sonnet",
+        "description": "Advisory alignment judge for autonomous-iterate-loop queue items (plan §14.4 A). For each candidate item drained from `.build-loop/ux-queue/` + `.build-loop/issues/` + `.build-loop/proposals/`, reads the build's stated intent (`intent.md`, `goal.md`, canonical build-loop-memory constitution context, optional repo `.build-loop/prd.md`) plus the item body and returns a structured verdict (`aligned | misaligned | uncer…",
+        "file": "agents/alignment-checker.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "api-assessor": {
+        "model": "sonnet",
+        "description": "Use this agent when the debugging symptom involves API endpoints, REST/GraphQL errors, request/response issues, authentication, rate limiting, or server-side route handlers. Examples - \"500 error\", \"endpoint not found\", \"auth failed\", \"CORS error\".",
+        "file": "agents/api-assessor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "architecture-scout": {
+        "model": "sonnet",
+        "description": "Read-only architecture analyst. Dispatched by build-loop orchestrator with a task type ('baseline', 'chunk-impact', 'review-rules', 'iterate-subgraph', 'learn-sync'). Decides native engine vs NavGator escalation per task. Returns ≤500-word structured JSON envelope. Owns architecture-related side effects (violation capture, lessons sync).",
+        "file": "agents/architecture-scout.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-06"
+        }
+      },
+      "assessment-orchestrator": {
+        "model": "opus",
+        "description": "Use this agent when debugging requires multi-domain analysis, when the symptom is unclear about which domain is affected, or when you need to coordinate parallel assessments across database, frontend, API, and performance domains.",
+        "file": "agents/assessment-orchestrator.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "build-orchestrator": {
+        "model": "opus",
+        "description": "Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.",
+        "file": "agents/build-orchestrator.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-13"
+        }
+      },
+      "database-assessor": {
+        "model": "sonnet",
+        "description": "Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - \"slow query\", \"migration failed\", \"constraint error\", \"Prisma error\", \"connection timeout\", \"vector search is stale\".",
+        "file": "agents/database-assessor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-15"
+        }
+      },
+      "design-contract-specialist": {
+        "model": "sonnet",
+        "description": "Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill(\"build-loop:ui-design\")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing…",
+        "file": "agents/design-contract-specialist.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-07"
+        }
+      },
+      "fact-checker": {
+        "model": "fable",
+        "description": "Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.",
+        "file": "agents/fact-checker.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "fix-critique": {
+        "model": "fable",
+        "description": "Use this agent to pressure-test a proposed fix before declaring a bug resolved. Challenges whether the fix addresses the root cause or just a symptom, checks for potential regressions, and verifies evidence exists for the claimed fix. Run after a fix is implemented but before declaring it done.",
+        "file": "agents/fix-critique.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-18"
+        }
+      },
+      "frontend-assessor": {
+        "model": "sonnet",
+        "description": "Use this agent when the debugging symptom involves React, hooks, rendering, UI components, state management, hydration errors, or client-side performance. Examples - \"useEffect infinite loop\", \"component not rendering\", \"hydration mismatch\", \"state not updating\".",
+        "file": "agents/frontend-assessor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "implementer": {
+        "model": "sonnet",
+        "description": "Apply a single ux-fix-plan.md (or per-criterion targeted fix plan) from the build-loop Phase 5 work list. One queue entry per invocation. Returns changed files + status. Designed for parallel fan-out (≤4 in flight per orchestrator pass).",
+        "file": "agents/implementer.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-24"
+        }
+      },
+      "independent-auditor": {
+        "model": "fable",
+        "description": "LLM-grade escalation path for the boundary-gated commit auditor. The primary mechanism is the deterministic PreToolUse hook script (`scripts/audit_before_commit.py`); this agent fires only when the orchestrator wants a deeper read on a specific commit (e.g., before squash-merge of a multi-chunk build, or when a chunk's diff is unusually large or crosses an architectural boundary). Gathers the same on-disk context th…",
+        "file": "agents/independent-auditor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "mock-scanner": {
+        "model": "haiku",
+        "description": "Fast, lightweight scan for residual mock, placeholder, fake, private, or secret data in production/public code paths.",
+        "file": "agents/mock-scanner.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-08"
+        }
+      },
+      "optimize-runner": {
+        "model": "sonnet",
+        "description": "Executes the optimization loop. Generates hypotheses, makes atomic changes within scope, measures metrics, keeps improvements or reverts regressions. Runs autonomously until convergence or budget exhaustion.",
+        "file": "agents/optimize-runner.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "overfitting-reviewer": {
+        "model": "fable",
+        "description": "Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.",
+        "file": "agents/overfitting-reviewer.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "performance-assessor": {
+        "model": "sonnet",
+        "description": "Use this agent when the debugging symptom involves slowness, latency, timeouts, memory leaks, CPU usage, bottlenecks, or optimization needs. Examples - \"app is slow\", \"memory keeps increasing\", \"timeout errors\", \"high CPU usage\".",
+        "file": "agents/performance-assessor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "plan-critic": {
+        "model": "fable",
+        "description": "Adversarial read-only critique of a Phase 2 plan markdown file for non-deterministic issues that grep cannot catch — alternatives considered, MECE scope quality, marker adequacy, and headline drift across sections. Pair with `scripts/plan_verify.py` (deterministic verifier) — run plan-verify first, feed its JSON output to this agent so it doesn't re-derive what's already been checked.",
+        "file": "agents/plan-critic.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-12"
+        }
+      },
+      "promotion-reviewer": {
+        "model": "fable",
+        "description": "Advisory judge for Phase 6 Learn experimental-artifact promotion. Reads a candidate experimental skill or agent (drafted by `self-improvement-architect`), its A/B track record, and the build-loop constitution, then returns a variance-shaped verdict (`approve | rethink | new_approach`). Never blocks — orchestrator policy still requires async user confirmation on the move from `experimental/` to `active/` per the irre…",
+        "file": "agents/promotion-reviewer.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "recurring-pattern-detector": {
+        "model": "haiku",
+        "description": "Scans `.build-loop/state.json.runs[]` for patterns that recur across 3+ runs (same phase failing, same diagnostic command, same file churn, same manual user intervention). Emits a structured JSON proposal list. Pattern-matching only — no authoring, no judgment.",
+        "file": "agents/recurring-pattern-detector.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-15"
+        }
+      },
+      "retrospective-synthesizer": {
+        "model": "sonnet",
+        "description": "Post-push retrospective synthesizer. Reads the session transcript JSONL + state.json + intent + plan after the Phase 4 Report closing push, and writes a structured 9-section retrospective to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` plus a ≤5-line `<run-id>.summary.md` surfaced inline. Anything prompted ≥2× in the thread, or surfaced for the \"what should be enforced\" section, becomes an auto-drafted enfo…",
+        "file": "agents/retrospective-synthesizer.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-18"
+        }
+      },
+      "root-cause-investigator": {
+        "model": "inherit",
+        "description": "Use this agent when a debugging symptom needs deep causal analysis beyond surface-level diagnosis. Builds a causal tree (not a single chain) to explore multiple potential root causes in parallel. Flags when investigation reaches external/environmental boundaries or when internet research is needed. Examples - \"why does this keep failing\", \"what's the real cause\", \"dig deeper into this error\", \"this fix didn't stick\".",
+        "file": "agents/root-cause-investigator.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-18"
+        }
+      },
+      "scope-auditor": {
+        "model": "fable",
+        "description": "Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the \"fan-out scope-blindness\" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-0…",
+        "file": "agents/scope-auditor.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "security-reviewer": {
+        "model": "fable",
+        "description": "Adversarial read-only security review of implementer output against OWASP LLM Top 10, OWASP Agentic Top 10, OWASP Web Top 10 (HTTP boundary only), and starter MITRE ATLAS techniques. Runs in Phase 4 Review sub-step A in parallel with `independent-auditor` at `scope: \"build\"`, but only when Assess flagged `triggers.riskSurfaceChange: true`.",
+        "file": "agents/security-reviewer.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "self-improvement-architect": {
+        "model": "sonnet",
+        "description": "Takes a pattern proposal from `recurring-pattern-detector` and drafts a concrete experimental SKILL.md (or agent definition) the build-loop can use immediately. Uses the `plugin-dev:skill-development` or `plugin-dev:agent-development` skill as the authoring reference. Writes output to `.build-loop/skills/experimental/<name>/SKILL.md` — project-local, clearly marked experimental, easy for the user to remove.",
+        "file": "agents/self-improvement-architect.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "synthesis-critic": {
+        "model": "sonnet",
+        "description": "Read-only model-based critic for the subjective synthesis dimensions (`copy_tone`, `empty_state`) that `attestation_lint.py` cannot grade deterministically. Runs in Phase 4.5 after the attestation lint, only on commits that touch UI files. WARN-only — never blocks a commit.",
+        "file": "agents/synthesis-critic.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "transcript-pattern-miner": {
+        "model": "haiku",
+        "description": "Scans local Claude Code session transcripts for recurring patterns worth promoting to skills, agents, hooks, or feedback notes. Pure stdlib regex miner — no LLM calls, no network. Five categories: user corrections, repeated tool sequences, cross-project file patterns, manual command rituals, and observed secrets (rotation tracker). Output is markdown report + candidates JSON consumed by self-improvement-architect.",
+        "file": "agents/transcript-pattern-miner.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "ui-validator": {
+        "model": "sonnet",
+        "description": "Run deterministic UI scans against the running dev server: layout collisions, touch-target violations, console errors, hydration stability, computed-style diffs vs prior baseline, and per-route visual SSIM. Used at Phase 3 chunk-close on UI-touching chunks and at Phase 4 Review sub-step B on every build that has `uiTarget != null`. Owns its own browser session so authed routes scan correctly.",
+        "file": "agents/ui-validator.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-24"
+        }
+      }
     },
     "skills": {
-      "agent-rally-point": "Use when coordinating build-loop with peer coding agents, checking Rally Point presence/inbox state, posting …",
-      "agent-rally-watcher": "Use when listening for Rally Point changes, wiring coordination watchers, debugging watch-loop behavior, or c…",
-      "api-registry-bridge": "Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks t…",
-      "architecture-dead": "Use when the user asks to \"find dead code\", \"scan for orphaned components\", or \"clean up unused files\", or du…",
-      "architecture-impact": "Use when Phase 1 Assess evaluates top-risk components, Phase 5 Iterate precedes a cross-layer fix, or the use…",
-      "architecture-review": "Use when Phase 4 Review covers a build that crosses 2+ layers, or the user asks for an \"architectural review\"…",
-      "architecture-rules": "Use when Phase 4 Review checks architectural integrity, the user asks to \"check for violations\" or \"find circ…",
-      "architecture-scan": "Use when Phase 1 Assess detects stale architecture state, the user asks for an \"architecture scan\", or before…",
-      "architecture-trace": "Use when the user asks to \"trace data flow\", \"follow this request end-to-end\", or \"show how X reaches Y\". Fol…",
-      "attribution-standard": "Apply the canonical four-layer Apache-2.0 attribution model (NOTICE, per-file SPDX, REUSE.toml, canary marker…",
-      "authentication": "Use when wiring auth to a new project, debugging login errors (redirect_uri_mismatch, invalid_grant, session …",
-      "auto-decision-capture": "Project-scoped skill for proactive in-session decision capture. Provides Claude the signal taxonomy, confiden…",
-      "build-loop": "Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', '…",
-      "building-with-deepagents": "Use when building or refactoring an agent that imports OSS `deepagents` (`from deepagents import create_deep_…",
-      "capabilities": "Invoked by Phase 1 Assess to populate `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via p…",
-      "debug-loop": "Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory loo…",
-      "debugging-assess": "Parallel domain assessment for complex debugging symptoms — fans out database / frontend / API / performance …",
-      "debugging-debug-loop": "Iterative root-cause debugging with 5 Whys, causal/fault-tree analysis, hypothesis testing, fix-verify-score …",
-      "debugging-memory-search": "Memory-first lookup before debugging — search local build-loop incidents and optionally standalone Coding Deb…",
-      "debugging-store": "Store a debugging incident after fixing a bug — writes build-loop's native local incident record and optional…",
-      "debugging-memory": "Use when the user asks to \"debug this\", \"fix this bug\", \"investigate error\", \"diagnose\", \"root cause\", or rep…",
-      "defenseclaw-bridge": "Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific…",
-      "handoff": "Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a f…",
-      "ibr-bridge": "Routing bridge to the IBR plugin for UI visual verification. Build-loop prefers IBR `scan` / `scan_macos` whe…",
-      "knowledge": "Canonical build-loop-memory framework. Use when the user asks to \"record a decision\", \"log an ADR\", \"write an…",
-      "knowledge-review": "Repo-local episodic memory review surface. Use when the user asks to \"review my decisions\", \"show review queu…",
-      "logging-tracer": "Use when the user asks to \"add logging\", \"add tracing\", \"improve observability\", \"OpenTelemetry\", \"structured…",
-      "logging-tracer-bridge": "Use when the bundled logging-tracer skill signals insufficient tier-selection or codegen, or the user asks fo…",
-      "loop-builder": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate…",
-      "mcp-builder": "Use when building, packaging, or debugging an MCP server, adding MCP tools to a plugin, or working on .mcp.js…",
-      "model-tiering": "Use when choosing a model tier for a subagent, deciding code-tier vs thinking-tier in frontmatter, or escalat…",
-      "native-ax-driver": "Use when the build needs to automate a macOS .app without touching the hardware cursor, or the user asks to \"…",
-      "optimize": "Use when the user says \"optimize this\", \"optimization\", \"make X faster\", \"reduce <metric>\", or \"speed up my a…",
-      "plan-verify": "Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:verify-plan`, asks to \"verify the…",
-      "plugin-builder": "Use when the user asks to create, build, scaffold, convert, or migrate a Claude Code plugin, or needs guidanc…",
-      "plugin-tests": "Static-analysis test harness for Claude Code plugins. Triggers on \"test plugin\", \"validate plugin\", \"check sk…",
-      "prd-bridge": "Use when Phase 1 Assess runs, the user mentions a PRD, or asks to \"ground the build in product strategy\". Sur…",
-      "recursive-retrospective": "Run a recursive-learning retrospective on an app/agent/plugin/build-loop project — analyze build history, beh…",
-      "research": "Use when the user asks to \"research\", \"investigate\", \"evaluate options\", or \"find out about\" a topic. Generat…",
-      "runtime-parity-verification": "Use in Phase 4/5 (Validate/Iterate) for ANY change to a user-visible flow — web, macOS, iOS, agent, or CLI/TU…",
-      "security-methodology": "Use when a build crosses a security boundary (auth, authz, secrets handling, network exposure, persistence of…",
-      "self-improve": "Use when Phase 6 Learn fires automatically after Report, the user runs `/build-loop:self-improve`, or asks to…",
-      "spec-writing": "Write a build-loop-compatible plan/spec. Walks the completeness checklist before drafting; runs plan-critic o…",
-      "sync-skills": "Use when the user asks to \"check skill drift\", \"sync skills\", or \"update architecture skills\", or when Phase …",
-      "telemetry": "Use when adding observability/telemetry to an app, instrumenting traces/metrics/logs, wiring LLM/agent tracin…",
-      "ui-design": "Use when build-loop needs UI design direction, visual style selection, UI guidance inventory, a .build-loop/a…"
+      "agent-rally-point": {
+        "description": "\"Use when coordinating build-loop with peer coding agents, checking Rally Point presence/inbox state, posting handoffs or feedback, validating the embedded Rally Point boundary, or changing the future agent-rally-point spin-out surface.\" user-invocable: false",
+        "file": "skills/agent-rally-point/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "agent-rally-watcher": {
+        "description": "\"Use when listening for Rally Point changes, wiring coordination watchers, debugging watch-loop behavior, or changing the future agent-rally-watcher spin-out surface.\" user-invocable: false",
+        "file": "skills/agent-rally-watcher/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "api-registry-bridge": {
+        "description": "Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to \"register this API\" or \"check the API registry\". Consults api-registry plugin; degrades gracefully if plugin is absent. user-invocable: false",
+        "file": "skills/api-registry-bridge/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "architecture-dead": {
+        "description": "Use when the user asks to \"find dead code\", \"scan for orphaned components\", or \"clean up unused files\", or during Phase 4 Review before a release. Scans for unreachable components and dead code; build-loop's native scan from NavGator's CLI.",
+        "file": "skills/architecture/dead/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "architecture-impact": {
+        "description": "Use when Phase 1 Assess evaluates top-risk components, Phase 5 Iterate precedes a cross-layer fix, or the user asks \"what does changing X break\". Blast-radius analysis tracing upstream/downstream dependencies for a component or file before refactor.",
+        "file": "skills/architecture/impact/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "architecture-review": {
+        "description": "Use when Phase 4 Review covers a build that crosses 2+ layers, or the user asks for an \"architectural review\" or \"full integrity check\". Covers system flow, component connections, documentation drift, and lessons; heavy-weight, native copy from NavGator.",
+        "file": "skills/architecture/review/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "architecture-rules": {
+        "description": "Use when Phase 4 Review checks architectural integrity, the user asks to \"check for violations\" or \"find circular deps\", or before a release. Detects orphans, layer violations, circular dependencies, and hotspots; build-loop's native rules engine from NavGator.",
+        "file": "skills/architecture/rules/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "architecture-scan": {
+        "description": "Use when Phase 1 Assess detects stale architecture state, the user asks for an \"architecture scan\", or before blast-radius analysis. Refreshes Build Loop's native component and connection data in `.build-loop/architecture/`, with NavGator reserved for escalation-only capabilities.",
+        "file": "skills/architecture/scan/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "architecture-trace": {
+        "description": "Use when the user asks to \"trace data flow\", \"follow this request end-to-end\", or \"show how X reaches Y\". Follows a component's connections from input to output across the architecture; build-loop's native trace copied from NavGator's CLI.",
+        "file": "skills/architecture/trace/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "attribution-standard": {
+        "description": "\"Apply the canonical four-layer Apache-2.0 attribution model (NOTICE, per-file SPDX, REUSE.toml, canary markers) to a repo. Triggers on 'stamp attribution', 'add NOTICE', 'license headers', 'attribution layers', a newly public repo, or a repo with .git but no NOTICE / no REUSE.toml / no CONTRIBUTING.md. Build-loop Phase 1 Assess can advise running this when shipped source files lack SPDX headers.\" user-invocable: fa…",
+        "file": "skills/attribution-standard/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "authentication": {
+        "description": "Use when wiring auth to a new project, debugging login errors (redirect_uri_mismatch, invalid_grant, session callback, refresh_token), or adding social/magic link flows. Covers Better Auth (Drizzle/Neon), Supabase Auth (SSR), Google OAuth, and Resend transactional email. user-invocable: false",
+        "file": "skills/authentication/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "auto-decision-capture": {
+        "description": "Project-scoped skill for proactive in-session decision capture. Provides Claude the signal taxonomy, confidence ladder, overwrite rules, and the three extraction prompts (SPO triplet / MADR-aligned / batch consolidation) so substantive decisions land in build-loop-memory without manual triggering. Use when the user makes a substantive choice, confirms a proposal, or implies a constraint with textual evidence. user-i…",
+        "file": "skills/auto-decision-capture/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "build-loop": {
+        "description": "\"Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', 'rewrite', 'replace') OR symptom language ('fix', 'broken', 'doesn't work', 'isn't loading', 'not displaying', 'missing', 'should show', 'needs to', 'make it', 'show this differently') OR any task touching 2+ files, adding/removing an endpoint, cro…",
+        "file": "skills/build-loop/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-21"
+        }
+      },
+      "building-with-deepagents": {
+        "description": "Use when building or refactoring an agent that imports OSS `deepagents` (`from deepagents import create_deep_agent`). Covers SubAgent API, middleware, tool scoping, streaming, checkpointing. Not for `.claude/agents/*.md`. user-invocable: false",
+        "file": "skills/building-with-deepagents/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "capabilities": {
+        "description": "Invoked by Phase 1 Assess to populate `state.json.activeCapabilities[<phase>]` with ≤8 relevant entries via plugin-surface collapse + trigger-aware demotion. Keeps the orchestrator below the empirical tool-selection ceiling. Not user-callable; orchestrator-internal. user-invocable: false",
+        "file": "skills/capabilities/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "debug-loop": {
+        "description": "Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues.",
+        "file": "skills/debug-loop/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-18"
+        }
+      },
+      "debugging-assess": {
+        "description": "Parallel domain assessment for complex debugging symptoms — fans out database / frontend / API / performance assessors in parallel and ranks findings. Build-loop's native assessor orchestration, adapted from debugger command workflows (no canonical SKILL.md exists upstream).",
+        "file": "skills/debugging/assess/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "debugging-debug-loop": {
+        "description": "Iterative root-cause debugging with 5 Whys, causal/fault-tree analysis, hypothesis testing, fix-verify-score cycles, and fix-critique pressure-test. Up to 5 iterations. Build-loop's native debug loop, adapted from debugger workflows.",
+        "file": "skills/debugging/debug-loop/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "debugging-memory-search": {
+        "description": "Memory-first lookup before debugging — search local build-loop incidents and optionally standalone Coding Debugger memory. Build-loop's native debugging memory, adapted from debugger workflows. Distinct from the legacy in-tree `build-loop:debugging-memory` skill (kept for backward compat); this is the source-tracked native version.",
+        "file": "skills/debugging/memory/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "debugging-store": {
+        "description": "Store a debugging incident after fixing a bug — writes build-loop's native local incident record and optionally mirrors to standalone Coding Debugger. Build-loop's native incident storage; canonical source has no discrete SKILL.md (the §\"Incident Documentation\" section of debugging-memory).",
+        "file": "skills/debugging/store/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "debugging-memory": {
+        "description": "Use when the user asks to \"debug this\", \"fix this bug\", \"investigate error\", \"diagnose\", \"root cause\", or reports a crash/exception/failure. Memory-first workflow checks past incidents before investigating.",
+        "file": "skills/debugging-memory/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "defenseclaw-bridge": {
+        "description": "Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific files (CLAUDE.md indicates the bridge target). Bridges build-loop's orchestrator to defenseclaw's eval/test conventions; otherwise no-op.",
+        "file": "skills/defenseclaw-bridge/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "handoff": {
+        "description": "\"Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'.\" user-invocable: true",
+        "file": "skills/handoff/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "ibr-bridge": {
+        "description": "Routing bridge to the IBR plugin for UI visual verification. Build-loop prefers IBR `scan` / `scan_macos` when the IBR plugin is installed; otherwise falls back to build-loop's own `native-ax-driver` / `ui-validator`. Never falls back to nm/strings.",
+        "file": "skills/ibr-bridge/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "knowledge": {
+        "description": "Canonical build-loop-memory framework. Use when the user asks to \"record a decision\", \"log an ADR\", \"write an MADR\", \"capture this choice\", \"regenerate the decisions index\", \"validate knowledge\", \"migrate feedback to decisions\", or \"recall <topic>\". Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only. user-invocable: true",
+        "file": "skills/knowledge/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-30"
+        }
+      },
+      "knowledge-review": {
+        "description": "Repo-local episodic memory review surface. Use when the user asks to \"review my decisions\", \"show review queue\", \"check decision rot\", \"list open conflicts\", \"find stale procedures\", or runs `/knowledge:review`. Read-only — never auto-resolves. user-invocable: false",
+        "file": "skills/knowledge-review/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "logging-tracer": {
+        "description": "Use when the user asks to \"add logging\", \"add tracing\", \"improve observability\", \"OpenTelemetry\", \"structured logging\", or reports silent failures or no runtime visibility. Generates stack-appropriate logging with optional OTel.",
+        "file": "skills/logging-tracer/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "logging-tracer-bridge": {
+        "description": "Use when the bundled logging-tracer skill signals insufficient tier-selection or codegen, or the user asks for \"extended observability\" or \"cross-build log correlation\". Optional escalation to standalone Coding Debugger for additional tracer backends and advanced placement intelligence.",
+        "file": "skills/logging-tracer-bridge/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "loop-builder": {
+        "description": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate a workflow loop\", \"adapt a framework into a loop\", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.",
+        "file": "skills/loop-builder/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "mcp-builder": {
+        "description": "Use when building, packaging, or debugging an MCP server, adding MCP tools to a plugin, or working on .mcp.json, transport, or bundling. Pair with plugin-builder when the plugin exposes MCP tools. user-invocable: false",
+        "file": "skills/mcp-builder/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "model-tiering": {
+        "description": "Use when choosing a model tier for a subagent, deciding code-tier vs thinking-tier in frontmatter, or escalating mid-flow. Covers the multi-model abstraction — Opus/Sonnet/Haiku are Anthropic-default mappings; the tier abstraction is provider-portable. user-invocable: false",
+        "file": "skills/model-tiering/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-10"
+        }
+      },
+      "native-ax-driver": {
+        "description": "Use when the build needs to automate a macOS .app without touching the hardware cursor, or the user asks to \"click through the app\" or \"test the UI headlessly\". Drives running apps via Accessibility API; self-contained Swift binary — no IBR, Playwright, or Appium required.",
+        "file": "skills/native-ax-driver/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-07"
+        }
+      },
+      "optimize": {
+        "description": "Use when the user says \"optimize this\", \"optimization\", \"make X faster\", \"reduce <metric>\", or \"speed up my app\". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables. user-invocable: true",
+        "file": "skills/optimize/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "plan-verify": {
+        "description": "Use when build-loop Phase 2 wraps plan drafting, the user runs `/build-loop:verify-plan`, asks to \"verify the plan\" or \"lint the plan\", or any plan markdown change touches evidence, synthesis-density, risk_reason, or modifies_api fields. Runs deterministic plan-verify rules and emits findings JSON. user-invocable: false",
+        "file": "skills/plan-verify/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "plugin-builder": {
+        "description": "Use when the user asks to create, build, scaffold, convert, or migrate a Claude Code plugin, or needs guidance on plugin.json, directory layout, hooks, MCP servers, agents, LSP, or distribution. user-invocable: false",
+        "file": "skills/plugin-builder/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-06"
+        }
+      },
+      "plugin-tests": {
+        "description": "Static-analysis test harness for Claude Code plugins. Triggers on \"test plugin\", \"validate plugin\", \"check skill resolution\", \"run plugin tests\", \"lint plugin\", \"verify manifest\", \"namesake collision\", \"MCP registration check\". Runs Python stdlib pytest scripts that catch namesake collisions, manifest drift, MCP misregistration, trigger-phrase coverage gaps, bridge pre-flight gaps, agent-surface drift, and cache-pru…",
+        "file": "skills/plugin-tests/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-04"
+        }
+      },
+      "prd-bridge": {
+        "description": "Use when Phase 1 Assess runs, the user mentions a PRD, or asks to \"ground the build in product strategy\". Surfaces always-true principles and Navigation Map from the project PRD so subsequent phases reason from strategic frame; recommends prd-builder if none exists.",
+        "file": "skills/prd-bridge/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-22"
+        }
+      },
+      "recursive-retrospective": {
+        "description": "Run a recursive-learning retrospective on an app/agent/plugin/build-loop project — analyze build history, behavior, and current state to extract reusable learning objects and encode them into memory, agents, skills, plugins, evals, preflights, and approval gates. Use after a substantial build, when reviewing a project's trajectory, when deciding preserve/refine/redirect/reset, or when converting a session into durab…",
+        "file": "skills/recursive-retrospective/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-18"
+        }
+      },
+      "research": {
+        "description": "Use when the user asks to \"research\", \"investigate\", \"evaluate options\", or \"find out about\" a topic. Generate a repo-grounded research packet before deciding whether/how to build — pre-decision analysis with risks, best path, confidence, next action. user-invocable: true",
+        "file": "skills/research/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-09"
+        }
+      },
+      "runtime-parity-verification": {
+        "description": "Use in Phase 4/5 (Validate/Iterate) for ANY change to a user-visible flow — web, macOS, iOS, agent, or CLI/TUI — before claiming \"done\". Verifies the RUNNING app's core flow by cross-checking the rendered/queryable UI against the backing source-of-truth (DB/API/daemon/tool-state), screen-independently. Triggers — \"verify it works\", \"confirm the fix\", \"does X actually work\", \"nothing happens when I…\", \"not showing\", …",
+        "file": "skills/runtime-parity-verification/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-08"
+        }
+      },
+      "security-methodology": {
+        "description": "\"Use when a build crosses a security boundary (auth, authz, secrets handling, network exposure, persistence of sensitive data) or when Phase 1 Assess flags `triggers.riskSurfaceChange: true`. Provides the threat-modeling and scoped-permission methodology for build-loop's security-reviewer agent.\"",
+        "file": "skills/security-methodology/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "self-improve": {
+        "description": "Use when Phase 6 Learn fires automatically after Report, the user runs `/build-loop:self-improve`, or asks to \"scan recent runs\" or \"improve build-loop\". Scans recent runs for recurring patterns, auto-drafts experimental skills/agents with A/B tracking.",
+        "file": "skills/self-improve/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "spec-writing": {
+        "description": "Write a build-loop-compatible plan/spec. Walks the completeness checklist before drafting; runs plan-critic on output. Triggers when build-loop Phase 2 starts OR when the user says \"write a plan\", \"write a spec\", \"draft a plan for X\", \"spec out a feature\".",
+        "file": "skills/spec-writing/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-10"
+        }
+      },
+      "sync-skills": {
+        "description": "Use when the user asks to \"check skill drift\", \"sync skills\", or \"update architecture skills\", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/ and skills/debugging/, recomputes source_hash, reports drift. Read-only.",
+        "file": "skills/sync-skills/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-05-28"
+        }
+      },
+      "telemetry": {
+        "description": "Use when adding observability/telemetry to an app, instrumenting traces/metrics/logs, wiring LLM/agent tracing, choosing a monitoring vendor, or auditing an app for missing telemetry. Triggers — \"add telemetry\", \"add observability\", \"instrument this\", \"tracing\", \"OpenTelemetry/OTel\", \"LLM observability\", \"LangChain tracing\", \"Phoenix/Langfuse/LangSmith\", \"Crashlytics/Sentry/mobile telemetry\", \"why is this slow in pr…",
+        "file": "skills/telemetry/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-08"
+        }
+      },
+      "ui-design": {
+        "description": "Use when build-loop needs UI design direction, visual style selection, UI guidance inventory, a .build-loop/app-contract/ui.md design contract, or non-trivial web/mobile/native UI planning. Build-loop-owned design route for design-contract-specialist; selects from project tokens, recent structures, UI Guidance, IBR artifacts, Mockup Gallery, and research based on product/workflow/data/platform fit. user-invocable: f…",
+        "file": "skills/ui-design/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-02"
+        }
+      }
     },
     "scripts": {
       "scripts/_db_url.py": "Shared Postgres DB-URL resolver. Stdlib-only, import-safe.",
@@ -947,6 +1493,7 @@
       "scripts/append_milestone.py": "Append one milestone record to a project's append-only milestones.jsonl log.",
       "scripts/append_run.py": "Append a Learn-visible run record to `.build-loop/state.json.runs[]`.",
       "scripts/apple_sourcekit_triage.py": "",
+      "scripts/architecture_diagram/comments_to_backlog.py": "Ingest exported architecture-diagram comments into the build-loop backlog as OPEN items.",
       "scripts/architecture_diagram/drift_lint.py": "Drift linter for the living architecture manifest.",
       "scripts/architecture_diagram/generate.py": "Generate the living architecture model for the build-loop flow diagram.",
       "scripts/architecture_freshness.py": "Architecture freshness state manager — Chunk 4 of architecture-awareness.",

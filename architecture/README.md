@@ -109,6 +109,31 @@ Mirrors the `scripts/sync_skills.py` drift-detector contract. Read-only, structu
 
 ---
 
+## Source-of-truth detail + version control
+
+Each agent (and skill) carries, auto-derived from its definition file:
+
+- **`model`** — its tier (from frontmatter).
+- **`description`** — what it does, extracted from the agent's frontmatter (examples stripped).
+  Click any agent chip in the diagram to read it — the diagram is a source of truth for agent behavior.
+- **`last_updated`** — `{author, date}` from `git log -1` on the file, so you see **who last
+  changed each component and when**. Component files aren't touched by the generator, so this is
+  stable and doesn't churn `model.json`.
+
+## Capturing feedback → backlog (open items)
+
+Comments left on the diagram (autosaved, then **⬇ Backup** to a `.json`) become assessable open
+items in the build-loop backlog:
+
+```bash
+python3 scripts/architecture_diagram/comments_to_backlog.py <backup.json>      # --dry-run to preview
+```
+
+Each commented element becomes one `backlog.py` item (`status: open`, `provenance: architecture-diagram`,
+`--type decision` by default) under the repo's `.build-loop/backlog/`, then `backlog.py sync` indexes
+it — ready for assessment / triage into improvements. Segmentation (`repo`/`branch`) follows the
+backlog system's rules; pass `--repo` for a different target.
+
 ## Provenance
 
 `model.json._provenance.content_sha256` is a hash of the derived model — **no git sha**, so the
