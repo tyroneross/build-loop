@@ -116,11 +116,13 @@ Multi-session, multi-tool runs (Claude Code + Codex; two Claude sessions; Claude
 
 Cheat-sheet (full detail in B1):
 
-- Verifier verdicts (`PASS` / `VARIANCE` / `BLOCKED`) are gating, not advisory; Claude does not advance past `verification-pending` until the latest verifier verdict for that step is `PASS` or a resolved `VARIANCE`.
+- Verifier verdicts (`PASS` / `VARIANCE` / `BLOCKED`) are gating inside an active coordination file; Rally carries those peer-authored verdicts but does not independently verify them.
 - Every cross-session signal goes through `scripts/rally_point/post.py` `post()` (bumps revision + appends record in canonical order — never raw `append_change`).
 - Every write-handoff brief MUST include all seven MECE fields (owns / does-not-own / interface-contract / integration-checkpoint / allowed-tools / denied-tools / acceptance-criteria); linted via `scripts/brief_mece_validator.py`.
 
-For parity with non-Claude tools (which lack SessionStart hooks), the host-neutral preflight CLI is `rally start claude_code --human` — same envelope, same routing decision (`proceed_solo` / `join_active`). When intent/files are known, use `rally start claude_code --intent "<work>" --path "<file>" --json`; peers read active work from `active_peers[]` and last-known active/stopped session state from `peer_states[]`. When done, use `rally stop claude_code --session-id "<sid>" --reason "done" --json` so peers see the stop and file claims are released. Claude Code typically gets startup for free via SessionStart; the CLI is the manual equivalent when hooks are unavailable. If the binary isn't installed, proceed without it.
+For parity with non-Claude tools (which lack SessionStart hooks), the host-neutral preflight CLI is `rally enter --tool claude_code --json`, followed by `rally next --tool claude_code --json` when checking addressed work. When files are known, use `rally enter --tool claude_code --path "<file>" --json` and `rally say claim --tool claude_code --subject "<work>" --path "<file>" --json`; peers read active work from Rally room state. When done, use `rally stop claude_code --json` so peers see the stop and file claims are released. Claude Code typically gets startup for free via SessionStart; the CLI is the manual equivalent when hooks are unavailable. If the binary isn't installed, proceed without it.
+
+Rally is coordination metadata, not verification evidence. Use Rally to find peers, claims, handoffs, and verifier messages; use git, tests, manifests, registries, or GitHub directly for code, package, version, and release truth.
 
 ## Plugin Development
 

@@ -77,6 +77,27 @@ Threats this model does NOT cover (out of scope by design): a hostile process ru
 
 ---
 
+## Evidence boundary (Rally is not a verifier)
+
+Rally records are peer-authored coordination metadata. They can tell an agent
+what another agent claimed, handed off, reviewed, blocked, or released, and they
+can point to artifacts worth inspecting. They do not prove the artifact, code,
+package, tag, release, or remote state is correct.
+
+Before making a factual claim about repo or release state, check the authoritative
+surface directly:
+
+- Code and docs: working tree, `git diff`, file contents, and tests.
+- Package/version surface: manifests, package tests, dry-run pack/publish output,
+  and release-surface verifier scripts.
+- Remote release state: GitHub/npm/GitHub Packages API or public pages, not a
+  Rally `release` or `artifact` record.
+
+A Rally `artifact`, `release`, `resolve`, `review_artifact`, or `next` record is
+a routing signal. It may identify what to inspect; it is never the inspection.
+
+---
+
 ## Cheap detection at step boundaries
 
 **Poll `coordination_status.py` BEFORE any step-boundary decision.** Costs ~100 tokens; prevents stale-state recommendations that cost full plan rewrites (~5K tokens).
@@ -152,7 +173,7 @@ any of the above. Memory citation:
 
 ## Idle-agent self-selection (rally facilitates, the agent decides)
 
-**Rally is a facilitator, not an orchestrator.** It exposes room state (`rally room` / `rally next`), file-level deconfliction (`rally check before-write --path P`), and claims/handoffs. It does **not** assign or pick work. A waiting agent runs this decision tree itself and chooses — the agent's LLM reasons over rally's surfaced state. This keeps coordination decentralized: no single point that hands out tasks (which would be a failure site and a bottleneck).
+**Rally is a facilitator, not an orchestrator or verifier.** It exposes room state (`rally room` / `rally next`), file-level deconfliction (`rally check before-write --path P`), and claims/handoffs. It does **not** assign work, pick work, or verify code/release truth. A waiting agent runs this decision tree itself and chooses — the agent's LLM reasons over Rally's surfaced coordination records. This keeps coordination decentralized: no single point that hands out tasks (which would be a failure site and a bottleneck).
 
 When an agent is idle and `rally next` returns no actionable item, walk the tree top-down, stop at the first match:
 
@@ -162,7 +183,7 @@ When an agent is idle and `rally next` returns no actionable item, walk the tree
 4. **All coding candidates are claimed or conflicted** → do read-only research or assessment that helps and has zero file conflict (simplification scans of untouched areas, duplication/test-gap audits, docs the room needs).
 5. **Nothing fits, or the only work left is risky/deferred/peer-exclusive** → stay idle and say so; do not start risky/deferred work, do not touch another session's claimed paths.
 
-The tree is the guideline; rally supplies the facts (claims, collisions, pending items) each branch needs. Two same-tool agents running it independently land on different work because claim-first + `check before-write` makes the first claimant win and the second re-select — no central referee required.
+The tree is the guideline; Rally supplies coordination records (claims, collisions, pending items) each branch needs. Two same-tool agents running it independently land on different work because claim-first + `check before-write` makes the first claimant win and the second re-select — no central referee required.
 
 ## Coordination reliability (verify the room before trusting it)
 

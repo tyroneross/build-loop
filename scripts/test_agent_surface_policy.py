@@ -128,6 +128,32 @@ class OtherAgentSurfaceTests(unittest.TestCase):
         self.assertIn("agent-role-taxonomy.md", orchestrator_text)
         self.assertIn("agent-role-taxonomy.md", skill_text)
 
+    def test_rally_coordination_boundary_is_current(self) -> None:
+        instruction_paths = [
+            REPO_ROOT / "AGENTS.md",
+            REPO_ROOT / "CLAUDE.md",
+            CODEX_ARTIFACT_DIR / "AGENTS.md",
+        ]
+
+        for path in instruction_paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("rally codex --human", text, str(path))
+            self.assertNotIn("rally start", text, str(path))
+            self.assertNotIn("--session-id", text, str(path))
+            self.assertIn("Rally is coordination metadata", text, str(path))
+
+        for path in [REPO_ROOT / "README.md", CODEX_ARTIFACT_DIR / "README.md"]:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("rally codex --human", text, str(path))
+            self.assertNotIn("rally start", text, str(path))
+
+        readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        coordination_text = (REPO_ROOT / "references" / "coordination-rules.md").read_text(encoding="utf-8")
+        skill_text = (REPO_ROOT / "skills" / "build-loop" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("not verification evidence", readme_text)
+        self.assertIn("Evidence boundary (Rally is not a verifier)", coordination_text)
+        self.assertIn("not verification evidence", skill_text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

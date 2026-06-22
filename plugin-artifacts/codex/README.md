@@ -68,11 +68,15 @@ python3 scripts/install_memory.py --ensure-project build-loop
 
 ## Agent Start Protocol
 
-Start every build-loop repo session by checking Rally. The historical
-`rally codex --human` form may be unavailable on newer Rally binaries; use the
-current command surface when needed.
+Start every build-loop repo session by checking Rally. Rally is coordination
+metadata, not verification evidence: use it to discover peers, claims,
+handoffs, and soft file conflicts; confirm code, package, version, and release
+truth from git, tests, manifests, registries, or GitHub directly. Older direct
+tool subcommand forms may be unavailable on newer Rally binaries; use the
+current `rally enter` / `rally next` / `rally room` surface.
 
 ```bash
+rally enter --tool codex --json
 rally next --tool codex --json
 rally room --tool codex --json
 ```
