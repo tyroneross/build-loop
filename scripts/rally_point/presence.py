@@ -253,7 +253,7 @@ def _iter_presence(channel_dir: Path):
             continue
 
 
-def reap_stale(channel_dir: Path) -> list:
+def reap_stale(channel_dir: Path, *, apply: bool = True) -> list:
     """Remove stale *live* presence. Returns reaped session IDs.
 
     Pure-reader cursor stubs (``tool == "reader"``, ``heartbeat_ts``
@@ -261,18 +261,28 @@ def reap_stale(channel_dir: Path) -> list:
     sole purpose is to persist a delta cursor between polls. Only real
     live presence (a positive heartbeat older than the window) is
     removed.
+
+    ``apply`` (default ``True`` for backward compatibility) — when ``False``
+    the function computes which sessions WOULD be reaped and returns their IDs
+    without unlinking any file. Callers such as the reaper dry-run path use
+    ``apply=False`` to report eligibility without side-effects.
     """
     cutoff = time.time() - heartbeat_minutes(channel_dir) * 60
     reaped: list = []
     for f, rec in _iter_presence(channel_dir):
         if rec.get("tool") == "reader":
             continue  # cursor stub — keep, never a peer
-        if float(rec.get("heartbeat_ts", 0)) < cutoff:
-            try:
-                f.unlink()
-                reaped.append(rec.get("session_id", f.stem))
-            except OSError:
-                continue
+        try:
+            hb = float(rec.get("heartbeat_ts", 0))
+        except (TypeError, ValueError):
+            continue
+        if hb > 0 and hb < cutoff:
+            if apply:
+                try:
+                    f.unlink()
+                except OSError:
+                    continue
+            reaped.append(rec.get("session_id", f.stem))
     return reaped
 
 

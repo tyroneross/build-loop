@@ -76,6 +76,15 @@
       "_doc": "Golden decay vectors. MUST stay byte-identical to the Rust fixture so both test suites assert the same curve at the same reference ages — the cross-repo parity proof. Drift = the two implementations no longer verified against one shared truth.",
       "source": "crates/rally-cli/tests/fixtures/decay_vectors.json",
       "source_hash": "d4e3ec4d01eaf65b7016016cd7c1d73e3d54fa0961866c0514de7118d1b1e6e8"
+    },
+    "reaper.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "heartbeat_parity_vectors.json": {
+      "_doc": "Golden heartbeat parity vectors — byte-identical to the Rust fixture crates/rally-cli/tests/fixtures/heartbeat_parity_vectors.json; proves claude/codex heartbeats decay identically (tool-agnostic).",
+      "source": "crates/rally-cli/tests/fixtures/heartbeat_parity_vectors.json",
+      "source_hash": "8d88c3e23fd8688b9a536ad06e3bdc89ede71a0637ff0455e87889f2869099c3"
     }
   }
 }

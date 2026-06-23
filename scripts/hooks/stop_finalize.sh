@@ -259,4 +259,8 @@ else:
     }))
 PY
 
+# Fire-and-forget self-release: frees claude_code's presence + claims so peers
+# see the stop immediately. Guarded — never blocks, exit 0 preserved.
+command -v rally >/dev/null 2>&1 && rally stop claude_code --json >/dev/null 2>&1 || true
+
 exit 0

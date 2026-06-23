@@ -228,6 +228,52 @@ This complements (does not replace) the >10-minute idle absorption rule above:
 idle-absorption handles local reversible lanes a quiet peer left open; the lease
 timeout governs the formal lead/ownership role handover.
 
+## In-room stale-state reaper (actuator) & codex parity
+
+The sections above define WHEN records become stale. This section describes the
+ACTUATOR that physically removes them.
+
+**Canonical actuator (Rust):** `rally doctor --reap-stale [--apply]` — bundled with
+agent-rally-point >= 0.5. Dry-run by default; `--apply` physically removes
+over-TTL presence, claims, and leads.
+
+**Fallback actuator (Python):** `scripts/rally_point/reaper.py` — runs when the
+Rust binary is absent. Called fire-and-forget at every session-start via
+`hooks/session-start-rally-point.sh` Step 3. Also available as a standalone CLI:
+`python3 scripts/rally_point/reaper.py --workdir <path> [--apply] [--json]`.
+
+**FAIL-CLOSED invariant.** The reaper NEVER removes a record whose ownership
+timestamp it cannot unambiguously prove is over-TTL. Missing, unparseable, or
+future timestamps are ALWAYS preserved. Specifically:
+- Presence: `heartbeat_ts` must be a positive float AND older than
+  `heartbeat_minutes * 60` (default 900 s). A zero or unreadable value → kept.
+- Claims: `lease_expires_at` must be a valid RFC3339 timestamp AND `<= now`. A
+  missing, malformed, or future value → kept.
+- Lead: `_reclaimable(doc, now)` from `leadership.py` must return `True` (requires
+  a present, parseable `lease_until` that is at/after expiry). A malformed lease →
+  kept (the same FAIL-CLOSED invariant as `claim_lead`).
+
+**Rust-vs-Python claim store rule.** When the discovery bridge resolves via
+`repo-local-rally-cli`, the Rust binary owns the `claim-index.json` projection;
+the Python reaper reaps PRESENCE + Python lead.json only and reports expired claim
+count as `claims_deferred_to_rust` rather than physically rewriting the file (which
+would fight the Rust projection). Only when the Rust binary is absent does the
+Python reaper rewrite `claim-index.json`.
+
+**Codex parity.** A codex session emits the same presence record claude does, via
+the `.codex/hooks.json` `SessionStart` hook that calls `session_probe.py --tool
+codex`. Its presence record therefore ages and decays identically to claude's —
+heartbeat parity is proven by `scripts/rally_point/heartbeat_parity_vectors.json`
+(byte-identical to the Rust fixture `crates/rally-cli/tests/fixtures/
+heartbeat_parity_vectors.json`). The parity test in `test_reaper.py` asserts
+`decay.recency_weight(age, half_life_secs)` matches each vector's `expected_weight`
+within 1e-4, and the `stale_at_15m` staleness verdict, for every case.
+
+**Session-end self-release.** Both tool hooks emit `rally stop <tool>` at turn
+completion (`Stop` event) so peers immediately see the agent's absence rather than
+waiting for heartbeat TTL expiry. This contains accretion at the source and
+reduces the reaper's steady-state work.
+
 ## Idle-agent self-selection (rally facilitates, the agent decides)
 
 **Rally is a facilitator, not an orchestrator or verifier.** It exposes room state (`rally room` / `rally next`), file-level deconfliction (`rally check before-write --path P`), and claims/handoffs. It does **not** assign work, pick work, or verify code/release truth. A waiting agent runs this decision tree itself and chooses — the agent's LLM reasons over Rally's surfaced coordination records. This keeps coordination decentralized: no single point that hands out tasks (which would be a failure site and a bottleneck).

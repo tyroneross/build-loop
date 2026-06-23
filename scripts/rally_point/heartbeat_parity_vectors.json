@@ -1,0 +1,12 @@
+{
+  "_doc": "Golden heartbeat parity vectors. Byte-identical in agent-rally-point (crates/rally-cli/tests/fixtures/) and build-loop (scripts/rally_point/). Asserts a claude session and a codex session that emit a presence/heartbeat at the same age decay IDENTICALLY — heartbeat is tool-agnostic. Each case: a presence record's age_secs and the half-life; both tools MUST yield the same recency_weight and same staleness verdict at heartbeat_minutes.",
+  "half_life_secs": 172800,
+  "heartbeat_minutes": 15,
+  "cases": [
+    {"tool_a": "claude_code", "tool_b": "codex", "age_secs": 0, "expected_weight": 1.0, "stale_at_15m": false},
+    {"tool_a": "claude_code", "tool_b": "codex", "age_secs": 899, "expected_weight": 0.99640, "stale_at_15m": false},
+    {"tool_a": "claude_code", "tool_b": "codex", "age_secs": 901, "expected_weight": 0.99640, "stale_at_15m": true},
+    {"tool_a": "claude_code", "tool_b": "codex", "age_secs": 172800, "expected_weight": 0.5, "stale_at_15m": true},
+    {"tool_a": "claude_code", "tool_b": "codex", "age_secs": 1209600, "expected_weight": 0.00781, "stale_at_15m": true}
+  ]
+}

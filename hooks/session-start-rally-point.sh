@@ -38,7 +38,11 @@ else
         --workdir "$W" --tool claude_code --mode hook --start-watch >/dev/null 2>&1 || true
 fi
 
-# Step 3: advance cursor past probe's own writes (silent; same script, no VERBOSE).
+# Step 3: opportunistic reaper sweep — physical cleanup of over-TTL presence/claims/lead.
+# Fire-and-forget: never blocks, exit 0 preserved. Python fallback path (actuator).
+[ -f "$PKG/reaper.py" ] && python3 "$PKG/reaper.py" --workdir "$W" --apply >/dev/null 2>&1 || true
+
+# Step 4: advance cursor past probe's own writes (silent; same script, no VERBOSE).
 python3 "$PKG/hooks.py" session-start-advance --workdir "$W" 2>/dev/null || true
 
 exit 0
