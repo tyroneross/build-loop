@@ -1,6 +1,6 @@
 ---
 name: debugging-memory
-description: Use when the user asks to "debug this", "fix this bug", "investigate error", "diagnose", "root cause", or reports a crash/exception/failure. Memory-first workflow checks past incidents before investigating.
+description: Use when the user asks to "debug this", "fix this bug", "investigate error", "diagnose", "root cause", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback, and delegates the actual lookup to the `build-loop:debugging-memory-search` primitive.
 version: 1.5.0
 user-invocable: false
 ---

@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 46 skills · 311 scripts · 17 hooks** (auto-discovered f6dfdd73)
+**28 agents · 46 skills · 313 scripts · 17 hooks** (auto-discovered 5ab3c452)
 
 <details><summary>agents</summary>
 
@@ -68,7 +68,6 @@ Format spec + drift gate: `architecture/README.md`.
 - `capabilities`
 - `debug-loop`
 - `debugging-assess`
-- `debugging-debug-loop`
 - `debugging-memory`
 - `debugging-memory-search`
 - `debugging-store`
@@ -90,6 +89,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `prd-bridge`
 - `recursive-retrospective`
 - `research`
+- `root-cause-analysis`
 - `runtime-parity-verification`
 - `security-methodology`
 - `self-improve`
@@ -285,6 +285,8 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/rally_point/changes.py`
 - `scripts/rally_point/channel_paths.py`
 - `scripts/rally_point/checkpoint.py`
+- `scripts/rally_point/coordination_policy.py`
+- `scripts/rally_point/decay.py`
 - `scripts/rally_point/discovery_bridge.py`
 - `scripts/rally_point/fact_v1.py`
 - `scripts/rally_point/hook_budget.py`

@@ -1,6 +1,6 @@
 ---
 name: build-loop:debugging-memory-search
-description: Memory-first lookup before debugging — search local build-loop incidents and optionally standalone Coding Debugger memory. Build-loop's native debugging memory, adapted from debugger workflows. Distinct from the legacy in-tree `build-loop:debugging-memory` skill (kept for backward compat); this is the source-tracked native version.
+description: Search primitive — the memory LOOKUP step invoked BY the `build-loop:debugging-memory` workflow skill and by the domain assessors (api/db/frontend/perf). Searches local build-loop incidents and optional standalone Coding Debugger memory, returning a verdict + compact matches. Not a standalone diagnose entry and not a successor: `build-loop:debugging-memory` owns the verdict-handling workflow and delegates the actual lookup here.
 version: 0.1.0
 user-invocable: false
 source: claude-code-debugger/skills/debugging-memory/SKILL.md
@@ -32,7 +32,7 @@ The search returns a **verdict** with matching incidents and patterns when struc
 1. **KNOWN_FIX**: Apply the documented fix directly only when the strict direct-apply gate (below) passes; otherwise adapt the prior incident as a hypothesis and route to the standard fix flow
 2. **LIKELY_MATCH**: Review the past incident, use it as a starting point — never direct-apply
 3. **WEAK_SIGNAL**: Consider loosely related incidents, but investigate fresh
-4. **NO_MATCH**: Proceed with standard debugging via `build-loop:debugging-debug-loop`, then document the solution after
+4. **NO_MATCH**: Proceed with standard debugging via `build-loop:debug-loop`, then document the solution after
 
 ### Direct-apply gate (KNOWN_FIX only)
 
@@ -59,7 +59,7 @@ When this skill activates, always announce it to the user:
 
 ## Deep Investigation Mode
 
-For non-trivial issues, escalate to the `build-loop:debugging-debug-loop` skill. Trigger is the **verdict category**, not a numeric confidence score:
+For non-trivial issues, escalate to the `build-loop:debug-loop` skill. Trigger is the **verdict category**, not a numeric confidence score:
 
 - **`KNOWN_FIX`** → apply directly, skip the loop
 - **`LIKELY_MATCH`** → enter debug loop (past incidents need verification against current context)
@@ -142,6 +142,6 @@ Subagents do not inherit Skill or MCP access — pre-load context into their pro
 
 - `build-loop:debugging-store` — write incident after fix
 - `build-loop:debugging-assess` — parallel domain assessment for multi-domain symptoms
-- `build-loop:debugging-debug-loop` — iterative root-cause analysis with causal-tree investigation
+- `build-loop:debug-loop` — iterative root-cause analysis with causal-tree investigation
 
 *Source: adapted from the debugger workflow lineage and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

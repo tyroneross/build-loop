@@ -19,7 +19,7 @@ Persist a fixed bug to debugging memory so future builds can recognize recurrenc
 ## When to Activate
 
 - Phase 4 Review-F Report: for each Review-B/Iterate failure newly resolved this build, store the incident
-- After any `build-loop:debugging-debug-loop` run that produced a verified fix
+- After any `build-loop:debug-loop` run that produced a verified fix
 - User asks "save this fix", "remember this bug"
 
 ## Native Path — Build-Loop Incident Note
@@ -148,6 +148,6 @@ Write to `.build-loop/debugging/incidents/<incident_id>.json`. Flag `debugger JS
 
 - `build-loop:debugging-memory` — search memory before debugging
 - `build-loop:debugging-assess` — parallel domain assessment
-- `build-loop:debugging-debug-loop` — full iterative debugging that produces the incident this skill stores
+- `build-loop:debug-loop` — full iterative debugging that produces the incident this skill stores
 
 *Source: adapted from the debugger incident-documentation workflow and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

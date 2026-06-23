@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f6dfdd7303828b999afab7543b9da5c08cdd23ff98c9f73e10c860b500b93279"
+    "content_sha256": "5ab3c452b08532ff4d489903437aaa275050e2d67fedd8639ab6b52fe85614b4"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1235,16 +1235,8 @@
           "date": "2026-06-04"
         }
       },
-      "debugging-debug-loop": {
-        "description": "Iterative root-cause debugging with 5 Whys, causal/fault-tree analysis, hypothesis testing, fix-verify-score cycles, and fix-critique pressure-test. Up to 5 iterations. Build-loop's native debug loop, adapted from debugger workflows.",
-        "file": "skills/debugging/debug-loop/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-04"
-        }
-      },
       "debugging-memory-search": {
-        "description": "Memory-first lookup before debugging — search local build-loop incidents and optionally standalone Coding Debugger memory. Build-loop's native debugging memory, adapted from debugger workflows. Distinct from the legacy in-tree `build-loop:debugging-memory` skill (kept for backward compat); this is the source-tracked native version.",
+        "description": "Search primitive — the memory LOOKUP step invoked BY the `build-loop:debugging-memory` workflow skill and by the domain assessors (api/db/frontend/perf). Searches local build-loop incidents and optional standalone Coding Debugger memory, returning a verdict + compact matches. Not a standalone diagnose entry and not a successor: `build-loop:debugging-memory` owns the verdict-handling workflow and delegates the actual…",
         "file": "skills/debugging/memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1260,7 +1252,7 @@
         }
       },
       "debugging-memory": {
-        "description": "Use when the user asks to \"debug this\", \"fix this bug\", \"investigate error\", \"diagnose\", \"root cause\", or reports a crash/exception/failure. Memory-first workflow checks past incidents before investigating.",
+        "description": "Use when the user asks to \"debug this\", \"fix this bug\", \"investigate error\", \"diagnose\", \"root cause\", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback, and delegates the actual lookup to the `build-loop:debugging-memory-search` primitive.",
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1409,6 +1401,14 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-06-09"
+        }
+      },
+      "root-cause-analysis": {
+        "description": "Blameless root-cause analysis that produces durable system levers, not blame or one-off patches. Use AFTER a failure/regression/wrong-output/near-miss when you need to explain why it existed AND why it escaped controls, then land the smallest system change that prevents recurrence. Tiered L0/L1/L2 by impact. Distinct from debug-loop (which fixes the live bug); this is what debug-loop's report step and the recursive-…",
+        "file": "skills/root-cause-analysis/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-22"
         }
       },
       "runtime-parity-verification": {
@@ -1654,6 +1654,8 @@
       "scripts/rally_point/changes.py": "Rally Point change log — append-only, immutable, cross-tool event stream.",
       "scripts/rally_point/channel_paths.py": "Rally Point fallback channel path resolver (D1: worktree-aware slug).",
       "scripts/rally_point/checkpoint.py": "Rally Point checkpoint read — the single consume entry point (D3).",
+      "scripts/rally_point/coordination_policy.py": "Resolve the effective coordination policy (decay + reclaim tunables).",
+      "scripts/rally_point/decay.py": "Single source of truth for build-loop's coordination time policy.",
       "scripts/rally_point/discovery_bridge.py": "Shared discovery resolver for Rally Point channel selection.",
       "scripts/rally_point/fact_v1.py": "fact.v1 emitter — lossless ARP-ingestible records from build-loop coordination writes.",
       "scripts/rally_point/hook_budget.py": "Single source of truth for the rally coordination-hook wall-clock budget.",

@@ -87,7 +87,7 @@ Action sequence: 1) eliminate N+1, 2) add index, 3) re-verify latency
 
 If two assessors return overlapping `probable_causes` with similar confidence — flag as **multi-causal**. Both fixes may be needed. Don't pick one and discard the other.
 
-If they disagree fundamentally (e.g., database-assessor says query, performance-assessor says rendering) — present both, ask user which path to pursue first, OR escalate to `build-loop:debugging-debug-loop` for causal-tree investigation.
+If they disagree fundamentally (e.g., database-assessor says query, performance-assessor says rendering) — present both, ask user which path to pursue first, OR escalate to `build-loop:debug-loop` for causal-tree investigation.
 
 ## Output
 
@@ -105,7 +105,7 @@ Write summary to `.build-loop/state.json.debugging.assess[<symptom-hash>]`:
 ## Sibling Skills
 
 - `build-loop:debugging-memory` — search before assessing (mandatory pre-step)
-- `build-loop:debugging-debug-loop` — escalate when assessment is inconclusive
+- `build-loop:debug-loop` — escalate when assessment is inconclusive
 - `build-loop:debugging-store` — store the resolved incident after the recommended action lands
 
 *Source: adapted from the standalone debugger assess command plus the four assessor agents. Drift-checked by `build-loop:sync-skills`.*

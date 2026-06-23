@@ -1,7 +1,9 @@
 ---
 name: build-loop:debugging-debug-loop
-description: Iterative root-cause debugging with 5 Whys, causal/fault-tree analysis, hypothesis testing, fix-verify-score cycles, and fix-critique pressure-test. Up to 5 iterations. Build-loop's native debug loop, adapted from debugger workflows.
+description: "[ARCHIVED v0.1.0 — superseded by build-loop:debug-loop] Older source-tracked copy of the iterative debug loop, retained for version history. Not active and referenced by nothing; use build-loop:debug-loop."
 version: 0.1.0
+deprecated: true
+superseded_by: build-loop:debug-loop
 user-invocable: false
 source: claude-code-debugger/skills/debug-loop/SKILL.md
 source_hash: 07b2dd2ad30c210b14bbac3c4e7ddd772ed642dd4c478dfbdb81b52ae809c92a

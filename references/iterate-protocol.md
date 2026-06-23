@@ -41,7 +41,7 @@ At the START of every Iterate attempt, run the cascade in order. Stop at the fir
 
 4. **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `Skill("build-loop:debugging-assess")`. Fans out to relevant domain assessors (api / database / frontend / performance) in parallel. **Model override**: explicitly pass `model: sonnet` to each domain assessor to avoid 4 parallel Opus invocations. Only escalate individual assessors to Opus if their initial output flags `confidence: low` or `needs_judgment: true`.
 
-5. **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debugging-debug-loop")`. Do not attempt a 4th fix without it. The skill runs its own 7-phase cycle with up to 5 internal iterations. If still failing after 5 internal debug-loop iterations, hard-stop and escalate to user.
+5. **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Do not attempt a 4th fix without it. The skill runs its own 7-phase cycle with up to 5 internal iterations. If still failing after 5 internal debug-loop iterations, hard-stop and escalate to user.
 
 ## Prioritized work list
 
