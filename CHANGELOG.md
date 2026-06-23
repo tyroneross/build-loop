@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Zombie-tmux prevention — shared decision policy (Python mirror).**
+  `scripts/rally_point/liveness.py` mirrors agent-rally-point's two new shared
+  reaper/self-exit authorities: `reapable(liveness, parent_alive)` (the single
+  "may this session be killed?" decision — Live/Unknown never reaped; parent-dead
+  reaps only a `Stale` session; missing parent info degrades to the window
+  criterion alone) and `completion_self_exit_eligible(...)` (a task-scoped session
+  self-exits only when work is resolved AND `rally next` is non-actionable for a
+  sustained streak; `--persistent` opts out). Parity double-pinned by the
+  byte-identical `liveness_vectors.json` (now carries `reapable_cases` +
+  `self_exit_cases`, ≡ the Rust fixture; `_provenance.json` updated to the new
+  upstream `liveness.rs` hash). `test_liveness.py` asserts the same vectors the
+  Rust suite asserts. `references/coordination-rules.md` §"Zombie-tmux prevention"
+  documents all three layers + the fail-safe directions. The tmux/CLI plumbing
+  (Layers 1–3 actuators) is Rust-canonical; this Python layer mirrors the decision
+  policy only, as it does for `is_live`.
 - **Adaptive, multi-signal session liveness (Python mirror).**
   `scripts/rally_point/liveness.py` mirrors agent-rally-point's canonical
   `liveness.rs`: staleness ADAPTS to each session's planned heartbeat cadence

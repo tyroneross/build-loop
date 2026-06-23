@@ -22,7 +22,9 @@ from liveness import (  # noqa: E402
     MISS_MULTIPLIER,
     LivenessSignals,
     adaptive_window_secs,
+    completion_self_exit_eligible,
     is_live,
+    reapable,
 )
 
 _FIXTURE = Path(__file__).resolve().parent / "liveness_vectors.json"
@@ -124,3 +126,46 @@ def test_boundary_at_window_is_fresh():
     window = 1860
     assert is_live(LivenessSignals(heartbeat_age=window), window) == liveness.LIVE
     assert is_live(LivenessSignals(heartbeat_age=window + 1), window) == liveness.UNKNOWN
+
+
+# --- Layer 1/2/3 shared decision-policy parity (mirror of the Rust tests) ---
+
+
+def test_reapable_cases_match_golden_vectors():
+    v = _load()
+    for case in v["reapable_cases"]:
+        got = reapable(case["liveness"], case["parent_alive"])
+        assert got == case["expected"], case["name"]
+
+
+def test_self_exit_cases_match_golden_vectors():
+    v = _load()
+    for case in v["self_exit_cases"]:
+        got = completion_self_exit_eligible(
+            case["work_resolved"],
+            case["next_empty_streak"],
+            case["required_streak"],
+            case["persistent_optout"],
+        )
+        assert got == case["expected"], case["name"]
+
+
+def test_reapable_never_reaps_live_or_unknown():
+    for parent in (True, False, None):
+        assert reapable(liveness.LIVE, parent) is False
+        assert reapable(liveness.UNKNOWN, parent) is False
+
+
+def test_reapable_stale_parent_dead_reaped_alive_kept():
+    assert reapable(liveness.STALE, False) is True   # stale + dead parent → reap
+    assert reapable(liveness.STALE, True) is False   # stale + live parent → keep
+    assert reapable(liveness.STALE, None) is True    # stale + no info → window alone
+
+
+def test_self_exit_requires_resolved_and_sustained_empty():
+    assert completion_self_exit_eligible(True, 2, 2, False) is True
+    assert completion_self_exit_eligible(False, 100, 2, False) is False  # mid-task
+    assert completion_self_exit_eligible(True, 1, 2, False) is False     # streak short
+    assert completion_self_exit_eligible(True, 100, 2, True) is False    # opt-out
+    assert completion_self_exit_eligible(True, 1, 0, False) is True      # clamp to 1
+    assert completion_self_exit_eligible(True, 0, 0, False) is False

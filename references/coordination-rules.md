@@ -317,6 +317,68 @@ tracked as managed sessions, kills them, and tombstones the reap (closing the ga
 where `--reap` saw 0 of the real detached orphans). Attached sessions (a human is
 looking) are never killed.
 
+## Zombie-tmux prevention — three layers over ONE liveness model
+
+Root cause of accreted zombie tmux sessions: rally `exec`s the agent, so a session
+auto-closes when its agent EXITS, but agents that never exit (a disabled autonomy
+poller, idle detached panes) leave the session forever — tmux has no native
+idle/lifetime timeout. The fix is three layers, all reusing the single
+`liveness::is_live` 4-signal model and the adaptive window above. NONE adds a
+fixed/brute-force idle clock; lifetime follows real liveness/ownership.
+
+**Layer 1 — completion-scoped self-exit (prevent at source).** `rally
+self-exit-check --tool <self>` is a stateless re-check: a task-scoped session that
+holds NO active claims AND for which `rally next` is non-actionable for a SUSTAINED
+streak self-kills its own `rally-*` tmux session, so `exec` auto-closes it. The
+streak (default 2 consecutive empty re-checks, `liveness::DEFAULT_SELF_EXIT_STREAK`)
+is persisted in the session's OWN tmux env (`RALLY_SELFEXIT_STREAK`, dies with the
+session — no new filesystem surface) so a brief lull between claims never exits
+mid-task. **Opt-out:** `--persistent` short-circuits to "never self-exit" for a
+deliberately-long-lived session. The existing `rally stop` self-kill remains the
+explicit-completion path; Layer 1 adds the implicit "work done" path. Decision is
+the shared `liveness::completion_self_exit_eligible(work_resolved,
+next_empty_streak, required_streak, persistent_optout)`.
+
+**Layer 2 — event-driven liveness-lease safety net.** `rally enter` (a new agent
+joining) opportunistically sweeps detached `rally-*` orphan tmux sessions via the
+SAME reaper Layer-3 logic, in addition to `rally sessions --reap`. Best-effort and
+fail-open: it runs AFTER presence (so the entering agent's own session is in the
+guard set), never blocks the enter path, and never raises. A live / parent-alive
+session is never reaped. No daemon/cron (those would themselves need worktree
+isolation). Both the enter sweep and `sessions --reap` call ONE shared actuator
+(`sweep_orphan_tmux`).
+
+**Layer 3 — parent-lifecycle binding.** At launch (`tmux_start_command`) the new
+session's env is stamped with `RALLY_PARENT_PID=<launcher pid>` in the SAME atomic
+`tmux new-session -e` call. The reaper reads it back (`show-environment`), probes
+`kill -0 <pid>` (no new crate dependency — the repo keeps a zero-extra-dep
+contract), and feeds the result to the shared `liveness::reapable(liveness,
+parent_alive)`. This targets the exact failure mode here (autonomy poller died →
+its child sessions orphaned).
+
+**The single reaper-eligibility authority** is `liveness::reapable` (mirrored
+Rust↔Python, asserted by the byte-identical `liveness_vectors.json` `reapable_cases`):
+
+| liveness | parent_alive | reapable | rationale |
+|----------|--------------|----------|-----------|
+| Live     | any          | NO       | any of 4 signals fresh → independently live |
+| Unknown  | any          | NO       | fail-closed: untrustworthy signals |
+| Stale    | alive        | NO       | stale by signals but a live parent may re-drive it (conservative) |
+| Stale    | dead         | YES      | the Layer-3 orphan target |
+| Stale    | none (no info)| YES     | window criterion ALONE — fail-safe degradation |
+
+**Fail-safe directions (binding):**
+- A session making code progress / heartbeating on cadence / recently injected /
+  holding a live plan is NEVER reaped — that's `Live` → not reapable, regardless of
+  parent state.
+- The control NEVER reaps on the parent criterion ALONE: parent-dead reaps only a
+  session that is ALSO `Stale` by the 4-signal liveness.
+- Missing/unparseable parent info (`parent_alive = None`) degrades to the
+  liveness-window criterion alone (`Stale → reap`), preserving the pre-Layer-3
+  orphan-window behavior exactly — never reaped *because* the parent is unknown.
+- `kill -0` failing for any reason other than "no such process" (e.g. EPERM) reads
+  ALIVE (a live-but-unsignalable process is never treated as dead).
+
 ## Idle-agent self-selection (rally facilitates, the agent decides)
 
 **Rally is a facilitator, not an orchestrator or verifier.** It exposes room state (`rally room` / `rally next`), file-level deconfliction (`rally check before-write --path P`), and claims/handoffs. It does **not** assign work, pick work, or verify code/release truth. A waiting agent runs this decision tree itself and chooses — the agent's LLM reasons over Rally's surfaced coordination records. This keeps coordination decentralized: no single point that hands out tasks (which would be a failure site and a bottleneck).

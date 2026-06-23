@@ -84,12 +84,12 @@
     "liveness.py": {
       "_doc": "Python MIRROR of the canonical Rust adaptive-liveness policy (liveness.rs). The two coordination systems are intentionally SEPARATE codebases; this entry is the COMPATIBILITY guard — drift here means the adaptive-cadence window math / 4-signal is_live verdict diverged between agent-rally-point and the build-loop fallback. Parity is double-pinned by the byte-identical golden fixture liveness_vectors.json (tracked below). Read-only/report-only.",
       "source": "crates/rally-cli/src/liveness.rs",
-      "source_hash": "77191177553804b452354771cc2e243f9cacd725c390237ace857a1fd528bb03"
+      "source_hash": "16c7855e5bd3ca09b66b97358aaa3757dd565f14d6455a1f0136b87c31457f05"
     },
     "liveness_vectors.json": {
       "_doc": "Golden adaptive-liveness vectors. MUST stay byte-identical to the Rust fixture crates/rally-cli/tests/fixtures/liveness_vectors.json so both test suites assert the same window math + is_live verdicts at the same reference cases — the cross-repo parity proof. Drift = the two implementations no longer verified against one shared truth.",
       "source": "crates/rally-cli/tests/fixtures/liveness_vectors.json",
-      "source_hash": "42a82bdf746c2fd75d6b60b9c398264042bbda84ae279f974e96a02d0b35e638"
+      "source_hash": "c4df5225ddb0978fad9acc8beceb2c08e28cfce7313dca94cb779ad35fe2ffc3"
     },
     "heartbeat_parity_vectors.json": {
       "_doc": "Golden heartbeat parity vectors — byte-identical to the Rust fixture crates/rally-cli/tests/fixtures/heartbeat_parity_vectors.json; proves claude/codex heartbeats decay identically (tool-agnostic).",

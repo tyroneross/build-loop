@@ -77,5 +77,22 @@
       "signals": { "heartbeat_age": 1861, "inject_age": 1861, "code_progress_age": 1861, "plan_age": 1861 },
       "expected": "stale"
     }
+  ],
+  "reapable_cases": [
+    { "name": "live_any_parent_kept", "liveness": "live", "parent_alive": null, "expected": false },
+    { "name": "live_parent_dead_still_kept", "liveness": "live", "parent_alive": false, "expected": false },
+    { "name": "unknown_failclosed_kept", "liveness": "unknown", "parent_alive": null, "expected": false },
+    { "name": "unknown_parent_dead_still_kept", "liveness": "unknown", "parent_alive": false, "expected": false },
+    { "name": "stale_no_parent_info_reaped_window_criterion", "liveness": "stale", "parent_alive": null, "expected": true },
+    { "name": "stale_parent_dead_reaped", "liveness": "stale", "parent_alive": false, "expected": true },
+    { "name": "stale_parent_alive_kept_conservative", "liveness": "stale", "parent_alive": true, "expected": false }
+  ],
+  "self_exit_cases": [
+    { "name": "resolved_streak_met_exits", "work_resolved": true, "next_empty_streak": 2, "required_streak": 2, "persistent_optout": false, "expected": true },
+    { "name": "resolved_streak_exceeded_exits", "work_resolved": true, "next_empty_streak": 5, "required_streak": 2, "persistent_optout": false, "expected": true },
+    { "name": "resolved_streak_not_met_stays", "work_resolved": true, "next_empty_streak": 1, "required_streak": 2, "persistent_optout": false, "expected": false },
+    { "name": "work_unresolved_stays_midtask", "work_resolved": false, "next_empty_streak": 9, "required_streak": 2, "persistent_optout": false, "expected": false },
+    { "name": "persistent_optout_never_exits", "work_resolved": true, "next_empty_streak": 9, "required_streak": 2, "persistent_optout": true, "expected": false },
+    { "name": "required_streak_clamped_to_one", "work_resolved": true, "next_empty_streak": 1, "required_streak": 0, "persistent_optout": false, "expected": true }
   ]
 }

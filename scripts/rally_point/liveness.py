@@ -108,3 +108,73 @@ def is_live_default(signals: LivenessSignals, planned_interval_secs: int) -> str
     ``adaptive_window_secs`` + ``is_live`` directly."""
     window = adaptive_window_secs(planned_interval_secs)
     return is_live(signals, window)
+
+
+# Default consecutive non-actionable re-checks before a task-scoped session
+# self-exits (Layer 1). Mirrors the Rust ``DEFAULT_SELF_EXIT_STREAK``.
+DEFAULT_SELF_EXIT_STREAK: int = 2
+
+
+def reapable(liveness: str, parent_alive: bool | None) -> bool:
+    """Reaper eligibility — the SINGLE authority for "may this session be killed?".
+
+    PYTHON MIRROR of ``liveness::reapable`` (Rust). Composes the 4-signal
+    :func:`is_live` verdict with an OPTIONAL parent-liveness signal (Layer 3
+    parent-lifecycle binding). Both the orphan-tmux sweep (Layer 2) and the
+    parent-binding reaper (Layer 3) call this, so the "never reap a live
+    session" invariant lives in exactly one place.
+
+    ``parent_alive``:
+      * ``True``  — the launching parent PID is provably still alive.
+      * ``False`` — the launching parent PID is provably dead/gone.
+      * ``None``  — no parsable parent info (pre-binding session, unparseable
+        metadata, or a session never launched via rally). The parent criterion
+        is UNAVAILABLE; fall back to the liveness-window criterion ALONE and
+        NEVER reap on the parent criterion.
+
+    Truth table (EXACT contract the shared golden fixture asserts):
+      | liveness | parent_alive | reapable |
+      |----------|--------------|----------|
+      | LIVE     | *            | False    | any of 4 signals fresh → never reap
+      | UNKNOWN  | *            | False    | fail-closed: untrustworthy signals
+      | STALE    | True         | False    | stale but parent alive → keep (conservative)
+      | STALE    | False        | True     | stale AND parent dead → Layer-3 target
+      | STALE    | None         | True     | stale; no parent info → window criterion alone
+    """
+    if liveness == LIVE:
+        return False
+    if liveness == UNKNOWN:
+        return False
+    # STALE (or any non-LIVE/UNKNOWN verdict treated as provably stale).
+    if parent_alive is True:
+        return False
+    # parent_alive is False (dead) OR None (no info → window criterion alone).
+    return True
+
+
+def completion_self_exit_eligible(
+    work_resolved: bool,
+    next_empty_streak: int,
+    required_streak: int,
+    persistent_optout: bool,
+) -> bool:
+    """Completion-scoped self-exit eligibility (Layer 1 — prevent at source).
+
+    PYTHON MIRROR of ``liveness::completion_self_exit_eligible`` (Rust). A
+    task-scoped agent exits ONLY when BOTH hold for a SUSTAINED re-check, and
+    never when opted out:
+
+      * ``work_resolved`` — the agent's owned rally work is all resolved/closed.
+      * ``next_empty_streak >= required_streak`` — ``rally next`` returned empty
+        for at least ``required_streak`` CONSECUTIVE re-checks (the streak, not a
+        single empty read, is what guarantees we never exit mid-task).
+
+    ``persistent_optout`` short-circuits to ``False``: a deliberately-persistent
+    session never self-exits on the implicit "work done" path. Pure + time-free.
+    """
+    if persistent_optout:
+        return False
+    if not work_resolved:
+        return False
+    needed = max(1, required_streak)
+    return next_empty_streak >= needed
