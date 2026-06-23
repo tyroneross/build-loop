@@ -1,0 +1,18 @@
+{
+  "_comment": "Shared golden vectors for coordination recency decay. IDENTICAL copy lives in agent-rally-point (crates/rally-cli/tests/fixtures/decay_vectors.json). Both language test suites assert against these numbers so the Rust and Python implementations can never silently diverge. half_life_secs=172800 (48h). weights rounded to 5dp; tests assert within 1e-4.",
+  "half_life_secs": 172800,
+  "archive_floor": 0.05,
+  "weights": [
+    { "age_secs": 0, "expected": 1.0 },
+    { "age_secs": 43200, "expected": 0.84090 },
+    { "age_secs": 172800, "expected": 0.5 },
+    { "age_secs": 345600, "expected": 0.25 },
+    { "age_secs": 604800, "expected": 0.08839 },
+    { "age_secs": 1209600, "expected": 0.00781 }
+  ],
+  "archive_floor_cases": [
+    { "weight": 0.0501, "archivable": false },
+    { "weight": 0.05, "archivable": false },
+    { "weight": 0.0499, "archivable": true }
+  ]
+}
