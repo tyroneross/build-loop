@@ -10,7 +10,9 @@ and is available as a standalone CLI for manual sweeps.
 
 FAIL-CLOSED invariant: we NEVER reap any record whose ownership timestamp we
 cannot unambiguously prove is over-TTL. Unparseable, missing, or future
-timestamps are ALWAYS preserved.
+timestamps are ALWAYS preserved. Presence staleness policy is implemented
+once in ``presence.reap_stale``; ``_sweep_presence`` composes it via the
+``apply=`` kwarg rather than duplicating the loop.
 
 Resolved-via rule for claims:
   - ``repo-local-rally-cli`` → Rust binary owns the ``claim-index.json`` projection;
@@ -120,34 +122,22 @@ def _write_claim_index(channel_dir: Path, data: dict[str, Any]) -> None:
 # Core sweep functions
 # ---------------------------------------------------------------------------
 
-def _sweep_presence(channel_dir: Path, *, apply: bool, now_ts: float) -> tuple[list[str], int]:
-    """Return (reaped_ids, preserved_count). Physically unlinks when apply=True."""
-    window = _presence.heartbeat_minutes(channel_dir) * 60
-    cutoff = now_ts - window
-    reaped: list[str] = []
-    preserved = 0
-    for f, rec in _presence._iter_presence(channel_dir):
-        if rec.get("tool") == "reader":
-            # cursor stubs are kept (heartbeat_ts intentionally 0)
-            preserved += 1
-            continue
-        hb = rec.get("heartbeat_ts", 0)
-        try:
-            hb_f = float(hb)
-        except (TypeError, ValueError):
-            # FAIL-CLOSED: unparseable heartbeat is kept
-            preserved += 1
-            continue
-        if hb_f > 0 and hb_f < cutoff:
-            if apply:
-                try:
-                    f.unlink()
-                except OSError:
-                    preserved += 1
-                    continue
-            reaped.append(rec.get("session_id", f.stem))
-        else:
-            preserved += 1
+def _sweep_presence(channel_dir: Path, *, apply: bool) -> tuple[list[str], int]:
+    """Return (reaped_ids, preserved_count). Physically unlinks when apply=True.
+
+    Delegates to ``presence.reap_stale(channel_dir, apply=apply)`` — the single
+    authoritative implementation of the staleness policy (reader-stub skip,
+    fail-closed parse, hb>0-and-hb<cutoff gate). Preserved count is derived by
+    counting surviving non-reader sessions after the reap.
+    """
+    reaped: list[str] = _presence.reap_stale(channel_dir, apply=apply)
+    reaped_set = set(reaped)
+    preserved = sum(
+        1
+        for _f, rec in _presence._iter_presence(channel_dir)
+        if rec.get("tool") != "reader"
+        and rec.get("session_id", _f.stem) not in reaped_set
+    )
     return reaped, preserved
 
 
@@ -260,7 +250,7 @@ def reap_channel(
     # 1. Presence sweep
     try:
         presence_reaped, presence_preserved = _sweep_presence(
-            channel_dir, apply=apply, now_ts=now_ts
+            channel_dir, apply=apply
         )
     except Exception:
         presence_reaped, presence_preserved = [], 0
