@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "5ab3c452b08532ff4d489903437aaa275050e2d67fedd8639ab6b52fe85614b4"
+    "content_sha256": "83e220e983da88c738c776381cdaeaaf7ecb04a0be18d5a8a97187d4102a5f0f"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1232,7 +1232,7 @@
         "file": "skills/debugging/assess/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-06-22"
         }
       },
       "debugging-memory-search": {
@@ -1240,7 +1240,7 @@
         "file": "skills/debugging/memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-06-22"
         }
       },
       "debugging-store": {
@@ -1248,7 +1248,7 @@
         "file": "skills/debugging/store/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-06-22"
         }
       },
       "debugging-memory": {
@@ -1256,7 +1256,7 @@
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-06-22"
         }
       },
       "defenseclaw-bridge": {
