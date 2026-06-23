@@ -211,6 +211,18 @@ live under `coordinationPolicy` in `.build-loop/config.json` (defaults shown):
   `lease_until` is unparseable is NEVER auto-reclaimed (we refuse rather than
   reclaim on a timestamp we cannot trust). An empty seat is still freely
   claimable.
+- **Separation invariant (compatible, but separate).** build-loop computes its
+  decay/reclaim ENTIRELY in Python (`decay.py`) over its own change-log store; it
+  never delegates the recency-decay listing to the Rust `rally` binary. So an
+  installed `rally` that predates the decay feature CANNOT un-decay build-loop's
+  output — build-loop's listing decays regardless of binary version. The Rust
+  `rally recent/room --include-archived` surface is agent-rally-point's OWN
+  equivalent for its `.rally` ledger, kept curve-compatible via the shared golden
+  fixture (`scripts/rally_point/decay_vectors.json` ≡ the Rust fixture, tracked in
+  `_provenance.json`). Pinned by `scripts/test_coordination_decay_invariant.py`:
+  if a future change routes build-loop's decay listing through any binary, that
+  test fails. (To get decayed output from the Rust CLI directly, install a
+  `rally` built from this feature or later — an older on-PATH binary won't decay.)
 
 This complements (does not replace) the >10-minute idle absorption rule above:
 idle-absorption handles local reversible lanes a quiet peer left open; the lease
