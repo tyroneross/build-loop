@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -172,6 +173,120 @@ class WriteTests(unittest.TestCase):
                 name="x", description="d", type_="not-a-real-type",
                 run_id="r", workdir=str(self.tmp), host="codex",
             )
+
+
+class AutoCommitTests(unittest.TestCase):
+    """memory_writer auto-commits a just-written file in its memory repo so
+    memories are never left uncommitted (recurring stranded-memory failure)."""
+
+    def _git(self, *args: str, cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True, text=True,
+        )
+
+    def _init_repo(self) -> Path:
+        repo = Path(tempfile.mkdtemp())
+        self._git("init", "-q", cwd=repo)
+        # Local identity so commit works in CI without global git config.
+        self._git("config", "user.email", "test@example.com", cwd=repo)
+        self._git("config", "user.name", "Test User", cwd=repo)
+        return repo
+
+    def _commit_count(self, repo: Path) -> int:
+        r = self._git("rev-list", "--count", "HEAD", cwd=repo)
+        return int(r.stdout.strip()) if r.returncode == 0 else 0
+
+    def _last_subject(self, repo: Path) -> str:
+        return self._git("log", "-1", "--pretty=%s", cwd=repo).stdout.strip()
+
+    def setUp(self):
+        # Ensure a clean env each test (default ON).
+        self._prev = os.environ.pop("BUILD_LOOP_MEMORY_AUTOCOMMIT", None)
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("BUILD_LOOP_MEMORY_AUTOCOMMIT", None)
+        else:
+            os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = self._prev
+
+    def test_write_creates_exactly_one_memory_commit(self):
+        repo = self._init_repo()
+        before = self._commit_count(repo)
+        mw.write(
+            repo, "lesson.md", body="A lesson body.",
+            name="my-lesson", description="d", type_="gotcha",
+            run_id="r", workdir=str(repo), host="claude_code",
+        )
+        after = self._commit_count(repo)
+        self.assertEqual(after, before + 1, "expected exactly one new commit")
+        subject = self._last_subject(repo)
+        self.assertTrue(
+            subject.startswith("memory("),
+            f"commit subject should start with 'memory(': {subject!r}",
+        )
+        self.assertEqual(subject, "memory(gotcha): my-lesson")
+        # The memory file specifically is committed (no longer untracked or
+        # staged). Sidecar artifacts (INDEX.jsonl, indexes/, TELEMETRY.jsonl)
+        # are intentionally NOT swept in — the commit pathspec is the file only.
+        file_status = self._git(
+            "status", "--porcelain", "--", "lesson.md", cwd=repo
+        ).stdout.strip()
+        self.assertEqual(
+            file_status, "",
+            f"memory file should be committed; got: {file_status!r}",
+        )
+
+    def test_autocommit_opt_out_writes_file_but_no_commit(self):
+        repo = self._init_repo()
+        os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = "0"
+        before = self._commit_count(repo)
+        mw.write(
+            repo, "lesson.md", body="body",
+            name="l", description="d", type_="gotcha",
+            run_id="r", workdir=str(repo), host="claude_code",
+        )
+        # File written.
+        self.assertTrue((repo / "lesson.md").exists())
+        # No commit created.
+        self.assertEqual(self._commit_count(repo), before)
+
+    def test_autocommit_opt_out_false_value(self):
+        repo = self._init_repo()
+        os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = "false"
+        mw.write(
+            repo, "lesson.md", body="body",
+            name="l", description="d", type_="gotcha",
+            run_id="r", workdir=str(repo), host="claude_code",
+        )
+        self.assertTrue((repo / "lesson.md").exists())
+        self.assertEqual(self._commit_count(repo), 0)
+
+    def test_write_into_non_git_dir_succeeds_fail_open(self):
+        non_git = Path(tempfile.mkdtemp())  # not a git repo
+        # Must not raise; file must be written.
+        fm = mw.write(
+            non_git, "lesson.md", body="body",
+            name="l", description="d", type_="gotcha",
+            run_id="r", workdir=str(non_git), host="claude_code",
+        )
+        self.assertTrue((non_git / "lesson.md").exists())
+        self.assertEqual(fm["name"], "l")
+
+    def test_status_field_passthrough_optional(self):
+        """Optional work-tracking status field flows through extra_frontmatter
+        with no required-field change and no validation gate."""
+        non_git = Path(tempfile.mkdtemp())
+        os.environ["BUILD_LOOP_MEMORY_AUTOCOMMIT"] = "0"
+        fm = mw.write(
+            non_git, "task.md", body="body",
+            name="t", description="d", type_="gotcha",
+            run_id="r", workdir=str(non_git), host="claude_code",
+            extra_frontmatter={"status": "completed"},
+        )
+        self.assertEqual(fm["status"], "completed")
+        ondisk, _ = mw._split_frontmatter((non_git / "task.md").read_text())
+        self.assertEqual(ondisk["status"], "completed")
 
 
 class MarkAppliedTests(unittest.TestCase):

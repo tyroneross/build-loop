@@ -24,6 +24,11 @@ Provenance schema (YAML frontmatter added to every memory file):
   last_updated_at: "ISO8601 UTC"
   ---
 
+Optional work-tracking field (passed through ``extra_frontmatter``, never
+required, never added to existing memories): ``status: open | pending |
+completed``. The convention is enforced by the caller, not validated here,
+per the project's "deterministic only for known risks" rule.
+
 Subcommands:
   write          — create or update a memory file. Adds/refreshes provenance
                    frontmatter, preserves applied_in_repos history, then
@@ -40,6 +45,14 @@ Subcommands:
 Concurrency: atomic writes (tmpfile + os.replace). The memory file IS the
 lock — no separate lock file. The INDEX append uses memory_index.py's
 existing fcntl-based locking.
+
+Auto-commit: after a successful write the just-written file is committed in
+its memory repo (git add + commit) so memories are never left uncommitted.
+Author/committer stay the human's default git config — no agent identity is
+ever set. Fire-and-forget and fail-open: a non-git dir, a commit failure, or a
+missing git binary WARNs to stderr but never blocks the write. Batch callers
+that prefer one commit at the end can set ``BUILD_LOOP_MEMORY_AUTOCOMMIT=0``
+(or ``false``) to write the file without committing; default is ON.
 
 Stdlib only. Python 3.11+.
 """
@@ -255,6 +268,62 @@ def _detect_git_head(workdir: Path) -> str | None:
     except (OSError, subprocess.SubprocessError):
         pass
     return None
+
+
+def _autocommit_enabled() -> bool:
+    """Honor BUILD_LOOP_MEMORY_AUTOCOMMIT. Default ON; ``0``/``false`` skips."""
+    raw = os.environ.get("BUILD_LOOP_MEMORY_AUTOCOMMIT")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _git_toplevel(path: Path) -> Path | None:
+    """Return the git work-tree root containing ``path``, or None if not a repo."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(path.parent), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return Path(r.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _autocommit_memory_file(path: Path, *, type_: str, name: str) -> None:
+    """Commit the just-written memory file in its own git repo.
+
+    Fire-and-forget and fail-open: every failure (not a git repo, no git
+    binary, nothing staged, commit error) WARNs to stderr and returns. Author
+    and committer stay the repo's default git config — never an agent identity
+    (build-loop authorship rule). No commit body trailer is added.
+
+    Skipped entirely when ``BUILD_LOOP_MEMORY_AUTOCOMMIT`` is set to a falsey
+    value, so batch callers can commit once at the end.
+    """
+    if not _autocommit_enabled():
+        return
+    try:
+        root = _git_toplevel(path)
+        if root is None:
+            print(
+                f"WARN: memory auto-commit skipped (not a git repo): {path}",
+                file=sys.stderr,
+            )
+            return
+        subprocess.run(
+            ["git", "-C", str(root), "add", "--", str(path)],
+            capture_output=True, text=True, timeout=10, check=True,
+        )
+        msg = f"memory({type_}): {name}"
+        subprocess.run(
+            ["git", "-C", str(root), "commit", "-m", msg, "--", str(path)],
+            capture_output=True, text=True, timeout=10, check=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
+        print(f"WARN: memory auto-commit failed: {exc}", file=sys.stderr)
 
 
 
@@ -513,6 +582,10 @@ def write(
         )
     except Exception as exc:  # noqa: BLE001 — fire-and-forget per protocol
         print(f"WARN: memory_telemetry emit_write failed: {exc}", file=sys.stderr)
+
+    # Auto-commit the just-written file in its memory repo so memories are
+    # never left uncommitted. Fire-and-forget, fail-open, human-authored.
+    _autocommit_memory_file(path, type_=type_, name=name)
 
     return fm
 
