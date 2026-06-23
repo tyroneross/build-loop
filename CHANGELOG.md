@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Adaptive, multi-signal session liveness (Python mirror).**
+  `scripts/rally_point/liveness.py` mirrors agent-rally-point's canonical
+  `liveness.rs`: staleness ADAPTS to each session's planned heartbeat cadence
+  (`window = planned_interval * MISS_MULTIPLIER + GRACE`; defaults 300 s / 6 / 60 s
+  → 5-min cadence stale at ~31 min, 5-hour cadence at ~30 h) and weighs four
+  signals — LIVE if ANY is fresh. `presence.reap_stale` is now adaptive
+  (per-record cadence from `planned_heartbeat_secs`, legacy `heartbeat_minutes` as
+  a fallback cadence source) with a code-progress keep-alive (a session whose
+  branch HEAD moved between polls survives a lapsed heartbeat, tracked via
+  `liveness-sha-cache.json`). `coordination_policy.py` gains `default_cadence_secs`,
+  `miss_multiplier`, `grace_secs` tunables. Parity double-pinned by the
+  byte-identical `liveness_vectors.json` (≡ the Rust fixture, tracked in
+  `_provenance.json`); `test_liveness.py` asserts the same vectors the Rust suite
+  asserts. `references/coordination-rules.md` documents the model + the FAIL-OPEN
+  (squad visibility) vs FAIL-CLOSED (reaper removal) split.
 - `scripts/rally_point/reaper.py` — Python fallback reaper that physically removes
   over-TTL presence files, expired claims, and reclaimable lead leases. FAIL-CLOSED
   on unprovable timestamps. Respects the resolved-via rule: defers claim-index.json

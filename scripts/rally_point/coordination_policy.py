@@ -33,6 +33,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import decay  # noqa: E402
+import liveness  # noqa: E402
 
 _CONFIG_KEY = "coordinationPolicy"
 
@@ -43,6 +44,10 @@ class CoordinationPolicy:
     archive_floor_weight: float = decay.DEFAULT_ARCHIVE_FLOOR
     reclaim_small_minutes: int = decay.DEFAULT_RECLAIM_SMALL_MINUTES
     reclaim_large_minutes: int = decay.DEFAULT_RECLAIM_LARGE_MINUTES
+    # Adaptive-liveness tunables (mirror of CoordinationConfig in Rust).
+    default_cadence_secs: int = liveness.DEFAULT_CADENCE_SECS
+    miss_multiplier: int = liveness.MISS_MULTIPLIER
+    grace_secs: int = liveness.GRACE_SECS
 
     @property
     def half_life_secs(self) -> int:
@@ -70,6 +75,17 @@ def _coerce_pos_int(value: object) -> int | None:
     return i if i > 0 else None
 
 
+def _coerce_nonneg_int(value: object) -> int | None:
+    """Like _coerce_pos_int but accepts 0 (grace may legitimately be 0)."""
+    try:
+        if isinstance(value, bool):
+            return None
+        i = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return i if i >= 0 else None
+
+
 def load_policy(workdir: Path) -> CoordinationPolicy:
     """Return the effective coordination policy for ``workdir``.
 
@@ -94,6 +110,9 @@ def load_policy(workdir: Path) -> CoordinationPolicy:
     floor = _coerce_float(raw.get("archive_floor_weight"), lo=0.0, hi=1.0)
     small = _coerce_pos_int(raw.get("reclaim_small_minutes"))
     large = _coerce_pos_int(raw.get("reclaim_large_minutes"))
+    cadence = _coerce_pos_int(raw.get("default_cadence_secs"))
+    mult = _coerce_pos_int(raw.get("miss_multiplier"))
+    grace = _coerce_nonneg_int(raw.get("grace_secs"))
 
     base = CoordinationPolicy()
     return CoordinationPolicy(
@@ -101,4 +120,7 @@ def load_policy(workdir: Path) -> CoordinationPolicy:
         archive_floor_weight=floor if floor is not None else base.archive_floor_weight,
         reclaim_small_minutes=small if small is not None else base.reclaim_small_minutes,
         reclaim_large_minutes=large if large is not None else base.reclaim_large_minutes,
+        default_cadence_secs=cadence if cadence is not None else base.default_cadence_secs,
+        miss_multiplier=mult if mult is not None else base.miss_multiplier,
+        grace_secs=grace if grace is not None else base.grace_secs,
     )

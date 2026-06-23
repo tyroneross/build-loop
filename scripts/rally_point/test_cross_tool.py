@@ -354,8 +354,11 @@ def test_v2_codex_presence_warns_claude_then_reaped(
     sess = channel / "sessions" / "codex-exec.json"
     import json
     rec = json.loads(sess.read_text())
-    window_s = canon["presence"].heartbeat_minutes(channel) * 60
-    rec["heartbeat_ts"] = time.time() - window_s - 5
+    # Backdate past the ADAPTIVE staleness window (default 5-min cadence ->
+    # 31-min window). 40 min is unambiguously past it; no branch sha is stamped,
+    # so the heartbeat alone decides and the session is reaped.
+    rec["heartbeat_ts"] = time.time() - 40 * 60
+    rec["branch_head_sha"] = "unknown"
     sess.write_text(json.dumps(rec))
 
     peers = canon["presence"].read_active_presence(

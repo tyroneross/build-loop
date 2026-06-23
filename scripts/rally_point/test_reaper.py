@@ -112,7 +112,7 @@ def test_presence_stale_file_unlinked(tmp_path):
     """An over-TTL presence file is physically deleted when apply=True."""
     channel_dir = tmp_path / "channel"
     now_ts = time.time()
-    stale_ts = now_ts - (15 * 60 + 10)  # 10 s past the 15-min window
+    stale_ts = now_ts - (40 * 60)  # 40 min: past the default adaptive window (31 min)
     sess_file = _write_presence_file(channel_dir, "sess-stale", stale_ts)
 
     report = _reaper.reap_channel(
@@ -140,7 +140,7 @@ def test_presence_dry_run_no_unlink(tmp_path):
     """Dry-run reports stale sessions but does NOT unlink."""
     channel_dir = tmp_path / "channel"
     now_ts = time.time()
-    stale_ts = now_ts - (15 * 60 + 10)
+    stale_ts = now_ts - (40 * 60)
     sess_file = _write_presence_file(channel_dir, "sess-dry", stale_ts)
 
     report = _reaper.reap_channel(
@@ -332,7 +332,7 @@ def test_idempotent_second_reap(tmp_path):
     """Running reap_channel twice yields the same result — second is a no-op."""
     channel_dir = tmp_path / "channel"
     now_ts = time.time()
-    stale_ts = now_ts - (15 * 60 + 10)
+    stale_ts = now_ts - (40 * 60)
     sess_file = _write_presence_file(channel_dir, "sess-idem", stale_ts)
 
     report1 = _reaper.reap_channel(
@@ -445,7 +445,7 @@ def test_presence_reap_stale_dry_run(tmp_path):
     """presence.reap_stale(channel_dir, apply=False) returns IDs without unlinking."""
     channel_dir = tmp_path / "channel"
     now_ts = time.time()
-    stale_ts = now_ts - (15 * 60 + 10)
+    stale_ts = now_ts - (40 * 60)
     sess_file = _write_presence_file(channel_dir, "sess-p-dry", stale_ts)
 
     with mock.patch("time.time", return_value=now_ts):
@@ -459,7 +459,7 @@ def test_presence_reap_stale_apply_true_unlinks(tmp_path):
     """presence.reap_stale(channel_dir, apply=True) [default] physically unlinks."""
     channel_dir = tmp_path / "channel"
     now_ts = time.time()
-    stale_ts = now_ts - (15 * 60 + 10)
+    stale_ts = now_ts - (40 * 60)
     sess_file = _write_presence_file(channel_dir, "sess-p-apply", stale_ts)
 
     with mock.patch("time.time", return_value=now_ts):

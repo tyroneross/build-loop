@@ -27,12 +27,18 @@ from pathlib import Path
 
 try:  # package import
     from .build_loop_id import rally_fields_for
+    from . import liveness as _liveness
 except ImportError:  # script import
     from build_loop_id import rally_fields_for  # type: ignore
+    import liveness as _liveness  # type: ignore
 
 _SESSIONS_DIR = "sessions"
 _CONFIG_NAME = "config.json"
 _DEFAULT_HEARTBEAT_MIN = 15
+# Per-session sha cache for the code-progress liveness signal, keyed by
+# session_id -> {"sha": <branch_head_sha>, "observed_ts": <epoch>}. Lives in the
+# channel dir; first observation of a moved sha is treated as fresh progress.
+_SHA_CACHE_NAME = "liveness-sha-cache.json"
 _ZERO_CURSOR = {"revision": 0, "changes_offset": 0}
 _GIT_TIMEOUT_S = 0.5  # cap any single git call; fail-open on timeout
 _UNKNOWN_BRANCH = {
@@ -182,6 +188,7 @@ def write_presence(
     spawned: str | dict | None = None,
     pid: int | None = None,
     host: str | None = None,
+    planned_heartbeat_secs: int | None = None,
 ) -> None:
     """Write/refresh presence (overwrite-in-place). Preserves the cursor.
 
@@ -222,6 +229,13 @@ def write_presence(
             "files_in_flight": list(files_in_flight or []),
             "heartbeat_ts": now,
             "last_seen": now,
+            # Adaptive-liveness: the session's declared beat cadence. None ->
+            # the reaper assumes the default cadence. Positive ints only.
+            "planned_heartbeat_secs": (
+                int(planned_heartbeat_secs)
+                if planned_heartbeat_secs and int(planned_heartbeat_secs) > 0
+                else None
+            ),
             "pid": int(pid) if pid is not None else os.getpid(),
             "host": host or socket.gethostname(),
             "cursor": cursor,
@@ -253,21 +267,117 @@ def _iter_presence(channel_dir: Path):
             continue
 
 
-def reap_stale(channel_dir: Path, *, apply: bool = True) -> list:
-    """Remove stale *live* presence. Returns reaped session IDs.
+def _sha_cache_path(channel_dir: Path) -> Path:
+    return Path(channel_dir) / _SHA_CACHE_NAME
 
-    Pure-reader cursor stubs (``tool == "reader"``, ``heartbeat_ts``
-    intentionally 0) are NOT reaped — they are not live peers and their
-    sole purpose is to persist a delta cursor between polls. Only real
-    live presence (a positive heartbeat older than the window) is
-    removed.
 
-    ``apply`` (default ``True`` for backward compatibility) — when ``False``
-    the function computes which sessions WOULD be reaped and returns their IDs
-    without unlinking any file. Callers such as the reaper dry-run path use
-    ``apply=False`` to report eligibility without side-effects.
+def _read_sha_cache(channel_dir: Path) -> dict:
+    try:
+        data = json.loads(_sha_cache_path(channel_dir).read_text())
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+
+
+def _write_sha_cache(channel_dir: Path, cache: dict) -> None:
+    try:
+        _atomic_write(_sha_cache_path(channel_dir), cache)
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _code_progress_age(
+    channel_dir: Path, cache: dict, session_id: str, sha: object, now: float
+) -> int | None:
+    """Age (seconds) since this session's branch HEAD last MOVED, or ``None``
+    when HEAD has never been observed to move.
+
+    Pure over the injected ``cache`` + ``now``; mutates ``cache`` in place. The
+    cache entry tracks ``{sha, moved_ts}`` where ``moved_ts`` is the wall-clock of
+    the last OBSERVED change (``None`` until a change is seen). Semantics:
+
+    * unknown/blank sha -> ``None`` (signal absent).
+    * FIRST observation (nothing cached) -> record ``{sha, moved_ts: None}``,
+      return ``None``. A first sighting is not proof of movement.
+    * sha CHANGED vs cache -> HEAD moved -> record ``moved_ts = now``, return 0.
+    * sha UNCHANGED vs cache -> if a prior move was recorded, return
+      ``now - moved_ts`` (the keep-alive decays over the window after the move);
+      else ``None`` (never moved -> signal absent).
+
+    A first-sighting is deliberately NOT a free keep-alive, and a sha that never
+    moves goes stale once the window since its last move (or, if never moved, the
+    heartbeat alone) elapses.
     """
-    cutoff = time.time() - heartbeat_minutes(channel_dir) * 60
+    if not isinstance(sha, str) or not sha or sha == "unknown":
+        return None
+    prev = cache.get(session_id)
+    if not isinstance(prev, dict) or "sha" not in prev:
+        cache[session_id] = {"sha": sha, "moved_ts": None}
+        return None
+    if prev.get("sha") != sha:
+        cache[session_id] = {"sha": sha, "moved_ts": now}
+        return 0
+    # Unchanged sha: age since the last observed move, if any.
+    moved_ts = prev.get("moved_ts")
+    if moved_ts is None:
+        return None
+    try:
+        return int(max(0.0, now - float(moved_ts)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _adaptive_cutoff_secs(channel_dir: Path, rec: dict, pol) -> int:
+    """The adaptive staleness window (seconds) for a presence record.
+
+    Cadence source, first present wins: the record's ``planned_heartbeat_secs``;
+    else the channel's legacy ``heartbeat_minutes`` config (kept as a cadence
+    knob for backward compatibility); else the policy default cadence. The window
+    is ``cadence * miss_multiplier + grace`` via the shared liveness math.
+    """
+    try:
+        planned = rec.get("planned_heartbeat_secs")
+        planned = int(planned) if planned else 0
+    except (TypeError, ValueError):
+        planned = 0
+    if planned <= 0:
+        # Legacy compatibility: an explicit `heartbeat_minutes` config acts as
+        # the declared cadence so existing per-channel overrides keep working.
+        legacy_min = heartbeat_minutes(channel_dir)
+        if legacy_min != _DEFAULT_HEARTBEAT_MIN:
+            planned = legacy_min * 60
+    return _liveness.adaptive_window_secs(
+        planned,
+        pol.default_cadence_secs,
+        pol.miss_multiplier,
+        pol.grace_secs,
+    )
+
+
+def reap_stale(channel_dir: Path, *, apply: bool = True) -> list:
+    """Remove ADAPTIVELY-stale live presence, with a code-progress keep-alive.
+    Returns reaped session IDs.
+
+    Staleness is RELATIVE to each session's declared cadence
+    (``planned_heartbeat_secs``, else the legacy ``heartbeat_minutes`` config,
+    else the policy default) via the shared adaptive-window math: a 5-min cadence
+    goes stale at ~31 min; a 5-hour cadence not until ~30 h.
+
+    A presence FILE *is* the heartbeat, so heartbeat is the primary signal. The
+    code-progress signal (the session's ``branch_head_sha`` moved since the last
+    poll, cached) acts as a KEEP-ALIVE OVERRIDE: a session whose HEAD advanced
+    within its window is alive even if its heartbeat lapsed, and is preserved.
+    (Inject/plan signals are room-fact projections, not file-derivable here, so
+    they live on the Rust squad-visibility path.)
+
+    Pure-reader cursor stubs (``tool == "reader"``, ``heartbeat_ts`` 0) are never
+    peers. ``apply`` (default ``True``) — when ``False``, report eligibility
+    without unlinking (dry-run).
+    """
+    now = time.time()
+    pol = _load_policy(channel_dir)
+    cache = _read_sha_cache(channel_dir)
+    cache_dirty = False
     reaped: list = []
     for f, rec in _iter_presence(channel_dir):
         if rec.get("tool") == "reader":
@@ -276,14 +386,65 @@ def reap_stale(channel_dir: Path, *, apply: bool = True) -> list:
             hb = float(rec.get("heartbeat_ts", 0))
         except (TypeError, ValueError):
             continue
-        if hb > 0 and hb < cutoff:
-            if apply:
-                try:
-                    f.unlink()
-                except OSError:
-                    continue
-            reaped.append(rec.get("session_id", f.stem))
+        if hb <= 0:
+            continue  # not a live heartbeat
+        session_id = rec.get("session_id", f.stem)
+        window = _adaptive_cutoff_secs(channel_dir, rec, pol)
+        heartbeat_age = now - hb
+        # Always observe the branch sha (records first-sightings + movement) so
+        # the keep-alive works across polls — even while the heartbeat is fresh.
+        before = cache.get(session_id)
+        cp_age = _code_progress_age(
+            channel_dir, cache, session_id, rec.get("branch_head_sha"), now
+        )
+        if cache.get(session_id) != before:
+            cache_dirty = True
+        if heartbeat_age <= window:
+            continue  # heartbeat fresh -> alive
+        # Heartbeat lapsed. Code-progress keep-alive: did HEAD move within window?
+        if cp_age is not None and cp_age <= window:
+            continue  # forward code progress -> alive despite stale heartbeat
+        # Stale heartbeat AND no fresh code progress -> reap.
+        if apply:
+            try:
+                f.unlink()
+            except OSError:
+                continue
+        reaped.append(session_id)
+    if apply and cache_dirty:
+        for sid in reaped:
+            cache.pop(sid, None)
+        _write_sha_cache(channel_dir, cache)
     return reaped
+
+
+def _load_policy(channel_dir: Path):
+    """Resolve the coordination policy (liveness tunables). The policy reads
+    ``<workdir>/.build-loop/config.json``; the channel dir is typically inside
+    ``.build-loop`` so its parent's parent is the workdir. Fail-open to a default
+    ``CoordinationPolicy`` (carrying the pinned liveness defaults).
+    """
+    try:
+        from . import coordination_policy as _cp
+    except ImportError:
+        try:
+            import coordination_policy as _cp  # type: ignore
+        except ImportError:
+            _cp = None  # type: ignore
+    if _cp is None:
+        # Minimal stand-in carrying the pinned defaults (no config available).
+        class _Default:
+            default_cadence_secs = _liveness.DEFAULT_CADENCE_SECS
+            miss_multiplier = _liveness.MISS_MULTIPLIER
+            grace_secs = _liveness.GRACE_SECS
+
+        return _Default()
+    try:
+        # channel_dir is .../.build-loop/<channel>; workdir is two levels up.
+        workdir = Path(channel_dir).parent.parent
+        return _cp.load_policy(workdir)
+    except Exception:  # noqa: BLE001 — fail-open to policy defaults
+        return _cp.CoordinationPolicy()
 
 
 def read_active_presence(channel_dir: Path, *, exclude_session: str) -> list:

@@ -78,7 +78,8 @@ def test_reap_stale(chan: Path):
                       run_id="r", app_slug="a", phase="p")
     f = chan / "sessions" / "old.json"
     rec = json.loads(f.read_text())
-    rec["heartbeat_ts"] = time.time() - 16 * 60  # 16 min ago > default 15
+    # 40 min ago > the default adaptive window (5-min cadence -> 31 min).
+    rec["heartbeat_ts"] = time.time() - 40 * 60
     f.write_text(json.dumps(rec))
     pr.write_presence(chan, session_id="fresh", tool="t", model="m",
                       run_id="r2", app_slug="a", phase="p")
@@ -87,6 +88,68 @@ def test_reap_stale(chan: Path):
     assert [p["session_id"]
             for p in pr.read_active_presence(chan, exclude_session="x")] \
         == ["fresh"]
+
+
+def test_reap_within_adaptive_window_keeps_presence(chan: Path):
+    # 20 min old on the default 5-min cadence (31-min window) is NOT stale.
+    pr.write_presence(chan, session_id="busy", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p")
+    f = chan / "sessions" / "busy.json"
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 20 * 60
+    f.write_text(json.dumps(rec))
+    assert pr.reap_stale(chan) == []
+    assert f.exists()
+
+
+def test_five_hour_cadence_idle_two_hours_kept(chan: Path):
+    # A declared 5-hour cadence (window ~30 h) idle 2 h stays alive.
+    pr.write_presence(chan, session_id="slow", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p",
+                      planned_heartbeat_secs=18000)
+    f = chan / "sessions" / "slow.json"
+    rec = json.loads(f.read_text())
+    assert rec["planned_heartbeat_secs"] == 18000
+    rec["heartbeat_ts"] = time.time() - 2 * 60 * 60  # 2 h
+    f.write_text(json.dumps(rec))
+    assert pr.reap_stale(chan) == []
+    assert f.exists()
+
+
+def test_code_progress_keeps_stale_heartbeat_alive(chan: Path):
+    # Poll 1: fresh heartbeat + sha-aaaa -> kept (establishes the sha cache).
+    pr.write_presence(chan, session_id="coder", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p")
+    f = chan / "sessions" / "coder.json"
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 60  # fresh
+    rec["branch_head_sha"] = "sha-aaaa"
+    f.write_text(json.dumps(rec))
+    assert pr.reap_stale(chan) == []
+    assert f.exists()
+    # Poll 2: heartbeat lapsed (40 min) BUT HEAD moved (sha-aaaa -> sha-bbbb) ->
+    # fresh code progress overrides the stale heartbeat -> kept.
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 40 * 60
+    rec["branch_head_sha"] = "sha-bbbb"
+    f.write_text(json.dumps(rec))
+    assert pr.reap_stale(chan) == []
+    assert f.exists()
+
+
+def test_stale_heartbeat_unmoving_head_is_reaped(chan: Path):
+    # A session that stamps a sha but never moves HEAD must still go stale: a
+    # first-seen sha is NOT proof of progress (no free keep-alive).
+    pr.write_presence(chan, session_id="stuck", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p")
+    f = chan / "sessions" / "stuck.json"
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 40 * 60  # stale
+    rec["branch_head_sha"] = "sha-frozen"
+    f.write_text(json.dumps(rec))
+    # First poll: sha first-seen (not progress) + stale heartbeat -> reaped.
+    assert "stuck" in pr.reap_stale(chan)
+    assert not f.exists()
 
 
 def _write_stale_presence(channel: Path, session_id: str, *, age_seconds: int) -> Path:
@@ -120,7 +183,9 @@ def test_stale_presence_regression_across_presence_status_and_lifecycle(tmp_path
     slug = cs.channel_paths.app_slug(workdir)
     channel = cs.channel_paths.ensure_channel_dir(slug)
 
-    old = _write_stale_presence(channel, "stale-presence", age_seconds=16 * 60)
+    # 40 min > the default adaptive window (31 min) and no branch sha stamped,
+    # so the presence is reaped on read.
+    old = _write_stale_presence(channel, "stale-presence", age_seconds=40 * 60)
     assert pr.read_active_presence(channel, exclude_session="me") == []
     assert not old.exists()
 
@@ -131,7 +196,7 @@ def test_stale_presence_regression_across_presence_status_and_lifecycle(tmp_path
     # the reaping assertion exercises build_status's real read path.
     _bs_slug, bs_channel, _via = cs._resolve_channel_dir(workdir.resolve())
     bs_channel.mkdir(parents=True, exist_ok=True)
-    old = _write_stale_presence(bs_channel, "stale-status", age_seconds=16 * 60)
+    old = _write_stale_presence(bs_channel, "stale-status", age_seconds=40 * 60)
     args = cs.parse_args([
         "--workdir", str(workdir),
         "--session-id", "me",
@@ -147,14 +212,32 @@ def test_stale_presence_regression_across_presence_status_and_lifecycle(tmp_path
 
 
 def test_reap_respects_config_override(chan: Path):
+    # Legacy `heartbeat_minutes` acts as the declared cadence: 1-min cadence ->
+    # adaptive window 1*60*6+60 = 420 s (7 min). A 10-min-old presence is past it.
     (chan / "config.json").write_text(json.dumps({"heartbeat_minutes": 1}))
     pr.write_presence(chan, session_id="s", tool="t", model="m",
                       run_id="r", app_slug="a", phase="p")
     f = chan / "sessions" / "s.json"
     rec = json.loads(f.read_text())
-    rec["heartbeat_ts"] = time.time() - 2 * 60  # 2 min ago > 1 min override
+    rec["heartbeat_ts"] = time.time() - 10 * 60
     f.write_text(json.dumps(rec))
     assert "s" in pr.reap_stale(chan)
+
+
+def test_planned_heartbeat_overrides_legacy_config(chan: Path):
+    # When a record declares planned_heartbeat_secs it wins over the channel's
+    # heartbeat_minutes config. 5-min declared cadence -> 31-min window; a record
+    # 10 min old stays alive even though the legacy 1-min config would reap it.
+    (chan / "config.json").write_text(json.dumps({"heartbeat_minutes": 1}))
+    pr.write_presence(chan, session_id="d", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p",
+                      planned_heartbeat_secs=300)
+    f = chan / "sessions" / "d.json"
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 10 * 60
+    f.write_text(json.dumps(rec))
+    assert pr.reap_stale(chan) == []
+    assert f.exists()
 
 
 def test_cursor_round_trip(chan: Path):

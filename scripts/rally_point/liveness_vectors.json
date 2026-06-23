@@ -1,0 +1,81 @@
+{
+  "_doc": "Golden adaptive-liveness vectors. BYTE-IDENTICAL copy lives in build-loop at scripts/rally_point/liveness_vectors.json. Both language suites assert the same adaptive-cadence window math and the same multi-signal is_live verdict so the Rust canonical and Python fallback can never silently diverge. Time is injected (now=0 implied; each signal age is seconds-since-fresh). Defaults: default_cadence_secs=300, miss_multiplier=6, grace_secs=60. Stale predicate is STRICT '>': silent_for > window. is_live: any signal fresh (age<=window, age!=null) => live; all signals stale (parseable) => stale; otherwise (a null/absent signal AND none fresh) => unknown (squad caller treats unknown as VISIBLE/fail-open; reaper treats unknown as NOT-reapable/fail-closed).",
+  "default_cadence_secs": 300,
+  "miss_multiplier": 6,
+  "grace_secs": 60,
+  "window_cases": [
+    { "name": "five_min_cadence", "planned_interval_secs": 300, "expected_window_secs": 1860 },
+    { "name": "five_hour_cadence", "planned_interval_secs": 18000, "expected_window_secs": 108060 },
+    { "name": "fifteen_min_cadence", "planned_interval_secs": 900, "expected_window_secs": 5460 },
+    { "name": "default_when_zero", "planned_interval_secs": 0, "expected_window_secs": 1860 },
+    { "name": "default_when_negative", "planned_interval_secs": -1, "expected_window_secs": 1860 }
+  ],
+  "liveness_cases": [
+    {
+      "name": "5min_silent_35min_all_stale_reaped",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 2100, "inject_age": 2100, "code_progress_age": 2100, "plan_age": 2100 },
+      "expected": "stale"
+    },
+    {
+      "name": "5min_silent_30min_within_grace_live",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 1800, "inject_age": null, "code_progress_age": null, "plan_age": null },
+      "expected": "live"
+    },
+    {
+      "name": "5hour_idle_2hours_heartbeat_fresh_live",
+      "planned_interval_secs": 18000,
+      "signals": { "heartbeat_age": 7200, "inject_age": null, "code_progress_age": null, "plan_age": null },
+      "expected": "live"
+    },
+    {
+      "name": "heartbeat_stale_but_code_progress_fresh_live",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 99999, "inject_age": null, "code_progress_age": 60, "plan_age": null },
+      "expected": "live"
+    },
+    {
+      "name": "heartbeat_stale_but_inject_fresh_live",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 99999, "inject_age": 120, "code_progress_age": null, "plan_age": null },
+      "expected": "live"
+    },
+    {
+      "name": "heartbeat_stale_but_plan_fresh_live",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 99999, "inject_age": null, "code_progress_age": null, "plan_age": 30 },
+      "expected": "live"
+    },
+    {
+      "name": "all_four_stale_stale",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 99999, "inject_age": 99999, "code_progress_age": 99999, "plan_age": 99999 },
+      "expected": "stale"
+    },
+    {
+      "name": "all_signals_absent_unknown_failopen",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": null, "inject_age": null, "code_progress_age": null, "plan_age": null },
+      "expected": "unknown"
+    },
+    {
+      "name": "stale_heartbeat_plus_absent_others_unknown_failopen",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 99999, "inject_age": null, "code_progress_age": null, "plan_age": null },
+      "expected": "unknown"
+    },
+    {
+      "name": "boundary_just_under_window_live",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 1860, "inject_age": null, "code_progress_age": null, "plan_age": null },
+      "expected": "live"
+    },
+    {
+      "name": "boundary_just_over_window_with_all_stale",
+      "planned_interval_secs": 300,
+      "signals": { "heartbeat_age": 1861, "inject_age": 1861, "code_progress_age": 1861, "plan_age": 1861 },
+      "expected": "stale"
+    }
+  ]
+}

@@ -245,8 +245,9 @@ Rust binary is absent. Called fire-and-forget at every session-start via
 **FAIL-CLOSED invariant.** The reaper NEVER removes a record whose ownership
 timestamp it cannot unambiguously prove is over-TTL. Missing, unparseable, or
 future timestamps are ALWAYS preserved. Specifically:
-- Presence: `heartbeat_ts` must be a positive float AND older than
-  `heartbeat_minutes * 60` (default 900 s). A zero or unreadable value → kept.
+- Presence: `heartbeat_ts` must be a positive float AND older than the record's
+  ADAPTIVE staleness window (see "Adaptive multi-signal liveness" below), AND no
+  fresh code-progress signal overrides it. A zero or unreadable value → kept.
 - Claims: `lease_expires_at` must be a valid RFC3339 timestamp AND `<= now`. A
   missing, malformed, or future value → kept.
 - Lead: `_reclaimable(doc, now)` from `leadership.py` must return `True` (requires
@@ -272,7 +273,49 @@ within 1e-4, and the `stale_at_15m` staleness verdict, for every case.
 **Session-end self-release.** Both tool hooks emit `rally stop <tool>` at turn
 completion (`Stop` event) so peers immediately see the agent's absence rather than
 waiting for heartbeat TTL expiry. This contains accretion at the source and
-reduces the reaper's steady-state work.
+reduces the reaper's steady-state work. On stop, a session also self-kills its own
+`rally-*` tmux session (Rust `rally stop`) so it can never become a detached orphan.
+
+## Adaptive multi-signal liveness (squad-projection decay + tmux orphan reaper)
+
+Fixed staleness cutoffs are replaced by liveness that ADAPTS to each session's
+planned heartbeat cadence and weighs four signals. One function, mirrored
+Rust↔Python (`crates/rally-cli/src/liveness.rs` ≡ `scripts/rally_point/liveness.py`),
+double-pinned by the byte-identical golden fixture `liveness_vectors.json` (tracked
+in `_provenance.json`).
+
+**Adaptive cadence.** A session declares its beat via `planned_heartbeat_secs`
+(presence record) or `renew_every_minutes` (lead.json); undeclared → the default
+cadence. Staleness is RELATIVE: `window = planned_interval * MISS_MULTIPLIER + GRACE`.
+Defaults `DEFAULT_CADENCE_SECS=300`, `MISS_MULTIPLIER=6`, `GRACE_SECS=60` →
+a 5-min cadence is stale at ~31 min (≈6 missed beats); a 5-hour cadence not until
+~30 h. Tunable via `.rally/config.json` `coordination{}` (Rust) /
+`.build-loop/config.json` `coordinationPolicy{}` (Python):
+`default_cadence_secs`, `miss_multiplier`, `grace_secs` (+ `RALLY_*` env in Rust).
+Legacy `heartbeat_minutes` is honored as a cadence source for backward compat.
+
+**Four signals — LIVE if ANY is fresh within the adaptive window:**
+(a) heartbeat/presence `last_seen`; (b) inject/ack (a `receipt`/`wake`/`handoff`
+naming the session); (c) forward code progress (the session's worktree branch HEAD
+MOVED since the last poll — Rust compares the two newest presence facts' shas, the
+Python reaper compares a cached `branch_head_sha`); (d) declared active work (a
+live claim or authored mission/handoff).
+
+**Two fail-directions, each on the safe side:**
+- **Squad VISIBILITY projection** (Rust `snapshot_from_facts_with_policy`) is
+  FAIL-OPEN. A squad whose four signals are ALL provably stale is DROPPED from the
+  default `rally room` view; `--include-archived` restores it (mirrors the message
+  archive model). A `Live` OR `Unknown` (any absent/unparseable signal) verdict
+  KEEPS the squad visible — hiding a still-alive peer could cause the very
+  write-collision this system prevents.
+- **Reaper REMOVAL** (presence-file unlink, claim/lead) stays FAIL-CLOSED — never
+  remove on a signal it cannot trust.
+
+**tmux orphan reaper.** `rally sessions --reap` also detects DETACHED `rally-*`
+tmux sessions whose last activity is past the adaptive window and which are not
+tracked as managed sessions, kills them, and tombstones the reap (closing the gap
+where `--reap` saw 0 of the real detached orphans). Attached sessions (a human is
+looking) are never killed.
 
 ## Idle-agent self-selection (rally facilitates, the agent decides)
 
