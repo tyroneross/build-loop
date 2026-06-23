@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Poll coordination status and print only state transitions."""
+"""Poll coordination status and print only state transitions.
+
+NOTIFY-ONLY CONTRACT (binding — enforced by scripts/worktree_isolation_lint.py)
+------------------------------------------------------------------------------
+This watcher detects a transition and NOTIFIES — it emits coordination-state and
+``rally_wake_due`` events (with ``suggested_commands`` the host MAY run). It must
+NEVER edit files, ``git add``/``git commit``, or act as a hidden scheduler that
+performs work. A committing background writer woken into the live interactive
+checkout races the interactive session on HEAD/index/branch (RCA 2026-06-22; see
+CLAUDE.md §"Concurrent dispatch isolation"). If a wake must do work that commits,
+dispatch it into a DEDICATED git worktree via
+``scripts/worktree_guard.create_guarded_worktree`` — never commit inline here.
+The lint asserts this file stays notify-only (``lint_in_repo_wake_path``); adding
+a worktree-less commit call will fail it.
+"""
 from __future__ import annotations
 
 import argparse

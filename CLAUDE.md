@@ -60,9 +60,17 @@ Both modes share the same plan, same Phase 1-4 logic, same Phase 6 Learn. The or
 
 See `references/model-tier-mapping.md` §"Dual-mode A/B test design" for the full design.
 
-### Concurrent dispatch isolation (NEW 2026-05-12)
+### Concurrent dispatch isolation (ENFORCED default — widened 2026-06-22)
 
-When dispatching `build-loop:build-orchestrator` as a sub-agent OR when the caller has another long-running edit session on the same workdir, pass `isolation: "worktree"` to the Agent tool. The orchestrator does not enforce single-worktree-per-run; isolation is the caller's contract. The Agent tool creates a temporary `git worktree` for the dispatch; the agent's `HEAD`, index, and working tree are isolated from the parent session. On return, the worktree path + branch appear in the envelope and the caller merges or cherry-picks back. Without isolation, two writers (main session + background orchestrator, OR two orchestrators) on the same worktree race on `HEAD` and the index — symptom log: commits on the wrong branch, staged residue bundled into unrelated commits, branches switched under the dispatch's feet. Decision-doctor-cc 2026-05-11 lost 5–10 min of `git reset` / `cherry-pick` recovery to this class three separate times.
+**Rule (enforced, not advisory): ANY headless or background writer that COMMITS must do so in a dedicated git worktree, never the live interactive checkout.** This covers every committing writer, not only Agent-tool dispatches: background `build-loop:build-orchestrator` sub-agents, headless launchd/cron pollers and watchers, and any process woken to do work and commit. Two writers on one checkout race on `HEAD` and the index — symptom log: commits on the wrong branch, staged residue bundled into unrelated commits, branches switched under the dispatch's feet, freshly-regenerated artifacts pushed stale.
+
+For the **Agent-tool dispatch path**: when dispatching `build-loop:build-orchestrator` as a sub-agent OR when the caller has another long-running edit session on the same workdir, pass `isolation: "worktree"` to the Agent tool. The Agent tool creates a temporary `git worktree`; the agent's `HEAD`, index, and working tree are isolated from the parent. On return, the worktree path + branch appear in the envelope and the caller merges or cherry-picks back.
+
+For the **headless/background path** (launchd, cron, pollers, watchers): the job must either point its `WorkingDirectory` at a dedicated worktree (`build-loop.worktrees/<agent>-<task>` or `.build-loop/worktrees/<slug>`), set `BUILD_LOOP_WORKTREE_ISOLATED=1` in its plist to declare it provisions a worktree before committing, or stay NOTIFY-ONLY (detect a transition and notify/inject, never edit or commit — the rally "watchers stay narrow" doctrine). The canonical in-repo wake surface (`scripts/wake_scheduler.py` = pure decision engine; `scripts/agent_rally_watcher/watch.py` = event emitter) is notify-only by contract.
+
+**Enforcement:** `scripts/worktree_isolation_lint.py` is the regression artifact. It scans `~/Library/LaunchAgents/*autonomy*`/`*poller*`/`*watcher*` jobs whose `WorkingDirectory` is a live checkout (exit 1 = BLOCKER) and asserts the in-repo wake path stays notify-only. Run it in Phase 1 Assess on self-recursive build-loop runs and before installing any background committer. Co-located test: `scripts/test_worktree_isolation_lint.py`.
+
+**History:** Decision-doctor-cc 2026-05-11 lost 5–10 min of `git reset` / `cherry-pick` recovery to this class three separate times. The control existed as prose from 2026-05-12 but was advisory and scoped only to the Agent-tool path, so a headless codex autonomy poller (`WorkingDirectory` = the live build-loop checkout) reproduced all three corruptions on 2026-06-22 — the meta-cause that prompted promoting this control from documentation to an enforced lint and widening its scope to the headless path.
 
 ## Project Data
 
