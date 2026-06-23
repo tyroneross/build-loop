@@ -1,7 +1,7 @@
 {
   "_doc": "Provenance manifest for vendored Rally Point substrate. Maps each scripts/rally_point/<name>.py to its upstream agent-rally-point counterpart (path relative to the ARP repo root) and the SHA-256 of that UPSTREAM file at last reconcile. The drift-detector (sync_rally.py) recomputes the CURRENT upstream hash and flags DRIFT when upstream moved since this baseline — i.e. 'review whether to port upstream changes into the (intentionally diverged) build-loop copy'. source: null marks a build-loop-original file with no upstream counterpart; the detector skips it cleanly. Read-only; never auto-updates a vendored file. Mirrors scripts/sync_skills.py exactly.",
   "_upstream_repo": "agent-rally-point",
-  "_baseline_set_at": "2026-06-17",
+  "_baseline_set_at": "2026-06-22",
   "files": {
     "changes.py": {
       "source": "build/lib/agent_rally_point/changes.py",
@@ -60,12 +60,22 @@
     "fact_v1.py": {
       "_doc": "Tracks the REAL wire contract the emitter must match: FACT_SCHEMA is defined in the Rust lib.rs (lib.rs:40) and migrate-legacy SILENTLY skips any line whose schema != it (discovery.rs:712-714). Drift here = a future silent-data-loss seam, so the detector watches the Rust source — not a Python mirror — read-only/report-only.",
       "source": "crates/rally-cli/src/lib.rs",
-      "source_hash": "43e6beb9b69d19766ee847064fa87da3d347e147c343db1d1687177c9ea5059e"
+      "source_hash": "a9282e2e07ff56c04d7fadfe39a827112b7fda65c16e57664d90273c41888f0a"
     },
     "fact_v1_struct": {
       "_doc": "The Fact struct wire shape the emitter targets (store.rs). Additive-tolerant (no deny_unknown_fields) — tracked so a struct-level contract move surfaces for review.",
       "source": "crates/rally-cli/src/store.rs",
-      "source_hash": "06555bb13711b906923809cd1ec78988bf97609ffcde0a7d387e64aecbbc3fa0"
+      "source_hash": "fe7f003e8609e8748df5f65300afd21ad8376c8a5f8d8308d684a1f692c7f615"
+    },
+    "decay.py": {
+      "_doc": "Python MIRROR of the canonical Rust recency-decay + size-scaled reclaim policy (decay.rs). The two coordination systems are intentionally SEPARATE codebases; this manifest entry is the COMPATIBILITY guard — drift here means the half-life curve / archive floor / reclaim-timeout math diverged between agent-rally-point and the build-loop fallback. Parity is double-pinned by the byte-identical golden fixture decay_vectors.json (tracked below). Read-only/report-only.",
+      "source": "crates/rally-cli/src/decay.rs",
+      "source_hash": "be1eafcba6aee81020ded916b78caa62744d8cfef79685680dc65fb118dad279"
+    },
+    "decay_vectors.json": {
+      "_doc": "Golden decay vectors. MUST stay byte-identical to the Rust fixture so both test suites assert the same curve at the same reference ages — the cross-repo parity proof. Drift = the two implementations no longer verified against one shared truth.",
+      "source": "crates/rally-cli/tests/fixtures/decay_vectors.json",
+      "source_hash": "d4e3ec4d01eaf65b7016016cd7c1d73e3d54fa0961866c0514de7118d1b1e6e8"
     }
   }
 }
