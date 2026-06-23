@@ -193,6 +193,11 @@ class WriteSurfaceGrepTests(unittest.TestCase):
         "rally_point/test_checkpoint.py",
         "rally_point/test_orchestrator_contract.py",
         "rally_point/test_cross_tool.py",
+        # test_coordination_status seeds change records with controlled `ts`
+        # values to exercise recency-decay ordering + archive-floor (Feature A);
+        # post() would stamp the real now() and defeat the aged-record fixture.
+        # Storage-layer test seam, not a message-emitting runtime caller.
+        "test_coordination_status.py",
         # install_git_hook.py is a one-shot installer script that probes
         # the channel; not part of the runtime write surface.
         "rally_point/install_git_hook.py",

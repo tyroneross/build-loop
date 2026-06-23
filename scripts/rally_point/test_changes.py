@@ -252,3 +252,31 @@ def test_no_mutation_api():
     for forbidden in ("rewrite", "delete_change", "truncate", "overwrite",
                        "update_change", "remove_change"):
         assert not hasattr(ch, forbidden), f"immutability violated: {forbidden}"
+
+
+def test_read_archived_changes_reads_rotated_files(chan: Path):
+    # A rotated (archived) log is a `changes.jsonl.<DATE>` sibling that
+    # read_changes_since never reads — read_archived_changes is the read-back.
+    r1 = ch.make_record(kind="decision", tool="t", model="m", run_id="r",
+                        app_slug="a", payload={"old": True}, revision=1)
+    rotated = chan / "changes.jsonl.2026-06-01"
+    rotated.write_text(json.dumps(r1) + "\n", encoding="utf-8")
+    # also a same-day numeric-suffix rotation
+    r2 = ch.make_record(kind="decision", tool="t", model="m", run_id="r",
+                        app_slug="a", payload={"old2": True}, revision=2)
+    (chan / "changes.jsonl.2026-06-01.2").write_text(
+        json.dumps(r2) + "\n", encoding="utf-8"
+    )
+    archived = ch.read_archived_changes(chan)
+    kinds = [a["kind"] for a in archived]
+    assert kinds == ["decision", "decision"]
+    # live changes.jsonl is NOT included by the archive reader.
+    ch.append_change(chan, ch.make_record(kind="commit", tool="t", model="m",
+                     run_id="r", app_slug="a", payload={}, revision=3))
+    archived2 = ch.read_archived_changes(chan)
+    assert all(a["kind"] == "decision" for a in archived2), "live log excluded"
+
+
+def test_read_archived_changes_absent_is_empty(chan: Path):
+    assert ch.read_archived_changes(chan) == []
+    assert ch.read_archived_changes(chan / "nope") == []

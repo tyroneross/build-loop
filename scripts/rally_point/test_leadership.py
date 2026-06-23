@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -25,6 +25,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import changes  # noqa: E402
 import leadership as ld  # noqa: E402
 
 _APP = "example-app"
@@ -183,3 +184,115 @@ def test_rebuild_returns_none_after_relinquish(channel: Path):
     _claim(channel, "claude-r1")
     ld.relinquish_lead(channel, session_id="claude-r1", app_slug=_APP)
     assert ld.rebuild_lead_from_changes(channel) is None
+
+
+# --------------------------------------------------------------------------
+# Size-scaled auto-reclaim + fail-closed (Feature B)
+# --------------------------------------------------------------------------
+
+def _claim_sized(channel: Path, session: str, *, work_size=None, effort=None,
+                 owns=None, now=None, workdir=None):
+    return ld.claim_lead(
+        channel,
+        run_id="run-test",
+        session_id=session,
+        tool="claude_code",
+        model="claude-opus",
+        app_slug=_APP,
+        work_size=work_size,
+        effort=effort,
+        owns=owns,
+        now=now,
+        workdir=workdir,
+    )
+
+
+def test_small_claim_lease_window_is_30m(channel: Path):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    r = _claim_sized(channel, "s1", work_size="small", now=base)
+    expiry = ld._parse_iso(r["lead"]["lead"]["lease_until"])
+    assert (expiry - base) == timedelta(minutes=30)
+    assert r["lead"]["lead"]["work_size"] == "small"
+
+
+def test_large_claim_lease_window_is_2h(channel: Path):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    r = _claim_sized(channel, "l1", work_size="large", now=base)
+    expiry = ld._parse_iso(r["lead"]["lead"]["lease_until"])
+    assert (expiry - base) == timedelta(hours=2)
+
+
+def test_small_claim_reclaimable_just_over_not_just_under(channel: Path):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _claim_sized(channel, "owner", work_size="small", now=base)
+    # 29m later: NOT reclaimable
+    under = base + timedelta(minutes=29)
+    r_under = _claim_sized(channel, "peer", work_size="small", now=under)
+    assert r_under["claimed"] is False, "single-file lease not expired at 29m"
+    # 31m later: reclaimable
+    over = base + timedelta(minutes=31)
+    r_over = _claim_sized(channel, "peer", work_size="small", now=over)
+    assert r_over["claimed"] is True, "single-file lease reclaimable at 31m"
+    assert r_over.get("reclaimed") is True
+
+
+def test_large_claim_not_reclaimable_at_31m(channel: Path):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _claim_sized(channel, "owner", work_size="large", now=base)
+    over_small = base + timedelta(minutes=31)
+    r = _claim_sized(channel, "peer", work_size="large", now=over_small)
+    assert r["claimed"] is False, "multi-file/coarse lease still valid at 31m"
+    # but reclaimable past 2h
+    over_large = base + timedelta(minutes=121)
+    r2 = _claim_sized(channel, "peer", work_size="large", now=over_large)
+    assert r2["claimed"] is True
+
+
+def test_reclaim_emits_reclaim_record_with_provenance(channel: Path):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _claim_sized(channel, "owner-sess", work_size="small", now=base)
+    over = base + timedelta(minutes=31)
+    _claim_sized(channel, "peer-sess", work_size="small", now=over)
+    # Read the durable changes trail: a lead-reclaim record must exist with
+    # the reason + prior owner provenance.
+    recs, _ = changes.read_changes_since(channel, 0)
+    reclaims = [r for r in recs if r.get("kind") == "lead-reclaim"]
+    assert reclaims, "a lead-reclaim record must be posted on auto-reclaim"
+    payload = reclaims[-1].get("payload", {})
+    assert payload.get("reclaim_reason") == "stale-by-timeout"
+    assert payload.get("work_size") == "small"
+    assert payload.get("reclaimed_from_session") == "owner-sess"
+
+
+def test_malformed_lease_is_fail_closed_not_reclaimable(channel: Path):
+    # An incumbent with a garbage lease_until must NEVER be auto-reclaimed.
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _claim_sized(channel, "owner", work_size="small", now=base)
+    # Corrupt the on-disk lease_until.
+    doc = ld.read_lead(channel)
+    doc["lead"]["lease_until"] = "not-a-timestamp"
+    ld._atomic_write(ld.lead_path(channel), doc)
+    # Far in the future — would be reclaimable if parse succeeded.
+    way_later = base + timedelta(days=30)
+    r = _claim_sized(channel, "peer", work_size="small", now=way_later)
+    assert r["claimed"] is False, "fail-closed: malformed lease never reclaimed"
+    # incumbent unchanged
+    assert ld.read_lead(channel)["lead"]["session_id"] == "owner"
+
+
+def test_effort_grade_sizes_lease(channel: Path):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    r = _claim_sized(channel, "e1", effort="XS", now=base)
+    expiry = ld._parse_iso(r["lead"]["lead"]["lease_until"])
+    assert (expiry - base) == timedelta(minutes=30), "XS -> small (30m)"
+
+
+def test_no_size_signal_preserves_renew_window(channel: Path):
+    # Backward compat: no work_size/effort -> lease window stays renew cadence.
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    r = ld.claim_lead(
+        channel, run_id="r", session_id="x", tool="t", model="m",
+        app_slug=_APP, renew_every_minutes=15, now=base,
+    )
+    expiry = ld._parse_iso(r["lead"]["lead"]["lease_until"])
+    assert (expiry - base) == timedelta(minutes=15), "no size signal keeps 15m window"

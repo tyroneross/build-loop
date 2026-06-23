@@ -51,6 +51,7 @@ KNOWN_KINDS = (
     "lead-renew",
     "lead-transfer",
     "lead-relinquish",
+    "lead-reclaim",
     "escalation",
     "standby",
     "wake",
@@ -320,6 +321,38 @@ def read_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
     except OSError:
         return [], offset
     return records, new_offset
+
+
+def read_archived_changes(channel_dir: Path) -> list:
+    """Return normalized rows from ROTATED change logs (``changes.jsonl.<DATE>``).
+
+    `lifecycle.rotate_changes_log` renames an over-threshold ``changes.jsonl``
+    to a dated sibling and never reads it back — those rotated files are the
+    physical archive store. This is the read-back path for
+    ``--include-archived`` on the listing surfaces. Lossless: it only reads,
+    never moves or deletes. Returns rows oldest-first across all rotated files.
+    Corrupt lines / unreadable files are skipped (best-effort).
+    """
+    d = Path(channel_dir)
+    records: list = []
+    try:
+        # `changes.jsonl.2026-06-22`, `changes.jsonl.2026-06-22.2`, etc.
+        paths = sorted(d.glob(f"{_LOG_NAME}.*"))
+    except OSError:
+        return records
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        records.append(normalize_record(json.loads(line)))
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+        except OSError:
+            continue
+    return records
 
 
 def _read_repo_local_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:

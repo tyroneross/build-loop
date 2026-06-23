@@ -48,9 +48,13 @@ from typing import Any
 
 try:  # package import
     from . import changes
+    from . import decay
+    from .coordination_policy import CoordinationPolicy, load_policy
     from .post import post
 except ImportError:  # script import
     import changes  # type: ignore
+    import decay  # type: ignore
+    from coordination_policy import CoordinationPolicy, load_policy  # type: ignore
     from post import post  # type: ignore
 
 _RALLY_DIR = "rally"
@@ -65,6 +69,9 @@ _KIND_CLAIM = "lead-claim"
 _KIND_RENEW = "lead-renew"
 _KIND_TRANSFER = "lead-transfer"
 _KIND_RELINQUISH = "lead-relinquish"
+# Emitted when a claim succeeds by reclaiming an EXPIRED prior lease (stale lead
+# auto-released by timeout), as opposed to a fresh claim into an empty seat.
+_KIND_RECLAIM = "lead-reclaim"
 
 
 # --------------------------------------------------------------------------
@@ -157,6 +164,30 @@ def _lease_expired(doc: dict[str, Any] | None, at: datetime) -> bool:
     return at >= expiry
 
 
+def _reclaimable(doc: dict[str, Any] | None, at: datetime) -> bool:
+    """FAIL-CLOSED auto-reclaim decision for an EXISTING incumbent lease.
+
+    Distinct from ``_lease_expired``: that function returns ``True`` for a
+    missing/malformed lead so the very first agent can seize an empty seat.
+    Auto-reclaim is a destructive-class action (it takes the role away from a
+    peer), so a present-but-unparseable lease must NEVER be reclaimable — we
+    refuse rather than reclaim on a timestamp we cannot trust. This matches the
+    Rust ``takeover_eligible_owners`` fail-closed invariant.
+
+    Returns ``True`` only when there IS an incumbent lead whose lease has a
+    VALID, parseable ``lease_until`` that is at/after expiry.
+    """
+    if not doc:
+        return False  # no incumbent to reclaim FROM (this is a fresh claim)
+    lead = doc.get("lead")
+    if not isinstance(lead, dict):
+        return False
+    expiry = _parse_iso(lead.get("lease_until"))
+    if expiry is None:
+        return False  # FAIL-CLOSED: malformed lease never reclaims
+    return at >= expiry
+
+
 def _build_lead_doc(
     *,
     run_id: str,
@@ -169,8 +200,17 @@ def _build_lead_doc(
     parent_lead: str | None,
     max_direct_reports: int,
     chunk_owners: dict[str, str] | None,
+    work_size: str = decay.LARGE,
+    lease_secs: int | None = None,
 ) -> dict[str, Any]:
-    lease_until = (now + timedelta(minutes=renew_every_minutes)).isoformat()
+    # The lease window is SIZE-SCALED: a small (single-file) claim expires
+    # sooner than a large (multi-file/coarse) claim. ``lease_secs`` (when given)
+    # wins; otherwise it derives from ``work_size`` via the coordination policy
+    # defaults. ``renew_every_minutes`` stays the RENEW cadence hint for the live
+    # lead; the lease WINDOW is what governs auto-reclaim.
+    if lease_secs is None:
+        lease_secs = decay.reclaim_timeout_seconds(work_size)
+    lease_until = (now + timedelta(seconds=lease_secs)).isoformat()
     return {
         "schema_version": _SCHEMA_VERSION,
         "run_id": run_id,
@@ -180,6 +220,7 @@ def _build_lead_doc(
             "model": model,
             "lease_until": lease_until,
             "renew_every_minutes": renew_every_minutes,
+            "work_size": work_size,
             "parent_lead": parent_lead,
             "max_direct_reports": max_direct_reports,
             "current_reports": [],
@@ -290,25 +331,56 @@ def claim_lead(
     parent_lead: str | None = None,
     max_direct_reports: int = 4,
     chunk_owners: dict[str, str] | None = None,
+    work_size: str | None = None,
+    effort: str | None = None,
     workdir: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Attempt to become lead. Race-safe via rally/lead.lock.
 
-    Under the lock: read ``lead.json``. If absent or the lease has expired,
-    write self and return ``{"claimed": True, "lead": <doc>}``. Otherwise
-    return ``{"claimed": False, "lead": <incumbent doc>}`` unchanged.
+    Under the lock: read ``lead.json``.
 
-    Two concurrent ``claim_lead`` calls serialize on the lock — exactly one
-    wins. On a successful claim a ``lead-claim`` record is posted (outside
-    the lock) for the durable audit trail.
+      * If absent (empty seat) -> claim, write self.
+      * If a PRESENT incumbent's lease is reclaimable (valid, parseable,
+        at/after expiry) -> AUTO-RECLAIM, write self, and post a durable
+        ``lead-reclaim`` record naming who reclaimed and why (stale-by-timeout).
+        FAIL-CLOSED: a present-but-unparseable lease is NEVER reclaimed.
+      * Otherwise -> ``{"claimed": False, "lead": <incumbent doc>}`` unchanged.
+
+    The new lease WINDOW is size-scaled: ``work_size`` (or ``effort``, or the
+    ``owns`` file list) decides small (default 30m) vs large (default 2h) via
+    the coordination policy. Two concurrent ``claim_lead`` calls serialize on
+    the lock — exactly one wins.
     """
     at = now or _now()
+    policy: CoordinationPolicy = load_policy(Path(workdir) if workdir else Path.cwd())
+    # Size-scaling for the lease WINDOW is OPT-IN to preserve the prior lead
+    # behavior exactly: if the caller gives no size signal (no work_size, no
+    # effort), the window stays `renew_every_minutes` (the historical lead
+    # lease). Ownership/lead claims that DO carry a size signal get the
+    # size-scaled window (small 30m / large 2h) per the coordination policy.
+    if work_size is not None or effort is not None:
+        size = work_size or decay.classify_work_size(effort=effort, scope_paths=owns)
+        lease_secs = decay.reclaim_timeout_seconds(
+            size,
+            small_minutes=policy.reclaim_small_minutes,
+            large_minutes=policy.reclaim_large_minutes,
+        )
+    else:
+        size = decay.LARGE  # recorded label; window stays the renew cadence
+        lease_secs = renew_every_minutes * 60
 
     def _do() -> dict[str, Any]:
         existing = read_lead(channel_dir)
-        if not _lease_expired(existing, at):
-            return {"claimed": False, "lead": existing}
+        # An incumbent that is present but NOT reclaimable blocks the claim.
+        # (No incumbent -> _reclaimable False but _lease_expired True -> fresh.)
+        is_reclaim = _reclaimable(existing, at)
+        if existing and not is_reclaim:
+            return {"claimed": False, "lead": existing, "reclaimed": False}
+        if not existing and not _lease_expired(existing, at):
+            # Defensive: should not happen (no doc => expired), keep explicit.
+            return {"claimed": False, "lead": existing, "reclaimed": False}
+        prior_lead = (existing or {}).get("lead") if isinstance(existing, dict) else None
         doc = _build_lead_doc(
             run_id=run_id,
             session_id=session_id,
@@ -320,9 +392,11 @@ def claim_lead(
             parent_lead=parent_lead,
             max_direct_reports=max_direct_reports,
             chunk_owners=chunk_owners,
+            work_size=size,
+            lease_secs=lease_secs,
         )
         _atomic_write(lead_path(channel_dir), doc)
-        return {"claimed": True, "lead": doc}
+        return {"claimed": True, "lead": doc, "reclaimed": is_reclaim, "prior_lead": prior_lead}
 
     result = _with_lock(channel_dir, _do)
     if result["claimed"]:
@@ -336,6 +410,25 @@ def claim_lead(
             lead=result["lead"]["lead"],
             workdir=workdir,
         )
+        if result.get("reclaimed"):
+            # Auditable auto-release record: who reclaimed, from whom, why.
+            prior = result.get("prior_lead") or {}
+            _post_lead_record(
+                channel_dir,
+                kind=_KIND_RECLAIM,
+                tool=tool,
+                model=model,
+                run_id=run_id,
+                app_slug=app_slug,
+                lead=result["lead"]["lead"],
+                extra={
+                    "reclaim_reason": "stale-by-timeout",
+                    "work_size": size,
+                    "reclaimed_from_tool": prior.get("tool"),
+                    "reclaimed_from_session": prior.get("session_id"),
+                },
+                workdir=workdir,
+            )
     return result
 
 

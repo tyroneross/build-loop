@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ if str(HERE) not in sys.path:
 from rally_point import (  # noqa: E402
     changes,
     channel_paths,
+    decay,
     hook_budget,
     inbox,
     presence,
@@ -37,6 +39,7 @@ from rally_point import (  # noqa: E402
     task_heartbeat,
 )
 from rally_point.checkpoint import sanitize_change_for_surface  # noqa: E402
+from rally_point.coordination_policy import load_policy as _load_coord_policy  # noqa: E402
 from rally_point.discovery_bridge import resolve as _bridge_resolve  # noqa: E402
 
 
@@ -254,9 +257,52 @@ def _latest_by_step(entries: list[dict[str, str]]) -> list[dict[str, str]]:
     return list(latest.values())
 
 
-def _read_recent_changes(channel_dir: Path, max_changes: int) -> list[dict[str, Any]]:
+def _change_recency_weight(rec: dict[str, Any], now: float, half_life_secs: int) -> float:
+    """Recency weight for a change record from its epoch-float ``ts``.
+
+    Fails OPEN: a record with a missing/unparseable ``ts`` is treated as fresh
+    (weight 1.0) and never hidden by decay.
+    """
+    raw = rec.get("ts")
+    try:
+        ts = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if ts <= 0:
+        return 1.0
+    return decay.recency_weight(now - ts, half_life_secs)
+
+
+def _read_recent_changes(
+    channel_dir: Path,
+    max_changes: int,
+    *,
+    workdir: Path | None = None,
+    include_archived: bool = False,
+) -> list[dict[str, Any]]:
+    """Recent coordination changes, recency-ordered with an archive floor.
+
+    Records are ordered fresh-first by recency weight (the historical-message
+    listing surface — the build-loop equivalent of ``rally room``/``recent``).
+    A record whose weight falls below the archive floor is excluded unless
+    ``include_archived`` is set. Active state is unaffected — this only orders
+    the change-log stream. Fails open on a malformed ``ts``.
+    """
     recs, _offset = changes.read_changes_since(channel_dir, 0)
-    return recs[-max_changes:] if len(recs) > max_changes else recs
+    policy = _load_coord_policy(Path(workdir) if workdir else Path.cwd())
+    now = time.time()
+    hl = policy.half_life_secs
+    floor = policy.archive_floor_weight
+    if include_archived:
+        # Fold in physically-rotated (archived) change logs for retrieval.
+        recs = recs + changes.read_archived_changes(channel_dir)
+    weighted = [(_change_recency_weight(r, now, hl), r) for r in recs]
+    if not include_archived:
+        weighted = [(w, r) for (w, r) in weighted if not decay.is_archivable(w, floor)]
+    # Fresh-first by weight; preserve original order for equal weights (stable).
+    weighted.sort(key=lambda wr: wr[0], reverse=True)
+    ordered = [r for (_w, r) in weighted]
+    return ordered[:max_changes]
 
 
 def _git_dirty_files(workdir: Path) -> tuple[list[str], bool]:
@@ -371,7 +417,12 @@ def build_status(args: argparse.Namespace) -> dict[str, Any]:
             continue
         dirty_outside_owned.append(path)
 
-    recent_changes = _read_recent_changes(channel_dir, args.max_changes)
+    recent_changes = _read_recent_changes(
+        channel_dir,
+        args.max_changes,
+        workdir=workdir,
+        include_archived=getattr(args, "include_archived", False),
+    )
     current_revision = revision.read_revision(channel_dir)
     # SEC-002 — ``new_changes`` is surfaced into orchestrator LLM context.
     # changes.jsonl is unauthenticated (trusted-local-peers-only); sanitize
@@ -526,6 +577,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--coordination-file", default=None)
     p.add_argument("--since-revision", type=int, default=None)
     p.add_argument("--max-changes", type=int, default=20)
+    p.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="re-include recency-decayed (archived) coordination changes",
+    )
     p.add_argument(
         "--task-ref",
         default=None,

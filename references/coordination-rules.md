@@ -171,6 +171,51 @@ any of the above. Memory citation:
 
 **Orphaned-lane absorption:** when a lane assigned to an idle peer is **local and reversible** (commits, doc/agent edits, dead-code or dead-key trims, version bumps, test updates), the live agent **absorbs it** — does the work itself, then records in the report `absorbed <peer>'s idle lane: <what> [<evidence>]`. Do **not** block a release, a finish, or "done" on an idle peer's local lane — that is the same manufactured wait as a turn-length stop (see `skills/build-loop/SKILL.md` §"Keep going until done"). Only surface/hold a lane that is genuinely **peer-exclusive**: needs the other vendor's model (true cross-vendor review), the peer's environment/credentials, or an irreversible action only that peer is authorized to take. Coordination is cooperative, not a dependency that can deadlock the live agent.
 
+## Recency decay & size-scaled lead/ownership auto-reclaim
+
+A single coordination policy governs message aging and stale-claim reclaim,
+mirrored from the canonical Rust implementation (agent-rally-point). Tunables
+live under `coordinationPolicy` in `.build-loop/config.json` (defaults shown):
+
+```json
+{
+  "coordinationPolicy": {
+    "half_life_hours": 48,
+    "archive_floor_weight": 0.05,
+    "reclaim_small_minutes": 30,
+    "reclaim_large_minutes": 120
+  }
+}
+```
+
+- **Recency decay (listing order + archive).** Every coordination change gets a
+  weight `0.5 ** (age_hours / half_life_hours)` (default half-life 48h). The
+  status / recent-changes listing orders fresh-first by weight and EXCLUDES any
+  change whose weight has fallen below the archive floor (default `0.05`, ≈14d).
+  Archived changes are losslessly retrievable with `--include-archived`
+  (`coordination_status.py --include-archived`), which also folds back any
+  physically-rotated `changes.jsonl.<date>` logs. Decay applies only to the
+  historical change stream — never to the live direct-message inbox or to active
+  state. Fails OPEN: a change with a malformed `ts` is treated as fresh.
+- **Size-scaled lead/ownership auto-reclaim.** A lead lease (`rally/lead.json`)
+  whose `lease_until` has passed is auto-reclaimable by the next `claim_lead`.
+  The lease WINDOW scales with the claimed work size: a small (single-file /
+  effort XS·S) claim expires after `reclaim_small_minutes` (default 30m); a
+  large (multi-file / coarse / effort M·L·XL) claim after `reclaim_large_minutes`
+  (default 2h). Pass `work_size`/`effort`/`owns` to `claim_lead`; with NO size
+  signal the lease window stays the historical `renew_every_minutes` cadence
+  (backward-compatible). An auto-reclaim posts a durable `lead-reclaim` record
+  naming who reclaimed, the prior owner, and the reason (`stale-by-timeout`).
+- **Preserved invariants.** Reclaim stays race-safe (the `rally/lead.lock`
+  fcntl lock is untouched) and FAIL-CLOSED: a present incumbent lease whose
+  `lease_until` is unparseable is NEVER auto-reclaimed (we refuse rather than
+  reclaim on a timestamp we cannot trust). An empty seat is still freely
+  claimable.
+
+This complements (does not replace) the >10-minute idle absorption rule above:
+idle-absorption handles local reversible lanes a quiet peer left open; the lease
+timeout governs the formal lead/ownership role handover.
+
 ## Idle-agent self-selection (rally facilitates, the agent decides)
 
 **Rally is a facilitator, not an orchestrator or verifier.** It exposes room state (`rally room` / `rally next`), file-level deconfliction (`rally check before-write --path P`), and claims/handoffs. It does **not** assign work, pick work, or verify code/release truth. A waiting agent runs this decision tree itself and chooses — the agent's LLM reasons over Rally's surfaced coordination records. This keeps coordination decentralized: no single point that hands out tasks (which would be a failure site and a bottleneck).

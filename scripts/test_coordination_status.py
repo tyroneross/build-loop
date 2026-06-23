@@ -919,6 +919,52 @@ class CoordinationStatusTests(unittest.TestCase):
         out = self._run()
         self.assertEqual(out["rejection_count"], 3)
 
+    # ---- recency decay ordering + archive floor (Feature A) ----
+    def _seed_change(self, channel_dir, *, kind, ts, rev, payload=None):
+        rec = changes.make_record(
+            kind=kind, tool="t", model="m", run_id="r",
+            app_slug="a", payload=payload or {}, revision=rev,
+        )
+        rec["ts"] = ts
+        changes.append_change(channel_dir, rec)
+
+    def test_recent_changes_decay_orders_and_archives(self):
+        import time as _time
+
+        slug = channel_paths.app_slug(self.workdir)
+        channel_dir = channel_paths.ensure_channel_dir(slug)
+        now = _time.time()
+        # fresh (0d), mid (3d, > floor), stale (20d, < 0.05 floor)
+        self._seed_change(channel_dir, kind="message", ts=now, rev=1,
+                          payload={"id": "fresh"})
+        self._seed_change(channel_dir, kind="message", ts=now - 3 * 86400,
+                          rev=2, payload={"id": "mid"})
+        self._seed_change(channel_dir, kind="message", ts=now - 20 * 86400,
+                          rev=3, payload={"id": "stale"})
+
+        # default: stale excluded, fresh before mid.
+        recs = cs._read_recent_changes(channel_dir, 20, workdir=self.workdir)
+        ids = [r["payload"]["id"] for r in recs]
+        self.assertEqual(ids, ["fresh", "mid"], "fresh-first, stale archived out")
+
+        # include_archived: stale reappears.
+        recs_all = cs._read_recent_changes(
+            channel_dir, 20, workdir=self.workdir, include_archived=True
+        )
+        ids_all = {r["payload"]["id"] for r in recs_all}
+        self.assertIn("stale", ids_all)
+
+    def test_recent_changes_malformed_ts_kept(self):
+        slug = channel_paths.app_slug(self.workdir)
+        channel_dir = channel_paths.ensure_channel_dir(slug)
+        self._seed_change(channel_dir, kind="message", ts="garbage", rev=1,
+                          payload={"id": "bad"})
+        recs = cs._read_recent_changes(channel_dir, 20, workdir=self.workdir)
+        self.assertEqual(
+            [r["payload"]["id"] for r in recs], ["bad"],
+            "fail-open: malformed ts kept, not archived",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
