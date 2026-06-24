@@ -144,12 +144,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"cleared": args.clear, "removed": removed}, indent=2))
         return 0
 
-    if not args.tier or not args.unavailable_model:
-        p.error("--tier and --unavailable-model are required unless --clear is given")
+    if not args.tier:
+        p.error("--tier is required unless --clear is given")
 
-    result = fallback(
-        workdir=workdir, tier=args.tier, unavailable_model=args.unavailable_model
-    )
+    if args.unavailable_model:
+        # Outage observed: record it + re-resolve to the next available model.
+        result = fallback(
+            workdir=workdir, tier=args.tier, unavailable_model=args.unavailable_model
+        )
+    else:
+        # No outage named: just resolve the tier to its primary available model
+        # (nothing down -> the tier default). Lets the dispatcher ask "what model
+        # for this tier?" through one entrypoint regardless of outage state.
+        resolved = model_resolver.resolve(tier=args.tier, workdir=workdir)
+        result = {
+            "recorded": None,
+            "newly_recorded": False,
+            "tier": args.tier,
+            "model": resolved.get("model"),
+            "source": resolved.get("source"),
+            "resolution_path": resolved.get("resolution_path"),
+        }
     if args.plain and not args.json:
         print(result.get("model") or "")
     else:

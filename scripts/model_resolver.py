@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -57,7 +58,9 @@ try:  # pragma: no cover - import shim for direct + packaged execution
     from model_overrides import (
         MODEL_REGISTRY,
         TIERS,
+        expand_unavailable,
         is_registered,
+        normalize_model_id,
         resolve_with_tier_fallback,
         tier_of_model,
     )
@@ -123,24 +126,54 @@ def load_tier_cache(workdir: Path) -> dict[str, dict[str, Any]]:
     return set() if False else {}  # noqa: SIM211 - explicit empty dict, fail-open
 
 
+# Env signals that identify the CURRENT coding host's dispatchable provider.
+# A host's Agent/dispatch tool can only run that host's own models (Claude Code
+# dispatches Anthropic; Codex dispatches OpenAI; Gemini CLI dispatches Google).
+# Detection stays host-neutral: it returns a provider only when a host signal is
+# present, else None (no filter) so an unknown host is never wrongly constrained.
+_HOST_PROVIDER_SIGNALS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("CLAUDECODE", "CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "ANTHROPIC_API_KEY"), "anthropic"),
+    (("CODEX_SANDBOX", "CODEX_HOME", "OPENAI_API_KEY"), "openai"),
+    (("GEMINI_CLI", "GEMINI_API_KEY", "GOOGLE_API_KEY"), "google"),
+)
+
+
+def detect_host_providers() -> set[str] | None:
+    """Best-effort: the provider set the CURRENT host can dispatch, or None.
+
+    `BUILD_LOOP_HOST_PROVIDERS` (comma-separated, e.g. "anthropic" or
+    "anthropic,openai") is the explicit override and wins. Otherwise detect from
+    host env signals. Returns None when no host is identifiable — host-neutral,
+    no filtering, so a non-Claude/unknown host is never wrongly constrained."""
+    override = os.environ.get("BUILD_LOOP_HOST_PROVIDERS")
+    if override and override.strip():
+        return {p.strip().lower() for p in override.split(",") if p.strip()}
+    for env_keys, provider in _HOST_PROVIDER_SIGNALS:
+        if any(os.environ.get(k) for k in env_keys):
+            return {provider}
+    return None
+
+
 def load_host_providers(workdir: Path) -> set[str] | None:
-    """Load the host's reachable-provider allowlist, if declared.
+    """The host's reachable-provider allowlist for THIS dispatch.
 
-    A host (e.g. Claude Code, which can only dispatch Anthropic models) may
-    declare ``{"hostProviders": ["anthropic"]}`` in ``model-availability.json``.
-    When present, any registry model whose ``provider`` is NOT in the set is
-    treated as unreachable on this host and excluded from the in-tier chain —
-    so the resolver never hands the dispatcher a model the host can't run.
+    Precedence: explicit `{"hostProviders": [...]}` in ``model-availability.json``
+    (operator override) → detected current host (``detect_host_providers``) →
+    None (host-neutral, no filtering).
 
-    Absent/empty = host-neutral: every provider is reachable (no filtering),
-    which is the default behavior. Returns ``None`` when undeclared.
+    When a set is returned, any registry model whose ``provider`` is NOT in it is
+    treated as unreachable on this host and excluded from the in-tier chain — so
+    the dispatcher is never handed a model it cannot run. This is applied BY
+    DEFAULT on the dispatch path (root fix for GAP 2): on a Claude host with
+    Fable down, frontier resolves fable→opus, never to a cross-vendor frontier
+    model that Claude Code cannot dispatch.
     """
     data = _read_json(availability_path(workdir))
     if isinstance(data, dict):
         hp = data.get("hostProviders")
         if isinstance(hp, list) and hp:
             return {str(p).strip().lower() for p in hp if str(p).strip()}
-    return None
+    return detect_host_providers()
 
 
 def in_tier_candidates(
@@ -193,14 +226,18 @@ def resolve(
     tier: str,
     workdir: Path,
     extra_unavailable: set[str] | frozenset[str] | None = None,
+    host_providers: set[str] | frozenset[str] | None = None,
     config_path: Path | None = None,
     state_path: Path | None = None,
 ) -> dict[str, Any]:
     """Resolve a tier to the highest-priority AVAILABLE model.
 
-    1. Load the persistent unavailable set (+ any ad-hoc ``extra_unavailable``).
-    2. Walk the in-tier candidate chain; return the first available one.
-    3. If every same-tier candidate is unavailable, delegate to
+    1. Load the persistent unavailable set (+ any ad-hoc ``extra_unavailable``),
+       expanding canonical ids ↔ aliases so an outage by either form fires.
+    2. Apply the host-provider filter (explicit arg → config → detected host) so a
+       model the current host cannot dispatch is never offered.
+    3. Walk the in-tier candidate chain; return the first available one.
+    4. If every same-tier candidate is unavailable, delegate to
        ``resolve_with_tier_fallback`` for the floor-respecting cross-tier descent.
 
     Always returns an envelope with a ``resolution_path`` listing every candidate
@@ -210,9 +247,19 @@ def resolve(
         raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(TIERS)}")
 
     wd = workdir.expanduser().resolve()
-    unavailable = load_unavailable(wd) | set(extra_unavailable or ())
+    # Expand canonical<->alias forms so an outage declared by either fires (GAP 1).
+    unavailable = expand_unavailable(
+        load_unavailable(wd) | set(extra_unavailable or ())
+    )
     tier_cache = load_tier_cache(wd)
-    host_providers = load_host_providers(wd)
+    # Host filter defaults to the current host (GAP 2): explicit arg wins, then
+    # config hostProviders, then detected host, then None (host-neutral).
+    if host_providers is HOST_FILTER_DISABLED:
+        host_providers = None  # explicit opt-out: no filtering
+    elif host_providers is not None:
+        host_providers = {str(p).strip().lower() for p in host_providers}
+    else:
+        host_providers = load_host_providers(wd)
 
     # Fold host-unreachable registry models into the unavailable set so the
     # cross-tier descent (resolve_with_tier_fallback) also avoids them. The
@@ -271,6 +318,25 @@ def resolve(
     return base
 
 
+# Sentinel: explicitly disable the host filter (host-neutral), distinct from
+# None (= "use the default: config → detected host").
+HOST_FILTER_DISABLED = frozenset({"__any__"})
+
+
+def _parse_host_providers_arg(raw: str | None) -> set[str] | frozenset[str] | None:
+    """Map the --host-providers CLI value to the resolve() host_providers arg.
+
+    None / "" -> None (default: config → detected host).
+    "any"     -> HOST_FILTER_DISABLED sentinel (no filter, host-neutral).
+    "a,b"     -> {"a","b"}.
+    """
+    if not raw or not raw.strip():
+        return None
+    if raw.strip().lower() == "any":
+        return HOST_FILTER_DISABLED
+    return {p.strip().lower() for p in raw.split(",") if p.strip()}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--workdir", default=".")
@@ -283,6 +349,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--config", default=None)
     p.add_argument("--state", default=None)
+    p.add_argument(
+        "--host-providers",
+        default=None,
+        help="Comma-separated providers the current host can dispatch (e.g. "
+        "'anthropic'). Overrides config + host detection. Default: detect the "
+        "current host (Claude Code -> anthropic) so a model the host cannot run "
+        "is never offered. Pass 'any' to disable the filter (host-neutral).",
+    )
     p.add_argument("--plain", action="store_true", help="Print only the model id.")
     p.add_argument("--json", action="store_true", help="Print the full envelope.")
     p.add_argument("--require", action="store_true", help="Exit 1 if unresolved.")
@@ -293,10 +367,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.unavailable
         else None
     )
+    host_providers = _parse_host_providers_arg(args.host_providers)
     result = resolve(
         tier=args.tier,
         workdir=Path(args.workdir),
         extra_unavailable=extra,
+        host_providers=host_providers,
         config_path=Path(args.config) if args.config else None,
         state_path=Path(args.state) if args.state else None,
     )

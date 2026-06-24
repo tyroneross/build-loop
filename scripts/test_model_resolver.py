@@ -29,19 +29,29 @@ def _write_tier_cache(workdir: Path, entries: dict) -> None:
     (bl / "model-tier-cache.json").write_text(json.dumps(entries), encoding="utf-8")
 
 
-def run_resolver(*args: str) -> subprocess.CompletedProcess[str]:
+def run_resolver(*args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
+    import os
+
+    run_env = {**os.environ, **(env or {})}
     return subprocess.run(
         [sys.executable, str(RESOLVER), *args],
         check=False,
         capture_output=True,
         text=True,
+        env=run_env,
     )
 
 
 def resolve(workdir: str, tier: str, **kw: str) -> dict:
+    # Default to --host-providers any so these tests are deterministic regardless
+    # of which host they run on (host DETECTION is exercised by dedicated tests in
+    # HostDetectionTests). Callers that want the filter pass host_providers= or
+    # use a config hostProviders file.
     args = ["--workdir", workdir, "--tier", tier, "--json"]
+    if "host_providers" not in kw:
+        args += ["--host-providers", "any"]
     for k, v in kw.items():
-        args += [f"--{k}", v]
+        args += [f"--{k.replace('_', '-')}", v]
     result = run_resolver(*args)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -190,29 +200,49 @@ class HostProvidersFilterTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _resolve_config_host(self, td: str) -> dict:
+        # Call WITHOUT --host-providers so the config-file hostProviders is the
+        # source under test. Suppress env host-detection so the result depends
+        # only on the config file.
+        result = run_resolver(
+            "--workdir", td, "--tier", "frontier", "--json",
+            env={"BUILD_LOOP_HOST_PROVIDERS": "", "CLAUDECODE": "",
+                 "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "",
+                 "ANTHROPIC_API_KEY": ""},
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
     def test_anthropic_only_host_fable_down_resolves_to_opus(self) -> None:
-        # The real production case stated plainly: Claude Code can only dispatch
-        # Anthropic models, so cross-vendor frontier alternates are unreachable.
-        # Fable down + hostProviders=[anthropic] -> opus, no manual config of
-        # each cross-vendor id needed.
+        # Claude Code can only dispatch Anthropic models, so cross-vendor frontier
+        # alternates are unreachable. Fable down + config hostProviders=[anthropic]
+        # -> opus, no manual config of each cross-vendor id needed.
         with tempfile.TemporaryDirectory() as td:
             self._write_host(Path(td), ["fable"], ["anthropic"])
-            payload = resolve(td, "frontier")
+            payload = self._resolve_config_host(td)
             self.assertEqual(payload["model"], "opus", payload)
             self.assertNotEqual(payload["model"], "sonnet")
             self.assertNotEqual(payload["model"], "haiku")
 
     def test_host_filter_absent_keeps_all_providers(self) -> None:
-        # No hostProviders declared = host-neutral default: cross-vendor allowed.
+        # No hostProviders + env detection suppressed = host-neutral: cross-vendor
+        # allowed. (The default dispatch path DETECTS the host — covered by
+        # HostDetectionTests; this asserts the no-signal fallback.)
         with tempfile.TemporaryDirectory() as td:
             _write_availability(Path(td), ["fable"])
-            payload = resolve(td, "frontier")
+            result = run_resolver(
+                "--workdir", td, "--tier", "frontier", "--json",
+                env={"BUILD_LOOP_HOST_PROVIDERS": "", "CLAUDECODE": "",
+                     "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "",
+                     "ANTHROPIC_API_KEY": ""},
+            )
+            payload = json.loads(result.stdout)
             self.assertEqual(payload["model"], "gpt-5.5")
 
     def test_anthropic_only_host_uses_anthropic_default_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             self._write_host(Path(td), [], ["anthropic"])
-            payload = resolve(td, "frontier")
+            payload = self._resolve_config_host(td)
             self.assertEqual(payload["model"], "fable")
 
 
@@ -297,11 +327,72 @@ class TierIntegrityGuardTests(unittest.TestCase):
             self.assertEqual(payload["model"], "opus")
 
 
+class CanonicalIdResolverTests(unittest.TestCase):
+    """GAP 1 regression at the resolver/dispatch layer: outage by canonical id."""
+
+    def test_canonical_fable_id_fires_fallback(self) -> None:
+        # The literal outage signal id (claude-fable-5) must be treated as the
+        # alias `fable` being down. On an anthropic host -> opus.
+        with tempfile.TemporaryDirectory() as td:
+            payload = resolve(
+                td, "frontier",
+                host_providers="anthropic",
+                unavailable="claude-fable-5",
+            )
+            self.assertEqual(payload["model"], "opus", payload)
+            self.assertNotEqual(payload["model"], "fable")
+
+    def test_alias_and_canonical_both_recognized(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            by_alias = resolve(td, "frontier", host_providers="anthropic", unavailable="fable")
+            by_canon = resolve(td, "frontier", host_providers="anthropic", unavailable="claude-fable-5")
+            self.assertEqual(by_alias["model"], by_canon["model"])
+            self.assertEqual(by_canon["model"], "opus")
+
+
+class HostDetectionTests(unittest.TestCase):
+    """GAP 2 regression: the host filter applies BY DEFAULT on the dispatch path."""
+
+    def test_explicit_anthropic_host_fable_down_resolves_opus(self) -> None:
+        # The exact GAP-2 failure: on a Claude host, fable down must NOT offer
+        # gpt-5.5 (undispatchable here) — it resolves to opus.
+        with tempfile.TemporaryDirectory() as td:
+            payload = resolve(td, "frontier", host_providers="anthropic", unavailable="fable")
+            self.assertEqual(payload["model"], "opus", payload)
+            self.assertNotEqual(payload["model"], "gpt-5.5")
+
+    def test_detected_anthropic_host_via_env_default(self) -> None:
+        # No config, no explicit flag — host detection via env must fire so the
+        # default dispatch path filters to anthropic.
+        with tempfile.TemporaryDirectory() as td:
+            result = run_resolver(
+                "--workdir", td, "--tier", "frontier", "--unavailable", "fable",
+                "--plain",
+                env={"BUILD_LOOP_HOST_PROVIDERS": "anthropic"},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "opus")
+
+    def test_host_filter_any_disables_filtering(self) -> None:
+        # --host-providers any opts out: cross-vendor frontier alternate allowed.
+        with tempfile.TemporaryDirectory() as td:
+            payload = resolve(td, "frontier", host_providers="any", unavailable="fable")
+            self.assertEqual(payload["model"], "gpt-5.5")
+
+    def test_help_exposes_host_flag(self) -> None:
+        result = run_resolver("--help")
+        self.assertIn("--host-providers", result.stdout)
+
+
 class CliShapeTests(unittest.TestCase):
     def test_plain_prints_model_id_only(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             _write_availability(Path(td), ["fable"])
-            result = run_resolver("--workdir", td, "--tier", "frontier", "--plain")
+            # host-providers any so this is deterministic across hosts.
+            result = run_resolver(
+                "--workdir", td, "--tier", "frontier", "--host-providers", "any",
+                "--plain",
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "gpt-5.5")
 

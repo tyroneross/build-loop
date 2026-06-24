@@ -367,6 +367,51 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
 
+class CanonicalAliasTests(unittest.TestCase):
+    """GAP 1 regression: an outage by canonical id must match the registry alias."""
+
+    def setUp(self) -> None:
+        import importlib
+
+        self.mo = importlib.import_module("model_overrides")
+
+    def test_normalize_canonical_to_alias(self) -> None:
+        self.assertEqual(self.mo.normalize_model_id("claude-fable-5"), "fable")
+        self.assertEqual(self.mo.normalize_model_id("claude-opus-4-8"), "opus")
+        self.assertEqual(self.mo.normalize_model_id("claude-opus-4-8[1m]"), "opus")
+        self.assertEqual(self.mo.normalize_model_id("claude-sonnet-4-6"), "sonnet")
+        self.assertEqual(self.mo.normalize_model_id("claude-haiku-4-5"), "haiku")
+
+    def test_normalize_alias_is_identity(self) -> None:
+        self.assertEqual(self.mo.normalize_model_id("fable"), "fable")
+
+    def test_normalize_unknown_passes_through(self) -> None:
+        self.assertEqual(self.mo.normalize_model_id("brand-new-x"), "brand-new-x")
+        self.assertIsNone(self.mo.normalize_model_id(None))
+
+    def test_expand_unavailable_covers_both_forms(self) -> None:
+        # A model down by canonical id marks the alias unavailable too, and vice versa.
+        exp = self.mo.expand_unavailable({"claude-fable-5"})
+        self.assertIn("fable", exp)
+        self.assertIn("claude-fable-5", exp)
+        exp2 = self.mo.expand_unavailable({"fable"})
+        self.assertIn("fable", exp2)
+        self.assertIn("claude-fable-5", exp2)
+
+    def test_canonical_id_outage_fires_fallback_at_source(self) -> None:
+        # The GAP-1 production repro at the model_overrides.py CLI: a frontier
+        # outage named by the CANONICAL id must fall back, not return the dead
+        # model. claude-fable-5 + cross-vendor frontier down -> opus.
+        with tempfile.TemporaryDirectory() as td:
+            result = run_script(
+                MODEL_OVERRIDES, "--workdir", td, "--tier", "frontier",
+                "--unavailable", "claude-fable-5,gpt-5.5,gpt-5.4", "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "opus", payload)
+            self.assertNotEqual(payload["model"], "fable")
+
+
 class TierRankHelperTests(unittest.TestCase):
     """The shared tier-rank helpers used by the model_resolver floor clamp."""
 

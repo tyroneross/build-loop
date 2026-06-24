@@ -112,30 +112,84 @@ TIER_FALLBACK = {
 # is advisory (powers `--list-models` + the `registered` flag), never a gate.
 # Cross-vendor cells are best-effort; confirm current benchmarks before swapping.
 # Canonical detail + swap recipes: references/model-tier-mapping.md.
-MODEL_REGISTRY: dict[str, list[dict[str, str]]] = {
+# `aliases`: the canonical/full model ids that map to this registry alias. The
+# SINGLE source of the canonical<->alias map — a dispatch error names the
+# canonical id ("Claude Fable 5 is currently unavailable" -> claude-fable-5),
+# but the registry + config use the short alias ("fable"). `normalize_model_id`
+# folds either form to the alias so an availability match on EITHER works.
+# Mirror of references/model-tier-mapping.md "Anthropic default" canonical ids.
+MODEL_REGISTRY: dict[str, list[dict[str, Any]]] = {
     "frontier": [
-        {"id": "fable", "provider": "anthropic", "label": "Fable 5", "status": "default"},
+        {"id": "fable", "provider": "anthropic", "label": "Fable 5", "status": "default",
+         "aliases": ["claude-fable-5", "claude-fable-5-20251101"]},
         {"id": "gpt-5.5", "provider": "openai", "label": "GPT-5.5 (Codex)", "status": "verified"},
         {"id": "gpt-5.4", "provider": "openai", "label": "GPT-5.4", "status": "verified"},
     ],
     "thinking": [
-        {"id": "opus", "provider": "anthropic", "label": "Opus 4.8", "status": "default"},
+        {"id": "opus", "provider": "anthropic", "label": "Opus 4.8", "status": "default",
+         "aliases": ["claude-opus-4-8", "claude-opus-4-8-20251101", "claude-opus-4-8[1m]"]},
         {"id": "gpt-5.4", "provider": "openai", "label": "GPT-5.4", "status": "verified"},
         {"id": "gemini-2.5-pro", "provider": "google", "label": "Gemini 2.5 Pro", "status": "verified"},
     ],
     "code": [
-        {"id": "sonnet", "provider": "anthropic", "label": "Sonnet 4.6", "status": "default"},
+        {"id": "sonnet", "provider": "anthropic", "label": "Sonnet 4.6", "status": "default",
+         "aliases": ["claude-sonnet-4-6", "claude-sonnet-4-6-20251101"]},
         {"id": "gpt-5.4-mini", "provider": "openai", "label": "GPT-5.4 Mini", "status": "verified"},
         {"id": "gemini-2.5-flash", "provider": "google", "label": "Gemini 2.5 Flash", "status": "verified"},
         {"id": "qwen2.5-coder-32b", "provider": "local", "label": "Qwen2.5-Coder 32B", "status": "local"},
     ],
     "pattern": [
-        {"id": "haiku", "provider": "anthropic", "label": "Haiku 4.5", "status": "default"},
+        {"id": "haiku", "provider": "anthropic", "label": "Haiku 4.5", "status": "default",
+         "aliases": ["claude-haiku-4-5", "claude-haiku-4-5-20251001"]},
         {"id": "gpt-5-nano", "provider": "openai", "label": "GPT-5 Nano", "status": "verified"},
         {"id": "gemini-flash-lite", "provider": "google", "label": "Gemini Flash Lite", "status": "verified"},
         {"id": "llama3.2-3b", "provider": "local", "label": "Llama 3.2 3B", "status": "local"},
     ],
 }
+
+
+def _build_alias_index() -> dict[str, str]:
+    """canonical-or-alias id (lowercased) -> registry alias id. Built once."""
+    idx: dict[str, str] = {}
+    for entries in MODEL_REGISTRY.values():
+        for entry in entries:
+            alias = entry["id"]
+            idx[alias.lower()] = alias
+            for canon in entry.get("aliases", []) or []:
+                idx[str(canon).lower()] = alias
+    return idx
+
+
+_ALIAS_INDEX = _build_alias_index()
+
+
+def normalize_model_id(model: str | None) -> str | None:
+    """Fold a canonical/full model id to its registry alias.
+
+    "claude-fable-5" -> "fable", "claude-opus-4-8[1m]" -> "opus", "fable" -> "fable".
+    An id not known to the registry is returned unchanged (lower-cased trim only
+    of surrounding whitespace) so brand-new/unregistered ids still pass through.
+    """
+    if not model:
+        return model
+    key = model.strip()
+    return _ALIAS_INDEX.get(key.lower(), key)
+
+
+def expand_unavailable(unavailable: set[str] | frozenset[str] | None) -> set[str]:
+    """Expand an unavailable set so a model down by EITHER its canonical id OR its
+    alias marks BOTH forms unavailable. Returns alias + every known canonical id."""
+    out: set[str] = set()
+    reverse: dict[str, list[str]] = {}
+    for entries in MODEL_REGISTRY.values():
+        for entry in entries:
+            reverse[entry["id"]] = [entry["id"], *(entry.get("aliases", []) or [])]
+    for raw in unavailable or ():
+        alias = normalize_model_id(raw)
+        out.add(raw)
+        out.add(alias)
+        out.update(reverse.get(alias, []))
+    return out
 
 
 def registered_models(tier: str | None = None) -> dict[str, list[dict[str, str]]]:
@@ -271,7 +325,12 @@ def resolve_with_tier_fallback(
     if tier not in TIERS:
         raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(TIERS)}")
 
-    unavailable = set(unavailable or ())
+    # Expand the unavailable set so a model declared down by EITHER its canonical
+    # id ("claude-fable-5", as a dispatch error names it) OR its short alias
+    # ("fable", as the registry/config use it) marks BOTH forms unavailable. The
+    # resolved model is normalized to its alias before the membership test, so a
+    # canonical-id outage actually fires the fallback. (Root fix for GAP 1.)
+    unavailable = expand_unavailable(unavailable)
 
     base = resolve_model(
         tier=tier,
@@ -281,7 +340,7 @@ def resolve_with_tier_fallback(
         state_path=state_path,
     )
 
-    model = base.get("model")
+    model = normalize_model_id(base.get("model"))
     # FLOOR ENFORCEMENT AT THE SOURCE (so EVERY caller inherits it, not just the
     # model_resolver wrapper). A config/state `modelOverrides[tier]` is resolved
     # by `resolve_model` BEFORE this floor walk — without this guard a frontier
@@ -306,6 +365,9 @@ def resolve_with_tier_fallback(
 
     # Usable as-is when there's a model and it's not declared unavailable.
     if model and model not in unavailable:
+        # Return the normalized alias so the caller always gets a dispatchable id
+        # (a config override written as a canonical id resolves to its alias).
+        base["model"] = model
         return base
     # An explicit caller fallback is intentional — don't override it with the
     # standing policy. If it's unavailable that's the caller's problem to know.
