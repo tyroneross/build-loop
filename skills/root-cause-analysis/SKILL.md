@@ -1,7 +1,7 @@
 ---
 name: root-cause-analysis
 description: Blameless root-cause analysis that produces durable system levers, not blame or one-off patches. Use AFTER a failure/regression/wrong-output/near-miss when you need to explain why it existed AND why it escaped controls, then land the smallest system change that prevents recurrence. Tiered L0/L1/L2 by impact. Distinct from debug-loop (which fixes the live bug); this is what debug-loop's report step and the recursive-retrospective §8 delegate to.
-user-invocable: true
+user-invocable: false
 ---
 
 # Root Cause Analysis
