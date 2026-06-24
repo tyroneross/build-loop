@@ -59,6 +59,7 @@ try:  # pragma: no cover - import shim for direct + packaged execution
         TIERS,
         is_registered,
         resolve_with_tier_fallback,
+        tier_of_model,
     )
 except ImportError:  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -67,6 +68,7 @@ except ImportError:  # pragma: no cover
         TIERS,
         is_registered,
         resolve_with_tier_fallback,
+        tier_of_model,
     )
 
 AVAILABILITY_FILENAME = "model-availability.json"
@@ -241,6 +243,12 @@ def resolve(
         }
 
     # Every same-tier candidate is unavailable — hand off to the floor walk.
+    # The floor invariant (frontier never resolves below thinking) is enforced AT
+    # THE SOURCE inside resolve_with_tier_fallback, so it holds for EVERY caller
+    # (this wrapper, the model_overrides.py CLI, any importer) — not just here.
+    # This wrapper therefore trusts the returned model is already floor-safe and
+    # only adds the persistent-availability + in-tier-chain layer plus an audit
+    # trail that reports each model's TRUE tier.
     base = resolve_with_tier_fallback(
         tier=tier,
         workdir=wd,
@@ -251,7 +259,9 @@ def resolve(
     resolution_path.append(
         {
             "model": base.get("model"),
-            "tier": base.get("fallback_tier", tier),
+            # Report the model's TRUE registry tier when known (so the audit trail
+            # never mislabels a fallback model's tier).
+            "tier": tier_of_model(base.get("model")) or base.get("fallback_tier", tier),
             "selected": True,
             "via": base.get("source"),
         }

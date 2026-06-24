@@ -100,6 +100,85 @@ class FloorInvariantTests(unittest.TestCase):
             self.assertEqual(payload["model"], "gpt-5.5")
 
 
+class FloorClampTests(unittest.TestCase):
+    """Closes independent-auditor f1/f2: a config override must not breach the floor.
+
+    resolve_with_tier_fallback honors a modelOverrides value before its own floor
+    walk, so a frontier override to a sub-thinking model would otherwise resolve
+    frontier -> sonnet/haiku. The clamp in model_resolver.resolve() rejects any
+    provably-below-floor model and re-resolves.
+    """
+
+    def _write_config(self, workdir: Path, overrides: dict, unavailable: list[str]) -> None:
+        bl = workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        (bl / "config.json").write_text(
+            json.dumps({"modelOverrides": overrides}), encoding="utf-8"
+        )
+        (bl / "model-availability.json").write_text(
+            json.dumps({"unavailable": unavailable}), encoding="utf-8"
+        )
+
+    def test_frontier_override_to_haiku_is_clamped(self) -> None:
+        # modelOverrides.frontier=haiku (PATTERN tier, two below floor) + all
+        # frontier registry models down. Must NOT resolve to haiku. The floor is
+        # enforced at the source (resolve_with_tier_fallback), so the resolver
+        # returns the floor-safe model directly.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_config(
+                Path(td), {"frontier": "haiku"}, ["fable", "gpt-5.5", "gpt-5.4"]
+            )
+            payload = resolve(td, "frontier")
+            self.assertNotEqual(payload["model"], "haiku", payload)
+            self.assertNotEqual(payload["model"], "sonnet")
+            self.assertEqual(payload["model"], "opus")  # thinking floor
+
+    def test_frontier_override_to_sonnet_is_clamped(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self._write_config(
+                Path(td), {"frontier": "sonnet"}, ["fable", "gpt-5.5", "gpt-5.4"]
+            )
+            payload = resolve(td, "frontier")
+            self.assertNotEqual(payload["model"], "sonnet", payload)
+            self.assertNotEqual(payload["model"], "haiku")
+            self.assertEqual(payload["model"], "opus")
+
+    def test_frontier_override_to_thinking_model_is_allowed(self) -> None:
+        # opus IS the thinking floor — a frontier override to opus is permitted
+        # (frontier's standing fallback is thinking). Not clamped.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_config(
+                Path(td), {"frontier": "opus"}, ["fable", "gpt-5.5", "gpt-5.4"]
+            )
+            payload = resolve(td, "frontier")
+            self.assertEqual(payload["model"], "opus")
+            self.assertNotIn("floor_clamped", payload)
+
+    def test_unknown_override_model_is_not_clamped(self) -> None:
+        # A brand-new model id we can't place in the registry must NOT be refused
+        # (we can't prove it's below floor; refusing all unknowns breaks valid
+        # overrides to new models).
+        with tempfile.TemporaryDirectory() as td:
+            self._write_config(
+                Path(td), {"frontier": "brand-new-frontier-x"},
+                ["fable", "gpt-5.5", "gpt-5.4"],
+            )
+            payload = resolve(td, "frontier")
+            self.assertEqual(payload["model"], "brand-new-frontier-x")
+
+    def test_resolution_path_reports_true_tier_not_requested(self) -> None:
+        # f2: the audit trail must not label a sub-tier model as 'frontier'.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_config(
+                Path(td), {"frontier": "haiku"}, ["fable", "gpt-5.5", "gpt-5.4"]
+            )
+            payload = resolve(td, "frontier")
+            for step in payload["resolution_path"]:
+                if step.get("model") == "haiku":
+                    # haiku must be recorded as its true (pattern) tier, skipped.
+                    self.assertNotEqual(step.get("tier"), "frontier")
+
+
 class HostProvidersFilterTests(unittest.TestCase):
     """Host-neutral provider filter: a model the host can't dispatch is excluded."""
 

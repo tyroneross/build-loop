@@ -225,6 +225,79 @@ class TierFallbackTests(unittest.TestCase):
             self.assertEqual(payload["model"], "gpt-5.5")
             self.assertEqual(payload["source"], "fallback")
 
+    def test_config_override_below_floor_is_clamped_at_source(self) -> None:
+        # The f1 production reproduction: the model_overrides.py CLI (the path the
+        # orchestrator dispatch docs point at) must NOT return a sub-floor config
+        # override. modelOverrides.frontier=haiku + all frontier models down ->
+        # opus (thinking floor), never haiku/sonnet. Enforced at the source so
+        # every caller inherits it, not just the model_resolver wrapper.
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            bl = workdir / ".build-loop"
+            bl.mkdir()
+            for sub_floor in ("haiku", "sonnet"):
+                (bl / "config.json").write_text(
+                    json.dumps({"modelOverrides": {"frontier": sub_floor}}),
+                    encoding="utf-8",
+                )
+                result = run_script(
+                    MODEL_OVERRIDES,
+                    "--workdir", str(workdir),
+                    "--tier", "frontier",
+                    "--unavailable", "fable,gpt-5.5,gpt-5.4",
+                    "--json",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["model"], "opus", f"{sub_floor}: {payload}")
+                self.assertNotEqual(payload["model"], sub_floor)
+
+    def test_config_override_at_floor_is_allowed(self) -> None:
+        # opus is the frontier floor (thinking) — a frontier override to opus is
+        # legitimate and must NOT be clamped.
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            bl = workdir / ".build-loop"
+            bl.mkdir()
+            (bl / "config.json").write_text(
+                json.dumps({"modelOverrides": {"frontier": "opus"}}), encoding="utf-8"
+            )
+            result = run_script(
+                MODEL_OVERRIDES, "--workdir", str(workdir),
+                "--tier", "frontier", "--unavailable", "fable", "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "opus")
+
+    def test_unknown_config_override_not_clamped(self) -> None:
+        # A brand-new unregistered override can't be proven below floor — kept.
+        with tempfile.TemporaryDirectory() as td:
+            workdir = Path(td)
+            bl = workdir / ".build-loop"
+            bl.mkdir()
+            (bl / "config.json").write_text(
+                json.dumps({"modelOverrides": {"frontier": "brand-new-x"}}),
+                encoding="utf-8",
+            )
+            result = run_script(
+                MODEL_OVERRIDES, "--workdir", str(workdir),
+                "--tier", "frontier", "--unavailable", "fable", "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "brand-new-x")
+
+    def test_explicit_fallback_below_floor_is_caller_intent(self) -> None:
+        # An explicit per-call --fallback is deliberate caller intent — exempt
+        # from the floor clamp (same as today; the caller owns that choice).
+        with tempfile.TemporaryDirectory() as td:
+            result = run_script(
+                MODEL_OVERRIDES, "--workdir", td,
+                "--tier", "frontier", "--fallback", "haiku",
+                "--unavailable", "fable", "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["model"], "haiku")
+
     def test_pattern_has_no_lower_fallback(self) -> None:
         # pattern is the bottom of the graph; an unavailable pattern default
         # returns the base resolution unchanged (no further walk).
@@ -292,6 +365,38 @@ class ModelRegistryTests(unittest.TestCase):
     def test_tier_required_without_list(self) -> None:
         result = run_script(MODEL_OVERRIDES, "--workdir", ".")
         self.assertNotEqual(result.returncode, 0)
+
+
+class TierRankHelperTests(unittest.TestCase):
+    """The shared tier-rank helpers used by the model_resolver floor clamp."""
+
+    def setUp(self) -> None:
+        import importlib
+
+        self.mo = importlib.import_module("model_overrides")
+
+    def test_tier_of_model_resolves_registry_ids(self) -> None:
+        self.assertEqual(self.mo.tier_of_model("fable"), "frontier")
+        self.assertEqual(self.mo.tier_of_model("opus"), "thinking")
+        self.assertEqual(self.mo.tier_of_model("sonnet"), "code")
+        self.assertEqual(self.mo.tier_of_model("haiku"), "pattern")
+
+    def test_tier_of_unknown_model_is_none(self) -> None:
+        self.assertIsNone(self.mo.tier_of_model("brand-new-9000"))
+        self.assertIsNone(self.mo.tier_of_model(None))
+
+    def test_is_below_floor_true_for_lower_tier(self) -> None:
+        # haiku (pattern) and sonnet (code) are below the thinking floor.
+        self.assertTrue(self.mo.is_below_floor("haiku", "thinking"))
+        self.assertTrue(self.mo.is_below_floor("sonnet", "thinking"))
+
+    def test_is_below_floor_false_at_or_above_floor(self) -> None:
+        self.assertFalse(self.mo.is_below_floor("opus", "thinking"))  # at floor
+        self.assertFalse(self.mo.is_below_floor("fable", "thinking"))  # above
+
+    def test_is_below_floor_keeps_unknown_models(self) -> None:
+        # Unknown models can't be proven below floor — never clamped.
+        self.assertFalse(self.mo.is_below_floor("brand-new-9000", "thinking"))
 
 
 class RouteDecisionOverrideTests(unittest.TestCase):

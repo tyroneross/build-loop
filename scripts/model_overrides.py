@@ -42,6 +42,43 @@ TIER_DEFAULTS = {
     "pattern": "haiku",
 }
 
+# Capability ordering, highest first. The single source of truth for "is tier A
+# at or above tier B" — used by the floor clamp so the frontier-never-below-
+# thinking invariant is enforced no matter HOW a model was selected (config
+# override, in-tier walk, or cross-tier fallback), not only inside the
+# TIER_FALLBACK walk. Lower index == higher capability.
+TIER_ORDER = ("frontier", "thinking", "code", "pattern")
+TIER_RANK = {tier: i for i, tier in enumerate(TIER_ORDER)}
+
+
+def tier_of_model(model: str | None) -> str | None:
+    """Best-effort: the registry tier a concrete model id belongs to, or None.
+
+    Resolves from MODEL_REGISTRY (curated). An id not in the registry returns
+    None — the caller decides how to treat an unknown id (the floor clamp keeps
+    an unknown id, since we cannot prove it is below the floor)."""
+    if not model:
+        return None
+    for tier, entries in MODEL_REGISTRY.items():
+        if any(entry.get("id") == model for entry in entries):
+            return tier
+    return None
+
+
+def is_below_floor(model: str | None, floor_tier: str) -> bool:
+    """True iff ``model``'s KNOWN registry tier is strictly below ``floor_tier``.
+
+    An unknown model (not in the registry) is NOT considered below the floor —
+    we cannot prove it, and refusing every unknown id would break legitimate
+    config overrides to brand-new models. Only a model we can positively place in
+    a lower tier is rejected by the clamp."""
+    if floor_tier not in TIER_RANK:
+        return False
+    mtier = tier_of_model(model)
+    if mtier is None:
+        return False
+    return TIER_RANK[mtier] > TIER_RANK[floor_tier]
+
 # Standing tier-fallback graph: when a tier's resolved model is unavailable and
 # the caller supplied no explicit `fallback`, resolution walks DOWN this graph to
 # the fallback tier's default. This is the durable POLICY (tier -> tier edges);
@@ -245,6 +282,28 @@ def resolve_with_tier_fallback(
     )
 
     model = base.get("model")
+    # FLOOR ENFORCEMENT AT THE SOURCE (so EVERY caller inherits it, not just the
+    # model_resolver wrapper). A config/state `modelOverrides[tier]` is resolved
+    # by `resolve_model` BEFORE this floor walk — without this guard a frontier
+    # override pointed at a sub-thinking model (modelOverrides.frontier="haiku")
+    # would be returned as-is, breaching the HARD INVARIANT this function's own
+    # docstring promises. So: a configured override whose KNOWN registry tier is
+    # strictly below the requested tier's standing-fallback floor is NOT returned
+    # — it is treated as unavailable and the standing walk runs instead. An
+    # explicit per-call `fallback` is deliberate caller intent and is exempt
+    # (the caller owns that choice, same as `--fallback`); an UNKNOWN model is
+    # exempt (cannot be proven below floor — refusing all unknowns would break
+    # legitimate overrides to brand-new models).
+    floor_tier = TIER_FALLBACK.get(tier) or tier
+    override_below_floor = (
+        base.get("source") in {"config", "state"}
+        and not fallback
+        and is_below_floor(model, floor_tier)
+    )
+    if override_below_floor and model:
+        unavailable = unavailable | {model}
+        model = None  # force the standing walk below
+
     # Usable as-is when there's a model and it's not declared unavailable.
     if model and model not in unavailable:
         return base
