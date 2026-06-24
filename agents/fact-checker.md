@@ -15,6 +15,7 @@ description: |
   assistant: "I'll use the fact-checker agent to trace each metric to its source."
   </example>
 model: fable
+tier: frontier
 color: yellow
 tools: ["Read", "Grep", "Glob"]
 ---

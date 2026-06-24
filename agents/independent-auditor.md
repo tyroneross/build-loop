@@ -15,6 +15,7 @@ description: |
   assistant: "Dispatching independent-auditor on HEAD~1..HEAD against the on-disk intent + PRD."
   </example>
 model: fable
+tier: frontier
 color: cyan
 tools: ["Read", "Grep", "Glob", "Bash"]
 ---

@@ -15,6 +15,7 @@ description: |
   assistant: "I'll run promotion-reviewer first to surface any policy variances, then present the verdict + diff for user confirmation."
   </example>
 model: fable
+tier: frontier
 color: purple
 tools: ["Read", "Grep", "Glob"]
 ---

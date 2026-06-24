@@ -19,6 +19,7 @@ description: |
   assistant: "I'll dispatch plan-critic to surface scope-split overlaps, missing alternatives, and headline drift."
   </example>
 model: fable
+tier: frontier
 color: purple
 tools: ["Read", "Grep", "Glob"]
 ---
