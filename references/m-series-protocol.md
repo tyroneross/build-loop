@@ -73,9 +73,35 @@ The helper writes `.build-loop/context/current.md`, a JSON snapshot under
 or heartbeat calls. Failure is fire-and-forget like working-state; never block
 the build because the snapshot is a resume/handoff aid, not the source of truth.
 
+## M2.5 — Tier resolution + dispatch-fallback contract (MANDATORY, not a placeholder)
+
+Every `<resolved-tier-model>` referenced in M3 below is the OUTPUT of this step — it is NOT a value the orchestrator picks by reasoning over prose. Resolving a tier-declared agent (an agent whose frontmatter carries `tier: <frontier|thinking|code|pattern>`) to a concrete model is a deterministic step the orchestrator MUST run:
+
+```bash
+RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_resolver.py \
+  --workdir "$PWD" --tier "<agent-frontmatter-tier>" --plain)"
+```
+
+`model_resolver.py` consults the PERSISTENT `.build-loop/model-availability.json` (the unavailable-model set + the optional `hostProviders` reachability allowlist) and the `.build-loop/model-tier-cache.json`, walks the in-tier priority chain, and on exhaustion delegates to the floor-respecting cross-tier walk (frontier never resolves below thinking). This is why the resolution is deterministic and auditable (`--json` returns the full `resolution_path`) rather than a per-dispatch judgment call.
+
+**Dispatch-fallback contract (handles the outage that shows up as a dispatch ERROR).** The Claude Code Agent tool selects ONE model and ERRORS if it is down ("Claude Fable 5 is currently unavailable"). Build-loop cannot wrap that harness primitive, so the orchestrator catches it:
+
+1. Dispatch the agent with `RESOLVED_MODEL`.
+2. If the Agent call returns an unavailability error (the error string names a model as unavailable / down / not currently available), call:
+   ```bash
+   RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dispatch_fallback.py \
+     --workdir "$PWD" --tier "<tier>" --unavailable-model "<the-down-model>" --plain)"
+   ```
+   This RECORDS the outage into `model-availability.json` (idempotent, persistent) and returns the next available model. Re-dispatch with the new `RESOLVED_MODEL`.
+3. Because the outage now persists, the NEXT resolve of that tier (this run or a later one) already returns the fallback — the orchestrator does not catch the same outage twice. A human clears it with `dispatch_fallback.py --clear <model>` when the model is back.
+
+**Why this closes the bug, not just documents it.** The fallback rides the resolver's call site (step M2.5) + the persistent availability registry — not a one-shot reaction. The single hop build-loop cannot mechanize in code is the Agent tool itself selecting the model; everything that DECIDES which model to hand it is deterministic, tested (`scripts/test_model_resolver.py`, `scripts/test_dispatch_fallback.py`), and persisted. On an Anthropic-only host with Fable down, `frontier` resolves to `opus` with no manual re-dispatch and never to `sonnet`/`haiku`.
+
 ## M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)
 
 Complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one ledger row at dispatch time and one at return time per subagent invocation. Both rows carry the same `task_id` so wall-clock and status can be correlated post-hoc by Round 4 dispatch-pattern analysis (and any later cost study).
+
+`<resolved-tier-model>` in the rows below is `RESOLVED_MODEL` from M2.5 — the concrete model the resolver returned, after any dispatch-fallback re-resolution.
 
 Procedure per dispatch:
 
