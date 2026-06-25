@@ -2,27 +2,69 @@
 <!-- canary-end -->
 # build-loop
 
-Build-loop is an agent workflow package for multi-step code changes. It gives
-Claude Code, Codex, and other AGENTS.md-aware tools the same operating loop:
-assess, plan, execute, review, iterate, then Learn.
+A portable, multi-phase build loop for AI coding agents — give Claude Code, Codex, and any AGENTS.md-aware tool the same disciplined operating loop: assess, plan, execute, review, iterate, then learn.
 
-The repo ships three agent surfaces:
+> **Summary:** build-loop helps AI coding agents and the developers who run them ship multi-step code changes by enforcing a planned, reviewed, verified loop instead of a single greedy edit. Best for non-trivial features, refactors, migrations, and bug hunts across more than one file. Not for one-line edits, pure Q&A, or status checks — those skip the loop.
 
-- Claude Code plugin metadata, commands, hooks, and `agents/*.md`.
-- Codex plugin metadata plus a slim public skill entrypoint.
-- Host-neutral `AGENTS.md` instructions for other coding agents.
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![npm](https://img.shields.io/badge/npm-%40tyroneross%2Fbuild--loop-cb3837.svg)](https://github.com/tyroneross/build-loop/pkgs/npm/build-loop)
+[![hosts](https://img.shields.io/badge/hosts-Claude_Code_%C2%B7_Codex_%C2%B7_AGENTS.md-5b21b6.svg)](#install)
 
-## Mac Install
+## Why build-loop
 
-Use the package installer when you want the shortest local setup path on macOS.
+Hand an agent a multi-step task and it tends to dive straight into edits — no plan, no scope boundary, no independent check that the result matches the goal. The failures compound: wrong assumptions ride into code, fixes patch symptoms, and "it compiles" gets reported as "it works."
+
+build-loop replaces that with a **structured loop every change runs through**: it assesses live repo state and memory, plans with explicit file ownership and pass/fail criteria, executes within scope, then runs an adversarial review (a critic, a fact-checker, a mock-data scanner) before iterating to green. The differentiator is portability and verification: the **same loop runs across Claude Code, Codex, and host-neutral AGENTS.md tools**, it is **multi-model by tier** (a frontier model plans and judges, a coding model executes), and **no completion claim ships without a verification step behind it**.
+
+## The loop
+
+```mermaid
+flowchart LR
+    A[Assess] --> P[Plan]
+    P --> E[Execute]
+    E --> R[Review]
+    R -->|fail| I[Iterate]
+    I --> R
+    R -->|pass| L[Learn]
+    subgraph Review
+        direction LR
+        R1[Critic] --> R2[Validate] --> R3[Optimize] --> R4[Fact-Check] --> R5[Simplify] --> R6[Auto-Resolve] --> R7[Report]
+    end
+```
+
+Assess → Plan → Execute → Review → Iterate (5x max) → Learn (always emits an outcome). Review runs seven ordered sub-steps; Iterate loops back to Review on failure.
+
+For the **living, auto-generated diagram** of how the loop actually wires up in this repo — every phase, gate, agent, skill, and script, regenerated from source so it cannot drift — open [`docs/build-loop-flow-mockup.html`](docs/build-loop-flow-mockup.html) in a browser. Format spec and drift gate: [`architecture/README.md`](architecture/README.md).
+
+## Quick start
+
+Install for all three host surfaces on macOS:
 
 ```bash
 npm install -g @tyroneross/build-loop@0.36.0
 build-loop-install --host all
 ```
 
-For GitHub Packages, authenticate first and use the GitHub registry for the
-`@tyroneross` scope:
+Then, in a Claude Code session inside your project, hand the loop a task:
+
+```text
+/build-loop:run add billing settings with tests
+```
+
+What you observe: the agent prints a short status line per phase — `[Phase 1: Assess]`, `[Phase 2: Plan]`, `[Phase 3: Execute]`, then each Review sub-step — and ends with a scorecard marking every acceptance criterion ✅ / ⚠️ / ❓. Completed, verified work is committed automatically; the only human-confirmation gates are production push, irreversible delete, and major user-impacting decisions.
+
+You do not pick a mode. `/build-loop:run` auto-routes build, fix, refactor, optimize, research, and test requests to the right path.
+
+## Install
+
+`build-loop-install` runs the package's helpers from the installed npm package:
+
+- Syncs the Claude Code cache from the package root.
+- Syncs the Codex cache from `plugin-artifacts/codex`, the slim Codex install artifact.
+- Bootstraps the build-loop memory root with public templates.
+- Leaves publishing, GitHub releases, and production deploys to explicit release commands.
+
+For GitHub Packages, authenticate first and point the `@tyroneross` scope at the GitHub registry:
 
 ```bash
 npm config set @tyroneross:registry https://npm.pkg.github.com
@@ -30,16 +72,6 @@ npm login --scope=@tyroneross --registry=https://npm.pkg.github.com
 npm install -g @tyroneross/build-loop@0.36.0
 build-loop-install --host all
 ```
-
-`build-loop-install` runs the existing package helpers from the installed npm
-package:
-
-- Syncs Claude cache from the package root.
-- Syncs Codex cache from `plugin-artifacts/codex`, the slim Codex install
-  artifact.
-- Bootstraps the build-loop memory root with public templates.
-- Leaves publishing, GitHub releases, and production deploys to explicit release
-  commands.
 
 Installer options:
 
@@ -66,53 +98,15 @@ npm run codex:sync-cache
 python3 scripts/install_memory.py --ensure-project build-loop
 ```
 
-## Agent Start Protocol
+## Commands
 
-Start every build-loop repo session by checking Rally. Rally is coordination
-metadata, not verification evidence: use it to discover peers, claims,
-handoffs, and soft file conflicts; confirm code, package, version, and release
-truth from git, tests, manifests, registries, or GitHub directly. Older direct
-tool subcommand forms may be unavailable on newer Rally binaries; use the
-current `rally enter` / `rally next` / `rally room` surface.
-
-```bash
-rally enter --tool codex --json
-rally next --tool codex --json
-rally room --tool codex --json
-```
-
-Before editing, check every path you will write:
-
-```bash
-rally check before-write --tool codex --path README.md --strict --json
-```
-
-When a handoff is addressed to you, resolve it before editing unrelated files:
-
-```bash
-rally say resolve --tool codex --ref <event-id> --subject "consumed handoff" --json
-```
-
-For substantial work, use the build-loop skill:
-
-```text
-Assess -> Plan -> Execute -> Review -> Iterate -> Learn
-```
-
-Skip the loop only for single-file edits, config-only changes, or very small
-fixes. Release, publish, production deploy, destructive delete, and major
-user-impacting decisions are the only human-confirmation gates after a plan is
-accepted.
-
-## Agent Commands
-
-Normal coding work:
+Normal coding work — auto-routes to build, fix, refactor, optimize, research, or test:
 
 ```text
 /build-loop:run add billing settings with tests
 ```
 
-Debugging:
+Deep iterative debugging (also auto-invoked by the loop on review failures):
 
 ```text
 /build-loop:debug tests pass locally but fail in CI
@@ -124,134 +118,122 @@ Direct advanced modes:
 /build-loop:optimize-run reduce API latency
 /build-loop:research-run compare queue providers
 /build-loop:test --strict
+/build-loop:self-improve
 ```
 
-Codex-specific delegation is opt-in. Build-loop planning language such as
-"parallel-safe groups" does not by itself authorize Codex subagents. Spawn Codex
-workers only when the user explicitly asks for parallel delegation or passes a
-parallel flag.
+`/build-loop:self-improve` runs Phase 6 Learn alone against recent runs without a new build. The repo also ships native debugger commands (`/build-loop:debugger`, `/build-loop:debugger-detail`, `/build-loop:debugger-scan`, `/build-loop:debugger-status`, `/build-loop:assess`).
 
-## Agent Roles
+## Host surfaces
 
-This is a role index, not a list of autonomous commands. Build-loop routes work
-through a lead orchestrator, invokes bounded subagents with scoped context, and
-accepts output only after verification. Core authority follows
-`references/agent-role-taxonomy.md`: **core means a pipeline step is contingent
-on the verdict**, not that the agent is top-level or expensive. Model tier
-follows role; it does not define authority.
+The repo ships three agent surfaces from one source:
 
-Deterministic judge surfaces also exist outside `agents/`, including
-`scripts/plan_verify.py`, `scripts/judgment_gate.py`, and release/package
-verifiers. Agent roles below are the LLM-side surfaces.
+- **Claude Code plugin** — plugin metadata, commands, hooks, and `agents/*.md`.
+- **Codex plugin** — Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
+- **Host-neutral [`AGENTS.md`](AGENTS.md)** — the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
-### Lead / Workflow Agents
+Surface counts in this release: ~18 commands, ~40 skills, ~28 agents.
 
-| Agent | Description | Model |
-|---|---|---|
-| `build-orchestrator` | Lead workflow owner for Assess -> Plan -> Execute -> Review -> Iterate -> Learn; owns dispatch, phase transitions, commits, and report. | `opus` |
-| `assessment-orchestrator` | Multi-domain debugging coordinator for unclear symptoms across database, frontend, API, and performance lanes. | `opus` |
-| `optimize-runner` | Optimization-loop coordinator for metric-driven experiments, measurement, and regression handling. | `sonnet` |
+## Agent start protocol
 
-### Judgment / Review Agents
+Start every build-loop repo session by checking Rally — coordination metadata, not verification evidence. Use it to discover peers, claims, handoffs, and soft file conflicts; confirm code, package, version, and release truth from git, tests, manifests, registries, or GitHub directly.
 
-| Agent | Description | Model |
-|---|---|---|
-| `advisor` | Frontier planning author or re-planner when Phase 2 needs deeper synthesis. | `fable` |
-| `plan-critic` | Plan critique for dependencies, scope drift, validation, ownership, alternatives, and MECE quality. | `fable` |
-| `scope-auditor` | Plan-to-Execute boundary check and public-signature caller coverage. | `fable` |
-| `independent-auditor` | Independent adversarial review for chunk and build-scope completion claims. | `fable` |
-| `fix-critique` | Root-cause and regression pressure-test after a proposed fix. | `fable` |
-| `fact-checker` | Claim, metric, and rendered-data provenance checks before completion. | `fable` |
-| `security-reviewer` | Security review for auth, secrets, trust boundaries, injection, and adjacent risks. | `fable` |
-| `overfitting-reviewer` | Optimization review for test gaming, Goodhart effects, and overfitting. | `fable` |
-| `promotion-reviewer` | Review of proposed skill, agent, or enforcement promotions before activation. | `fable` |
-| `synthesis-critic` | Advisory coherence review for synthesis-heavy outputs across multiple dimensions. | `sonnet` |
-| `alignment-checker` | Advisory queue-item alignment check against current intent, goal, and non-goals. | `sonnet` |
+```bash
+rally enter --tool claude_code --json
+rally next --tool claude_code --json
+rally check before-write --tool claude_code --path README.md --strict --json
+```
 
-### Worker / Specialist Agents
+If the Rally binary is not installed, proceed without it. Full coordination rules: [`references/coordination-rules.md`](references/coordination-rules.md).
 
-| Agent | Description | Model |
-|---|---|---|
-| `implementer` | Bounded coding worker for one Phase 5 fix plan or criterion-targeted implementation packet. | `sonnet` |
-| `api-assessor` | API, route, auth, rate-limit, CORS, and request/response failure assessment. | `sonnet` |
-| `database-assessor` | Query, migration, schema, connection, vector index, and data integrity failure assessment. | `sonnet` |
-| `frontend-assessor` | React, rendering, hydration, state, component, and client performance assessment. | `sonnet` |
-| `performance-assessor` | Latency, memory, CPU, timeout, and bottleneck assessment. | `sonnet` |
-| `architecture-scout` | Read-only architecture baseline, impact, rules, iterate subgraph, and learn-sync tasks. | `sonnet` |
-| `design-contract-specialist` | UI/data input-output contracts, design direction, and traceability artifacts. | `sonnet` |
-| `ui-validator` | UI behavior, state, accessibility, layout, console, and rendering evidence validation. | `sonnet` |
-| `root-cause-investigator` | Causal-tree investigation for persistent or ambiguous failures. | `inherit` |
-| `mock-scanner` | Production-path scan for placeholder, fake, fixture, and mock data. | `haiku` |
+Codex-specific delegation is opt-in. build-loop planning language such as "parallel-safe groups" does not by itself authorize Codex subagents — spawn them only when the user explicitly asks for parallel delegation or passes a parallel flag.
 
-### Learning Agents
+## How it works
 
-| Agent | Description | Model |
-|---|---|---|
-| `recurring-pattern-detector` | Repeated run-pattern and Learn-candidate detection from run history and retro signals. | `haiku` |
-| `retrospective-synthesizer` | Background post-build retrospective and enforce-candidate summary. | `sonnet` |
-| `self-improvement-architect` | Experimental skill, agent, and workflow drafts from recurring lessons. | `sonnet` |
-| `transcript-pattern-miner` | Transcript mining for repeated patterns and self-improvement candidates. | `haiku` |
-
-## Phase Summary
+build-loop routes work through a lead orchestrator, invokes bounded subagents with scoped context, and accepts output only after verification. It is **multi-model by tier** — roles map to a tier (Frontier / Thinking / Code / Pattern), not a fixed model name. The Anthropic mapping is the default; equivalents from other providers substitute when their benchmarks meet the tier contract.
 
 | Phase | Agent obligation |
 |---|---|
-| Assess | Read live repo state, tooling, memory, Rally, current docs, and external docs when needed. Define the goal and pass/fail criteria. |
+| Assess | Read live repo state, tooling, memory, Rally, and current docs. Define the goal and pass/fail criteria. |
 | Plan | Produce a dependency-ordered plan with MECE file ownership, validation gates, and approach tradeoffs. |
 | Execute | Implement the accepted plan. Keep edits scoped to owned files. |
-| Review | Run critic, validation, fact-check, simplify, auto-resolve, and report steps. |
+| Review | Run critic, validate, fact-check, simplify, auto-resolve, and report steps. |
 | Iterate | Fix review failures until pass or a real blocker is reached. |
 | Learn | Always emit the Learn outcome and capture durable lessons when warranted. |
 
-## Architecture diagram (living)
+<details>
+<summary><strong>Agent roles (full index)</strong></summary>
 
-An interactive, version-controlled diagram of how build-loop actually works — phases,
-sub-steps, gates, and which agent does what — that regenerates from source so it cannot
-drift. Agents, skills, scripts, and hooks are auto-discovered from the repo; the flow is
-authored in one markdown doc.
+This is a role index, not a list of autonomous commands. Core authority follows [`references/agent-role-taxonomy.md`](references/agent-role-taxonomy.md): **core means a pipeline step is contingent on the verdict**, not that the agent is top-level or expensive. Model tier follows role; it does not define authority. Deterministic judge surfaces also exist outside `agents/` (`scripts/plan_verify.py`, `scripts/judgment_gate.py`, release verifiers); the tables below are the LLM-side surfaces.
 
-- **View it:** open `docs/build-loop-flow-mockup.html` in any browser (standalone).
-- **Edit it / how it stays in sync:** `architecture/README.md` (format spec + drift gate).
-- **Source of truth:** `architecture/ARCHITECTURE.md` (auto Components + authored Flow).
-- **Regenerate:** `python3 scripts/architecture_diagram/generate.py`; gate via
-  `bash scripts/architecture_diagram/check.sh`.
+### Lead / workflow agents
 
-Each agent in the diagram carries its description and `last updated by` (from git). Comments
-left on the diagram can be turned into backlog items with
-`scripts/architecture_diagram/comments_to_backlog.py`.
+| Agent | Description | Tier |
+|---|---|---|
+| `build-orchestrator` | Lead workflow owner for Assess → Plan → Execute → Review → Iterate → Learn; owns dispatch, phase transitions, commits, and report. | Thinking |
+| `assessment-orchestrator` | Multi-domain debugging coordinator for unclear symptoms across database, frontend, API, and performance lanes. | Thinking |
+| `optimize-runner` | Optimization-loop coordinator for metric-driven experiments, measurement, and regression handling. | Code |
 
-## Release Checklist
+### Judgment / review agents
 
-For a plugin/package release, keep these version surfaces in lockstep:
+| Agent | Description | Tier |
+|---|---|---|
+| `advisor` | Frontier planning author or re-planner when Phase 2 needs deeper synthesis. | Frontier |
+| `plan-critic` | Plan critique for dependencies, scope drift, validation, ownership, alternatives, and MECE quality. | Frontier |
+| `scope-auditor` | Plan-to-Execute boundary check and public-signature caller coverage. | Frontier |
+| `independent-auditor` | Independent adversarial review for chunk and build-scope completion claims. | Frontier |
+| `fix-critique` | Root-cause and regression pressure-test after a proposed fix. | Frontier |
+| `fact-checker` | Claim, metric, and rendered-data provenance checks before completion. | Frontier |
+| `security-reviewer` | Security review for auth, secrets, trust boundaries, injection, and adjacent risks. | Frontier |
+| `overfitting-reviewer` | Optimization review for test gaming, Goodhart effects, and overfitting. | Frontier |
+| `promotion-reviewer` | Review of proposed skill, agent, or enforcement promotions before activation. | Frontier |
+| `synthesis-critic` | Advisory coherence review for synthesis-heavy outputs across multiple dimensions. | Code |
+| `alignment-checker` | Advisory queue-item alignment check against current intent, goal, and non-goals. | Code |
 
-- `package.json`
-- `package-lock.json`
-- `.claude-plugin/plugin.json`
-- `.claude-plugin/marketplace.json`
-- `.codex-plugin/plugin.json`
-- `.agents/plugins/marketplace.json`
-- `plugin-artifacts/codex/.codex-plugin/plugin.json`
+### Worker / specialist agents
 
-Build and verify:
+| Agent | Description | Tier |
+|---|---|---|
+| `implementer` | Bounded coding worker for one Phase 5 fix plan or criterion-targeted implementation packet. | Code |
+| `api-assessor` | API, route, auth, rate-limit, CORS, and request/response failure assessment. | Code |
+| `database-assessor` | Query, migration, schema, connection, vector index, and data integrity failure assessment. | Code |
+| `frontend-assessor` | React, rendering, hydration, state, component, and client performance assessment. | Code |
+| `performance-assessor` | Latency, memory, CPU, timeout, and bottleneck assessment. | Code |
+| `architecture-scout` | Read-only architecture baseline, impact, rules, iterate subgraph, and learn-sync tasks. | Code |
+| `design-contract-specialist` | UI/data input-output contracts, design direction, and traceability artifacts. | Code |
+| `ui-validator` | UI behavior, state, accessibility, layout, console, and rendering evidence validation. | Code |
+| `root-cause-investigator` | Causal-tree investigation for persistent or ambiguous failures. | inherit |
+| `mock-scanner` | Production-path scan for placeholder, fake, fixture, and mock data. | Pattern |
 
-```bash
-npm run build
-python3 scripts/test_plugin_manifest.py
-python3 scripts/test_agent_surface_policy.py
-npm run codex:build-artifact
-npm pack --dry-run --json
-```
+### Learning agents
 
-Release verification after tag/push:
+| Agent | Description | Tier |
+|---|---|---|
+| `recurring-pattern-detector` | Repeated run-pattern and Learn-candidate detection from run history and retro signals. | Pattern |
+| `retrospective-synthesizer` | Background post-build retrospective and enforce-candidate summary. | Code |
+| `self-improvement-architect` | Experimental skill, agent, and workflow drafts from recurring lessons. | Code |
+| `transcript-pattern-miner` | Transcript mining for repeated patterns and self-improvement candidates. | Pattern |
 
-```bash
-python3 scripts/verify_release_surface.py --version v0.36.0 --branch main --remote origin --json
-```
+</details>
 
-Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action.
-Run it only when explicitly requested by the human owner.
+## FAQ
 
-## Runtime Data
+### What problem does it solve?
+
+Agents handed multi-step work tend to skip planning and verification, so wrong assumptions ride into code and "it compiles" gets reported as "it works." build-loop forces every change through a planned, reviewed, verified loop and refuses to claim completion without evidence behind it.
+
+### Who is it for — and who is it not for?
+
+It is for developers running AI coding agents on non-trivial changes: features, refactors, migrations, and bug hunts that touch more than one file. It is not for one-line edits, pure Q&A, or status checks — those skip the loop by design.
+
+### What is the fastest way to try it?
+
+`npm install -g @tyroneross/build-loop@0.36.0`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
+
+### How is it different from just letting an agent code directly?
+
+A direct agent edit has no scope boundary and no independent check. build-loop adds explicit file ownership, pass/fail criteria, an adversarial review pass (critic, fact-checker, mock-data scanner), and automatic iteration to green. It also runs the same loop across Claude Code, Codex, and AGENTS.md tools, and routes planning/judging to a frontier model while execution runs on a coding model.
+
+## Runtime data
 
 Consumer projects store run state under `.build-loop/`:
 
@@ -267,19 +249,16 @@ Consumer projects store run state under `.build-loop/`:
   backlog/
 ```
 
-Add `.build-loop/` to consumer project `.gitignore` unless a repo intentionally
-tracks selected backlog or plan files.
+Add `.build-loop/` to a consumer project's `.gitignore` unless the repo intentionally tracks selected backlog or plan files.
 
-Build-loop memory defaults to `~/.build-loop-memory` on a fresh machine, or an
-existing `~/dev/git-folder/build-loop-memory` when present. Bootstrap or inspect
-it with:
+build-loop memory defaults to `~/.build-loop-memory` on a fresh machine, or an existing `~/dev/git-folder/build-loop-memory` when present. Bootstrap or inspect it:
 
 ```bash
 python3 scripts/install_memory.py
 python3 scripts/install_memory.py --check
 ```
 
-## Codex Surface
+## Codex surface
 
 The Codex package exposes one public entrypoint skill through the slim artifact:
 
@@ -289,24 +268,53 @@ plugin-artifacts/codex/
   skills/build-loop/SKILL.md
 ```
 
-The full `skills/` tree still ships for Claude Code and for internal references.
-Codex should load helper instructions only when the public build-loop skill asks
-for them.
+The full `skills/` tree still ships for Claude Code and for internal references. Codex loads helper instructions only when the public build-loop skill asks for them.
 
-Check installed cache sync:
+Check installed cache sync and prune stale versions:
 
 ```bash
 python3 scripts/check_cache_sync.py --host codex --source plugin-artifacts/codex
 python3 scripts/check_cache_sync.py --host claude --source .
-```
-
-Prune stale cache versions:
-
-```bash
 python3 scripts/prune_plugin_cache.py --source . --host all --apply
 ```
 
+## Release checklist
+
+For a plugin/package release, keep these version surfaces in lockstep:
+
+- `package.json`
+- `package-lock.json`
+- `.claude-plugin/plugin.json`
+- `.claude-plugin/marketplace.json`
+- `.codex-plugin/plugin.json`
+- `.agents/plugins/marketplace.json`
+- `plugin-artifacts/codex/.codex-plugin/plugin.json`
+
+Build and verify, then verify the release surface after tag/push:
+
+```bash
+npm run build
+python3 scripts/test_plugin_manifest.py
+python3 scripts/test_agent_surface_policy.py
+npm run codex:build-artifact
+npm pack --dry-run --json
+python3 scripts/verify_release_surface.py --version v0.36.0 --branch main --remote origin --json
+```
+
+Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.
+
+## Limitations and known issues
+
+See [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md). Notably, the bare `/build-loop` command form is deprecated in favor of `/build-loop:run` because of a namesake collision with the skill of the same qualified name.
+
+## Architecture
+
+Short overview: [`ARCHITECTURE.md`](ARCHITECTURE.md). The living, auto-generated diagram and its drift gate are described under [The loop](#the-loop). Regenerate the diagram with `python3 scripts/architecture_diagram/generate.py`.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Agent build/test conventions for this repo live in [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md).
+
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE), and
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Apache-2.0. See [`LICENSE`](LICENSE), [`NOTICE`](NOTICE), and [`CONTRIBUTING.md`](CONTRIBUTING.md).
