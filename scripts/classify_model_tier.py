@@ -45,21 +45,64 @@ import sys
 from pathlib import Path
 from typing import Any
 
-VALID_TIERS = {"frontier", "thinking", "code", "pattern"}
+# Reuse the taxonomy as the single source of the segment + tier vocabulary.
+try:  # pragma: no cover - import shim
+    import model_taxonomy
+except ImportError:  # pragma: no cover
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import model_taxonomy  # type: ignore[no-redefine]
+
+# Valid tiers = the ladder rungs (T0..T5, T-S) PLUS the four legacy tokens, so a
+# host can record either vocabulary. The legacy tokens fold to ladder rungs in
+# the cache via model_taxonomy.normalize_tier at record time.
+VALID_TIERS = set(model_taxonomy.tier_ladder()) | set(model_taxonomy.LEGACY_TIER_TOKENS)
+# The segments a model can be classified into.
+VALID_SEGMENTS = set(model_taxonomy.segments())
+# Back-compat default segment (the implicit segment of the legacy tier tokens).
+DEFAULT_SEGMENT = "generative_reasoning"
 TIER_CACHE_FILENAME = "model-tier-cache.json"
 
-CLASSIFY_RUBRIC = (
-    "Classify the model into exactly one build-loop tier using current benchmarks "
-    "(prefer T1 official docs / leaderboards, then T2):\n"
-    "  frontier: clears the thinking contract AND benchmarks above the prior-gen "
-    "thinking ceiling on >=1 of SWE-bench Verified / ARC-AGI / GPQA Diamond.\n"
-    "  thinking: SWE-bench Verified >= ~78% AND competitive on ARC-AGI / GPQA.\n"
-    "  code: SWE-bench Verified >= ~75% AND tool-use accuracy >= ~85%.\n"
-    "  pattern: fast/cheap classify+summarize, no judgment gradient.\n"
-    "Then call: classify_model_tier.py record <id> --tier <tier> --provider "
-    "<vendor> --provenance verified  (use 'verified' ONLY if a T1/T2 source "
-    "confirmed it; otherwise omit and it caches as unverified)."
-)
+
+def _build_rubric() -> str:
+    """Build the classification rubric for BOTH axes (segment + tier), pulling
+    segment-appropriate benchmark hints from the taxonomy so specialist segments
+    (embeddings/rerankers/realtime/media/moderation) grade on MTEB/recall/NDCG/
+    WER/latency rather than SWE-bench."""
+    seg_hints = model_taxonomy.classification_rubric()
+    _default_hint = "use the segment's standard benchmarks"
+    seg_lines = "\n".join(
+        f"    {seg}: {seg_hints.get(seg, _default_hint)}"
+        for seg in sorted(model_taxonomy.segments())
+    )
+    return (
+        "Classify the model on BOTH axes — SEGMENT (work role) and TIER "
+        "(capability rung) — using current benchmarks (prefer T1 official docs / "
+        "leaderboards, then T2).\n\n"
+        "SEGMENT — the model's PRIMARY product role:\n"
+        f"{seg_lines}\n"
+        f"    {seg_hints.get('primary_role_rule', '')}\n\n"
+        "TIER — the capability rung (legacy tokens frontier/thinking/code/pattern "
+        "map to T1/T2/T3/T4 and remain accepted):\n"
+        "  T0/restricted: experimental or access-restricted frontier.\n"
+        "  T1/frontier: ultra-frontier — clears the thinking contract AND "
+        "benchmarks above the prior-gen thinking ceiling on >=1 of SWE-bench "
+        "Verified / ARC-AGI / GPQA Diamond.\n"
+        "  T2: frontier — SWE-bench Verified >= ~78% AND competitive on "
+        "ARC-AGI / GPQA.\n"
+        "  T3/code: balanced workhorse — SWE-bench Verified >= ~75% AND tool-use "
+        "accuracy >= ~85%.\n"
+        "  T4/pattern: efficient near-frontier — fast/cheap classify+summarize.\n"
+        "  T5: utility/nano/edge.\n"
+        "  T-S: specialist infrastructure (embeddings/rerankers/realtime/media/"
+        "moderation) — grade on the SEGMENT's own metric, NOT SWE-bench.\n\n"
+        "Then call: classify_model_tier.py record <id> --tier <tier> --segment "
+        "<segment> --provider <vendor> --provenance verified  (use 'verified' "
+        "ONLY if a T1/T2 source confirmed it; otherwise omit and it caches as "
+        "unverified). --segment defaults to generative_reasoning for back-compat."
+    )
+
+
+CLASSIFY_RUBRIC = _build_rubric()
 
 
 def _build_loop_dir(workdir: Path) -> Path:
@@ -109,9 +152,11 @@ def lookup(model_id: str, workdir: Path, refresh: bool = False) -> dict[str, Any
         "source": "search",
         "search_query": search_query(model_id),
         "rubric": CLASSIFY_RUBRIC,
+        "axes": ["segment", "tier"],
+        "valid_segments": sorted(VALID_SEGMENTS),
         "record_hint": (
             f"classify_model_tier.py record {model_id} --tier <tier> "
-            f"--provider <vendor> [--provenance verified]"
+            f"--segment <segment> --provider <vendor> [--provenance verified]"
         ),
     }
 
@@ -122,18 +167,34 @@ def record(
     tier: str,
     provider: str,
     workdir: Path,
+    segment: str | None = None,
     provenance: str = "unverified",
     source_note: str | None = None,
 ) -> dict[str, Any]:
-    """Cache a classification verdict. Returns the written entry."""
+    """Cache a classification verdict on BOTH axes. Returns the written entry.
+
+    ``tier`` accepts either vocabulary (legacy token or ladder rung) and is
+    normalized to a ladder rung in the cache. ``segment`` defaults to
+    generative_reasoning (the implicit segment of the legacy tier tokens) so a
+    pre-segment caller keeps working."""
     model_id = model_id.strip()
     if tier not in VALID_TIERS:
         raise ValueError(f"invalid tier {tier!r}; expected one of {sorted(VALID_TIERS)}")
+    seg = (segment or DEFAULT_SEGMENT).strip()
+    if seg not in VALID_SEGMENTS:
+        raise ValueError(
+            f"invalid segment {seg!r}; expected one of {sorted(VALID_SEGMENTS)}"
+        )
     if provenance not in {"verified", "unverified"}:
         raise ValueError("provenance must be 'verified' or 'unverified'")
     cache = _read_cache(workdir)
     entry = {
+        # Preserve the tier token EXACTLY as passed (back-compat: the resolver's
+        # in-tier walk and the existing tests read this field verbatim). The
+        # normalized ladder rung is added alongside for the two-axis consumers.
         "tier": tier,
+        "tier_rung": model_taxonomy.normalize_tier(tier),
+        "segment": seg,
         "provider": provider.strip(),
         "provenance": provenance,
         "classified_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
@@ -159,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
     rc = sub.add_parser("record", help="Cache a classification verdict.")
     rc.add_argument("model_id")
     rc.add_argument("--tier", required=True, choices=sorted(VALID_TIERS))
+    rc.add_argument(
+        "--segment",
+        default=None,
+        choices=sorted(VALID_SEGMENTS),
+        help="Work-role segment. Defaults to generative_reasoning (back-compat).",
+    )
     rc.add_argument("--provider", required=True)
     rc.add_argument(
         "--provenance",
@@ -177,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         result = record(
             args.model_id,
             tier=args.tier,
+            segment=args.segment,
             provider=args.provider,
             workdir=workdir,
             provenance=args.provenance,

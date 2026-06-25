@@ -117,5 +117,54 @@ class HostNeutralityTests(unittest.TestCase):
             self.assertNotIn("benchmark_result", out)  # no fetched data
 
 
+class SegmentAxisTests(unittest.TestCase):
+    """The two-axis extension: classification emits BOTH segment and tier."""
+
+    def test_lookup_packet_asks_for_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            out = jrun("--workdir", td, "lookup", "new-multimodal-model")
+            self.assertEqual(out["status"], "needs_classification")
+            self.assertIn("segment", out["axes"])
+            self.assertIn("tier", out["axes"])
+            self.assertIn("generative_reasoning", out["valid_segments"])
+            self.assertIn("--segment", out["record_hint"])
+
+    def test_rubric_has_specialist_segment_hints(self) -> None:
+        # Specialist segments must grade on their own metric, not SWE-bench.
+        with tempfile.TemporaryDirectory() as td:
+            out = jrun("--workdir", td, "lookup", "some-embedding-model")
+            rubric = out["rubric"]
+            self.assertIn("MTEB", rubric)   # representation_retrieval
+            self.assertIn("WER", rubric)    # realtime_interaction
+            self.assertIn("frontier", rubric)  # legacy back-compat word retained
+
+    def test_record_segment_and_tier_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            rec = jrun(
+                "--workdir", td, "record", "gpt-realtime-2",
+                "--tier", "T-S", "--segment", "realtime_interaction",
+                "--provider", "openai",
+            )
+            self.assertEqual(rec["status"], "recorded")
+            self.assertEqual(rec["tier"], "T-S")
+            self.assertEqual(rec["segment"], "realtime_interaction")
+            # Second lookup returns both axes from cache.
+            second = jrun("--workdir", td, "lookup", "gpt-realtime-2")
+            self.assertEqual(second["source"], "cache")
+            self.assertEqual(second["segment"], "realtime_interaction")
+
+    def test_record_without_segment_defaults_generative_reasoning(self) -> None:
+        # Back-compat: a pre-segment caller (no --segment) still works.
+        with tempfile.TemporaryDirectory() as td:
+            rec = jrun(
+                "--workdir", td, "record", "legacy-model",
+                "--tier", "frontier", "--provider", "anthropic",
+            )
+            self.assertEqual(rec["segment"], "generative_reasoning")
+            # Legacy token preserved verbatim in the tier field; rung added.
+            self.assertEqual(rec["tier"], "frontier")
+            self.assertEqual(rec["tier_rung"], "T1")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
