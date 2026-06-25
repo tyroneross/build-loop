@@ -143,7 +143,7 @@ rally next --tool claude_code --json
 rally check before-write --tool claude_code --path README.md --strict --json
 ```
 
-If the Rally binary is not installed, proceed without it. Full coordination rules: [`references/coordination-rules.md`](references/coordination-rules.md).
+If the Rally binary is not installed, proceed without it. Full coordination rules: [`references/coordination-rules.md`](references/coordination-rules.md). Rally is coordination metadata, not verification evidence: use it to find peers, claims, and handoffs, and confirm code, package, version, and release truth from git, tests, manifests, registries, or GitHub directly.
 
 Codex-specific delegation is opt-in. build-loop planning language such as "parallel-safe groups" does not by itself authorize Codex subagents. Spawn them only when the user explicitly asks for parallel delegation or passes a parallel flag.
 
