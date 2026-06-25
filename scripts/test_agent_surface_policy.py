@@ -150,7 +150,10 @@ class OtherAgentSurfaceTests(unittest.TestCase):
         readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         coordination_text = (REPO_ROOT / "references" / "coordination-rules.md").read_text(encoding="utf-8")
         skill_text = (REPO_ROOT / "skills" / "build-loop" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("not verification evidence", readme_text)
+        # README documents the Rally evidence-boundary in plain-copy style (no
+        # "X, not Y" antithesis in public-facing copy); internal docs below keep
+        # the canonical phrase.
+        self.assertIn("Rally verifies nothing on its own", readme_text)
         self.assertIn("Evidence boundary (Rally is not a verifier)", coordination_text)
         self.assertIn("not verification evidence", skill_text)
 
