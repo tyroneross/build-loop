@@ -318,6 +318,57 @@ def resolve(
     return base
 
 
+def resolve_role(
+    *,
+    segment: str,
+    tier: str,
+    workdir: Path,
+    extra_unavailable: set[str] | frozenset[str] | None = None,
+    host_providers: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Two-axis resolve: a ``(segment, tier)`` ROLE → the highest-priority
+    AVAILABLE + host-reachable model.
+
+    Adds the resolver's two value-adds (persistent availability + host-provider
+    reachability) on top of ``model_overrides.resolve_role`` (which owns the
+    preferred-list walk, recency tiebreak, and the floor inheritance). A model
+    the current host cannot dispatch is folded into the unavailable set so the
+    role never resolves to an unreachable model — on a Claude host, a
+    generative_reasoning/thinking role resolves to opus (reachable) rather than
+    the recency-newer but unreachable gpt-5.5.
+    """
+    import model_overrides  # local import: model_resolver already imports its symbols
+
+    wd = workdir.expanduser().resolve()
+    unavailable = expand_unavailable(
+        load_unavailable(wd) | set(extra_unavailable or ())
+    )
+    # Host filter: explicit arg → config → detected host → None (host-neutral).
+    if host_providers is HOST_FILTER_DISABLED:
+        host_providers = None
+    elif host_providers is not None:
+        host_providers = {str(p).strip().lower() for p in host_providers}
+    else:
+        host_providers = load_host_providers(wd)
+
+    # Fold host-unreachable seed models into unavailable so the preferred walk
+    # skips them. A model with an unknown provider is kept (fail-open).
+    if host_providers is not None:
+        models = MODEL_REGISTRY  # legacy view; also check taxonomy seeds
+        import model_taxonomy
+        for mid in (model_taxonomy.taxonomy().get("models") or {}):
+            if mid.startswith("_"):
+                continue
+            meta = model_taxonomy.model_meta(mid) or {}
+            provider = (meta.get("provider") or "").strip().lower()
+            if provider and provider not in host_providers:
+                unavailable.add(mid)
+
+    return model_overrides.resolve_role(
+        segment=segment, tier=tier, workdir=wd, unavailable=unavailable,
+    )
+
+
 # Sentinel: explicitly disable the host filter (host-neutral), distinct from
 # None (= "use the default: config → detected host").
 HOST_FILTER_DISABLED = frozenset({"__any__"})
