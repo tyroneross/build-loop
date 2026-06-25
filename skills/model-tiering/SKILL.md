@@ -1,6 +1,6 @@
 ---
 name: model-tiering
-description: Use when choosing a model tier for a subagent, deciding code-tier vs thinking-tier in frontmatter, or escalating mid-flow. Covers the multi-model abstraction — Opus/Sonnet/Haiku are Anthropic-default mappings; the tier abstraction is provider-portable.
+description: Use when choosing a model tier or segment for a subagent, deciding a role descriptor (segment + tier) in frontmatter, or escalating mid-flow. Covers the two-axis taxonomy (work-role segment × 7-rung capability ladder) — Opus/Sonnet/Haiku are Anthropic-default mappings; selection is provider-portable and data-driven.
 user-invocable: false
 ---
 
@@ -13,7 +13,16 @@ Governs model selection across all build-loop phases. Build-loop is **multi-mode
 Use `references/agent-role-taxonomy.md` for responsibility boundaries. This
 skill answers "which tier should run the role?", not "who owns the work?".
 
-## Tier abstraction (canonical)
+## Two-axis taxonomy (the source of truth)
+
+Selection runs on **two orthogonal axes**, encoded as data in `references/model-taxonomy.json` (loader: `scripts/model_taxonomy.py`):
+
+- **SEGMENT** — the work role / primary output: Generative Reasoning, Agentic Execution, Representation/Retrieval, Realtime Interaction, Perception/Input Understanding, Generative Media, Governance/Evaluation. Segment is the *primary product role* — a reasoning model that accepts image/audio input is Generative Reasoning with a `multimodal-input` tag, not Perception.
+- **CAPABILITY-TIER** — a 7-rung ladder: T0 experimental/restricted frontier · T1 ultra-frontier · T2 frontier · T3 balanced workhorse · T4 efficient near-frontier · T5 utility/nano/edge · T-S specialist infrastructure (off the ladder).
+
+Agents declare a `(segment, tier)` ROLE; the resolver (`scripts/model_resolver.py resolve_role`) walks the per-cell ordered preferred list and returns the highest-ranked AVAILABLE + host-reachable model (ties → release recency). New models are classified once (`scripts/classify_model_tier.py`, host-LLM, both axes) — no agent edits. **The 4-tier table below is the legacy alias view** — `frontier/thinking/code/pattern` fold to `T1/T2/T3/T4` (Generative Reasoning segment) and remain accepted everywhere for back-compat. Dormant segments (Realtime/Perception/Media) are data + reference only — no resolver wiring yet.
+
+## Tier abstraction (legacy 4-token alias view — Generative Reasoning T1–T4)
 
 | Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
 |---|---|---|---|

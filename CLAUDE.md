@@ -37,7 +37,14 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Model Tiering
 
-Build-loop is **multi-model**. Roles are assigned by **tier** (Frontier / Thinking / Code / Pattern), not provider-specific identifiers. The Anthropic mapping (Fable 5 / Opus 4.8 / Sonnet 4.6 / Haiku 4.5) is the default; equivalents from other providers (GPT-5.5/5.4 incl. Codex, Gemini 2.5, qwen2.5-coder) substitute cleanly when their benchmarks meet the tier contract. The selectable models per tier are registered in `scripts/model_overrides.py` (`MODEL_REGISTRY`); list them with `python3 scripts/model_overrides.py --list-models`.
+Build-loop is **multi-model** and selects on **two orthogonal axes**, encoded as data in `references/model-taxonomy.json` (the single source of truth; `scripts/model_taxonomy.py` is the loader):
+
+- **SEGMENT axis** — work role / primary output: Generative Reasoning, Agentic Execution, Representation/Retrieval, Realtime Interaction, Perception/Input Understanding, Generative Media, Governance/Evaluation. A reasoning model that merely accepts image/audio input is Generative Reasoning with a `multimodal-input` tag — segment is the *primary product role*, not the input modality.
+- **CAPABILITY-TIER axis** — a 7-rung ladder: T0 (experimental/restricted frontier) · T1 (ultra-frontier) · T2 (frontier) · T3 (balanced workhorse) · T4 (efficient near-frontier) · T5 (utility/nano/edge) · T-S (specialist infrastructure, off the capability ladder).
+
+Each agent declares a `(segment, tier)` ROLE resolved to a concrete model at dispatch; `model:` frontmatter is the harness default + fresh-install fallback. **Selection is Hybrid:** per `(segment, tier)` an ORDERED preferred list (capability rank, honoring Accuracy>Speed>Cost) — the resolver picks the highest-ranked AVAILABLE + host-reachable id, ties broken by release recency; users reorder via config. **A new model is adopted by classifying it once** (host-LLM rubric + WebSearch → record, into BOTH segment + tier; no vendor API call) — no agent edits.
+
+**Back-compat:** the legacy tier tokens `frontier/thinking/code/pattern` fold onto ladder rungs `T1/T2/T3/T4` and remain accepted everywhere (config, plan frontmatter, route_decision, tests). The Anthropic mapping (Fable 5 / Opus 4.8 / Sonnet 4.6 / Haiku 4.5) is the default; cross-provider equivalents (GPT-5.5/5.4 incl. Codex, Gemini 2.5, qwen2.5-coder) substitute when their benchmarks meet the tier contract. List the selectable models with `python3 scripts/model_overrides.py --list-models`. Model IDs live in the taxonomy data file, not here.
 
 | Tier | Anthropic default | Role | Substitution rule |
 |---|---|---|---|

@@ -140,6 +140,14 @@ accepts output only after verification. Core authority follows
 on the verdict**, not that the agent is top-level or expensive. Model tier
 follows role; it does not define authority.
 
+Each agent declares a `(segment, tier)` ROLE resolved to a concrete model at
+dispatch — selection runs on two axes (work-role **segment** × a 7-rung
+**capability tier** ladder T0–T5/T-S), encoded as data in
+`references/model-taxonomy.json`. The `Model` column below is the Anthropic
+fresh-install default; the legacy tokens `frontier/thinking/code/pattern` are
+aliases onto `T1/T2/T3/T4`. A new model is adopted by classifying it once — no
+agent edits. See `references/model-tier-mapping.md`.
+
 Deterministic judge surfaces also exist outside `agents/`, including
 `scripts/plan_verify.py`, `scripts/judgment_gate.py`, and release/package
 verifiers. Agent roles below are the LLM-side surfaces.
