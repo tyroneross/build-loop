@@ -439,6 +439,32 @@ class ResolveRoleTests(unittest.TestCase):
             # opus down + gpt-5.5 unreachable -> ladder floor walk -> sonnet (code)
             self.assertEqual(r["model"], "sonnet")
 
+    def test_cli_segment_flag_uses_two_axis_path(self) -> None:
+        # --segment routes through resolve_role; without it, legacy single-axis.
+        with tempfile.TemporaryDirectory() as td:
+            two_axis = run_resolver(
+                "--workdir", td, "--tier", "frontier",
+                "--segment", "generative_reasoning",
+                "--host-providers", "anthropic", "--plain",
+            )
+            self.assertEqual(two_axis.returncode, 0, two_axis.stderr)
+            self.assertEqual(two_axis.stdout.strip(), "fable")
+
+    def test_cli_no_segment_is_unchanged_legacy(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            legacy = run_resolver("--workdir", td, "--tier", "frontier", "--plain")
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertEqual(legacy.stdout.strip(), "fable")
+
+    def test_cli_ladder_rung_tier_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = run_resolver(
+                "--workdir", td, "--tier", "T3", "--segment", "agentic_execution",
+                "--host-providers", "anthropic", "--plain",
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(), "sonnet")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

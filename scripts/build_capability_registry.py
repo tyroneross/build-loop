@@ -24,8 +24,9 @@ Surfaces crawled (always opt-in / no network):
     scripts/*.py (top-level only, not _attic/)    (kind=script)
 
 For each entry, the registry records:
-    name, kind, category, triggers[], tier (opus|sonnet|haiku|n/a),
-    tools_consumed, owns_files[], description, source_path.
+    name, kind, category, triggers[], tier (taxonomy ladder rung T0-T5/T-S,
+    or n/a), segment (work-role, agents only), tools_consumed, owns_files[],
+    description, source_path.
 
 Categories are coarse routing labels:
     architecture, debugging, validation, planning, execution, observability,
