@@ -2,6 +2,8 @@
 name: implementer
 description: Apply a single ux-fix-plan.md (or per-criterion targeted fix plan) from the build-loop Phase 5 work list. One queue entry per invocation. Returns changed files + status. Designed for parallel fan-out (≤4 in flight per orchestrator pass).
 model: sonnet
+tier: code
+segment: agentic_execution
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 

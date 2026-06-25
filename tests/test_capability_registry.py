@@ -79,9 +79,32 @@ def test_categories_are_known(registry: dict) -> None:
 
 
 def test_tiers_are_valid(registry: dict) -> None:
+    # Reconciled to the canonical taxonomy ladder vocabulary (T0-T5, T-S) plus
+    # "n/a". The old {opus, sonnet, haiku} model-name vocabulary was a SECOND,
+    # stale tier vocabulary — removed when build_capability_registry was sourced
+    # from references/model-taxonomy.json.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import model_taxonomy
+    valid = set(model_taxonomy.tier_ladder()) | {"n/a"}
     for e in registry["entries"]:
-        assert e["tier"] in ("opus", "sonnet", "haiku", "n/a"), (
-            f"unknown tier on {e['name']}: {e['tier']}"
+        assert e["tier"] in valid, (
+            f"unknown tier on {e['name']}: {e['tier']} (expected one of {sorted(valid)})"
+        )
+
+
+def test_agent_segments_are_valid(registry: dict) -> None:
+    # Every agent carries a work-role segment from the taxonomy (or "n/a" for
+    # the inherit agent). This is the new SEGMENT axis.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import model_taxonomy
+    valid = set(model_taxonomy.segments()) | {"n/a"}
+    for e in registry["entries"]:
+        if e["kind"] != "agent":
+            continue
+        assert e.get("segment", "n/a") in valid, (
+            f"unknown segment on {e['name']}: {e.get('segment')}"
         )
 
 

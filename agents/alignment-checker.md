@@ -15,6 +15,8 @@ description: |
   assistant: "alignment-checker reads intent.md non-goals, matches 'incremental migration only' against the proposal's 'wholesale rewrite' framing, returns verdict: misaligned with violated_non_goals populated. Orchestrator moves it to followup/."
   </example>
 model: sonnet
+tier: code
+segment: governance_evaluation
 color: yellow
 tools: ["Read", "Grep", "Glob"]
 ---

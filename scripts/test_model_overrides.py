@@ -482,5 +482,115 @@ class RouteDecisionOverrideTests(unittest.TestCase):
             self.assertEqual(payload["synthesis_dimensions_count"], 1)
 
 
+class TwoAxisRoleTests(unittest.TestCase):
+    """The two-axis taxonomy layer: alias back-compat through the ladder,
+    resolve_role, recency tiebreak, and the floor invariant under the 7-rung
+    ladder. These are ADDITIVE — the legacy tests above must stay green."""
+
+    def setUp(self) -> None:
+        import importlib
+        self.mo = importlib.import_module("model_overrides")
+
+    # --- Alias back-compat: legacy tokens resolve the SAME models ----------
+    def test_tier_defaults_derived_from_taxonomy_unchanged(self) -> None:
+        self.assertEqual(self.mo.TIER_DEFAULTS, {
+            "frontier": "fable", "thinking": "opus",
+            "code": "sonnet", "pattern": "haiku",
+        })
+
+    def test_tier_fallback_chain_unchanged(self) -> None:
+        self.assertEqual(self.mo.TIER_FALLBACK, {
+            "frontier": "thinking", "thinking": "code",
+            "code": "pattern", "pattern": None,
+        })
+
+    def test_legacy_tier_normalizes_to_ladder_rung(self) -> None:
+        import importlib
+        mt = importlib.import_module("model_taxonomy")
+        self.assertEqual(mt.normalize_tier("frontier"), "T1")
+        self.assertEqual(mt.normalize_tier("pattern"), "T4")
+
+    # --- resolve_role two-axis entrypoint ---------------------------------
+    def test_resolve_role_generative_reasoning_frontier(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="frontier",
+                workdir=Path(td),
+            )
+            self.assertEqual(r["model"], "fable")
+            self.assertEqual(r["tier"], "T1")
+            self.assertEqual(r["source"], "role-preferred")
+
+    def test_resolve_role_accepts_ladder_tier_directly(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="T4", workdir=Path(td),
+            )
+            self.assertEqual(r["model"], "haiku")
+
+    def test_resolve_role_unavailable_falls_to_next_preferred(self) -> None:
+        # GR/T2 preferred = [opus, gpt-5.5]; opus down -> gpt-5.5.
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), unavailable={"opus"},
+            )
+            self.assertEqual(r["model"], "gpt-5.5")
+
+    def test_resolve_role_floor_inherited_for_generative(self) -> None:
+        # GR/T1 = [fable]; fable down + the whole T1 cell exhausted -> the
+        # legacy ladder floor walk takes over and stops at thinking (opus),
+        # never below. Floor invariant preserved under the new ladder.
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="frontier",
+                workdir=Path(td), unavailable={"fable"},
+            )
+            self.assertEqual(r["model"], "opus")
+            self.assertNotEqual(r["model"], "sonnet")
+            self.assertNotEqual(r["model"], "haiku")
+
+    def test_resolve_role_specialist_segment_unresolved_when_unavailable(self) -> None:
+        # representation_retrieval is off-ladder (T-S only); if its sole model
+        # is down there is no generative ladder to walk -> unresolved.
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="representation_retrieval", tier="T-S",
+                workdir=Path(td),
+                unavailable={"openai-text-embedding-3-large",
+                             "openai-text-embedding-3-small"},
+            )
+            self.assertEqual(r["source"], "unresolved")
+            self.assertIsNone(r["model"])
+
+    def test_resolve_role_unknown_segment_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                self.mo.resolve_role(
+                    segment="no-such-segment", tier="T1", workdir=Path(td),
+                )
+
+    # --- Recency tiebreak --------------------------------------------------
+    def test_recency_breaks_tie_among_equal_rank(self) -> None:
+        # Within a single (segment,tier) cell every entry shares the rung, so
+        # recency is a pure in-cell tiebreak. GR/T2 = [opus(2025-11),
+        # gpt-5.5(2026-02)]; with recency_tiebreak the newer gpt-5.5 is tried
+        # FIRST. With opus available, recency still prefers the newer model.
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), recency_tiebreak=True,
+            )
+            self.assertEqual(r["model"], "gpt-5.5")  # newer than opus
+
+    def test_no_recency_keeps_capability_order(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mo.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), recency_tiebreak=False,
+            )
+            self.assertEqual(r["model"], "opus")  # list order preserved
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

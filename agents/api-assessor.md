@@ -2,6 +2,8 @@
 name: api-assessor
 description: Use this agent when the debugging symptom involves API endpoints, REST/GraphQL errors, request/response issues, authentication, rate limiting, or server-side route handlers. Examples - "500 error", "endpoint not found", "auth failed", "CORS error".
 model: sonnet
+tier: code
+segment: agentic_execution
 color: yellow
 tools: ["Read", "Grep", "Bash"]
 ---

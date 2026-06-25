@@ -15,6 +15,8 @@ description: |
   assistant: "I'll use the self-improvement-architect agent to draft the agent definition."
   </example>
 model: sonnet
+tier: code
+segment: generative_reasoning
 color: cyan
 tools: ["Read", "Write", "Edit", "Glob", "Grep", "Skill"]
 ---

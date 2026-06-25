@@ -165,6 +165,8 @@ build-loop routes work through a lead orchestrator, invokes bounded subagents wi
 
 These tables index agent roles. None of them are commands you run directly. Core authority follows [`references/agent-role-taxonomy.md`](references/agent-role-taxonomy.md): an agent is **core** when a pipeline step is contingent on its verdict, regardless of whether it is top-level or expensive. Model tier follows role; it does not define authority. Deterministic judge surfaces also exist outside `agents/` (`scripts/plan_verify.py`, `scripts/judgment_gate.py`, release verifiers); the tables below are the LLM-side surfaces.
 
+Each agent declares a `(segment, tier)` role that resolves to a concrete model at dispatch. Selection runs on two axes: a work-role **segment** (Generative Reasoning, Agentic Execution, Representation/Retrieval, Governance/Evaluation, plus dormant Realtime, Perception, and Generative Media lanes) and a seven-rung **capability tier** ladder (T0 through T5, plus T-S for specialist infrastructure). Both axes are encoded as data in [`references/model-taxonomy.json`](references/model-taxonomy.json). The `Tier` column below shows the legacy token (`Frontier`, `Thinking`, `Code`, `Pattern`), which aliases onto `T1`, `T2`, `T3`, `T4`, and the concrete model is an Anthropic fresh-install default. A new or different-provider model is adopted by classifying it once, with no agent edits. Full mapping: [`references/model-tier-mapping.md`](references/model-tier-mapping.md).
+
 ### Lead / workflow agents
 
 | Agent | Description | Tier |

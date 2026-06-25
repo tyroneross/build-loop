@@ -84,6 +84,16 @@ RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_resolver.py \
 
 `model_resolver.py` consults the PERSISTENT `.build-loop/model-availability.json` (the unavailable-model set + the optional `hostProviders` reachability allowlist) and the `.build-loop/model-tier-cache.json`, walks the in-tier priority chain, and on exhaustion delegates to the floor-respecting cross-tier walk (frontier never resolves below thinking). This is why the resolution is deterministic and auditable (`--json` returns the full `resolution_path`) rather than a per-dispatch judgment call.
 
+**Two-axis role resolution (optional, available now).** Agents also carry a `segment:` descriptor beside `tier:` (the work-role axis of the model taxonomy — `references/model-taxonomy.json`). When the orchestrator wants the role resolved on BOTH axes (the segment's ordered preferred list + release-recency tiebreak + host-reachability), pass `--segment "<agent-frontmatter-segment>"`:
+
+```bash
+RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_resolver.py \
+  --workdir "$PWD" --tier "<agent-frontmatter-tier>" \
+  --segment "<agent-frontmatter-segment>" --plain)"
+```
+
+The single-axis `--tier`-only form (above) stays the default and is unchanged. For the active segments (generative_reasoning, agentic_execution, governance_evaluation) the two forms resolve to the same Anthropic default on a Claude host; `--segment` becomes load-bearing when a cross-provider or newly-classified model populates a `(segment, tier)` cell. The dormant segments (realtime/perception/media) have no live consumer yet — data + reference only.
+
 **Dispatch-fallback contract (handles the outage that shows up as a dispatch ERROR).** The Claude Code Agent tool selects ONE model and ERRORS if it is down ("Claude Fable 5 is currently unavailable"). Build-loop cannot wrap that harness primitive, so the orchestrator catches it:
 
 1. Dispatch the agent with `RESOLVED_MODEL`.

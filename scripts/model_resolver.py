@@ -318,6 +318,57 @@ def resolve(
     return base
 
 
+def resolve_role(
+    *,
+    segment: str,
+    tier: str,
+    workdir: Path,
+    extra_unavailable: set[str] | frozenset[str] | None = None,
+    host_providers: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Two-axis resolve: a ``(segment, tier)`` ROLE → the highest-priority
+    AVAILABLE + host-reachable model.
+
+    Adds the resolver's two value-adds (persistent availability + host-provider
+    reachability) on top of ``model_overrides.resolve_role`` (which owns the
+    preferred-list walk, recency tiebreak, and the floor inheritance). A model
+    the current host cannot dispatch is folded into the unavailable set so the
+    role never resolves to an unreachable model — on a Claude host, a
+    generative_reasoning/thinking role resolves to opus (reachable) rather than
+    the recency-newer but unreachable gpt-5.5.
+    """
+    import model_overrides  # local import: model_resolver already imports its symbols
+
+    wd = workdir.expanduser().resolve()
+    unavailable = expand_unavailable(
+        load_unavailable(wd) | set(extra_unavailable or ())
+    )
+    # Host filter: explicit arg → config → detected host → None (host-neutral).
+    if host_providers is HOST_FILTER_DISABLED:
+        host_providers = None
+    elif host_providers is not None:
+        host_providers = {str(p).strip().lower() for p in host_providers}
+    else:
+        host_providers = load_host_providers(wd)
+
+    # Fold host-unreachable seed models into unavailable so the preferred walk
+    # skips them. A model with an unknown provider is kept (fail-open).
+    if host_providers is not None:
+        models = MODEL_REGISTRY  # legacy view; also check taxonomy seeds
+        import model_taxonomy
+        for mid in (model_taxonomy.taxonomy().get("models") or {}):
+            if mid.startswith("_"):
+                continue
+            meta = model_taxonomy.model_meta(mid) or {}
+            provider = (meta.get("provider") or "").strip().lower()
+            if provider and provider not in host_providers:
+                unavailable.add(mid)
+
+    return model_overrides.resolve_role(
+        segment=segment, tier=tier, workdir=wd, unavailable=unavailable,
+    )
+
+
 # Sentinel: explicitly disable the host filter (host-neutral), distinct from
 # None (= "use the default: config → detected host").
 HOST_FILTER_DISABLED = frozenset({"__any__"})
@@ -338,9 +389,24 @@ def _parse_host_providers_arg(raw: str | None) -> set[str] | frozenset[str] | No
 
 
 def main(argv: list[str] | None = None) -> int:
+    import model_taxonomy  # for the --tier ladder/legacy choices + segment choices
+
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--workdir", default=".")
-    p.add_argument("--tier", required=True, choices=sorted(TIERS))
+    # --tier accepts the legacy tokens (single-axis path) AND the ladder rungs
+    # (two-axis path). The legacy set is the default contract; ladder rungs are
+    # accepted so a (segment, tier) role can name its rung directly.
+    _tier_choices = sorted(set(TIERS) | set(model_taxonomy.tier_ladder()))
+    p.add_argument("--tier", required=True, choices=_tier_choices)
+    p.add_argument(
+        "--segment",
+        default=None,
+        choices=sorted(model_taxonomy.segments()),
+        help="Work-role segment. When given, resolution uses the two-axis "
+        "resolve_role path (the segment's ordered preferred list + recency "
+        "tiebreak + host-reachability). When omitted, the single-axis legacy "
+        "tier path is used (unchanged default).",
+    )
     p.add_argument(
         "--unavailable",
         default=None,
@@ -368,14 +434,25 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     host_providers = _parse_host_providers_arg(args.host_providers)
-    result = resolve(
-        tier=args.tier,
-        workdir=Path(args.workdir),
-        extra_unavailable=extra,
-        host_providers=host_providers,
-        config_path=Path(args.config) if args.config else None,
-        state_path=Path(args.state) if args.state else None,
-    )
+    if args.segment:
+        # Two-axis path: resolve the (segment, tier) ROLE.
+        result = resolve_role(
+            segment=args.segment,
+            tier=args.tier,
+            workdir=Path(args.workdir),
+            extra_unavailable=extra,
+            host_providers=host_providers,
+        )
+    else:
+        # Single-axis legacy path (unchanged default).
+        result = resolve(
+            tier=args.tier,
+            workdir=Path(args.workdir),
+            extra_unavailable=extra,
+            host_providers=host_providers,
+            config_path=Path(args.config) if args.config else None,
+            state_path=Path(args.state) if args.state else None,
+        )
     if args.require and not result.get("model"):
         print(json.dumps(result, indent=2), file=sys.stderr)
         return 1

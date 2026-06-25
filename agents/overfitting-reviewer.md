@@ -3,6 +3,7 @@ name: overfitting-reviewer
 description: Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.
 model: fable
 tier: frontier
+segment: governance_evaluation
 tools: ["Read", "Glob", "Grep"]
 ---
 

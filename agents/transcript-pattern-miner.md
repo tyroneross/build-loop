@@ -21,6 +21,8 @@ description: |
   assistant: "I'll use the transcript-pattern-miner agent. Section 5 of its report is a rotation tracker — truncated previews, first-seen and last-seen dates, project context."
   </example>
 model: haiku
+tier: pattern
+segment: generative_reasoning
 color: cyan
 tools: ["Bash", "Read"]
 ---

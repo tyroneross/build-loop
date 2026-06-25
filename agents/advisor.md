@@ -24,6 +24,7 @@ description: |
   </example>
 model: fable
 tier: frontier
+segment: generative_reasoning
 color: gold
 tools: ["Read", "Grep", "Glob", "Skill", "Write"]
 ---

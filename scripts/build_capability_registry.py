@@ -24,8 +24,9 @@ Surfaces crawled (always opt-in / no network):
     scripts/*.py (top-level only, not _attic/)    (kind=script)
 
 For each entry, the registry records:
-    name, kind, category, triggers[], tier (opus|sonnet|haiku|n/a),
-    tools_consumed, owns_files[], description, source_path.
+    name, kind, category, triggers[], tier (taxonomy ladder rung T0-T5/T-S,
+    or n/a), segment (work-role, agents only), tools_consumed, owns_files[],
+    description, source_path.
 
 Categories are coarse routing labels:
     architecture, debugging, validation, planning, execution, observability,
@@ -76,6 +77,12 @@ CATEGORY_KEYWORDS = [
                       "narrow", "decision space", "subagent dispatch",
                       "project tag", "project_resolver", "cwd to a project",
                       "model tier", "model_tier", "model-tier", "tier",
+                      # Model selection / dispatch resolution surfaces (the
+                      # taxonomy, resolver, dispatch fallback, classification):
+                      "model selection", "model-selection", "model outage",
+                      "model availability", "dispatch fallback", "re-resolve",
+                      "taxonomy", "segment", "model resolver", "model_resolver",
+                      "classify model", "model_overrides", "model overrides",
                       "transcript", "pattern-miner", "pattern miner",
                       "slice", "acp",
                       # Crash recovery / state.json checkpoint surfaces (M1-M4):
@@ -172,11 +179,20 @@ TRIGGER_VERBS = (
     "refactor", "lint", "audit",
 )
 
-MODEL_HINTS = {
-    "opus": ("opus", "claude-opus", "claude-3-5-opus", "claude-3-7-opus", "claude-opus-4"),
-    "sonnet": ("sonnet", "claude-sonnet", "claude-3-5-sonnet", "claude-3-7-sonnet"),
-    "haiku": ("haiku", "claude-haiku", "claude-3-5-haiku"),
-}
+# Tier classification is sourced from the model taxonomy (the single source of
+# truth). The old per-model MODEL_HINTS={opus,sonnet,haiku} vocabulary was a
+# SECOND, stale tier vocabulary — removed here so there is one taxonomy. An
+# agent's tier comes from its frontmatter `tier:` (legacy token or ladder rung)
+# first, then a fall-back mapping of its frontmatter `model:` id via the
+# taxonomy. `_classify_tier` below returns the taxonomy ladder rung (or "n/a").
+try:  # pragma: no cover - import shim
+    import model_taxonomy as _mt
+except ImportError:  # pragma: no cover
+    sys.path.insert(0, str((REPO_ROOT_DEFAULT / "scripts")))
+    try:
+        import model_taxonomy as _mt  # type: ignore[no-redefine]
+    except ImportError:
+        _mt = None  # taxonomy unavailable -> tier classification degrades to n/a
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
@@ -294,15 +310,48 @@ def _extract_triggers(description: str) -> List[str]:
     return sorted(set(found))[:8]
 
 
-def _classify_tier(model_str: str) -> str:
-    if not model_str:
+def _classify_tier(tier_str: str, model_str: str = "") -> str:
+    """Return the taxonomy ladder rung for an agent.
+
+    Priority: explicit frontmatter `tier:` (legacy token or ladder rung) ->
+    fall back to mapping the frontmatter `model:` id via the taxonomy seed
+    registry. `inherit` / unknown -> "n/a". Sourced from references/
+    model-taxonomy.json (the single tier vocabulary)."""
+    if _mt is None:
         return "n/a"
-    m = model_str.lower()
-    for tier, hints in MODEL_HINTS.items():
-        if any(h in m for h in hints):
-            return tier
-    if "inherit" in m:
+    # 1. Explicit tier token wins.
+    if tier_str:
+        try:
+            return _mt.normalize_tier(tier_str.strip())
+        except ValueError:
+            pass  # not a recognized tier token; fall through to model mapping
+    # 2. Map the concrete model id to its tier via the taxonomy.
+    if model_str:
+        mid = model_str.strip().lower()
+        if mid == "inherit":
+            return "n/a"
+        meta = _mt.model_meta(mid)
+        if meta and meta.get("tier"):
+            return meta["tier"]
+    return "n/a"
+
+
+def _classify_segment(segment_str: str, model_str: str = "") -> str:
+    """Return the agent's work-role segment.
+
+    Priority: explicit frontmatter `segment:` -> map the frontmatter `model:`
+    id's segment via the taxonomy -> "n/a"."""
+    if _mt is None:
         return "n/a"
+    if segment_str and segment_str.strip() in _mt.segments():
+        return segment_str.strip()
+    if model_str:
+        mid = model_str.strip().lower()
+        if mid == "inherit":
+            return "n/a"
+        meta = _mt.model_meta(mid)
+        if meta and meta.get("segment"):
+            return meta["segment"]
     return "n/a"
 
 
@@ -334,6 +383,8 @@ def crawl_agents(repo: Path) -> Iterable[Dict[str, Any]]:
         name = _strip_yaml_quotes(fm.get("name", p.stem))
         description = _strip_yaml_quotes(fm.get("description", ""))
         model = _strip_yaml_quotes(fm.get("model", ""))
+        tier_fm = _strip_yaml_quotes(fm.get("tier", ""))
+        segment_fm = _strip_yaml_quotes(fm.get("segment", ""))
         tools_raw = _strip_yaml_quotes(fm.get("tools", ""))
         # tools may be a JSON list inline.
         tools_consumed: List[str] = []
@@ -348,7 +399,8 @@ def crawl_agents(repo: Path) -> Iterable[Dict[str, Any]]:
             "kind": "agent",
             "category": _classify_category(name, description, rel),
             "triggers": _extract_triggers(description),
-            "tier": _classify_tier(model),
+            "tier": _classify_tier(tier_fm, model),
+            "segment": _classify_segment(segment_fm, model),
             "tools_consumed": tools_consumed,
             "owns_files": [rel],
             "description": _short(description),
@@ -367,15 +419,16 @@ def crawl_skills(repo: Path) -> Iterable[Dict[str, Any]]:
         # Derive name: prefer frontmatter, else parent dir.
         name = _strip_yaml_quotes(fm.get("name", skill_md.parent.name))
         description = _strip_yaml_quotes(fm.get("description", ""))
-        # Some skills set `model:` (rare) or document tier in body.
+        # Some skills set `model:`/`tier:` (rare) or document tier in body.
         model = _strip_yaml_quotes(fm.get("model", ""))
+        tier_fm = _strip_yaml_quotes(fm.get("tier", ""))
         rel = skill_md.relative_to(repo).as_posix()
         yield {
             "name": name,
             "kind": "skill",
             "category": _classify_category(name, description, rel),
             "triggers": _extract_triggers(description),
-            "tier": _classify_tier(model),
+            "tier": _classify_tier(tier_fm, model),
             "tools_consumed": [],
             "owns_files": [rel],
             "description": _short(description),

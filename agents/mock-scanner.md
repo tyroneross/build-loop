@@ -15,6 +15,8 @@ description: |
   assistant: "I'll use the mock-scanner agent to scan for residual mock data."
   </example>
 model: haiku
+tier: pattern
+segment: governance_evaluation
 color: cyan
 tools: ["Read", "Grep", "Glob"]
 ---

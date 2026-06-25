@@ -33,21 +33,48 @@ import sys
 from pathlib import Path
 from typing import Any
 
-TIERS = {"frontier", "thinking", "code", "pattern"}
+# Single source of truth for the segment/tier vocabulary. This module re-expresses
+# the legacy 4-token tier surface (frontier/thinking/code/pattern) over the
+# taxonomy ladder so there is exactly ONE vocabulary in the codebase. The legacy
+# tokens are PRESERVED as the public surface (every existing test, config, plan
+# frontmatter, and route_decision references them) — they fold to ladder rungs
+# T1/T2/T3/T4 via the taxonomy's legacy_aliases.
+try:  # pragma: no cover - import shim for direct + packaged execution
+    import model_taxonomy
+except ImportError:  # pragma: no cover
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import model_taxonomy  # type: ignore[no-redefine]
 
-TIER_DEFAULTS = {
-    "frontier": "fable",
-    "thinking": "opus",
-    "code": "sonnet",
-    "pattern": "haiku",
-}
+# The legacy tier tokens, in capability order (highest first). This stays the
+# public `TIERS` surface; the values fold to ladder rungs internally.
+_LEGACY_ORDER = ("frontier", "thinking", "code", "pattern")
+# The implicit segment of the legacy tier tokens (they predate the segment axis).
+_LEGACY_SEGMENT = "generative_reasoning"
+
+TIERS = set(_LEGACY_ORDER)
+
+# Derived from the taxonomy: each legacy token's default = the first preferred
+# model for (generative_reasoning, its-ladder-rung). frontier->fable,
+# thinking->opus, code->sonnet, pattern->haiku — same values as before, now
+# sourced from references/model-taxonomy.json instead of hand-maintained here.
+def _derive_tier_defaults() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for token in _LEGACY_ORDER:
+        pref = model_taxonomy.preferred(_LEGACY_SEGMENT, token)
+        if pref:
+            out[token] = pref[0]
+    return out
+
+
+TIER_DEFAULTS = _derive_tier_defaults()
 
 # Capability ordering, highest first. The single source of truth for "is tier A
 # at or above tier B" — used by the floor clamp so the frontier-never-below-
 # thinking invariant is enforced no matter HOW a model was selected (config
 # override, in-tier walk, or cross-tier fallback), not only inside the
-# TIER_FALLBACK walk. Lower index == higher capability.
-TIER_ORDER = ("frontier", "thinking", "code", "pattern")
+# TIER_FALLBACK walk. Lower index == higher capability. Legacy-token surface;
+# the ordering is inherited from the taxonomy ladder rank of each token's rung.
+TIER_ORDER = _LEGACY_ORDER
 TIER_RANK = {tier: i for i, tier in enumerate(TIER_ORDER)}
 
 
@@ -96,12 +123,26 @@ def is_below_floor(model: str | None, floor_tier: str) -> bool:
 # enforces this by walking AT MOST one edge from frontier; if the thinking
 # tier's default is itself unavailable, frontier resolution stops at thinking
 # rather than degrading further. See feedback_model_org_fable5.md.
-TIER_FALLBACK = {
-    "frontier": "thinking",
-    "thinking": "code",
-    "code": "pattern",
-    "pattern": None,
-}
+# Derived from the taxonomy ladder fallback, mapped back to legacy tokens. The
+# ladder edges T1->T2->T3->T4 correspond exactly to frontier->thinking->code->
+# pattern; pattern (T4) bottoms out at None on the legacy surface (the legacy
+# vocabulary has no rung below pattern). Sourcing this from the taxonomy keeps
+# ONE fallback graph in the codebase while preserving the legacy token shape the
+# existing tests assert (fallback_tier == "thinking"/"code"/"pattern").
+def _derive_tier_fallback() -> dict[str, str | None]:
+    rung_to_token = {model_taxonomy.normalize_tier(t): t for t in _LEGACY_ORDER}
+    ladder_fb = model_taxonomy.ladder_fallback()
+    out: dict[str, str | None] = {}
+    for token in _LEGACY_ORDER:
+        rung = model_taxonomy.normalize_tier(token)
+        nxt_rung = ladder_fb.get(rung)
+        # Map the next ladder rung back to a legacy token; if the next rung is
+        # outside the legacy vocabulary (below pattern/T4) the legacy chain ends.
+        out[token] = rung_to_token.get(nxt_rung) if nxt_rung else None
+    return out
+
+
+TIER_FALLBACK = _derive_tier_fallback()
 
 # Selectable models per tier. TIER_DEFAULTS (above) is the Anthropic mapping used
 # when nothing is configured; this registry is the broader set of models known to
@@ -118,34 +159,37 @@ TIER_FALLBACK = {
 # but the registry + config use the short alias ("fable"). `normalize_model_id`
 # folds either form to the alias so an availability match on EITHER works.
 # Mirror of references/model-tier-mapping.md "Anthropic default" canonical ids.
-MODEL_REGISTRY: dict[str, list[dict[str, Any]]] = {
-    "frontier": [
-        {"id": "fable", "provider": "anthropic", "label": "Fable 5", "status": "default",
-         "aliases": ["claude-fable-5", "claude-fable-5-20251101"]},
-        {"id": "gpt-5.5", "provider": "openai", "label": "GPT-5.5 (Codex)", "status": "verified"},
-        {"id": "gpt-5.4", "provider": "openai", "label": "GPT-5.4", "status": "verified"},
-    ],
-    "thinking": [
-        {"id": "opus", "provider": "anthropic", "label": "Opus 4.8", "status": "default",
-         "aliases": ["claude-opus-4-8", "claude-opus-4-8-20251101", "claude-opus-4-8[1m]"]},
-        {"id": "gpt-5.4", "provider": "openai", "label": "GPT-5.4", "status": "verified"},
-        {"id": "gemini-2.5-pro", "provider": "google", "label": "Gemini 2.5 Pro", "status": "verified"},
-    ],
-    "code": [
-        {"id": "sonnet", "provider": "anthropic", "label": "Sonnet 4.6", "status": "default",
-         "aliases": ["claude-sonnet-4-6", "claude-sonnet-4-6-20251101"]},
-        {"id": "gpt-5.4-mini", "provider": "openai", "label": "GPT-5.4 Mini", "status": "verified"},
-        {"id": "gemini-2.5-flash", "provider": "google", "label": "Gemini 2.5 Flash", "status": "verified"},
-        {"id": "qwen2.5-coder-32b", "provider": "local", "label": "Qwen2.5-Coder 32B", "status": "local"},
-    ],
-    "pattern": [
-        {"id": "haiku", "provider": "anthropic", "label": "Haiku 4.5", "status": "default",
-         "aliases": ["claude-haiku-4-5", "claude-haiku-4-5-20251001"]},
-        {"id": "gpt-5-nano", "provider": "openai", "label": "GPT-5 Nano", "status": "verified"},
-        {"id": "gemini-flash-lite", "provider": "google", "label": "Gemini Flash Lite", "status": "verified"},
-        {"id": "llama3.2-3b", "provider": "local", "label": "Llama 3.2 3B", "status": "local"},
-    ],
-}
+# Derived from the taxonomy (DRY): for each legacy tier token, the selectable
+# models are the taxonomy's preferred list for (generative_reasoning, its-rung),
+# expanded to the `{id, provider, label, status, aliases}` registry shape via the
+# taxonomy's per-model metadata. The FIRST entry per tier is the default (its
+# status is forced to "default" so `--list-models` and `is_registered` keep their
+# contract). This replaces the hand-maintained registry — there is now ONE place
+# (references/model-taxonomy.json) where these model ids live.
+def _derive_model_registry() -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    for token in _LEGACY_ORDER:
+        entries: list[dict[str, Any]] = []
+        ids = model_taxonomy.legacy_registry(token)
+        for i, mid in enumerate(ids):
+            meta = model_taxonomy.model_meta(mid) or {}
+            entry: dict[str, Any] = {
+                "id": mid,
+                "provider": meta.get("provider", "unknown"),
+                "label": meta.get("label", mid),
+                # First model per tier is the tier default; the taxonomy may mark
+                # it "default" already, but force it so the contract is explicit.
+                "status": "default" if i == 0 else meta.get("status", "verified"),
+            }
+            aliases = meta.get("aliases") or []
+            if aliases:
+                entry["aliases"] = list(aliases)
+            entries.append(entry)
+        out[token] = entries
+    return out
+
+
+MODEL_REGISTRY: dict[str, list[dict[str, Any]]] = _derive_model_registry()
 
 
 def _build_alias_index() -> dict[str, str]:
@@ -413,6 +457,90 @@ def resolve_with_tier_fallback(
     # No usable fallback tier (e.g. pattern, or every default unavailable):
     # return the base resolution unchanged.
     return base
+
+
+def resolve_role(
+    *,
+    segment: str,
+    tier: str,
+    workdir: Path,
+    unavailable: set[str] | frozenset[str] | None = None,
+    recency_tiebreak: bool = True,
+) -> dict[str, Any]:
+    """Two-axis entrypoint: resolve a ``(segment, tier)`` ROLE to a model.
+
+    Walks ``taxonomy.preferred(segment, tier)`` in capability-rank order
+    (the list order), optionally re-ordering equal-rank ties by release
+    recency (newer first), and returns the highest-ranked AVAILABLE id. The
+    preferred list order already encodes capability rank, so recency only
+    re-orders *within* the list — it never overrides a higher-ranked model
+    with a newer lower-ranked one (that would violate Accuracy>Speed>Cost).
+
+    Back-compat bridge: the legacy tier tokens have an implicit segment of
+    ``generative_reasoning``. When ``segment == "generative_reasoning"`` and
+    the requested tier maps to a legacy token, on exhaustion this delegates to
+    ``resolve_with_tier_fallback`` so the floor invariant (frontier never below
+    thinking) and the legacy fallback chain are inherited unchanged.
+
+    For a specialist (T-S) or dormant-segment role with no available preferred
+    model, returns ``source: "unresolved"`` (there is no generative ladder to
+    walk for an off-ladder specialist role).
+    """
+    if segment not in model_taxonomy.segments():
+        raise ValueError(
+            f"unknown segment {segment!r}; expected one of "
+            f"{sorted(model_taxonomy.segments())}"
+        )
+    rung = model_taxonomy.normalize_tier(tier)
+    wd = workdir.expanduser().resolve()
+    unavail = expand_unavailable(unavailable)
+
+    candidates = model_taxonomy.preferred(segment, rung)
+    if recency_tiebreak and candidates:
+        # Re-order ONLY among same-capability-rank entries. The preferred list is
+        # already rank-ordered, so we keep rank as the dominant key and recency
+        # as the tiebreak: group is the list itself (every entry shares the same
+        # (segment,tier) cell == same rung == same rank), so recency is a pure
+        # in-cell tiebreak. Newer wins.
+        candidates = model_taxonomy.break_ties_by_recency(candidates)
+
+    resolution_path: list[dict[str, Any]] = []
+    for mid in candidates:
+        alias = normalize_model_id(mid)
+        if alias in unavail or mid in unavail:
+            resolution_path.append({"model": mid, "skipped": "unavailable"})
+            continue
+        resolution_path.append({"model": mid, "selected": True})
+        return {
+            "segment": segment,
+            "tier": rung,
+            "model": mid,
+            "source": "role-preferred",
+            "released": model_taxonomy.released(mid),
+            "resolution_path": resolution_path,
+        }
+
+    # Every preferred candidate is unavailable (or the cell is empty).
+    # Generative-Reasoning roles inherit the legacy ladder floor walk.
+    legacy_token = {v: k for k, v in model_taxonomy.legacy_aliases().items()}.get(rung)
+    if segment == "generative_reasoning" and legacy_token:
+        base = resolve_with_tier_fallback(
+            tier=legacy_token, workdir=wd, unavailable=unavail
+        )
+        base["segment"] = segment
+        base["resolution_path"] = resolution_path + [
+            {"model": base.get("model"), "via": base.get("source")}
+        ]
+        return base
+
+    # Off-ladder specialist / dormant role with nothing available.
+    return {
+        "segment": segment,
+        "tier": rung,
+        "model": None,
+        "source": "unresolved",
+        "resolution_path": resolution_path,
+    }
 
 
 def has_override(

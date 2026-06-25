@@ -401,5 +401,70 @@ class CliShapeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
 
+class ResolveRoleTests(unittest.TestCase):
+    """The two-axis resolve_role path: persistent availability + host-provider
+    reachability layered over model_overrides.resolve_role."""
+
+    def setUp(self) -> None:
+        import importlib
+        self.mr = importlib.import_module("model_resolver")
+
+    def test_anthropic_host_filters_unreachable_recency_winner(self) -> None:
+        # GR/thinking preferred = [opus, gpt-5.5]; gpt-5.5 is newer (recency
+        # would prefer it) but unreachable on a Claude host -> opus selected.
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mr.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), host_providers={"anthropic"},
+            )
+            self.assertEqual(r["model"], "opus")
+
+    def test_host_neutral_picks_recency_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = self.mr.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), host_providers=self.mr.HOST_FILTER_DISABLED,
+            )
+            self.assertEqual(r["model"], "gpt-5.5")  # newer, no host filter
+
+    def test_persistent_availability_respected(self) -> None:
+        # opus recorded unavailable on disk + anthropic host -> no reachable GR
+        # T2 model -> floor walk inherits to T3 (sonnet, reachable on Claude).
+        with tempfile.TemporaryDirectory() as td:
+            _write_availability(Path(td), ["opus"])
+            r = self.mr.resolve_role(
+                segment="generative_reasoning", tier="thinking",
+                workdir=Path(td), host_providers={"anthropic"},
+            )
+            # opus down + gpt-5.5 unreachable -> ladder floor walk -> sonnet (code)
+            self.assertEqual(r["model"], "sonnet")
+
+    def test_cli_segment_flag_uses_two_axis_path(self) -> None:
+        # --segment routes through resolve_role; without it, legacy single-axis.
+        with tempfile.TemporaryDirectory() as td:
+            two_axis = run_resolver(
+                "--workdir", td, "--tier", "frontier",
+                "--segment", "generative_reasoning",
+                "--host-providers", "anthropic", "--plain",
+            )
+            self.assertEqual(two_axis.returncode, 0, two_axis.stderr)
+            self.assertEqual(two_axis.stdout.strip(), "fable")
+
+    def test_cli_no_segment_is_unchanged_legacy(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            legacy = run_resolver("--workdir", td, "--tier", "frontier", "--plain")
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertEqual(legacy.stdout.strip(), "fable")
+
+    def test_cli_ladder_rung_tier_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            r = run_resolver(
+                "--workdir", td, "--tier", "T3", "--segment", "agentic_execution",
+                "--host-providers", "anthropic", "--plain",
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(), "sonnet")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

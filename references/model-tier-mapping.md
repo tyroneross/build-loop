@@ -2,9 +2,26 @@
 
 # Model Tier Mapping — Multi-Provider Substitution Reference
 
-Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthropic aliases (`fable`, `opus`, `sonnet`, `haiku`) by default because Claude Code is the primary host, but the **tier abstraction** (Frontier / Thinking / Code / Pattern) is what governs the role assignment. This reference documents how to swap providers cleanly.
+Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthropic aliases (`fable`, `opus`, `sonnet`, `haiku`) by default because Claude Code is the primary host, but the **tier abstraction** is what governs the role assignment. This reference documents how to swap providers cleanly.
 
-## Canonical tier definitions
+## Two-axis taxonomy (the source of truth)
+
+Model selection runs on **two orthogonal axes**, encoded as structured data in **`references/model-taxonomy.json`** (the single source of truth; `scripts/model_taxonomy.py` is the loader every selection script imports):
+
+- **SEGMENT axis — work role / primary output.** Seven segments: Generative Reasoning, Agentic Execution, Representation/Retrieval, Realtime Interaction, Perception/Input Understanding, Generative Media, Governance/Evaluation. Each has subsegments. A model with image/audio INPUT but a reasoning primary job is Generative Reasoning with a `multimodal-input` TAG — only classify into Perception/Realtime/Media when that IS the primary product role. Tags (`long-context`, `agentic`, `multimodal-input`, `cost-sensitive`, `restricted`, …) are a third axis.
+- **CAPABILITY-TIER axis — a 7-rung ladder:** `T0` experimental/restricted frontier · `T1` ultra-frontier · `T2` frontier · `T3` balanced workhorse · `T4` efficient near-frontier · `T5` utility/nano/edge · `T-S` specialist infrastructure (off the capability ladder).
+
+**Legacy aliases (back-compat, never removed):** the four legacy tier tokens fold onto the ladder — `frontier→T1`, `thinking→T2`, `code→T3`, `pattern→T4`. Existing config `modelOverrides`, plan `tier:` frontmatter, `route_decision`, and every existing test reference the legacy tokens and keep resolving to the same models.
+
+**Selection policy (Hybrid):** per `(segment, tier)` there is an ORDERED preferred-model list (order = capability rank, honoring Accuracy>Speed>Cost). The resolver (`scripts/model_resolver.py resolve_role`) picks the highest-ranked AVAILABLE + host-reachable id; ties / equal-or-unranked candidates are broken by release recency (newer wins). Users reorder via `.build-loop/config.json`. On a Claude host, a host-unreachable cross-vendor model is filtered out, so a generative_reasoning/thinking role resolves to `opus`, never the recency-newer but unreachable `gpt-5.5`.
+
+**Classification (host-LLM, no vendor API):** an unseen model is classified into BOTH segment + tier by the host LLM (`scripts/classify_model_tier.py` — rubric + WebSearch packet → `record`). Specialist segments grade on their own metrics (MTEB / recall / NDCG / WER / latency), not SWE-bench.
+
+**Agent binding:** every agent declares a `(segment, tier)` ROLE in frontmatter, resolved to a concrete model at dispatch (M2.5 contract). `model:` stays as the harness default + fresh-install fallback. A new model is adopted by classifying it once — no agent edits.
+
+**Dormant vs active segments:** *active* (live resolver) — generative_reasoning, agentic_execution, governance_evaluation. *partial* — representation_retrieval (embeddings; no agent-dispatch resolver). *dormant (DATA + reference only, no resolver wiring)* — realtime_interaction, perception_input, generative_media. The dormant segments are encoded for future skills; nothing walks them yet.
+
+## Canonical tier definitions (legacy 4-tier view — the Generative Reasoning T1–T4 cells)
 
 ### Frontier tier
 - **Role:** Planning synthesis AND verification verdicts. **Phase 2 Plan synthesis reaches Fable via the stakes-gated Advisor dispatch ladder** (`advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise — `skills/build-loop/references/advisor-dispatch-ladder.md`); the Advisor v1 ladder is Phase 2 only, so Phase 1 Assess synthesis runs inline as today until v2. Plan content: frame goal, draft spec/ADRs, F-criteria, MECE partition. Verification-shaped agents whose verdicts gate downstream work: plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer.
@@ -52,7 +69,7 @@ Build-loop is provider-agnostic at the tier level. Agent frontmatter uses Anthro
 
 ### Selectable model registry (the machine-readable source of truth)
 
-The cells above are mirrored by `MODEL_REGISTRY` in `scripts/model_overrides.py`. List the selectable models per tier (and feed any tool) with:
+The single source of truth is **`references/model-taxonomy.json`** (segments, ladder, per-`(segment,tier)` preferred lists, seed model metadata with release dates, legacy aliases, classification rubric). `MODEL_REGISTRY` / `TIER_DEFAULTS` / `TIER_FALLBACK` in `scripts/model_overrides.py` are now DERIVED from it (the legacy 4-token view) — there is one vocabulary in the codebase. List the selectable models per legacy tier with:
 
 ```bash
 python3 scripts/model_overrides.py --list-models          # all tiers

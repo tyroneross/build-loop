@@ -1,0 +1,277 @@
+{
+  "schema_version": "2.0.0",
+  "_comment": "Single source of truth for build-loop's two-axis model taxonomy. SEGMENT axis = work role / primary output; CAPABILITY-TIER axis = a 7-rung ladder. Read by scripts/model_taxonomy.py (the loader every other script imports). Anthropic/OpenAI ids are EXAMPLE SEEDS held as data, NOT hard-codes — classification appends new models to the runtime cache, never to this file. Provider names are illustrative. KISS/DRY: nothing here is duplicated in code.",
+
+  "tiers": {
+    "order": ["T0", "T1", "T2", "T3", "T4", "T5", "T-S"],
+    "defs": {
+      "T0":  {"label": "experimental/restricted frontier", "rank": 0},
+      "T1":  {"label": "ultra-frontier",                    "rank": 1},
+      "T2":  {"label": "frontier",                          "rank": 2},
+      "T3":  {"label": "balanced workhorse",                "rank": 3},
+      "T4":  {"label": "efficient near-frontier",           "rank": 4},
+      "T5":  {"label": "utility/nano/edge",                 "rank": 5},
+      "T-S": {"label": "specialist infrastructure",         "rank": 99, "specialist": true}
+    },
+    "fallback": {
+      "_comment": "One-edge capability fallback walk on the GENERATIVE ladder T0..T5. T-S is specialist (off-ladder): it never participates in the capability fallback walk. The HARD FLOOR INVARIANT is enforced in code: a tier walks AT MOST one edge upward in capability, so T1/frontier never resolves below T2/thinking.",
+      "T0": "T1",
+      "T1": "T2",
+      "T2": "T3",
+      "T3": "T4",
+      "T4": "T5",
+      "T5": null,
+      "T-S": null
+    },
+    "legacy_aliases": {
+      "_comment": "The 4 legacy tier tokens map onto ladder rungs. Back-compat: config modelOverrides, plan tier: frontmatter, route_decision, and every existing test reference these tokens — normalize_tier folds them to the ladder so they keep resolving to the same models.",
+      "frontier": "T1",
+      "thinking": "T2",
+      "code": "T3",
+      "pattern": "T4"
+    }
+  },
+
+  "segments": {
+    "generative_reasoning": {
+      "label": "Generative Reasoning",
+      "subsegments": ["ultra-frontier reasoners", "frontier reasoners", "balanced workhorses", "efficient utility generators"],
+      "status": "active",
+      "_status_note": "live resolver consumer — the implicit segment of the legacy tier tokens"
+    },
+    "agentic_execution": {
+      "label": "Agentic Execution",
+      "subsegments": ["coding agents", "computer-use agents", "tool-calling agents", "multi-agent coordinators"],
+      "status": "active"
+    },
+    "representation_retrieval": {
+      "label": "Representation/Retrieval",
+      "subsegments": ["embeddings", "encoders", "rerankers", "dense retrievers", "sparse retrievers", "hybrid retrievers", "memory indexers"],
+      "status": "partial",
+      "_status_note": "embeddings used by debugging-memory; no agent-dispatch resolver"
+    },
+    "realtime_interaction": {
+      "label": "Realtime Interaction",
+      "subsegments": ["speech-to-speech", "realtime transcription", "realtime translation", "speech generation"],
+      "status": "dormant",
+      "_status_note": "DATA + reference only — no resolver wiring; future skills may consume"
+    },
+    "perception_input": {
+      "label": "Perception/Input Understanding",
+      "subsegments": ["vision", "document", "audio understanding", "video understanding", "multimodal input"],
+      "status": "dormant",
+      "_status_note": "DATA + reference only — no resolver wiring"
+    },
+    "generative_media": {
+      "label": "Generative Media",
+      "subsegments": ["image gen/edit", "video gen", "audio/music gen", "3D/spatial"],
+      "status": "dormant",
+      "_status_note": "DATA + reference only — no resolver wiring"
+    },
+    "governance_evaluation": {
+      "label": "Governance/Evaluation",
+      "subsegments": ["moderation", "LLM judges", "routing judges", "compliance classifiers", "quality evaluators"],
+      "status": "active"
+    }
+  },
+
+  "preferred": {
+    "_comment": "Ordered preferred-model list per (segment, tier). Order = capability rank, honoring Accuracy>Speed>Cost. The resolver picks the highest-ranked AVAILABLE + host-reachable id; ties / equal-or-unranked broken by release recency (newer wins). Users reorder via .build-loop/config.json. ALL 7 segments carry at least one cell so the data shape is uniform; dormant cells are data only — no resolver walks them yet.",
+    "generative_reasoning": {
+      "T0": ["mythos"],
+      "T1": ["fable"],
+      "T2": ["opus", "gpt-5.5"],
+      "T3": ["sonnet", "gpt-5.4", "gemini-2.5-pro"],
+      "T4": ["haiku", "gpt-5.4-mini"],
+      "T5": ["gpt-5.4-nano", "gemini-flash-lite"]
+    },
+    "agentic_execution": {
+      "T2": ["opus"],
+      "T3": ["sonnet", "gpt-5.4", "qwen2.5-coder-32b"]
+    },
+    "governance_evaluation": {
+      "T1": ["fable"],
+      "T3": ["sonnet"],
+      "T4": ["haiku"],
+      "T5": ["gpt-5.4-nano"],
+      "T-S": ["omni-moderation"]
+    },
+    "representation_retrieval": {
+      "T-S": ["openai-text-embedding-3-large", "openai-text-embedding-3-small"]
+    },
+    "realtime_interaction": {
+      "T-S": ["gpt-realtime"]
+    },
+    "perception_input": {
+      "T-S": ["gpt-5.4"]
+    },
+    "generative_media": {
+      "T-S": ["gpt-image-1"]
+    }
+  },
+
+  "models": {
+    "_comment": "Seed registry: model id -> {provider, label, segment, tier, tags[], released (ISO date, for the recency tiebreak), status, aliases[]}. status: default (the segment/tier's host fallback) | verified (cross-vendor, advisory) | local | specialist. Runtime classification writes to .build-loop/model-tier-cache.json, NOT this file.",
+    "mythos": {
+      "provider": "anthropic", "label": "Claude Mythos 5",
+      "segment": "generative_reasoning", "tier": "T0",
+      "tags": ["restricted", "long-context", "high-autonomy", "agentic"],
+      "released": "2026-01-15", "status": "default",
+      "aliases": ["claude-mythos-5"]
+    },
+    "fable": {
+      "provider": "anthropic", "label": "Claude Fable 5",
+      "segment": "generative_reasoning", "tier": "T1",
+      "tags": ["ultra-frontier", "long-context", "agentic"],
+      "released": "2025-11-01", "status": "default",
+      "aliases": ["claude-fable-5", "claude-fable-5-20251101"]
+    },
+    "opus": {
+      "provider": "anthropic", "label": "Claude Opus 4.8",
+      "segment": "agentic_execution", "tier": "T2",
+      "tags": ["long-horizon-coding", "high-autonomy", "long-context"],
+      "released": "2025-11-01", "status": "default",
+      "aliases": ["claude-opus-4-8", "claude-opus-4-8-20251101", "claude-opus-4-8[1m]"]
+    },
+    "gpt-5.5": {
+      "provider": "openai", "label": "GPT-5.5 (Codex)",
+      "segment": "generative_reasoning", "tier": "T2",
+      "tags": ["frontier", "coding", "tool-capable"],
+      "released": "2026-02-01", "status": "verified",
+      "aliases": ["gpt-5.5-codex"]
+    },
+    "sonnet": {
+      "provider": "anthropic", "label": "Claude Sonnet 4.6",
+      "segment": "generative_reasoning", "tier": "T3",
+      "tags": ["balanced-workhorse"],
+      "released": "2025-11-01", "status": "default",
+      "aliases": ["claude-sonnet-4-6", "claude-sonnet-4-6-20251101"]
+    },
+    "gpt-5.4": {
+      "provider": "openai", "label": "GPT-5.4",
+      "segment": "generative_reasoning", "tier": "T3",
+      "tags": ["balanced-workhorse", "multimodal-input"],
+      "released": "2025-10-01", "status": "verified",
+      "aliases": []
+    },
+    "gemini-2.5-pro": {
+      "provider": "google", "label": "Gemini 2.5 Pro",
+      "segment": "generative_reasoning", "tier": "T3",
+      "tags": ["balanced-workhorse", "long-context"],
+      "released": "2025-06-01", "status": "verified",
+      "aliases": []
+    },
+    "haiku": {
+      "provider": "anthropic", "label": "Claude Haiku 4.5",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient", "fast"],
+      "released": "2025-10-01", "status": "default",
+      "aliases": ["claude-haiku-4-5", "claude-haiku-4-5-20251001"]
+    },
+    "gpt-5.4-mini": {
+      "provider": "openai", "label": "GPT-5.4 Mini",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient"],
+      "released": "2025-10-01", "status": "verified",
+      "aliases": []
+    },
+    "gpt-5.4-nano": {
+      "provider": "openai", "label": "GPT-5.4 Nano",
+      "segment": "generative_reasoning", "tier": "T5",
+      "tags": ["nano", "edge", "cost-sensitive"],
+      "released": "2025-10-01", "status": "verified",
+      "aliases": []
+    },
+    "gemini-flash-lite": {
+      "provider": "google", "label": "Gemini Flash Lite",
+      "segment": "generative_reasoning", "tier": "T5",
+      "tags": ["nano", "cost-sensitive"],
+      "released": "2025-06-01", "status": "verified",
+      "aliases": []
+    },
+    "gemini-2.5-flash": {
+      "provider": "google", "label": "Gemini 2.5 Flash",
+      "segment": "generative_reasoning", "tier": "T3",
+      "tags": ["balanced-workhorse", "fast"],
+      "released": "2025-06-01", "status": "verified",
+      "aliases": []
+    },
+    "gpt-5-nano": {
+      "provider": "openai", "label": "GPT-5 Nano",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient", "fast", "cost-sensitive"],
+      "released": "2025-08-07", "status": "verified",
+      "aliases": []
+    },
+    "llama3.2-3b": {
+      "provider": "local", "label": "Llama 3.2 3B",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient", "local"],
+      "released": "2024-09-25", "status": "local",
+      "aliases": []
+    },
+    "qwen2.5-coder-32b": {
+      "provider": "local", "label": "Qwen2.5-Coder 32B",
+      "segment": "agentic_execution", "tier": "T3",
+      "tags": ["coding", "local"],
+      "released": "2024-11-01", "status": "local",
+      "aliases": []
+    },
+    "openai-text-embedding-3-large": {
+      "provider": "openai", "label": "OpenAI text-embedding-3-large",
+      "segment": "representation_retrieval", "tier": "T-S",
+      "tags": ["embeddings"],
+      "released": "2024-01-25", "status": "specialist",
+      "aliases": ["text-embedding-3-large"]
+    },
+    "openai-text-embedding-3-small": {
+      "provider": "openai", "label": "OpenAI text-embedding-3-small",
+      "segment": "representation_retrieval", "tier": "T-S",
+      "tags": ["embeddings", "cost-sensitive"],
+      "released": "2024-01-25", "status": "specialist",
+      "aliases": ["text-embedding-3-small"]
+    },
+    "gpt-realtime": {
+      "provider": "openai", "label": "OpenAI gpt-realtime",
+      "segment": "realtime_interaction", "tier": "T-S",
+      "tags": ["speech-to-speech", "realtime"],
+      "released": "2025-08-28", "status": "specialist",
+      "aliases": ["gpt-realtime-2025-08-28"]
+    },
+    "gpt-image-1": {
+      "provider": "openai", "label": "OpenAI gpt-image-1",
+      "segment": "generative_media", "tier": "T-S",
+      "tags": ["image-gen", "image-edit"],
+      "released": "2025-04-23", "status": "specialist",
+      "aliases": []
+    },
+    "omni-moderation": {
+      "provider": "openai", "label": "OpenAI omni-moderation",
+      "segment": "governance_evaluation", "tier": "T-S",
+      "tags": ["moderation", "classifier"],
+      "released": "2024-09-26", "status": "specialist",
+      "aliases": ["omni-moderation-latest"]
+    }
+  },
+
+  "legacy_registry": {
+    "_comment": "Back-compat VIEW for model_overrides.MODEL_REGISTRY. The legacy 4-token tier surface advertised a curated selectable-model list per tier (broader than a single capability rung — e.g. frontier accepted cross-vendor frontier-equivalents). These ordered id lists preserve that exact contract (--list-models, is_registered) while keeping ALL model ids in this one file. The precise per-(segment,tier) capability assignment lives in `models` + `preferred`; this is only the legacy advisory registry. First id per tier is the default.",
+    "frontier": ["fable", "gpt-5.5", "gpt-5.4"],
+    "thinking": ["opus", "gpt-5.4", "gemini-2.5-pro"],
+    "code": ["sonnet", "gpt-5.4-mini", "gemini-2.5-flash", "qwen2.5-coder-32b"],
+    "pattern": ["haiku", "gpt-5-nano", "gemini-flash-lite", "llama3.2-3b"]
+  },
+
+  "classification_rubric": {
+    "_comment": "Segment-appropriate benchmark hints the host LLM uses when classifying an unseen model into BOTH segment and tier. Generative segments grade on reasoning/coding benchmarks; specialist segments grade on their own metrics (recall/NDCG/WER/latency), NOT SWE-bench.",
+    "generative_reasoning": "SWE-bench Verified / ARC-AGI / GPQA Diamond — tier by where it lands vs the prior-gen frontier ceiling",
+    "agentic_execution": "SWE-bench Verified + tool-use accuracy + tau-bench / agentic-harness scores",
+    "governance_evaluation": "judge-agreement rate / classification F1 / moderation precision-recall",
+    "representation_retrieval": "MTEB / recall@k / NDCG@10 / embedding latency",
+    "realtime_interaction": "WER (word error rate) / end-to-end latency ms / streaming stability",
+    "perception_input": "document-VQA / vision / audio / video understanding benchmarks",
+    "generative_media": "human-preference / FID / CLIP-score / generation latency",
+    "primary_role_rule": "A model with image/audio INPUT but whose PRIMARY job is reasoning is generative_reasoning with a multimodal-input TAG. Classify into perception_input / realtime_interaction / generative_media ONLY when that IS the primary product role.",
+    "tag_axis": "Tags are a third axis (orthogonal to segment+tier): long-context, agentic, multimodal-input, cost-sensitive, restricted, local, coding, fast, nano, edge."
+  }
+}
