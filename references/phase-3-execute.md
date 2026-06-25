@@ -37,7 +37,7 @@ Consult `model-router` per dispatch — see `references/capability-routing.md` �
 
 ## M1/M2/M3 — Crash-recovery + context snapshots + cost-ledger
 
-At every dispatch + return, write subagent envelopes atomically (M1), heartbeat the chunk pointer + working-state (M2), write non-blocking `.build-loop/context/` snapshots at dispatch/return/phase boundaries, and emit cost-ledger rows (M3). Full procedure in `references/m-series-protocol.md` (six M2 trigger points: run_id provenance + run start, dispatch_chunk, return_chunk, phase_transition, iterate_attempt, complete).
+At every dispatch + return, write subagent envelopes atomically (M1), heartbeat the chunk pointer + working-state (M2), write non-blocking `.build-loop/context/` snapshots at dispatch/return/phase boundaries, and emit cost-ledger rows (M3). **Resolve the dispatch model via the front door** `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resolve_agent_model.py <agent-name> --workdir "$PWD" --plain` (reads the agent's `(segment, tier)` ROLE — the index key — and OVERRIDES the `model:` frontmatter; `inherit` → pass NO `model` override). Pass it as the Agent tool's `model` parameter. Full contract: M2.5 in the m-series protocol. Full procedure in `references/m-series-protocol.md` (six M2 trigger points: run_id provenance + run start, dispatch_chunk, return_chunk, phase_transition, iterate_attempt, complete).
 
 ### Step 9 — Per-agent invocation telemetry (cost-ledger extension)
 
