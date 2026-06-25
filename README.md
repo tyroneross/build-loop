@@ -2,9 +2,9 @@
 <!-- canary-end -->
 # build-loop
 
-A portable, multi-phase build loop for AI coding agents — give Claude Code, Codex, and any AGENTS.md-aware tool the same disciplined operating loop: assess, plan, execute, review, iterate, then learn.
+A portable, multi-phase build loop for AI coding agents. It gives Claude Code, Codex, and any AGENTS.md-aware tool the same disciplined operating loop: assess, plan, execute, review, iterate, then learn.
 
-> **Summary:** build-loop helps AI coding agents and the developers who run them ship multi-step code changes by enforcing a planned, reviewed, verified loop instead of a single greedy edit. Best for non-trivial features, refactors, migrations, and bug hunts across more than one file. Not for one-line edits, pure Q&A, or status checks — those skip the loop.
+> **Summary:** build-loop helps AI coding agents and the developers who run them ship multi-step code changes by running every change through a planned, reviewed, verified loop. Best for non-trivial features, refactors, migrations, and bug hunts across more than one file. Skip it for one-line edits, pure Q&A, or status checks.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![npm](https://img.shields.io/badge/npm-%40tyroneross%2Fbuild--loop-cb3837.svg)](https://github.com/tyroneross/build-loop/pkgs/npm/build-loop)
@@ -12,7 +12,7 @@ A portable, multi-phase build loop for AI coding agents — give Claude Code, Co
 
 ## Why build-loop
 
-Hand an agent a multi-step task and it tends to dive straight into edits — no plan, no scope boundary, no independent check that the result matches the goal. The failures compound: wrong assumptions ride into code, fixes patch symptoms, and "it compiles" gets reported as "it works."
+Hand an agent a multi-step task and it tends to dive straight into edits, with no plan, no scope boundary, and no independent check that the result matches the goal. The failures compound: wrong assumptions ride into code, fixes patch symptoms, and "it compiles" gets reported as "it works."
 
 build-loop replaces that with a **structured loop every change runs through**: it assesses live repo state and memory, plans with explicit file ownership and pass/fail criteria, executes within scope, then runs an adversarial review (a critic, a fact-checker, a mock-data scanner) before iterating to green. The differentiator is portability and verification: the **same loop runs across Claude Code, Codex, and host-neutral AGENTS.md tools**, it is **multi-model by tier** (a frontier model plans and judges, a coding model executes), and **no completion claim ships without a verification step behind it**.
 
@@ -34,7 +34,7 @@ flowchart LR
 
 Assess → Plan → Execute → Review → Iterate (5x max) → Learn (always emits an outcome). Review runs seven ordered sub-steps; Iterate loops back to Review on failure.
 
-For the **living, auto-generated diagram** of how the loop actually wires up in this repo — every phase, gate, agent, skill, and script, regenerated from source so it cannot drift — open [`docs/build-loop-flow-mockup.html`](docs/build-loop-flow-mockup.html) in a browser. Format spec and drift gate: [`architecture/README.md`](architecture/README.md).
+For the **living, auto-generated diagram** of how the loop actually wires up in this repo, covering every phase, gate, agent, skill, and script and regenerated from source so it cannot drift, open [`docs/build-loop-flow-mockup.html`](docs/build-loop-flow-mockup.html) in a browser. Format spec and drift gate: [`architecture/README.md`](architecture/README.md).
 
 ## Quick start
 
@@ -51,7 +51,7 @@ Then, in a Claude Code session inside your project, hand the loop a task:
 /build-loop:run add billing settings with tests
 ```
 
-What you observe: the agent prints a short status line per phase — `[Phase 1: Assess]`, `[Phase 2: Plan]`, `[Phase 3: Execute]`, then each Review sub-step — and ends with a scorecard marking every acceptance criterion ✅ / ⚠️ / ❓. Completed, verified work is committed automatically; the only human-confirmation gates are production push, irreversible delete, and major user-impacting decisions.
+What you observe: the agent prints a short status line per phase (`[Phase 1: Assess]`, `[Phase 2: Plan]`, `[Phase 3: Execute]`, then each Review sub-step), then ends with a scorecard marking every acceptance criterion ✅ / ⚠️ / ❓. Completed, verified work is committed automatically; the only human-confirmation gates are production push, irreversible delete, and major user-impacting decisions.
 
 You do not pick a mode. `/build-loop:run` auto-routes build, fix, refactor, optimize, research, and test requests to the right path.
 
@@ -100,7 +100,7 @@ python3 scripts/install_memory.py --ensure-project build-loop
 
 ## Commands
 
-Normal coding work — auto-routes to build, fix, refactor, optimize, research, or test:
+Normal coding work, auto-routed to build, fix, refactor, optimize, research, or test:
 
 ```text
 /build-loop:run add billing settings with tests
@@ -127,15 +127,15 @@ Direct advanced modes:
 
 The repo ships three agent surfaces from one source:
 
-- **Claude Code plugin** — plugin metadata, commands, hooks, and `agents/*.md`.
-- **Codex plugin** — Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
-- **Host-neutral [`AGENTS.md`](AGENTS.md)** — the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
+- **Claude Code plugin**: plugin metadata, commands, hooks, and `agents/*.md`.
+- **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
+- **Host-neutral [`AGENTS.md`](AGENTS.md)**: the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
 Surface counts in this release: ~18 commands, ~40 skills, ~28 agents.
 
 ## Agent start protocol
 
-Start every build-loop repo session by checking Rally — coordination metadata, not verification evidence. Use it to discover peers, claims, handoffs, and soft file conflicts; confirm code, package, version, and release truth from git, tests, manifests, registries, or GitHub directly.
+Start every build-loop repo session by checking Rally for coordination state: peers, claims, handoffs, and soft file conflicts. Rally verifies nothing on its own, so confirm code, package, version, and release truth from git, tests, manifests, registries, or GitHub directly.
 
 ```bash
 rally enter --tool claude_code --json
@@ -145,11 +145,11 @@ rally check before-write --tool claude_code --path README.md --strict --json
 
 If the Rally binary is not installed, proceed without it. Full coordination rules: [`references/coordination-rules.md`](references/coordination-rules.md).
 
-Codex-specific delegation is opt-in. build-loop planning language such as "parallel-safe groups" does not by itself authorize Codex subagents — spawn them only when the user explicitly asks for parallel delegation or passes a parallel flag.
+Codex-specific delegation is opt-in. build-loop planning language such as "parallel-safe groups" does not by itself authorize Codex subagents. Spawn them only when the user explicitly asks for parallel delegation or passes a parallel flag.
 
 ## How it works
 
-build-loop routes work through a lead orchestrator, invokes bounded subagents with scoped context, and accepts output only after verification. It is **multi-model by tier** — roles map to a tier (Frontier / Thinking / Code / Pattern), not a fixed model name. The Anthropic mapping is the default; equivalents from other providers substitute when their benchmarks meet the tier contract.
+build-loop routes work through a lead orchestrator, invokes bounded subagents with scoped context, and accepts output only after verification. It is **multi-model by tier**: each role maps to an abstract tier (Frontier / Thinking / Code / Pattern), and any model that meets the tier's benchmark contract can fill it. The Anthropic mapping is the default; equivalents from other providers substitute when their benchmarks meet the tier contract.
 
 | Phase | Agent obligation |
 |---|---|
@@ -163,7 +163,7 @@ build-loop routes work through a lead orchestrator, invokes bounded subagents wi
 <details>
 <summary><strong>Agent roles (full index)</strong></summary>
 
-This is a role index, not a list of autonomous commands. Core authority follows [`references/agent-role-taxonomy.md`](references/agent-role-taxonomy.md): **core means a pipeline step is contingent on the verdict**, not that the agent is top-level or expensive. Model tier follows role; it does not define authority. Deterministic judge surfaces also exist outside `agents/` (`scripts/plan_verify.py`, `scripts/judgment_gate.py`, release verifiers); the tables below are the LLM-side surfaces.
+These tables index agent roles. None of them are commands you run directly. Core authority follows [`references/agent-role-taxonomy.md`](references/agent-role-taxonomy.md): an agent is **core** when a pipeline step is contingent on its verdict, regardless of whether it is top-level or expensive. Model tier follows role; it does not define authority. Deterministic judge surfaces also exist outside `agents/` (`scripts/plan_verify.py`, `scripts/judgment_gate.py`, release verifiers); the tables below are the LLM-side surfaces.
 
 ### Lead / workflow agents
 
@@ -221,9 +221,9 @@ This is a role index, not a list of autonomous commands. Core authority follows 
 
 Agents handed multi-step work tend to skip planning and verification, so wrong assumptions ride into code and "it compiles" gets reported as "it works." build-loop forces every change through a planned, reviewed, verified loop and refuses to claim completion without evidence behind it.
 
-### Who is it for — and who is it not for?
+### Who is it for, and who is it not for?
 
-It is for developers running AI coding agents on non-trivial changes: features, refactors, migrations, and bug hunts that touch more than one file. It is not for one-line edits, pure Q&A, or status checks — those skip the loop by design.
+It is for developers running AI coding agents on non-trivial changes: features, refactors, migrations, and bug hunts that touch more than one file. It is not for one-line edits, pure Q&A, or status checks; those skip the loop by design.
 
 ### What is the fastest way to try it?
 
