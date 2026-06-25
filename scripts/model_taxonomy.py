@@ -227,6 +227,25 @@ def break_ties_by_recency(model_ids: list[str]) -> list[str]:
     return sorted(model_ids, key=_released_key, reverse=True)
 
 
+def legacy_registry(token: str | None = None) -> dict[str, list[str]] | list[str]:
+    """The back-compat selectable-model registry view, keyed by legacy tier token.
+
+    Returns the full {legacy_token: [model_id, ...]} map, or one token's list
+    when ``token`` is given. This preserves the legacy 4-token
+    ``MODEL_REGISTRY`` contract (broader than a single capability rung) while
+    keeping every model id in the one taxonomy file. Doc-only ``_``-keys excluded.
+    """
+    raw = _load().get("legacy_registry", {})
+    full = {
+        k: [str(m) for m in v]
+        for k, v in raw.items()
+        if not k.startswith("_") and isinstance(v, list)
+    }
+    if token is None:
+        return full
+    return full.get(token, [])
+
+
 def classification_rubric() -> dict[str, str]:
     """Segment-appropriate benchmark hints for host-LLM classification."""
     return dict(_load().get("classification_rubric", {}))

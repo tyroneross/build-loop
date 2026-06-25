@@ -189,6 +189,27 @@
       "released": "2025-06-01", "status": "verified",
       "aliases": []
     },
+    "gemini-2.5-flash": {
+      "provider": "google", "label": "Gemini 2.5 Flash",
+      "segment": "generative_reasoning", "tier": "T3",
+      "tags": ["balanced-workhorse", "fast"],
+      "released": "2025-06-01", "status": "verified",
+      "aliases": []
+    },
+    "gpt-5-nano": {
+      "provider": "openai", "label": "GPT-5 Nano",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient", "fast", "cost-sensitive"],
+      "released": "2025-08-07", "status": "verified",
+      "aliases": []
+    },
+    "llama3.2-3b": {
+      "provider": "local", "label": "Llama 3.2 3B",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient", "local"],
+      "released": "2024-09-25", "status": "local",
+      "aliases": []
+    },
     "qwen2.5-coder-32b": {
       "provider": "local", "label": "Qwen2.5-Coder 32B",
       "segment": "agentic_execution", "tier": "T3",
@@ -231,6 +252,14 @@
       "released": "2024-09-26", "status": "specialist",
       "aliases": ["omni-moderation-latest"]
     }
+  },
+
+  "legacy_registry": {
+    "_comment": "Back-compat VIEW for model_overrides.MODEL_REGISTRY. The legacy 4-token tier surface advertised a curated selectable-model list per tier (broader than a single capability rung — e.g. frontier accepted cross-vendor frontier-equivalents). These ordered id lists preserve that exact contract (--list-models, is_registered) while keeping ALL model ids in this one file. The precise per-(segment,tier) capability assignment lives in `models` + `preferred`; this is only the legacy advisory registry. First id per tier is the default.",
+    "frontier": ["fable", "gpt-5.5", "gpt-5.4"],
+    "thinking": ["opus", "gpt-5.4", "gemini-2.5-pro"],
+    "code": ["sonnet", "gpt-5.4-mini", "gemini-2.5-flash", "qwen2.5-coder-32b"],
+    "pattern": ["haiku", "gpt-5-nano", "gemini-flash-lite", "llama3.2-3b"]
   },
 
   "classification_rubric": {
