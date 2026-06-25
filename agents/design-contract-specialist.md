@@ -21,6 +21,8 @@ description: |
   assistant: "I'll dispatch design-contract-specialist with the architecture-scout `schema-map` envelope's `schema_delta`. It updates `.build-loop/app-contract/data.md` and refreshes the schema half of `traceability.json`."
   </example>
 model: sonnet
+tier: code
+segment: agentic_execution
 color: teal
 tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill"]
 ---

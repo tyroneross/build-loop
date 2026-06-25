@@ -15,6 +15,8 @@ description: |
   assistant: "I'll use the recurring-pattern-detector agent to produce a ranked candidate list."
   </example>
 model: haiku
+tier: pattern
+segment: generative_reasoning
 color: yellow
 tools: ["Read", "Glob", "Grep"]
 ---

@@ -2,6 +2,8 @@
 name: root-cause-investigator
 description: Use this agent when a debugging symptom needs deep causal analysis beyond surface-level diagnosis. Builds a causal tree (not a single chain) to explore multiple potential root causes in parallel. Flags when investigation reaches external/environmental boundaries or when internet research is needed. Examples - "why does this keep failing", "what's the real cause", "dig deeper into this error", "this fix didn't stick".
 model: inherit
+tier: inherit
+segment: inherit
 color: red
 tools: ["Read", "Grep", "Bash", "Glob", "WebSearch"]
 ---

@@ -20,6 +20,7 @@ description: |
   </example>
 model: fable
 tier: frontier
+segment: governance_evaluation
 color: purple
 tools: ["Read", "Grep", "Glob"]
 ---

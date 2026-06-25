@@ -2,6 +2,8 @@
 name: build-loop:architecture-scout
 description: Read-only architecture analyst. Dispatched by build-loop orchestrator with a task type ('baseline', 'chunk-impact', 'review-rules', 'iterate-subgraph', 'learn-sync'). Decides native engine vs NavGator escalation per task. Returns ≤500-word structured JSON envelope. Owns architecture-related side effects (violation capture, lessons sync).
 model: sonnet
+tier: code
+segment: agentic_execution
 tools: ["Read", "Grep", "Glob", "Bash"]
 ---
 

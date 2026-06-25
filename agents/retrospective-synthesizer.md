@@ -15,6 +15,8 @@ description: |
   assistant: "I'll use the retrospective-synthesizer agent with --run-id bl-20260604T213054Z-claude_code-827367 to regenerate the retro from the transcript + state.json."
   </example>
 model: sonnet
+tier: code
+segment: generative_reasoning
 color: green
 tools: ["Read", "Edit", "Bash", "Grep", "Glob"]
 ---

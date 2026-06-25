@@ -15,6 +15,8 @@ description: |
   assistant: "I'll use the synthesis-critic agent to read the diff against the claimed copy_tone register and empty-state pattern, returning a JSON verdict (pass | flag) without blocking."
   </example>
 model: sonnet
+tier: code
+segment: governance_evaluation
 color: cyan
 tools: ["Read", "Glob", "Grep"]
 ---

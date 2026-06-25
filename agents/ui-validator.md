@@ -15,6 +15,8 @@ description: |
   assistant: "I'll use the ui-validator agent — build-loop's owned UI validation path — and return route-level evidence without routing through IBR."
   </example>
 model: sonnet
+tier: code
+segment: agentic_execution
 color: blue
 tools: ["Read", "Bash", "Grep", "Glob"]
 ---

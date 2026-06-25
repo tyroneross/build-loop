@@ -2,6 +2,8 @@
 name: optimize-runner
 description: Executes the optimization loop. Generates hypotheses, makes atomic changes within scope, measures metrics, keeps improvements or reverts regressions. Runs autonomously until convergence or budget exhaustion.
 model: sonnet
+tier: code
+segment: agentic_execution
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 

@@ -2,6 +2,8 @@
 name: frontend-assessor
 description: Use this agent when the debugging symptom involves React, hooks, rendering, UI components, state management, hydration errors, or client-side performance. Examples - "useEffect infinite loop", "component not rendering", "hydration mismatch", "state not updating".
 model: sonnet
+tier: code
+segment: agentic_execution
 color: green
 tools: ["Read", "Grep", "Glob"]
 ---

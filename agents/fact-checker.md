@@ -16,6 +16,7 @@ description: |
   </example>
 model: fable
 tier: frontier
+segment: governance_evaluation
 color: yellow
 tools: ["Read", "Grep", "Glob"]
 ---
