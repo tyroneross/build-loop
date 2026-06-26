@@ -193,6 +193,67 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 6b: Stop hook WRITE PATH (regression for the write_run_entry arg-contract
+# drift). A phase==report state with a NEW session_id must drive Step 4's append:
+#   (a) emit valid JSON, (b) NEVER contain "returned empty", (c) append an honest
+#   {run_id, date, session_id} marker for that session to runs[] — no fabricated
+#   goal/outcome/phases. This exercises the path Cases 4-6 (all no-op paths) skip,
+#   which is exactly why the "write_run_entry returned empty" regression went
+#   silent. See docs/plans/2026-06-25-fix-stop-hook-run-entry-plan.md.
+# ---------------------------------------------------------------------------
+TMPDIR_6B=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_6B"' EXIT
+
+mkdir -p "${TMPDIR_6B}/.build-loop"
+python3 -c "
+import json
+state = {'phase': 'report', 'runs': []}
+with open('${TMPDIR_6B}/.build-loop/state.json', 'w') as f:
+    json.dump(state, f, indent=2)
+"
+
+RESULT=$(printf '%s' \
+    "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-write-path-6b\",\"cwd\":\"${TMPDIR_6B}\"}" \
+    | CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$STOP_FIN")
+
+# (a) valid JSON  (b) no "returned empty"  (c) honest marker appended for THIS session
+WROTE_OK=$(printf '%s' "$RESULT" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    json.dumps(d)  # valid
+    print('1')
+except Exception:
+    print('0')
+" 2>/dev/null)
+
+MARKER_OK=$(python3 -c "
+import json
+state = json.load(open('${TMPDIR_6B}/.build-loop/state.json'))
+runs = state.get('runs', [])
+m = [r for r in runs if isinstance(r, dict) and r.get('session_id') == 'sess-write-path-6b']
+ok = (
+    len(m) == 1
+    and m[0].get('run_id')
+    and m[0].get('date')
+    # honest minimal marker: NO fabricated rich fields
+    and 'goal' not in m[0]
+    and 'outcome' not in m[0]
+    and 'phases' not in m[0]
+)
+print('1' if ok else '0')
+" 2>/dev/null)
+
+if [ "$WROTE_OK" = "1" ] \
+    && ! printf '%s' "$RESULT" | grep -q "returned empty" \
+    && [ "$MARKER_OK" = "1" ]; then
+    pass "Case 6b: Stop write path -> valid JSON, no 'returned empty', honest marker appended"
+else
+    fail "Case 6b: Stop write path" "wrote_ok=${WROTE_OK} marker_ok=${MARKER_OK} result=${RESULT}"
+fi
+rm -rf "$TMPDIR_6B"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 # Dependency-cooldown backstop hook (pre_bash_dependency_cooldown.sh)

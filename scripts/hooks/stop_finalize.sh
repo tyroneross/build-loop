@@ -120,28 +120,20 @@ PY
     fi
 fi
 
-# Resolve CLAUDE_PLUGIN_ROOT
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
-if [ -z "$PLUGIN_ROOT" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-fi
-
-WRITE_ENTRY="${PLUGIN_ROOT}/scripts/write_run_entry/__main__.py"
-RUN_ENTRY_STATUS="skipped"
-RUN_ID=""
-
-# Step 4: write run entry
-if [ -f "$WRITE_ENTRY" ]; then
-    RUN_ID=$(python3 "$WRITE_ENTRY" --workdir "$WORKDIR" 2>/dev/null) || RUN_ID=""
-    if [ -n "$RUN_ID" ]; then
-        RUN_ENTRY_STATUS="written:${RUN_ID}"
-    else
-        RUN_ENTRY_STATUS="write_run_entry/__main__.py returned empty (check stderr for details)"
-    fi
-else
-    # Minimal inline fallback: append {run_id, date, session_id} to runs[]
-    RUN_ENTRY_STATUS=$(python3 <<'PY' 2>/dev/null
+# Step 4: record an honest run-lifecycle marker.
+#
+# A Stop hook does not know the real build goal/outcome/phases, so it must NOT
+# call the rich Review-F writer (scripts/write_run_entry/__main__.py requires
+# real --goal/--outcome — calling it with only --workdir always fails argparse,
+# which is what produced the recurring "returned empty" status). The rich entry
+# is owned by the orchestrator's Review-G/Report (real goal/outcome/scope), and
+# the modern Stop-time recorder (hooks/closeout.sh -> scripts/stop_closeout.py)
+# derives goal/outcome honestly and refuses to clobber a richer record.
+#
+# Here we append only the honest minimal marker {run_id, date, session_id} — a
+# run-lifecycle boundary, no fabricated data. Idempotency (Step 3) already
+# guards against a duplicate append for the same session.
+RUN_ENTRY_STATUS=$(python3 <<'PY' 2>/dev/null
 import json, fcntl, os, tempfile, time
 from datetime import datetime, timezone
 
@@ -176,9 +168,9 @@ try:
     json.dump(data, tmp, indent=2)
     tmp.close()
     os.replace(tmp.name, state_path)
-    print('inline:' + run_id, end='')
+    print('marker:' + run_id, end='')
 except Exception as e:
-    print('inline_error:' + str(e), end='')
+    print('marker_error:' + str(e), end='')
 finally:
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -186,9 +178,7 @@ finally:
         pass
     lock_fd.close()
 PY
-) || RUN_ENTRY_STATUS="inline_fallback_error"
-    RUN_ENTRY_STATUS="${RUN_ENTRY_STATUS} (write_run_entry/__main__.py absent; full schema requires it)"
-fi
+) || RUN_ENTRY_STATUS="marker_error"
 
 # Step 5: check scorecard for failed F-criteria not held
 EVALS_DIR="${WORKDIR}/.build-loop/evals"
