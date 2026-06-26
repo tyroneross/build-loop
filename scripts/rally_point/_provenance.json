@@ -1,7 +1,7 @@
 {
-  "_doc": "Provenance manifest for vendored Rally Point substrate. Maps each scripts/rally_point/<name>.py to its upstream agent-rally-point counterpart (path relative to the ARP repo root) and the SHA-256 of that UPSTREAM file at last reconcile. The drift-detector (sync_rally.py) recomputes the CURRENT upstream hash and flags DRIFT when upstream moved since this baseline — i.e. 'review whether to port upstream changes into the (intentionally diverged) build-loop copy'. source: null marks a build-loop-original file with no upstream counterpart; the detector skips it cleanly. Read-only; never auto-updates a vendored file. Mirrors scripts/sync_skills.py exactly.",
+  "_doc": "Provenance manifest for vendored Rally Point substrate. Maps each scripts/rally_point/<name>.py to its upstream agent-rally-point counterpart (path relative to the ARP repo root) and the SHA-256 of that UPSTREAM file at last reconcile. The drift-detector (sync_rally.py) recomputes the CURRENT upstream hash and flags DRIFT when upstream moved since this baseline \u2014 i.e. 'review whether to port upstream changes into the (intentionally diverged) build-loop copy'. source: null marks a build-loop-original file with no upstream counterpart; the detector skips it cleanly. Read-only; never auto-updates a vendored file. Mirrors scripts/sync_skills.py exactly.",
   "_upstream_repo": "agent-rally-point",
-  "_baseline_set_at": "2026-06-22",
+  "_baseline_set_at": "2026-06-25",
   "files": {
     "changes.py": {
       "source": "build/lib/agent_rally_point/changes.py",
@@ -27,10 +27,6 @@
       "source": "build/lib/agent_rally_point/checkpoint.py",
       "source_hash": "88b28d3bbb6a16b1a03efe383185242c101ed383789660b1bc96b8c74dacae3b"
     },
-    "lifecycle.py": {
-      "source": "build/lib/agent_rally_point/lifecycle.py",
-      "source_hash": "fc848e236625b289ef2ad7125583ba13a3d249502564e31619ab20e88c893d2a"
-    },
     "install_git_hook.py": {
       "source": "build/lib/agent_rally_point/install_git_hook.py",
       "source_hash": "e5a90c9464489784c7b594cc23ab8ba582df0224c5227029f7ed66d7fd1f5c83"
@@ -43,58 +39,75 @@
       "source": "build/lib/agent_rally_point/__init__.py",
       "source_hash": "16cba174b01218a45892207560104962147d473a1f44dd219a2d45d378514d45"
     },
-    "discovery_bridge.py": { "source": null, "source_hash": null },
-    "build_loop_id.py": { "source": null, "source_hash": null },
-    "producer_metadata.py": { "source": null, "source_hash": null },
-    "boundary.py": { "source": null, "source_hash": null },
-    "roster.py": { "source": null, "source_hash": null },
-    "session_probe.py": { "source": null, "source_hash": null },
-    "leadership.py": { "source": null, "source_hash": null },
-    "inbox.py": { "source": null, "source_hash": null },
-    "rally.py": { "source": null, "source_hash": null },
-    "agent_autoreg.py": { "source": null, "source_hash": null },
-    "hook_budget.py": { "source": null, "source_hash": null },
-    "hooks.py": { "source": null, "source_hash": null },
-    "mece_gate.py": { "source": null, "source_hash": null },
-    "task_heartbeat.py": { "source": null, "source_hash": null },
+    "discovery_bridge.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "build_loop_id.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "producer_metadata.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "boundary.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "roster.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "session_probe.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "leadership.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "inbox.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "rally.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "agent_autoreg.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "hook_budget.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "hooks.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "mece_gate.py": {
+      "source": null,
+      "source_hash": null
+    },
+    "task_heartbeat.py": {
+      "source": null,
+      "source_hash": null
+    },
     "fact_v1.py": {
-      "_doc": "Tracks the REAL wire contract the emitter must match: FACT_SCHEMA is defined in the Rust lib.rs (lib.rs:40) and migrate-legacy SILENTLY skips any line whose schema != it (discovery.rs:712-714). Drift here = a future silent-data-loss seam, so the detector watches the Rust source — not a Python mirror — read-only/report-only.",
+      "_doc": "Tracks the REAL wire contract the emitter must match: FACT_SCHEMA is defined in the Rust lib.rs (lib.rs:40) and migrate-legacy SILENTLY skips any line whose schema != it (discovery.rs:712-714). Drift here = a future silent-data-loss seam, so the detector watches the Rust source \u2014 not a Python mirror \u2014 read-only/report-only.",
       "source": "crates/rally-cli/src/lib.rs",
       "source_hash": "a9282e2e07ff56c04d7fadfe39a827112b7fda65c16e57664d90273c41888f0a"
     },
     "fact_v1_struct": {
-      "_doc": "The Fact struct wire shape the emitter targets (store.rs). Additive-tolerant (no deny_unknown_fields) — tracked so a struct-level contract move surfaces for review.",
+      "_doc": "The Fact struct wire shape the emitter targets (store.rs). Additive-tolerant (no deny_unknown_fields) \u2014 tracked so a struct-level contract move surfaces for review.",
       "source": "crates/rally-cli/src/store.rs",
       "source_hash": "fe7f003e8609e8748df5f65300afd21ad8376c8a5f8d8308d684a1f692c7f615"
-    },
-    "decay.py": {
-      "_doc": "Python MIRROR of the canonical Rust recency-decay + size-scaled reclaim policy (decay.rs). The two coordination systems are intentionally SEPARATE codebases; this manifest entry is the COMPATIBILITY guard — drift here means the half-life curve / archive floor / reclaim-timeout math diverged between agent-rally-point and the build-loop fallback. Parity is double-pinned by the byte-identical golden fixture decay_vectors.json (tracked below). Read-only/report-only.",
-      "source": "crates/rally-cli/src/decay.rs",
-      "source_hash": "be1eafcba6aee81020ded916b78caa62744d8cfef79685680dc65fb118dad279"
-    },
-    "decay_vectors.json": {
-      "_doc": "Golden decay vectors. MUST stay byte-identical to the Rust fixture so both test suites assert the same curve at the same reference ages — the cross-repo parity proof. Drift = the two implementations no longer verified against one shared truth.",
-      "source": "crates/rally-cli/tests/fixtures/decay_vectors.json",
-      "source_hash": "d4e3ec4d01eaf65b7016016cd7c1d73e3d54fa0961866c0514de7118d1b1e6e8"
     },
     "reaper.py": {
       "source": null,
       "source_hash": null
-    },
-    "liveness.py": {
-      "_doc": "Python MIRROR of the canonical Rust adaptive-liveness policy (liveness.rs). The two coordination systems are intentionally SEPARATE codebases; this entry is the COMPATIBILITY guard — drift here means the adaptive-cadence window math / 4-signal is_live verdict diverged between agent-rally-point and the build-loop fallback. Parity is double-pinned by the byte-identical golden fixture liveness_vectors.json (tracked below). Read-only/report-only.",
-      "source": "crates/rally-cli/src/liveness.rs",
-      "source_hash": "16c7855e5bd3ca09b66b97358aaa3757dd565f14d6455a1f0136b87c31457f05"
-    },
-    "liveness_vectors.json": {
-      "_doc": "Golden adaptive-liveness vectors. MUST stay byte-identical to the Rust fixture crates/rally-cli/tests/fixtures/liveness_vectors.json so both test suites assert the same window math + is_live verdicts at the same reference cases — the cross-repo parity proof. Drift = the two implementations no longer verified against one shared truth.",
-      "source": "crates/rally-cli/tests/fixtures/liveness_vectors.json",
-      "source_hash": "c4df5225ddb0978fad9acc8beceb2c08e28cfce7313dca94cb779ad35fe2ffc3"
-    },
-    "heartbeat_parity_vectors.json": {
-      "_doc": "Golden heartbeat parity vectors — byte-identical to the Rust fixture crates/rally-cli/tests/fixtures/heartbeat_parity_vectors.json; proves claude/codex heartbeats decay identically (tool-agnostic).",
-      "source": "crates/rally-cli/tests/fixtures/heartbeat_parity_vectors.json",
-      "source_hash": "8d88c3e23fd8688b9a536ad06e3bdc89ede71a0637ff0455e87889f2869099c3"
     }
   }
 }

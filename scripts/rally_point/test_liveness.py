@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the adaptive multi-signal liveness mirror.
+"""Unit tests for the in-process adaptive multi-signal liveness math.
 
-The headline test asserts the SAME byte-identical golden fixture
-(``liveness_vectors.json``) the Rust suite asserts — the cross-repo parity proof.
+The cross-repo golden-fixture parity coupling (``liveness_vectors.json``, byte-
+identical to the Rust fixture) was RETIRED in the Rust-rally facade migration:
+liveness policy is Rust-only, and the Python liveness math is now an in-process
+helper for window computation, not a behavioral mirror that must match a foreign
+suite byte-for-byte. These inline-value tests cover the same window /
+``is_live`` / ``reapable`` / self-exit logic the fixtures used to assert.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -26,50 +29,6 @@ from liveness import (  # noqa: E402
     is_live,
     reapable,
 )
-
-_FIXTURE = Path(__file__).resolve().parent / "liveness_vectors.json"
-
-
-def _load() -> dict:
-    return json.loads(_FIXTURE.read_text())
-
-
-def test_fixture_constants_match_module():
-    v = _load()
-    assert v["default_cadence_secs"] == DEFAULT_CADENCE_SECS
-    assert v["miss_multiplier"] == MISS_MULTIPLIER
-    assert v["grace_secs"] == GRACE_SECS
-
-
-def test_window_cases_match_golden_vectors():
-    v = _load()
-    for case in v["window_cases"]:
-        got = adaptive_window_secs(
-            case["planned_interval_secs"],
-            v["default_cadence_secs"],
-            v["miss_multiplier"],
-            v["grace_secs"],
-        )
-        assert got == case["expected_window_secs"], case["name"]
-
-
-def test_liveness_cases_match_golden_vectors():
-    v = _load()
-    for case in v["liveness_cases"]:
-        sig = case["signals"]
-        signals = LivenessSignals(
-            heartbeat_age=sig["heartbeat_age"],
-            inject_age=sig["inject_age"],
-            code_progress_age=sig["code_progress_age"],
-            plan_age=sig["plan_age"],
-        )
-        window = adaptive_window_secs(
-            case["planned_interval_secs"],
-            v["default_cadence_secs"],
-            v["miss_multiplier"],
-            v["grace_secs"],
-        )
-        assert is_live(signals, window) == case["expected"], case["name"]
 
 
 def test_five_min_cadence_window_is_31_minutes():
@@ -128,26 +87,7 @@ def test_boundary_at_window_is_fresh():
     assert is_live(LivenessSignals(heartbeat_age=window + 1), window) == liveness.UNKNOWN
 
 
-# --- Layer 1/2/3 shared decision-policy parity (mirror of the Rust tests) ---
-
-
-def test_reapable_cases_match_golden_vectors():
-    v = _load()
-    for case in v["reapable_cases"]:
-        got = reapable(case["liveness"], case["parent_alive"])
-        assert got == case["expected"], case["name"]
-
-
-def test_self_exit_cases_match_golden_vectors():
-    v = _load()
-    for case in v["self_exit_cases"]:
-        got = completion_self_exit_eligible(
-            case["work_resolved"],
-            case["next_empty_streak"],
-            case["required_streak"],
-            case["persistent_optout"],
-        )
-        assert got == case["expected"], case["name"]
+# --- Layer 1/2/3 reaper/self-exit decision policy (in-process helpers) ---
 
 
 def test_reapable_never_reaps_live_or_unknown():

@@ -1,14 +1,17 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Single source of truth for ADAPTIVE, MULTI-SIGNAL session liveness.
+"""In-process ADAPTIVE, MULTI-SIGNAL session-liveness math helper.
 
-PYTHON MIRROR of agent-rally-point's ``crates/rally-cli/src/liveness.rs``.
-Build-loop's coordination layer DEFERS to the Rust canonical when present
-(discovery_bridge tier 6); this module is the fallback and MUST behave
-identically. Parity is double-pinned by the byte-identical golden fixture
-``liveness_vectors.json`` (same file in both repos) and the ``_provenance.json``
-drift manifest.
+Liveness POLICY is Rust-only: the coordination facade delegates reaper/liveness
+decisions to the canonical ``rally`` binary and fails loud when it is
+unavailable (see ``capability.py`` / ``reaper.py``). This module is no longer a
+behavioral mirror of ``crates/rally-cli/src/liveness.rs`` — the cross-repo
+golden-fixture parity proof (``liveness_vectors.json``) and its drift-manifest
+entry were RETIRED in the Rust-rally migration. What remains is the pure window-
+computation math that presence/squad-visibility still uses in-process; it is
+verified by ``test_liveness.py``'s own inline unit tests, not against a foreign
+suite.
 
 Replaces fixed staleness cutoffs for the presence/squad projection with a window
 that ADAPTS to each session's planned heartbeat cadence, and decides liveness

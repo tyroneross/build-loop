@@ -1,12 +1,15 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Single source of truth for build-loop's coordination time policy.
+"""In-process coordination time-policy math (recency decay + reclaim windows).
 
-This is the Python MIRROR of agent-rally-point's ``crates/rally-cli/src/decay.rs``.
-Build-loop's rally/coord point DEFERS to the Rust canonical implementation when
-both are present (discovery_bridge tier 6); this module is the fallback path and
-MUST behave identically:
+Coordination POLICY is Rust-only: the facade delegates reclaim/decay decisions
+to the canonical ``rally`` binary and fails loud when it is unavailable. This
+module is no longer a behavioral mirror of ``crates/rally-cli/src/decay.rs`` —
+the cross-repo golden-fixture parity proof (``decay_vectors.json``) and its
+drift-manifest entry were RETIRED in the Rust-rally migration. What remains is
+the pure math that lead-lease window computation still uses in-process; it is
+verified by ``test_decay.py``'s own inline unit tests:
 
 * **Recency decay** — ``weight(age) = 0.5 ** (age_hours / half_life)``
   (exponential half-life, default 48h). Listings deprioritize by weight; a

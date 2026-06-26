@@ -1,16 +1,18 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the coordination decay/reclaim core (Python mirror of decay.rs).
+"""Unit tests for the in-process decay/reclaim math helpers (``decay.py``).
 
-The golden vectors in ``decay_vectors.json`` are an IDENTICAL copy of the
-fixture used by the Rust suite, so a divergence between the two implementations
-fails one of the two suites.
+The cross-repo golden-fixture parity coupling (``decay_vectors.json``, byte-
+identical to the Rust fixture) was RETIRED in the Rust-rally facade migration:
+coordination policy is Rust-only and the Python decay math is now just an
+in-process helper for window/weight computation, not a behavioral mirror that
+must match a foreign suite byte-for-byte. These tests pin the helper's own
+contract with inline reference values.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -23,30 +25,19 @@ import decay  # noqa: E402
 _HL_SECS = int(decay.DEFAULT_HALF_LIFE_HOURS) * 3600  # 48h
 
 
-def _vectors() -> dict:
-    return json.loads(
-        (Path(__file__).parent / "decay_vectors.json").read_text(encoding="utf-8")
-    )
+# ---- recency_weight reference values ----
+def test_weight_reference_values():
+    # weight = 0.5 ** (age_hours / half_life_hours); half-life = 48h.
+    assert abs(decay.recency_weight(0, _HL_SECS) - 1.0) < 1e-4
+    assert abs(decay.recency_weight(_HL_SECS, _HL_SECS) - 0.5) < 1e-4       # 1 half-life
+    assert abs(decay.recency_weight(2 * _HL_SECS, _HL_SECS) - 0.25) < 1e-4  # 2 half-lives
 
 
-# ---- recency_weight against the shared golden vectors ----
-def test_weight_matches_golden_vectors():
-    v = _vectors()
-    hl = v["half_life_secs"]
-    for row in v["weights"]:
-        w = decay.recency_weight(row["age_secs"], hl)
-        assert abs(w - row["expected"]) < 1e-4, (
-            f"age {row['age_secs']}s: got {w}, expected {row['expected']}"
-        )
-
-
-def test_archive_floor_against_golden_vectors():
-    v = _vectors()
-    floor = v["archive_floor"]
-    for row in v["archive_floor_cases"]:
-        assert decay.is_archivable(row["weight"], floor) is row["archivable"], (
-            f"weight {row['weight']} vs floor {floor}"
-        )
+def test_archive_floor_reference_cases():
+    floor = decay.DEFAULT_ARCHIVE_FLOOR  # 0.05
+    assert decay.is_archivable(0.04, floor) is True
+    assert decay.is_archivable(0.06, floor) is False
+    assert decay.is_archivable(0.05, floor) is False  # strict <
 
 
 def test_weight_monotonic_decreasing():
