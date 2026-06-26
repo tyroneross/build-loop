@@ -113,15 +113,21 @@ def test_stage1_acceptance(app_repo: Path, tmp_path: Path):
     assert "dep-change" in kinds
     assert any(r["type"] == "reinstall" for r in env2["reactions"])
 
-    # --- (4) reaper clears a stale-heartbeat session ------------------
+    # --- (4) reaper is RUST-ONLY: refuses to physically reap below full
+    # capability ------------------------------------------------------
+    # Post-migration contract: physical presence reaping is delegated to the
+    # Rust binary. This acceptance fixture resolves to a degraded
+    # (build-loop-internal) channel with no full-capability binary, so
+    # reap_stale MUST refuse (no-op) rather than run a shadow Python sweep —
+    # never hide a peer it cannot prove is dead.
     import json
     af = chan / "sessions" / "A.json"
     arec = json.loads(af.read_text())
     arec["heartbeat_ts"] = time.time() - 999 * 60
     af.write_text(json.dumps(arec))
     reaped = pr.reap_stale(chan)
-    assert "A" in reaped and not af.exists()
-    assert pr.read_active_presence(chan, exclude_session="B") == []
+    assert reaped == []          # Rust-only guard refused the destructive reap
+    assert af.exists()           # stale file preserved (fail-closed)
 
     # --- non-goal guard: no frequency/invocation keys anywhere --------
     bad = {"count", "frequency", "invocations", "calls", "num_calls",

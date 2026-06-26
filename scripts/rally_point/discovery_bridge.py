@@ -121,6 +121,22 @@ class DiscoveryEnvelope:
     bridge does not normalize. Empty when ``resolved_via ==
     "build-loop-internal"``."""
 
+    @property
+    def capability_level(self) -> str:
+        """Coordination capability this resolution affords (see ``capability.py``).
+
+        ``full`` for a healthy native binary, ``degraded-breadcrumb`` for the
+        embedded fallback, ``unavailable`` for an incompatible protocol. The
+        single mapping lives in ``capability.level_for_resolved_via``.
+        """
+        try:
+            from . import capability as _cap
+        except ImportError:  # script-mode
+            import capability as _cap  # type: ignore
+        return _cap.level_for_resolved_via(
+            self.resolved_via, self.coordination_unavailable
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "channel_dir": self.channel_dir,
@@ -131,6 +147,7 @@ class DiscoveryEnvelope:
             "protocol_version": self.protocol_version,
             "last_resolved_at": self.last_resolved_at,
             "resolved_via": self.resolved_via,
+            "capability_level": self.capability_level,
             "legacy_channel_dir": self.legacy_channel_dir,
             "merged_view": self.merged_view,
             "coordination_unavailable": self.coordination_unavailable,

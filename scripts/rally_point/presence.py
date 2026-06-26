@@ -354,9 +354,34 @@ def _adaptive_cutoff_secs(channel_dir: Path, rec: dict, pol) -> int:
     )
 
 
+def _full_capability_for_channel(channel_dir: Path) -> bool:
+    """True only when a full-capability Rust binary owns this channel.
+
+    Reaping presence is a destructive coordination action; it is Rust-only. A
+    degraded/unavailable session must NEVER unlink a presence file it cannot
+    prove is dead — doing so would hide a still-alive peer and cause the exact
+    write-collision this system prevents. Delegates to the single capability
+    guard (``capability.full_capability_for_channel``); fail-CLOSED on any error.
+    """
+    try:
+        from . import capability as _cap
+    except ImportError:  # script-mode
+        try:
+            import capability as _cap  # type: ignore
+        except ImportError:
+            return False
+    return _cap.full_capability_for_channel(channel_dir)
+
+
 def reap_stale(channel_dir: Path, *, apply: bool = True) -> list:
     """Remove ADAPTIVELY-stale live presence, with a code-progress keep-alive.
     Returns reaped session IDs.
+
+    RUST-ONLY when applying: physical unlinking happens only when a
+    full-capability Rust binary owns the channel (``_full_capability_for_channel``).
+    Below full capability this is a no-op returning ``[]`` — a degraded session
+    keeps every presence file rather than risk hiding a live peer. A dry-run
+    (``apply=False``) still reports eligibility regardless of capability.
 
     Staleness is RELATIVE to each session's declared cadence
     (``planned_heartbeat_secs``, else the legacy ``heartbeat_minutes`` config,
@@ -374,6 +399,9 @@ def reap_stale(channel_dir: Path, *, apply: bool = True) -> list:
     peers. ``apply`` (default ``True``) — when ``False``, report eligibility
     without unlinking (dry-run).
     """
+    # RUST-ONLY destructive guard: never physically reap below full capability.
+    if apply and not _full_capability_for_channel(channel_dir):
+        return []
     now = time.time()
     pol = _load_policy(channel_dir)
     cache = _read_sha_cache(channel_dir)

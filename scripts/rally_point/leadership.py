@@ -47,15 +47,26 @@ from pathlib import Path
 from typing import Any
 
 try:  # package import
+    from . import capability as _cap
     from . import changes
     from . import decay
     from .coordination_policy import CoordinationPolicy, load_policy
     from .post import post
 except ImportError:  # script import
+    import capability as _cap  # type: ignore
     import changes  # type: ignore
     import decay  # type: ignore
     from coordination_policy import CoordinationPolicy, load_policy  # type: ignore
     from post import post  # type: ignore
+
+
+def _full_capability_for_channel(channel_dir: Path, workdir: Path | None = None) -> bool:
+    """True only when a full-capability Rust binary owns this channel.
+
+    Reclaiming a peer's lead lease is a destructive Rust-only action. Delegates
+    to the single capability guard; fail-CLOSED on any error.
+    """
+    return _cap.full_capability_for_channel(channel_dir, workdir)
 
 _RALLY_DIR = "rally"
 _LEAD_NAME = "lead.json"
@@ -377,6 +388,21 @@ def claim_lead(
         is_reclaim = _reclaimable(existing, at)
         if existing and not is_reclaim:
             return {"claimed": False, "lead": existing, "reclaimed": False}
+        # RUST-ONLY destructive guard: taking the lead FROM a peer (reclaim) is a
+        # destructive coordination action and is Rust-only. A degraded/unavailable
+        # session may seed an EMPTY seat (breadcrumb-class) but must NEVER reclaim
+        # a peer's lease — refuse loudly rather than run shadow reclaim logic.
+        if is_reclaim and not _full_capability_for_channel(channel_dir, workdir):
+            return {
+                "claimed": False,
+                "lead": existing,
+                "reclaimed": False,
+                "coordination_unavailable": "no_binary",
+                "detail": (
+                    "lead reclaim is Rust-only; full-capability binary "
+                    "unavailable — refusing to reclaim a peer's lease"
+                ),
+            }
         if not existing and not _lease_expired(existing, at):
             # Defensive: should not happen (no doc => expired), keep explicit.
             return {"claimed": False, "lead": existing, "reclaimed": False}

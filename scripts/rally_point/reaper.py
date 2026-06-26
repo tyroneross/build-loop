@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Rally Point fallback reaper — physical cleanup of over-TTL presence, claims, and lead.
+"""Rally Point reaper FACADE — delegates physical cleanup to the Rust binary.
 
-This is the PYTHON FALLBACK path; when the Rust ``rally`` binary is present it
-is canonical (``rally doctor --reap-stale [--apply]``). This reaper runs
-opportunistically at session-start (wired via ``hooks/session-start-rally-point.sh``)
-and is available as a standalone CLI for manual sweeps.
+REAPING IS RUST-ONLY. This module used to carry a full Python sweep (presence /
+claim-index / lead deletion) that mirrored the Rust reaper. That mirror is
+retired: a Python process physically deleting coordination records that the Rust
+binary owns is the exact shadow-implementation Codex flagged as worse than no
+coordination. The facade now shells ``rally sessions --reap`` (the canonical
+reaper) when a full-capability binary owns the channel, and FAILS LOUD
+otherwise.
 
-FAIL-CLOSED invariant: we NEVER reap any record whose ownership timestamp we
-cannot unambiguously prove is over-TTL. Unparseable, missing, or future
-timestamps are ALWAYS preserved. Presence staleness policy is implemented
-once in ``presence.reap_stale``; ``_sweep_presence`` composes it via the
-``apply=`` kwarg rather than duplicating the loop.
+Capability contract (see ``capability.py``):
 
-Resolved-via rule for claims:
-  - ``repo-local-rally-cli`` → Rust binary owns the ``claim-index.json`` projection;
-    we reap PRESENCE + the Python lead.json only and report claim count as
-    "deferred-to-rust". Physical rewrite of claim-index.json would fight the Rust
-    projection, so we skip it.
-  - Any other resolved_via → Python reaper physically rewrites claim-index.json,
-    removing expired claims.
+* ``full``     — Rust binary present + owns channel → ``rally sessions --reap``
+                 runs; report carries ``capability_level: full``.
+* below full   — NO reaping. Reaping is destructive; the facade refuses and
+                 returns a loud ``capability_level: unavailable`` /
+                 ``degraded-breadcrumb`` report. It never falls back to a Python
+                 sweep. A degraded session must never reap a peer it cannot
+                 prove is dead.
 
-ReapReport dict shape::
+ReapReport dict shape (stable for callers; new ``capability_level`` +
+``coordination_unavailable`` fields)::
 
     {
-        "presence_reaped":        [session_id, ...],   # IDs physically unlinked
-        "claims_reaped":          [claim_id, ...],      # IDs removed from claim-index.json
-        "claims_deferred_to_rust": int,                 # count when Rust owns the store
-        "lead_relinquished":      bool,                 # True when lead.json deleted
-        "preserved":              int,                  # records kept (not eligible)
-        "applied":                bool,                 # True = apply mode, False = dry-run
-        "resolved_via":           str,                  # from discovery_bridge
+        "applied":               bool,   # True = --reap (apply); False = dry-run probe
+        "capability_level":      str,    # full | degraded-breadcrumb | unavailable
+        "coordination_unavailable": str | None,
+        "resolved_via":          str,    # from discovery_bridge
+        "reaped":                list,   # session ids the Rust reaper removed (full only)
+        "deferred_to_rust":      bool,   # True whenever a sub-full level refused
+        "detail":                str,    # human-readable explanation
     }
 """
 from __future__ import annotations
@@ -39,9 +39,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -56,309 +55,168 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 try:
-    from . import presence as _presence
-    from . import leadership as _leadership
-    from .discovery_bridge import resolve as _resolve
-except ImportError:
-    import presence as _presence  # type: ignore
-    import leadership as _leadership  # type: ignore
+    from . import capability as _cap
+    from . import hook_budget as _budget
+    from .discovery_bridge import resolve as _resolve, rust_rally_binary as _rust_binary
+except ImportError:  # script-mode
+    import capability as _cap  # type: ignore
+    import hook_budget as _budget  # type: ignore
     from discovery_bridge import resolve as _resolve  # type: ignore
-
-_CLAIM_INDEX = "claim-index.json"
-_RUST_RESOLVED_VIA = "repo-local-rally-cli"
+    from discovery_bridge import rust_rally_binary as _rust_binary  # type: ignore
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _parse_rfc3339(value: Any) -> datetime | None:
-    """Parse an RFC3339/ISO-8601 UTC timestamp ending in 'Z'. FAIL-CLOSED: returns
-    None on any parse failure so callers KEEP the record."""
-    if not value or not isinstance(value, str):
-        return None
-    # datetime.fromisoformat handles most ISO-8601; Python <3.11 doesn't accept
-    # trailing 'Z', so normalise it.
-    s = value.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
+def _child_timeout() -> float:
     try:
-        dt = datetime.fromisoformat(s)
+        return _budget.inner_timeout_seconds(_budget.MARGIN_CHILD)
+    except Exception:  # noqa: BLE001 — budget helper is best-effort
+        return 5.0
+
+
+def _run_rust_reap(binary: str, workdir: Path, *, apply: bool) -> dict[str, Any] | None:
+    """Shell ``rally sessions [--reap] --json``. Returns parsed dict or None on error.
+
+    ``--reap`` physically removes; without it the command is a read-only probe.
+    """
+    cmd = [binary, "sessions", "--json"]
+    if apply:
+        cmd.insert(2, "--reap")
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=_child_timeout(),
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        out = json.loads(proc.stdout)
     except (ValueError, TypeError):
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
+    return out if isinstance(out, dict) else None
 
 
-def _claim_index_path(channel_dir: Path) -> Path:
-    return Path(channel_dir) / _CLAIM_INDEX
+def _reaped_ids(rust_out: dict[str, Any]) -> list[str]:
+    """Best-effort extraction of reaped session ids from the rally JSON envelope."""
+    data = rust_out.get("data")
+    if not isinstance(data, dict):
+        return []
+    sessions = data.get("sessions")
+    # rally nests sessions.sessions or sessions.reaped depending on version.
+    if isinstance(sessions, dict):
+        reaped = sessions.get("reaped")
+        if isinstance(reaped, list):
+            return [str(x) for x in reaped]
+    if isinstance(sessions, list):
+        return [str(x) for x in sessions]
+    return []
 
-
-def _read_claim_index(channel_dir: Path) -> dict[str, Any] | None:
-    """Read claim-index.json. Returns None when absent or invalid."""
-    p = _claim_index_path(channel_dir)
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _write_claim_index(channel_dir: Path, data: dict[str, Any]) -> None:
-    """Atomic overwrite of claim-index.json."""
-    p = _claim_index_path(channel_dir)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.parent / f".{p.name}.tmp.{os.getpid()}"
-    tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
-    os.replace(str(tmp), str(p))
-
-
-# ---------------------------------------------------------------------------
-# Core sweep functions
-# ---------------------------------------------------------------------------
-
-def _sweep_presence(channel_dir: Path, *, apply: bool) -> tuple[list[str], int]:
-    """Return (reaped_ids, preserved_count). Physically unlinks when apply=True.
-
-    Delegates to ``presence.reap_stale(channel_dir, apply=apply)`` — the single
-    authoritative implementation of the staleness policy (reader-stub skip,
-    fail-closed parse, hb>0-and-hb<cutoff gate). Preserved count is derived by
-    counting surviving non-reader sessions after the reap.
-    """
-    reaped: list[str] = _presence.reap_stale(channel_dir, apply=apply)
-    reaped_set = set(reaped)
-    preserved = sum(
-        1
-        for _f, rec in _presence._iter_presence(channel_dir)
-        if rec.get("tool") != "reader"
-        and rec.get("session_id", _f.stem) not in reaped_set
-    )
-    return reaped, preserved
-
-
-def _sweep_claims(
-    channel_dir: Path, *, apply: bool, now_dt: datetime
-) -> tuple[list[str], int, int]:
-    """Return (reaped_ids, preserved_count, deferred_count_if_not_our_store).
-
-    ``deferred_count`` is non-zero only when resolved_via == rust; in that path
-    we report how many expired claims we found but did NOT reap. When we OWN
-    the store we reap them physically (apply=True) or count them (dry-run).
-    """
-    data = _read_claim_index(channel_dir)
-    if data is None:
-        return [], 0, 0
-    claims = data.get("claims")
-    if not isinstance(claims, dict):
-        return [], 0, 0
-
-    reaped: list[str] = []
-    kept: list[str] = []
-    for claim_id, claim in claims.items():
-        if not isinstance(claim, dict):
-            kept.append(claim_id)
-            continue
-        expires = _parse_rfc3339(claim.get("lease_expires_at"))
-        if expires is None:
-            # FAIL-CLOSED: missing/unparseable → keep
-            kept.append(claim_id)
-            continue
-        if expires <= now_dt:
-            reaped.append(claim_id)
-        else:
-            kept.append(claim_id)
-
-    if apply and reaped:
-        new_claims = {k: v for k, v in claims.items() if k not in set(reaped)}
-        _write_claim_index(channel_dir, {"claims": new_claims})
-
-    return reaped, len(kept), 0
-
-
-def _sweep_lead(channel_dir: Path, *, apply: bool, now_dt: datetime) -> bool:
-    """Delete lead.json when _reclaimable (expired + parseable). Returns True if deleted."""
-    doc = _leadership.read_lead(channel_dir)
-    if doc is None:
-        return False
-    if not _leadership._reclaimable(doc, now_dt):
-        return False
-    if apply:
-        def _do() -> bool:
-            # Re-read under lock to avoid TOCTOU
-            inner_doc = _leadership.read_lead(channel_dir)
-            if inner_doc is None:
-                return False
-            if not _leadership._reclaimable(inner_doc, now_dt):
-                return False
-            try:
-                _leadership.lead_path(channel_dir).unlink()
-                return True
-            except OSError:
-                return False
-        return bool(_leadership._with_lock(channel_dir, _do))
-    # dry-run: just report eligibility
-    return True
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def reap_channel(
     channel_dir: Path | str,
     workdir: Path | str,
     *,
     apply: bool = False,
-    now: float | None = None,
+    now: float | None = None,  # retained for signature compat; Rust owns time policy
 ) -> dict[str, Any]:
-    """Sweep a Rally Point channel for over-TTL presence, claims, and lead.
+    """Reap over-TTL coordination state via the Rust binary, or refuse loudly.
 
-    Parameters
-    ----------
-    channel_dir:
-        The channel directory (resolved via discovery_bridge by the caller).
-    workdir:
-        Repo root (used for resolved_via lookup and coordination_policy).
-    apply:
-        ``False`` (default) = dry-run; ``True`` = physically remove.
-    now:
-        Injectable wall-clock (seconds since epoch). Defaults to
-        ``time.time()`` / ``datetime.now(utc)`` for deterministic tests.
+    ``channel_dir`` is accepted for signature compatibility but the Rust binary
+    resolves its own channel from ``workdir``. ``now`` is ignored — time-decay
+    policy is Rust-only.
 
-    Returns
-    -------
-    ReapReport dict.
+    Returns a capability-marked ReapReport. Reaping happens ONLY at ``full``
+    capability; any sub-full level returns ``deferred_to_rust: True`` and reaps
+    nothing.
     """
-    channel_dir = Path(channel_dir)
     workdir = Path(workdir)
-    now_ts: float = now if now is not None else time.time()
-    now_dt: datetime = datetime.fromtimestamp(now_ts, tz=timezone.utc)
 
-    # Resolve the channel so we know whether Rust owns the claim store.
     try:
         env = _resolve(workdir)
         resolved_via = env.resolved_via
-    except Exception:
-        # Fail-open on discovery: proceed as build-loop-internal
+        level = _cap.level_for_resolved_via(resolved_via, env.coordination_unavailable)
+    except Exception:  # noqa: BLE001 — discovery must never crash the reaper
         resolved_via = "build-loop-internal"
+        level = _cap.DEGRADED_BREADCRUMB
 
-    # 1. Presence sweep
-    try:
-        presence_reaped, presence_preserved = _sweep_presence(
-            channel_dir, apply=apply
-        )
-    except Exception:
-        presence_reaped, presence_preserved = [], 0
-
-    # 2. Claims sweep
-    claims_reaped: list[str] = []
-    claims_deferred = 0
-    claims_preserved = 0
-    if resolved_via == _RUST_RESOLVED_VIA:
-        # Rust owns the claim store; count but do NOT rewrite
-        try:
-            found_reaped, found_kept, _ = _sweep_claims(
-                channel_dir, apply=False, now_dt=now_dt
-            )
-            claims_deferred = len(found_reaped)
-            claims_preserved += found_kept
-        except Exception:
-            pass
-    else:
-        try:
-            claims_reaped, claims_preserved, _ = _sweep_claims(
-                channel_dir, apply=apply, now_dt=now_dt
-            )
-        except Exception:
-            pass
-
-    # 3. Lead sweep (race-safe via leadership._with_lock)
-    lead_relinquished = False
-    try:
-        lead_relinquished = _sweep_lead(channel_dir, apply=apply, now_dt=now_dt)
-    except Exception:
-        pass
-
-    preserved_total = presence_preserved + claims_preserved
-
-    return {
-        "presence_reaped": presence_reaped,
-        "claims_reaped": claims_reaped,
-        "claims_deferred_to_rust": claims_deferred,
-        "lead_relinquished": lead_relinquished,
-        "preserved": preserved_total,
+    base: dict[str, Any] = {
         "applied": apply,
         "resolved_via": resolved_via,
+        "reaped": [],
+        "deferred_to_rust": True,
     }
+
+    if not _cap.is_full(level):
+        base["detail"] = (
+            "reaping is Rust-only and the full-capability binary is unavailable; "
+            "refusing to run a shadow Python sweep"
+        )
+        reason = (
+            _cap.REASON_INCOMPATIBLE_PROTOCOL
+            if level == _cap.UNAVAILABLE
+            else _cap.REASON_NO_BINARY
+        )
+        return _cap.mark(base, level, reason)
+
+    binary = _rust_binary(workdir)
+    if not binary:
+        # Resolved full but binary path vanished between resolve and now.
+        base["detail"] = "rally binary disappeared after resolution; refusing to reap"
+        return _cap.mark(base, _cap.UNAVAILABLE, _cap.REASON_BINARY_ERROR)
+
+    rust_out = _run_rust_reap(binary, workdir, apply=apply)
+    if rust_out is None:
+        base["detail"] = "rally sessions --reap failed or returned no JSON; reaped nothing"
+        return _cap.mark(base, _cap.UNAVAILABLE, _cap.REASON_BINARY_ERROR)
+
+    base["reaped"] = _reaped_ids(rust_out) if apply else []
+    base["deferred_to_rust"] = False
+    base["detail"] = "delegated to rally sessions --reap"
+    return _cap.mark(base, _cap.FULL)
 
 
 # ---------------------------------------------------------------------------
-# CLI entrypoint (F1/F5 callable sweep)
+# CLI entrypoint (manual sweep)
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Rally Point stale-state reaper (Python fallback path). "
-        "Dry-run by default; pass --apply to physically remove."
+        description="Rally Point reaper facade (delegates to the Rust binary). "
+        "Dry-run by default; pass --apply to physically reap via rally."
     )
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Repo root (default: cwd or WORKDIR env var)",
-    )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        default=False,
-        help="Physically remove over-TTL records. Without this flag the report "
-        "shows what WOULD be removed (dry-run).",
-    )
-    parser.add_argument(
-        "--json",
-        dest="json_output",
-        action="store_true",
-        default=False,
-        help="Emit the ReapReport as JSON on stdout.",
-    )
+    parser.add_argument("--workdir", default=None, help="Repo root (default: cwd)")
+    parser.add_argument("--apply", action="store_true", default=False)
+    parser.add_argument("--json", dest="json_output", action="store_true", default=False)
     args = parser.parse_args(argv)
 
     workdir = Path(
-        args.workdir
-        or os.environ.get("WORKDIR", "")
-        or os.getcwd()
+        args.workdir or os.environ.get("WORKDIR", "") or os.getcwd()
     ).resolve()
 
-    # Resolve channel_dir
     try:
         env = _resolve(workdir)
         channel_dir = Path(env.channel_dir)
-        resolved_via = env.resolved_via
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — fail-open: never crash a session
         if args.json_output:
             print(json.dumps({"error": str(exc), "applied": args.apply}))
         else:
             print(f"[reaper] channel resolution failed: {exc}", file=sys.stderr)
-        sys.exit(0)  # fail-open: never crash a session
+        sys.exit(0)
 
-    report = reap_channel(
-        channel_dir, workdir, apply=args.apply
-    )
+    report = reap_channel(channel_dir, workdir, apply=args.apply)
 
     if args.json_output:
         print(json.dumps(report, indent=2))
     else:
         mode = "APPLY" if args.apply else "DRY-RUN"
-        print(f"[reaper] {mode} via={resolved_via}")
-        print(f"  presence_reaped:        {report['presence_reaped']}")
-        print(f"  claims_reaped:          {report['claims_reaped']}")
-        print(f"  claims_deferred_to_rust:{report['claims_deferred_to_rust']}")
-        print(f"  lead_relinquished:      {report['lead_relinquished']}")
-        print(f"  preserved:              {report['preserved']}")
+        print(f"[reaper] {mode} via={report['resolved_via']} "
+              f"capability={report['capability_level']}")
+        print(f"  reaped:           {report['reaped']}")
+        print(f"  deferred_to_rust: {report['deferred_to_rust']}")
+        print(f"  detail:           {report['detail']}")
 
 
 if __name__ == "__main__":
