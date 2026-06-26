@@ -61,6 +61,67 @@ class FetchUnitTests(unittest.TestCase):
         self.assertEqual(bf.PINNED_TAG, f"v{bf.PINNED_VERSION}")
 
 
+class FetchFailClosedTests(unittest.TestCase):
+    """The sha256 / version-pin reject branches — the security-critical path.
+
+    All mock-based (no network). The migration's core safety claim is that a
+    downloaded payload is verified BEFORE it is ever made executable; these tests
+    pin every reject branch so a refactor cannot silently regress to exec-on-bad.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="fetch-failclosed-"))
+        # Isolate the cache so no real cached binary satisfies the fast path.
+        self._old_xdg = os.environ.get("XDG_CACHE_HOME")
+        os.environ["XDG_CACHE_HOME"] = str(self.tmp / "cache")
+
+    def tearDown(self) -> None:
+        if self._old_xdg is None:
+            os.environ.pop("XDG_CACHE_HOME", None)
+        else:
+            os.environ["XDG_CACHE_HOME"] = self._old_xdg
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_sha_mismatch_rejected_no_file_written(self) -> None:
+        payload = b"\x7fELF-not-really-rally"
+        # Sidecar advertises a hash that does NOT match the payload.
+        wrong = "0" * 64
+        with mock.patch.object(bf, "host_triple", return_value="aarch64-apple-darwin"), \
+             mock.patch.object(bf, "_http_get", return_value=payload), \
+             mock.patch.object(bf, "_expected_sha256", return_value=wrong):
+            result = bf.ensure_binary()
+        self.assertIsNone(result, "sha mismatch must reject")
+        self.assertFalse(bf.cached_binary_path().exists(), "no file on mismatch")
+
+    def test_unverifiable_rejected(self) -> None:
+        # Sidecar absent/unparseable → unverifiable → reject (never exec).
+        with mock.patch.object(bf, "host_triple", return_value="aarch64-apple-darwin"), \
+             mock.patch.object(bf, "_http_get", return_value=b"payload"), \
+             mock.patch.object(bf, "_expected_sha256", return_value=None):
+            result = bf.ensure_binary()
+        self.assertIsNone(result, "unverifiable download must reject")
+        self.assertFalse(bf.cached_binary_path().exists())
+
+    def test_download_failure_returns_none(self) -> None:
+        with mock.patch.object(bf, "host_triple", return_value="aarch64-apple-darwin"), \
+             mock.patch.object(bf, "_http_get", return_value=None):
+            self.assertIsNone(bf.ensure_binary())
+
+    def test_version_mismatch_rejected_and_cleaned_up(self) -> None:
+        import hashlib
+        payload = b"a fake rally binary body"
+        good = hashlib.sha256(payload).hexdigest()
+        # sha matches, but the binary reports the WRONG version → reject + unlink.
+        with mock.patch.object(bf, "host_triple", return_value="aarch64-apple-darwin"), \
+             mock.patch.object(bf, "_http_get", return_value=payload), \
+             mock.patch.object(bf, "_expected_sha256", return_value=good), \
+             mock.patch.object(bf, "_strip_quarantine"), \
+             mock.patch.object(bf, "version_matches_pin", return_value=False):
+            result = bf.ensure_binary()
+        self.assertIsNone(result, "version-pin mismatch must reject")
+        self.assertFalse(bf.cached_binary_path().exists(), "tmp cleaned up")
+
+
 class UnsupportedHostLoudTests(unittest.TestCase):
     """An unsupported host yields LOUD coordination_unavailable, never a mirror."""
 

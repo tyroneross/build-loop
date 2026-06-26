@@ -68,6 +68,22 @@ _SESSIONS_DIR_NAME = "sessions"
 _LOG_NAME = "changes.jsonl"
 
 
+def _full_capability_for_channel(channel_dir: Path) -> bool:
+    """True only when a full-capability Rust binary owns this channel.
+
+    Delegates to the single capability guard; fail-CLOSED on any error so a
+    degraded session never reaps a peer's presence file.
+    """
+    try:
+        from . import capability as _cap
+    except ImportError:  # script-mode
+        try:
+            import capability as _cap  # type: ignore
+        except ImportError:
+            return False
+    return _cap.full_capability_for_channel(channel_dir)
+
+
 def _sessions_dir(channel_dir: Path) -> Path:
     return Path(channel_dir) / _SESSIONS_DIR_NAME
 
@@ -93,16 +109,24 @@ def reap_my_sessions(channel_dir: Path, session_id: str) -> int:
 def reap_stale_sessions(
     channel_dir: Path, stale_after_seconds: int = 3600
 ) -> int:
-    """Delete every presence file with mtime older than threshold.
+    """Delete every PEER presence file with mtime older than threshold.
 
     Defense-in-depth for crashed peers. The default 1 hour is intentionally
     larger than presence.py's 15-minute heartbeat window — this is for
     sessions that crashed and never reached Phase D closeout but whose
     heartbeat process is genuinely dead.
 
+    RUST-ONLY guard: this physically unlinks PEER presence files, so it is gated
+    behind full coordination capability exactly like ``presence.reap_stale`` — a
+    degraded/unavailable session must never reap a peer it cannot prove is dead.
+    Below full capability it is a fail-closed no-op (returns 0). (Reaping THIS
+    run's own session is unconditional — see ``reap_my_sessions``.)
+
     Returns count reaped. Fire-and-forget; errors swallowed.
     """
     try:
+        if not _full_capability_for_channel(Path(channel_dir)):
+            return 0  # Rust-only: never reap a peer below full capability
         sd = _sessions_dir(Path(channel_dir))
         if not sd.is_dir():
             return 0

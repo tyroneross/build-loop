@@ -25,10 +25,20 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import capability as cap  # noqa: E402
 import changes  # noqa: E402
 import leadership as ld  # noqa: E402
 
 _APP = "example-app"
+
+
+@pytest.fixture(autouse=True)
+def _force_full_capability(monkeypatch):
+    """Reclaim (taking a peer's lease) is Rust-only: claim_lead reclaims only at
+    full capability. These tests exercise the reclaim ACTION, so force full
+    capability rather than depend on a live Rust binary on the runner. The
+    refuse-below-full contract has its own dedicated test below."""
+    monkeypatch.setattr(cap, "full_capability_for_channel", lambda *_a, **_k: True)
 
 
 @pytest.fixture()
@@ -72,6 +82,32 @@ def test_takeover_after_lease_expires(channel: Path):
     result = _claim(channel, "codex-r1", now=after)
     assert result["claimed"] is True
     assert result["lead"]["lead"]["session_id"] == "codex-r1"
+
+
+def test_reclaim_refused_below_full_capability(channel: Path, monkeypatch):
+    """RUST-ONLY guard: taking a peer's EXPIRED lease (reclaim) is refused below
+    full capability — a degraded session must never reclaim a peer's lease. The
+    empty-seat claim and the incumbent stay intact."""
+    monkeypatch.setattr(cap, "full_capability_for_channel", lambda *_a, **_k: False)
+    first = _claim(channel, "claude-r1", renew_every_minutes=15)
+    assert first["claimed"] is True  # empty-seat claim still works degraded
+    expiry = ld._parse_iso(first["lead"]["lead"]["lease_until"])
+    after = expiry + timedelta(minutes=1)
+    result = _claim(channel, "codex-r1", now=after)
+    assert result["claimed"] is False
+    assert result.get("reclaimed") is False
+    assert result.get("coordination_unavailable") == "no_binary"
+    # The incumbent's lease is untouched — no shadow reclaim happened.
+    assert ld.read_lead(channel)["lead"]["session_id"] == "claude-r1"
+
+
+def test_empty_seat_claim_allowed_below_full_capability(channel: Path, monkeypatch):
+    """Seeding an EMPTY lead seat is breadcrumb-class (not a peer-destructive
+    reclaim), so it is allowed even below full capability."""
+    monkeypatch.setattr(cap, "full_capability_for_channel", lambda *_a, **_k: False)
+    result = _claim(channel, "claude-r1")
+    assert result["claimed"] is True
+    assert result["lead"]["lead"]["session_id"] == "claude-r1"
 
 
 def test_renew_extends_lease(channel: Path):

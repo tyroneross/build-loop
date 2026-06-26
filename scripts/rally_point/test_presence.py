@@ -32,9 +32,20 @@ if str(_HERE.parent) not in sys.path:
 # resolves to whichever landed in sys.modules first, so in a full run an
 # earlier test could leave the wrong `lifecycle` cached (symptom:
 # AttributeError: module 'lifecycle' has no attribute 'reap_stale_sessions').
+from rally_point import capability as cap  # noqa: E402
 from rally_point import lifecycle as lc  # noqa: E402
 from rally_point import presence as pr  # noqa: E402
 import coordination_status as cs  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _force_full_capability(monkeypatch):
+    """Reaping is Rust-only: presence.reap_stale physically unlinks only at full
+    capability. These tests exercise the ACTION, so force full capability rather
+    than depend on whether a live Rust binary happens to be installed on the
+    runner. The refuse-below-full contract has its own dedicated tests below.
+    """
+    monkeypatch.setattr(cap, "full_capability_for_channel", lambda *_a, **_k: True)
 
 
 @pytest.fixture()
@@ -88,6 +99,37 @@ def test_reap_stale(chan: Path):
     assert [p["session_id"]
             for p in pr.read_active_presence(chan, exclude_session="x")] \
         == ["fresh"]
+
+
+def test_reap_stale_refuses_below_full_capability(chan: Path, monkeypatch):
+    """RUST-ONLY guard: below full capability, reap_stale physically reaps
+    NOTHING — a degraded session must never unlink a peer it cannot prove is
+    dead. Overrides the autouse full-capability fixture to force degraded."""
+    monkeypatch.setattr(cap, "full_capability_for_channel", lambda *_a, **_k: False)
+    pr.write_presence(chan, session_id="old", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p")
+    f = chan / "sessions" / "old.json"
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 999 * 60  # very stale
+    f.write_text(json.dumps(rec))
+    # apply=True (default) must be a no-op below full capability.
+    assert pr.reap_stale(chan) == []
+    assert f.exists()  # stale file preserved (fail-closed)
+
+
+def test_reap_dry_run_unaffected_by_capability(chan: Path, monkeypatch):
+    """A dry-run (apply=False) reports eligibility regardless of capability — it
+    never unlinks, so the Rust-only guard does not gate it."""
+    monkeypatch.setattr(cap, "full_capability_for_channel", lambda *_a, **_k: False)
+    pr.write_presence(chan, session_id="old", tool="t", model="m",
+                      run_id="r", app_slug="a", phase="p")
+    f = chan / "sessions" / "old.json"
+    rec = json.loads(f.read_text())
+    rec["heartbeat_ts"] = time.time() - 999 * 60
+    f.write_text(json.dumps(rec))
+    eligible = pr.reap_stale(chan, apply=False)
+    assert "old" in eligible      # reported as eligible
+    assert f.exists()             # but never unlinked in dry-run
 
 
 def test_reap_within_adaptive_window_keeps_presence(chan: Path):

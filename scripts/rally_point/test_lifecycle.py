@@ -62,6 +62,31 @@ class ReapMySessionsTests(unittest.TestCase):
 
 
 class ReapStaleSessionsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # reap_stale_sessions physically unlinks PEER presence and is Rust-only
+        # (gated behind full capability). These tests exercise the ACTION, so
+        # force full capability instead of depending on a live binary; the
+        # refuse-below-full contract has its own test below.
+        self._cap_patch = mock.patch.object(
+            lifecycle, "_full_capability_for_channel", return_value=True
+        )
+        self._cap_patch.start()
+
+    def tearDown(self) -> None:
+        self._cap_patch.stop()
+
+    def test_refuses_below_full_capability(self):
+        with tempfile.TemporaryDirectory() as d:
+            ch = Path(d)
+            sd = ch / "sessions"
+            _make_session(sd, "stale-2h", age_seconds=2 * 3600)
+            with mock.patch.object(
+                lifecycle, "_full_capability_for_channel", return_value=False
+            ):
+                n = lifecycle.reap_stale_sessions(ch, stale_after_seconds=3600)
+            self.assertEqual(n, 0, "must reap nothing below full capability")
+            self.assertTrue((sd / "stale-2h.json").exists(), "peer file preserved")
+
     def test_reaps_stale_keeps_active(self):
         with tempfile.TemporaryDirectory() as d:
             ch = Path(d)
