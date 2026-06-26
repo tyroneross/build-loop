@@ -172,15 +172,21 @@ def level_for_resolved_via(resolved_via: str, coordination_unavailable: str | No
     """Map a ``discovery_bridge`` resolution to a capability level.
 
     * A native binary source (``rust-cli`` / ``repo-local-rally-cli`` /
-      ``path-binary`` / ``python-import`` / ``env-override``) with no
-      ``coordination_unavailable`` flag → ``full``.
-    * ``incompatible_protocol`` → ``unavailable`` (loud; never breadcrumb).
-    * The embedded fallback (``build-loop-internal``) or a ``degraded`` flag →
-      ``degraded-breadcrumb`` (breadcrumb-only; never full).
+      ``fetched-binary`` / ``path-binary`` / ``python-import`` / ``env-override``)
+      with no ``coordination_unavailable`` flag → ``full``.
+    * ``incompatible_protocol`` / ``unsupported_host`` / ``binary_error`` →
+      ``unavailable`` (LOUD no-coordination; never breadcrumb, never a mirror).
+    * The embedded fallback (``build-loop-internal``) on a SUPPORTED host, or a
+      ``degraded`` / ``no_binary`` flag → ``degraded-breadcrumb`` (breadcrumb
+      facts only; never full).
     """
-    if coordination_unavailable == REASON_INCOMPATIBLE_PROTOCOL:
-        return UNAVAILABLE
-    if coordination_unavailable == "incompatible_protocol":  # discovery alias
+    # Loud-unavailable reasons override everything — even the internal fallback.
+    if coordination_unavailable in (
+        REASON_INCOMPATIBLE_PROTOCOL,
+        "incompatible_protocol",  # discovery alias
+        REASON_UNSUPPORTED_HOST,
+        REASON_BINARY_ERROR,
+    ):
         return UNAVAILABLE
     if resolved_via == "build-loop-internal":
         return DEGRADED_BREADCRUMB

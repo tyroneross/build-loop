@@ -211,64 +211,77 @@ live under `coordinationPolicy` in `.build-loop/config.json` (defaults shown):
   `lease_until` is unparseable is NEVER auto-reclaimed (we refuse rather than
   reclaim on a timestamp we cannot trust). An empty seat is still freely
   claimable.
-- **Separation invariant (compatible, but separate).** build-loop computes its
-  decay/reclaim ENTIRELY in Python (`decay.py`) over its own change-log store; it
-  never delegates the recency-decay listing to the Rust `rally` binary. So an
-  installed `rally` that predates the decay feature CANNOT un-decay build-loop's
-  output — build-loop's listing decays regardless of binary version. The Rust
-  `rally recent/room --include-archived` surface is agent-rally-point's OWN
-  equivalent for its `.rally` ledger, kept curve-compatible via the shared golden
-  fixture (`scripts/rally_point/decay_vectors.json` ≡ the Rust fixture, tracked in
-  `_provenance.json`). Pinned by `scripts/test_coordination_decay_invariant.py`:
-  if a future change routes build-loop's decay listing through any binary, that
-  test fails. (To get decayed output from the Rust CLI directly, install a
-  `rally` built from this feature or later — an older on-PATH binary won't decay.)
+- **Policy is Rust-only; the Python math is an in-process helper.** Reclaim and
+  reap DECISIONS are made by the Rust binary (facade in `reaper.py` /
+  `leadership.py`, fail-loud below full capability). `decay.py` survives only as
+  pure in-process math the lead-lease window sizing needs (`recency_weight`,
+  `reclaim_timeout_seconds`, `classify_work_size`); it is NOT a behavioral mirror
+  of `decay.rs` and is no longer double-pinned against a cross-repo golden
+  fixture. The status/recent-changes LISTING still applies the decay weight in
+  Python over build-loop's own change-log so an old on-PATH binary cannot
+  un-decay the listing (pinned by `scripts/test_coordination_decay_invariant.py`);
+  that is a presentation concern, distinct from the now-Rust-only reclaim/reap
+  actuation.
 
 This complements (does not replace) the >10-minute idle absorption rule above:
 idle-absorption handles local reversible lanes a quiet peer left open; the lease
 timeout governs the formal lead/ownership role handover.
 
-## In-room stale-state reaper (actuator) & codex parity
+## In-room stale-state reaper (actuator) — RUST-ONLY via a fail-loud facade
 
-The sections above define WHEN records become stale. This section describes the
-ACTUATOR that physically removes them.
+The sections above define WHEN records become stale. Physically removing them
+(reaping) is **Rust-only**. There is no Python reaper sweep — the prior Python
+parity mirror (presence/claim-index/lead deletion, double-pinned against golden
+fixtures) was RETIRED in the Rust-rally facade migration. A Python process
+deleting coordination records the Rust binary owns is the exact shadow
+implementation that is worse than no coordination.
 
-**Canonical actuator (Rust):** `rally doctor --reap-stale [--apply]` — bundled with
-agent-rally-point >= 0.5. Dry-run by default; `--apply` physically removes
-over-TTL presence, claims, and leads.
+**Canonical actuator (Rust):** the `rally` binary's reaper (`rally sessions
+--reap`, or `rally doctor --reap-stale` on newer builds). Dry-run by default;
+`--reap`/`--apply` physically removes over-TTL presence, claims, and leads.
 
-**Fallback actuator (Python):** `scripts/rally_point/reaper.py` — runs when the
-Rust binary is absent. Called fire-and-forget at every session-start via
-`hooks/session-start-rally-point.sh` Step 3. Also available as a standalone CLI:
-`python3 scripts/rally_point/reaper.py --workdir <path> [--apply] [--json]`.
+**Facade (`scripts/rally_point/reaper.py`).** `reap_channel(channel, workdir,
+apply=…)` resolves coordination capability via `discovery_bridge` and then:
+- **full capability** (a real binary owns the channel — `rust-cli` /
+  `repo-local-rally-cli` / `fetched-binary` / env-override / path-binary /
+  python-import) → shells `rally sessions --reap` and surfaces the result
+  (`capability_level: full`, `deferred_to_rust: false`).
+- **below full** (degraded-breadcrumb or unavailable) → REFUSES. It reaps
+  nothing and returns a capability-marked report (`deferred_to_rust: true`,
+  `coordination_unavailable: <reason>`). A degraded session must never reap a
+  peer it cannot prove is dead.
 
-**FAIL-CLOSED invariant.** The reaper NEVER removes a record whose ownership
-timestamp it cannot unambiguously prove is over-TTL. Missing, unparseable, or
-future timestamps are ALWAYS preserved. Specifically:
-- Presence: `heartbeat_ts` must be a positive float AND older than the record's
-  ADAPTIVE staleness window (see "Adaptive multi-signal liveness" below), AND no
-  fresh code-progress signal overrides it. A zero or unreadable value → kept.
-- Claims: `lease_expires_at` must be a valid RFC3339 timestamp AND `<= now`. A
-  missing, malformed, or future value → kept.
-- Lead: `_reclaimable(doc, now)` from `leadership.py` must return `True` (requires
-  a present, parseable `lease_until` that is at/after expiry). A malformed lease →
-  kept (the same FAIL-CLOSED invariant as `claim_lead`).
+CLI: `python3 scripts/rally_point/reaper.py --workdir <path> [--apply] [--json]`.
 
-**Rust-vs-Python claim store rule.** When the discovery bridge resolves via
-`repo-local-rally-cli`, the Rust binary owns the `claim-index.json` projection;
-the Python reaper reaps PRESENCE + Python lead.json only and reports expired claim
-count as `claims_deferred_to_rust` rather than physically rewriting the file (which
-would fight the Rust projection). Only when the Rust binary is absent does the
-Python reaper rewrite `claim-index.json`.
+**Capability field on every coordination envelope.** Every facade return and
+`DiscoveryEnvelope` carries `capability_level` (`full` / `degraded-breadcrumb` /
+`unavailable`) + a `coordination_unavailable` reason. The single source of truth
+is `scripts/rally_point/capability.py`; `FULL_ONLY_OPERATIONS`
+(claim/release/reclaim/lead/reap/liveness/before_write/checkpoint) are permitted
+only at full capability.
+
+**Degraded breadcrumb path (the ONLY thing a sub-full session may write).** When
+no binary is available but the host is supported, a session may write
+capability-marked presence/handoff *breadcrumb* facts so a later full-capability
+peer (or a human) sees it existed. It must NOT — and structurally cannot — claim
+ownership, reclaim, infer liveness, reap, or imply before-write protection.
+
+**Unsupported-host = loud no-coordination.** A host with no fetchable pinned-
+binary asset (Intel macOS, musl/Alpine, exotic arch) resolves to
+`capability_level: unavailable` (`coordination_unavailable: unsupported_host`).
+The facade is a loud no-op there — NEVER a policy mirror.
+
+**Remaining Python guards** (the destructive paths that survive as in-process
+guards, all FAIL-CLOSED): `presence.reap_stale` physically unlinks only at full
+capability; `leadership` reclaim (taking a peer's lease) is full-only, while
+seeding an EMPTY lead seat and self-relinquishing one's OWN seat stay breadcrumb-
+class. The in-process `decay.py` / `liveness.py` are now pure window/weight math
+helpers (lead-lease sizing, adaptive presence window), not behavioral mirrors.
 
 **Codex parity.** A codex session emits the same presence record claude does, via
 the `.codex/hooks.json` `SessionStart` hook that calls `session_probe.py --tool
-codex`. Its presence record therefore ages and decays identically to claude's —
-heartbeat parity is proven by `scripts/rally_point/heartbeat_parity_vectors.json`
-(byte-identical to the Rust fixture `crates/rally-cli/tests/fixtures/
-heartbeat_parity_vectors.json`). The parity test in `test_reaper.py` asserts
-`decay.recency_weight(age, half_life_secs)` matches each vector's `expected_weight`
-within 1e-4, and the `stale_at_15m` staleness verdict, for every case.
+codex`, so it ages and decays identically — now enforced by the single Rust
+reaper both tools share, not by a cross-language golden fixture.
 
 **Session-end self-release.** Both tool hooks emit `rally stop <tool>` at turn
 completion (`Stop` event) so peers immediately see the agent's absence rather than
@@ -279,10 +292,13 @@ reduces the reaper's steady-state work. On stop, a session also self-kills its o
 ## Adaptive multi-signal liveness (squad-projection decay + tmux orphan reaper)
 
 Fixed staleness cutoffs are replaced by liveness that ADAPTS to each session's
-planned heartbeat cadence and weighs four signals. One function, mirrored
-Rust↔Python (`crates/rally-cli/src/liveness.rs` ≡ `scripts/rally_point/liveness.py`),
-double-pinned by the byte-identical golden fixture `liveness_vectors.json` (tracked
-in `_provenance.json`).
+planned heartbeat cadence and weighs four signals. The liveness DECISION (reap /
+self-exit) is Rust-only via the facade; `scripts/rally_point/liveness.py` retains
+only the in-process window/verdict MATH the presence squad-projection uses,
+verified by its own inline unit tests (`test_liveness.py`). The cross-repo golden
+fixture `liveness_vectors.json` and its `_provenance.json` drift entry were
+RETIRED in the Rust-rally migration — there is no longer a byte-identical parity
+contract to maintain across the two codebases.
 
 **Adaptive cadence.** A session declares its beat via `planned_heartbeat_secs`
 (presence record) or `renew_every_minutes` (lead.json); undeclared → the default

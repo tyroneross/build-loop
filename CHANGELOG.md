@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Changed
+
+- **Rust-rally coordination facade — retire the Python policy mirror (4-phase migration).**
+  build-loop's coordination layer is now a thin facade over the canonical Rust
+  `rally` binary that FAILS LOUD when the binary is unavailable, replacing the
+  cross-language Python parity mirror and eliminating the parity tax (golden
+  fixtures + drift manifest).
+  - **Capability contract** (`scripts/rally_point/capability.py`): every
+    coordination envelope carries `capability_level` (`full` /
+    `degraded-breadcrumb` / `unavailable`) + a `coordination_unavailable` reason.
+    `FULL_ONLY_OPERATIONS` (claim/reclaim/lead/reap/liveness/before_write/
+    checkpoint) are permitted only at full capability.
+  - **Reaper is Rust-only** (`reaper.py` facade): shells `rally sessions --reap`
+    at full capability; refuses (no shadow sweep) below it. `presence.reap_stale`
+    and `leadership` reclaim gain fail-closed Rust-only guards; the EMPTY-seat
+    claim and self-relinquish stay breadcrumb-class.
+  - **Degraded breadcrumb path**: a binary-less but supported host may write only
+    capability-marked presence/handoff breadcrumb facts — never ownership,
+    reclaim, liveness, reap, or before-write protection.
+  - **Fetch-on-install** (`binary_fetch.py`): when no system/sibling/PATH binary
+    is found, build-loop fetches the host-platform asset from the PINNED
+    agent-rally-point `v0.1.3` release, SHA256-verifies it (fail-closed), strips
+    the macOS quarantine xattr, version-pins (refuses != 0.1.3), and caches under
+    `$XDG_CACHE_HOME/build-loop/rally`. Wired as a `discovery_bridge` tier. An
+    UNSUPPORTED host (no matching asset — Intel mac / musl / exotic arch) → loud
+    `coordination_unavailable: unsupported_host`, never a mirror.
+  - **One-way legacy migration**: `discovery_bridge.maybe_auto_migrate` fires on
+    any full-capability resolution and replays a stranded `build-loop-internal`
+    fallback store into `.rally` via `rally migrate-legacy` (idempotent).
+  - **Parity tax removed**: deleted `decay_vectors.json`, `liveness_vectors.json`,
+    `heartbeat_parity_vectors.json` and 6 `_provenance.json` drift entries;
+    `decay.py`/`liveness.py` survive as in-process math helpers (window/weight
+    only). `test_decay.py`/`test_liveness.py` rewritten as inline unit tests;
+    `test_reaper.py` rewritten as facade wire-contract tests; `test_binary_fetch.py`
+    adds a native integration test running the FETCHED v0.1.3 binary.
+
 ### Added
 
 - **Zombie-tmux prevention — shared decision policy (Python mirror).**

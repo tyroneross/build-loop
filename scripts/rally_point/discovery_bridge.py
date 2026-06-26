@@ -597,16 +597,48 @@ def _try_python_import(workdir: Path) -> DiscoveryEnvelope | None:
     return _shape_envelope_from_discover(raw, resolved_via="python-import")
 
 
+def _host_can_fetch_binary() -> bool:
+    """True when this host has a fetchable pinned-binary asset.
+
+    An UNSUPPORTED host (no matching release asset — Intel mac / musl / exotic
+    arch) cannot ever reach full capability, so its fallback must surface a LOUD
+    ``unavailable``, not a degraded breadcrumb. Best-effort: a missing fetch
+    module is treated as "could fetch" (don't escalate to loud on an import
+    quirk).
+    """
+    if os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
+        return True  # fetch deliberately off → not an unsupported-host signal
+    try:
+        from . import binary_fetch as _fetch
+    except ImportError:
+        try:
+            import binary_fetch as _fetch  # type: ignore
+        except ImportError:
+            return True
+    try:
+        return _fetch.host_triple() is not None
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _internal_fallback(workdir: Path) -> DiscoveryEnvelope:
     """Last-resort resolver using the embedded ``channel_paths`` API.
 
-    Returns ``policy: "legacy-only"`` and ``resolved_via:
-    "build-loop-internal"`` so callers can refuse to write when their
-    contract requires native package discovery. The embedded fallback is
-    NEVER silently treated as native agent-rally-point discovery.
+    Returns ``resolved_via: "build-loop-internal"`` so callers can refuse to
+    write when their contract requires native package discovery. The embedded
+    fallback is NEVER silently treated as native agent-rally-point discovery.
+
+    Capability split (loud-vs-degraded):
+      * UNSUPPORTED host (no fetchable asset) → ``coordination_unavailable:
+        "unsupported_host"`` → capability ``unavailable`` (LOUD no-coordination;
+        never a policy mirror, per the migration contract).
+      * Supported host that simply has no binary yet → ``coordination_
+        unavailable: None`` → capability ``degraded-breadcrumb`` (may write
+        capability-marked breadcrumb facts only).
     """
     slug = channel_paths.app_slug(workdir)
     channel_dir = channel_paths.app_channel_dir(slug)
+    unsupported = not _host_can_fetch_binary()
     return DiscoveryEnvelope(
         channel_dir=str(channel_dir),
         app_slug=slug,
@@ -618,7 +650,7 @@ def _internal_fallback(workdir: Path) -> DiscoveryEnvelope:
         resolved_via="build-loop-internal",
         legacy_channel_dir=str(channel_dir),
         merged_view=False,
-        coordination_unavailable=None,
+        coordination_unavailable="unsupported_host" if unsupported else None,
         raw={},
     )
 
@@ -721,12 +753,15 @@ def maybe_auto_migrate(
 ) -> dict | None:
     """Auto-run ``rally migrate-legacy`` on the fallback→ARP transition seam.
 
-    Fires when (a) the resolved envelope is ``rust-cli`` (an ARP binary is installed
-    AND owns the active channel) AND (b) a stranded global fallback store exists at
-    the embedded apps path (``channel_paths.app_channel_dir(slug)/changes.jsonl``)
-    holding ≥1 ``agent-rally.fact.v1`` line. Shells out to ``rally migrate-legacy
-    --json`` (binary from ``rust_rally_binary``), which losslessly + idempotently
-    replays the stranded store into the ARP repo ledger.
+    Fires when (a) the resolved envelope is FULL capability (any real binary owns
+    the active channel — ``rust-cli``, ``repo-local-rally-cli``, ``fetched-binary``,
+    ``env-override``, ``path-binary``, ``python-import``) AND (b) a stranded global
+    fallback store exists at the embedded apps path
+    (``channel_paths.app_channel_dir(slug)/changes.jsonl``) holding ≥1
+    ``agent-rally.fact.v1`` line. Shells out to ``rally migrate-legacy --json``
+    (binary from ``rust_rally_binary``), which losslessly + idempotently replays the
+    stranded store into the ARP repo ledger — a ONE-WAY migration of the retired
+    ``build-loop-internal`` fallback logs into ``.rally``.
 
     Returns the parsed migrate result dict (``slugs_found``, ``facts_read``,
     ``facts_migrated``, ``facts_skipped_existing``, ``warnings``) on success, or
@@ -738,7 +773,7 @@ def maybe_auto_migrate(
     """
     try:
         env = envelope if envelope is not None else resolve(workdir)
-        if env.resolved_via != "rust-cli":
+        if env.capability_level != "full":
             return None
 
         # Locate the stranded global fallback store for this repo's slug.

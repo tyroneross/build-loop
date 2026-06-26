@@ -61,6 +61,49 @@ class FetchUnitTests(unittest.TestCase):
         self.assertEqual(bf.PINNED_TAG, f"v{bf.PINNED_VERSION}")
 
 
+class UnsupportedHostLoudTests(unittest.TestCase):
+    """An unsupported host yields LOUD coordination_unavailable, never a mirror."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="unsupported-host-"))
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        self._old = {
+            k: os.environ.get(k)
+            for k in ("AGENT_RALLY_BINARY", "BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
+        }
+        os.environ["AGENT_RALLY_BINARY"] = ""  # hide live binaries
+        os.environ.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
+        discovery_bridge.clear_cache()
+
+    def tearDown(self) -> None:
+        for k, v in self._old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        discovery_bridge.clear_cache()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_unsupported_host_resolves_loud_unavailable(self) -> None:
+        # Intel macOS has no published v0.1.3 asset → unsupported → loud.
+        # Isolate XDG_CACHE_HOME so no real previously-fetched binary leaks in
+        # as a repo-local candidate (an unsupported host would have no cache).
+        empty_cache = self.tmp / "xdg-cache"
+        with mock.patch("platform.system", return_value="Darwin"), \
+             mock.patch("platform.machine", return_value="x86_64"), \
+             mock.patch("shutil.which", return_value=None), \
+             mock.patch.dict(os.environ, {
+                 "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
+                 "XDG_CACHE_HOME": str(empty_cache),
+             }):
+            env = discovery_bridge.resolve(self.repo)
+        self.assertEqual(env.resolved_via, "build-loop-internal")
+        self.assertEqual(env.coordination_unavailable, "unsupported_host")
+        self.assertEqual(env.capability_level, capability.UNAVAILABLE)
+
+
 def _asset_reachable_for_host() -> bool:
     """True when this host has a published asset AND the release URL is reachable."""
     triple = bf.host_triple()

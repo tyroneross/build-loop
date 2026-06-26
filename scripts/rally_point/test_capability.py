@@ -82,6 +82,20 @@ class CapabilityContractTests(unittest.TestCase):
             capability.level_for_resolved_via("rust-cli", "degraded"),
             capability.DEGRADED_BREADCRUMB,
         )
+        # Unsupported host → LOUD unavailable, even on the internal fallback.
+        self.assertEqual(
+            capability.level_for_resolved_via(
+                "build-loop-internal", capability.REASON_UNSUPPORTED_HOST
+            ),
+            capability.UNAVAILABLE,
+        )
+        # A binary error after resolution → loud unavailable.
+        self.assertEqual(
+            capability.level_for_resolved_via(
+                "fetched-binary", capability.REASON_BINARY_ERROR
+            ),
+            capability.UNAVAILABLE,
+        )
 
 
 if __name__ == "__main__":

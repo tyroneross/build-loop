@@ -96,6 +96,9 @@ class AgentRallyWhereTests(unittest.TestCase):
         # actually probes Python import.
         env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
         env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
+        # Exclude the fetch-on-install tier (+ its cached binary, which would
+        # otherwise resolve as repo-local) so the python-import probe is isolated.
+        env["BUILD_LOOP_DISABLE_BINARY_FETCH"] = "1"
         # Strip PATH so the real pipx-installed agent-rally-discover
         # cannot shadow the Python-import probe under test.
         env["PATH"] = "/usr/bin:/bin"

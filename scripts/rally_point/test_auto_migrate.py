@@ -26,15 +26,27 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import capability as _cap  # noqa: E402
 import discovery_bridge as db  # noqa: E402
 import fact_v1 as fv  # noqa: E402
 
 
 class _Env:
-    """Minimal stand-in for DiscoveryEnvelope.resolved_via."""
+    """Minimal stand-in for DiscoveryEnvelope (resolved_via + capability_level).
 
-    def __init__(self, resolved_via: str):
+    maybe_auto_migrate now gates on capability_level (full = a real binary owns
+    the channel), so the stub derives it the same way the real envelope does.
+    """
+
+    def __init__(self, resolved_via: str, coordination_unavailable: str | None = None):
         self.resolved_via = resolved_via
+        self.coordination_unavailable = coordination_unavailable
+
+    @property
+    def capability_level(self) -> str:
+        return _cap.level_for_resolved_via(
+            self.resolved_via, self.coordination_unavailable
+        )
 
 
 @pytest.fixture(autouse=True)
