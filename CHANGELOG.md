@@ -2,8 +2,18 @@
 
 ## Unreleased
 
+## 0.36.0 — 2026-06-26
+
 ### Changed
 
+- **Model resolution — availability fallback + outage TTL.** A tier role observed
+  unavailable at dispatch auto-falls-back to the next host-reachable model in its
+  tier (a frontier/judgment role degrades at most to the thinking tier, never below
+  the floor); a model the current host cannot dispatch is filtered out. Outages are
+  recorded with a timestamp and auto-expire after a TTL (default 1800s,
+  `BUILD_LOOP_OUTAGE_TTL_SECONDS`); legacy untimestamped records self-heal on read.
+  (`scripts/model_resolver.py`, `scripts/dispatch_fallback.py`,
+  `scripts/model_availability_store.py`, `scripts/classify_model_tier.py`)
 - **Rust-rally coordination facade — retire the Python policy mirror (4-phase migration).**
   build-loop's coordination layer is now a thin facade over the canonical Rust
   `rally` binary that FAILS LOUD when the binary is unavailable, replacing the
