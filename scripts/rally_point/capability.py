@@ -171,9 +171,9 @@ def full_capability_for_channel(channel_dir: Any, workdir: Any = None) -> bool:
 def level_for_resolved_via(resolved_via: str, coordination_unavailable: str | None) -> str:
     """Map a ``discovery_bridge`` resolution to a capability level.
 
-    * A native binary source (``rust-cli`` / ``repo-local-rally-cli`` /
-      ``fetched-binary`` / ``path-binary`` / ``python-import`` / ``env-override``)
-      with no ``coordination_unavailable`` flag → ``full``.
+    * A native binary source (``repo-local-rally-cli`` / ``fetched-binary`` /
+      ``path-binary`` / ``python-import`` / ``env-override``) with no
+      ``coordination_unavailable`` flag → ``full``.
     * ``incompatible_protocol`` / ``unsupported_host`` / ``binary_error`` →
       ``unavailable`` (LOUD no-coordination; never breadcrumb, never a mirror).
     * The embedded fallback (``build-loop-internal``) on a SUPPORTED host, or a

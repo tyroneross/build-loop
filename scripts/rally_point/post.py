@@ -94,24 +94,22 @@ def post(
                     from .discovery_bridge import (
                         repo_local_rally_binary,
                         resolve as _bridge_resolve,
-                        rust_rally_binary,
                     )
                 except ImportError:  # script import
                     from discovery_bridge import (  # type: ignore
                         repo_local_rally_binary,
                         resolve as _bridge_resolve,
-                        rust_rally_binary,
                     )
 
                 envelope = _bridge_resolve(workdir)
                 if (
-                    envelope.resolved_via == "rust-cli"
+                    envelope.resolved_via == "repo-local-rally-cli"
                     and str(Path(envelope.channel_dir).resolve()) == str(d.resolve())
                 ):
-                    # Zero-seam transition: on the first coordination write after an
-                    # ARP binary is detected, replay any stranded global fact.v1
-                    # fallback store into the ARP ledger (lossless + idempotent).
-                    # Fire-and-forget; never blocks this post.
+                    # Zero-seam transition: on the first coordination write after a
+                    # native rally binary owns the channel, replay any stranded
+                    # global fact.v1 fallback store into the rally ledger (lossless +
+                    # idempotent). Fire-and-forget; never blocks this post.
                     try:
                         try:  # package import
                             from .discovery_bridge import maybe_auto_migrate
@@ -120,19 +118,6 @@ def post(
                         maybe_auto_migrate(workdir, envelope)
                     except Exception:
                         pass
-                    return _post_via_rust_rally(
-                        binary=rust_rally_binary(workdir),
-                        workdir=workdir,
-                        kind=kind,
-                        tool=tool,
-                        model=model,
-                        run_id=run_id,
-                        payload=payload,
-                    )
-                if (
-                    envelope.resolved_via == "repo-local-rally-cli"
-                    and str(Path(envelope.channel_dir).resolve()) == str(d.resolve())
-                ):
                     return _post_via_repo_local_rally(
                         binary=repo_local_rally_binary(workdir),
                         workdir=workdir,
@@ -400,131 +385,3 @@ def _native_seq(out: dict) -> int | None:
     except (TypeError, ValueError):
         return None
     return 0
-
-
-def _post_via_rust_rally(
-    *,
-    binary: str | None,
-    workdir: Path,
-    kind: str,
-    tool: str,
-    model: str,
-    run_id: str,
-    payload: dict,
-) -> int | None:
-    if not binary:
-        return None
-    if kind == "handoff":
-        return _handoff_via_rust_rally(
-            binary=binary,
-            workdir=workdir,
-            tool=tool,
-            model=model,
-            run_id=run_id,
-            payload=payload,
-        )
-    subject = (
-        str((payload or {}).get("subject") or (payload or {}).get("message") or kind)
-        or kind
-    )
-    cmd = [
-        binary,
-        "post",
-        "--json",
-        "--tool",
-        tool,
-        "--model",
-        model,
-        "--run-id",
-        run_id,
-        "--kind",
-        kind,
-        "--payload",
-        json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
-        "--subject",
-        subject,
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    try:
-        out = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(out, dict) or out.get("ok") is not True:
-        return None
-    seq = out.get("local_seq")
-    return int(seq) if isinstance(seq, int) else 0
-
-
-def _handoff_via_rust_rally(
-    *,
-    binary: str,
-    workdir: Path,
-    tool: str,
-    model: str,
-    run_id: str,
-    payload: dict,
-) -> int | None:
-    ownership = (payload or {}).get("ownership") or {}
-    subject = (
-        str(
-            (payload or {}).get("message")
-            or ownership.get("interface_contract")
-            or "build-loop handoff"
-        )
-        or "build-loop handoff"
-    )
-    to_tool = str((payload or {}).get("to") or "peer")
-    cmd = [
-        binary,
-        "handoff",
-        "--json",
-        "--tool",
-        tool,
-        "--model",
-        model,
-        "--run-id",
-        run_id,
-        "--to",
-        to_tool,
-        "--from-tool",
-        tool,
-        "--subject",
-        subject,
-        "--notes",
-        json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
-    ]
-    owns = ownership.get("owns") if isinstance(ownership, dict) else None
-    if isinstance(owns, list) and owns:
-        cmd.append("--files")
-        cmd.extend(str(item) for item in owns if item)
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    try:
-        out = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(out, dict) or out.get("ok") is not True:
-        return None
-    seq = out.get("local_seq")
-    return int(seq) if isinstance(seq, int) else 0

@@ -51,6 +51,8 @@ post(
 
 **Channel scope (worktree- and clone-independent):** resolve the channel through `scripts/rally_point/discovery_bridge.resolve(workdir)`. Native `agent-rally-point` discovery returns the canonical shared channel (currently `~/.agent-rally-point/apps/<repo-id>/`). The embedded build-loop fallback also defaults to `~/.agent-rally-point/apps/<slug>/`, where `slug` comes from `git rev-parse --git-common-dir` via `scripts/rally_point/channel_paths.app_slug(cwd)`. The main checkout, every worktree, and every clone of the same canonical repo share ONE channel. Different canonical repos get different channel directories (cross-repo isolation).
 
+**Rally's REAL CLI surface (the only commands build-loop shells out to).** Rally exposes `enter`, `say <kind>`, `whoami`, `room`, `next`, `recent`, `stop <session|name|tool>`, `sessions [--reap]`, `migrate-legacy`, `mission`, `version`, and `check`. It has NO `setup`, NO `post`, NO `start`, and NO `replay` — those were anticipated but never shipped, and a discovery tier that gated on them was dead code (removed). A write goes out as `rally say <kind> --json …` (build-loop's `post()` helper translates to this); identity/channel info comes from `rally whoami --json` (`repo_root`/`repo_id`/`worktree`/`build_id`/`cwd`), NOT a `setup` probe. The surface-acceptance check (`discovery_bridge._rally_binary_supports_required_surface`) is pinned to a real rally binary's `--help` by `scripts/test_discovery_bridge.py::RequiredSurfacePinnedToRealRallyTests`, so it can never silently drift back to a phantom surface. When adding a rally call, read the binary's real `--help` first; do not assume a command exists.
+
 **Anti-pattern (silent no-op):**
 
 ```python
@@ -242,10 +244,10 @@ implementation that is worse than no coordination.
 
 **Facade (`scripts/rally_point/reaper.py`).** `reap_channel(channel, workdir,
 apply=…)` resolves coordination capability via `discovery_bridge` and then:
-- **full capability** (a real binary owns the channel — `rust-cli` /
-  `repo-local-rally-cli` / `fetched-binary` / env-override / path-binary /
-  python-import) → shells `rally sessions --reap` and surfaces the result
-  (`capability_level: full`, `deferred_to_rust: false`).
+- **full capability** (a real binary owns the channel — `repo-local-rally-cli`
+  / `fetched-binary` / env-override / path-binary / python-import) → shells
+  `rally sessions --reap` and surfaces the result (`capability_level: full`,
+  `deferred_to_rust: false`).
 - **below full** (degraded-breadcrumb or unavailable) → REFUSES. It reaps
   nothing and returns a capability-marked report (`deferred_to_rust: true`,
   `coordination_unavailable: <reason>`). A degraded session must never reap a

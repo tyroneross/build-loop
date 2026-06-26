@@ -270,12 +270,17 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         self.assertEqual(envelope.channel_layout, "hash-chain")
 
     def test_stale_rally_binary_is_skipped_for_current_surface(self) -> None:
-        """A stale PATH/override binary must not masquerade as Rust-ready."""
+        """A binary missing a real surface fragment must not be accepted.
+
+        The stale binary's help lacks ``rally whoami`` (rally's real surface);
+        the current binary exposes all three real fragments. Discovery skips
+        the stale override and accepts the current one.
+        """
         stale = self.tmp / "stale-rally"
         stale.write_text(
             "#!/bin/sh\n"
-            "echo 'usage: rally start <tool> [--session-id <id>]'\n"
-            "echo '       rally post --kind <kind> [--payload <json>]'\n"
+            "echo 'usage: rally enter --tool <tool>'\n"
+            "echo '       rally say <kind> --tool <tool>'\n"
             "exit 2\n",
             encoding="utf-8",
         )
@@ -283,9 +288,9 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         current = self.tmp / "current-rally"
         current.write_text(
             "#!/bin/sh\n"
-            "echo 'usage: rally start <tool> [--session-id <id>]'\n"
-            "echo '       rally stop <tool> [--session-id <id>] [--reason <text>] [--json]'\n"
-            "echo '       rally post --kind <kind> [--payload <json>] [--subject <text>] [--json]'\n"
+            "echo 'usage: rally enter --tool <tool>'\n"
+            "echo '       rally say <kind> --tool <tool> --subject <subject>'\n"
+            "echo '       rally whoami [--tool <id>] [--json]'\n"
             "exit 2\n",
             encoding="utf-8",
         )
@@ -349,16 +354,21 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
         )
         self.assertEqual(envelope.policy, "repo-local")
 
-    def test_repo_local_binary_is_not_returned_as_setup_rust_binary(self) -> None:
+    def test_rust_and_repo_local_resolvers_are_the_same_real_surface(self) -> None:
+        """The phantom ``setup`` tier is gone: ``rust_rally_binary`` and
+        ``repo_local_rally_binary`` now resolve rally's single real surface and
+        return the identical binary (they are the same function)."""
         rally = self.tmp / "bin" / "rally"
         self._write_fake_repo_local_rally(rally)
+
+        self.assertIs(bridge.repo_local_rally_binary, bridge.rust_rally_binary)
 
         env = _clean_env({
             "PATH": f"{rally.parent}:/usr/bin:/bin",
             "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
         })
         with self._patched_env(env):
-            self.assertIsNone(bridge.rust_rally_binary(self.workdir))
+            self.assertEqual(bridge.rust_rally_binary(self.workdir), str(rally))
             self.assertEqual(bridge.repo_local_rally_binary(self.workdir), str(rally))
 
     # ------------------------------------------------------------------
@@ -366,23 +376,36 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def _write_fake_rally(self, path: Path, channel_dir: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        setup_payload = json.dumps({
+        """Write a fake ``rally`` exposing rally's REAL surface.
+
+        ``channel_dir`` is retained for signature compatibility; the real
+        repo-local resolver derives the channel from ``whoami``'s ``repo_root``
+        (the ``.rally`` ledger), so the whoami payload reports the binary's own
+        parent repo. The binary's identity (which path resolved) is what the
+        sibling/stale/PATH-priority tests assert.
+        """
+        whoami_payload = json.dumps({
             "ok": True,
-            "schema": "agent-rally.command.setup.v1",
-            "channel": str(channel_dir),
+            "data": {"whoami": {
+                "repo_root": str(channel_dir.parent),
+                "repo_id": channel_dir.parent.name,
+                "worktree": str(channel_dir.parent),
+                "cwd": str(channel_dir.parent),
+                "build_id": "test-fake",
+            }},
         })
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             f"#!{sys.executable}\n"
             "import json, sys\n"
             "args = sys.argv[1:]\n"
             "if not args:\n"
-            "    print('usage: rally start <tool> [--session-id <id>]')\n"
-            "    print('       rally stop <tool> [--session-id <id>] [--reason <text>] [--json]')\n"
-            "    print('       rally post --kind <kind> [--payload <json>] [--subject <text>] [--json]')\n"
+            "    print('usage: rally enter --tool <tool>')\n"
+            "    print('       rally say <kind> --tool <tool> --subject <subject>')\n"
+            "    print('       rally whoami [--tool <id>] [--json]')\n"
             "    raise SystemExit(2)\n"
-            "if args == ['setup', '--json']:\n"
-            f"    print({setup_payload!r})\n"
+            "if args == ['whoami', '--json']:\n"
+            f"    print({whoami_payload!r})\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(2)\n",
             encoding="utf-8",
@@ -446,9 +469,9 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
 
     def test_user_default_env_resolves_canonical_when_binary_installed(self) -> None:
         """When a native Rally Point surface is available in a user shell,
-        the bridge resolves canonical through it. Rust ``rally`` wins when
-        a sibling checkout binary is present; otherwise the Python
-        ``agent-rally-discover`` binary is accepted.
+        the bridge resolves through it. A native ``rally`` (repo-local real
+        surface) wins when present; otherwise the Python ``agent-rally-discover``
+        binary is accepted.
         """
         if not shutil.which("agent-rally-discover") and not bridge.rust_rally_binary():
             self.skipTest("no native Rally Point surface available")
@@ -476,9 +499,17 @@ class DiscoveryBridgeUserShellEquivalentTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertIn(result["resolved_via"], {"rust-cli", "path-binary"})
-        # Canonical apps root is ~/.agent-rally-point/apps/ per α design.
-        self.assertIn(".agent-rally-point", result["channel_dir"])
+        self.assertIn(
+            result["resolved_via"],
+            {"repo-local-rally-cli", "fetched-binary", "path-binary"},
+        )
+        # Native rally owns a repo-local ``.rally`` ledger; the Python
+        # ``agent-rally-discover`` path resolves the canonical apps root.
+        self.assertTrue(
+            result["channel_dir"].endswith(".rally")
+            or ".agent-rally-point" in result["channel_dir"],
+            msg=result["channel_dir"],
+        )
 
 
 class DiscoveryBridgeWorktreeCanonicalizationTests(unittest.TestCase):
@@ -541,6 +572,118 @@ class DiscoveryBridgeWorktreeCanonicalizationTests(unittest.TestCase):
         self.assertEqual(main_env.app_slug, wt_env.app_slug)
         self.assertEqual(main_env.channel_dir, wt_env.channel_dir)
         self.assertEqual(main_env.app_slug, "split-repo")
+
+
+class RequiredSurfacePinnedToRealRallyTests(unittest.TestCase):
+    """Pin the surface-acceptance check to a REAL ``rally`` binary's ``--help``.
+
+    The durable anti-recurrence lever for the v0.12.x phantom-surface defect
+    class (build-loop gated discovery on ``rally setup``/``rally post``/
+    ``rally stop <tool>`` — commands rally never shipped, so a whole resolution
+    tier was dead). These tests run a real rally binary's actual top-level usage
+    and assert:
+
+      1. build-loop's required-surface check PASSES against it, and
+      2. every ``REQUIRED_RALLY_HELP_FRAGMENTS`` fragment is genuinely present
+         in that real ``--help`` (so the tuple can never silently drift to a
+         surface rally does not expose), and
+      3. the historic phantom fragments are ABSENT from real rally — the exact
+         assertion that would have caught the original mismatch.
+
+    A real binary is sourced from (in order): the build-loop runtime cache
+    (fetched pinned release), ``$AGENT_RALLY_BINARY``, a sibling
+    ``agent-rally-point/target/{release,debug}/rally`` checkout, or ``rally`` on
+    PATH. When none is available (a clean CI box with no rally), the test
+    skips — it never fabricates a binary, because a fabricated help text is
+    exactly the phantom this test exists to prevent.
+    """
+
+    # Commands rally never shipped; the original phantom gate looked for these.
+    PHANTOM_FRAGMENTS = (
+        "rally stop <tool>",
+        "rally post --kind",
+        "rally setup",
+    )
+
+    def _real_rally_binary(self) -> str | None:
+        # 1. Fetched pinned release in the build-loop runtime cache.
+        try:
+            from rally_point import binary_fetch
+            cached = binary_fetch.cached_binary_path()
+            if cached.is_file() and os.access(cached, os.X_OK):
+                return str(cached)
+        except Exception:  # noqa: BLE001 — fetch module is optional
+            pass
+        # 2. Operator override.
+        override = os.environ.get("AGENT_RALLY_BINARY")
+        if override and Path(override).expanduser().is_file():
+            return str(Path(override).expanduser())
+        # 3. Sibling checkout next to build-loop.
+        repo_root = HERE.parent  # scripts/ -> repo root
+        sibling = repo_root.parent / "agent-rally-point"
+        for sub in ("target/release/rally", "target/debug/rally"):
+            cand = sibling / sub
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+        # 4. PATH.
+        on_path = shutil.which("rally")
+        return on_path
+
+    def _real_help_text(self, binary: str) -> str:
+        proc = subprocess.run(
+            [binary], capture_output=True, text=True, timeout=10
+        )
+        return f"{proc.stdout}\n{proc.stderr}"
+
+    def test_real_rally_passes_required_surface_check(self) -> None:
+        binary = self._real_rally_binary()
+        if not binary:
+            self.skipTest("no real rally binary available to pin the surface against")
+        self.assertTrue(
+            bridge._rally_binary_supports_required_surface(binary),
+            msg=(
+                "build-loop's required-surface check REJECTED a real rally "
+                f"binary ({binary}). The REQUIRED_RALLY_HELP_FRAGMENTS have "
+                "drifted away from rally's actual --help — this is the phantom-"
+                "surface regression the test exists to catch."
+            ),
+        )
+
+    def test_required_fragments_are_all_in_real_help(self) -> None:
+        binary = self._real_rally_binary()
+        if not binary:
+            self.skipTest("no real rally binary available to pin the surface against")
+        help_text = self._real_help_text(binary)
+        for fragment in bridge.REQUIRED_RALLY_HELP_FRAGMENTS:
+            self.assertIn(
+                fragment, help_text,
+                msg=f"required fragment {fragment!r} absent from real rally --help",
+            )
+
+    def test_phantom_fragments_are_absent_from_real_help(self) -> None:
+        binary = self._real_rally_binary()
+        if not binary:
+            self.skipTest("no real rally binary available to pin the surface against")
+        help_text = self._real_help_text(binary)
+        for fragment in self.PHANTOM_FRAGMENTS:
+            self.assertNotIn(
+                fragment, help_text,
+                msg=(
+                    f"phantom fragment {fragment!r} unexpectedly present in real "
+                    "rally --help. If rally genuinely added this command, move it "
+                    "from PHANTOM_FRAGMENTS into REQUIRED_RALLY_HELP_FRAGMENTS."
+                ),
+            )
+
+    def test_required_fragments_are_not_the_phantom_set(self) -> None:
+        # Pure unit guard (no binary needed): the gate must never be the old
+        # phantom tuple again.
+        self.assertNotIn("rally stop <tool>", bridge.REQUIRED_RALLY_HELP_FRAGMENTS)
+        self.assertNotIn("rally post --kind", bridge.REQUIRED_RALLY_HELP_FRAGMENTS)
+        self.assertEqual(
+            bridge.REQUIRED_RALLY_HELP_FRAGMENTS,
+            ("rally enter --tool", "rally say <kind>", "rally whoami"),
+        )
 
 
 if __name__ == "__main__":

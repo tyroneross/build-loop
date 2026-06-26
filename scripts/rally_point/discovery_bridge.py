@@ -11,15 +11,15 @@ native discovery → embedded fallback chain themselves.
 Resolution order (highest → lowest priority):
 
 1. ``$AGENT_RALLY_DISCOVER`` env override (operator-controlled).
-2. ``$AGENT_RALLY_BINARY`` / repo-associated sibling
-   ``agent-rally-point/target/*/rally`` checkout / ``rally`` Rust CLI
-   (agent-rally-point >= 0.4).
-3. Repo-local native ``rally enter/say/whoami`` CLI backed by
-   ``<repo>/.rally``.
-4. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
+2. Native ``rally enter/say/whoami`` CLI (rally's real surface) backed by
+   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, a repo-associated
+   sibling ``agent-rally-point/target/*/rally`` checkout, ``rally`` on ``$PATH``,
+   or the fetched pinned binary.
+3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
-5. ``agent_rally_point.discover`` Python import (sibling-repo install
+4. ``agent_rally_point.discover`` Python import (sibling-repo install
    or local ``.venv``).
+5. Fetch-on-install: provision the pinned ``rally`` release, then resolve.
 6. Embedded fallback to ``channel_paths.app_slug`` /
    ``channel_paths.app_channel_dir`` (canonical
    ``~/.agent-rally-point/apps/`` root, compatibility env overrides honored).
@@ -75,17 +75,23 @@ MAX_PROTOCOL_VERSION_EXCLUSIVE = (3, 0)
 """Pinned protocol-version range. Bridge refuses to operate outside this band."""
 
 REQUIRED_RALLY_HELP_FRAGMENTS = (
-    "rally stop <tool>",
-    "rally post --kind",
-)
-"""Rust CLI surface Build Loop relies on for current cross-host coordination."""
-
-REQUIRED_REPO_LOCAL_RALLY_HELP_FRAGMENTS = (
     "rally enter --tool",
     "rally say <kind>",
     "rally whoami",
 )
-"""Older native Rally surface backed by a repo-local ``.rally`` ledger."""
+"""Rally's REAL CLI surface — the commands Build Loop actually shells out to.
+
+These three fragments appear verbatim in ``rally`` top-level usage (verified
+against the local source build and the fetched pinned release). The surface-
+pinning regression test asserts a real ``rally`` binary's ``--help`` contains
+every fragment, so this tuple can never silently drift back to a phantom
+surface rally does not expose (the v0.12.x ``setup``/``post``/``start``/
+``replay`` defect class). ``REQUIRED_REPO_LOCAL_RALLY_HELP_FRAGMENTS`` is an
+alias kept for callers that imported the older name."""
+
+REQUIRED_REPO_LOCAL_RALLY_HELP_FRAGMENTS = REQUIRED_RALLY_HELP_FRAGMENTS
+"""Back-compat alias. Rally standardized on a single native surface; there is
+no separate "newer" cross-host surface to gate on."""
 
 
 @dataclass
@@ -103,8 +109,11 @@ class DiscoveryEnvelope:
     protocol_version: str
     last_resolved_at: str
     resolved_via: str
-    """One of ``env-override``, ``rust-cli``, ``repo-local-rally-cli``,
-    ``path-binary``, ``python-import``, ``build-loop-internal``."""
+    """One of ``env-override``, ``repo-local-rally-cli``, ``path-binary``,
+    ``python-import``, ``fetched-binary``, ``build-loop-internal``.
+
+    (``rust-cli`` was removed: it gated on a ``setup``/``post``/``start``
+    surface rally never shipped, so it could never resolve a real binary.)"""
     legacy_channel_dir: str | None = None
     """Populated during ``policy: "migration"`` so callers can mirror
     or compare reads against the legacy root."""
@@ -240,7 +249,7 @@ def _try_path_binary(workdir: Path) -> DiscoveryEnvelope | None:
 
 
 def rust_rally_binary(workdir: Path | str | None = None) -> str | None:
-    """Return the Rust ``rally`` binary path when available.
+    """Return a native ``rally`` binary path when one exposes rally's real surface.
 
     Production installs should put ``rally`` on ``PATH`` or set
     ``AGENT_RALLY_BINARY``. The workdir sibling-checkout probe keeps
@@ -248,37 +257,29 @@ def rust_rally_binary(workdir: Path | str | None = None) -> str | None:
     being coordinated, even when Build Loop is running from an installed
     plugin cache.
 
-    Stale ``rally`` binaries are skipped. During the Rust cutover it is
-    common for a shell PATH to point at an older installed binary while a
-    sibling checkout has the current CLI. Build Loop depends on the current
-    start/stop/post surface for Claude Code, Codex, tmux/Ghostty panes,
-    Herdr, cmux, and other host adapters, so discovery must prefer a binary
-    that actually exposes those commands.
+    A candidate is accepted iff its top-level usage exposes every fragment in
+    ``REQUIRED_RALLY_HELP_FRAGMENTS`` (``enter``/``say``/``whoami``) — rally's
+    actual surface. Build Loop shells out to ``rally sessions --reap`` (reaper),
+    ``rally migrate-legacy`` (zero-seam migration), ``rally stop <session|name|
+    tool>``, ``rally enter``, and ``rally say`` against this binary; all of those
+    live on the same real surface, so the single help-fragment gate is sufficient.
+
+    This used to be a separate "newer cross-host" tier gated on a ``rally setup``
+    identity probe and ``stop <tool>``/``post --kind`` help fragments — a surface
+    rally never shipped, so the tier could never resolve a real binary and every
+    downstream caller silently fell through. It is now collapsed onto rally's real
+    surface; ``repo_local_rally_binary`` is a back-compat alias of this function.
     """
     workdir_path = Path(workdir).expanduser().resolve() if workdir else None
     for candidate in _rally_binary_candidates(workdir_path):
-        if not _rally_binary_supports_required_surface(candidate):
-            continue
-        if workdir_path is not None and _rally_setup_payload(candidate, workdir_path) is None:
-            continue
-        return candidate
-
-    return None
-
-
-def repo_local_rally_binary(workdir: Path | str | None = None) -> str | None:
-    """Return a native repo-local ``rally`` binary when available.
-
-    This is the older but still live ``enter/say/whoami`` surface used by
-    repos with a source-of-truth ``.rally`` directory. It is intentionally
-    separate from ``rust_rally_binary()``, whose callers require the newer
-    ``setup/start/post`` surface.
-    """
-    workdir_path = Path(workdir).expanduser().resolve() if workdir else None
-    for candidate in _rally_binary_candidates(workdir_path):
-        if _rally_binary_supports_repo_local_surface(candidate):
+        if _rally_binary_supports_required_surface(candidate):
             return candidate
     return None
+
+
+# Back-compat alias. Both names resolve rally's single real surface; the historic
+# split (repo-local enter/say vs a phantom setup/start/post tier) is gone.
+repo_local_rally_binary = rust_rally_binary
 
 
 def _rally_binary_candidates(workdir: Path | None) -> list[str]:
@@ -346,7 +347,13 @@ def _repo_associated_roots(workdir: Path | None) -> list[Path]:
 
 
 def _rally_binary_supports_required_surface(binary: str) -> bool:
-    """Return True when ``binary`` exposes the current host-adapter commands."""
+    """Return True when ``binary`` exposes rally's real CLI surface.
+
+    Checks for every fragment in ``REQUIRED_RALLY_HELP_FRAGMENTS`` in the
+    binary's top-level usage — rally's actual ``enter``/``say``/``whoami``
+    commands. The surface-pinning regression test asserts a real rally binary
+    passes this check, so it can never silently drift back to a phantom surface.
+    """
     path = Path(binary).expanduser()
     try:
         if not path.is_file() or not os.access(path, os.X_OK):
@@ -361,75 +368,6 @@ def _rally_binary_supports_required_surface(binary: str) -> bool:
         return False
     help_text = f"{proc.stdout}\n{proc.stderr}"
     return all(fragment in help_text for fragment in REQUIRED_RALLY_HELP_FRAGMENTS)
-
-
-def _rally_binary_supports_repo_local_surface(binary: str) -> bool:
-    """Return True when ``binary`` exposes the repo-local enter/say API."""
-    path = Path(binary).expanduser()
-    try:
-        if not path.is_file() or not os.access(path, os.X_OK):
-            return False
-        proc = subprocess.run(
-            [str(path)],
-            capture_output=True,
-            text=True,
-            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return False
-    help_text = f"{proc.stdout}\n{proc.stderr}"
-    return all(
-        fragment in help_text
-        for fragment in REQUIRED_REPO_LOCAL_RALLY_HELP_FRAGMENTS
-    )
-
-
-def _rally_setup_payload(binary: str, workdir: Path) -> dict[str, Any] | None:
-    try:
-        proc = subprocess.run(
-            [binary, "setup", "--json"],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    try:
-        raw = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(raw, dict) or raw.get("ok") is not True or not raw.get("channel"):
-        return None
-    return raw
-
-
-def _try_rust_cli(workdir: Path) -> DiscoveryEnvelope | None:
-    binary = rust_rally_binary(workdir)
-    if not binary:
-        return None
-    raw = _rally_setup_payload(binary, workdir)
-    if raw is None:
-        return None
-    channel_dir = raw.get("channel")
-    if not channel_dir:
-        return None
-    channel_name = Path(str(channel_dir)).name
-    shaped = {
-        "installed": True,
-        "channel_dir": str(channel_dir),
-        "app_slug": channel_name,
-        "repo_id": channel_name if channel_name.startswith("repo_") else None,
-        "channel_layout": "hash-chain",
-        "policy": "rust-cli",
-        "protocol_version": "2.0",
-        "last_resolved_at": _utc_iso(),
-        "rally_binary": binary,
-        "setup": raw,
-    }
-    return _shape_envelope_from_discover(shaped, resolved_via="rust-cli")
 
 
 def _try_repo_local_rally_cli(workdir: Path) -> DiscoveryEnvelope | None:
@@ -506,16 +444,16 @@ def _invoke_discover_binary(
 def _try_fetched_binary(workdir: Path) -> DiscoveryEnvelope | None:
     """Fetch-on-install tier: provision the PINNED rally binary, then resolve.
 
-    Fires only after the live-binary probes (env / rust-cli / repo-local /
-    path-binary) miss — i.e. no rally is installed. Fetches the host-platform
+    Fires only after the live-binary probes (env / repo-local / path-binary /
+    python-import) miss — i.e. no rally is installed. Fetches the host-platform
     asset from the pinned release (sha256-verified, version-pinned, quarantine-
-    stripped, cached), then runs the same ``rally setup --json`` resolution the
-    rust-cli tier uses. An unsupported host (no matching asset) returns None so
+    stripped, cached), then runs the same ``rally whoami --json`` resolution the
+    repo-local tier uses. An unsupported host (no matching asset) returns None so
     the chain falls through to the loud internal fallback.
 
     The fetched binary is treated as a first-class native source: the envelope
     carries ``resolved_via: "fetched-binary"`` (a full-capability source) and the
-    same hash-chain channel layout as ``rust-cli``.
+    same repo-local ``.rally`` channel layout as ``repo-local-rally-cli``.
     """
     if os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
         return None
@@ -540,11 +478,10 @@ def _resolve_fetched_binary_channel(
 ) -> DiscoveryEnvelope | None:
     """Resolve a channel for an already-provisioned fetched binary.
 
-    The pinned binary exposes the repo-local ``whoami`` surface (protocol 1.0,
-    ``.rally`` ledger), not the newer ``setup`` surface, so resolution mirrors
-    ``_try_repo_local_rally_cli`` but stamps ``resolved_via: "fetched-binary"``
-    so the source is attributable to the fetch tier. Still a FULL-capability
-    source.
+    The pinned binary exposes rally's real ``whoami`` surface (protocol 1.0,
+    ``.rally`` ledger), so resolution mirrors ``_try_repo_local_rally_cli`` but
+    stamps ``resolved_via: "fetched-binary"`` so the source is attributable to
+    the fetch tier. Still a FULL-capability source.
     """
     try:
         proc = subprocess.run(
@@ -679,8 +616,9 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     ``coordination_unavailable`` and ``resolved_via`` to decide whether
     to write, mirror, or surface a degraded-mode warning.
 
-    The order is: env override → Rust CLI → Python discover binary →
-    Python import → internal fallback. The first non-``None`` source wins.
+    The order is: env override → native rally CLI (real enter/say/whoami
+    surface) → ``agent-rally-discover`` binary → Python import → fetched
+    binary → internal fallback. The first non-``None`` source wins.
     Each successful resolution is cached for ``CACHE_TTL_SECONDS``.
 
     Channel-split fix (worktree canonicalization): ``workdir`` is collapsed
@@ -714,7 +652,6 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
     # Probe each source in priority order; cache hits short-circuit.
     for source_tag, probe in (
         ("env-override", _try_env_override),
-        ("rust-cli", _try_rust_cli),
         ("repo-local-rally-cli", _try_repo_local_rally_cli),
         ("path-binary", _try_path_binary),
         ("python-import", _try_python_import),
@@ -754,7 +691,7 @@ def maybe_auto_migrate(
     """Auto-run ``rally migrate-legacy`` on the fallback→ARP transition seam.
 
     Fires when (a) the resolved envelope is FULL capability (any real binary owns
-    the active channel — ``rust-cli``, ``repo-local-rally-cli``, ``fetched-binary``,
+    the active channel — ``repo-local-rally-cli``, ``fetched-binary``,
     ``env-override``, ``path-binary``, ``python-import``) AND (b) a stranded global
     fallback store exists at the embedded apps path
     (``channel_paths.app_channel_dir(slug)/changes.jsonl``) holding ≥1

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Rust ``rally`` bridge tests.
+"""Native ``rally`` bridge tests (rally's REAL surface).
 
-These tests pin the v0.4 cutover behavior: build-loop may discover a Rust
-hash-chained channel, but it must write through the Rust CLI instead of
-appending flat JSONL directly.
+These tests pin that build-loop discovers a native rally channel and writes
+through the rally CLI's real ``say``/``enter``/``whoami`` surface — never a
+phantom ``setup``/``post``/``start``/``replay`` surface rally does not ship.
+
+The historic ``rust-cli`` tier (gated on ``rally setup --json`` + a
+``stop <tool>``/``post --kind`` help surface) was removed: that surface never
+shipped, so the tier could never resolve a real binary. The single live native
+path is ``repo-local-rally-cli``.
 """
 from __future__ import annotations
 
@@ -26,50 +31,41 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from rally_point import discovery_bridge
 from rally_point.post import post
-from coordination_rally import rally
 
 
-class RustRallyBridgeTests(unittest.TestCase):
+class NativeRallyBridgeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="rust-rally-bridge-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="native-rally-bridge-"))
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
-        self.channel = self.tmp / "home" / ".agent-rally-point" / "apps" / "repo_fake"
+        # Native rally owns a repo-local .rally ledger.
+        self.channel = self.repo / ".rally"
         self.channel.mkdir(parents=True)
         self.calls = self.tmp / "calls.jsonl"
+        # Fake rally exposing rally's REAL surface: enter/say/whoami top-level
+        # help, whoami --json (discovery), and say <kind> --json (writes).
         self.fake_rally = self.tmp / "rally"
         self.fake_rally.write_text(
             "#!/usr/bin/env python3\n"
-            "import json, os, sys\n"
-            f"channel = {str(self.channel)!r}\n"
+            "import json, sys\n"
+            f"repo = {str(self.repo)!r}\n"
             f"calls = {str(self.calls)!r}\n"
             "args = sys.argv[1:]\n"
             "if not args:\n"
-            "    print('usage: rally start <tool> [--session-id <id>] [--human]')\n"
-            "    print('       rally stop <tool> [--session-id <id>] [--reason <text>] [--json]')\n"
-            "    print('       rally post --kind <kind> [--payload <json>] [--subject <text>] [--json]')\n"
+            "    print('usage: rally enter --tool <tool>')\n"
+            "    print('       rally say <kind> --tool <tool> --subject <subject>')\n"
+            "    print('       rally whoami [--tool <id>] [--json]')\n"
             "    raise SystemExit(2)\n"
-            "if args == ['setup', '--json']:\n"
-            "    print(json.dumps({'ok': True, 'schema': 'agent-rally.command.setup.v1', 'channel': channel}))\n"
+            "if args == ['whoami', '--json']:\n"
+            "    print(json.dumps({'ok': True, 'data': {'whoami': {\n"
+            "        'repo_root': repo, 'repo_id': 'repo', 'worktree': repo,\n"
+            "        'cwd': repo, 'build_id': 'test-native'}}}))\n"
             "    raise SystemExit(0)\n"
-            "if len(args) >= 2 and args[:2] == ['start', 'codex']:\n"
+            "if len(args) >= 2 and args[0] == 'say':\n"
             "    with open(calls, 'a', encoding='utf-8') as fh:\n"
             "        fh.write(json.dumps(args) + '\\n')\n"
-            "    print(json.dumps({'ok': True, 'schema': 'agent-rally.command.start.v1'}))\n"
-            "    raise SystemExit(0)\n"
-            "if len(args) >= 2 and args[:2] in (['post', '--json'], ['handoff', '--json']):\n"
-            "    with open(calls, 'a', encoding='utf-8') as fh:\n"
-            "        fh.write(json.dumps(args) + '\\n')\n"
-            "    print(json.dumps({'ok': True, 'schema': 'agent-rally.command.post.v1', 'local_seq': 7}))\n"
-            "    raise SystemExit(0)\n"
-            "if args == ['replay', '--json']:\n"
-            "    print(json.dumps({'ok': True, 'data': {'events': [\n"
-            "        {'local_seq': 7, 'event': {'kind': 'handoff'}}\n"
-            "    ]}}))\n"
-            "    raise SystemExit(0)\n"
-            "if args == ['checkpoint', 'status', '--json']:\n"
-            "    print(json.dumps({'ok': True, 'data': {'checkpoint': {'valid': False}}}))\n"
+            "    print(json.dumps({'ok': True, 'data': {'say': {'fact': {'seq': 7}}}}))\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(2)\n",
             encoding="utf-8",
@@ -93,50 +89,35 @@ class RustRallyBridgeTests(unittest.TestCase):
         discovery_bridge.clear_cache()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_discovers_rust_rally_channel(self) -> None:
+    def test_discovers_native_rally_channel(self) -> None:
         envelope = discovery_bridge.resolve(self.repo)
 
-        self.assertEqual(envelope.resolved_via, "rust-cli")
-        self.assertEqual(envelope.protocol_version, "2.0")
-        self.assertEqual(envelope.channel_layout, "hash-chain")
-        self.assertEqual(envelope.channel_dir, str(self.channel))
+        self.assertEqual(envelope.resolved_via, "repo-local-rally-cli")
+        self.assertEqual(envelope.protocol_version, "1.0")
+        self.assertEqual(envelope.channel_layout, "repo-local-rally")
+        self.assertEqual(envelope.capability_level, "full")
+        self.assertEqual(
+            Path(envelope.channel_dir).resolve(), self.channel.resolve()
+        )
 
-    def test_post_routes_handoffs_through_rust_rally(self) -> None:
+    def test_post_routes_handoffs_through_rally_say(self) -> None:
         seq = post(
             channel_dir=self.channel,
             kind="handoff",
             tool="codex",
             model="gpt-5",
             run_id="run-1",
-            app_slug="repo_fake",
+            app_slug="repo",
             payload={"message": "take this", "session_id": "s1"},
             workdir=self.repo,
         )
 
         self.assertEqual(seq, 7)
+        # No flat-JSONL shadow write: the binary owns the ledger.
         self.assertFalse((self.channel / "changes.jsonl").exists())
         posted_args = json.loads(self.calls.read_text(encoding="utf-8").strip())
-        self.assertEqual(posted_args[:2], ["handoff", "--json"])
-        self.assertIn("--notes", posted_args)
-
-    def test_verified_coordination_rally_accepts_stale_checkpoint_when_event_landed(self) -> None:
-        result = rally(
-            workdir=self.repo,
-            session_id="s2",
-            message="coordinate",
-            tool="codex",
-            model="gpt-5",
-            run_id="run-1",
-            owns=["scripts/foo.py"],
-            verify=True,
-        )
-
-        self.assertTrue(result["presence_written"])
-        self.assertEqual(result["channel_revision"], 7)
-        self.assertTrue(result["posted"])
-        self.assertEqual(result["verify"]["protocol"], "rust-cli")
-        self.assertEqual(result["verify"]["matching_record_count"], 1)
-        self.assertFalse(result["verify"]["checkpoint_valid"])
+        self.assertEqual(posted_args[:2], ["say", "handoff"])
+        self.assertIn("--json", posted_args)
 
 
 if __name__ == "__main__":

@@ -64,7 +64,6 @@ from rally_point import (  # noqa: E402
 from rally_point.discovery_bridge import (  # noqa: E402
     repo_local_rally_binary,
     resolve as _bridge_resolve,
-    rust_rally_binary,
 )
 from rally_point.post import post  # noqa: E402
 
@@ -247,23 +246,6 @@ def cmd_presence(args: argparse.Namespace) -> int:
     envelope = _bridge_resolve(wd)
     slug = envelope.app_slug
     channel_dir = Path(envelope.channel_dir)
-    if envelope.resolved_via == "rust-cli":
-        ok = _rust_start(
-            workdir=wd,
-            session_id=args.session_id,
-            tool=args.tool,
-            model=args.model,
-            run_id=args.run_id,
-            intent=args.phase,
-            paths=_split_csv(args.files_in_flight),
-        )
-        return _emit({
-            "action": "presence-written" if ok else "presence-error",
-            "app_slug": slug,
-            "session_id": args.session_id,
-            "phase": args.phase,
-            "resolved_via": "rust-cli",
-        })
     if envelope.resolved_via == "build-loop-internal":
         channel_dir.mkdir(parents=True, exist_ok=True)
     cwd = (
@@ -299,31 +281,6 @@ def cmd_presence(args: argparse.Namespace) -> int:
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    wd = Path(args.workdir).expanduser().resolve()
-    envelope = _bridge_resolve(wd)
-    if envelope.resolved_via == "rust-cli":
-        binary = rust_rally_binary(wd)
-        if not binary:
-            return _emit({"action": "stop-error", "error": "rally binary unavailable"})
-        cmd = [
-            binary,
-            "stop",
-            args.tool,
-            "--json",
-            "--session-id",
-            args.session_id,
-            "--reason",
-            args.reason,
-        ]
-        if args.keep_claims:
-            cmd.append("--keep-claims")
-        try:
-            result = subprocess.run(cmd, cwd=str(wd), capture_output=True, text=True, timeout=5)
-        except (OSError, subprocess.SubprocessError) as exc:
-            return _emit({"action": "stop-error", "error": str(exc)})
-        sys.stdout.write(result.stdout)
-        return result.returncode
-
     slug, channel_dir = _resolve_channel(args.workdir)
     removed = []
     sessions_dir = channel_dir / "sessions"
@@ -342,48 +299,6 @@ def cmd_stop(args: argparse.Namespace) -> int:
         "claims_kept": True,
         "resolved_via": "build-loop-internal",
     })
-
-
-def _rust_start(
-    *,
-    workdir: Path,
-    session_id: str,
-    tool: str,
-    model: str,
-    run_id: str,
-    intent: str,
-    paths: list[str],
-) -> bool:
-    binary = rust_rally_binary(workdir)
-    if not binary:
-        return False
-    cmd = [
-        binary,
-        "start",
-        tool,
-        "--json",
-        "--session-id",
-        session_id,
-        "--model",
-        model,
-        "--run-id",
-        run_id,
-        "--intent",
-        intent,
-    ]
-    for path in paths:
-        cmd.extend(["--path", path])
-    try:
-        result = subprocess.run(cmd, cwd=str(workdir), capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if result.returncode != 0 or not result.stdout.strip():
-        return False
-    try:
-        payload = json.loads(result.stdout)
-    except (ValueError, TypeError):
-        return False
-    return bool(payload.get("ok") is True)
 
 
 def cmd_handoff(args: argparse.Namespace) -> int:

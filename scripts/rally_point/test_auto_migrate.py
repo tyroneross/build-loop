@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the fallback→ARP auto-migrate seam (discovery_bridge.maybe_auto_migrate).
 
-  - no rust-cli envelope -> returns None (not applicable)
-  - rust-cli + no stranded store -> None
-  - rust-cli + stranded store with a fact.v1 line -> invokes `rally migrate-legacy` (argv asserted)
+  - non-full envelope -> returns None (not applicable)
+  - full (repo-local-rally-cli) + no stranded store -> None
+  - full + stranded store with a fact.v1 line -> invokes `rally migrate-legacy` (argv asserted)
   - binary absent -> None, no crash
   - per-process marker / .migrated file -> skips re-invocation
   - LOSSLESS ROUND-TRIP (gated on a real rally binary): fact.v1 store -> migrate-legacy ->
@@ -56,21 +56,21 @@ def _reset_process_marker():
     db._MIGRATED_THIS_PROCESS.clear()
 
 
-def test_not_rust_cli_returns_none(monkeypatch, tmp_path):
+def test_non_full_returns_none(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "resolve", lambda _w: _Env("build-loop-internal"))
     assert db.maybe_auto_migrate(tmp_path, _Env("build-loop-internal")) is None
 
 
-def test_rust_cli_no_stranded_store_returns_none(monkeypatch, tmp_path):
+def test_full_no_stranded_store_returns_none(monkeypatch, tmp_path):
     fallback = tmp_path / "fallback"
     fallback.mkdir()
     monkeypatch.setattr(db.channel_paths, "app_slug", lambda _w: "throwaway")
     monkeypatch.setattr(db.channel_paths, "app_channel_dir", lambda _s: fallback)
     # No changes.jsonl in fallback -> None
-    assert db.maybe_auto_migrate(tmp_path, _Env("rust-cli")) is None
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
 
 
-def test_rust_cli_stranded_store_invokes_migrate(monkeypatch, tmp_path):
+def test_full_stranded_store_invokes_migrate(monkeypatch, tmp_path):
     fallback = tmp_path / "fallback"
     fallback.mkdir()
     f = fv.to_fact_v1(kind="handoff", tool="claude", model="m", run_id="r",
@@ -93,7 +93,7 @@ def test_rust_cli_stranded_store_invokes_migrate(monkeypatch, tmp_path):
         return _Proc()
 
     monkeypatch.setattr(db.subprocess, "run", _fake_run)
-    result = db.maybe_auto_migrate(tmp_path, _Env("rust-cli"))
+    result = db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli"))
     assert result is not None
     assert result["facts_read"] == 1
     assert captured["cmd"][1:3] == ["migrate-legacy", "--json"]
@@ -109,7 +109,7 @@ def test_binary_absent_returns_none_no_crash(monkeypatch, tmp_path):
     monkeypatch.setattr(db.channel_paths, "app_slug", lambda _w: "throwaway")
     monkeypatch.setattr(db.channel_paths, "app_channel_dir", lambda _s: fallback)
     monkeypatch.setattr(db, "rust_rally_binary", lambda _w: None)
-    assert db.maybe_auto_migrate(tmp_path, _Env("rust-cli")) is None
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
 
 
 def test_marker_skips_reinvocation(monkeypatch, tmp_path):
@@ -127,7 +127,7 @@ def test_marker_skips_reinvocation(monkeypatch, tmp_path):
         raise AssertionError("migrate-legacy must not be invoked when marker present")
 
     monkeypatch.setattr(db.subprocess, "run", _fail_run)
-    assert db.maybe_auto_migrate(tmp_path, _Env("rust-cli")) is None
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
 
 
 def test_non_factv1_store_not_migrated(monkeypatch, tmp_path):
@@ -142,7 +142,7 @@ def test_non_factv1_store_not_migrated(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "rust_rally_binary", lambda _w: "/fake/rally")
     monkeypatch.setattr(db.subprocess, "run",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not run")))
-    assert db.maybe_auto_migrate(tmp_path, _Env("rust-cli")) is None
+    assert db.maybe_auto_migrate(tmp_path, _Env("repo-local-rally-cli")) is None
 
 
 # --------------------------------------------------------------------------

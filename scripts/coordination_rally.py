@@ -36,7 +36,6 @@ from rally_point import changes, channel_paths, presence, revision  # noqa: E402
 from rally_point.discovery_bridge import (  # noqa: E402
     repo_local_rally_binary,
     resolve as _bridge_resolve,
-    rust_rally_binary,
 )
 from rally_point.post import post  # noqa: E402
 
@@ -106,18 +105,6 @@ def rally(
         )
         if not presence_written:
             errors.append("rally enter failed")
-    elif envelope.resolved_via == "rust-cli":
-        presence_written = _start_rust_session(
-            workdir=workdir,
-            session_id=session_id,
-            tool=tool,
-            model=model,
-            run_id=effective_run_id,
-            message=message,
-            owns=owns,
-        )
-        if not presence_written:
-            errors.append("rally start failed")
     else:
         try:
             presence.write_presence(
@@ -201,8 +188,6 @@ def rally(
             "after_revision": after_revision,
             "matching_record_count": len(matching_records),
         }
-    elif verify and envelope.resolved_via == "rust-cli":
-        verify_result = _verify_rust_post(workdir, channel_rev)
     elif verify:
         records, _offset = changes.read_changes_since(channel_dir, 0)
         matching_records = [
@@ -353,117 +338,6 @@ def _handoff_via_repo_local_rally(
         return 0
 
 
-def _start_rust_session(
-    *,
-    workdir: Path,
-    session_id: str,
-    tool: str,
-    model: str,
-    run_id: str,
-    message: str,
-    owns: list[str],
-) -> bool:
-    binary = rust_rally_binary(workdir)
-    if not binary:
-        return False
-    cmd = [
-        binary,
-        "start",
-        tool,
-        "--json",
-        "--session-id",
-        session_id,
-        "--model",
-        model,
-        "--run-id",
-        run_id,
-        "--intent",
-        message,
-    ]
-    for owned in owns:
-        cmd.extend(["--path", owned])
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return False
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return False
-    try:
-        payload = json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return False
-    return bool(payload.get("ok") is True)
-
-
-def _verify_rust_post(workdir: Path, channel_rev: int | None) -> dict[str, Any]:
-    binary = rust_rally_binary(workdir)
-    if not binary or channel_rev is None:
-        return {
-            "posted": False,
-            "protocol": "rust-cli",
-            "matching_record_count": 0,
-            "checkpoint_valid": False,
-        }
-    try:
-        replay = subprocess.run(
-            [binary, "replay", "--json"],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        checkpoint = subprocess.run(
-            [binary, "checkpoint", "status", "--json"],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
-        return {
-            "posted": False,
-            "protocol": "rust-cli",
-            "matching_record_count": 0,
-            "checkpoint_valid": False,
-        }
-    matching = []
-    checkpoint_valid = False
-    try:
-        replay_payload = json.loads(replay.stdout)
-        events = ((replay_payload.get("data") or {}).get("events") or [])
-        matching = [
-            event for event in events
-            if event.get("local_seq") == channel_rev
-            and ((event.get("event") or {}).get("kind") == "handoff")
-        ]
-    except (ValueError, TypeError, AttributeError):
-        matching = []
-    try:
-        checkpoint_payload = json.loads(checkpoint.stdout)
-        checkpoint_valid = bool(
-            checkpoint.returncode == 0
-            and checkpoint_payload.get("ok") is True
-            and (
-                ((checkpoint_payload.get("data") or {}).get("checkpoint") or {})
-                .get("valid")
-                is True
-            )
-        )
-    except (ValueError, TypeError, AttributeError):
-        checkpoint_valid = False
-    return {
-        "posted": bool(matching),
-        "protocol": "rust-cli",
-        "matching_record_count": len(matching),
-        "checkpoint_valid": checkpoint_valid,
-    }
-
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -479,7 +353,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--does-not-own", action="append", default=[], help="Non-owned file/path. Repeat or comma-separate.")
     p.add_argument("--interface-contract", default=None)
     p.add_argument("--integration-checkpoint", default=None)
-    p.add_argument("--verify", action="store_true", help="Read back the channel and confirm the rally post landed")
+    p.add_argument("--verify", action="store_true", help="Read back the channel and confirm the rally write landed")
     p.add_argument("--json", action="store_true", help="Emit JSON envelope (always JSON; flag is for explicitness)")
     return p.parse_args(argv)
 

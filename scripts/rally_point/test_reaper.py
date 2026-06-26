@@ -82,18 +82,22 @@ class ReaperDelegatesAtFullTests(unittest.TestCase):
         self.channel = self.tmp / "home" / ".agent-rally-point" / "apps" / "repo_fake"
         self.channel.mkdir(parents=True)
         self.calls = self.tmp / "calls.txt"
-        # Fake rally exposing setup (so discovery resolves full) + sessions --reap.
+        # Fake rally exposing rally's REAL surface (enter/say/whoami → discovery
+        # resolves full) + sessions --reap. whoami canonicalizes repo_root so the
+        # repo-local resolver maps the channel to <repo>/.rally.
         self.fake = self.tmp / "rally"
         self.fake.write_text(
             "#!/usr/bin/env python3\n"
             "import json, sys\n"
-            f"channel = {str(self.channel)!r}\n"
+            f"repo = {str(self.repo)!r}\n"
             f"calls = {str(self.calls)!r}\n"
             "a = sys.argv[1:]\n"
             "if not a:\n"
-            "    print('rally stop <tool>\\nrally post --kind <kind>'); raise SystemExit(2)\n"
-            "if a == ['setup','--json']:\n"
-            "    print(json.dumps({'ok':True,'channel':channel})); raise SystemExit(0)\n"
+            "    print('rally enter --tool <tool>\\n"
+            "rally say <kind> --tool <tool>\\nrally whoami'); raise SystemExit(2)\n"
+            "if a == ['whoami','--json']:\n"
+            "    print(json.dumps({'ok':True,'data':{'whoami':"
+            "{'repo_root':repo,'repo_id':'repo_fake'}}})); raise SystemExit(0)\n"
             "if a[:1] == ['sessions']:\n"
             "    open(calls,'a').write(' '.join(a)+'\\n')\n"
             "    reaped = ['stale-sess'] if '--reap' in a else []\n"
