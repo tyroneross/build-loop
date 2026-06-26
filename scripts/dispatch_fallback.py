@@ -42,77 +42,72 @@ from typing import Any
 
 try:  # pragma: no cover - import shim
     import model_resolver
+    import model_availability_store as store
 except ImportError:  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import model_resolver  # type: ignore[no-redefine]
+    import model_availability_store as store  # type: ignore[no-redefine]
 
-AVAILABILITY_FILENAME = "model-availability.json"
-
-
-def _build_loop_dir(workdir: Path) -> Path:
-    return workdir.expanduser().resolve() / ".build-loop"
+AVAILABILITY_FILENAME = store.AVAILABILITY_FILENAME
 
 
 def availability_path(workdir: Path) -> Path:
-    return _build_loop_dir(workdir) / AVAILABILITY_FILENAME
+    return store.availability_path(workdir)
 
 
-def _read(workdir: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(availability_path(workdir).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
+def record_unavailable(
+    workdir: Path, model_id: str, *, ttl: int | None = None
+) -> bool:
+    """Record ``model_id`` as unavailable with a wall-clock timestamp + TTL.
 
-
-def _normalized_unavailable(data: dict[str, Any]) -> list[str]:
-    listed = data.get("unavailable")
-    return list(listed) if isinstance(listed, list) else []
-
-
-def _write(workdir: Path, data: dict[str, Any]) -> None:
-    d = _build_loop_dir(workdir)
-    d.mkdir(parents=True, exist_ok=True)
-    availability_path(workdir).write_text(
-        json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
-    )
-
-
-def record_unavailable(workdir: Path, model_id: str) -> bool:
-    """Add ``model_id`` to the persistent unavailable set. Idempotent.
-
-    Returns True if it was newly added, False if it was already present.
-    Preserves any existing ``hostProviders`` and other keys.
+    Returns True if it was newly added, False if a LIVE (non-expired) record for
+    it already exists. Writing also lazily prunes any expired records (so a stale
+    legacy entry self-heals here too). Preserves ``hostProviders`` + other keys.
+    Re-recording a still-live model refreshes nothing (idempotent); re-recording
+    one whose prior record expired writes a fresh record (the outage is back).
     """
     model_id = model_id.strip()
-    data = _read(workdir)
-    unavailable = _normalized_unavailable(data)
-    if model_id in unavailable:
+    wd = workdir.expanduser().resolve()
+    # Start from the pruned view so expired/legacy records are dropped on write.
+    live, data, _changed = store.live_unavailable(wd)
+    if model_id in live:
+        # Already have a live record — keep it (and the pruned store), no dup.
+        store.write_store(wd, data)
         return False
-    unavailable.append(model_id)
-    data["unavailable"] = sorted(set(unavailable))
-    _write(workdir, data)
+    effective_ttl = store.resolve_ttl(wd, explicit=ttl)
+    kept = [r for r in data.get("unavailable", []) if store._record_id(r) != model_id]
+    kept.append(
+        {"id": model_id, "recorded_at": store.now(), "ttl": effective_ttl}
+    )
+    data["unavailable"] = kept
+    store.write_store(wd, data)
     return True
 
 
 def clear_unavailable(workdir: Path, model_id: str) -> bool:
-    """Remove ``model_id`` from the unavailable set. Returns True if removed."""
+    """Remove ``model_id`` from the unavailable set (object OR legacy string).
+
+    Returns True if a record was removed."""
     model_id = model_id.strip()
-    data = _read(workdir)
-    unavailable = _normalized_unavailable(data)
-    if model_id not in unavailable:
+    wd = workdir.expanduser().resolve()
+    data = store._read_raw(wd)
+    listed = data.get("unavailable")
+    if not isinstance(listed, list):
         return False
-    data["unavailable"] = sorted(m for m in set(unavailable) if m != model_id)
-    _write(workdir, data)
+    kept = [r for r in listed if store._record_id(r) != model_id]
+    if len(kept) == len(listed):
+        return False
+    data["unavailable"] = kept
+    store.write_store(wd, data)
     return True
 
 
 def fallback(
-    *, workdir: Path, tier: str, unavailable_model: str
+    *, workdir: Path, tier: str, unavailable_model: str, ttl: int | None = None
 ) -> dict[str, Any]:
     """Record the outage, then re-resolve the tier to the next available model."""
     wd = workdir.expanduser().resolve()
-    newly = record_unavailable(wd, unavailable_model)
+    newly = record_unavailable(wd, unavailable_model, ttl=ttl)
     resolved = model_resolver.resolve(tier=tier, workdir=wd)
     return {
         "recorded": unavailable_model.strip(),
@@ -134,6 +129,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Model id observed unavailable at dispatch — recorded + re-resolved.",
     )
     p.add_argument("--clear", default=None, help="Mark a model available again.")
+    p.add_argument(
+        "--ttl",
+        type=int,
+        default=None,
+        help="Seconds this outage stays recorded before it self-expires on read "
+        "(per-record override). Precedence: --ttl > BUILD_LOOP_OUTAGE_TTL_SECONDS "
+        f"> config.outageTtlSeconds > {store.DEFAULT_TTL_SECONDS}s default.",
+    )
     p.add_argument("--plain", action="store_true", help="Print only the model id.")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
@@ -150,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.unavailable_model:
         # Outage observed: record it + re-resolve to the next available model.
         result = fallback(
-            workdir=workdir, tier=args.tier, unavailable_model=args.unavailable_model
+            workdir=workdir,
+            tier=args.tier,
+            unavailable_model=args.unavailable_model,
+            ttl=args.ttl,
         )
     else:
         # No outage named: just resolve the tier to its primary available model

@@ -80,7 +80,8 @@ CATEGORY_KEYWORDS = [
                       # Model selection / dispatch resolution surfaces (the
                       # taxonomy, resolver, dispatch fallback, classification):
                       "model selection", "model-selection", "model outage",
-                      "model availability", "dispatch fallback", "re-resolve",
+                      "model-outage", "model availability", "model_availability",
+                      "model-availability", "dispatch fallback", "re-resolve",
                       "taxonomy", "segment", "model resolver", "model_resolver",
                       "classify model", "model_overrides", "model overrides",
                       "transcript", "pattern-miner", "pattern miner",

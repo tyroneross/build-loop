@@ -55,6 +55,7 @@ from typing import Any
 
 # Reuse the existing resolver — do not reimplement the tier taxonomy or floor.
 try:  # pragma: no cover - import shim for direct + packaged execution
+    import model_availability_store as availability_store
     from model_overrides import (
         MODEL_REGISTRY,
         TIERS,
@@ -66,6 +67,7 @@ try:  # pragma: no cover - import shim for direct + packaged execution
     )
 except ImportError:  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import model_availability_store as availability_store  # type: ignore[no-redefine]
     from model_overrides import (  # type: ignore[no-redefine]
         MODEL_REGISTRY,
         TIERS,
@@ -98,21 +100,32 @@ def _read_json(path: Path) -> Any:
 
 
 def load_unavailable(workdir: Path) -> set[str]:
-    """Load the persistent unavailable-model set.
+    """Load the persistent unavailable-model set, expiring + pruning stale records.
 
-    Accepts two on-disk shapes (both fail-open to an empty set):
-      - {"unavailable": ["fable", ...]}                 # explicit list
-      - {"fable": {"reason": "...", "since": "..."}}    # id-keyed map
+    This is THE read on the resolve/dispatch path. Each recorded outage carries a
+    wall-clock ``recorded_at`` + effective ``ttl``; records past that horizon (and
+    legacy bare-string records with no timestamp) are treated as available and
+    LAZILY pruned from the store on read — no background process. So a ``fable``
+    outage recorded earlier auto-clears once its TTL elapses, and the legacy
+    timestamp-less flat-list format self-heals on first read.
+
+    Accepts these on-disk shapes (all fail-open to an empty set):
+      - {"unavailable": [{"id": "fable", "recorded_at": ..., "ttl": ...}, ...]}  # current
+      - {"unavailable": ["fable", ...]}                 # legacy flat list (-> expired)
+      - {"fable": {"reason": "...", "since": "..."}}    # id-keyed map (legacy fallback)
     """
     data = _read_json(availability_path(workdir))
+    if isinstance(data, dict) and isinstance(data.get("unavailable"), list):
+        # Primary path: object/legacy records with TTL-based expiry + prune-on-read.
+        return availability_store.prune_on_read(workdir)
     if isinstance(data, dict):
-        listed = data.get("unavailable")
-        if isinstance(listed, list):
-            return {str(m).strip() for m in listed if str(m).strip()}
-        # id-keyed map fallback (any non-"unavailable" top-level key is an id)
-        return {str(k).strip() for k in data if k != "unavailable" and str(k).strip()}
+        # id-keyed map fallback (any non-"unavailable" top-level key is an id).
+        # No timestamps in this shape -> treat every id as expired (available),
+        # consistent with the legacy-self-heal rule.
+        return set()
     if isinstance(data, list):
-        return {str(m).strip() for m in data if str(m).strip()}
+        # Bare top-level list (legacy) -> no timestamps -> all expired.
+        return set()
     return set()
 
 

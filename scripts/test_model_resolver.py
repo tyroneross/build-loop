@@ -16,10 +16,16 @@ RESOLVER = HERE / "model_resolver.py"
 
 
 def _write_availability(workdir: Path, unavailable: list[str]) -> None:
+    # Write LIVE (non-expired) timestamped records — the current store shape for
+    # "this model is down right now". Legacy bare-string expiry is covered by the
+    # dedicated TtlExpiryTests below, so general resolver tests use live records.
+    import time
+
     bl = workdir / ".build-loop"
     bl.mkdir(parents=True, exist_ok=True)
+    records = [{"id": m, "recorded_at": time.time(), "ttl": 3600} for m in unavailable]
     (bl / "model-availability.json").write_text(
-        json.dumps({"unavailable": unavailable}), encoding="utf-8"
+        json.dumps({"unavailable": records}), encoding="utf-8"
     )
 
 
@@ -120,13 +126,16 @@ class FloorClampTests(unittest.TestCase):
     """
 
     def _write_config(self, workdir: Path, overrides: dict, unavailable: list[str]) -> None:
+        import time
+
         bl = workdir / ".build-loop"
         bl.mkdir(parents=True, exist_ok=True)
         (bl / "config.json").write_text(
             json.dumps({"modelOverrides": overrides}), encoding="utf-8"
         )
+        records = [{"id": m, "recorded_at": time.time(), "ttl": 3600} for m in unavailable]
         (bl / "model-availability.json").write_text(
-            json.dumps({"unavailable": unavailable}), encoding="utf-8"
+            json.dumps({"unavailable": records}), encoding="utf-8"
         )
 
     def test_frontier_override_to_haiku_is_clamped(self) -> None:
@@ -193,10 +202,13 @@ class HostProvidersFilterTests(unittest.TestCase):
     """Host-neutral provider filter: a model the host can't dispatch is excluded."""
 
     def _write_host(self, workdir: Path, unavailable: list[str], providers: list[str]) -> None:
+        import time
+
         bl = workdir / ".build-loop"
         bl.mkdir(parents=True, exist_ok=True)
+        records = [{"id": m, "recorded_at": time.time(), "ttl": 3600} for m in unavailable]
         (bl / "model-availability.json").write_text(
-            json.dumps({"unavailable": unavailable, "hostProviders": providers}),
+            json.dumps({"unavailable": records, "hostProviders": providers}),
             encoding="utf-8",
         )
 
@@ -268,6 +280,51 @@ class AvailabilityPersistenceTests(unittest.TestCase):
             payload = resolve(td, "frontier")
             self.assertEqual(payload["model"], "opus")
             self.assertEqual(payload["source"], "tier-fallback")
+
+
+class TtlExpiryTests(unittest.TestCase):
+    """The resolve/dispatch read self-expires + prunes stale outage records."""
+
+    def _write_records(self, workdir: Path, records: list) -> None:
+        bl = workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        (bl / "model-availability.json").write_text(
+            json.dumps({"unavailable": records}), encoding="utf-8"
+        )
+
+    def test_legacy_flat_list_self_heals_to_default(self) -> None:
+        # The exact stale-state bug: a timestamp-less {"unavailable":["fable"]}
+        # must be treated as expired on first read -> frontier resolves to fable.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_records(Path(td), ["fable"])
+            payload = resolve(td, "frontier", host_providers="anthropic")
+            self.assertEqual(payload["model"], "fable", payload)
+            # And the stale record is pruned from disk on read.
+            disk = json.loads(
+                (Path(td) / ".build-loop" / "model-availability.json").read_text()
+            )
+            self.assertEqual(disk["unavailable"], [])
+
+    def test_expired_object_record_self_heals(self) -> None:
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            self._write_records(Path(td), [
+                {"id": "fable", "recorded_at": time.time() - 10_000, "ttl": 1}
+            ])
+            payload = resolve(td, "frontier", host_providers="anthropic")
+            self.assertEqual(payload["model"], "fable", payload)
+
+    def test_within_ttl_object_record_still_blocks(self) -> None:
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            self._write_records(Path(td), [
+                {"id": "fable", "recorded_at": time.time(), "ttl": 3600}
+            ])
+            payload = resolve(td, "frontier", host_providers="anthropic")
+            self.assertEqual(payload["model"], "opus", payload)
+            self.assertNotIn(payload["model"], {"sonnet", "haiku"})
 
 
 class TierIntegrityGuardTests(unittest.TestCase):

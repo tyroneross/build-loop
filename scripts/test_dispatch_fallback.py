@@ -35,6 +35,14 @@ def _availability(workdir: str) -> dict:
     return json.loads(p.read_text()) if p.exists() else {}
 
 
+def _unavailable_ids(workdir: str) -> list[str]:
+    """The model ids recorded unavailable (records are timestamped objects now)."""
+    out: list[str] = []
+    for r in _availability(workdir).get("unavailable", []):
+        out.append(r if isinstance(r, str) else r.get("id"))
+    return out
+
+
 def _anthropic_host(workdir: str) -> None:
     bl = Path(workdir) / ".build-loop"
     bl.mkdir(parents=True, exist_ok=True)
@@ -67,7 +75,7 @@ class FallbackResolutionTests(unittest.TestCase):
             _anthropic_host(td)
             jrun("--workdir", td, "--tier", "frontier",
                  "--unavailable-model", "fable", "--json")
-            self.assertIn("fable", _availability(td)["unavailable"])
+            self.assertIn("fable", _unavailable_ids(td))
 
     def test_record_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -79,7 +87,7 @@ class FallbackResolutionTests(unittest.TestCase):
             self.assertTrue(first["newly_recorded"])
             self.assertFalse(second["newly_recorded"])
             # Still exactly one entry.
-            self.assertEqual(_availability(td)["unavailable"].count("fable"), 1)
+            self.assertEqual(_unavailable_ids(td).count("fable"), 1)
 
     def test_preserves_host_providers_key_on_record(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -88,7 +96,7 @@ class FallbackResolutionTests(unittest.TestCase):
                  "--unavailable-model", "fable", "--json")
             data = _availability(td)
             self.assertEqual(data["hostProviders"], ["anthropic"])
-            self.assertIn("fable", data["unavailable"])
+            self.assertIn("fable", _unavailable_ids(td))
 
     def test_clear_restores_availability(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -98,6 +106,92 @@ class FallbackResolutionTests(unittest.TestCase):
             cleared = jrun("--workdir", td, "--clear", "fable", "--json")
             self.assertTrue(cleared["removed"])
             self.assertNotIn("fable", _availability(td).get("unavailable", []))
+
+
+class TtlExpiryTests(unittest.TestCase):
+    """Outages self-clear after their TTL — no manual --clear needed."""
+
+    def _resolver(self, workdir: str) -> str:
+        # Use the NON-recording resolver for the "is it still down?" read so the
+        # read itself doesn't persist anything. Anthropic host so fable->opus.
+        r = subprocess.run(
+            [sys.executable, str(HERE / "model_resolver.py"),
+             "--workdir", workdir, "--tier", "frontier",
+             "--host-providers", "anthropic", "--plain"],
+            check=True, capture_output=True, text=True,
+        )
+        return r.stdout.strip()
+
+    def test_self_expiry_after_ttl(self) -> None:
+        # Record fable down with a 2s TTL -> opus now; after 3s a fresh resolve
+        # auto-expires the record and returns fable (no manual clear).
+        import time
+
+        with tempfile.TemporaryDirectory() as td:
+            _anthropic_host(td)
+            out = jrun("--workdir", td, "--tier", "frontier",
+                       "--unavailable-model", "fable", "--ttl", "2", "--json")
+            self.assertEqual(out["model"], "opus")
+            time.sleep(3)
+            self.assertEqual(self._resolver(td), "fable")
+            # The expired record was lazily pruned from the store on read.
+            self.assertEqual(_availability(td).get("unavailable"), [])
+
+    def test_within_ttl_still_holds(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _anthropic_host(td)
+            jrun("--workdir", td, "--tier", "frontier",
+                 "--unavailable-model", "fable", "--ttl", "3600", "--json")
+            # Well within TTL -> outage still in effect -> opus.
+            self.assertEqual(self._resolver(td), "opus")
+            ids = {r.get("id") for r in _availability(td)["unavailable"]}
+            self.assertIn("fable", ids)
+
+    def test_per_record_ttl_override_stored(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _anthropic_host(td)
+            jrun("--workdir", td, "--tier", "frontier",
+                 "--unavailable-model", "fable", "--ttl", "999", "--json")
+            rec = _availability(td)["unavailable"][0]
+            self.assertEqual(rec["id"], "fable")
+            self.assertEqual(rec["ttl"], 999)
+            self.assertIn("recorded_at", rec)
+
+    def test_record_writes_timestamped_object_not_bare_string(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _anthropic_host(td)
+            jrun("--workdir", td, "--tier", "frontier",
+                 "--unavailable-model", "fable", "--json")
+            rec = _availability(td)["unavailable"][0]
+            self.assertIsInstance(rec, dict)
+            self.assertIn("recorded_at", rec)
+            self.assertIn("ttl", rec)
+
+    def test_clear_removes_object_record(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _anthropic_host(td)
+            jrun("--workdir", td, "--tier", "frontier",
+                 "--unavailable-model", "fable", "--json")
+            cleared = jrun("--workdir", td, "--clear", "fable", "--json")
+            self.assertTrue(cleared["removed"])
+            self.assertEqual(_availability(td)["unavailable"], [])
+
+    def test_clear_removes_legacy_string_record(self) -> None:
+        # --clear must still work against a pre-existing legacy flat-list entry.
+        with tempfile.TemporaryDirectory() as td:
+            bl = Path(td) / ".build-loop"
+            bl.mkdir(parents=True, exist_ok=True)
+            (bl / "model-availability.json").write_text(
+                json.dumps({"unavailable": ["fable", "opus"]}), encoding="utf-8"
+            )
+            cleared = jrun("--workdir", td, "--clear", "fable", "--json")
+            self.assertTrue(cleared["removed"])
+            ids = {
+                (r if isinstance(r, str) else r.get("id"))
+                for r in _availability(td)["unavailable"]
+            }
+            self.assertNotIn("fable", ids)
+            self.assertIn("opus", ids)
 
 
 class FailOpenTests(unittest.TestCase):
