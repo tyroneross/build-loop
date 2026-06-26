@@ -355,6 +355,9 @@ class CoordinationStatusTests(unittest.TestCase):
         # actually probes Python import.
         env.pop("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", None)
         env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
+        # Exclude the fetch-on-install tier (and its cached binary, which would
+        # otherwise resolve as repo-local) so this test isolates python-import.
+        env["BUILD_LOOP_DISABLE_BINARY_FETCH"] = "1"
         env["PATH"] = "/usr/bin:/bin"  # strip the real pipx-installed CLI
         # Prepend so the fake wins over any real install.
         env["PYTHONPATH"] = fake_path + os.pathsep + env.get("PYTHONPATH", "")

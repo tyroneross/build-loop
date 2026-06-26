@@ -311,6 +311,24 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
         add(sibling / "target" / "debug" / "rally")
 
     add(shutil.which("rally"))
+
+    # Fetch-on-install: a previously-fetched pinned binary in the build-loop
+    # runtime cache. Last candidate so a live system/sibling binary always wins,
+    # but ahead of nothing — the facade's direct rust_rally_binary() calls
+    # (reaper, post) must find the fetched binary too. We do NOT trigger a fetch
+    # here (that is the discovery-tier's job); we only ADD an already-cached path.
+    if not os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
+        try:
+            from . import binary_fetch as _fetch
+        except ImportError:
+            try:
+                import binary_fetch as _fetch  # type: ignore
+            except ImportError:
+                _fetch = None  # type: ignore
+        if _fetch is not None:
+            cached = _fetch.cached_binary_path()
+            if cached.is_file():
+                add(cached)
     return candidates
 
 
@@ -485,6 +503,86 @@ def _invoke_discover_binary(
     return _shape_envelope_from_discover(raw, resolved_via=resolved_via)
 
 
+def _try_fetched_binary(workdir: Path) -> DiscoveryEnvelope | None:
+    """Fetch-on-install tier: provision the PINNED rally binary, then resolve.
+
+    Fires only after the live-binary probes (env / rust-cli / repo-local /
+    path-binary) miss — i.e. no rally is installed. Fetches the host-platform
+    asset from the pinned release (sha256-verified, version-pinned, quarantine-
+    stripped, cached), then runs the same ``rally setup --json`` resolution the
+    rust-cli tier uses. An unsupported host (no matching asset) returns None so
+    the chain falls through to the loud internal fallback.
+
+    The fetched binary is treated as a first-class native source: the envelope
+    carries ``resolved_via: "fetched-binary"`` (a full-capability source) and the
+    same hash-chain channel layout as ``rust-cli``.
+    """
+    if os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
+        return None
+    try:  # package import with script-mode fallback
+        from . import binary_fetch as _fetch
+    except ImportError:
+        try:
+            import binary_fetch as _fetch  # type: ignore
+        except ImportError:
+            return None
+    try:
+        binary = _fetch.ensure_binary()
+    except Exception:  # noqa: BLE001 — fetch must never crash discovery
+        return None
+    if binary is None:
+        return None
+    return _resolve_fetched_binary_channel(str(binary), workdir)
+
+
+def _resolve_fetched_binary_channel(
+    binary: str, workdir: Path
+) -> DiscoveryEnvelope | None:
+    """Resolve a channel for an already-provisioned fetched binary.
+
+    The pinned binary exposes the repo-local ``whoami`` surface (protocol 1.0,
+    ``.rally`` ledger), not the newer ``setup`` surface, so resolution mirrors
+    ``_try_repo_local_rally_cli`` but stamps ``resolved_via: "fetched-binary"``
+    so the source is attributable to the fetch tier. Still a FULL-capability
+    source.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "whoami", "--json"],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=hook_budget.inner_timeout_seconds(hook_budget.MARGIN_CHILD),
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        raw = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict) or raw.get("ok") is not True:
+        return None
+    whoami = ((raw.get("data") or {}).get("whoami") or {})
+    repo_root = whoami.get("repo_root") or str(workdir)
+    channel_dir = Path(str(repo_root)).expanduser().resolve() / ".rally"
+    repo_id = whoami.get("repo_id") or channel_dir.parent.name
+    shaped = {
+        "installed": True,
+        "channel_dir": str(channel_dir),
+        "app_slug": str(repo_id),
+        "repo_id": str(repo_id),
+        "channel_layout": "repo-local-rally",
+        "policy": "fetched-binary",
+        "protocol_version": "1.0",
+        "last_resolved_at": _utc_iso(),
+        "rally_binary": binary,
+        "whoami": raw,
+    }
+    return _shape_envelope_from_discover(shaped, resolved_via="fetched-binary")
+
+
 def _try_python_import(workdir: Path) -> DiscoveryEnvelope | None:
     try:
         from agent_rally_point.discover import discover  # noqa: PLC0415
@@ -588,6 +686,7 @@ def resolve(workdir: Path | str) -> DiscoveryEnvelope:
         ("repo-local-rally-cli", _try_repo_local_rally_cli),
         ("path-binary", _try_path_binary),
         ("python-import", _try_python_import),
+        ("fetched-binary", _try_fetched_binary),
     ):
         cached = _cache_get(workdir_key, source_tag)
         if cached is not None:

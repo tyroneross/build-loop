@@ -60,6 +60,10 @@ def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     # adjacent local agent-rally-point checkout may contain an uninstalled
     # Rust binary that would otherwise intentionally win.
     env["BUILD_LOOP_DISABLE_SIBLING_RALLY"] = "1"
+    # Likewise exclude the fetch-on-install tier: these tests pin the order of
+    # the LIVE source tiers, and a previously-cached fetched binary would
+    # otherwise resolve as repo-local before the lower live tiers.
+    env["BUILD_LOOP_DISABLE_BINARY_FETCH"] = "1"
     if extra:
         env.update(extra)
     return env
