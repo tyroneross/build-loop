@@ -77,36 +77,60 @@ filter; outages persist to model-availability.json with a TTL.
 
 Why this is bad: it is the exact same change, but described as the feature/implementation. The reader learns what files exist, not that their runs stop stalling during an outage or that quality holds on the backup. It leads with the mechanism (`dispatch_fallback.py`, `canonical-id normalization`, `host-provider filter`, `model-availability.json`, `TTL`) and never states the user outcome. The fix is the rewrite above: keep this detail, but move it below an outcome-first lead.
 
-## Precision and Brevity Rules
-Rewrite sentences to be clear, short, and specific.
-Prefer:
-- Short common words over longer words with the same meaning.
-- Concrete nouns and verbs over abstract phrases.
-- Numbers, dates, steps, names, and roles over vague claims.
-- Direct cause-and-effect sentences over soft phrasing.
-- 'Because' when it cleanly explains the cause.
-Do not invent data. If numbers, dates, or evidence are not provided, do not add them.
+## Precision and Brevity — sentence architecture
 
-### Preferred Patterns
-Metric → Location → Meaning
-[Number] of [users/items/events] [did action] at [specific point], suggesting [likely cause or meaning].
-Example: 70% of users abandoned onboarding at step 5 of 7, suggesting the flow was too long.
+Clear, concise statements depend less on better words and more on sentence architecture. Strongest pattern: concrete noun + strong verb + specific object/outcome + cause/evidence when needed.
 
-Thing → Failed behavior → Cause
-[Thing] [failed outcome] because [specific cause].
-Example: The model gave inconsistent answers because the prompt lacked success criteria.
+### 1. Core elements of a clear sentence
+| Element | Job | Strong | Weak |
+|---|---|---|---|
+| Actor/subject | Who or what it is about | The team | There was |
+| Verb | What happened/changed | launched, cut, missed, caused | had, was, experienced |
+| Object/outcome | What the action affected | the onboarding flow | the process |
+| Cause | Why it happened | because ownership was split | due to various issues |
+| Metric/evidence | What proves it | 70% dropped at step 5 | many users struggled |
+| Time/place | When/where | in Q2, at step 5 of 7 | recently, during the process |
+| Implication | Why it matters | so the team should shorten setup | which is important |
 
-Cause → Outcome
-[Specific cause] caused [specific outcome].
-Example: No single owner caused the project to stall.
+Core sentence spine: [Actor] [verb] [object/outcome] [because cause].
+Example: The team launched behind schedule because ownership was split across three groups.
 
-Actor → Outcome → Cause
-[Actor] [outcome] because [cause].
-Example: The team launched behind schedule because they lacked stakeholder alignment.
+### 2. Parts of speech: what to favor
+- Nouns — concrete: name real things/people/roles/systems/outcomes. ("Users abandoned onboarding at step 5." not "There was friction in the user journey.")
+- Verbs — carry the sentence: had an impact on→changed; was responsible for→caused; made improvements to→improved; experienced delays→slipped; provided support for→supported; made a decision→decided.
+- Adjectives — only when they add precision: "missed the regulatory deadline" (why it matters) not "an important deadline" (asks for trust).
+- Adverbs — usually replace with data: significantly increased→increased 42%; quickly resolved→resolved in two days; frequently failed→failed in 3 of 5 tests; strongly suggests→suggests; materially improved→improved conversion by 8 points.
 
-Nuance: use 'suggesting' when the data points to a likely cause; use 'because' only when the causal link is known.
+### 3. Most useful sentence patterns
+1. Outcome → Cause — [Actor] [outcome] because [cause]. ("The model gave inconsistent answers because the prompt lacked success criteria.")
+2. Metric → Behavior → Location → Meaning — [Metric] of [group] [behavior] at [point], suggesting [meaning]. ("70% of users abandoned onboarding at step 5 of 7, suggesting the flow was too long.") Use "suggesting" when data implies but does not prove a cause.
+3. Cause → Outcome — [Cause] caused [outcome]. ("No single owner caused the project to stall.")
+4. Actor → Action → Object → Reason — [Actor] should [action] [object] because [reason]. ("The team should cut onboarding from seven steps to three because most users drop off before setup is complete.")
+5. Decision → Rationale → Tradeoff — [Decision] works because [rationale], but [tradeoff]. ("A shorter onboarding flow should improve completion, but it may collect less user data upfront.")
+6. If → Then → Because — If [condition], then [action/outcome] because [reason]. ("If users abandon step 5, then the team should test a shorter flow because the current sequence likely asks for too much upfront.")
 
-These reinforce, not replace, the rules above. "Direct cause-and-effect over soft phrasing" is the same instinct as rule 6's no-contrastive-pivot ban — both say to state what happened and why without negation or padding. "Do not invent data" is the user-facing-style face of rule 7 and of build-loop's standing "no false data, no unverified claims" principle, backed by the fact-checker in Review-D. These are JUDGMENT rules, applied in the Review-G one-pass self-heal alongside outcome framing — `report_lint.py` does NOT grade "shorter words" or "is this a causal pattern": a fuzzy check there would false-flag correct terse prose and over-block, against the deterministic-only-for-known-risks rule. Apply them when rewriting the draft; do not add a lint for them.
+### 4. Order of information
+Default: (1) main point, (2) evidence or cause, (3) implication or next step.
+Example: "Users are dropping out late in onboarding. 70% abandon at step 5 of 7, suggesting the setup asks for too much before users see value. The team should test a three-step version."
+
+### 5. Practical rule set
+1. Start with the real actor, not "there is" / "it is."
+2. Use one strong verb instead of a weak verb plus extra words.
+3. Prefer numbers over vague claims.
+4. Put the main point before the explanation.
+5. Use "because" for known causes.
+6. Use "suggesting" for likely causes.
+7. Cut adjectives unless they add specific meaning.
+8. Replace adverbs with data when possible.
+9. Keep one main idea per sentence.
+10. Keep caveats close to the claim they qualify.
+Do not invent data: numbers, dates, and evidence appear only when supplied or verified (this is the user-facing-style face of build-loop's no-false-data principle + the fact-checker, not a second check).
+
+### Best default formula
+[Specific actor] + [strong verb] + [specific outcome] + because + [specific cause].
+Example: "Users abandoned onboarding because the seven-step flow asked for too much before showing value."
+
+This section is JUDGMENT-enforced in the Review-G one-pass self-heal alongside outcome framing — `report_lint.py` does NOT grade "shorter words", sentence patterns, or "is this a causal sentence": a fuzzy check there would false-flag correct terse prose and over-block, against the deterministic-only-for-known-risks rule. The direct cause→effect guidance is the same instinct as rule 6's no-contrastive-pivot ban (state what happened and why, without negation or padding); the no-invented-data line is the user-facing-style face of rule 7 and of build-loop's standing "no false data, no unverified claims" principle, traced by the fact-checker in Review-D — not a second enforcement path. Apply these when rewriting the draft; do not add a lint for them.
 
 ## Good — the exemplar (Codex output, captured 2026-06-04)
 

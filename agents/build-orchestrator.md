@@ -140,7 +140,7 @@ Routing detail extracted to `references/phase-4-review.md`. Sub-step procedural 
   ```
   python3 scripts/report_lint.py <draft.md> --json
   → total==0: emit as-is
-  → total>0: revise the draft ONCE per skills/build-loop/references/output-style.md (translate jargon, fix headline, add validation line, remove contrastive-pivots, rewrite a mechanism-only lead into an outcome-first one per §"Outcome framing", and apply §"Precision and Brevity Rules" — shorter words, concrete nouns/verbs, direct cause→effect, no invented numbers), re-run, emit (append a one-line "[warn] style-lint findings remain" to ## Done if any persist)
+  → total>0: revise the draft ONCE per skills/build-loop/references/output-style.md (translate jargon, fix headline, add validation line, remove contrastive-pivots, rewrite a mechanism-only lead into an outcome-first one per §"Outcome framing", and apply §"Precision and Brevity — sentence architecture" — actor+strong-verb+outcome spine, concrete nouns/verbs, data over adjectives/adverbs, direct cause→effect with because/suggesting, no invented numbers), re-run, emit (append a one-line "[warn] style-lint findings remain" to ## Done if any persist)
   → script error: append "[warn] style-lint skipped" and continue
   ```
 
