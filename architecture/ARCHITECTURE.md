@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 47 skills · 328 scripts · 17 hooks** (auto-discovered d7fb535e)
+**28 agents · 48 skills · 332 scripts · 17 hooks** (auto-discovered ed192d23)
 
 <details><summary>agents</summary>
 
@@ -63,6 +63,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `attribution-standard`
 - `authentication`
 - `auto-decision-capture`
+- `auto-finding-capture`
 - `build-loop`
 - `building-with-deepagents`
 - `capabilities`
@@ -202,6 +203,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/hook_budget_lint.py`
 - `scripts/hook_hygiene_lint.py`
 - `scripts/hooks/plugin_dir_heal.py`
+- `scripts/hooks/session_end_retro_sweep.py`
 - `scripts/host_capabilities.py`
 - `scripts/ibr_quickpass.py`
 - `scripts/infer_risk_surface.py`
@@ -354,6 +356,9 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/scan_corrections/__init__.py`
 - `scripts/scan_corrections/__main__.py`
 - `scripts/scan_corrections/detect.py`
+- `scripts/scan_findings/__init__.py`
+- `scripts/scan_findings/__main__.py`
+- `scripts/scan_findings/detect.py`
 - `scripts/scan_transcript_for_decisions.py`
 - `scripts/script_relevance.py`
 - `scripts/self_mod_verify.py`

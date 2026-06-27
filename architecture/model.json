@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d7fb535e947493cac2d3142639748de1776becf2826e43e078fcc5fffa3f4cd4"
+    "content_sha256": "ed192d23522bfd6c4ed84e51c982af987b3feb9786e7d86d952887e7ad32e92d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1195,6 +1195,14 @@
           "date": "2026-06-04"
         }
       },
+      "auto-finding-capture": {
+        "description": "Project-scoped skill documenting build-loop's DEFAULT-ON auto-capture of clearly-identified findings/issues into the backlog, regardless of which terminal or agent surfaced them. Provides the detection contract, routing rules, dedup strategy, and the standing rule that agents/critics must NOT gate identified issues behind a user selection. Use when an agent, audit, or critic surfaces a concrete severity-labeled issu…",
+        "file": "skills/auto-finding-capture/SKILL.md",
+        "last_updated": {
+          "author": "Tyrone Ross",
+          "date": "2026-06-27"
+        }
+      },
       "build-loop": {
         "description": "\"Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', 'rewrite', 'replace') OR symptom language ('fix', 'broken', 'doesn't work', 'isn't loading', 'not displaying', 'missing', 'should show', 'needs to', 'make it', 'show this differently') OR any task touching 2+ files, adding/removing an endpoint, cro…",
         "file": "skills/build-loop/SKILL.md",
@@ -1578,6 +1586,7 @@
       "scripts/hook_budget_lint.py": "hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.",
       "scripts/hook_hygiene_lint.py": "hook_hygiene_lint.py — deterministic hook reliability lint for build-loop.",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
+      "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
       "scripts/infer_risk_surface.py": "infer_risk_surface.py — deterministic riskSurfaceChange auto-infer.",
@@ -1730,6 +1739,9 @@
       "scripts/scan_corrections/__init__.py": "Deterministic transcript scanner for user corrections + lessons.",
       "scripts/scan_corrections/__main__.py": "CLI for the tier-1 correction + lesson scanner.",
       "scripts/scan_corrections/detect.py": "Tier-1 deterministic correction + lesson detector.",
+      "scripts/scan_findings/__init__.py": "scan_findings — deterministic Stop-hook sweep that auto-captures",
+      "scripts/scan_findings/__main__.py": "CLI + Stop-hook entry for the deterministic findings sweep.",
+      "scripts/scan_findings/detect.py": "Tier-1 deterministic findings detector.",
       "scripts/scan_transcript_for_decisions.py": "End-of-session sweep for tier-3 (inferred / assumed) decisions.",
       "scripts/script_relevance.py": "Script relevance / staleness detector (G5).",
       "scripts/self_mod_verify.py": "self_mod_verify.py — correctness gate for any self-modification of build-loop's own code.",
