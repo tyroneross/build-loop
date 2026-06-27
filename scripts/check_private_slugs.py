@@ -29,6 +29,7 @@ private slugs out of every tracked file, including this one.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import sys
@@ -243,8 +244,13 @@ def main(argv: list[str]) -> int:
         print("build-loop is open source — replace each hit with a generic,",
               file=sys.stderr)
         print("non-private placeholder before committing.\n", file=sys.stderr)
-        for path, lineno, slug, line in hits:
-            print(f"  {path}:{lineno}: [{slug}] {line}", file=sys.stderr)
+        for path, lineno, slug, _line in hits:
+            # Redact: emit location + a stable short hash only — never the raw
+            # slug or its surrounding line. This output lands in public Actions
+            # logs, so printing the matched private slug would re-leak it. The
+            # hash lets a maintainer correlate locally without exposure.
+            digest = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:12]
+            print(f"  {path}:{lineno}: [redacted slug sha256:{digest}]", file=sys.stderr)
         print(f"\nIf a hit is an intentional historical record, add the path to",
               file=sys.stderr)
         print(f"EXEMPT_PATHS in scripts/{SELF_BASENAME}.", file=sys.stderr)

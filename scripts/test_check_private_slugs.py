@@ -94,7 +94,9 @@ def test_embedded_slug_with_leading_underscore_is_caught(repo: Path):
     _git(["add", "-A"], repo)
     res = _run(repo, "--all")
     assert res.returncode == 1
-    assert "secretproj" in res.stdout + res.stderr
+    # The hit is reported but the slug itself must never reach (public) logs.
+    assert "secretproj" not in res.stdout + res.stderr
+    assert "redacted slug sha256:" in res.stderr
 
 
 def test_embedded_slug_with_trailing_underscore_is_caught(repo: Path):
@@ -136,7 +138,9 @@ def test_literal_dot_matches_only_a_literal_dot(repo: Path):
     _git(["add", "-A"], repo)
     res = _run(repo, "--all")
     assert res.returncode == 1, res.stderr
-    assert _DOTTED_SLUG in res.stdout + res.stderr
+    # Detected, but the slug must not leak into output (only a redacted hash).
+    assert _DOTTED_SLUG not in res.stdout + res.stderr
+    assert "redacted slug sha256:" in res.stderr
 
 
 def test_literal_dot_does_not_match_hyphen_or_space(repo: Path):
@@ -290,7 +294,9 @@ def test_ci_flow_real_slug_in_tracked_file_fails(repo: Path):
     _git(["add", "-A"], repo)
     res = _run(repo, "--all")
     assert res.returncode == 1
-    assert slug in res.stdout + res.stderr
+    # Enforcement reports the hit (path + redacted hash) without leaking the slug.
+    assert slug not in res.stdout + res.stderr
+    assert "redacted slug sha256:" in res.stderr
 
 
 def test_example_file_is_exempt_from_scan(repo: Path):

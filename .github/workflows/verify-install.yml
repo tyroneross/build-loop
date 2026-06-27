@@ -31,9 +31,19 @@ jobs:
 
       - name: Resolve version to verify
         id: ver
+        env:
+          # Untrusted workflow_dispatch input — passed via env so it is never
+          # interpolated into the script text (no command injection), then
+          # validated against a strict allowlist before any use.
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            V="${{ inputs.version }}"
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            if ! printf '%s' "$INPUT_VERSION" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+_-]*$'; then
+              echo "::error::Invalid version input: must match ^[0-9A-Za-z][0-9A-Za-z.+_-]*$"
+              exit 1
+            fi
+            V="$INPUT_VERSION"
           else
             V=$(node -p "require('./package.json').version")
           fi
@@ -56,17 +66,19 @@ jobs:
       - name: Sandbox install
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Env-passed (already validated in the resolve step) — not inlined.
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/verify && cd /tmp/verify
           npm init -y >/dev/null
-          npm install "@tyroneross/build-loop@${{ steps.ver.outputs.version }}"
+          npm install "@tyroneross/build-loop@${VERSION}"
 
           # Read the manifest directly. require() would fail because the
           # package's `exports` field doesn't expose ./package.json.
           INSTALLED=$(jq -r .version node_modules/@tyroneross/build-loop/package.json)
-          if [ "$INSTALLED" != "${{ steps.ver.outputs.version }}" ]; then
-            echo "::error::Installed version ($INSTALLED) does not match requested (${{ steps.ver.outputs.version }})"
+          if [ "$INSTALLED" != "$VERSION" ]; then
+            echo "::error::Installed version ($INSTALLED) does not match requested ($VERSION)"
             exit 1
           fi
 

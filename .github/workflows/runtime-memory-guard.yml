@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
 
+permissions:
+  contents: read
+
 jobs:
   runtime-memory-guard:
     runs-on: ubuntu-latest

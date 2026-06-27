@@ -21,6 +21,9 @@ on:
   pull_request:
   push:
 
+permissions:
+  contents: read
+
 jobs:
   private-slug-guard:
     runs-on: ubuntu-latest
