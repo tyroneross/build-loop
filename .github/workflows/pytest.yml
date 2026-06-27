@@ -56,12 +56,13 @@ jobs:
 
       - name: Sync core + test dependencies
         # Core deps (tree-sitter, networkx, pathspec) + the `test` extra
-        # (pytest) + pytest-timeout/PyYAML for CI-only test infrastructure.
+        # (pytest, pytest-timeout, PyYAML). All test deps are declared in
+        # pyproject so `uv sync --extra test` is the single source of truth —
+        # no inline installs to drift out of sync (the root cause of the
+        # 2026-06 CI outage was PyYAML living only in an inline install).
         # The optional `db` extra is deliberately omitted so `db`-marked tests
         # auto-skip.
-        run: |
-          uv sync --extra test
-          uv pip install pytest-timeout pyyaml
+        run: uv sync --extra test
 
       - name: Run deterministic test suite
         # --timeout caps any single test (thread method) so a hung test fails

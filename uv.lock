@@ -45,6 +45,8 @@ retrieval = [
 ]
 test = [
     { name = "pytest" },
+    { name = "pytest-timeout" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -58,6 +60,8 @@ requires-dist = [
     { name = "pathspec", specifier = ">=0.12" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'db'", specifier = ">=3.1" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
+    { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.4.0" },
+    { name = "pyyaml", marker = "extra == 'test'" },
     { name = "sentence-transformers", marker = "extra == 'retrieval'", specifier = ">=3.0" },
     { name = "torch", marker = "extra == 'retrieval'", specifier = ">=2.0" },
     { name = "tree-sitter", specifier = ">=0.21" },
