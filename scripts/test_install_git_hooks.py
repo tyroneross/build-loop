@@ -335,5 +335,72 @@ class TestSessionStartAutoInstall(unittest.TestCase):
         self.assertEqual(rc, 0)
 
 
+class TestArchRegenSegment(unittest.TestCase):
+    """The pre-commit arch-regen segment chains in/out without clobbering a
+    coexisting rally-point private-slug-guard segment."""
+
+    RALLY_PRECOMMIT = (
+        "#!/bin/sh\n"
+        "# --- BEGIN private-slug-guard pre-commit ---\n"
+        "echo rally-guard\n"
+        "# --- END private-slug-guard pre-commit ---\n"
+        "exit 0\n"
+    )
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import install_git_hooks  # noqa: E402
+        self.mod = install_git_hooks
+        self._td = TemporaryDirectory()
+        self.repo = Path(self._td.name)
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _precommit(self) -> Path:
+        return self.repo / ".git" / "hooks" / "pre-commit"
+
+    def test_install_into_empty_creates_runnable_hook(self):
+        res = self.mod._install_arch_regen_segment(self.repo)
+        self.assertTrue(res["installed"])
+        body = self._precommit().read_text()
+        self.assertIn(self.mod.ARCH_REGEN_MARKER, body)
+        self.assertTrue(body.startswith("#!"))
+        self.assertTrue(self._precommit().stat().st_mode & 0o111)
+
+    def test_coexists_with_rally_segment(self):
+        self._precommit().parent.mkdir(parents=True, exist_ok=True)
+        self._precommit().write_text(self.RALLY_PRECOMMIT)
+        self.mod._install_arch_regen_segment(self.repo)
+        body = self._precommit().read_text()
+        self.assertIn("private-slug-guard", body)   # rally preserved
+        self.assertIn(self.mod.ARCH_REGEN_MARKER, body)
+        self.assertTrue(body.rstrip().endswith("exit 0"))
+
+    def test_install_is_idempotent(self):
+        self._precommit().parent.mkdir(parents=True, exist_ok=True)
+        self._precommit().write_text(self.RALLY_PRECOMMIT)
+        self.mod._install_arch_regen_segment(self.repo)
+        self.mod._install_arch_regen_segment(self.repo)
+        body = self._precommit().read_text()
+        self.assertEqual(body.count(self.mod.ARCH_REGEN_MARKER), 1)
+        self.assertEqual(body.count("private-slug-guard pre-commit ---"), 2)  # begin+end
+
+    def test_uninstall_removes_only_our_segment(self):
+        self._precommit().parent.mkdir(parents=True, exist_ok=True)
+        self._precommit().write_text(self.RALLY_PRECOMMIT)
+        self.mod._install_arch_regen_segment(self.repo)
+        self.mod._uninstall_arch_regen_segment(self.repo)
+        body = self._precommit().read_text()
+        self.assertNotIn(self.mod.ARCH_REGEN_MARKER, body)
+        self.assertIn("private-slug-guard", body)   # rally survives
+
+    def test_status_reports_presence(self):
+        self.assertFalse(self.mod._status_arch_regen_segment(self.repo)["installed"])
+        self.mod._install_arch_regen_segment(self.repo)
+        self.assertTrue(self.mod._status_arch_regen_segment(self.repo)["installed"])
+
+
 if __name__ == "__main__":
     unittest.main()

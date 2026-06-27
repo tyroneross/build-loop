@@ -3,14 +3,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """install_git_hooks.py — install / uninstall the build-loop git hooks.
 
-Currently installs:
+Installs:
 
-- ``pre-push`` — the path-agnostic push-HOLD gate (see ``hooks/git/pre-push``).
+- ``pre-push`` — the path-agnostic push-HOLD gate (whole-file Python hook from
+  ``hooks/git/pre-push``).
+- a marker-fenced ``pre-commit`` **segment** that auto-regenerates the
+  architecture diagram when a diagram-source file is staged (delegates to
+  ``scripts/architecture_diagram/regen_hook.py``). It is a chained SEGMENT, not
+  a whole-file hook: the rally-point installer
+  (``scripts/rally_point/install_git_hook.py``) owns its own private-slug-guard
+  segment in the same ``.git/hooks/pre-commit``. Each installer replaces only
+  its OWN fenced segment and preserves the rest verbatim, so the two coexist.
 
-The shell hook chain at ``hooks/pre-commit`` is installed separately (it's
-managed by ``scripts/install_hooks.sh`` and the plugin's session-start
-guardian).  This installer is scoped to hooks that need a Python entry point
-under ``.git/hooks/`` AND that fire on a git operation other than commit.
+Both are idempotent and auto-run on session start via
+``hooks/session-start-git-hooks.sh``.
 
 Design
 ------
@@ -52,8 +58,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,6 +72,28 @@ from typing import Any
 
 HOOK_MARKER = "# build-loop:pre-push-hold-gate"
 HOOKS_RELPATH = ("hooks", "git")
+
+# ---------------------------------------------------------------------------
+# pre-commit arch-regen segment
+# ---------------------------------------------------------------------------
+# A marker-fenced segment chained into ``.git/hooks/pre-commit`` (NOT a
+# whole-file hook — the rally-point installer owns its own private-slug-guard
+# segment in the same file; each installer replaces only its OWN fenced segment
+# and preserves the rest verbatim, so they coexist). When a commit stages a
+# diagram-source file, this runs scripts/architecture_diagram/regen_hook.py to
+# regenerate + stage the diagram, so the freshness gate can't go red on a
+# forgotten manual ``generate.py``. The segment is fail-open: regen_hook.py
+# always exits 0, and the `|| true` is belt-and-suspenders so a hook crash can
+# never block a commit (the CI gate is the fail-closed backstop).
+ARCH_REGEN_MARKER = "# --- BEGIN build-loop arch-regen pre-commit ---"
+ARCH_REGEN_MARKER_END = "# --- END build-loop arch-regen pre-commit ---"
+ARCH_REGEN_SEGMENT = f'''{ARCH_REGEN_MARKER}
+BL_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -n "$BL_TOPLEVEL" ] && [ -f "$BL_TOPLEVEL/scripts/architecture_diagram/regen_hook.py" ]; then
+  python3 "$BL_TOPLEVEL/scripts/architecture_diagram/regen_hook.py" --repo "$BL_TOPLEVEL" || true
+fi
+{ARCH_REGEN_MARKER_END}
+'''
 
 
 # ---------------------------------------------------------------------------
@@ -83,35 +113,102 @@ def _resolve_repo(arg_repo: str | None) -> Path:
 
 
 def _git_hooks_dir(repo: Path) -> Path:
-    """Resolve the effective hooks dir (handles worktrees + core.hooksPath).
+    """Resolve the effective hooks dir, deferring to git itself.
 
-    - In a normal repo: ``<repo>/.git/hooks``
-    - In a worktree: ``<repo>/.git`` is a file pointing to the main repo's
-      ``.git/worktrees/<name>``; we still install into ``<repo>/.git/hooks``
-      because that's the path git resolves for the active worktree by
-      default.  ``core.hooksPath`` overrides; we honour that when set.
+    ``git rev-parse --git-path hooks`` is authoritative: it returns the COMMON
+    ``.git/hooks`` for a worktree (git does NOT use a per-worktree hooks dir by
+    default) and honours ``core.hooksPath``. Hand-parsing the ``.git`` file got
+    this wrong for worktrees (it pointed at ``.git/worktrees/<name>/hooks``,
+    which git never executes), so a hook installed from inside a worktree was a
+    silent no-op. ``GIT_HOOKS_DIR`` still wins for explicit test overrides.
     """
-    # Check core.hooksPath via env or git config — best-effort.
     env_override = os.environ.get("GIT_HOOKS_DIR")
     if env_override:
         return Path(env_override)
-    dot_git = repo / ".git"
-    if dot_git.is_file():
-        # Worktree: read "gitdir: <path>" and append /hooks
-        try:
-            line = dot_git.read_text().strip()
-            if line.startswith("gitdir:"):
-                gd = Path(line.split(":", 1)[1].strip())
-                if not gd.is_absolute():
-                    gd = (repo / gd).resolve()
-                return gd / "hooks"
-        except OSError:
-            pass
-    return dot_git / "hooks"
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(repo), "rev-parse", "--git-path", "hooks"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        if out:
+            p = Path(out)
+            return p if p.is_absolute() else (repo / p).resolve()
+    except Exception:
+        pass
+    # Fallback (git unavailable): the common hooks dir for a normal repo.
+    return repo / ".git" / "hooks"
 
 
 def _source_hook(repo: Path, name: str) -> Path:
     return repo / Path(*HOOKS_RELPATH) / name
+
+
+# ---------------------------------------------------------------------------
+# pre-commit segment chaining (coexists with the rally-point segment)
+# ---------------------------------------------------------------------------
+
+_SEGMENT_RE = re.compile(
+    re.escape(ARCH_REGEN_MARKER) + r".*?" + re.escape(ARCH_REGEN_MARKER_END) + r"\n?",
+    re.DOTALL,
+)
+
+
+def _install_arch_regen_segment(repo: Path) -> dict[str, Any]:
+    """Chain the arch-regen segment into ``.git/hooks/pre-commit`` idempotently.
+
+    - File absent/empty  -> write shebang + segment + ``exit 0``.
+    - Segment present     -> replace it in place (re-run is a no-op-equivalent).
+    - Other content       -> append the segment before any trailing ``exit 0``,
+      preserving the rest verbatim (the rally private-slug segment lives here).
+    """
+    hooks_dir = _git_hooks_dir(repo)
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    dst = hooks_dir / "pre-commit"
+
+    existing = dst.read_text(encoding="utf-8") if dst.exists() else ""
+
+    if not existing.strip():
+        body = "#!/bin/sh\n" + ARCH_REGEN_SEGMENT + "exit 0\n"
+        already = False
+    elif ARCH_REGEN_MARKER in existing:
+        body = _SEGMENT_RE.sub(ARCH_REGEN_SEGMENT, existing, count=1)
+        already = body == existing
+    else:
+        # Insert before a trailing bare `exit 0` if present, else append.
+        lines = existing.splitlines(keepends=True)
+        insert_at = len(lines)
+        for idx in range(len(lines) - 1, -1, -1):
+            if lines[idx].strip() == "exit 0":
+                insert_at = idx
+                break
+        seg = ARCH_REGEN_SEGMENT if existing.endswith("\n") else "\n" + ARCH_REGEN_SEGMENT
+        lines.insert(insert_at, seg)
+        body = "".join(lines)
+        already = False
+
+    if body != existing:
+        dst.write_text(body, encoding="utf-8")
+    current = dst.stat().st_mode
+    dst.chmod(current | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return {"name": "pre-commit:arch-regen", "installed": True, "skipped": False,
+            "already_present": already, "path": str(dst)}
+
+
+def _uninstall_arch_regen_segment(repo: Path) -> dict[str, Any]:
+    dst = _git_hooks_dir(repo) / "pre-commit"
+    if not dst.exists():
+        return {"name": "pre-commit:arch-regen", "removed": False, "reason": "not installed"}
+    existing = dst.read_text(encoding="utf-8")
+    if ARCH_REGEN_MARKER not in existing:
+        return {"name": "pre-commit:arch-regen", "removed": False, "reason": "segment not present"}
+    body = _SEGMENT_RE.sub("", existing, count=1)
+    dst.write_text(body, encoding="utf-8")
+    return {"name": "pre-commit:arch-regen", "removed": True, "path": str(dst)}
+
+
+def _status_arch_regen_segment(repo: Path) -> dict[str, Any]:
+    dst = _git_hooks_dir(repo) / "pre-commit"
+    present = dst.exists() and ARCH_REGEN_MARKER in dst.read_text(encoding="utf-8")
+    return {"name": "pre-commit:arch-regen", "installed": present, "path": str(dst)}
 
 
 # ---------------------------------------------------------------------------
@@ -257,12 +354,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.install:
         for name in _HOOKS_MANAGED:
             results.append(_install_hook(repo, name, force=args.force))
+        results.append(_install_arch_regen_segment(repo))
     elif args.uninstall:
         for name in _HOOKS_MANAGED:
             results.append(_uninstall_hook(repo, name))
+        results.append(_uninstall_arch_regen_segment(repo))
     elif args.status:
         for name in _HOOKS_MANAGED:
             results.append(_status_hook(repo, name))
+        results.append(_status_arch_regen_segment(repo))
 
     out = {"repo": str(repo), "results": results}
     if args.json:
