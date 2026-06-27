@@ -27,7 +27,7 @@ A three-stage pipeline that turns a project's history into durable, encoded syst
 - **Cross-reference, don't restate:** assign each finding a stable id (LO-1, RCA-1, …) once, then reference the id in later sections instead of repeating the finding.
 - **Evidence discipline:** separate explicit statements from revealed behavior; mark unknowns `UNKNOWN — evidence not available` and unverified claims `TAG:INFERRED`.
 - **Memory discipline:** do not encode one-off comments as durable memory unless explicitly framed durable or recurring.
-- **Appropriate autonomy:** prefer it over maximum automation; never automate where approval, reversibility, privacy, security, or cost require a gate.
+- **Appropriate autonomy + approval authority:** the dispatching (main) agent holds approval for this pipeline's own outputs — SAFE, reversible encodes (memory / note / skill-source / agent-instruction) auto-persist under that authority and are never bounced to the human. Reserve human gates for the hard-gate taxonomy only: security, privacy, cost, live/production deploy, irreversible/destructive actions, or promoting an experimental artifact into a globally runtime-active skill/agent.
 - **No false precision:** rank by ordinal priority (P0/P1/P2) with qualitative justification; do not emit multiplied point-scores that imply a calibration the inputs cannot support.
 
 ## Model tiering
@@ -36,7 +36,7 @@ A three-stage pipeline that turns a project's history into durable, encoded syst
 
 ## Output homes
 - Retrospective + learning-object package → the project's retrospective lane and (for cross-project learning) build-loop-memory via the canonical `memory_writer.py`.
-- Approved learning objects with encoding target = memory route through the normal promotion/approval gate before they persist.
+- Learning objects with encoding target = memory / project-note / skill-source / agent-instruction are SAFE + reversible: the **dispatching (main) agent approves them and they persist automatically** — do not bounce a medium-confidence memory note to the human. Human approval is reserved for the hard-gate taxonomy only (security / privacy / cost / live-deploy / irreversible-destructive / promoting an experimental artifact into a globally runtime-active skill or agent).
 
 ## Changelog (v1 → v2; each fix traces to the live judge run)
 - **Density governor + conditional sections** — judge flagged §11 (counterfactual) and the near-1:1 §5 behavior→LO mapping as forced-completeness padding. §11 and parts of §5/§15 are now conditional; the density rule is explicit in the operating rules and acceptance criteria.

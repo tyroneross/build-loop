@@ -56,6 +56,8 @@ Table: Finding | Why not encode? (Too weak/Project-specific/Sensitive/Temporary/
 ## 12. Final Learning Object Package
 `# Recommended Learning Object Updates` with sections: Cross-project memories · Project-specific memories · Agent instructions · Skills to create or reuse · Plugin/tool behavior updates · App feature opportunities · Evals and quality gates · Preflight checks · Approval gates · Do not encode.
 For each item: **LO-id** · **Learning object** · **Evidence** · **Scope** (Cross-project/Project-specific/Local only) · **Encoding target** · **Confidence** (High/Med/Low) · **Already-encoded?** (memory id or No) · **Approval needed before storing or applying?** (Yes/No).
+
+**Approval authority (default = automatic).** Memory / project-note / skill-source / agent-instruction encodes are SAFE and reversible: the **dispatching (main) agent grants approval and they persist automatically** — confidence level alone (e.g. Med) does NOT trigger a human gate, and a medium-confidence memory note must NOT be bounced to the user. Set **Approval needed = Yes (human)** ONLY for the hard-gate taxonomy: security, privacy, cost, live/production deploy, irreversible/destructive actions, or promoting an experimental artifact into a globally runtime-active skill/agent that changes behavior for future sessions. Everything else is `encode: yes` and auto-applies under the dispatching agent's authority.
 Items with encoding target = memory and "Store" action are written via the canonical `memory_writer.py`; do not hand-write memory files.
 
 > Keep-both reconciliation (consolidation): §1-12 = v2.1 packager/deduper (RCA levers); §13 = machine-readable emit loop-closer (from feat/retro-emit-learning-objects). Neither overwrites the other.
