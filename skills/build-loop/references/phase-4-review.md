@@ -263,7 +263,7 @@ Runs only when all prior sub-steps pass OR when iteration cap is hit. Writes fin
 
 Final report sections, in this order:
 
-- `## Done` — every verified pass + every Auto-Resolve `auto` item, with one-line evidence each.
+- `## Done` — every verified pass + every Auto-Resolve `auto` item, with one-line evidence each. **Lead outcome-first** (`output-style.md` §"Outcome framing"): the report's headline and substance lead with what the user can now do / what stops failing / what no longer needs a manual step, not the feature or mechanism that delivers it; mechanism, file paths, and design detail stay in the progressive-disclosure detail below the lead.
 - `## Held` — items Auto-Resolve verdicted as `confirm`, with the `reason` field from `autonomy_gate.py` quoted verbatim. The user may run any held command manually if they want to. Build-loop does NOT prompt or auto-execute these.
 - `## Blocked` — items Auto-Resolve verdicted as `block`, same shape as Held.
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; keep this section).
@@ -302,6 +302,7 @@ Style lint (`report_lint.py`) — WARN with self-heal, never a hard halt. The us
 
 - `summary.total == 0` → emit the report.
 - `summary.total > 0` → auto-revise the draft ONCE to clear the findings (translate jargon to plain language per the contract's blocklist, rewrite a missing headline as a one-sentence statement of what changed, add a validation line naming the exact command/method that verified the work, remove contrastive-pivot constructions), then re-run the lint. If a second pass still has findings, emit the report with a `[warn] report-lint findings remain after one revise pass` line in `## Done` and continue. Never block on style.
+- Outcome framing is part of this same self-heal pass (the lint does NOT grade it — it's judgment, not pattern): if the headline or first substance line leads with the feature/mechanism rather than the user outcome, rewrite it outcome-first per `output-style.md` §"Outcome framing" (lead with what the user can now do / what stops failing / what no longer needs a manual step; keep the mechanism detail below the lead). No extra pass — fold this into the one revise pass above.
 - Script error / file not found → record `[warn] report-lint skipped (<reason>)` in `## Done` and continue.
 
 The two lints are orthogonal: structural rules live in `build_report_lint.py`, style/jargon rules live in `report_lint.py`. Neither replaces the other. The lints target ONLY the final user-facing report markdown; internal envelopes between agents stay structured/jargon-ok.

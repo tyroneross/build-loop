@@ -10,16 +10,17 @@ It extends — does not duplicate — the existing guidance:
 
 Scope: **user-facing output only.** Internal agent-to-agent envelopes (subagent return JSON, judge-decisions, run records, MECE briefs) are structured data and stay as-is — they exist for machines, not the human.
 
-## The five rules
+## The six rules
 
 1. **Headline = one plain full sentence** stating what changed. First non-blank line. Not a noun phrase, not a telegraph fragment, not a heading.
-2. **Bulleted concrete artifacts.** Below the headline: commit hashes, file paths, issue paths. Concrete things the user can grep, open, or `git show`.
-3. **Substance bullets.** What the change captures or does, in plain language. Optional when the artifacts alone are self-explanatory.
-4. **Validation line, explicit.** Name the exact command, method, or observer that verified the work, with a status marker:
+2. **Outcome framing — lead with what changes for the user.** The headline and substance lead with what the user can now do, what stops failing, or what no longer needs a manual step — the *result*, not the implementation. Use before→after when it clarifies. Mechanism, file paths, and design detail still belong in the report — below the lead, in the progressive-disclosure detail (see rules 3–4), never in the headline. See "Outcome framing" below for the worked good/bad pair.
+3. **Bulleted concrete artifacts.** Below the headline: commit hashes, file paths, issue paths. Concrete things the user can grep, open, or `git show`.
+4. **Substance bullets.** What the change does for the user, in plain language (outcome-first per rule 2). Optional when the artifacts alone are self-explanatory.
+5. **Validation line, explicit.** Name the exact command, method, or observer that verified the work, with a status marker:
    - `✅ Verified by <method>` — ran the script, passing test, curl response, IBR scan, demo
    - `⚠️ Untested — <what couldn't be verified and why>`
    - `❓ Uncertain — <what's assumed and what would close it>`
-5. **Plain language.** No jargon (see blocklist below). No contrastive pivot (`not X — it's Y`, `isn't X, it's Y`, `not just X but Y`) — state the point directly.
+6. **Plain language.** No jargon (see blocklist below). No contrastive pivot (`not X — it's Y`, `isn't X, it's Y`, `not just X but Y`) — state the point directly.
 
 ## Jargon blocklist (user-facing only)
 
@@ -38,6 +39,42 @@ These tokens are fine in internal envelopes; they must be translated to plain la
 | `Phase 4G` / `Phase 5` | "final review", "iterate step" |
 | `state.json.runs[]` | "run record" |
 | Internal phase codenames (C-HEAL, C-RCA, C-FLOW…) | Describe the behavior, not the code |
+
+## Outcome framing — lead with the result, not the mechanism
+
+The report describes what the change DOES FOR THE USER, not the feature or mechanism that delivers it. Lead with what the user can now do, what stops failing, or what no longer needs a manual step. Before→after where it clarifies. Plain language, minimal jargon. The mechanism — script names, normalization, TTLs, file paths — still appears, but in the progressive-disclosure detail below the lead, never in the headline or the first substance line.
+
+This is judgment, not a deterministic check: `report_lint.py` does NOT grade outcome framing (a fuzzy "is this outcome-framed?" rule would false-green on disguised mechanism prose and false-block on terse-but-correct outcome reports). The rule is enforced by the Review-G one-pass self-heal — the orchestrator rewrites a mechanism-only lead into an outcome-first one before emitting.
+
+### Good — outcome-framed (the user-approved target style)
+
+```
+When you run build-loop and a model it depends on goes down, the work now keeps
+running on a backup instead of stopping and waiting for you to step in — and when
+that model comes back, it returns to it on its own. You stop having to be the
+manual fallback.
+
+- No more stalled runs during an outage — if the preferred model is unavailable,
+  agents automatically continue on the next-best one, instead of erroring out and
+  needing a restart.
+- Self-recovery — once the model is back, the system returns to it within about
+  half an hour by itself, rather than staying on the backup until someone resets it.
+- Quality holds during fallback — it won't quietly drop verification to a weaker
+  model, and won't pick a model the setup can't run.
+- Works as you add or change models — the same behavior applies no matter which
+  vendor a model comes from.
+```
+
+Why this is good: the headline says what changes for the user ("the work now keeps running … you stop having to be the manual fallback"), each bullet leads with the user-visible outcome (no stalled runs, self-recovery, quality holds, works as you change models), and the before→after contrast ("instead of stopping and waiting", "rather than staying on the backup") makes the gain concrete. The mechanism that delivers it (the fallback script, the recovery window, the tier floor, vendor-agnostic resolution) is implied through outcomes, not enumerated.
+
+### Bad — mechanism-only (same change, tells the user nothing)
+
+```
+Added dispatch_fallback.py with canonical-id normalization and a host-provider
+filter; outages persist to model-availability.json with a TTL.
+```
+
+Why this is bad: it is the exact same change, but described as the feature/implementation. The reader learns what files exist, not that their runs stop stalling during an outage or that quality holds on the backup. It leads with the mechanism (`dispatch_fallback.py`, `canonical-id normalization`, `host-provider filter`, `model-availability.json`, `TTL`) and never states the user outcome. The fix is the rewrite above: keep this detail, but move it below an outcome-first lead.
 
 ## Good — the exemplar (Codex output, captured 2026-06-04)
 
