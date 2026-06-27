@@ -31,6 +31,16 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 GEN_VERSION = "2.0.0"
 
+# The generated outputs this script writes (relative to the repo root). Single
+# source of truth: main() writes these, and scripts/architecture_diagram/
+# regen_hook.py imports this to know which files to stage after a regen — so a
+# new/renamed output is picked up in both places from one edit.
+OUTPUTS = (
+    "architecture/model.json",
+    "docs/build-loop-flow-mockup.html",
+    "architecture/ARCHITECTURE.md",
+)
+
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.M)
 MODEL_RE = re.compile(r"^model:\s*(.+?)\s*$", re.M)
@@ -304,9 +314,9 @@ def main() -> int:
     repo = Path(args.repo).resolve()
 
     model = build_model(repo)
-    model_path = repo / "architecture" / "model.json"
-    html_path = repo / "docs" / "build-loop-flow-mockup.html"
-    arch_path = repo / "architecture" / "ARCHITECTURE.md"
+    model_path = repo / OUTPUTS[0]   # architecture/model.json
+    html_path = repo / OUTPUTS[1]    # docs/build-loop-flow-mockup.html
+    arch_path = repo / OUTPUTS[2]    # architecture/ARCHITECTURE.md
 
     new_json = json.dumps(model, ensure_ascii=False, indent=2) + "\n"
     new_html = inject_html(html_path.read_text(encoding="utf-8"), model)
