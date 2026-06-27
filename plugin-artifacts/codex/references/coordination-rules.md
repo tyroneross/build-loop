@@ -51,6 +51,8 @@ post(
 
 **Channel scope (worktree- and clone-independent):** resolve the channel through `scripts/rally_point/discovery_bridge.resolve(workdir)`. Native `agent-rally-point` discovery returns the canonical shared channel (currently `~/.agent-rally-point/apps/<repo-id>/`). The embedded build-loop fallback also defaults to `~/.agent-rally-point/apps/<slug>/`, where `slug` comes from `git rev-parse --git-common-dir` via `scripts/rally_point/channel_paths.app_slug(cwd)`. The main checkout, every worktree, and every clone of the same canonical repo share ONE channel. Different canonical repos get different channel directories (cross-repo isolation).
 
+**Rally's REAL CLI surface (the only commands build-loop shells out to).** Rally exposes `enter`, `say <kind>`, `whoami`, `room`, `next`, `recent`, `stop <session|name|tool>`, `sessions [--reap]`, `migrate-legacy`, `mission`, `version`, and `check`. It has NO `setup`, NO `post`, NO `start`, and NO `replay` — those were anticipated but never shipped, and a discovery tier that gated on them was dead code (removed). A write goes out as `rally say <kind> --json …` (build-loop's `post()` helper translates to this); identity/channel info comes from `rally whoami --json` (`repo_root`/`repo_id`/`worktree`/`build_id`/`cwd`), NOT a `setup` probe. The surface-acceptance check (`discovery_bridge._rally_binary_supports_required_surface`) is pinned to a real rally binary's `--help` by `scripts/test_discovery_bridge.py::RequiredSurfacePinnedToRealRallyTests`, so it can never silently drift back to a phantom surface. When adding a rally call, read the binary's real `--help` first; do not assume a command exists.
+
 **Anti-pattern (silent no-op):**
 
 ```python
@@ -211,10 +213,189 @@ live under `coordinationPolicy` in `.build-loop/config.json` (defaults shown):
   `lease_until` is unparseable is NEVER auto-reclaimed (we refuse rather than
   reclaim on a timestamp we cannot trust). An empty seat is still freely
   claimable.
+- **Policy is Rust-only; the Python math is an in-process helper.** Reclaim and
+  reap DECISIONS are made by the Rust binary (facade in `reaper.py` /
+  `leadership.py`, fail-loud below full capability). `decay.py` survives only as
+  pure in-process math the lead-lease window sizing needs (`recency_weight`,
+  `reclaim_timeout_seconds`, `classify_work_size`); it is NOT a behavioral mirror
+  of `decay.rs` and is no longer double-pinned against a cross-repo golden
+  fixture. The status/recent-changes LISTING still applies the decay weight in
+  Python over build-loop's own change-log so an old on-PATH binary cannot
+  un-decay the listing (pinned by `scripts/test_coordination_decay_invariant.py`);
+  that is a presentation concern, distinct from the now-Rust-only reclaim/reap
+  actuation.
 
 This complements (does not replace) the >10-minute idle absorption rule above:
 idle-absorption handles local reversible lanes a quiet peer left open; the lease
 timeout governs the formal lead/ownership role handover.
+
+## In-room stale-state reaper (actuator) — RUST-ONLY via a fail-loud facade
+
+The sections above define WHEN records become stale. Physically removing them
+(reaping) is **Rust-only**. There is no Python reaper sweep — the prior Python
+parity mirror (presence/claim-index/lead deletion, double-pinned against golden
+fixtures) was RETIRED in the Rust-rally facade migration. A Python process
+deleting coordination records the Rust binary owns is the exact shadow
+implementation that is worse than no coordination.
+
+**Canonical actuator (Rust):** the `rally` binary's reaper (`rally sessions
+--reap`, or `rally doctor --reap-stale` on newer builds). Dry-run by default;
+`--reap`/`--apply` physically removes over-TTL presence, claims, and leads.
+
+**Facade (`scripts/rally_point/reaper.py`).** `reap_channel(channel, workdir,
+apply=…)` resolves coordination capability via `discovery_bridge` and then:
+- **full capability** (a real binary owns the channel — `repo-local-rally-cli`
+  / `fetched-binary` / env-override / path-binary / python-import) → shells
+  `rally sessions --reap` and surfaces the result (`capability_level: full`,
+  `deferred_to_rust: false`).
+- **below full** (degraded-breadcrumb or unavailable) → REFUSES. It reaps
+  nothing and returns a capability-marked report (`deferred_to_rust: true`,
+  `coordination_unavailable: <reason>`). A degraded session must never reap a
+  peer it cannot prove is dead.
+
+CLI: `python3 scripts/rally_point/reaper.py --workdir <path> [--apply] [--json]`.
+
+**Capability field on every coordination envelope.** Every facade return and
+`DiscoveryEnvelope` carries `capability_level` (`full` / `degraded-breadcrumb` /
+`unavailable`) + a `coordination_unavailable` reason. The single source of truth
+is `scripts/rally_point/capability.py`; `FULL_ONLY_OPERATIONS`
+(claim/release/reclaim/lead/reap/liveness/before_write/checkpoint) are permitted
+only at full capability.
+
+**Degraded breadcrumb path (the ONLY thing a sub-full session may write).** When
+no binary is available but the host is supported, a session may write
+capability-marked presence/handoff *breadcrumb* facts so a later full-capability
+peer (or a human) sees it existed. It must NOT — and structurally cannot — claim
+ownership, reclaim, infer liveness, reap, or imply before-write protection.
+
+**Unsupported-host = loud no-coordination.** A host with no fetchable pinned-
+binary asset (Intel macOS, musl/Alpine, exotic arch) resolves to
+`capability_level: unavailable` (`coordination_unavailable: unsupported_host`).
+The facade is a loud no-op there — NEVER a policy mirror.
+
+**Remaining Python guards** (the destructive paths that survive as in-process
+guards, all FAIL-CLOSED): `presence.reap_stale` physically unlinks only at full
+capability; `leadership` reclaim (taking a peer's lease) is full-only, while
+seeding an EMPTY lead seat and self-relinquishing one's OWN seat stay breadcrumb-
+class. The in-process `decay.py` / `liveness.py` are now pure window/weight math
+helpers (lead-lease sizing, adaptive presence window), not behavioral mirrors.
+
+**Codex parity.** A codex session emits the same presence record claude does, via
+the `.codex/hooks.json` `SessionStart` hook that calls `session_probe.py --tool
+codex`, so it ages and decays identically — now enforced by the single Rust
+reaper both tools share, not by a cross-language golden fixture.
+
+**Session-end self-release.** Both tool hooks emit `rally stop <tool>` at turn
+completion (`Stop` event) so peers immediately see the agent's absence rather than
+waiting for heartbeat TTL expiry. This contains accretion at the source and
+reduces the reaper's steady-state work. On stop, a session also self-kills its own
+`rally-*` tmux session (Rust `rally stop`) so it can never become a detached orphan.
+
+## Adaptive multi-signal liveness (squad-projection decay + tmux orphan reaper)
+
+Fixed staleness cutoffs are replaced by liveness that ADAPTS to each session's
+planned heartbeat cadence and weighs four signals. The liveness DECISION (reap /
+self-exit) is Rust-only via the facade; `scripts/rally_point/liveness.py` retains
+only the in-process window/verdict MATH the presence squad-projection uses,
+verified by its own inline unit tests (`test_liveness.py`). The cross-repo golden
+fixture `liveness_vectors.json` and its `_provenance.json` drift entry were
+RETIRED in the Rust-rally migration — there is no longer a byte-identical parity
+contract to maintain across the two codebases.
+
+**Adaptive cadence.** A session declares its beat via `planned_heartbeat_secs`
+(presence record) or `renew_every_minutes` (lead.json); undeclared → the default
+cadence. Staleness is RELATIVE: `window = planned_interval * MISS_MULTIPLIER + GRACE`.
+Defaults `DEFAULT_CADENCE_SECS=300`, `MISS_MULTIPLIER=6`, `GRACE_SECS=60` →
+a 5-min cadence is stale at ~31 min (≈6 missed beats); a 5-hour cadence not until
+~30 h. Tunable via `.rally/config.json` `coordination{}` (Rust) /
+`.build-loop/config.json` `coordinationPolicy{}` (Python):
+`default_cadence_secs`, `miss_multiplier`, `grace_secs` (+ `RALLY_*` env in Rust).
+Legacy `heartbeat_minutes` is honored as a cadence source for backward compat.
+
+**Four signals — LIVE if ANY is fresh within the adaptive window:**
+(a) heartbeat/presence `last_seen`; (b) inject/ack (a `receipt`/`wake`/`handoff`
+naming the session); (c) forward code progress (the session's worktree branch HEAD
+MOVED since the last poll — Rust compares the two newest presence facts' shas, the
+Python reaper compares a cached `branch_head_sha`); (d) declared active work (a
+live claim or authored mission/handoff).
+
+**Two fail-directions, each on the safe side:**
+- **Squad VISIBILITY projection** (Rust `snapshot_from_facts_with_policy`) is
+  FAIL-OPEN. A squad whose four signals are ALL provably stale is DROPPED from the
+  default `rally room` view; `--include-archived` restores it (mirrors the message
+  archive model). A `Live` OR `Unknown` (any absent/unparseable signal) verdict
+  KEEPS the squad visible — hiding a still-alive peer could cause the very
+  write-collision this system prevents.
+- **Reaper REMOVAL** (presence-file unlink, claim/lead) stays FAIL-CLOSED — never
+  remove on a signal it cannot trust.
+
+**tmux orphan reaper.** `rally sessions --reap` also detects DETACHED `rally-*`
+tmux sessions whose last activity is past the adaptive window and which are not
+tracked as managed sessions, kills them, and tombstones the reap (closing the gap
+where `--reap` saw 0 of the real detached orphans). Attached sessions (a human is
+looking) are never killed.
+
+## Zombie-tmux prevention — three layers over ONE liveness model
+
+Root cause of accreted zombie tmux sessions: rally `exec`s the agent, so a session
+auto-closes when its agent EXITS, but agents that never exit (a disabled autonomy
+poller, idle detached panes) leave the session forever — tmux has no native
+idle/lifetime timeout. The fix is three layers, all reusing the single
+`liveness::is_live` 4-signal model and the adaptive window above. NONE adds a
+fixed/brute-force idle clock; lifetime follows real liveness/ownership.
+
+**Layer 1 — completion-scoped self-exit (prevent at source).** `rally
+self-exit-check --tool <self>` is a stateless re-check: a task-scoped session that
+holds NO active claims AND for which `rally next` is non-actionable for a SUSTAINED
+streak self-kills its own `rally-*` tmux session, so `exec` auto-closes it. The
+streak (default 2 consecutive empty re-checks, `liveness::DEFAULT_SELF_EXIT_STREAK`)
+is persisted in the session's OWN tmux env (`RALLY_SELFEXIT_STREAK`, dies with the
+session — no new filesystem surface) so a brief lull between claims never exits
+mid-task. **Opt-out:** `--persistent` short-circuits to "never self-exit" for a
+deliberately-long-lived session. The existing `rally stop` self-kill remains the
+explicit-completion path; Layer 1 adds the implicit "work done" path. Decision is
+the shared `liveness::completion_self_exit_eligible(work_resolved,
+next_empty_streak, required_streak, persistent_optout)`.
+
+**Layer 2 — event-driven liveness-lease safety net.** `rally enter` (a new agent
+joining) opportunistically sweeps detached `rally-*` orphan tmux sessions via the
+SAME reaper Layer-3 logic, in addition to `rally sessions --reap`. Best-effort and
+fail-open: it runs AFTER presence (so the entering agent's own session is in the
+guard set), never blocks the enter path, and never raises. A live / parent-alive
+session is never reaped. No daemon/cron (those would themselves need worktree
+isolation). Both the enter sweep and `sessions --reap` call ONE shared actuator
+(`sweep_orphan_tmux`).
+
+**Layer 3 — parent-lifecycle binding.** At launch (`tmux_start_command`) the new
+session's env is stamped with `RALLY_PARENT_PID=<launcher pid>` in the SAME atomic
+`tmux new-session -e` call. The reaper reads it back (`show-environment`), probes
+`kill -0 <pid>` (no new crate dependency — the repo keeps a zero-extra-dep
+contract), and feeds the result to the shared `liveness::reapable(liveness,
+parent_alive)`. This targets the exact failure mode here (autonomy poller died →
+its child sessions orphaned).
+
+**The single reaper-eligibility authority** is `liveness::reapable` (mirrored
+Rust↔Python, asserted by the byte-identical `liveness_vectors.json` `reapable_cases`):
+
+| liveness | parent_alive | reapable | rationale |
+|----------|--------------|----------|-----------|
+| Live     | any          | NO       | any of 4 signals fresh → independently live |
+| Unknown  | any          | NO       | fail-closed: untrustworthy signals |
+| Stale    | alive        | NO       | stale by signals but a live parent may re-drive it (conservative) |
+| Stale    | dead         | YES      | the Layer-3 orphan target |
+| Stale    | none (no info)| YES     | window criterion ALONE — fail-safe degradation |
+
+**Fail-safe directions (binding):**
+- A session making code progress / heartbeating on cadence / recently injected /
+  holding a live plan is NEVER reaped — that's `Live` → not reapable, regardless of
+  parent state.
+- The control NEVER reaps on the parent criterion ALONE: parent-dead reaps only a
+  session that is ALSO `Stale` by the 4-signal liveness.
+- Missing/unparseable parent info (`parent_alive = None`) degrades to the
+  liveness-window criterion alone (`Stale → reap`), preserving the pre-Layer-3
+  orphan-window behavior exactly — never reaped *because* the parent is unknown.
+- `kill -0` failing for any reason other than "no such process" (e.g. EPERM) reads
+  ALIVE (a live-but-unsignalable process is never treated as dead).
 
 ## Idle-agent self-selection (rally facilitates, the agent decides)
 

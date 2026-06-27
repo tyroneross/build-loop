@@ -6,9 +6,9 @@
 Verifies that the source repo is correctly configured for Codex installs:
   1. .codex-plugin/plugin.json exists and is valid JSON.
   2. Its name and version match .claude-plugin/plugin.json.
-  3. package.json files[] includes .codex-plugin, .agents, and AGENTS.md.
+  3. package.json files[] includes the package-root Codex surfaces.
   4. .agents/plugins/marketplace.json exists and its name matches .codex-plugin/plugin.json name.
-  5. The .mcp.json server path resolves (args/command with ${CLAUDE_PLUGIN_ROOT} expanded).
+  5. MCP server paths resolve when the plugin declares MCP servers.
   6. (Soft) Codex installed cache sync via check_cache_sync.py — warning only, never causes exit 1.
 
 CLI:
@@ -46,19 +46,13 @@ def expand_plugin_root(value: str, source: Path) -> str:
     return value.replace("${CLAUDE_PLUGIN_ROOT}", str(source))
 
 
-def check_mcp_server_path(source: Path) -> tuple[bool, str]:
-    """Check that the .mcp.json server command/args path resolves."""
-    mcp_path = source / ".mcp.json"
-    data = load_json(mcp_path, ".mcp.json")
-    if data is None:
-        return False, ".mcp.json not found"
-
-    servers = data.get("mcpServers", {})
+def _check_mcp_servers(source: Path, servers: dict) -> tuple[bool, str]:
     if not servers:
-        return False, ".mcp.json has no mcpServers entries"
-
+        return True, "no MCP servers declared"
     resolved_paths: list[str] = []
     for server_name, server_cfg in servers.items():
+        if not isinstance(server_cfg, dict):
+            return False, f"server '{server_name}' config is not an object"
         # Check args list first, then command
         args = server_cfg.get("args", [])
         command = server_cfg.get("command", "")
@@ -93,7 +87,62 @@ def check_mcp_server_path(source: Path) -> tuple[bool, str]:
         if len(resolved_paths) > 1:
             return True, f"{len(resolved_paths)} paths resolve (first: {head})"
         return True, f"server '{head}' resolves"
-    return True, "no path-bearing args found in .mcp.json (skipped path check)"
+    return True, "no path-bearing MCP args found (skipped path check)"
+
+
+def check_mcp_server_path(source: Path, codex_manifest: dict | None = None) -> tuple[bool, str]:
+    """Check declared MCP server command/args paths.
+
+    Build Loop currently ships no Codex MCP server. Absence of ``.mcp.json`` is
+    therefore valid unless the manifest declares ``mcpServers`` or a default
+    ``.mcp.json`` file exists.
+    """
+    declared = (codex_manifest or {}).get("mcpServers")
+    mcp_path = source / ".mcp.json"
+
+    if declared is None:
+        if not mcp_path.exists():
+            return True, "plugin declares no MCP servers"
+        data = load_json(mcp_path, ".mcp.json")
+        if data is None:
+            return False, ".mcp.json not found"
+        return _check_mcp_servers(source, data.get("mcpServers", {}))
+
+    if isinstance(declared, str):
+        ref = declared[2:] if declared.startswith("./") else declared
+        path = (source / ref).resolve()
+        data = load_json(path, declared)
+        if data is None:
+            return False, f"declared MCP config not found: {declared}"
+        return _check_mcp_servers(source, data.get("mcpServers", {}))
+
+    if isinstance(declared, dict):
+        return _check_mcp_servers(source, declared)
+
+    return False, "manifest mcpServers must be a path string or object"
+
+
+def codex_install_source(source: Path) -> Path:
+    """Return the actual Codex install source for cache-sync checks."""
+    marketplace = load_json(source / ".agents" / "plugins" / "marketplace.json", ".agents/plugins/marketplace.json")
+    if not marketplace:
+        return source
+    plugins = marketplace.get("plugins", [])
+    if not isinstance(plugins, list):
+        return source
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("name") != "build-loop":
+            continue
+        raw = entry.get("source")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        rel = raw[2:] if raw.startswith("./") else raw
+        candidate = (source / rel).resolve()
+        if candidate.is_dir():
+            return candidate
+    return source
 
 
 def run_cache_sync(source: Path) -> tuple[bool, str]:
@@ -101,10 +150,11 @@ def run_cache_sync(source: Path) -> tuple[bool, str]:
     script = source / "scripts" / "check_cache_sync.py"
     if not script.exists():
         return True, "check_cache_sync.py not found — skipped"
+    install_source = codex_install_source(source)
 
     try:
         result = subprocess.run(
-            [sys.executable, str(script), "--host", "codex", "--source", str(source)],
+            [sys.executable, str(script), "--host", "codex", "--source", str(install_source)],
             capture_output=True,
             text=True,
             timeout=30,
@@ -178,14 +228,14 @@ def run_checks(source: Path) -> list[dict]:
                 "hard": True,
             })
 
-    # Check 3: package.json files[] includes .codex-plugin, .agents, AGENTS.md
+    # Check 3: package.json files[] includes the package-root Codex surfaces.
     pkg_path = source / "package.json"
     pkg = load_json(pkg_path, "package.json")
-    required_entries = {".codex-plugin", ".agents", "AGENTS.md"}
+    required_entries = {".codex-plugin", ".agents/plugins", "AGENTS.md", "plugin-artifacts/codex"}
     if pkg is None:
         checks.append({
             "id": 3,
-            "name": "package.json files[] includes .codex-plugin, .agents, AGENTS.md",
+            "name": "package.json files[] includes Codex package surfaces",
             "pass": False,
             "reason": "package.json not found",
             "hard": True,
@@ -196,7 +246,7 @@ def run_checks(source: Path) -> list[dict]:
         if not missing:
             checks.append({
                 "id": 3,
-                "name": "package.json files[] includes .codex-plugin, .agents, AGENTS.md",
+                "name": "package.json files[] includes Codex package surfaces",
                 "pass": True,
                 "reason": "all required entries present",
                 "hard": True,
@@ -204,7 +254,7 @@ def run_checks(source: Path) -> list[dict]:
         else:
             checks.append({
                 "id": 3,
-                "name": "package.json files[] includes .codex-plugin, .agents, AGENTS.md",
+                "name": "package.json files[] includes Codex package surfaces",
                 "pass": False,
                 "reason": f"missing from files[]: {sorted(missing)}",
                 "hard": True,
@@ -249,11 +299,11 @@ def run_checks(source: Path) -> list[dict]:
                 "hard": True,
             })
 
-    # Check 5: .mcp.json server path resolves
-    mcp_pass, mcp_reason = check_mcp_server_path(source)
+    # Check 5: declared MCP server paths resolve.
+    mcp_pass, mcp_reason = check_mcp_server_path(source, codex_manifest)
     checks.append({
         "id": 5,
-        "name": ".mcp.json server path resolves",
+        "name": "declared MCP server paths resolve",
         "pass": mcp_pass,
         "reason": mcp_reason,
         "hard": True,

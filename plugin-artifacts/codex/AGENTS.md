@@ -45,6 +45,8 @@ rally stop codex --json
 
 **Fallback:** if `rally` is not on PATH, proceed without preflight — do **not** crash, do **not** block on it. The Phase 1 Rally Point presence write below covers the minimum coordination contract.
 
+**Codex heartbeat parity:** codex sessions emit presence via `session_probe.py --tool codex` (wired in `.codex/hooks.json` `SessionStart`), so their presence/claims/lead decay identically to claude sessions — parity proven by `scripts/rally_point/heartbeat_parity_vectors.json`.
+
 ## Output style
 
 Concise output — say only what the user needs to decide or act; cut narration, restated context, filler; no jargon.
