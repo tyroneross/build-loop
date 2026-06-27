@@ -56,11 +56,12 @@ jobs:
 
       - name: Sync core + test dependencies
         # Core deps (tree-sitter, networkx, pathspec) + the `test` extra
-        # (pytest) + pytest-timeout (dev group). The optional `db` extra is
-        # deliberately omitted so `db`-marked tests auto-skip.
+        # (pytest) + pytest-timeout/PyYAML for CI-only test infrastructure.
+        # The optional `db` extra is deliberately omitted so `db`-marked tests
+        # auto-skip.
         run: |
           uv sync --extra test
-          uv pip install pytest-timeout
+          uv pip install pytest-timeout pyyaml
 
       - name: Run deterministic test suite
         # --timeout caps any single test (thread method) so a hung test fails

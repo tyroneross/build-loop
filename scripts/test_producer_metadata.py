@@ -198,6 +198,10 @@ class WriteSurfaceGrepTests(unittest.TestCase):
         # post() would stamp the real now() and defeat the aged-record fixture.
         # Storage-layer test seam, not a message-emitting runtime caller.
         "test_coordination_status.py",
+        # test_coordination_decay_invariant likewise seeds aged records to prove
+        # the Python listing applies recency decay without shelling out to rally.
+        # post() would stamp current time and invalidate the old-record fixture.
+        "test_coordination_decay_invariant.py",
         # install_git_hook.py is a one-shot installer script that probes
         # the channel; not part of the runtime write surface.
         "rally_point/install_git_hook.py",

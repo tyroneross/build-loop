@@ -126,7 +126,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/acceptance_probe.py rerun --goal .build-lo
 ```
 Per-criterion `gate_verdict`:
 - `passed` — the probe ran and its output **no longer matches the captured baseline-failure**. The criterion's data-layer evidence is necessary but NOT sufficient; this re-run is the boundary observation that makes "passed" real. Proceed to the criterion's other graders.
-- `blocked` — the probe **still returns its baseline-failure state**. A blocked criterion **CANNOT be marked `passed`, and CANNOT be deferred inline** (no "out of scope" prose drop — that exact scope-drop is the evidenced failure this gate closes, atomize-ai 2026-06-13). It routes to Iterate like any Validate failure. If the run nonetheless needs to defer it, the deferral is a **DECISION-class surface**: pass the criterion's `decision_command` through the existing autonomy gate —
+- `blocked` — the probe **still returns its baseline-failure state**. A blocked criterion **CANNOT be marked `passed`, and CANNOT be deferred inline** (no "out of scope" prose drop — that exact scope-drop is the evidenced failure this gate closes, sample-app 2026-06-13). It routes to Iterate like any Validate failure. If the run nonetheless needs to defer it, the deferral is a **DECISION-class surface**: pass the criterion's `decision_command` through the existing autonomy gate —
   ```
   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/autonomy_gate.py --workdir "$PWD" \
       --action "defer acceptance criterion <id>" --command "<decision_command>" --json

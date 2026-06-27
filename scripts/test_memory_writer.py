@@ -158,6 +158,20 @@ class WriteTests(unittest.TestCase):
         # parsing — just ensure it's present and well-formed).
         self.assertEqual(len(fm2["last_updated_at"]), 20)  # YYYY-MM-DDTHH:MM:SSZ
 
+    def test_patch_frontmatter_noop_preserves_file(self):
+        mw.write(
+            self.tmp, "same.md", body="stable body\n",
+            name="same", description="d", type_="pattern",
+            run_id="r1", workdir=str(self.tmp), host="codex",
+        )
+        path = self.tmp / "same.md"
+        before = path.read_text(encoding="utf-8")
+        _, body = mw._split_frontmatter(before)
+
+        mw.patch_frontmatter(path, {}, new_body=body)
+
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+
     def test_write_rejects_invalid_host(self):
         with self.assertRaises(ValueError):
             mw.write(

@@ -626,18 +626,24 @@ def patch_frontmatter(
         raise FileNotFoundError(f"memory file not found: {p}")
     text = p.read_text(encoding="utf-8")
     fm, body = _split_frontmatter(text)
+    original_fm = dict(fm)
+    original_body = body
 
     # Apply delta — caller's values win for every key in fm_delta.
     for k, v in fm_delta.items():
         fm[k] = v
-    # Refresh last_updated_at.
-    fm["last_updated_at"] = iso_utc()
 
     # Body handling.
     if new_body is not None:
         body = new_body
     elif body_append is not None:
         body = body.rstrip("\n") + "\n" + body_append.lstrip("\n")
+
+    if fm == original_fm and body == original_body and "last_updated_at" in original_fm:
+        return original_fm
+
+    # Refresh last_updated_at only for an effective write.
+    fm["last_updated_at"] = iso_utc()
 
     content = _emit_frontmatter(fm) + "\n" + body.lstrip("\n")
     _atomic_write_text(p, content)

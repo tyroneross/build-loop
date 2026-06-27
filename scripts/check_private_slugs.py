@@ -110,7 +110,7 @@ def _load_denylist(root: Path) -> list[str]:
 def _compile_pattern(slugs: list[str]) -> re.Pattern[str]:
     # Boundary class is alphanumeric ONLY — underscore is treated as a
     # boundary that still allows the match, so an embedded slug like
-    # ``_atomize`` or ``atomize_`` is caught. The original guard's
+    # ``_sample`` or ``sample_`` is caught. The original guard's
     # lookbehind included ``_`` while the lookahead did not; that
     # asymmetry let an underscore-prefixed slug slip past (SEC-005).
     #

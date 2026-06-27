@@ -217,7 +217,7 @@ materialises on demand. `adopt --dry-run` (the default) reports exactly what it
 *would* create without writing anything, so the user previews before opting in.
 
 **3. The `.gitignore` dependency — and how `adopt` fixes it.** `.build-loop/` is
-gitignored by default (confirmed in both `build-loop` and `atomize-ai`). That is
+gitignored by default (confirmed in both `build-loop` and `sample-app`). That is
 correct for transient run state — but it means the backlog would **not commit
 and therefore would not travel** with the repo (no team-sharing, lost on a fresh
 clone). `adopt` detects this by inspecting `.gitignore` (pure text, no git call)

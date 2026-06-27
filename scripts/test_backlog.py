@@ -382,14 +382,14 @@ class TestSlugOverride(_Base):
     def test_env_slug_overrides_dir_basename(self):
         import os
         old = os.environ.get("BACKLOG_SLUG")
-        os.environ["BACKLOG_SLUG"] = "atomize-ai"
+        os.environ["BACKLOG_SLUG"] = "sample-app"
         try:
             # repo dir basename is myproj-app, but slug must be the override
-            self.assertEqual(bl.project_slug(self.repo), "atomize-ai")
+            self.assertEqual(bl.project_slug(self.repo), "sample-app")
             res = self._new(area="search", title="x")
-            # ID prefix derives from the override slug -> ATOM
-            self.assertTrue(res["id"].startswith("ATOM-SEARCH-"))
-            self.assertEqual(res["slug"], "atomize-ai")
+            # ID prefix derives from the override slug -> SAMP
+            self.assertTrue(res["id"].startswith("SAMP-SEARCH-"))
+            self.assertEqual(res["slug"], "sample-app")
         finally:
             if old is None:
                 os.environ.pop("BACKLOG_SLUG", None)
@@ -399,11 +399,11 @@ class TestSlugOverride(_Base):
     def test_mirror_path_uses_override_slug(self):
         import os
         old = os.environ.get("BACKLOG_SLUG")
-        os.environ["BACKLOG_SLUG"] = "atomize-ai"
+        os.environ["BACKLOG_SLUG"] = "sample-app"
         try:
             self._new(area="search", title="x")
             res = self._sync()
-            self.assertIn("/projects/atomize-ai/backlog", res["mirror"]["dir"])
+            self.assertIn("/projects/sample-app/backlog", res["mirror"]["dir"])
         finally:
             if old is None:
                 os.environ.pop("BACKLOG_SLUG", None)
@@ -650,7 +650,7 @@ class TestAdopt(_Base):
                          "re-adopt must not create duplicate items")
 
     def test_gitignore_guard_appends_unignore(self):
-        # Simulate the default-ignored case (build-loop + atomize both do this).
+        # Simulate the default-ignored case (build-loop + sample both do this).
         (self.repo / ".gitignore").write_text(".build-loop/\nnode_modules/\n",
                                               encoding="utf-8")
         res = self._adopt(apply=True)
@@ -775,7 +775,7 @@ class TestDistributedCollision(_Base):
 
 
 class TestLegacyIdBackCompat(_Base):
-    """Back-compat: legacy `-NNN` items (the 8 seeded atomize-ai items + anything
+    """Back-compat: legacy `-NNN` items (the 8 seeded sample-app items + anything
     already created before the token switch) must still read/list/sync. Parsing
     must not assume a numeric suffix; legacy and token items must coexist.
     """

@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for db_substrate_lint. Zero deps. Run: python3 -m pytest scripts/test_db_substrate_lint.py
 
-Fixtures are modeled on REAL observed shapes (atomize-ai, evidence sample 1):
-the positive fixture mirrors atomize's actual ArticleEmbedding model — embedding
+Fixtures are modeled on REAL observed shapes (sample-app, evidence sample 1):
+the positive fixture mirrors sample's actual ArticleEmbedding model — embedding
 + content_hash but NO embedding_model/embedding_version/index_version — which is
 exactly the undetectable-stale-vector failure that seeded check (a). The clean
 fixture is the same shape with version + metadata fields added, proving the
@@ -23,7 +23,7 @@ if str(HERE) not in sys.path:
 import db_substrate_lint as lint  # noqa: E402
 
 
-# Positive fixture: atomize-ai's real ArticleEmbedding shape (no version field)
+# Positive fixture: sample-app's real ArticleEmbedding shape (no version field)
 # + a SQL artifact table with no metadata + a version-less cache key.
 POSITIVE_PRISMA = """\
 model ArticleEmbedding {
@@ -117,7 +117,7 @@ class PositiveFixtureTests(unittest.TestCase):
                 and f["block"] == "ArticleEmbedding"]
         self.assertEqual(len(hits), 1, "should flag the version-less embedding model exactly once")
         self.assertIn("Retrieval And Metadata Rules", hits[0]["constitution_rule"])
-        self.assertIn("atomize-ai", hits[0]["seed_evidence"])
+        self.assertIn("sample-app", hits[0]["seed_evidence"])
 
     def test_check_a_flags_versionless_cache_key(self) -> None:
         hits = [f for f in self.result["findings"]

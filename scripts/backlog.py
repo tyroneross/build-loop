@@ -228,7 +228,7 @@ def project_slug(repo: Path) -> str:
     directory's basename, lowercased with non-alphanumerics collapsed to single
     hyphens. The override exists because the working-dir basename is the wrong
     identity inside a git worktree or CI checkout (e.g. a worktree at
-    ``/tmp/atomize-backlog`` still belongs to project ``atomize-ai``). The slug
+    ``/tmp/sample-backlog`` still belongs to project ``sample-app``). The slug
     drives the ID prefix, the INDEX header, and the personal-memory mirror path,
     so pinning it keeps those stable across checkouts. No git calls required.
     """
@@ -245,10 +245,10 @@ def area_slug(area: str) -> str:
 
 
 def proj_id_prefix(repo: Path) -> str:
-    """ID prefix from the slug: alnum uppercased (e.g. atomize-ai -> ATOM... )."""
+    """ID prefix from the slug: alnum uppercased (e.g. sample-app -> ATOM... )."""
     slug = project_slug(repo)
     # Use the leading alphanumeric run, uppercased, capped at 6 chars for
-    # readable IDs (ATOMIZE-AI -> ATOM). Falls back to the full cleaned slug.
+    # readable IDs (SAMPLE-APP -> ATOM). Falls back to the full cleaned slug.
     cleaned = re.sub(r"[^A-Za-z0-9]", "", slug).upper()
     return (cleaned[:4] or "REPO")
 

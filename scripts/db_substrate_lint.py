@@ -6,7 +6,7 @@
 Scans a TARGET consumer repo for two clear, grep-able anti-patterns from
 `references/database-agent-constitution.md`. It is **advisory** — it never
 gates a build, it only surfaces findings. Each finding cites the constitution
-rule it implements plus the real seeding evidence (atomize-ai, evidence
+rule it implements plus the real seeding evidence (sample-app, evidence
 sample 1) that motivated the check.
 
 It deliberately covers ONLY two deterministic, low-false-positive patterns:
@@ -165,13 +165,13 @@ SQL_TABLE_RE = re.compile(
 RULE_A = 'Retrieval And Metadata Rules #4/#5 (track embedding/index versions; version cache keys)'
 RULE_B = 'File And Artifact Rule (every AI-visible artifact needs a DB metadata record)'
 SEED_A = (
-    'atomize-ai (evidence sample 1): article_embeddings rows store content_hash '
+    'sample-app (evidence sample 1): article_embeddings rows store content_hash '
     '(content staleness) but carry no embedding_model/embedding_version/index_version '
     '-> a model swap yields undetectable stale vectors.'
 )
 SEED_B = (
     'Constitution "File And Artifact Rule" (modeled, not a specific observed '
-    'atomize-ai row — atomize embedding rows carry content_hash, which clears '
+    'sample-app row — sample embedding rows carry content_hash, which clears '
     'this check): AI-visible vector/ingestion rows without an accompanying '
     'checksum/version/permissions/status record cannot express ownership, '
     'freshness, or retrieval status. Check (b) guards the artifact class the '

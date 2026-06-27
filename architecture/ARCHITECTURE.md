@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 47 skills · 325 scripts · 17 hooks** (auto-discovered 8a25aafb)
+**28 agents · 47 skills · 328 scripts · 17 hooks** (auto-discovered 72dec4b3)
 
 <details><summary>agents</summary>
 
@@ -264,6 +264,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/migrate_project_memory.py`
 - `scripts/migrate_reembed_to_bgem3.py`
 - `scripts/migrate_state_schema.py`
+- `scripts/model_availability_store.py`
 - `scripts/model_overrides.py`
 - `scripts/model_resolver.py`
 - `scripts/model_taxonomy.py`
@@ -285,8 +286,10 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/rally_merge_gate.py`
 - `scripts/rally_point/__init__.py`
 - `scripts/rally_point/agent_autoreg.py`
+- `scripts/rally_point/binary_fetch.py`
 - `scripts/rally_point/boundary.py`
 - `scripts/rally_point/build_loop_id.py`
+- `scripts/rally_point/capability.py`
 - `scripts/rally_point/changes.py`
 - `scripts/rally_point/channel_paths.py`
 - `scripts/rally_point/checkpoint.py`
