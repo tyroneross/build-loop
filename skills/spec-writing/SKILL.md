@@ -27,7 +27,7 @@ A skill that walks a completeness checklist before producing a build-loop-compat
 
 ---
 
-## The 17-Item Checklist
+## The Completeness Checklist
 
 Walk every item before writing a single line of the plan body. For each item, record the answer (or "N/A with reason") inline in a `<!-- checklist -->` HTML comment block at the top of the plan file so the critic can verify it.
 
@@ -73,6 +73,8 @@ If the plan introduces any paid API call, the F-criteria table must include a ro
 `Rate-limit | Max N calls/user/hour to <API> | Pass if no 429 under load test`
 
 If no paid API calls, write "N/A."
+
+> **Adding an external service?** The integration also needs an **env-var manifest** — see **Item 19** (gated: fires only when the change adds a new external service/integration). It names every required env var, sources the names via live research, and checks secrets-vault availability. Keeps items 4–18 unrenumbered.
 
 ---
 
@@ -332,6 +334,44 @@ Each value must be exactly one of `script | haiku | sonnet | opus | frontier`. O
 
 ---
 
+### Item 19 — Env-var manifest (gated: only when adding a new external service)
+
+**Gate:** this item fires only when the change **adds** an external service or integration (a new third-party API, auth provider, database, payment processor, email/SMS sender, object store, analytics, etc.). If the change adds no new external service, write "N/A: no new external service" and skip the rest. (Topically this belongs with Items 2–3; it is numbered 19 to avoid renumbering the existing checklist.)
+
+**Why:** ported from the `prd-builder` skill (scoped here to integration-adding build-loop changes) to prevent two recurring failure classes — (1) the app builds and runs but auth / DB / payments silently don't work because the env vars were never named, and (2) **fabricated env-var names** for a service the model has never actually wired.
+
+**Prompt:** for every required env var the change introduces, name it and source it. Produce a manifest row per var:
+
+- **Name** — the exact env-var name.
+- **Tier** — `Required` | `Optional` | `Optional-but-recommended`.
+- **What it does** — one line.
+- **Where to obtain it** — the dashboard/console page or doc URL the user goes to.
+
+**How to check:**
+
+1. **Source the names via live research — never from memory, never fabricated.** For each new service, resolve the real env-var names from official docs: Context7 MCP (`resolve-library-id` → `query-docs`) first, else WebSearch for the provider's current setup/quickstart docs (T1/T2 only). If a name cannot be verified from a T1/T2 source, it becomes an Open Question (Item 11), never a guessed value.
+
+2. **Secrets-vault availability check.** For each env var in the manifest, invoke the `secrets-vault` skill's load-by-name (`secrets-vault load <name>`) to detect availability:
+   - If present → mark `available in secrets-vault — load with \`secrets-vault load <name>\``.
+   - If absent → add the var to a **Pre-build checklist** with "obtain before build" guidance (the obtain link from the manifest row), so the missing credential surfaces before Execute rather than at runtime.
+
+3. Record the manifest (or the `N/A: no new external service` answer) inline in the `<!-- checklist -->` block, same as every other item.
+
+**Example (good):**
+
+```markdown
+Item 19 — Env-var manifest:
+| Name | Tier | What it does | Where to obtain |
+|---|---|---|---|
+| STRIPE_SECRET_KEY | Required | Server-side Stripe API auth | dashboard.stripe.com → Developers → API keys |
+| STRIPE_WEBHOOK_SECRET | Required | Verifies webhook signatures | dashboard.stripe.com → Webhooks → signing secret |
+Secrets-vault: STRIPE_SECRET_KEY available (`secrets-vault load STRIPE_SECRET_KEY`); STRIPE_WEBHOOK_SECRET absent → Pre-build checklist (obtain before build).
+```
+
+If the change adds no new external service, write "N/A: no new external service."
+
+---
+
 ## Frontmatter fields used by routing
 
 These fields appear in plan or chunk frontmatter and affect orchestrator routing decisions. They are validated by `scripts/plan_verify.py`.
@@ -369,6 +409,7 @@ Item 14 — Handoff document: <answer>
 Item 15 — Synthesis dimensions: <answer>
 Item 16 — Risk reason: <answer>
 Item 17 — UI input/output contract: <answer>
+Item 19 — Env-var manifest: <answer or "N/A: no new external service">
 -->
 
 ## Goal

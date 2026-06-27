@@ -82,6 +82,21 @@ These run parameters apply on any host — pass them on the invocation (`--flag`
 
 **Budget-aware behavior is host-neutral** — without programmatic budget tracking, treat the budget as a soft wall-clock target: check in at ~50%, finalize before the deadline rather than starting new chunks.
 
+## Codex Execution Adapter
+
+The phase logic in this file is host-neutral, but several primitives it names are Claude-Code-specific. When running under Codex (or any non-Claude host), map each primitive to its Codex equivalent. This closes the functional-parity gap — the workflow runs the same; only the dispatch mechanics differ.
+
+| Claude primitive | Codex equivalent | How |
+|---|---|---|
+| `Agent(subagent_type="<name>", …)` | Codex worker, peer process, inline read, or unavailable-fallback | **Preferred:** spawn a Codex worker per `references/codex-subagents.md` (role mapping + permission gate) using `templates/codex-worker-prompt.md` as the prompt skeleton — only under explicit `--parallel` / delegation authorization. **No authorization:** keep the work in the lead session (inline), still writing the same MECE plan + ownership packet. **Cross-vendor verifier:** a reachable peer host via `codex exec <prompt>` or a rally-channel handoff. **None reachable:** record the role as not-run and have the dispatching parent owe it (see the verifier matrix below). |
+| `Skill("<name>")` | Inline-read the skill | Read that skill's `SKILL.md` and follow it inline. Codex auto-discovers root `skills/*/SKILL.md`; for nested build-loop skills, read the file at its path. There is no Codex "invoke skill" call — the SKILL.md body is the instruction set. |
+| `AskUserQuestion` | Surface to user | Codex has no structured-choice tool. Print the question + 2–4 labeled options inline and wait for the reply; persist the answer as a DECISION record (see Post-Build steering-decision capture). For non-blocking/reversible choices, pick the default, label it `[ASSUMED: <reason>]`, and continue. |
+| `TaskCreate` / `TaskUpdate` / `TaskList` | Backlog files or inline list | Use the host-neutral backlog system (`scripts/backlog.py`, `.build-loop/backlog/`) for durable work items, or a plain inline checklist in the lead session for within-run tracking. Do not block on a task tool that does not exist. |
+| `PushNotification` | Surface to user | Print the notification inline in the session; there is no background push channel under `codex exec`. |
+| `${CLAUDE_PLUGIN_ROOT}` | Repo-relative path or `BUILD_LOOP_ROOT` | Under Codex this variable is unset. Resolve scripts/references relative to the repo root (`root="$(git rev-parse --show-toplevel)"`), or export `BUILD_LOOP_ROOT=<path-to-build-loop>` and substitute it. Every `${CLAUDE_PLUGIN_ROOT}/…` invocation in this file has a working `"$root"/…` or `"$BUILD_LOOP_ROOT"/…` equivalent. |
+
+When a primitive is unavailable and no equivalent applies, do not silently skip the step — record it as not-run and surface it in the end-of-run readback so the dispatching parent (or the user) can complete it.
+
 ## Core Principles
 
 - **KISS + DRY — code and output (governing).** Before adding a rule, gate, schema, script, agent, or report section, first try to (a) delete something, (b) extend something that exists, or (c) do nothing. A new mechanism must earn its place against a *named, observed* failure in this repo — not a cited statistic. Prefer one rule covering many cases over many narrow rules; one source of truth over duplicated logic. For output: say it once in the fewest words that keep the evidence; omit empty sections; headline first. Fewer rules and fewer lines is the default; growth is the justified exception. When this tensions with the principles below, simplify. **Every issue is a systems issue:** when something doesn't work, debugging finishes only when the *system* is updated so the class can't recur (durable guidance/check/simplification/restructure addressing root cause + meta-point, never a surface patch). Default corrective move is to reduce complexity (fewer lines/deps/steps) or, when size is irreducible, better structure (split large files, progressive disclosure) to minimize cognitive load. Scalable means simple over compact — every node (rule, script, agent, step, dep) is a failure site.
@@ -350,6 +365,18 @@ The `synthesis_attestation` map MUST have one entry per dimension named in the p
 
 Seven ordered sub-steps; intermediate failures route to Iterate, final pass writes Report artifacts.
 
+**Verifier contract matrix (Codex parity).** Each review verifier has a required output shape, a routing effect, and a rule for whether inline Codex execution is valid. Mirror `skills/build-loop/references/codex-subagents.md` (role mapping) and `skills/build-loop/references/phase-4-review.md`.
+
+| Verifier | When | Required output | Routing effect | Inline Codex valid? |
+|---|---|---|---|---|
+| **Critic (independent-auditor)** | every non-trivial build (Sub-step A) | JSON envelope: `verdict ∈ {yay, nay, suggest_correction, look_again}` + `findings[]` (`severity: critical\|high\|medium\|low`) | `nay`/critical+high route to Iterate; advisory at chunk close, gating at build scope | **Inline self-review is NEVER recorded as `independent-auditor`** (per `skills/build-loop/references/phase-4-review.md` §20). A lead session inline-reasoning IS valid review work, but it must NOT be written to `judge-decisions.json` with `judge_id: independent-auditor`, and a `scope=build` code-touching run must report `outcome: partial` (not `pass`) when no real dispatched/peer auditor ran. Record `auditor_status` honestly: `ran:dispatched-agent` / `ran:peer-host(<host>)` / `not-run:parent-must-dispatch`. |
+| **Validate (graders)** | every build (Sub-step B) | scorecard rows: criterion · method · PASS/FAIL · evidence | any FAIL routes to Iterate | Yes — code-based graders (test/lint/type/build) run inline in the lead session. UI validation must use a real visual/AX surface, never symbol-only checks. |
+| **Fact-Check** | every build (Sub-step D) | per-claim trace: metric → source, or `unverifiable` | unverifiable rendered number is **blocking** → Iterate | Yes — runs inline; it is a read-and-trace pass, no dedicated agent required. |
+| **Mock-Scanner** | every build (Sub-step D) | findings: path · pattern · `blocking\|warning` | blocking (renders to user) → Iterate | Yes — inline grep/scan of production paths. |
+| **Security-Reviewer** | only when Assess flagged a risk-surface change (Sub-step A) | findings vs OWASP LLM/Agentic/Web top-10, severity-tagged | critical/high feed the no-critical/high exit gate (blocking) | Yes inline, OR a cross-vendor peer when `cross_vendor_required` and a peer host is reachable; if neither, record `cross_vendor: untested` — never claim it ran. |
+
+**The inline-self-review rule is the load-bearing one:** a solicited inline pass agreeing with the lead is not independent validation. Dispatch a real auditor (Agent tool), run it as a peer process (`codex exec` / rally handoff), or mark the run `not-run:parent-must-dispatch` so the parent that *does* have the dispatch capability completes the audit before Report finalizes.
+
 **Sub-step A — Critic (adversarial read-only)**: perform a read-only adversarial review of the diff — inline in the lead session, or via an authorized explorer when delegation is permitted. This is the independent-auditor pass: render one of four verdicts (`yay` approve / `nay` reject / `suggest_correction` / `look_again`) gathering context from intent, goal, PRD, constitution. Catch scope drift, missed edge cases, rubric violations before spending tokens on full validation. **When Assess flagged a risk-surface change** (new auth, network, persistence, secrets, or external-input surface), also run a security review in this sub-step against OWASP LLM/Agentic/Web top-10 — its critical/high findings feed the no-critical/high exit gate and are blocking. Strong-checkpoint findings route back to Execute (no iteration burn); guidance findings are logged.
 
 **Sub-step A.5 — Synthesis-decision backstops (post-implementer-commit, runs before B):**
@@ -505,6 +532,15 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
 
 3. **Codex wiring.** Both hosts ship in-repo: Claude via `hooks/hooks.json`, Codex via the tracked `.codex/hooks.json` — `Stop` and `SessionStart` entries call the same shim (`root="$(git rev-parse --show-toplevel)"; bash "$root/hooks/closeout.sh" stop`). ⚠ VERIFIED DORMANT under `codex exec` 0.139.0 (live probe 2026-06-12, `--dangerously-bypass-hook-trust`): codex fired global/built-in hooks but never the repo-level file. Until codex honors repo-level hooks, the working Codex path is the global `~/.codex/hooks.json` (the shim self-gates on `.build-loop/`, so a global install is safe — but global installs are user-opt-in, not shipped).
+
+**Codex closeout + run-recording fallbacks (do these MANUALLY when hooks do not fire).** Because repo-level Codex hooks are dormant under `codex exec` (verified above), the `Stop`/`SessionStart` shim that auto-records a run does NOT run on its own in a Codex session. Unless the global `~/.codex/hooks.json` is installed AND confirmed firing, a Codex run must perform these steps by hand before declaring the run done (resolve `${RUNTIME_PLUGIN_ROOT}` to the build-loop repo root — see the Codex Execution Adapter):
+
+1. **Append the run record** — `python3 "$root"/scripts/append_run.py …` so Phase 6 Learn's `runs[]` sees this run. Without it, the run is invisible to the recurring-pattern detector and the milestone log.
+2. **Run the judgment gate** — `python3 "$root"/scripts/judgment_gate.py --workdir "$PWD" --run-id <run-id> --agent-tool-available false --json`. On a stakes-gated run that stayed at the inline floor, it surfaces the skipped-Frontier-judgment WARN that the Stop hook would otherwise have surfaced.
+3. **Write the closeout status** — record `state.json.runs[N].closeout_status` (and the inline-path marker `.build-loop/closeout-pending/<run-id>.md` if a follow-up surface is needed), matching what `stop_closeout.py` would have written.
+4. **Phase 6 Learn recording** — run the cheap detector + consolidation and emit the `## Learn` outcome line (accruing / deferred / full) explicitly; it does not auto-fire without the hook.
+
+These are idempotent with the hook path (the marker is the inline sentinel; `runs[]` membership is the Phase-D sentinel), so a later host that DOES fire the hook will not double-record. The rule: **never let "the hook will catch it" stand in for run recording under Codex** — confirm the hook fired, or do the four steps by hand.
 
 ## Post-Build
 
