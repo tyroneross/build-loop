@@ -10,7 +10,7 @@ It extends — does not duplicate — the existing guidance:
 
 Scope: **user-facing output only.** Internal agent-to-agent envelopes (subagent return JSON, judge-decisions, run records, MECE briefs) are structured data and stay as-is — they exist for machines, not the human.
 
-## The six rules
+## The rules
 
 1. **Headline = one plain full sentence** stating what changed. First non-blank line. Not a noun phrase, not a telegraph fragment, not a heading.
 2. **Outcome framing — lead with what changes for the user.** The headline and substance lead with what the user can now do, what stops failing, or what no longer needs a manual step — the *result*, not the implementation. Use before→after when it clarifies. Mechanism, file paths, and design detail still belong in the report — below the lead, in the progressive-disclosure detail (see rules 3–4), never in the headline. See "Outcome framing" below for the worked good/bad pair.
@@ -20,7 +20,8 @@ Scope: **user-facing output only.** Internal agent-to-agent envelopes (subagent 
    - `✅ Verified by <method>` — ran the script, passing test, curl response, IBR scan, demo
    - `⚠️ Untested — <what couldn't be verified and why>`
    - `❓ Uncertain — <what's assumed and what would close it>`
-6. **Plain language.** No jargon (see blocklist below). No contrastive pivot (`not X — it's Y`, `isn't X, it's Y`, `not just X but Y`) — state the point directly.
+6. **Plain language, stated directly.** No jargon (see blocklist below). No contrastive pivot (`not X — it's Y`, `isn't X, it's Y`, `not just X but Y`) and no soft hedging — state the point directly, and state cause and effect directly (see "Precision and Brevity" below: shorter words, data over adjectives, direct cause→effect). The contrastive-pivot ban and the direct-cause-and-effect rule are the same instinct: say what happened and why, without negation or padding.
+7. **Numbers only when supplied or verified.** Never invent a metric, date, percentage, or count to make a sentence concrete. This is the user-facing-style restatement of build-loop's existing "no false data, no unverified claims" guarantee — the fact-checker (Review-D) traces every rendered metric to its source; this rule keeps the report from adding one the fact-checker never saw. If you have no number, write the plain claim without one.
 
 ## Jargon blocklist (user-facing only)
 
@@ -75,6 +76,37 @@ filter; outages persist to model-availability.json with a TTL.
 ```
 
 Why this is bad: it is the exact same change, but described as the feature/implementation. The reader learns what files exist, not that their runs stop stalling during an outage or that quality holds on the backup. It leads with the mechanism (`dispatch_fallback.py`, `canonical-id normalization`, `host-provider filter`, `model-availability.json`, `TTL`) and never states the user outcome. The fix is the rewrite above: keep this detail, but move it below an outcome-first lead.
+
+## Precision and Brevity Rules
+Rewrite sentences to be clear, short, and specific.
+Prefer:
+- Short common words over longer words with the same meaning.
+- Concrete nouns and verbs over abstract phrases.
+- Numbers, dates, steps, names, and roles over vague claims.
+- Direct cause-and-effect sentences over soft phrasing.
+- 'Because' when it cleanly explains the cause.
+Do not invent data. If numbers, dates, or evidence are not provided, do not add them.
+
+### Preferred Patterns
+Metric → Location → Meaning
+[Number] of [users/items/events] [did action] at [specific point], suggesting [likely cause or meaning].
+Example: 70% of users abandoned onboarding at step 5 of 7, suggesting the flow was too long.
+
+Thing → Failed behavior → Cause
+[Thing] [failed outcome] because [specific cause].
+Example: The model gave inconsistent answers because the prompt lacked success criteria.
+
+Cause → Outcome
+[Specific cause] caused [specific outcome].
+Example: No single owner caused the project to stall.
+
+Actor → Outcome → Cause
+[Actor] [outcome] because [cause].
+Example: The team launched behind schedule because they lacked stakeholder alignment.
+
+Nuance: use 'suggesting' when the data points to a likely cause; use 'because' only when the causal link is known.
+
+These reinforce, not replace, the rules above. "Direct cause-and-effect over soft phrasing" is the same instinct as rule 6's no-contrastive-pivot ban — both say to state what happened and why without negation or padding. "Do not invent data" is the user-facing-style face of rule 7 and of build-loop's standing "no false data, no unverified claims" principle, backed by the fact-checker in Review-D. These are JUDGMENT rules, applied in the Review-G one-pass self-heal alongside outcome framing — `report_lint.py` does NOT grade "shorter words" or "is this a causal pattern": a fuzzy check there would false-flag correct terse prose and over-block, against the deterministic-only-for-known-risks rule. Apply them when rewriting the draft; do not add a lint for them.
 
 ## Good — the exemplar (Codex output, captured 2026-06-04)
 

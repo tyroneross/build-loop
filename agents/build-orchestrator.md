@@ -140,11 +140,11 @@ Routing detail extracted to `references/phase-4-review.md`. Sub-step procedural 
   ```
   python3 scripts/report_lint.py <draft.md> --json
   → total==0: emit as-is
-  → total>0: revise the draft ONCE per skills/build-loop/references/output-style.md (translate jargon, fix headline, add validation line, remove contrastive-pivots, and rewrite a mechanism-only lead into an outcome-first one per §"Outcome framing"), re-run, emit (append a one-line "[warn] style-lint findings remain" to ## Done if any persist)
+  → total>0: revise the draft ONCE per skills/build-loop/references/output-style.md (translate jargon, fix headline, add validation line, remove contrastive-pivots, rewrite a mechanism-only lead into an outcome-first one per §"Outcome framing", and apply §"Precision and Brevity Rules" — shorter words, concrete nouns/verbs, direct cause→effect, no invented numbers), re-run, emit (append a one-line "[warn] style-lint findings remain" to ## Done if any persist)
   → script error: append "[warn] style-lint skipped" and continue
   ```
 
-  The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured. Outcome framing (lead with the user outcome, not the mechanism) is part of the same contract — judgment-graded via the one-pass self-heal, not by the lint.
+  The lint enforces `skills/build-loop/references/output-style.md` (concise headline + validation line + jargon blocklist) on user-facing output only; internal envelopes stay structured. Outcome framing (lead with the user outcome, not the mechanism) and precision-and-brevity (shorter words, data over adjectives, direct cause→effect, no invented numbers) are part of the same contract — both judgment-graded via the one-pass self-heal, not by the lint.
 
 ### Phase 5: Iterate (up to 5x classic, up to 25 autonomous)
 
