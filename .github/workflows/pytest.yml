@@ -117,3 +117,15 @@ jobs:
         # both fail CI.
         run: |
           uv run python scripts/methodology_drift_lint.py --strict
+
+      - name: Import-vs-manifest lint
+        # Catch an undeclared third-party import (the 2026-06 pyyaml-outage
+        # class) before it reddens main. Compares HARD (unconditional,
+        # module-top-level) third-party imports across scripts/ + tests/
+        # against pyproject's declared deps (core + every extra +
+        # dependency-groups). Guarded try/except + function-local optional
+        # imports are exempt by design (graceful degradation). The deps were
+        # just installed by `uv sync --extra test`, so this also confirms the
+        # manifest is the single source of truth — no inline-install drift.
+        run: |
+          uv run python scripts/import_manifest_lint.py
