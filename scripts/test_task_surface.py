@@ -112,6 +112,31 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertIn("Ship guided memory install", titles)
         self.assertNotIn("Do not include me", titles)
 
+    def test_status_current_is_surfaced_from_canonical_status(self) -> None:
+        memory = self.root / "memory"
+        status_dir = memory / "projects" / "sample-repo" / "status"
+        status_dir.mkdir(parents=True)
+        (status_dir / "CURRENT.md").write_text(
+            "# Status\n\n## Current open work (ranked)\n"
+            "1. **Async recordComposite** (P2)\n"
+            "2. Reconcile docs\n\n## Links\n- x\n",
+            encoding="utf-8",
+        )
+
+        result = run_surface(
+            "--workdir", str(self.workdir),
+            "--memory-root", str(memory),
+            "--json",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["counts_by_surface"]["status_current"], 2)
+        titles = [row["title"] for row in payload["items"]]
+        self.assertIn("Async recordComposite (P2)", titles)
+        status_rows = [r for r in payload["items"] if r["surface"] == "status_current"]
+        self.assertEqual(status_rows[0]["dry_run_action"], "address_status_item")
+
     def test_proposals_are_opt_in(self) -> None:
         proposals = self.workdir / ".build-loop" / "proposals"
         proposals.mkdir()

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ SURFACE_RANK_BONUS = {
     "state.in_flight": 35,
     "state.queued_chunks": 25,
     "state.queued": 25,
+    "status_current": 22,
     "ux_queue": 18,
     "issues": 16,
     "followup": 10,
@@ -47,6 +49,7 @@ SURFACE_ACTION = {
     "state.in_flight": "continue_in_flight",
     "state.queued_chunks": "dispatch_next",
     "state.queued": "dispatch_next",
+    "status_current": "address_status_item",
     "ux_queue": "iterate_now",
     "issues": "investigate_issue",
     "followup": "resume_followup",
@@ -279,6 +282,57 @@ def memory_backlog_items(
     ]
 
 
+def _current_open_work(path: Path) -> list[str]:
+    """Parse the numbered items under a '## Current open work' heading in CURRENT.md."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    items: list[str] = []
+    in_section = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_section = stripped.lower().startswith("## current open work")
+            continue
+        if not in_section:
+            continue
+        match = re.match(r"^\d+\.\s+(.*)", stripped)
+        if match:
+            items.append(_clean_markdown(match.group(1)))
+    return items
+
+
+def _clean_markdown(text: str) -> str:
+    text = text.replace("**", "").replace("`", "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def status_current_items(
+    *,
+    workdir: Path,
+    memory_root: Path | None = None,
+    project: str | None = None,
+) -> list[dict[str, Any]]:
+    """Surface the code-grounded 'Current open work' from the canonical CURRENT.md."""
+    root = memory_root or memory_store_root()
+    slug = project or resolve_project(workdir)
+    current = root / "projects" / slug / "status" / "CURRENT.md"
+    if not current.is_file():
+        return []
+    return [
+        _item(
+            surface="status_current",
+            lifecycle="code-grounded-status",
+            priority=15,
+            title=title,
+            path=str(current),
+            item_id=f"CURRENT:{idx}",
+        )
+        for idx, title in enumerate(_current_open_work(current), start=1)
+    ]
+
+
 def collect_task_surface(
     *,
     workdir: Path,
@@ -293,6 +347,7 @@ def collect_task_surface(
         include_proposals=include_proposals,
     )
     if include_memory:
+        items.extend(status_current_items(workdir=wd, memory_root=memory_root))
         items.extend(memory_backlog_items(workdir=wd, memory_root=memory_root))
     summaries = iteration_summary(wd)
     ranked_items = rank_task_items(items, summaries)
