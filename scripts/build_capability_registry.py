@@ -127,6 +127,11 @@ CATEGORY_KEYWORDS = [
     # collisions) and api-dependency contract checks.
     ("validation",   ("validate", "fact-check", "fact_check", "mock", "critic",
                       "review", "rubric", "lint", "cache sync", "cache-sync",
+                      # Commit-time drift/hygiene gates: artifact regen guard
+                      # (keeps checked-in generated artifacts in sync) sits with
+                      # the lint/cache-sync hygiene family.
+                      "artifact_guard", "artifact guard", "checked-in artifact",
+                      "checked-in generated", "artifacts in sync",
                       "collision", "namesake", "api dependency", "api-registry",
                       "api config", "api-config",
                       # Supply-chain + autonomy gating hooks (PreToolUse Bash
