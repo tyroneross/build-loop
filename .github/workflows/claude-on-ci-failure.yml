@@ -1,0 +1,65 @@
+name: CI failure -> Claude
+
+# When one of the watched CI gates fails on main, hand the failure to Claude:
+# it fetches the failing logs, diagnoses the root cause, and EITHER opens a fix PR
+# (e.g. regenerate a stale architecture diagram) OR opens an issue with the cause.
+#
+# Self-contained: needs only the ANTHROPIC_API_KEY secret + the Claude GitHub App
+# (same prerequisites as claude.yml). Bounded by --max-turns. Guarded so it never
+# watches itself or the publish workflows (no loops, no spend on releases).
+
+on:
+  workflow_run:
+    workflows:
+      - "Python test suite"
+      - "Architecture diagram"
+      - "Private Slug Guard"
+      - "Runtime Memory Guard"
+      - "Verify @tyroneross/build-loop install"
+    types: [completed]
+
+# One Claude run per failing workflow at a time; newer failures supersede.
+concurrency:
+  group: claude-ci-fix-${{ github.event.workflow_run.name }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    # Only on a genuine failure on main (PR-branch runs have head_branch != main, so no loop).
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@a92e7c70a4da9793dc164451d829089dc057a464 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--max-turns 15"
+          prompt: |
+            The CI workflow "${{ github.event.workflow_run.name }}" FAILED on main.
+            Failing run: ${{ github.event.workflow_run.html_url }}
+            Head SHA: ${{ github.event.workflow_run.head_sha }}
+
+            Do this, minimally:
+            1. Fetch the failing job logs for that run with `gh run view ${{ github.event.workflow_run.id }} --log-failed`.
+            2. Diagnose the root cause from the logs + the repo source. State it plainly.
+            3. If it is a deterministic, safe-to-auto-fix drift (e.g. a stale generated
+               artifact such as the architecture diagram — the check prints the exact
+               regen command like `python3 scripts/architecture_diagram/generate.py`):
+               run that command, commit the regenerated files, and open a PR. Do not
+               hand-edit generated output.
+            4. Otherwise (test failure, logic bug, anything needing judgment): do NOT
+               change code. Open a GitHub issue titled "CI failure: ${{ github.event.workflow_run.name }}"
+               summarizing the root cause and a proposed fix, and stop.
+
+            Keep the change/issue tightly scoped to this one failure.
