@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -354,6 +355,92 @@ def cmd_escalate(args: argparse.Namespace) -> int:
         "action": "escalation-posted",
         "app_slug": slug,
         "channel_revision": new_rev,
+    })
+
+
+_STATUS_PTR_RE = re.compile(r"\[file=(?P<file>[^\]\s]+)\s+sha=(?P<sha>[^\]\s]*)\]")
+
+
+def _is_status_record(record: dict) -> bool:
+    """A status pointer survives as kind='status' (fact_v1) OR subject='status'
+    (the canonical rally binary remaps the kind but keeps the subject)."""
+    if record.get("kind") == "status":
+        return True
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    return record.get("subject") == "status" or payload.get("subject") == "status"
+
+
+def cmd_status_post(args: argparse.Namespace) -> int:
+    """Post a typed status record pointing at the canonical CURRENT.md.
+
+    Mirrors handoff/escalate so a peer (or a fresh terminal) reading the room has a
+    durable pointer to the code-grounded status file + the sha it describes. The
+    canonical rally binary only preserves its fixed fact schema (it drops unknown
+    payload keys and remaps unknown kinds), so the file+sha are ALSO encoded into
+    the summary text — the one free-text field that survives the native store —
+    while the structured keys ride along for build-loop's own fact_v1 read-back.
+    """
+    slug, channel_dir = _resolve_channel(args.workdir)
+    summary = args.summary or "status refreshed"
+    encoded = f"{summary} [file={args.file} sha={args.committed_sha}]"
+    new_rev = post(
+        channel_dir=channel_dir,
+        kind="status",
+        tool=args.tool,
+        model=args.model,
+        run_id=args.run_id,
+        app_slug=slug,
+        payload={
+            "session_id": args.session_id,
+            "summary": encoded,
+            "file": args.file,
+            "committed_sha": args.committed_sha,
+        },
+        workdir=Path(args.workdir).expanduser().resolve(),
+    )
+    return _emit({
+        "action": "status-posted" if new_rev is not None else "status-rejected",
+        "app_slug": slug,
+        "channel_revision": new_rev,
+        "accepted": new_rev is not None,
+    })
+
+
+def cmd_status_read(args: argparse.Namespace) -> int:
+    """Read the latest status record + extract its CURRENT.md pointer (cross-store)."""
+    slug, channel_dir = _resolve_channel(args.workdir)
+    records, _ = changes.read_changes_since(channel_dir, 0)
+    status_records = [r for r in records if _is_status_record(r)]
+    if args.tool:
+        scoped = [r for r in status_records if r.get("tool") == args.tool]
+        if scoped:
+            status_records = scoped
+    latest = status_records[-1] if status_records else None
+    pointer = None
+    if latest:
+        payload = latest.get("payload") if isinstance(latest.get("payload"), dict) else {}
+        text = payload.get("summary") or payload.get("reason") or ""
+        file = payload.get("file")
+        sha = payload.get("committed_sha")
+        if not file:  # native store dropped the structured keys — recover from text
+            match = _STATUS_PTR_RE.search(text)
+            if match:
+                file = match.group("file")
+                sha = sha or match.group("sha")
+        pointer = {
+            "file": file,
+            "committed_sha": sha,
+            "summary": text,
+            "tool": latest.get("tool"),
+            "ts": latest.get("ts"),
+            "revision": latest.get("revision"),
+        }
+    return _emit({
+        "action": "status-read",
+        "app_slug": slug,
+        "found": latest is not None,
+        "pointer": pointer,
+        "latest": latest,
     })
 
 
@@ -819,6 +906,35 @@ def build_parser() -> argparse.ArgumentParser:
     sp_esc.add_argument("--reason", required=True)
     sp_esc.add_argument("--needs", default="lead-or-user-attention")
     sp_esc.set_defaults(func=cmd_escalate)
+
+    sp_status_post = sub.add_parser(
+        "status-post",
+        help="Post a typed kind=status record pointing at the canonical CURRENT.md.",
+    )
+    _common(sp_status_post)
+    sp_status_post.add_argument(
+        "--file", required=True,
+        help="Path to the canonical CURRENT.md status file.")
+    sp_status_post.add_argument(
+        "--committed-sha", default="", dest="committed_sha",
+        help="The repo HEAD sha the status file describes.")
+    sp_status_post.add_argument(
+        "--summary", default="",
+        help="One-line status summary surfaced to peers.")
+    sp_status_post.set_defaults(func=cmd_status_post)
+
+    sp_status_read = sub.add_parser(
+        "status-read",
+        help="Read the latest typed kind=status record (canonical-status pointer).",
+    )
+    sp_status_read.add_argument("--workdir", default=".")
+    sp_status_read.add_argument(
+        "--tool", default=None,
+        help="Optional: prefer this tool's latest status record.")
+    sp_status_read.add_argument(
+        "--json", action="store_true",
+        help="Output JSON (default — accepted for parity).")
+    sp_status_read.set_defaults(func=cmd_status_read)
 
     sp_where = sub.add_parser(
         "where",

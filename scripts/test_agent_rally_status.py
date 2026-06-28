@@ -248,6 +248,50 @@ class AgentRallyStatusTests(unittest.TestCase):
             ["pytest", "git diff"],
         )
 
+    def test_status_post_then_read_roundtrips_the_canonical_pointer(self) -> None:
+        posted = subprocess.run(
+            [
+                sys.executable, str(CLI), "status-post",
+                "--workdir", str(self.workdir),
+                "--session-id", "me", "--tool", "claude_code",
+                "--file", "/abs/path/CURRENT.md",
+                "--committed-sha", "abc1234",
+                "--summary", "spectra status refreshed",
+                "--json",
+            ],
+            check=True, capture_output=True, text=True, env=os.environ.copy(),
+        )
+        post_payload = json.loads(posted.stdout)
+        self.assertEqual(post_payload["action"], "status-posted")
+        self.assertTrue(post_payload["accepted"])
+
+        read = subprocess.run(
+            [
+                sys.executable, str(CLI), "status-read",
+                "--workdir", str(self.workdir), "--json",
+            ],
+            check=True, capture_output=True, text=True, env=os.environ.copy(),
+        )
+        status = json.loads(read.stdout)
+        self.assertTrue(status["found"])
+        self.assertEqual(status["pointer"]["file"], "/abs/path/CURRENT.md")
+        self.assertEqual(status["pointer"]["committed_sha"], "abc1234")
+        self.assertIn("spectra status refreshed", status["pointer"]["summary"])
+        # file+sha are also recoverable from the encoded summary text alone
+        self.assertIn("[file=/abs/path/CURRENT.md sha=abc1234]", status["pointer"]["summary"])
+
+    def test_status_read_reports_not_found_when_none_posted(self) -> None:
+        read = subprocess.run(
+            [
+                sys.executable, str(CLI), "status-read",
+                "--workdir", str(self.workdir), "--json",
+            ],
+            check=True, capture_output=True, text=True, env=os.environ.copy(),
+        )
+        status = json.loads(read.stdout)
+        self.assertFalse(status["found"])
+        self.assertIsNone(status["latest"])
+
 
 if __name__ == "__main__":
     unittest.main()
