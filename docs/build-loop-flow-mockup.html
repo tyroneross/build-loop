@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ed192d23522bfd6c4ed84e51c982af987b3feb9786e7d86d952887e7ad32e92d"
+    "content_sha256": "e59ba682ebfd743496504aabf92824ca112f35e2b1dac145312299481e98662e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1125,7 +1125,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-25"
+          "date": "2026-06-27"
         }
       },
       "database-assessor": {
@@ -1677,7 +1677,7 @@
         "file": "skills/spec-writing/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-10"
+          "date": "2026-06-27"
         }
       },
       "sync-skills": {
@@ -1744,6 +1744,7 @@
       "scripts/architecture_freshness.py": "Architecture freshness state manager — Chunk 4 of architecture-awareness.",
       "scripts/architecture_snapshot.py": "Architecture snapshot promotion — live dependency graph → durable cross-session lane (WP-H/G4).",
       "scripts/archive_project_plan.py": "Archive ephemeral project plans into build-loop-memory before cleanup.\"\"\"",
+      "scripts/artifact_guard.py": "artifact_guard.py — keep checked-in generated artifacts in sync at commit time.",
       "scripts/assess_grounding_score.py": "Score a candidate Phase-1 Assess output against a real run's recorded outcome.",
       "scripts/atomic_io.py": "Shared atomic-write primitives for build-loop scripts.",
       "scripts/attestation_lint.py": "",
@@ -1818,6 +1819,7 @@
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
+      "scripts/import_manifest_lint.py": "import_manifest_lint.py — catch undeclared third-party imports before CI.",
       "scripts/infer_risk_surface.py": "infer_risk_surface.py — deterministic riskSurfaceChange auto-infer.",
       "scripts/inject_dependency_cooldown.py": "Inject a dependency-cooldown config into a JS project (supply-chain gate).",
       "scripts/install_git_hooks.py": "install_git_hooks.py — install / uninstall the build-loop git hooks.",
