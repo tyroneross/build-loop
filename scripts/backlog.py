@@ -28,7 +28,7 @@ Subcommands::
                      [--priority P2] [--status open] [--gated none]
                      [--entities a,b] [--provenance-source ...] [--provenance-ref ...]
                      [--evidence p1,p2] [--owner ...] [--review-days 30] [--today YYYY-MM-DD]
-    backlog.py sync  --repo <path> [--today YYYY-MM-DD] [--no-mirror]
+    backlog.py sync  --repo <path> [--today YYYY-MM-DD] [--no-mirror] [--prune]
     backlog.py list  --repo <path> [--status ...] [--area ...] [--priority ...]
 
 All commands print a JSON summary on stdout (``list`` prints a text table
@@ -251,6 +251,33 @@ def proj_id_prefix(repo: Path) -> str:
     # readable IDs (SAMPLE-APP -> ATOM). Falls back to the full cleaned slug.
     cleaned = re.sub(r"[^A-Za-z0-9]", "", slug).upper()
     return (cleaned[:4] or "REPO")
+
+
+def normalize_repo(repo_arg: str) -> Path:
+    """Resolve a ``--repo`` argument to the intended store root, avoiding the
+    doubly-nested ``<name>/.build-loop/`` defect.
+
+    ``--repo`` is overloaded: it accepts a path (``.``, ``../foo``, an absolute
+    path) but agents also pass a repo IDENTITY by NAME (``--repo build-loop``).
+    Run from INSIDE the named repo, the literal-path reading of that name
+    (relative to cwd) points at a non-existent ``./build-loop/`` child, so the
+    store lands at ``./build-loop/.build-loop/backlog/`` — one level too deep
+    (the BUIL-TOOLING-syncsafety-001 nesting bug).
+
+    Rule (KISS, one special-case): an existing directory (``.``, an absolute
+    path, or a real relative subdir) is honoured literally. Otherwise a
+    RELATIVE arg whose basename matches the current directory's basename is the
+    "named from inside itself" case and resolves to the current directory. Any
+    other non-existent relative arg is left literal (the caller meant a new
+    sibling path, e.g. ``--repo new-thing`` from a parent dir).
+    """
+    p = Path(repo_arg)
+    if p.is_dir():
+        return p
+    cwd = Path.cwd()
+    if not p.is_absolute() and p.name == cwd.name:
+        return cwd
+    return p
 
 
 # ----------------------------------------------------------------------------
@@ -696,7 +723,7 @@ def _csv(value: str | None) -> list[str]:
 
 
 def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
-    repo = Path(args.repo)
+    repo = normalize_repo(args.repo)
     ensure_dirs(repo)
     today = resolve_today(args.today)
     review_days = args.review_days if args.review_days is not None else DEFAULT_REVIEW_DAYS
@@ -1016,13 +1043,54 @@ def memory_root() -> Path:
     return Path.home() / "dev" / "git-folder" / "build-loop-memory"
 
 
-def mirror_to_memory(repo: Path, today: str) -> dict[str, Any]:
-    """Mirror active item files into the per-user memory backlog lane.
+def _load_mirror_items(dest_dir: Path) -> list[dict[str, Any]]:
+    """Load item dicts from a FLAT mirror dir (``<ID>.md`` files, no items/ subdir).
 
-    One-way: per-repo backlog -> personal memory. Writes per-item copies under
-    ``build-loop-memory/projects/<slug>/backlog/`` plus a regenerated
-    ``INDEX.md`` there. Best-effort: if the memory root is absent/unwritable,
-    returns {written: 0, skipped: <reason>} without failing sync.
+    The personal-memory mirror stores item files directly under
+    ``projects/<slug>/backlog/`` (not under an ``items/`` subdir like the
+    per-repo store), so it needs its own loader. INDEX.md and any file whose
+    stem is not item-ID-shaped are skipped. Routes every file through the
+    tolerant ``read_item`` reader. Used to render the mirror INDEX from the
+    MERGED union of all mirror items — not just the local source items — so an
+    item that lives only in the mirror still appears in the mirror's INDEX.
+    """
+    out: list[dict[str, Any]] = []
+    if not dest_dir.is_dir():
+        return out
+    for path in sorted(dest_dir.glob("*.md")):
+        if path.name == "INDEX.md" or not _ITEM_ID_RE.match(path.stem):
+            continue
+        try:
+            fm, body = read_item(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        fm["_path"] = str(path)
+        fm["_body"] = body
+        fm["_archived"] = False
+        out.append(fm)
+    return out
+
+
+def mirror_to_memory(repo: Path, today: str, prune: bool = False) -> dict[str, Any]:
+    """Mirror active item files into the per-user memory backlog lane (MERGE).
+
+    One-way: per-repo backlog -> personal memory. Writes/updates a per-item copy
+    of every active local item under ``build-loop-memory/projects/<slug>/backlog/``
+    and regenerates the ``INDEX.md`` there from the MERGED UNION of all mirror
+    items.
+
+    MERGE, not destructive overwrite (the syncsafety contract,
+    BUIL-TOOLING-syncsafety-001): a mirror item that is ABSENT from the local
+    source store is NEVER deleted by default. The local store can be incomplete
+    (e.g. a partial or mis-rooted store), and reconciling a durable mirror
+    toward an incomplete source silently drops real open work — the exact defect
+    that deleted a pre-existing open item. Pass ``prune=True`` (the ``--prune``
+    flag, OFF by default) ONLY when the local store is known authoritative; then
+    item-ID-shaped mirror files with no local source are removed. A non-item
+    file (USER-NOTES.md, etc.) is never touched even under ``--prune``.
+
+    Best-effort: if the memory root is absent/unwritable, returns
+    {written: 0, skipped: <reason>} without failing sync.
     """
     slug = project_slug(repo)
     dest_dir = memory_root() / "projects" / slug / "backlog"
@@ -1043,27 +1111,33 @@ def mirror_to_memory(repo: Path, today: str) -> dict[str, Any]:
             written_names.add(src.name)
         except OSError:
             continue
-    # Prune mirror files whose source item no longer exists (kept in sync,
-    # one-way). Only prune files that LOOK like item mirrors — an ID-shaped stem
-    # `<PREFIX>-<AREA>-<NNN>`. A hand-dropped note (USER-NOTES.md, etc.) in this
-    # dir is never touched: the mirror prune is the system's only delete path and
-    # must not over-reach onto files it did not write.
-    for path in sorted(dest_dir.glob("*.md")):
-        if path.name == "INDEX.md":
-            continue
-        if not _ITEM_ID_RE.match(path.stem):
-            continue
-        if path.name not in written_names:
-            try:
-                path.unlink()
-            except OSError:
-                pass
-    # Mirror INDEX too (atomic — same torn-read protection as the item copies).
+    # PRUNE IS OPT-IN. By default the mirror is additive/merge-by-id: a mirror
+    # item with no local source SURVIVES (it may be real open work the local
+    # store — possibly partial or mis-rooted — simply doesn't have). Only
+    # `--prune`, used when the local store is known complete, removes
+    # item-ID-shaped mirror files whose source is gone. A non-item file is never
+    # touched even then.
+    pruned: list[str] = []
+    if prune:
+        for path in sorted(dest_dir.glob("*.md")):
+            if path.name == "INDEX.md" or not _ITEM_ID_RE.match(path.stem):
+                continue
+            if path.name not in written_names:
+                try:
+                    path.unlink()
+                    pruned.append(path.name)
+                except OSError:
+                    pass
+    # Regenerate the mirror INDEX from the MERGED UNION of mirror items (every
+    # `<ID>.md` now on disk), NOT just the local source items — so an item
+    # present only in the mirror still shows up in the mirror's INDEX. Atomic
+    # write keeps the same torn-read protection as the item copies.
+    union = _load_mirror_items(dest_dir)
     try:
-        _atomic_write_text(dest_dir / "INDEX.md", render_index(repo, items, today))
+        _atomic_write_text(dest_dir / "INDEX.md", render_index(repo, union, today))
     except OSError:
         pass
-    return {"written": written, "dir": str(dest_dir)}
+    return {"written": written, "pruned": pruned, "merged": len(union), "dir": str(dest_dir)}
 
 
 # ----------------------------------------------------------------------------
@@ -1082,7 +1156,7 @@ def write_index(repo: Path, today: str) -> dict[str, Any]:
 
 
 def cmd_sync(args: argparse.Namespace) -> dict[str, Any]:
-    repo = Path(args.repo)
+    repo = normalize_repo(args.repo)
     ensure_dirs(repo)
     today = resolve_today(args.today)
 
@@ -1093,7 +1167,7 @@ def cmd_sync(args: argparse.Namespace) -> dict[str, Any]:
     # 3. Mirror to personal memory (unless suppressed).
     mirror: dict[str, Any] = {"written": 0, "skipped": "disabled"}
     if not args.no_mirror:
-        mirror = mirror_to_memory(repo, today)
+        mirror = mirror_to_memory(repo, today, prune=bool(getattr(args, "prune", False)))
 
     return {
         "command": "sync",
@@ -1272,7 +1346,7 @@ def cmd_adopt(args: argparse.Namespace) -> dict[str, Any]:
     Dry-run by DEFAULT (reports actions, writes nothing); ``--apply`` executes.
     Never deletes or moves a source file — imported items LINK to their source.
     """
-    repo = Path(args.repo)
+    repo = normalize_repo(args.repo)
     today = resolve_today(args.today)
     review_days = args.review_days if args.review_days is not None else DEFAULT_REVIEW_DAYS
     apply = bool(args.apply)
@@ -1339,7 +1413,7 @@ class _NS_sync:
 # ----------------------------------------------------------------------------
 
 def cmd_list(args: argparse.Namespace) -> dict[str, Any]:
-    repo = Path(args.repo)
+    repo = normalize_repo(args.repo)
     items = load_items(repo, include_archive=bool(args.include_archive))
 
     def keep(it: dict[str, Any]) -> bool:
@@ -1419,6 +1493,11 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--today", default=None)
     ps.add_argument("--no-mirror", action="store_true",
                     help="Skip the personal-memory mirror (per-repo only).")
+    ps.add_argument("--prune", action="store_true",
+                    help="Delete personal-memory mirror items that have no local "
+                         "source (OFF by default — the mirror is merge-by-id and "
+                         "never drops items the local store lacks). Use ONLY when "
+                         "the local store is known complete/authoritative.")
     ps.add_argument("--json", action="store_true")
 
     pa = sub.add_parser(

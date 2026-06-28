@@ -63,8 +63,9 @@ class _Base(unittest.TestCase):
                  today=kw.get("today", "2026-06-16"))
         return bl.cmd_new(ns)
 
-    def _sync(self, today="2026-06-16", no_mirror=False):
-        return bl.cmd_sync(_NS(repo=str(self.repo), today=today, no_mirror=no_mirror))
+    def _sync(self, today="2026-06-16", no_mirror=False, prune=False):
+        return bl.cmd_sync(_NS(repo=str(self.repo), today=today,
+                               no_mirror=no_mirror, prune=prune))
 
 
 class _NS:
@@ -366,16 +367,34 @@ class TestRoundTripFidelity(_Base):
         self._sync()
         self.assertTrue(note.exists(), "non-item .md must not be pruned")
 
-    def test_f3_mirror_prune_removes_orphan_item(self):
-        r = self._new(area="search", title="will be removed")
+    def test_f3_default_sync_keeps_orphan_mirror_item(self):
+        # MERGE-by-id contract (BUIL-TOOLING-syncsafety-001): a mirror item whose
+        # local source disappears is NOT deleted by a default sync. The local
+        # store can be partial/mis-rooted, so a default sync must never prune.
+        r = self._new(area="search", title="orphan-safe")
         res = self._sync()
         mem_dir = Path(res["mirror"]["dir"])
         mirrored = mem_dir / f"{r['id']}.md"
         self.assertTrue(mirrored.exists())
-        # Delete the source item, re-sync -> mirror copy must be pruned.
         (bl.items_dir(self.repo) / f"{r['id']}.md").unlink()
-        self._sync()
-        self.assertFalse(mirrored.exists(), "orphaned item mirror must be pruned")
+        res2 = self._sync()  # default: no --prune
+        self.assertTrue(mirrored.exists(),
+                        "default sync must NOT prune an orphaned mirror item")
+        self.assertEqual(res2["mirror"]["pruned"], [])
+
+    def test_f3_prune_flag_removes_orphan_item(self):
+        # Opt-in --prune (local store known authoritative) DOES remove an
+        # item-ID-shaped mirror file whose source is gone.
+        r = self._new(area="search", title="will be pruned")
+        res = self._sync()
+        mem_dir = Path(res["mirror"]["dir"])
+        mirrored = mem_dir / f"{r['id']}.md"
+        self.assertTrue(mirrored.exists())
+        (bl.items_dir(self.repo) / f"{r['id']}.md").unlink()
+        res2 = self._sync(prune=True)
+        self.assertFalse(mirrored.exists(),
+                         "--prune must remove an orphaned mirror item")
+        self.assertIn(f"{r['id']}.md", res2["mirror"]["pruned"])
 
 
 class TestSlugOverride(_Base):
@@ -841,16 +860,17 @@ class TestLegacyIdBackCompat(_Base):
         self.assertFalse((bl.items_dir(self.repo) / "ATOM-SEARCH-003.md").exists())
 
     def test_legacy_mirror_prune_still_targets_legacy_shape(self):
-        # An orphaned LEGACY mirror file must still be pruned (the prune regex
-        # must accept -NNN), while a non-item note survives.
+        # Under the opt-in --prune path, an orphaned LEGACY mirror file must
+        # still be pruned (the prune regex must accept -NNN). A default sync
+        # never prunes (merge-by-id, BUIL-TOOLING-syncsafety-001).
         self._seed_legacy("ATOM-SEARCH-004", "will orphan")
         res = self._sync()
         mem_dir = Path(res["mirror"]["dir"])
         self.assertTrue((mem_dir / "ATOM-SEARCH-004.md").exists())
         (bl.items_dir(self.repo) / "ATOM-SEARCH-004.md").unlink()
-        self._sync()
+        self._sync(prune=True)
         self.assertFalse((mem_dir / "ATOM-SEARCH-004.md").exists(),
-                         "orphaned legacy mirror must be pruned")
+                         "orphaned legacy mirror must be pruned under --prune")
 
 
 class TestDuplicateIdDetection(_Base):
@@ -985,6 +1005,98 @@ class TestNoThirdPartyImports(unittest.TestCase):
             nonstdlib, set(),
             f"backlog.py must import only stdlib; found non-allowlisted: {sorted(nonstdlib)}",
         )
+
+
+class TestSyncSafety(_Base):
+    """Acceptance tests for BUIL-TOOLING-syncsafety-001 — sync is non-destructive
+    and `--repo X` from inside X does not doubly-nest the store."""
+
+    def test_sync_from_partial_store_leaves_mirror_item_intact(self):
+        # Acceptance (a): a sync from a local store MISSING item K leaves K
+        # intact in the durable mirror — file AND INDEX row.
+        k = self._new(area="selfmod", title="keep me")
+        kid = k["id"]
+        res = self._sync()
+        mem_dir = Path(res["mirror"]["dir"])
+        k_mirror = mem_dir / f"{kid}.md"
+        self.assertTrue(k_mirror.exists(), "precondition: K mirrored")
+
+        # Simulate the bug's partial/mis-rooted local store: K is gone locally,
+        # a DIFFERENT item exists. A default sync must merge, not overwrite.
+        (bl.items_dir(self.repo) / f"{kid}.md").unlink()
+        j = self._new(area="other", title="partial-store item")
+        jid = j["id"]
+        res2 = self._sync()
+
+        self.assertTrue(k_mirror.exists(),
+                        "K must survive a sync from a store that lacks it")
+        index_text = (mem_dir / "INDEX.md").read_text(encoding="utf-8")
+        self.assertIn(kid, index_text,
+                      "mirror INDEX must still list the mirror-only item K")
+        self.assertTrue((mem_dir / f"{jid}.md").exists(),
+                        "the new local item must also be mirrored")
+        self.assertIn(jid, index_text)
+
+    def test_new_repo_named_from_inside_itself_writes_to_dot_build_loop(self):
+        # Acceptance (b): `new --repo <name>` run from inside repo <name> writes
+        # to ./.build-loop/backlog/, NOT ./<name>/.build-loop/backlog/.
+        import os
+        name = self.repo.name  # "myproj-app"
+        old_cwd = os.getcwd()
+        os.chdir(self.repo)
+        try:
+            ns = _NS(repo=name, area="search", type="debt", title="x",
+                     priority="P2", status="open", gated="none", entities="",
+                     evidence="", provenance_source="", provenance_ref="",
+                     owner="", context="", notes="", review_days=30,
+                     today="2026-06-16")
+            res = bl.cmd_new(ns)
+        finally:
+            os.chdir(old_cwd)
+        item_path = Path(res["path"]).resolve()
+        good_root = (self.repo / ".build-loop" / "backlog").resolve()
+        nested_root = (self.repo / name / ".build-loop").resolve()
+        self.assertTrue(str(item_path).startswith(str(good_root)),
+                        f"item must land under {good_root}, got {item_path}")
+        self.assertFalse(nested_root.exists(),
+                         f"must NOT create doubly-nested store at {nested_root}")
+
+
+class TestNormalizeRepo(unittest.TestCase):
+    """Unit tests for normalize_repo path resolution (no fs writes)."""
+
+    def test_existing_dir_honoured_literally(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(bl.normalize_repo(d), Path(d))
+
+    def test_dot_resolves_to_cwd_dir(self):
+        # "." is an existing dir -> returned as-is.
+        self.assertEqual(bl.normalize_repo("."), Path("."))
+
+    def test_relative_name_matching_cwd_basename_resolves_to_cwd(self):
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "build-loop"
+            repo.mkdir()
+            old = os.getcwd()
+            os.chdir(repo)
+            try:
+                # No nested ./build-loop child -> name matches cwd basename.
+                self.assertEqual(bl.normalize_repo("build-loop").resolve(),
+                                 repo.resolve())
+            finally:
+                os.chdir(old)
+
+    def test_unrelated_relative_name_stays_literal(self):
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            old = os.getcwd()
+            os.chdir(d)
+            try:
+                self.assertEqual(bl.normalize_repo("new-thing"), Path("new-thing"))
+            finally:
+                os.chdir(old)
 
 
 if __name__ == "__main__":
