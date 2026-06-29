@@ -2,7 +2,7 @@
 name: build-loop:security-scan
 description: "Run before any feature push, during Phase 2 planning, or whenever an agent wants a security pass. Executes a deterministic, model-independent OWASP scanner (scripts/security_scan.py) over the repo — catches the common greppable classes: secrets in source, secrets/tokens in logs, SQL/command/eval injection, public mutating endpoints without rate limiting, missing security headers, prompt-injection sinks — and maps each finding to OWASP Web/LLM/Agentic IDs. The judgment layer (authz logic, tenant scoping, tool-permission scope, agent goal-drift) escalates to the security-reviewer agent + the security-methodology canon."
 version: 0.1.0
-user-invocable: true
+user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -19,7 +19,7 @@ This skill RUNS: a stdlib-only Python scanner, no model, no network, no Fable de
 
 1. **Before any feature push (always-on gate).** `scripts/hooks/pre_bash_dispatch.sh` routes `git push` through the scanner and HARD-BLOCKS the push on HIGH+ findings (mirrors the commit auditor). Invoke it explicitly too when pushing outside a build-loop project.
 2. **During Phase 2 planning.** Run it over the files/area you're about to change to surface existing security debt before adding to it.
-3. **Whenever any agent wants a security pass.** It's `user-invocable` and a plain script — any orchestrator or agent can call it.
+3. **Whenever any agent wants a security pass.** It's a plain script — any orchestrator or agent can call it (agent-callable; not a user-facing slash command, so `user-invocable: false`).
 
 ## Run it
 
