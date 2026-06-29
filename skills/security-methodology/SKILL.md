@@ -17,7 +17,7 @@ This is the canon the `security-reviewer` agent grades against, and the canon th
 - **Auto-loaded** by `skills/defenseclaw-bridge/SKILL.md` after Phase 3 Execute when the build produced agent-builder-style artifacts (`tool-contract.md`, `agent-manifest.md`, `guardrail.md`).
 - **User-invocable** standalone: ask "what are the security concerns for this design", "give me the OWASP threat model for this", "which ASI risks does this surface", and the orchestrator should `Skill("build-loop:security-methodology")`.
 
-This skill is **knowledge only**. It writes nothing. It performs no scans. The grading logic lives in `security-reviewer`; the runtime mapping lives in `defenseclaw-bridge`.
+This skill is **knowledge only**. It writes nothing. It performs no scans. The **deterministic, always-on scan** lives in `skills/security-scan/` (script `scripts/security_scan.py`) — the model-independent arm that runs before every push via the `pre_bash_dispatch.sh` gate and is user-invocable during planning; it catches the greppable classes (secrets, secret-in-logs, injection, missing rate-limit/headers) and cites the same matrix rows. The LLM **grading** (judgment layer) lives in `security-reviewer`; the runtime mapping lives in `defenseclaw-bridge`.
 
 ## What this skill ships
 

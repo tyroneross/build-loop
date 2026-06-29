@@ -152,6 +152,30 @@ case "$CMD" in
         ;;
 esac
 
+# Pre-push security gate: deterministic OWASP scan before a push. Mirrors the
+# commit-auditor hard-block. Named, observed failure that earns it: a GitHub
+# OAuth access_token logged to console.log shipped unnoticed (2026-06) — detection
+# was gated on a judgment flag + a Fable-pinned agent, with no always-on backstop.
+# Hard-block (exit 2) only on HIGH+ findings (scanner rc==1); its stderr names
+# them. Fail-open on any other rc (missing python3, scanner crash) — a broken
+# scanner must never wedge `git push`. Escape: `// nosec: <reason>` on a confirmed
+# false positive, or BUILD_LOOP_HOOKS=off to bypass.
+SECURITY_HARD_BLOCK=0
+case "$CMD" in
+    *"git push"*)
+        _SCAN="$PLUGIN_ROOT/scripts/security_scan.py"
+        if [ -f "$_SCAN" ] && command -v python3 >/dev/null 2>&1; then
+            _SCAN_RC=0
+            _SCAN_OUT=$(python3 "$_SCAN" --path "$CWD" --fail-on high 2>&1) || _SCAN_RC=$?
+            if [ "$_SCAN_RC" = "1" ]; then
+                SECURITY_HARD_BLOCK=1
+                printf '%s\n' "$_SCAN_OUT" >&2
+                printf '\n[build-loop] Pre-push security scan found HIGH+ findings — push blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>`, or set BUILD_LOOP_HOOKS=off to bypass.\n' >&2
+            fi
+        fi
+        ;;
+esac
+
 # Merge by precedence: deny > ask > allow. First matching decision wins.
 # Pass the envelopes via argv to a tiny python merge (no shell JSON parsing).
 python3 - "${ENVELOPES[@]}" <<'PY'
@@ -177,9 +201,9 @@ for raw in sys.argv[1:]:
 print(json.dumps(best) if best else "{}")
 PY
 
-# Hard-block the commit if the auditor flagged a deterministic violation.
-# stderr was already emitted by the auditor; exit 2 tells Claude Code to deny.
-if [ "$COMMIT_AUDIT_HARD_BLOCK" = "1" ]; then
+# Hard-block the commit (auditor) or push (security scan) on a deterministic
+# violation. stderr was already emitted; exit 2 tells Claude Code to deny.
+if [ "$COMMIT_AUDIT_HARD_BLOCK" = "1" ] || [ "$SECURITY_HARD_BLOCK" = "1" ]; then
     exit 2
 fi
 
