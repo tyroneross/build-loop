@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e59ba682ebfd743496504aabf92824ca112f35e2b1dac145312299481e98662e"
+    "content_sha256": "adc25a5fd49045518ab5558bf89f7c90222bd13b94a684d28bec274a503d7f4b"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1664,6 +1664,14 @@
           "date": "2026-05-28"
         }
       },
+      "security-scan": {
+        "description": "\"Run before any feature push, during Phase 2 planning, or whenever an agent wants a security pass. Executes a deterministic, model-independent OWASP scanner (scripts/security_scan.py) over the repo — catches the common greppable classes: secrets in source, secrets/tokens in logs, SQL/command/eval injection, public mutating endpoints without rate limiting, missing security headers, prompt-injection sinks — and maps e…",
+        "file": "skills/security-scan/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
+        }
+      },
       "self-improve": {
         "description": "Use when Phase 6 Learn fires automatically after Report, the user runs `/build-loop:self-improve`, or asks to \"scan recent runs\" or \"improve build-loop\". Scans recent runs for recurring patterns, auto-drafts experimental skills/agents with A/B tracking.",
         "file": "skills/self-improve/SKILL.md",
@@ -1975,6 +1983,7 @@
       "scripts/scan_findings/detect.py": "Tier-1 deterministic findings detector.",
       "scripts/scan_transcript_for_decisions.py": "End-of-session sweep for tier-3 (inferred / assumed) decisions.",
       "scripts/script_relevance.py": "Script relevance / staleness detector (G5).",
+      "scripts/security_scan.py": "",
       "scripts/self_mod_verify.py": "self_mod_verify.py — correctness gate for any self-modification of build-loop's own code.",
       "scripts/self_review/__init__.py": "self_review package — deterministic data-gatherer for build-loop periodic self-review.",
       "scripts/self_review/__main__.py": "self_review/__main__.py — deterministic data-gatherer for build-loop periodic self-review.",
@@ -1989,6 +1998,7 @@
       "scripts/slice_acp.py": "Slice the ACP to a file set for a single subagent dispatch.",
       "scripts/stale_context_check.py": "",
       "scripts/state_finalize.py": "M4 — Best-effort Stop hook annotation for crash detection.",
+      "scripts/status_refresh.py": "status_refresh.py — keep a project's canonical CURRENT.md status file honest.",
       "scripts/stop_closeout.py": "stop_closeout.py — structural run-close for INLINE build-loop runs (f6).",
       "scripts/supersede_decision.py": "Explicit supersession CLI for canonical build-loop memory.",
       "scripts/surface_pending_lessons.py": "Surface pending-lesson candidates for the HOST coding agent to refine.",
