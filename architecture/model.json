@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "adc25a5fd49045518ab5558bf89f7c90222bd13b94a684d28bec274a503d7f4b"
+    "content_sha256": "04cc9dae1143a975cb89b1b2bc76f565312dad2d010bead05045813915927174"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1432,15 +1432,15 @@
         "file": "skills/security-methodology/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-28"
+          "date": "2026-06-29"
         }
       },
       "security-scan": {
         "description": "\"Run before any feature push, during Phase 2 planning, or whenever an agent wants a security pass. Executes a deterministic, model-independent OWASP scanner (scripts/security_scan.py) over the repo — catches the common greppable classes: secrets in source, secrets/tokens in logs, SQL/command/eval injection, public mutating endpoints without rate limiting, missing security headers, prompt-injection sinks — and maps e…",
         "file": "skills/security-scan/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-06-29"
         }
       },
       "self-improve": {
