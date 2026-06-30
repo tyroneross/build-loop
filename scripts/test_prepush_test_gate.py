@@ -219,6 +219,18 @@ def test_all_default_gates_run_and_pass_on_green_repo():
     assert by_name.get("artifact-freshness") in {"pass", "skip"}
 
 
+def test_shallow_clone_skips_artifact_freshness(monkeypatch):
+    """Regression (2026-06-30): a shallow clone (CI pytest.yml checkout) lacks the
+    git history the diagram's freshness check derives dates from, so generate.py
+    --check false-positives STALE. The gate must fail-open SKIP (not BLOCK) a green
+    repo in that case. Pre-fix this blocked CI on the gate's own merge commit."""
+    monkeypatch.setattr(gate, "_is_shallow_clone", lambda wd: True)
+    verdict = gate.evaluate(REPO, [MAIN_PUSH_LINE], force_run=True)
+    by_name = {r["name"]: r["status"] for r in verdict["gate_results"]}
+    assert by_name.get("artifact-freshness") == "skip", verdict
+    assert verdict["action"] == "allow", verdict
+
+
 def test_named_targets_exist_and_collect():
     """Standing guard closing the exit-5 silent-disarm hole: if a named target is
     renamed/deleted, this fails (in the same suite the gate itself runs)."""

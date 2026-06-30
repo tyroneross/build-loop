@@ -196,6 +196,20 @@ def _module_available(interp: str, module: str, *, workdir: Path) -> bool:
 # Gate runner
 # ---------------------------------------------------------------------------
 
+def _is_shallow_clone(workdir: Path) -> bool:
+    """True if this is a shallow git clone. A shallow clone lacks full file
+    history, so any gate that derives state from `git log` (e.g. the diagram's
+    git_last_updated dates) computes wrong values and would false-positive.
+    CI test jobs (pytest.yml) check out shallow; real local pre-push is full."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(workdir), "rev-parse", "--is-shallow-repository"],
+            stderr=subprocess.DEVNULL, text=True).strip()
+        return out == "true"
+    except Exception:  # noqa: BLE001 — can't tell -> don't skip (safer to run)
+        return False
+
+
 def _run_gate(
     name: str,
     argv: list[str],
@@ -206,6 +220,7 @@ def _run_gate(
     open_codes: Iterable[int] = (),
     extra_path: str | None = None,
     timeout: int = 600,
+    skip_if_shallow: bool = False,
 ) -> dict[str, Any]:
     """Run one gate. Returns ``{name, status, exit_code, detail}``.
 
@@ -215,6 +230,14 @@ def _run_gate(
       - exit in ``open_codes`` (env/no-collect, NOT a real failure) -> ``skip``
       - any other non-zero -> ``fail`` (fail-CLOSED -> caller blocks)
     """
+    if skip_if_shallow and _is_shallow_clone(workdir):
+        return {
+            "name": name,
+            "status": "skip",
+            "exit_code": None,
+            "detail": "shallow clone — git-history-derived check can't verify reliably — fail-open skip",
+        }
+
     for mod in requires:
         if not _module_available(interp, mod, workdir=workdir):
             return {
@@ -373,6 +396,11 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
         "requires": ["yaml"],
         "extra_path": venv_bin,
         "timeout": 120,
+        # generate.py --check derives git_last_updated from `git log`; a shallow
+        # clone (CI pytest job) lacks the history, so it false-positives STALE.
+        # Real pre-push runs in a full clone where this is reliable. The diagram
+        # is independently gated by architecture-diagram.yml (fetch-depth:0).
+        "skip_if_shallow": True,
     })
     return gates
 
@@ -486,6 +514,7 @@ def evaluate(
                 open_codes=spec.get("open_codes", ()),
                 extra_path=spec.get("extra_path"),
                 timeout=spec.get("timeout", 600),
+                skip_if_shallow=spec.get("skip_if_shallow", False),
             )
             results.append(res)
             if res["status"] == "fail":
