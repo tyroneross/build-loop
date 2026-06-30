@@ -8,7 +8,14 @@
 
 **Goal**: Break work into executable steps, then optimize the plan before execution.
 
-0. **If no plan exists yet**: check whether `.build-loop/plan.md` is absent or empty. If so, invoke `Skill("build-loop:spec-writing")` to draft a build-loop-compatible plan markdown before proceeding. The spec-writing skill walks the completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation, UI input/output contract when UI is in scope, and routing-risk fields) and runs `check_checklist.py` + `plan-critic` on the output. It writes the plan to `docs/plans/<feature-slug>.md` and commits it before any implementation branches are cut. Only continue to step 1 once the spec-writing skill returns a plan path. Skip this step when a valid plan already exists and passed `plan-verify` on the previous run.
+0. **Consume the Phase 1 spec-router record (author selection)**: READ `state.json.intent.spec_router` (written by Phase 1 Assess step 11 per `references/capability-routing.md` §"Spec/Plan author router (intent-driven, ordered)"). Do NOT independently re-decide which author skill to call — act on the recorded `action`/`skill`:
+   - `action: "call"`, `skill: "build-loop:spec-writing"` → invoke `Skill("build-loop:spec-writing")` to draft the plan (the `no-plan` case: `.build-loop/plan.md` absent/empty).
+   - `action: "call"`, `skill: "build-loop:writing-plans"` → the plan exists and is valid; go straight to step 1 (`writing-plans` turns it into the task/dependency graph). Skip spec-writing.
+   - `action: "call"`, `skill: "prd-builder"` → greenfield PRD authoring (only when `run_active == false`); outside an active run this row rarely reaches Phase 2.
+   - `action: "noop"` / `"recommend"` (`skill: null`) → author nothing from the router; proceed.
+   - **Fallback** (record absent — older state, or a Codex lead that skipped step 11): apply the router's own logic inline — if `.build-loop/plan.md` is absent or empty, invoke `Skill("build-loop:spec-writing")`; otherwise skip to step 1.
+
+   When spec-writing is invoked it walks the completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation, UI input/output contract when UI is in scope, and routing-risk fields), runs `check_checklist.py` + `plan-critic`, writes the plan to `docs/plans/<feature-slug>.md`, and commits it before any implementation branches are cut. Only continue to step 1 once a plan path exists.
 
 1. **Invoke `writing-plans` skill** for detailed task breakdown
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph

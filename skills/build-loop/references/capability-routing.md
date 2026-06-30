@@ -25,6 +25,52 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Modular systems pack | Phases 1-4 | Read `references/modular-systems-pack.md`; partition files/tasks MECE; prefer modular scalable boundaries unless an exception is documented |
 | Codex subagent adapter | Phase 3 (Execute, Codex only) | Read `references/codex-subagents.md`; use `templates/codex-worker-prompt.md` for authorized Codex workers |
 
+### Spec/Plan author router (intent-driven, ordered)
+
+This router selects the single skill that AUTHORS the plan/spec/task graph for this run. It is a recommendation that DRIVES Phase 2 — recorded into `state.json.intent.spec_router`, consumed by Phase 2 Plan, never a hard block.
+
+**Scope — author selection only.** `prd-bridge` is NOT in this router. It is mandatory in Phase 1 step 10 and only *consumes* an existing PRD (`docs/prd-*.md` → `state.json.prd`); it never authors. PRD-context is orthogonal to author selection — keep them separate.
+
+**Governing rule**: select on intent + goal + context, not on a trigger-word match. A skill's word-overlap activation is not enough to call it (this is why `prd-builder` over-fired during build-loop runs). The router is the intent-side selection; it pairs with the activation-side guard (prd-builder's negative-trigger scope, which excludes in-flight changes and active build-loop runs).
+
+Signals (all set during Phase 1 Assess):
+
+- `run_active` — is a build-loop run active? (`true` for any `/build-loop:run` or build-orchestrator dispatch.)
+- `plan_status` — `no-plan` | `plan-valid`, from the Phase 2 plan-exists gate (`.build-loop/plan.md` absent/empty + last `plan-verify` result).
+- `intent_kind` — `PRD-author` | `build-plan` | `task-graph` | `none`, the LLM's read of what this run needs authored.
+- `code_exists` — does the repo have substantive existing code? (Assess maps architecture: new/empty repo → false, existing repo → true.)
+- `goal_scope` — `new-app` | `existing-app-change` | `in-build-task-breakdown`.
+
+The rows are ORDERED — first match wins, so exactly one author is selected and no case matches two:
+
+| # | Match condition (first true wins) | route_type / action | Author selected | Why |
+|---|---|---|---|---|
+| 1 | Q&A, status, trivial, read-only, or advisory-context-only — nothing to author | `noop` (call nothing) | — | no plan/spec/task graph needed |
+| 2 | `run_active == false` AND greenfield PRD authoring is explicitly intended (new app with no code, OR `/start-prd` requested for a project) | `call` (or `recommend` outside an interactive session) | `prd-builder` | greenfield authoring + interactive intake; honors prd-builder's negative trigger — never fires inside an active run |
+| 3 | `run_active == true` AND `plan_status == no-plan` | `call` | `build-loop:spec-writing` | author the in-build, non-interactive, gated plan for the orchestrator |
+| 4 | `run_active == true` AND `plan_status == plan-valid` | `call` | `build-loop:writing-plans` | turn the accepted plan into the task / dependency graph |
+
+The order is the contract: row 1 short-circuits before any author runs; row 2 is the only PRD author and is fenced off from active runs; rows 3 and 4 are mutually exclusive on `plan_status`. The table extends to any future author skill — add a row at the right precedence, key it on the same signals, and the system still selects exactly one and records why.
+
+> Future refinement (do not over-build now): for monorepos, a `target_code_exists` signal (does the *target sub-path* already have code, vs the repo as a whole) would refine row 2's greenfield test. Out of scope until a monorepo case demands it.
+
+**Phase 1 record (the consumable contract)**. Phase 1 writes the matched decision into `state.json.intent.spec_router` so a Codex lead (no `Skill()` auto-activation) can consume it deterministically:
+
+```json
+{
+  "route_type": "author",
+  "action": "call" | "recommend" | "noop",
+  "skill": "build-loop:spec-writing" | "build-loop:writing-plans" | "prd-builder" | null,
+  "fallback": "<fallbacks.md section or inline guidance> | null",
+  "matched_row": 1 | 2 | 3 | 4,
+  "signals": { "run_active": true, "plan_status": "no-plan", "intent_kind": "build-plan", "code_exists": true, "goal_scope": "existing-app-change" }
+}
+```
+
+`action: "noop"` → `skill: null`, Phase 2 authors nothing from the router. `action: "recommend"` → surface the skill in the report, don't auto-call. `action: "call"` → Phase 2 calls `skill`.
+
+**Phase 2 read (the load-bearing wire)**. Phase 2 Plan READS `state.json.intent.spec_router` and acts on `action`/`skill` — it does NOT independently re-decide which author to call. See `references/phase-2-plan.md` step 0.
+
 ### Phase quick reference
 
 | # | Phase | Purpose | Sub-steps / key actions |
