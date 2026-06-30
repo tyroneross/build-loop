@@ -29,9 +29,18 @@ Contract (mirrors build-loop's hook charter):
     FLOOR ``auditor_status`` (``not-run:parent-must-dispatch``) — it never marks
     the run as judged. The gate WARNs that the Frontier layer was skipped.
 
+Also (added 2026-06-29): on every Stop, RELEASE this tool's Rally file-claims so a
+stopped session's claims do not leak past Stop. This mirrors what
+``.codex/hooks.json`` already does for Codex (``rally stop codex``); the Claude hook
+previously released only the run IDENTITY and never the file claims, so
+``claude_code`` auto-claims accreted unbounded (112→127 observed). See
+``release_my_claims``. The non-default reaper (``rally sessions --reap`` /
+``reaper.py``) remains the backstop for sessions that crash before Stop fires.
+
 Two modes:
-  --mode stop           (default) record the run + run the gate + write the marker,
-                        emit Stop-hook JSON (advisory ``systemMessage`` on WARN/FAIL).
+  --mode stop           (default) release this tool's file claims, record the run +
+                        run the gate + write the marker, emit Stop-hook JSON
+                        (advisory ``systemMessage`` on WARN/FAIL).
   --mode session-start  surface any ``closeout-pending/*.md`` marker ONCE (emit
                         SessionStart ``additionalContext``), then move it to
                         ``closeout-pending/surfaced/``.
@@ -44,6 +53,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,9 +71,103 @@ import judgment_gate  # noqa: E402  (Frontier-judgment gate evaluator)
 # gate; this is the proxy only when no session id is available.
 _HEARTBEAT_FRESH_MINUTES = 120
 
+# This tool's Rally identity. A Claude Code session claims files as ``claude_code``
+# (auto-claim hooks + explicit ``rally say claim``). On Stop we release them.
+_RALLY_TOOL = "claude_code"
+
+# Cap the per-Stop release sweep so a pathological backlog (the 100+ leaked
+# auto-claims this fix was written for) can never make a Stop hook run long.
+_MAX_RELEASE_PER_STOP = 200
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _rally_runner(args: list[str], workdir: Path) -> subprocess.CompletedProcess | None:
+    """Run ``rally <args> --json`` in ``workdir``. None when rally is absent/errors.
+
+    Isolated + injectable so ``release_my_claims`` is unit-testable without a live
+    rally binary. Minimal-PATH safe: resolves ``rally`` via ``shutil.which`` (the
+    ``command -v rally`` guard the closeout contract requires) and never raises.
+    """
+    binary = shutil.which("rally")
+    if not binary:
+        return None
+    try:
+        return subprocess.run(
+            [binary, *args],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _open_claim_event_ids(workdir: Path, tool: str, runner=_rally_runner) -> list[str]:
+    """Event ids of every live claim owned by ``tool``, via ``rally room --json``.
+
+    Fail-open: returns [] on any error (rally absent, non-zero exit, unparseable
+    JSON). Walks the room envelope rather than assuming a fixed shape, because the
+    rally JSON nests facts differently across versions.
+    """
+    proc = runner(["room", "--tool", tool, "--json"], workdir)
+    if proc is None or proc.returncode != 0 or not (proc.stdout or "").strip():
+        return []
+    try:
+        envelope = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return []
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("kind") == "claim" and node.get("tool") == tool:
+                ev = node.get("event_id")
+                if isinstance(ev, str) and ev and ev not in seen:
+                    seen.add(ev)
+                    ids.append(ev)
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(envelope)
+    return ids
+
+
+def release_my_claims(workdir: Path, tool: str = _RALLY_TOOL, runner=_rally_runner) -> int:
+    """Release every live Rally file-claim owned by ``tool``. Returns count released.
+
+    Mirrors what ``.codex/hooks.json`` achieves with ``rally stop codex`` (which
+    releases Codex's claims via its managed tmux session). ``rally stop claude_code``
+    does NOT work — ``claude_code`` is not a managed session, so the binary returns
+    ``unknown managed session``. The portable primitive is therefore: enumerate this
+    tool's open claims (``rally room --tool``) and release each by event id
+    (``rally say release --tool --ref``). Verified live 2026-06-29.
+
+    A stopped session is no longer editing, so this fires on EVERY Stop regardless
+    of run outcome. Advisory + fail-open: swallows all errors, never raises, capped
+    at ``_MAX_RELEASE_PER_STOP`` so a huge backlog can't make a Stop hook run long.
+    """
+    try:
+        event_ids = _open_claim_event_ids(workdir, tool, runner=runner)
+    except Exception:  # noqa: BLE001 — closeout must never raise
+        return 0
+    released = 0
+    for ev in event_ids[:_MAX_RELEASE_PER_STOP]:
+        proc = runner(
+            ["say", "release", "--tool", tool, "--subject",
+             "stop: session ended — releasing file claim", "--ref", ev],
+            workdir,
+        )
+        if proc is not None and proc.returncode == 0:
+            released += 1
+    return released
 
 
 def _parse_iso(value: str) -> datetime | None:
@@ -332,6 +437,16 @@ def _release_identity(workdir: Path, run_id: str) -> None:
 
 def run_stop(workdir: Path, session_id: str) -> dict:
     """Stop-mode entrypoint. Returns a Stop-hook JSON dict (always exit 0 upstream)."""
+    # Release this tool's Rally file-claims FIRST, unconditionally: a stopped
+    # session is no longer editing, so its claims must not leak past Stop (the
+    # leak this hook was written to close — claude_code auto-claims accreted
+    # 112→127 because nothing released them). Independent of the run-record path
+    # below: it runs even when no build-loop run touched this session (an editing
+    # session still auto-claims files), and even when state.json is absent.
+    try:
+        release_my_claims(workdir)
+    except Exception:  # noqa: BLE001 — claim release is best-effort; never break Stop
+        pass
     state = _read_state(workdir)
     if state is None:
         return {}

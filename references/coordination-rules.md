@@ -285,11 +285,33 @@ the `.codex/hooks.json` `SessionStart` hook that calls `session_probe.py --tool
 codex`, so it ages and decays identically — now enforced by the single Rust
 reaper both tools share, not by a cross-language golden fixture.
 
-**Session-end self-release.** Both tool hooks emit `rally stop <tool>` at turn
-completion (`Stop` event) so peers immediately see the agent's absence rather than
-waiting for heartbeat TTL expiry. This contains accretion at the source and
-reduces the reaper's steady-state work. On stop, a session also self-kills its own
-`rally-*` tmux session (Rust `rally stop`) so it can never become a detached orphan.
+**Session-end self-release (primary).** Both tool hooks release the agent's Rally
+file-claims at turn completion (`Stop` event) so peers immediately see the agent's
+absence and the claims do not leak past Stop. The two hosts reach this differently
+because their session models differ:
+
+- **Codex** emits `rally stop codex` (`.codex/hooks.json` Stop). `codex` resolves to
+  Codex's managed `rally-*` tmux session, so that one call both self-kills the
+  session (it can never become a detached orphan) AND releases the session's claims.
+- **Claude Code** is normally NOT a `rally run`-managed session, so `rally stop
+  claude_code` fails (`unknown managed session`). The Claude Stop hook therefore
+  releases claims via the portable primitive instead: `scripts/stop_closeout.py`
+  (`release_my_claims`, called from `hooks/closeout.sh stop`) enumerates this tool's
+  open claims with `rally room --tool claude_code --json` and releases each by event
+  id with `rally say release --tool claude_code --ref <event-id>`. It fires on EVERY
+  Stop (a stopped session is no longer editing), is advisory + fail-open (`command -v
+  rally` guarded; swallows all errors; exit 0 always), and is capped per Stop so a
+  backlog can't make the hook run long. History: before this, the Claude hook
+  released only the run IDENTITY, never the file claims, so `claude_code` auto-claims
+  accreted unbounded (112→127 observed). Added 2026-06-29.
+
+**Reaper = backstop, not primary (NON-DEFAULT).** The reaper that expires abandoned
+claims/presence (`rally sessions --reap`, faced by `scripts/rally_point/reaper.py`)
+is Rust-only and dry-run/manual by default — it is NOT turned on. Self-release above
+is the primary mechanism. The reaper exists ONLY to catch the dead: sessions that
+crash (SIGKILL / 529 / network drop) before their Stop hook fires, so self-release
+never ran. Do not enable it as a default-on sweep; run it deliberately as the
+explicit backstop for crash-orphaned claims.
 
 ## Adaptive multi-signal liveness (squad-projection decay + tmux orphan reaper)
 

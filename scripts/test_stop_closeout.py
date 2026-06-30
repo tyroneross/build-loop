@@ -131,6 +131,88 @@ def test_idle_stop_skips_rewrite_when_record_current(tmp_path):
     assert sp.read_text() == before        # byte-identical: no rewrite happened
 
 
+# --- Rally file-claim release on Stop (2026-06-29) --------------------------
+
+
+class _FakeRally:
+    """In-memory rally stand-in: claims live until released by event id.
+
+    Models the verified live behavior — ``room --tool`` lists this tool's open
+    claims with event ids; ``say release --tool --ref <id>`` releases that claim.
+    Lets the acceptance test claim a temp path, run the closeout release logic,
+    and assert the claim is gone, with no live rally binary.
+    """
+
+    def __init__(self, claims):
+        # claims: list of (event_id, tool, scope_path)
+        self.claims = list(claims)
+        self.calls = []
+
+    def __call__(self, args, workdir):
+        import subprocess as _sp
+        self.calls.append(list(args))
+        if args[:1] == ["room"]:
+            tool = args[args.index("--tool") + 1]
+            facts = [
+                {"kind": "claim", "tool": t, "event_id": e, "scope": [f"file:{p}"]}
+                for (e, t, p) in self.claims
+                if t == tool
+            ]
+            envelope = {"data": {"room": {"facts": facts}}}
+            return _sp.CompletedProcess(args, 0, stdout=json.dumps(envelope), stderr="")
+        if args[:2] == ["say", "release"]:
+            tool = args[args.index("--tool") + 1]
+            ref = args[args.index("--ref") + 1]
+            before = len(self.claims)
+            self.claims = [c for c in self.claims if not (c[0] == ref and c[1] == tool)]
+            ok = len(self.claims) < before
+            return _sp.CompletedProcess(args, 0 if ok else 3, stdout="{}", stderr="")
+        return _sp.CompletedProcess(args, 1, stdout="", stderr="unexpected")
+
+
+def test_release_my_claims_releases_this_tools_claims(tmp_path):
+    # ACCEPTANCE: claim a temp path as a fake claude_code session, run the
+    # release logic, assert the claim is released and other tools are untouched.
+    probe = "/tmp/__stop_release_probe__.txt"
+    fake = _FakeRally(
+        claims=[
+            ("fact_mine_1", "claude_code", probe),
+            ("fact_mine_2", "claude_code", "/tmp/other_mine.txt"),
+            ("fact_peer_1", "codex", "/tmp/peer.txt"),  # must NOT be touched
+        ]
+    )
+    released = stop_closeout.release_my_claims(tmp_path, "claude_code", runner=fake)
+    assert released == 2  # both claude_code claims released
+    remaining = {(e, t) for (e, t, _p) in fake.claims}
+    assert ("fact_mine_1", "claude_code") not in remaining  # the probe claim is gone
+    assert ("fact_mine_2", "claude_code") not in remaining
+    assert ("fact_peer_1", "codex") in remaining  # peer's claim preserved
+
+
+def test_release_my_claims_fail_open_when_rally_absent(tmp_path):
+    # rally absent → runner returns None → 0 released, no raise.
+    none_runner = lambda args, workdir: None  # noqa: E731
+    assert stop_closeout.release_my_claims(tmp_path, "claude_code", runner=none_runner) == 0
+
+
+def test_release_my_claims_capped(tmp_path):
+    many = [(f"fact_{i}", "claude_code", f"/tmp/f{i}") for i in range(stop_closeout._MAX_RELEASE_PER_STOP + 50)]
+    fake = _FakeRally(claims=many)
+    released = stop_closeout.release_my_claims(tmp_path, "claude_code", runner=fake)
+    assert released == stop_closeout._MAX_RELEASE_PER_STOP  # capped, not all 250
+
+
+def test_run_stop_invokes_claim_release(tmp_path, monkeypatch):
+    # Integration: run_stop calls release_my_claims on EVERY Stop, even when the
+    # run-record path skips (no state) and regardless of outcome.
+    called = {"n": 0}
+    monkeypatch.setattr(stop_closeout, "release_my_claims", lambda wd, **k: called.__setitem__("n", called["n"] + 1) or 0)
+    # No state.json present → record path returns {} early, but release still ran.
+    out = stop_closeout.run_stop(tmp_path, SESSION)
+    assert out == {}
+    assert called["n"] == 1
+
+
 # --- terminal identity release (W5) -----------------------------------------
 
 def test_terminal_stop_releases_identity(tmp_path):
