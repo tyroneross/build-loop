@@ -30,6 +30,11 @@
             "type": "command",
             "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; [ -f \"$pkg/session_probe.py\" ] && WORKDIR=\"$root\" python3 \"$pkg/session_probe.py\" --workdir \"$root\" --tool codex --mode hook >/dev/null 2>&1 || printf '{}'",
             "timeout": 4000
+          },
+          {
+            "type": "command",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; bash \"$root/hooks/session-start-git-hooks.sh\" </dev/null >/dev/null 2>&1; printf '{}'",
+            "timeout": 3000
           }
         ]
       }
