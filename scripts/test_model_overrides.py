@@ -379,7 +379,7 @@ class CanonicalAliasTests(unittest.TestCase):
         self.assertEqual(self.mo.normalize_model_id("claude-fable-5"), "fable")
         self.assertEqual(self.mo.normalize_model_id("claude-opus-4-8"), "opus")
         self.assertEqual(self.mo.normalize_model_id("claude-opus-4-8[1m]"), "opus")
-        self.assertEqual(self.mo.normalize_model_id("claude-sonnet-4-6"), "sonnet")
+        self.assertEqual(self.mo.normalize_model_id("claude-sonnet-5"), "sonnet")
         self.assertEqual(self.mo.normalize_model_id("claude-haiku-4-5"), "haiku")
 
     def test_normalize_alias_is_identity(self) -> None:

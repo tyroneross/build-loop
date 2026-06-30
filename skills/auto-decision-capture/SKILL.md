@@ -141,7 +141,7 @@ captures should set these explicitly when the signal is clear:
 | Field | Skill default | Example | When to override |
 |---|---|---|---|
 | `--tool` | `claude-code` (Stop hook fires inside Claude Code) | `claude-code` | If the conversation references another tool authoring the decision (rare) |
-| `--model` | `claude-opus-4-7` (or `$CLAUDE_MODEL`) | `claude-sonnet-4-6` | When you know the active sub-agent's model |
+| `--model` | `claude-opus-4-8` (or `$CLAUDE_MODEL`) | `claude-sonnet-5` | When you know the active sub-agent's model |
 | `--author` | `auto` (skill-driven captures) | `auto` | Always `auto` for in-session skill writes |
 | `--project` | derived from entity prefix or `$CLAUDE_PROJECT_DIR` | `build-loop` | Almost never; the default is right |
 | `--task-category` | `unknown` if no signal | `bugfix`, `feature`, `refactor`, `research`, `docs`, `migration`, `experiment`, `config` | **Set explicitly** whenever the conversational signal is clear (user said "fix this bug" → `bugfix`; "add this feature" → `feature`; "investigate why X" → `research`) |

@@ -28,7 +28,7 @@ Agents declare a `(segment, tier)` ROLE; the resolver (`scripts/model_resolver.p
 |---|---|---|---|
 | **Frontier** | Fable 5 | **Phase 2 Plan synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) via the Advisor dispatch ladder when stakes-gated** — `advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise (`references/advisor-dispatch-ladder.md`). (Advisor v1 = Phase 2 only; Phase 1 Assess synthesis runs inline as today until v2.) AND verification judgment (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer) | GPT-5.5 Thinking (or whichever tier scores above the prior Thinking-tier ceiling), future Claude tier above Opus; any model that benchmarks above the Thinking-tier contract on SWE-bench Verified AND ARC-AGI / GPQA Diamond |
 | **Thinking** | Opus 4.8 | Coordination — build-orchestrator, assessment-orchestrator — and the escalation target for execution (ambiguous spec, 2 consecutive failures, cross-file surprise) and audit/learnings synthesis when Frontier is unavailable | GPT-5 Thinking, Gemini 2.5 Pro; any model >= Opus 4.6 on SWE-bench Verified + Frontier-class on ARC-AGI / MMLU-Pro |
-| **Code** | Sonnet 4.6 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | Sonnet 4.7+, GPT-5 Codex, qwen2.5-coder-32B (local); any model with SWE-bench Verified within ~5pt of Sonnet 4.6 (currently ~79.6%) |
+| **Code** | Sonnet 5 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | GPT-5 Codex, qwen2.5-coder-32B (local); any model with SWE-bench Verified within ~5pt of the Code-tier default (last published Anthropic Sonnet figure: 4.6 ~79.6%; Sonnet 5 reaches prior Opus-tier coding/agentic quality per claude-api T1) |
 | **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | Haiku 4.6, GPT-5 Mini, llama3.2-3b (local); any small/fast model that handles structured pattern matching |
 
 **Rule of substitution:** tier A's swap target must score within tolerance of the default on the benchmark relevant to its role. For Code tier that's SWE-bench Verified ≥75% AND tool-use accuracy ≥85%; for Thinking tier that's SWE-bench ≥78% AND ARC-AGI / GPQA Diamond competitive; for Frontier tier that's clearing the Thinking-tier contract AND scoring above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond; for Pattern tier no benchmark — just "fast and cheap, doesn't hallucinate on bounded structured tasks."
@@ -76,10 +76,12 @@ Dispatch always resolves the role LIVE through `resolve_agent_model.py`, so an i
 
 | Claim | Source | Certainty |
 |-------|--------|-----------|
-| Sonnet 4.6: 79.6% SWE-bench Verified | Anthropic announcement + SWE-bench leaderboard | ⚠️ T2, single-source |
-| Opus 4.6: 80.8% SWE-bench Verified (1.2pt gap — smallest in Claude history) | Same | ⚠️ T2, single-source |
-| Sonnet 4.6 uses 70% fewer tokens than 4.5 on complex file ops with +38% accuracy | Anthropic Sonnet 4.6 announcement | ⚠️ T2, single-source |
-| Pricing: Sonnet $3/$15 per MTok input/output | Anthropic pricing page | ⚠️ verify before billing |
+| Sonnet 5 reaches prior Opus-tier quality on coding/agentic work (Code-tier default since 2026-06) | claude-api skill cache (T1 — Anthropic) | ✅ T1 qualitative; no single SWE-bench figure published yet |
+| Sonnet 5 uses a new tokenizer — ~30% more tokens for the same text vs Sonnet 4.6 | claude-api skill cache (T1 — Anthropic) | ✅ T1 — re-baseline token budgets, do not reuse 4.6 counts |
+| (prior-gen baseline) Sonnet 4.6: 79.6% SWE-bench Verified | Anthropic announcement + SWE-bench leaderboard | ⚠️ T2, single-source; historical calibration |
+| (prior-gen baseline) Opus 4.6: 80.8% SWE-bench Verified (1.2pt gap — smallest in Claude history) | Same | ⚠️ T2, single-source; historical |
+| (prior-gen baseline) Sonnet 4.6 uses 70% fewer tokens than 4.5 on complex file ops with +38% accuracy | Anthropic Sonnet 4.6 announcement | ⚠️ T2, single-source; superseded by Sonnet 5's new tokenizer |
+| Pricing: Sonnet 5 $3/$15 per MTok ($2/$10 introductory through 2026-08-31) | claude-api skill cache 2026-06-24 (T1 — Anthropic) | ⚠️ verify before billing |
 | Pricing: Opus 4.8 $5/$25 per MTok input/output | Anthropic pricing page | ⚠️ verify before billing |
 | Pricing: Fable 5 $10/$50 per MTok input/output (1M context, capability tier above Opus 4.8) | claude-api skill cache 2026-05-26 (T1 — Anthropic) | ✅ T1 source, advisory until re-confirmed at next billing audit |
 
@@ -187,10 +189,12 @@ If the ambiguity surfaces a **planning** problem (the original plan no longer fi
 | Configuration | Relative cost (advisory) |
 |---------------|--------------|
 | Single-pass Opus | ~5x baseline |
-| Single-pass Sonnet 4.6 | ~0.3x (70% fewer tokens in observed samples) |
-| Sonnet 4.6, effort=high | ~0.6x |
-| Sonnet 4.6, best-of-3 + critic | ~1.2x |
-| Sonnet 4.6 best-of-3 + critic vs single-pass Opus | ~4x cheaper |
+| Single-pass Sonnet | ~0.3x (token profile measured on Sonnet 4.6 — see caveat) |
+| Sonnet, effort=high | ~0.6x |
+| Sonnet, best-of-3 + critic | ~1.2x |
+| Sonnet best-of-3 + critic vs single-pass Opus | ~4x cheaper |
+
+> ⚠️ **Tokenizer change.** The multipliers above were derived from Sonnet 4.6 token profiles. Sonnet 5 uses a new tokenizer (~30% more tokens per unit text, claude-api T1), so these ratios are stale until re-derived from Sonnet 5 telemetry. Per-token *price* is unchanged ($3/$15), but token *counts* per task are higher — net cost-per-task shifts upward. Re-derive before any cost-minimization decision.
 
 ❓ Best-of-N + critic vs single-pass Opus on SWE-bench has not been directly benchmarked.
 
@@ -212,11 +216,12 @@ Not every agent should hard-pin its model. Use this rule:
 - **Inherit** (`model: inherit`) when user intent should flow through. The user's main-session choice is itself a cost/speed preference; respect it. Pair with a "recommended: X" note in this skill rather than forcing via frontmatter. Example: `root-cause-investigator` — recommended Opus on causal-tree work, but inherit honors whatever tier the user picked upstream.
 - **Override mechanism**: users can override any pin by passing `model:` when spawning the agent or by editing the frontmatter. Pins are defaults, not locks. The deliberate exceptions documented above (`alignment-checker`, `synthesis-critic` on Sonnet despite being verification-shaped) are exactly this kind of cost-vs-judgment pin and can be lifted if telemetry says so.
 
-Forward-compat note: pinned family aliases (`fable`, `sonnet`, `opus`) auto-track latest versions in their tier (e.g., Sonnet 4.6 → 4.7, Opus 4.7 → 4.8, Fable 5 → 6). `inherit` additionally picks up brand-new tiers (e.g., a future Flash-class model) without frontmatter edits.
+Forward-compat note: pinned family aliases (`fable`, `sonnet`, `opus`) auto-track latest versions in their tier (e.g., Sonnet 4.6 → 5, Opus 4.7 → 4.8, Fable 5 → 6). `inherit` additionally picks up brand-new tiers (e.g., a future Flash-class model) without frontmatter edits.
 
 ## Limitations of this guidance
 
-- ⚠️ Sonnet 4.6 token-efficiency claim is single-source (Anthropic announcement). Treat as directionally correct, not proven.
+- ⚠️ Sonnet 4.6 token-efficiency claim is single-source (Anthropic announcement). Treat as directionally correct, not proven; superseded for the active default by Sonnet 5's new tokenizer (~30% more tokens/text, claude-api T1).
+- ❓ No single published SWE-bench Verified figure for Sonnet 5 yet; the Code-tier capability claim rests on the T1 qualitative "reaches prior Opus-tier coding/agentic quality." Re-confirm with a benchmark when available.
 - ❓ Best-of-N + critic hasn't been tested against single-pass Opus on SWE-bench specifically.
 - ⚠️ Escalation triggers are heuristics, not proven thresholds. Revise after observing 5+ real builds and logging outcomes to `.build-loop/memory/`.
 

@@ -118,7 +118,7 @@ Required before Phase 2 done:
 - **Strong-checkpoint variances (severity=major with `verdict=new_approach`) route to Execute (no iteration counter burn) — never to Auto-Resolve.**
 - On `guidance` → log to `.build-loop/issues/` and proceed.
 - Skip A on re-reviews after Iterate unless Iterate touched new files.
-- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 4.6, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed.
+- **If `triggers.riskSurfaceChange` is true**, also dispatch `security-reviewer` (Sonnet 5, read-only) in parallel with `commit-auditor`; load `Skill("build-loop:security-methodology")` for the rubric. Findings JSON: `CRITICAL` or `HIGH` → route back to Execute (no iteration burn, same as `strong-checkpoint`); `MEDIUM` / `LOW` → log to `.build-loop/issues/security-findings.json` and proceed.
 - After Phase 3 Execute, also load `Skill("build-loop:defenseclaw-bridge")` if the build produced any agent-builder-style artifacts (`tool-contract*.md`, `agent-manifest*.md`, `guardrail*.md`, `system-boundary*.md`, `flow-topology*.md`, `role-card*.md`) — the bridge writes a DefenseClaw spec skeleton to `<project>/.defenseclaw/generated/`; spec-only, no runtime install.
 
 ### Sub-step B — Validate

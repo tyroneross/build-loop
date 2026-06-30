@@ -25,7 +25,7 @@ The "code is cheap, AI agents build fast" framing: the orchestrator does NOT def
 
 **Fan-out** (mode-dependent): After dequeue, partition entries by `files_touched` into independent groups (no overlapping files).
 
-- **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 4.6, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
+- **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 5, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
 - **Subagent mode** (orchestrator was itself spawned via `Agent(...)` so the no-sub-sub-agents rule applies): degrade to **inline-implementer mode** — iterate the queue serially, apply each fix following the implementer's protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed). No parallelism, same quality bar. The orchestrator surfaces the degradation in Review-F.
 
 In both modes, each pass returns the same structured outcome (status + files_changed + verifications). Status routing covers all 9 implementer return values:

@@ -418,7 +418,7 @@ Use the **6-Part Stack** for any system prompt or agent prompt:
 Calibrate to model tier:
 
 - **Frontier (T1 — Opus 4.6, GPT-5)**: can handle longer instructions, implicit reasoning, self-correction. Prefer clarity over verbosity.
-- **Mid (T2 — Sonnet 4.6, GPT-4)**: explicit instructions; show, don't tell; 1-2 few-shot examples help.
+- **Mid (T2 — Sonnet 5, GPT-5 class)**: explicit instructions; show, don't tell; 1-2 few-shot examples help.
 - **Small/fast (T3 — Haiku 4.5, gpt-4-mini)**: keep prompts short; single task only; deterministic output format; more examples (3-5).
 
 Review checklist — when auditing an existing prompt:

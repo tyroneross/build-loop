@@ -113,7 +113,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--agent", required=True, help="Subagent type (e.g. 'implementer', 'scope-auditor')")
     p.add_argument("--task-id", required=True, help="Unique per-dispatch task identifier")
-    p.add_argument("--model", required=True, help="Resolved model identifier (e.g. claude-sonnet-4-6)")
+    p.add_argument("--model", required=True, help="Resolved model identifier (e.g. claude-sonnet-5)")
     p.add_argument("--status", required=True, choices=sorted(VALID_STATUSES))
     p.add_argument("--dispatch-mode", required=True, choices=sorted(VALID_DISPATCH_MODES))
     p.add_argument("--files-changed-count", type=int, default=None)

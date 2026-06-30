@@ -107,6 +107,6 @@ def test_non_governed_agent_wrong_tier_ignored(tmp_path):
 def test_this_run_auditor_wrong_tier_fails(tmp_path):
     _write(tmp_path,
            _runs({"run_id": "cur", "riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}),
-           ledger_rows=[{"run_id": "cur", "agent": "independent-auditor", "action": "verify", "tier": "code", "model": "claude-sonnet-4-6"}])
+           ledger_rows=[{"run_id": "cur", "agent": "independent-auditor", "action": "verify", "tier": "code", "model": "claude-sonnet-5"}])
     rc, out = _run(tmp_path, "--run-id", "cur")
     assert rc == 1 and any(f["layer"] == "agent-ledger" for f in out["findings"])

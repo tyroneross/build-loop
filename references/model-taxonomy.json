@@ -141,11 +141,11 @@
       "aliases": ["gpt-5.5-codex"]
     },
     "sonnet": {
-      "provider": "anthropic", "label": "Claude Sonnet 4.6",
+      "provider": "anthropic", "label": "Claude Sonnet 5",
       "segment": "generative_reasoning", "tier": "T3",
-      "tags": ["balanced-workhorse"],
-      "released": "2025-11-01", "status": "default",
-      "aliases": ["claude-sonnet-4-6", "claude-sonnet-4-6-20251101"]
+      "tags": ["balanced-workhorse", "coding", "agentic", "long-context"],
+      "released": "2026-06-01", "status": "default",
+      "aliases": ["claude-sonnet-5"]
     },
     "gpt-5.4": {
       "provider": "openai", "label": "GPT-5.4",

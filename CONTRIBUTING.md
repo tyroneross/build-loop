@@ -25,7 +25,7 @@ For Claude Code sessions, the trailer is:
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
-Substitute the actual model + tier you used (e.g., `Claude Sonnet 4.6`, `Claude Haiku 4.5`).
+Substitute the actual model + tier you used (e.g., `Claude Sonnet 5`, `Claude Haiku 4.5`).
 
 For Codex CLI sessions, the trailer is:
 

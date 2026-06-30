@@ -44,7 +44,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Role:** Application. Apply a known rule, spec, or pattern to bounded input. Scoped implementation per a commit's owned-files. Adversarial critic vs rubric. Mechanical simplify. The "how" decisions when the "what" is already settled.
 - **Benchmark contract:** SWE-bench Verified ≥75% AND tool-use accuracy ≥85% AND multi-turn coding rollout ≥80%.
 - **Cost expectation:** ~3-5× cheaper than Thinking tier per token. The default for the bulk of build-loop work.
-- **Anthropic default:** Sonnet 4.6 (`claude-sonnet-4-6`)
+- **Anthropic default:** Sonnet 5 (`claude-sonnet-5`; alias `sonnet` auto-tracks the latest Sonnet generation)
 - **Verified equivalents:** Sonnet 4.7+ (when available), GPT-5.4 Mini (`gpt-5.4-mini` — fast coding + subagents)
 - **Local equivalents:** qwen2.5-coder-32B-instruct (mid-quality), Codestral 22B (reasonable substitute for bounded refactor work)
 
@@ -60,7 +60,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 
 | Provider | Frontier | Thinking | Code | Pattern |
 |---|---|---|---|---|
-| Anthropic (default) | Fable 5 (`fable`) | Opus 4.8 (`opus`) | Sonnet 4.6 (`sonnet`) | Haiku 4.5 (`haiku`) |
+| Anthropic (default) | Fable 5 (`fable`) | Opus 4.8 (`opus`) | Sonnet 5 (`sonnet`) | Haiku 4.5 (`haiku`) |
 | OpenAI | `gpt-5.5` (Codex) | `gpt-5.4` | `gpt-5.4-mini` | `gpt-5-nano` |
 | Google | next-gen Gemini Ultra (when it clears the contract) | `gemini-2.5-pro` | `gemini-2.5-flash` | `gemini-flash-lite` |
 | Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | `qwen2.5-coder-32b` | `llama3.2-3b` |
@@ -212,7 +212,7 @@ This dual-mode design is **not deprecated** — it's the intentional architectur
 ## Multi-model implications for the dispatch test
 
 When swapping providers, the dispatch-pattern A/B test should be re-run because:
-- **Wall-clock per tier varies by provider.** GPT-5 Codex may be faster or slower than Sonnet 4.6 at scoped code application.
+- **Wall-clock per tier varies by provider.** GPT-5 Codex may be faster or slower than Sonnet 5 at scoped code application.
 - **Cost ratios shift.** Some providers price the Thinking tier closer to the Code tier (smaller multiplier); others price wider.
 - **Cross-context-window effects.** Mode B's "single Opus context" wins partly come from full-file-system visibility; the same effect may differ on a model with a smaller context window.
 - **Tool-use fidelity.** Mode A's parallel implementer fan-out depends on the Code tier reliably calling Read/Edit/Bash tools without hallucination. This varies materially across providers.
