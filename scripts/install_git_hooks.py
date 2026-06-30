@@ -5,7 +5,13 @@
 
 Currently installs:
 
-- ``pre-push`` — the path-agnostic push-HOLD gate (see ``hooks/git/pre-push``).
+- ``pre-push`` — the path-agnostic push choke point (see ``hooks/git/pre-push``).
+  It runs TWO composed stages: the deploy-HOLD gate (``push_hold``) AND the
+  deterministic pre-push TEST gate (``prepush_test_gate`` — added per the
+  2026-06-29 RCA so a red commit cannot reach origin/main).  Both stages ship in
+  the single hook body copied verbatim below, so installing the hook installs the
+  test gate too — no separate wiring, and ``prepush_test_gate`` resolves off the
+  ``<repo>/scripts`` path the hook already adds to ``sys.path`` at runtime.
 
 The shell hook chain at ``hooks/pre-commit`` is installed separately (it's
 managed by ``scripts/install_hooks.sh`` and the plugin's session-start

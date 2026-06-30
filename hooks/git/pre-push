@@ -20,19 +20,23 @@ Per ``man githooks``: pre-push receives ``<remote> <url>`` as argv, and four
 fields per ref on stdin: ``<local_ref> <local_sha> <remote_ref> <remote_sha>``.
 Exit non-zero → push is blocked.
 
-This hook:
+This hook runs TWO stages; either blocking stops the push:
 
 1. Locates the repo (git rev-parse) and adds ``<repo>/scripts`` to sys.path.
-2. Imports ``push_hold.evaluate_push``.
-3. Calls it with the stdin lines.
-4. On ``allow``/``bypass``: exit 0 (push proceeds).
-5. On ``block``: print the reason + release instructions to stderr, exit 1.
-6. On ANY internal exception (broken import, syntax error, OSError): log to
-   stderr and exit 0.  A broken hook MUST NOT permanently wedge the user's
-   ability to push — fail OPEN on internal errors, fail CLOSED on holds.
+2. STAGE 1 — deploy-HOLD: ``push_hold.evaluate_push``. On ``block`` print the
+   reason + release instructions to stderr and exit 1.
+3. STAGE 2 — deterministic TEST gate: ``prepush_test_gate.evaluate`` (added per
+   the 2026-06-29 L2 RCA — red commits kept reaching origin/main because the
+   deterministic suite ran only post-push in CI). On ``block`` print the failing
+   gate to stderr and exit 1. Stage 2 COMPOSES with — never replaces — stage 1.
+4. On ``allow``/``bypass`` from both stages: arm closeout, exit 0 (push proceeds).
+5. On ANY internal exception (broken import, syntax error, OSError) in EITHER
+   stage: log to stderr and exit 0.  A broken hook MUST NOT permanently wedge the
+   user's ability to push — fail OPEN on internal errors, fail CLOSED on a real
+   hold / a real deterministic test failure.
 
 The block-vs-fail-open distinction is the whole reason for the try/except
-wrapper below.  Do NOT collapse it into a bare ``raise``.
+wrappers below.  Do NOT collapse them into a bare ``raise``.
 """
 from __future__ import annotations
 
@@ -185,12 +189,33 @@ def main() -> int:
         except OSError as exc:
             return _fail_open(f"could not read stdin: {exc!r}", repo=repo)
 
+        # --- STAGE 1: deploy-HOLD gate ---
         verdict = push_hold.evaluate_push(repo, stdin_lines, env=os.environ)
         action = verdict.get("action", "allow")
         if action == "block":
             sys.stderr.write(_format_block_message(verdict))
             return int(verdict.get("exit_code") or 1)
-        # allow / bypass / anything else → exit 0.
+
+        # --- STAGE 2: deterministic TEST gate (composes with stage 1) ---
+        # Runs the fast deterministic gate subset (the integration-gate class CI
+        # also runs) and BLOCKS the push on a real failure.  Import + evaluate are
+        # wrapped so a missing/broken gate fails OPEN — a broken gate must never
+        # permanently wedge pushing (same contract as stage 1).  evaluate() itself
+        # never raises; this try/except backstops an import/attr error.
+        try:
+            import prepush_test_gate  # type: ignore
+
+            test_verdict = prepush_test_gate.evaluate(repo, stdin_lines, env=os.environ)
+            if test_verdict.get("action") == "block":
+                sys.stderr.write(prepush_test_gate.format_block_message(test_verdict))
+                return int(test_verdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — test-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] test gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
+        # Both stages passed (or the test gate failed open) → exit 0.
         # Arm the post-push closeout baton BEFORE the push completes — git has
         # no native client-side post-push hook, so the next session-start
         # drains the baton via ``python3 -m closeout --source post-push-armed``.
