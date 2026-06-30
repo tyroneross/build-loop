@@ -8,12 +8,13 @@
 
 **Goal**: Break work into executable steps, then optimize the plan before execution.
 
-0. **Consume the Phase 1 spec-router record (author selection)**: READ `state.json.intent.spec_router` (written by Phase 1 Assess step 11 per `references/capability-routing.md` §"Spec/Plan author router (intent-driven, ordered)"). Do NOT independently re-decide which author skill to call — act on the recorded `action`/`skill`:
+0. **Consume the Phase 1 spec-router record (author selection)**: READ `state.json.intent.spec_router` (written by Phase 1 Assess step 11 per `references/capability-routing.md` §"Spec/Plan author router (intent-driven, ordered)"). Do NOT independently re-decide which author skill to call — **branch on `action` first**, then on `skill`:
+   - `action: "noop"` → **terminal**: author NOTHING from the router. Skip the author/writing-plans invocation entirely and proceed to step 1's optimization work without drafting a spec. Do not fall through to `writing-plans`.
+   - `action: "recommend"` → surface-only: name the recommended `skill` in the report so the lead knows what to run if it chooses, but do NOT auto-invoke it. Then proceed. (Distinct from `call`, which auto-invokes, and `noop`, which skips silently.)
    - `action: "call"`, `skill: "build-loop:spec-writing"` → invoke `Skill("build-loop:spec-writing")` to draft the plan (the `no-plan` case: `.build-loop/plan.md` absent/empty).
-   - `action: "call"`, `skill: "build-loop:writing-plans"` → the plan exists and is valid; go straight to step 1 (`writing-plans` turns it into the task/dependency graph). Skip spec-writing.
+   - `action: "call"`, `skill: "build-loop:writing-plans"` → the plan exists and is valid; go straight to step 1 (`writing-plans` turns it into the task/dependency graph). Skip spec-writing. `writing-plans` is the external superpowers skill, not vendored here; if absent, write a structured plan inline (see `references/capability-routing.md` §"Core loop skills/assets" fallback).
    - `action: "call"`, `skill: "prd-builder"` → greenfield PRD authoring (only when `run_active == false`); outside an active run this row rarely reaches Phase 2.
-   - `action: "noop"` / `"recommend"` (`skill: null`) → author nothing from the router; proceed.
-   - **Fallback** (record absent — older state, or a Codex lead that skipped step 11): apply the router's own logic inline — if `.build-loop/plan.md` is absent or empty, invoke `Skill("build-loop:spec-writing")`; otherwise skip to step 1.
+   - **Fallback** (record absent — older state, or a Codex lead that skipped step 11): apply the router's own logic inline. Compute `plan_status` exactly as the signal is defined — `no-plan` when `.build-loop/plan.md` is absent/empty OR the last `plan-verify` result failed; `plan-valid` otherwise. If `plan_status == no-plan`, invoke `Skill("build-loop:spec-writing")`; otherwise skip to step 1.
 
    When spec-writing is invoked it walks the completeness checklist (auth guard, external API contracts, rate-limit criterion, discoverability surfaces, server/client boundary, concurrency mechanism, observability events, input validation, UI input/output contract when UI is in scope, and routing-risk fields), runs `check_checklist.py` + `plan-critic`, writes the plan to `docs/plans/<feature-slug>.md`, and commits it before any implementation branches are cut. Only continue to step 1 once a plan path exists.
 

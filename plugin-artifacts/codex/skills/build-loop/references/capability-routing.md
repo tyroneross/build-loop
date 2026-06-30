@@ -41,16 +41,19 @@ Signals (all set during Phase 1 Assess):
 - `code_exists` — does the repo have substantive existing code? (Assess maps architecture: new/empty repo → false, existing repo → true.)
 - `goal_scope` — `new-app` | `existing-app-change` | `in-build-task-breakdown`.
 
-The rows are ORDERED — first match wins, so exactly one author is selected and no case matches two:
+The rows are ORDERED — first match wins, so exactly one author is selected and no case matches two. The final default row makes the table exhaustive: every `(run_active, plan_status, intent_kind)` combination matches exactly one row, so nothing falls through.
 
 | # | Match condition (first true wins) | route_type / action | Author selected | Why |
 |---|---|---|---|---|
-| 1 | Q&A, status, trivial, read-only, or advisory-context-only — nothing to author | `noop` (call nothing) | — | no plan/spec/task graph needed |
+| 1 | `intent_kind == none` — nothing to author (Q&A, status, trivial, read-only, or advisory-context-only) | `noop` (call nothing) | — (`skill: null`) | no plan/spec/task graph needed |
 | 2 | `run_active == false` AND greenfield PRD authoring is explicitly intended (new app with no code, OR `/start-prd` requested for a project) | `call` (or `recommend` outside an interactive session) | `prd-builder` | greenfield authoring + interactive intake; honors prd-builder's negative trigger — never fires inside an active run |
 | 3 | `run_active == true` AND `plan_status == no-plan` | `call` | `build-loop:spec-writing` | author the in-build, non-interactive, gated plan for the orchestrator |
-| 4 | `run_active == true` AND `plan_status == plan-valid` | `call` | `build-loop:writing-plans` | turn the accepted plan into the task / dependency graph |
+| 4 | `run_active == true` AND `plan_status == plan-valid` | `call` | `build-loop:writing-plans` (external) | turn the accepted plan into the task / dependency graph |
+| 5 (default) | else (no earlier row matched) — the canonical case is `run_active == false` AND `intent_kind` is `build-plan` or `task-graph`: a direct, out-of-run invocation of plan authoring on an existing repo | `recommend` | `build-loop:spec-writing` | recommend, not auto-call: there is no active run to drive, so surface the author for the lead to run if it chooses |
 
-The order is the contract: row 1 short-circuits before any author runs; row 2 is the only PRD author and is fenced off from active runs; rows 3 and 4 are mutually exclusive on `plan_status`. The table extends to any future author skill — add a row at the right precedence, key it on the same signals, and the system still selects exactly one and records why.
+The order is the contract: row 1 short-circuits before any author runs; row 2 is the only PRD author and is fenced off from active runs; rows 3 and 4 are mutually exclusive on `plan_status`; row 5 is the exhaustive `else` default that catches every remaining combination — its canonical case is an out-of-run `build-plan`/`task-graph` intent, but as the final row it also absorbs any residual (e.g. an out-of-run non-greenfield `PRD-author`) so no signal combination ever falls through. The table extends to any future author skill — add a row at the right precedence above the default, key it on the same signals, and the system still selects exactly one and records why.
+
+`build-loop:writing-plans` (row 4) is the **external** `writing-plans` skill from the superpowers plugin — it is not vendored in this repo (`skills/writing-plans/SKILL.md` does not exist here). When it is absent, fall back to the inline "write a structured plan directly" path in the §"Core loop skills/assets" table above.
 
 > Future refinement (do not over-build now): for monorepos, a `target_code_exists` signal (does the *target sub-path* already have code, vs the repo as a whole) would refine row 2's greenfield test. Out of scope until a monorepo case demands it.
 
@@ -62,12 +65,12 @@ The order is the contract: row 1 short-circuits before any author runs; row 2 is
   "action": "call" | "recommend" | "noop",
   "skill": "build-loop:spec-writing" | "build-loop:writing-plans" | "prd-builder" | null,
   "fallback": "<fallbacks.md section or inline guidance> | null",
-  "matched_row": 1 | 2 | 3 | 4,
+  "matched_row": 1 | 2 | 3 | 4 | 5,
   "signals": { "run_active": true, "plan_status": "no-plan", "intent_kind": "build-plan", "code_exists": true, "goal_scope": "existing-app-change" }
 }
 ```
 
-`action: "noop"` → `skill: null`, Phase 2 authors nothing from the router. `action: "recommend"` → surface the skill in the report, don't auto-call. `action: "call"` → Phase 2 calls `skill`.
+`action: "noop"` → `skill: null`, Phase 2 authors nothing from the router (terminal). `action: "recommend"` → `skill` carries the recommended author name (so the lead knows what to run if it chooses); Phase 2 surfaces the recommendation in the report and does NOT auto-call. `action: "call"` → `skill` is non-null and Phase 2 calls it. The three actions are distinct: `call` auto-invokes, `recommend` surfaces-only, `noop` skips.
 
 **Phase 2 read (the load-bearing wire)**. Phase 2 Plan READS `state.json.intent.spec_router` and acts on `action`/`skill` — it does NOT independently re-decide which author to call. See `references/phase-2-plan.md` step 0.
 
