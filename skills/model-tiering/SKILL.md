@@ -172,7 +172,7 @@ If the ambiguity surfaces a **planning** problem (the original plan no longer fi
 - **Self-refine with external verification** (tests, lint, type-check). External oracle is non-negotiable — without it, self-refine is circular.
 - **Adversarial critic loop** (writer agent + read-only reviewer agent). Separation is what makes it work. Same model reviewing its own output doesn't catch errors.
 - **Best-of-N sampling with self-certainty voting** on HARD chunks only (flagged by plan or first-pass failure). N=3. Cost = ~3x Sonnet, still under 1.5x single-pass Opus.
-- **Test-time compute** (effort=medium default, effort=high on retry). Easier problems benefit from revisions; harder problems need parallel sampling — not just more thinking on one path.
+- **Test-time compute** (effort=high default, effort=xhigh on retry — Sonnet 5 is the first Sonnet with `xhigh`; coding/agentic work wants high/xhigh per claude-api T1). Easier problems benefit from revisions; harder problems need parallel sampling — not just more thinking on one path.
 - **Plan-then-execute split** (Opus plans once, Sonnet executes many). Established pattern. Amortizes Opus cost across N subagent calls.
 
 ## Techniques to avoid
@@ -186,17 +186,19 @@ If the ambiguity surfaces a **planning** problem (the original plan no longer fi
 
 > ⚠️ **Advisory only.** The numbers below are directional heuristics based on single-source token-profile estimates and public pricing as of the skill's last update. They are **not** verified against real usage telemetry and should not be used as hard routing logic. Treat them as "this tier costs roughly this much more than that tier," not as commitments. Pricing, token profiles, and model output lengths all drift over time. Before using these ratios in any cost-minimization decision, pull actual usage data from the last 30 days of builds and re-derive the numbers for your workload.
 
-| Configuration | Relative cost (advisory) |
-|---------------|--------------|
-| Single-pass Opus | ~5x baseline |
-| Single-pass Sonnet | ~0.3x (token profile measured on Sonnet 4.6 — see caveat) |
-| Sonnet, effort=high | ~0.6x |
-| Sonnet, best-of-3 + critic | ~1.2x |
-| Sonnet best-of-3 + critic vs single-pass Opus | ~4x cheaper |
+**Price ratios only** (T1, claude-api — per-MTok, in/out): Fable 5 $10/$50 · Opus 4.8 $5/$25 · Sonnet 5 $3/$15 ($2/$10 intro through 2026-08-31) · Haiku 4.5 $1/$5.
 
-> ⚠️ **Tokenizer change.** The multipliers above were derived from Sonnet 4.6 token profiles. Sonnet 5 uses a new tokenizer (~30% more tokens per unit text, claude-api T1), so these ratios are stale until re-derived from Sonnet 5 telemetry. Per-token *price* is unchanged ($3/$15), but token *counts* per task are higher — net cost-per-task shifts upward. Re-derive before any cost-minimization decision.
+| Pair (same task) | Price ratio | Basis |
+|---|---|---|
+| Sonnet 5 vs Opus 4.8 | **~0.6x** | $3/$15 ÷ $5/$25 = 0.6 in & out. Sonnet 5 and Opus 4.8 share the **same** new tokenizer (T1), so token counts are comparable — the ratio is price-driven, not token-driven |
+| Sonnet 5 vs Fable 5 | **~0.3x** | $3/$15 ÷ $10/$50 |
+| Haiku 4.5 vs Sonnet 5 | **~0.33x** | $1/$5 ÷ $3/$15 |
 
-❓ Best-of-N + critic vs single-pass Opus on SWE-bench has not been directly benchmarked.
+> ⚠️ **These are price ratios, not measured task costs.** Real per-task cost also depends on token volume and effort — running Sonnet 5 at `high`/`xhigh` (the new default + escalation rung) raises its output-token count, narrowing the gap to Opus. A *measured* multiplier cannot yet be stated: the cost ledger (`~/.bookmark/cost-ledger.jsonl`) is currently dominated by local-model rows with no Anthropic build telemetry. **Re-derivation trigger:** once the ledger carries real Sonnet-5 + Opus build rows, pull the last 30 days and re-derive measured task-cost multipliers per workload.
+>
+> The retired "~0.3x single-pass Sonnet" figure was a Sonnet-**4.6** token-profile artifact ("70% fewer tokens than 4.5") and does **not** carry to Sonnet 5 — whose new tokenizer emits ~30% *more* tokens per unit text than 4.6. That ~30% delta matters only when comparing Sonnet 5 to the old 4.6 numbers, **not** to Opus 4.8 (shared tokenizer).
+
+❓ Best-of-N + critic vs single-pass Opus on SWE-bench has not been directly benchmarked on Sonnet 5.
 
 **How to convert these into routing decisions**: don't. Use the numbers to sanity-check a tier choice after the fact ("was this worth the 5x?"), not to justify forcing a model swap. When real telemetry disagrees with this table, trust telemetry and file an issue to update the table.
 
@@ -204,7 +206,7 @@ If the ambiguity surfaces a **planning** problem (the original plan no longer fi
 
 **Fable plans (when stakes-gated) and verifies. Opus coordinates. Sonnet executes. Haiku recognizes.**
 
-Phase 2 Plan synthesis reaches **Fable** through the **Advisor dispatch ladder** when stakes-gating trips (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`): the orchestrator dispatches the `advisor` agent (Rung 1), routes to a peer host (Rung 2), or — if its own session is already Fable — synthesizes inline at Frontier (Rung 0). When no trigger fires or no dispatch path is reachable, the orchestrator synthesizes the plan **inline on its own model (Opus)** and labels it honestly (Rung 3 = today's behavior; the floor equals current state). So "Fable plans" is the *guarantee on high-stakes plans*, with an honestly-labeled inline fallback otherwise — not unconditional. Full protocol: `references/advisor-dispatch-ladder.md`. The Advisor frames the goal, drafts the spec/ADRs, sets F-criteria, and MECE-partitions the work. The orchestrator (**Opus**, `build-orchestrator`, `assessment-orchestrator`) coordinates: it routes dispatches, runs deterministic gates, manages parallel fan-out, walks the Advisor ladder, and handles the escalation ladder. Phase 3 implementer subagents run on **Sonnet** at effort=medium (default workhorse) → external verification gate (tests/lint/types) → adversarial **Fable** verification surface (`plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, `promotion-reviewer`). If a strong-checkpoint finding or 2 consecutive chunk failures surface, execution escalates to **Opus** for judgment; if the failure traces back to a planning miss, route back to Fable to re-plan. See `agents/build-orchestrator.md §Escalation Triggers`. The **tier mapping** is the policy; the cost numbers above are advisory context, not the basis for overrides.
+Phase 2 Plan synthesis reaches **Fable** through the **Advisor dispatch ladder** when stakes-gating trips (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`): the orchestrator dispatches the `advisor` agent (Rung 1), routes to a peer host (Rung 2), or — if its own session is already Fable — synthesizes inline at Frontier (Rung 0). When no trigger fires or no dispatch path is reachable, the orchestrator synthesizes the plan **inline on its own model (Opus)** and labels it honestly (Rung 3 = today's behavior; the floor equals current state). So "Fable plans" is the *guarantee on high-stakes plans*, with an honestly-labeled inline fallback otherwise — not unconditional. Full protocol: `references/advisor-dispatch-ladder.md`. The Advisor frames the goal, drafts the spec/ADRs, sets F-criteria, and MECE-partitions the work. The orchestrator (**Opus**, `build-orchestrator`, `assessment-orchestrator`) coordinates: it routes dispatches, runs deterministic gates, manages parallel fan-out, walks the Advisor ladder, and handles the escalation ladder. Phase 3 implementer subagents run on **Sonnet** at effort=high (default workhorse; xhigh on hard/code-heavy chunks) → external verification gate (tests/lint/types) → adversarial **Fable** verification surface (`plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, `promotion-reviewer`). On a first execution-problem chunk failure, retry the same Sonnet 5 implementer at **effort=xhigh** (intermediate rung — near-Opus coding at lower cost) before paying for Opus; a strong-checkpoint finding or a 2nd consecutive failure after the xhigh retry escalates to **Opus** for judgment; if the failure traces back to a planning miss, route back to Fable to re-plan. See `agents/build-orchestrator.md §Escalation Triggers`. The **tier mapping** is the policy; the cost numbers above are advisory context, not the basis for overrides.
 
 Haiku is only used for Phase 7B mock scanning and recurring-pattern detection across `runs[]`. Never for reasoning tasks.
 

@@ -9,7 +9,7 @@
 **Goal**: Implement the plan using parallel subagents where possible.
 
 1. **Use `subagent-driven-development`** — dispatch subagents per task
-2. **Model assignment**: Default implementer `model: sonnet`, `effort: medium`. Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
+2. **Model assignment**: Default implementer `model: sonnet`, `effort: high` (`xhigh` on hard/code-heavy chunks — Sonnet 5's coding gains land at high/xhigh, claude-api T1). Consult `Skill("build-loop:model-tiering")` for task-specific defaults and escalation triggers
 3. **Parallel agents** where dependency graph allows. build-loop dispatches up to `effective_max` parallel subagents, where `effective_max = scripts/parallelism.py effective_max_implementers(workdir)` — machine-aware (default 8; `min(config.parallelism.maxImplementers, cpu_count−2, hard ceiling 12)`). Decompose the plan into as many independent MECE chunks as the dependency graph allows so the wider fan-out is filled; dispatch in batches via `plan_batches()` when chunk count exceeds `effective_max`.
 
    **Maximize parallel-safe chunks**: the partition should expose the maximum number of independent chunks (one file-owner each) so fan-out scales to the available `effective_max`. Serializing parallelizable work requires a `parallel_skipped_reason:` entry in the plan record.
