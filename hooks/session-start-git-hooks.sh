@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Auto-install build-loop git hooks on session start (idempotent).
-# Installs: pre-push (push-HOLD gate) + the artifact-guard pre-commit segment
+# Installs: pre-push (deploy-HOLD gate + deterministic pre-push TEST gate, composed
+# in one hook body — the test gate added per the 2026-06-29 RCA so new sessions get
+# the prevent-before-merge control automatically) + the artifact-guard pre-commit segment
 # (regenerate-and-restage checked-in artifacts; block undeclared third-party
 # imports — chained so it coexists with the rally-point private-slug segment).
 # Skips silently when: not inside a git repo, Python unavailable, hook
