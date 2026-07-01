@@ -114,6 +114,59 @@ when query shape, scale, governance, or economics requires it.
    rollback behavior, query-result stability after index/schema changes, and
    migration idempotence.
 
+## Supabase And RLS Addendum
+
+Use this addendum when the work touches Supabase, Postgres RLS, exposed schemas,
+Data API access, Supabase Auth, Storage policies, database functions, or
+service-role usage.
+
+1. **Separate API exposure from row authorization.** Grants and schema usage
+   decide whether `anon` or `authenticated` can reach objects through the Data
+   API. RLS decides which rows are visible after access exists. A secure design
+   must state both the object-level access posture and the row-level policy
+   posture.
+2. **Default exposed schemas to deny-by-default.** For every table in `public`
+   or another exposed schema, either document the intended public/authenticated
+   access and matching policies, or revoke `anon`/`authenticated` schema usage
+   and table/function privileges. RLS with no policy is an acceptable fail-closed
+   state only when paired with explicit object-level access checks.
+3. **Make RLS complete, not decorative.** Enable RLS on every table in an
+   exposed schema. For user-owned data, policies need ownership predicates; `TO
+   authenticated` alone is authentication, not authorization. Updates need both
+   read visibility and `WITH CHECK` ownership protection.
+4. **Treat privileged functions as security boundaries.** Do not add generic SQL
+   execution functions, especially `SECURITY DEFINER` functions in exposed
+   schemas. A required `SECURITY DEFINER` function must be narrow, live in a
+   non-exposed schema when possible, set a safe `search_path`, validate the
+   caller, and have `EXECUTE` revoked from roles that should not call it.
+5. **Audit default privileges and object owners.** Current grants are not the
+   whole risk. Check default privileges for every role that creates objects
+   (`postgres`, `supabase_admin`, migration roles, service roles) so future
+   tables, sequences, and functions do not silently re-grant `anon` or
+   `authenticated`. If the current role cannot change another owner's defaults,
+   record that as a residual owner/dashboard action, not as fixed.
+6. **Keep `service_role` server-only and rotate on exposure.** The service-role
+   key bypasses RLS and must never appear in browser code, public env vars, logs,
+   or git history. If `service_role`, database passwords, or provider secrets
+   are exposed, rotation is part of containment; code fixes alone do not close
+   the incident.
+7. **Verify through catalog checks and external API probes.** A Supabase fix is
+   not complete until it proves the live database posture. At minimum verify:
+   RLS enabled for exposed-schema tables; no unintended `anon`/`authenticated`
+   schema usage or object privileges; no public generic SQL executor; intended
+   functions/views are invoker-safe or access-revoked; default privileges do not
+   re-open future objects; and anonymous REST calls to protected resources return
+   denial responses from outside the database session.
+8. **Run advisor and docs freshness checks.** For Supabase security work, check
+   current Supabase docs or changelog before relying on remembered behavior, run
+   the Supabase database advisors when available, and distinguish blocker
+   findings from advisory fail-closed findings such as "RLS enabled with no
+   policy" when the object is intentionally inaccessible.
+9. **Review destructive referential actions.** Ingestion/source tables often
+   look low-risk but can delete product data through `ON DELETE CASCADE`. For
+   source-retention relationships, prefer `SET NULL`, soft-delete, or explicit
+   cleanup jobs unless cascade is the named invariant.
+
 ## Vector And Retrieval Addendum
 
 Use this addendum when the work touches embeddings, vector indexes, semantic
@@ -193,6 +246,10 @@ When a database or retrieval agent uses this reference, include:
 - `substrate_boundary`: which store is canonical truth, which stores are
   derived indexes/caches, and which layer is memory policy.
 - `governance`: permission, lineage, retention, deletion, and audit controls.
+- `supabase_security_check`: when Supabase/RLS/Data API/function work is in
+  scope, include exposed schemas, RLS coverage, object grants, default
+  privileges, privileged functions/views, `service_role` handling, live REST
+  probes, advisor output, and residual owner-only actions.
 
 ## Prompt Blocks
 
@@ -234,6 +291,12 @@ missing, return a slower but honest result with explicit degradation status.
 - Near-term incorporation: require database/retrieval assessments to distinguish
   canonical substrate, derived indexes/caches, explicit memory records, and
   audit/event logs.
+- Supabase incorporation: require database/retrieval assessments that detect
+  Supabase, RLS, public schemas, Data API, service-role keys, or privileged
+  functions to run the Supabase/RLS addendum above and report the
+  `supabase_security_check` field. Do not treat "RLS enabled" as sufficient
+  proof of containment without object-grant, default-ACL, function/view, and
+  external REST verification evidence.
 - Medium-term incorporation: add a deterministic checklist that flags designs
   where vector search is treated as source of truth, cache keys omit permission
   or index versions, or AI-visible files lack metadata records. A first

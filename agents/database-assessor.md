@@ -37,6 +37,15 @@ policy; never leave it blank. The other seven may be `"none"` only when
 genuinely not applicable. Do not expand into implementation unless the
 orchestrator explicitly assigns an implementation task.
 
+When the symptom or requested design touches Supabase, RLS, exposed schemas,
+Data API access, Supabase Auth, Storage policies, database functions, or
+`service_role` usage, also apply the constitution's "Supabase And RLS Addendum"
+and include a `supabase_security_check` object in the assessment. If current
+Supabase docs or changelog access is available, check it before making
+security-sensitive claims and cite that the recommendation was docs-verified.
+If docs access is unavailable, say so and treat any remembered Supabase behavior
+as needing verification.
+
 An optional advisory accelerator exists: `scripts/db_substrate_lint.py
 --workdir <target-repo> --json` greps a consumer repo for two clear,
 low-false-positive patterns (version-less embedding/retrieval rows or cache
@@ -63,6 +72,10 @@ Determine which type of database issue:
 - **Data integrity**: duplicates, foreign key violations, corrupted data
 - **Vector/retrieval**: stale indexes, ingestion replay errors, incorrect
   top-k results, cache/index divergence, reranker/filter mismatch
+- **Supabase/RLS security**: exposed schema access, missing or decorative RLS,
+  broad `anon`/`authenticated` grants, unsafe functions/views, default privilege
+  drift, service-role leakage, or Data API access that disagrees with the
+  intended authorization model
 
 ### Step 2: Search Memory
 
@@ -92,6 +105,23 @@ For connection issues:
 - Review timeout settings
 - Look for connection leaks
 
+For Supabase/RLS security issues:
+- Inventory exposed schemas and Data API settings when available.
+- Verify RLS coverage for every exposed-schema table.
+- Check schema usage and object privileges for `anon`, `authenticated`, and
+  `service_role`; do not treat RLS as a substitute for object access review.
+- Check default privileges for all object-creating roles, including
+  `postgres`, `supabase_admin`, and migration roles.
+- Search for `SECURITY DEFINER`, generic SQL executors, security-definer views,
+  materialized views exposed through the API, and functions with public
+  `EXECUTE`.
+- Identify whether leaked `service_role`, database passwords, or provider keys
+  require rotation as part of containment.
+- Require live verification evidence: catalog queries plus anonymous REST/API
+  probes against protected resources.
+- Record residual actions separately when the connected role cannot change an
+  owner-only setting such as another role's default privileges.
+
 ### Step 4: Generate Assessment
 
 Return a structured JSON assessment:
@@ -114,6 +144,19 @@ Return a structured JSON assessment:
     "tests": ["invariant-level test"],
     "substrate_boundary": "canonical: <store>; derived indexes/caches: <list>; memory policy: <layer> (MANDATORY — never blank)",
     "governance": ["permission/lineage/retention/deletion/audit control, or none"]
+  },
+  "supabase_security_check": {
+    "applies": true,
+    "docs_checked": "yes | no | unavailable | not_applicable",
+    "exposed_schemas": ["schema1"],
+    "rls_coverage": "all_exposed_tables_enabled | gaps:<details> | unknown",
+    "object_grants": "anon/auth/service_role grant posture and gaps",
+    "default_privileges": "future object grant posture and owner-only residuals",
+    "privileged_functions_or_views": ["finding or none"],
+    "service_role_and_secret_rotation": "needed | not_needed | unknown, with reason",
+    "live_rest_probe_result": "protected resources deny anon/auth as expected, or gaps",
+    "advisor_findings": ["blocking/advisory findings or none"],
+    "residual_risks": ["owner/dashboard/manual action still required, or none"]
   }
 }
 ```
@@ -139,6 +182,18 @@ Return a structured JSON assessment:
 - Data-dependent migrations failing
 - Incorrect constraint order
 - Missing rollback handling
+
+### Supabase/RLS Security Issues
+- RLS enabled on tables but `anon`/`authenticated` still have unintended schema
+  or object access
+- RLS policies that check only `TO authenticated` without row ownership
+- `SECURITY DEFINER` functions or views in exposed schemas callable by broad
+  roles
+- Default privileges that re-open future tables, sequences, or functions after
+  current objects are fixed
+- Leaked `service_role` keys or database passwords treated as code-only fixes
+  instead of credential-rotation incidents
+- REST/API probes skipped, leaving catalog-only verification unproven
 
 ### Connection Problems
 - Pool exhaustion from unclosed connections

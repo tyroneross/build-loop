@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "920dd0a2f40f46d398745967a61f981d9093974cc892671239212b06e45edcf4"
+    "content_sha256": "1ba84009c99a2e102290d415466d1597e7529208cdbee1a2caac3ca3dfc8c75e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1566,6 +1566,14 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-05-28"
+        }
+      },
+      "model-bakeoff": {
+        "description": "Use to run a controlled multi-model bake-off — have N models (e.g. Opus 4.8, Sonnet 5.0, GPT-5.5) each independently diagnose→plan→execute the SAME bounded change in isolated git worktrees, then deterministically re-score their committed code on a fresh server, merge the best-of (grafting distinct wins from the others), and repeat per change. Triggers on \"bake-off\", \"compare models on this task\", \"which model is bes…",
+        "file": "skills/model-bakeoff/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
         }
       },
       "model-tiering": {
