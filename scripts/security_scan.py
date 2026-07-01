@@ -57,8 +57,8 @@ SKIP_DIRS: set[str] = {
     # python envs
     "venv", ".venv", "env", ".tox", ".eggs", "eggs",
     ".mypy_cache", ".ruff_cache", ".pytest_cache",
-    # other tool caches
-    ".cache", ".playground", ".codex", ".cursor", ".bookmark",
+    # other tool caches / agent tooling (vendored skills + tool state, not app source)
+    ".cache", ".playground", ".codex", ".cursor", ".bookmark", ".claude",
     ".build-loop", ".navgator", ".ibr", ".mockup-gallery", ".rally",
     # compiled
     "target", "vendor", "coverage",
@@ -128,8 +128,14 @@ def _is_test_file(path: Path) -> bool:
     )
 
 def _is_content_file(path: Path) -> bool:
-    """Markdown/HTML content files — skip code-execution checks."""
-    return path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}
+    """Documentation / prose files — skip code-execution checks (still secret-scanned).
+
+    Includes markdown/text plus anything under a top-level `docs/` tree: design
+    mockups and doc snippets are documentation, not deployed request handlers.
+    """
+    if path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}:
+        return True
+    return "docs" in path.parts
 
 def _skip_file_name(name: str) -> bool:
     for pat in SKIP_FILE_RES:
@@ -240,8 +246,9 @@ _GENERIC_SECRET_RE = re.compile(
 
 _PLACEHOLDER_RE = re.compile(
     r"""^(x{3,}|<[^>]+>|\.{3,}|your[_\-]?|my[_\-]?key|example|"""
+    r"""secure[_\-]?random|random[_\-]?string|s3cr3t|super[_\-]?secret|generated[_\-]?|"""
     r"""test[_\-]?|fake|dummy|mock|sample|changeme|replace|placeholder|"""
-    r"""insert|todo|fixme|process\.env|os\.environ|getenv|env\.|"""
+    r"""insert|todo|fixme|process\.env|os\.environ|getenv|env\.|env\(|\$\{|"""
     r"""config\.|secrets?\.|bun\.env|import\.meta\.env|"""
     r"""[A-Z][A-Z0-9_]{3,}(?:_SECRET|_KEY|_TOKEN|_PASSWORD|_PASS)\b)""",
     re.IGNORECASE,
@@ -249,7 +256,7 @@ _PLACEHOLDER_RE = re.compile(
 
 _ENV_LOOKUP_RE = re.compile(
     r"(?:process\.env|os\.environ|getenv|Bun\.env|import\.meta\.env|"
-    r"env\.\w|secrets\.\w|config\.\w)",
+    r"env\.\w|secrets\.\w|config\.\w|env\(|\$\{)",  # env(VAR) / ${VAR} config-reference syntax
     re.IGNORECASE,
 )
 
@@ -434,9 +441,22 @@ def check_B_secret_in_logs(path: Path, lines: list[str]) -> list[dict[str, Any]]
 # Check C: Injection
 # ---------------------------------------------------------------------------
 
-# SQL via template literals: .prepare(`...${`) or .query(`...${`)
+# SQL via template literals: .query(`SELECT ... ${`) — require an actual SQL
+# statement verb inside the backtick so Redis/other command DSLs
+# (`.execute(`GET "${key}"`)`) are not mislabeled as SQL injection.
 _SQL_TEMPLATE_RE = re.compile(
-    r"\.(?:prepare|query|exec(?:ute)?|run|all)\s*\(\s*`[^`]*\$\{",
+    r"\.(?:prepare|query|exec(?:ute)?|run|all)\s*\(\s*`[^`]*"
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE|UPSERT)\b"
+    r"[^`]*\$\{",
+    re.IGNORECASE,
+)
+
+# A real SQL statement: a verb PLUS a clause/structural token. Guards f-string /
+# .format() SQL checks so English prose ("Failed to update cache: {e}") that
+# merely contains a keyword is not flagged.
+_SQL_STMT_RE = re.compile(
+    r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE)\b"
+    r"[^\n]*?\b(?:FROM|INTO|SET|WHERE|VALUES|TABLE|JOIN|COLUMN|INDEX|DATABASE|SCHEMA|CONFLICT)\b",
     re.IGNORECASE,
 )
 
@@ -473,6 +493,14 @@ _XSS_RE = re.compile(
     r"\bv-html\s*=",
     re.IGNORECASE,
 )
+# A known HTML sanitizer wraps the value → the sink is the recommended safe
+# pattern, not a finding (DOMPurify.sanitize(...), sanitizeHtml(...), xss(...)).
+_XSS_SAFE_RE = re.compile(
+    r"\b(?:DOMPurify|sanitizeHtml|sanitize_html|sanitizeHTML|sanitize\s*\(|"
+    r"purify|xss\s*\(|escapeHtml|escapeHTML|escape\s*\()",
+    re.IGNORECASE,
+)
+
 # Patterns that indicate innerHTML is receiving a STATIC value (not user-influenced)
 _XSS_STATIC_ASSIGN_RE = re.compile(
     r"\.innerHTML\s*=\s*(?:"
@@ -511,7 +539,7 @@ def check_C_injection(path: Path, lines: list[str]) -> list[dict[str, Any]]:
                 fix="use parameterized queries (? placeholders + .bind()) instead of string interpolation",
                 check_id="C",
             ))
-        elif _SQL_FSTRING_RE.search(raw):
+        elif _SQL_FSTRING_RE.search(raw) and _SQL_STMT_RE.search(raw):
             findings.append(_finding(
                 severity="HIGH",
                 owasp_ids="A03/LLM02/ASI05",
@@ -522,7 +550,7 @@ def check_C_injection(path: Path, lines: list[str]) -> list[dict[str, Any]]:
                 fix="use parameterized queries with placeholders (%s / ?) and cursor.execute(sql, params)",
                 check_id="C",
             ))
-        elif _SQL_FORMAT_RE.search(raw):
+        elif _SQL_FORMAT_RE.search(raw) and _SQL_STMT_RE.search(raw):
             findings.append(_finding(
                 severity="HIGH",
                 owasp_ids="A03/LLM02/ASI05",
@@ -563,7 +591,13 @@ def check_C_injection(path: Path, lines: list[str]) -> list[dict[str, Any]]:
         if _XSS_RE.search(raw):
             # Skip static assignments: direct string, boolean, or multiline ternary
             is_static = _XSS_STATIC_ASSIGN_RE.search(raw)
-            if not is_static:
+            # The injected value may sit on the next line(s) for JSX
+            # (`dangerouslySetInnerHTML={{` then `__html: ...`), so inspect a
+            # small window for a sanitizer wrapper or a <style> (CSS) target.
+            window = " ".join(lines[max(0, lineno - 2):lineno + 3])
+            is_sanitized = _XSS_SAFE_RE.search(window)
+            is_style_css = "<style" in window.lower()
+            if not is_static and not is_sanitized and not is_style_css:
                 # Also skip if the NEXT line begins a ternary (multiline split: `= var\n  ? 'str'`)
                 next_raw = lines[lineno] if lineno < len(lines) else ""  # lineno is 1-based
                 is_multiline_ternary = next_raw.strip().startswith("?")
