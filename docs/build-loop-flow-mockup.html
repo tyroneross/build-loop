@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "caeba38072d34342e6cd81dc8210cca55313c222ffdd3bb25de07b3b106057f3"
+    "content_sha256": "920dd0a2f40f46d398745967a61f981d9093974cc892671239212b06e45edcf4"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1645,7 +1645,7 @@
         "file": "skills/root-cause-analysis/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-06-30"
         }
       },
       "runtime-parity-verification": {
@@ -2073,7 +2073,11 @@
         "session-start-closeout.sh",
         "closeout.sh"
       ],
+      "UserPromptSubmit": [
+        "route-guard.sh"
+      ],
       "PreToolUse": [
+        "route-guard.sh",
         "pre-edit-architecture.sh",
         "pre-edit-rally-point.sh",
         "pre_bash_dispatch.sh",
