@@ -137,12 +137,41 @@ def _skip_file_name(name: str) -> bool:
             return True
     return False
 
+def _git_tracked_files(root: Path) -> set[Path] | None:
+    """Absolute paths of git-tracked files, or None if not a usable git repo.
+
+    A pre-push gate should scan what is actually being pushed — the tracked
+    tree — not gitignored build/test artifacts (playwright-report, coverage,
+    tool snapshots) that live on disk but never reach the remote. Returns None
+    (→ caller falls back to full-tree walk) when git is unavailable or the path
+    is not a repo, so non-git consumers keep working.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=root, capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    tracked = {
+        (root / rel).resolve()
+        for rel in result.stdout.split("\0")
+        if rel.strip()
+    }
+    return tracked or None
+
+
 def walk_source_files(root: Path):
     """Yield (path, lines) for non-binary text source files.
 
     Uses os.walk with directory pruning so we never descend into SKIP_DIRS.
-    This is essential for large repos (pnpm-store, node_modules, dist).
+    This is essential for large repos (pnpm-store, node_modules, dist). In a git
+    repo, additionally restricts to tracked + not-ignored files so gitignored
+    artifacts (that will never be pushed) don't produce phantom findings.
     """
+    tracked = _git_tracked_files(root)  # None → not a git repo, scan everything
     for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
         # Prune SKIP_DIRS in-place so os.walk doesn't descend into them
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -152,11 +181,18 @@ def walk_source_files(root: Path):
             if _skip_file_name(fname):
                 continue
             path = Path(dirpath_str) / fname
+            if tracked is not None and path.resolve() not in tracked:
+                continue
             if _is_binary(path):
                 continue
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
+                continue
+            # Skip minified/generated bundles (long single lines) even when the
+            # extension isn't `.min.js` — committed playwright/trace/webpack
+            # bundles produce phantom pattern matches, not reviewable source.
+            if any(len(ln) > 2000 for ln in lines):
                 continue
             yield path, lines
 
@@ -300,6 +336,9 @@ def check_A_tracked_env_files(root: Path) -> list[dict[str, Any]]:
             return findings
         for tracked in result.stdout.splitlines():
             tracked = tracked.strip()
+            # Placeholder templates carry no real secrets by definition — don't flag them.
+            if re.search(r"\.(example|sample|template|dist)$", tracked, re.IGNORECASE):
+                continue
             if re.match(r"^(\.env[.\w]*|\.dev\.vars)$", tracked, re.IGNORECASE):
                 findings.append(_finding(
                     severity="HIGH",
