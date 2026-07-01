@@ -136,12 +136,15 @@ def split_candidates(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
     return skills, lessons
 
 
-def write_marker(skills: list[dict], lessons: list[dict], staging_path: Path) -> None:
+def write_marker(skills: list[dict], lessons: list[dict], staging_path: Path,
+                 session_key: str) -> None:
     if not skills and not lessons:
         return  # nothing worth surfacing — stay silent
     MARKER_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    marker = MARKER_DIR / f"{ts}-retro-closeout.md"
+    # Session-keyed filename: SessionEnd can fire more than once for a session
+    # (e.g. /clear then continue) — overwrite rather than accumulate duplicates.
+    marker = MARKER_DIR / f"retro-closeout-{session_key}.md"
     lines = [
         f"# 🔁 Session retrospective closeout ({ts})",
         "",
@@ -170,8 +173,18 @@ def write_marker(skills: list[dict], lessons: list[dict], staging_path: Path) ->
     marker.write_text("\n".join(lines), encoding="utf-8")
 
 
+def resolve_transcript() -> str:
+    """Transcript path comes from the SessionEnd stdin JSON `transcript_path`
+    field (Claude Code hooks reference) — there is NO `CLAUDE_TRANSCRIPT_PATH`
+    env var. The wiring hook extracts it from stdin and passes it as argv[1].
+    Fall back to argv, then the (non-standard) env var for manual/test runs."""
+    if len(sys.argv) > 1 and sys.argv[1]:
+        return sys.argv[1]
+    return os.environ.get("CLAUDE_TRANSCRIPT_PATH", "")
+
+
 def main() -> None:
-    transcript_env = os.environ.get("CLAUDE_TRANSCRIPT_PATH", "")
+    transcript_env = resolve_transcript()
     if not transcript_env:
         _log_and_exit()
     transcript = Path(transcript_env)
@@ -197,7 +210,8 @@ def main() -> None:
              "window": data.get("window_label"),
              "skills": skills, "lessons": lessons,
              "transcript": str(transcript)}, indent=2), encoding="utf-8")
-        write_marker(skills, lessons, staging)
+        session_key = transcript.stem or ts
+        write_marker(skills, lessons, staging, session_key)
 
 
 if __name__ == "__main__":
