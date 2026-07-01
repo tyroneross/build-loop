@@ -40,8 +40,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -105,9 +107,20 @@ def _detect_repo(arg: str | None) -> Path:
     return Path.cwd().resolve()
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _git(repo: Path, *args: str,
+         env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(repo), *args],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
+
+
+def _clean_git_env() -> dict[str, str]:
+    """Environment with git's hook-injected location vars removed. During a
+    ``git commit`` the pre-commit hook inherits ``GIT_DIR`` / ``GIT_INDEX_FILE``
+    / ``GIT_WORK_TREE`` etc. pointing at the committing repo; a git subprocess
+    that inherits them binds to THAT index instead of the throwaway worktree we
+    point it at. Stripping every ``GIT_*`` var makes ``git -C <path>`` resolve
+    from the path, which is what isolation needs."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def _staged_files(repo: Path) -> list[str]:
@@ -146,11 +159,105 @@ def _run_check(repo: Path, artifact: Artifact) -> tuple[bool, str]:
     return cp.returncode == 0, detail
 
 
+def _unstaged_files(repo: Path) -> list[str]:
+    """Files with UNSTAGED modifications (working tree vs index)."""
+    cp = _git(repo, "diff", "--name-only")
+    if cp.returncode != 0:
+        return []
+    return [ln for ln in cp.stdout.splitlines() if ln.strip()]
+
+
+def _copy_outputs(src_root: Path, dst_root: Path, outputs: tuple[str, ...]) -> None:
+    for rel in outputs:
+        src, dst = src_root / rel, dst_root / rel
+        if src.is_dir():
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        elif src.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
+def _regen_isolated(repo: Path, artifact: Artifact) -> tuple[bool, str] | None:
+    """Regenerate against the STAGED INDEX in a throwaway worktree, then copy
+    outputs back into ``repo``. Returns (ok, detail), or None when isolation
+    could not be set up (caller falls back). The isolated tree is exactly what
+    is being committed (HEAD + staged changes) with NO unstaged edits, so a
+    generator that reads whole files (the Codex mirror) can never bundle another
+    agent's uncommitted work into this commit."""
+    # write-tree inherits git's env so it captures the EXACT index being
+    # committed (git may point GIT_INDEX_FILE at a temp index for a partial
+    # commit). The result is a content-addressed SHA, portable to the worktree.
+    tree = _git(repo, "write-tree")
+    if tree.returncode != 0 or not tree.stdout.strip():
+        return None
+    tree_sha = tree.stdout.strip()
+    # Everything below must bind to the throwaway worktree, not the committing
+    # repo — run it with git's hook-injected location vars stripped.
+    env = _clean_git_env()
+    tmp = Path(tempfile.mkdtemp(prefix="artifact-guard-"))
+    wt = tmp / "wt"
+    try:
+        if _git(repo, "worktree", "add", "--detach", "-q", str(wt), "HEAD",
+                env=env).returncode != 0:
+            return None
+        try:
+            if (_git(wt, "read-tree", tree_sha, env=env).returncode != 0
+                    or _git(wt, "checkout-index", "-a", "-f", env=env).returncode != 0):
+                return None
+            cp = subprocess.run([sys.executable, *artifact.regen_argv],
+                                cwd=str(wt), capture_output=True, text=True, env=env)
+            detail = (cp.stdout + cp.stderr).strip()
+            if cp.returncode != 0:
+                return (False, detail)
+            # Verify freshness in the SAME staged-index frame the regen used —
+            # NOT against the live working tree (which may carry unstaged edits
+            # that are not being committed and would falsely read as drift).
+            chk = subprocess.run([sys.executable, *artifact.check_argv],
+                                 cwd=str(wt), capture_output=True, text=True, env=env)
+            if chk.returncode != 0:
+                return (False, "regen ran but the artifact is still stale vs the "
+                               "staged sources: " + (chk.stdout + chk.stderr).strip())
+            _copy_outputs(wt, repo, artifact.outputs)
+            return (True, detail)
+        finally:
+            _git(repo, "worktree", "remove", "--force", str(wt), env=env)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _run_regen(repo: Path, artifact: Artifact) -> tuple[bool, str]:
+    """Regenerate ``artifact``, leaving its outputs in ``repo`` ready to stage.
+
+    Sources from the staged index in isolation (never the live working tree) so
+    a committer can't bundle another agent's uncommitted edits into a derived
+    artifact — the concurrent-checkout leak class. If isolation is unavailable,
+    fall back to in-place regen ONLY when no unstaged change touches this
+    artifact's watched paths; otherwise fail closed with a clear message rather
+    than risk absorbing foreign uncommitted content."""
+    isolated = _regen_isolated(repo, artifact)
+    if isolated is not None:
+        return isolated
+    if _matches(artifact, _unstaged_files(repo)):
+        return (False,
+                "regen isolation unavailable AND unstaged changes touch this "
+                "artifact's sources — refusing to regenerate from the working "
+                "tree (would risk bundling uncommitted third-party content). "
+                "Stage or stash those changes, or regenerate manually.")
+    # Safe in-place fallback: no unstaged change touches this artifact's sources,
+    # so the working tree == the staged index for what matters here.
     cp = subprocess.run([sys.executable, *artifact.regen_argv],
                         cwd=str(repo), capture_output=True, text=True)
     detail = (cp.stdout + cp.stderr).strip()
-    return cp.returncode == 0, detail
+    if cp.returncode != 0:
+        return (False, detail)
+    chk = subprocess.run([sys.executable, *artifact.check_argv],
+                         cwd=str(repo), capture_output=True, text=True)
+    if chk.returncode != 0:
+        return (False, "regen ran but the artifact is still stale: "
+                       + (chk.stdout + chk.stderr).strip())
+    return (True, detail)
 
 
 def _regen_cmd_str(artifact: Artifact) -> str:
@@ -207,14 +314,10 @@ def mode_staged(repo: Path) -> int:
             if detail:
                 sys.stderr.write("  " + detail.replace("\n", "\n  ") + "\n")
             continue
-        # Confirm the regen actually resolved the drift before restaging.
-        refresh, _ = _run_check(repo, artifact)
-        if not refresh:
-            failed = True
-            sys.stderr.write(
-                f"✖ {artifact.name}: regen ran but the artifact is still stale "
-                f"(check {_regen_cmd_str(artifact)} output).\n")
-            continue
+        # _run_regen already verified freshness in the reference frame it used
+        # (the staged index under isolation, or the working tree in the safe
+        # fallback) — a working-tree re-check here would falsely flag drift when
+        # unstaged edits exist, so trust the verified result and restage.
         added = _git_add(repo, artifact.outputs)
         sys.stderr.write(
             f"↻ {artifact.name}: regenerated and re-staged "
