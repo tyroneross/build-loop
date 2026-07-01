@@ -274,3 +274,48 @@ def test_hook_blocks_undeclared_import_and_advisory_bypasses(tmp_path):
     ok = subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "x"],
                         capture_output=True, text=True, env=env)
     assert ok.returncode == 0
+
+
+# --- regen isolation: never source from the live working tree ---------------
+# Named failure this earns its place against: on a shared checkout, a committer's
+# pre-commit regen read the DIRTY working tree, so another agent's *uncommitted*
+# edits to a watched source could be bundled into the committer's derived
+# artifact (the Codex file-mirror copies whole files). Regen must source from
+# the staged index — exactly what is being committed — instead.
+
+
+def test_regen_sources_from_staged_index_not_working_tree(synth):
+    """Isolation: with index=b and an unstaged working-tree edit=c, the regen
+    reflects the STAGED content (b), never the unstaged edit (c)."""
+    repo = synth
+    (repo / "src.txt").write_text("b"); _git(repo, "add", "src.txt")   # staged = b
+    (repo / "src.txt").write_text("c")                                 # unstaged = c
+    assert ag.mode_staged(repo) == 0
+    # Regenerated from the staged index (b) — NOT the working tree (c).
+    assert (repo / "out.txt").read_text() == hashlib.sha256(b"b").hexdigest()
+    staged = subprocess.run(["git", "-C", str(repo), "diff", "--cached",
+                             "--name-only"], capture_output=True, text=True).stdout
+    assert "out.txt" in staged
+
+
+def test_fail_closed_when_isolation_unavailable_and_unstaged_watched(synth, monkeypatch):
+    """Fallback safety: if isolation can't run AND an unstaged change touches a
+    watched source, refuse (exit 1) rather than regen from the dirty tree."""
+    repo = synth
+    monkeypatch.setattr(ag, "_regen_isolated", lambda *a, **k: None)
+    (repo / "src.txt").write_text("b"); _git(repo, "add", "src.txt")
+    (repo / "src.txt").write_text("c")                                 # unstaged watched
+    assert ag.mode_staged(repo) == 1                                   # fail closed
+    staged = subprocess.run(["git", "-C", str(repo), "diff", "--cached",
+                             "--name-only"], capture_output=True, text=True).stdout
+    assert "out.txt" not in staged                                     # nothing leaked/staged
+
+
+def test_fallback_inplace_when_isolation_unavailable_and_clean(synth, monkeypatch):
+    """Fallback still regenerates when isolation is unavailable but no unstaged
+    change touches watched sources (working tree == index for what matters)."""
+    repo = synth
+    monkeypatch.setattr(ag, "_regen_isolated", lambda *a, **k: None)
+    (repo / "src.txt").write_text("b"); _git(repo, "add", "src.txt")
+    assert ag.mode_staged(repo) == 0
+    assert (repo / "out.txt").read_text() == hashlib.sha256(b"b").hexdigest()
