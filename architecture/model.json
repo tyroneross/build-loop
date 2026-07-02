@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "9eb2e32ca3d4550f2fe2629c658dc1cacaa0fd05e282047610088e0ee35a94d0"
+    "content_sha256": "ddfd9f77d30a93aebfe545c30bf4408b08a952ad9c140a82efd32fa49865e1a4"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1116,7 +1116,7 @@
         }
       },
       "api-registry-bridge": {
-        "description": "Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to \"register this API\" or \"check the API registry\". Consults api-registry plugin; degrades gracefully if plugin is absent. user-invocable: false",
+        "description": "Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to \"register this API\" or \"check the API registry\". Consults api-registry plugin; degrades gracefully if plugin is absent. NOT for PRD strategic grounding (use `prd-bridge`) or UI verification (use `ibr-bridge`). user-invocable: false",
         "file": "skills/api-registry-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1228,7 +1228,7 @@
         }
       },
       "debug-loop": {
-        "description": "Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues.",
+        "description": "Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues. NOT for blameless postmortem system-lever analysis (use `root-cause-analysis`) or memory search/store (use `debugging-memory`).",
         "file": "skills/debug-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1244,7 +1244,7 @@
         }
       },
       "defenseclaw-bridge": {
-        "description": "Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific files (CLAUDE.md indicates the bridge target). Bridges build-loop's orchestrator to defenseclaw's eval/test conventions; otherwise no-op.",
+        "description": "Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific files (CLAUDE.md indicates the bridge target). Bridges build-loop's orchestrator to defenseclaw's eval/test conventions; otherwise no-op. NOT a general eval/test bridge (defenseclaw project only); for API/PRD/UI use `api-registry-bridge` / `prd-bridge` / `ibr-bridge`.",
         "file": "skills/defenseclaw-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1255,8 +1255,8 @@
         "description": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate a workflow loop\", \"adapt a framework into a loop\", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.",
         "file": "skills/focused-loop-builder/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-07-02"
         }
       },
       "handoff": {
@@ -1268,7 +1268,7 @@
         }
       },
       "ibr-bridge": {
-        "description": "Routing bridge to the IBR plugin for UI visual verification. Build-loop prefers IBR `scan` / `scan_macos` when the IBR plugin is installed; otherwise falls back to build-loop's own `native-ax-driver` / `ui-validator`. Never falls back to nm/strings.",
+        "description": "Routing bridge to the IBR plugin for UI visual verification. Build-loop prefers IBR `scan` / `scan_macos` when the IBR plugin is installed; otherwise falls back to build-loop's own `native-ax-driver` / `ui-validator`. Never falls back to nm/strings. NOT for API registration (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).",
         "file": "skills/ibr-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1308,7 +1308,7 @@
         }
       },
       "model-tiering": {
-        "description": "Use when choosing a model tier or segment for a subagent, deciding a role descriptor (segment + tier) in frontmatter, or escalating mid-flow. Covers the two-axis taxonomy (work-role segment × 7-rung capability ladder) — Opus/Sonnet/Haiku are Anthropic-default mappings; selection is provider-portable and data-driven. user-invocable: false",
+        "description": "Use when choosing a model tier or segment for a subagent, deciding a role descriptor (segment + tier) in frontmatter, or escalating mid-flow. Covers the two-axis taxonomy (work-role segment × 7-rung capability ladder) — Opus/Sonnet/Haiku are Anthropic-default mappings; selection is provider-portable and data-driven. NOT for benchmarking models head-to-head on a task — use `model-bakeoff`. user-invocable: false",
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1356,7 +1356,7 @@
         }
       },
       "prd-bridge": {
-        "description": "Use when Phase 1 Assess runs, the user mentions a PRD, or asks to \"ground the build in product strategy\". Surfaces always-true principles and Navigation Map from the project PRD so subsequent phases reason from strategic frame; recommends prd-builder if none exists.",
+        "description": "Use when Phase 1 Assess runs, the user mentions a PRD, or asks to \"ground the build in product strategy\". Surfaces always-true principles and Navigation Map from the project PRD so subsequent phases reason from strategic frame; recommends prd-builder if none exists. NOT for authoring a PRD from scratch (use `prd-builder`), API registration (use `api-registry-bridge`), or UI verification (use `ibr-bridge`).",
         "file": "skills/prd-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

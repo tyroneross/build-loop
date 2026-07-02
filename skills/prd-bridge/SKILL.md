@@ -1,6 +1,6 @@
 ---
 name: build-loop:prd-bridge
-description: Use when Phase 1 Assess runs, the user mentions a PRD, or asks to "ground the build in product strategy". Surfaces always-true principles and Navigation Map from the project PRD so subsequent phases reason from strategic frame; recommends prd-builder if none exists.
+description: Use when Phase 1 Assess runs, the user mentions a PRD, or asks to "ground the build in product strategy". Surfaces always-true principles and Navigation Map from the project PRD so subsequent phases reason from strategic frame; recommends prd-builder if none exists. NOT for authoring a PRD from scratch (use `prd-builder`), API registration (use `api-registry-bridge`), or UI verification (use `ibr-bridge`).
 version: 0.1.0
 user-invocable: false
 ---

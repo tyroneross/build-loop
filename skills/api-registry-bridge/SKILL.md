@@ -1,6 +1,6 @@
 ---
 name: api-registry-bridge
-description: Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to "register this API" or "check the API registry". Consults api-registry plugin; degrades gracefully if plugin is absent.
+description: Use when Phase 1 Assess or Phase 5 Iterate detects a new API dependency, API config fails, or the user asks to "register this API" or "check the API registry". Consults api-registry plugin; degrades gracefully if plugin is absent. NOT for PRD strategic grounding (use `prd-bridge`) or UI verification (use `ibr-bridge`).
 user-invocable: false
 ---
 

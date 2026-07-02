@@ -1,6 +1,6 @@
 ---
 name: build-loop:defenseclaw-bridge
-description: Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific files (CLAUDE.md indicates the bridge target). Bridges build-loop's orchestrator to defenseclaw's eval/test conventions; otherwise no-op.
+description: Use when the user is working on the defenseclaw project and build-loop's Phase 1 detects defenseclaw-specific files (CLAUDE.md indicates the bridge target). Bridges build-loop's orchestrator to defenseclaw's eval/test conventions; otherwise no-op. NOT a general eval/test bridge (defenseclaw project only); for API/PRD/UI use `api-registry-bridge` / `prd-bridge` / `ibr-bridge`.
 version: 0.1.0
 user-invocable: false
 ---

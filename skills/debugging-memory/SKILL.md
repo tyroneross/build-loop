@@ -1,6 +1,6 @@
 ---
 name: debugging-memory
-description: Use when the user asks to "debug this", "fix this bug", "investigate error", "diagnose", "root cause", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback. Op-routed (input `{op: "search" | "store" | "assess", ...}`): search = memory lookup, store = incident write, assess = parallel domain assessment; per-op detail in `references/{search,store,assess}.md`.
+description: Use when the user asks to "debug this", "fix this bug", "investigate error", "diagnose", "root cause", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback. Op-routed (input `{op: "search" | "store" | "assess", ...}`): search = memory lookup, store = incident write, assess = parallel domain assessment; per-op detail in `references/{search,store,assess}.md`. NOT the iterative fix loop (use `debug-loop`) or the postmortem system-lever analysis (use `root-cause-analysis`).
 version: 1.6.0
 user-invocable: false
 ---

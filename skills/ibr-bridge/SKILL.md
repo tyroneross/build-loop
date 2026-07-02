@@ -1,6 +1,6 @@
 ---
 name: build-loop:ibr-bridge
-description: Routing bridge to the IBR plugin for UI visual verification. Build-loop prefers IBR `scan` / `scan_macos` when the IBR plugin is installed; otherwise falls back to build-loop's own `native-ax-driver` / `ui-validator`. Never falls back to nm/strings.
+description: Routing bridge to the IBR plugin for UI visual verification. Build-loop prefers IBR `scan` / `scan_macos` when the IBR plugin is installed; otherwise falls back to build-loop's own `native-ax-driver` / `ui-validator`. Never falls back to nm/strings. NOT for API registration (use `api-registry-bridge`) or PRD grounding (use `prd-bridge`).
 version: 0.3.0
 user-invocable: false
 ---
