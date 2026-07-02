@@ -12,9 +12,12 @@ Resolution order (highest → lowest priority):
 
 1. ``$AGENT_RALLY_DISCOVER`` env override (operator-controlled).
 2. Native ``rally enter/say/whoami`` CLI (rally's real surface) backed by
-   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, a repo-associated
-   sibling ``agent-rally-point/target/*/rally`` checkout, ``rally`` on ``$PATH``,
-   or the fetched pinned binary.
+   ``<repo>/.rally`` — resolved from ``$AGENT_RALLY_BINARY``, the fetched
+   pinned binary cache, ``rally`` on ``$PATH``, or (lowest priority) a
+   repo-associated sibling ``agent-rally-point/target/*/rally`` checkout. The
+   pinned cache is the source of truth for version currency, so a sibling dev
+   build is only used when nothing higher-priority resolves — it must never
+   shadow the pin with a stale version.
 3. ``agent-rally-discover`` console script on ``$PATH`` (pipx /
    system install of agent-rally-point >= 0.3.0).
 4. ``agent_rally_point.discover`` Python import (sibling-repo install
@@ -283,7 +286,21 @@ repo_local_rally_binary = rust_rally_binary
 
 
 def _rally_binary_candidates(workdir: Path | None) -> list[str]:
-    """Return candidate ``rally`` paths in repo-associated priority order."""
+    """Return candidate ``rally`` paths in priority order.
+
+    Priority (highest → lowest): env override → fetch-on-install pinned cache
+    → ``rally`` on ``$PATH`` → repo-associated sibling ``target/{release,debug}``
+    dev builds (checked last, across all resolved roots).
+
+    The pinned cache is the source of truth for version currency (see
+    ``binary_fetch.PINNED_VERSION``). A sibling ``target/release/rally`` /
+    ``target/debug/rally`` checkout is the LEAST trustworthy candidate for
+    version currency — it is whatever a prior local ``cargo build`` happened to
+    produce, with no guarantee it matches the pin — so it must never shadow a
+    live system binary or the pin. It is still probed (never removed): a
+    contributor actively developing ``agent-rally-point`` locally needs their
+    freshly-built binary reachable when nothing higher-priority resolves.
+    """
     candidates: list[str] = []
     seen: set[str] = set()
 
@@ -297,6 +314,27 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
 
     add(os.environ.get("AGENT_RALLY_BINARY"))
 
+    # Fetch-on-install: a previously-fetched pinned binary in the build-loop
+    # runtime cache. Checked before PATH/sibling so the pin — the source of
+    # truth for version currency — is preferred over a live-but-possibly-stale
+    # system or dev-checkout binary. We do NOT trigger a fetch here (that is
+    # the discovery-tier's job); we only ADD an already-cached path.
+    if not os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
+        try:
+            from . import binary_fetch as _fetch
+        except ImportError:
+            try:
+                import binary_fetch as _fetch  # type: ignore
+            except ImportError:
+                _fetch = None  # type: ignore
+        if _fetch is not None:
+            cached = _fetch.cached_binary_path()
+            if cached.is_file():
+                add(cached)
+
+    add(shutil.which("rally"))
+
+    # Sibling dev-checkout builds — LAST priority (see docstring above).
     if (
         not os.environ.get("BUILD_LOOP_DISABLE_SIBLING_RALLY")
         and not os.environ.get("BUILD_LOOP_APPS_ROOT")
@@ -311,25 +349,6 @@ def _rally_binary_candidates(workdir: Path | None) -> list[str]:
         add(sibling / "target" / "release" / "rally")
         add(sibling / "target" / "debug" / "rally")
 
-    add(shutil.which("rally"))
-
-    # Fetch-on-install: a previously-fetched pinned binary in the build-loop
-    # runtime cache. Last candidate so a live system/sibling binary always wins,
-    # but ahead of nothing — the facade's direct rust_rally_binary() calls
-    # (reaper, post) must find the fetched binary too. We do NOT trigger a fetch
-    # here (that is the discovery-tier's job); we only ADD an already-cached path.
-    if not os.environ.get("BUILD_LOOP_DISABLE_BINARY_FETCH"):
-        try:
-            from . import binary_fetch as _fetch
-        except ImportError:
-            try:
-                import binary_fetch as _fetch  # type: ignore
-            except ImportError:
-                _fetch = None  # type: ignore
-        if _fetch is not None:
-            cached = _fetch.cached_binary_path()
-            if cached.is_file():
-                add(cached)
     return candidates
 
 
