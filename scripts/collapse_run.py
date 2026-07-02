@@ -30,6 +30,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +40,9 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# This tool's Rally identity, matching scripts/stop_closeout.py::_RALLY_TOOL.
+_RALLY_TOOL = "claude_code"
 
 def _now_utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -104,15 +108,141 @@ def _delete_branch(workdir: Path, branch: str) -> str | None:
         return str(exc)
 
 
+def _rally_runner(args: list[str], workdir: Path) -> subprocess.CompletedProcess | None:
+    """Run ``rally <args>`` in ``workdir``. None when rally is absent/errors.
+
+    Injectable so worktree-claim release is unit-testable without a live
+    rally binary. Gated on ``shutil.which`` so this is a no-op when rally
+    isn't installed (mirrors ``scripts/stop_closeout.py::_rally_runner``).
+    """
+    binary = shutil.which("rally")
+    if not binary:
+        return None
+    try:
+        return subprocess.run(
+            [binary, *args],
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _worktree_claim_event_ids(
+    workdir: Path, wt_relpath: str, runner=_rally_runner
+) -> list[str]:
+    """Event ids of live rally claims scoped under the removed worktree.
+
+    Rally file-claims are per-file (e.g. ``file:.claude/worktrees/agent-x/foo.py``),
+    not one claim per worktree folder, so an exact ``rally room --path`` match on
+    the worktree folder itself returns nothing. Query broadly
+    (``rally room --tool claude_code --json``) and filter client-side for any
+    claim whose scope contains ``file:<wt_relpath>``. Fail-open: returns []
+    on any error (rally absent, non-zero exit, unparseable JSON).
+    """
+    proc = runner(["room", "--tool", _RALLY_TOOL, "--json"], workdir)
+    if proc is None or proc.returncode != 0 or not (proc.stdout or "").strip():
+        return []
+    try:
+        envelope = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return []
+    # Match on a path BOUNDARY, not a bare substring: the worktree folder
+    # itself (exact) or any file beneath it (prefix + "/"). A bare substring
+    # would false-match a sibling worktree whose name shares this prefix
+    # (e.g. ".../rally-lifecycle" vs ".../rally-lifecycle-2/foo.py") and
+    # over-release another worktree's claim — violating the never-touch-a-
+    # different-path's-claim guard.
+    prefix = f"file:{wt_relpath}"
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def _walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("kind") == "claim":
+                scope = node.get("scope")
+                scopes = scope if isinstance(scope, list) else ([scope] if scope else [])
+                if any(
+                    isinstance(s, str)
+                    and (s == prefix or s.startswith(prefix + "/"))
+                    for s in scopes
+                ):
+                    ev = node.get("event_id")
+                    if isinstance(ev, str) and ev and ev not in seen:
+                        seen.add(ev)
+                        ids.append(ev)
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(envelope)
+    return ids
+
+
+def _release_worktree_claims(workdir: Path, path: str, runner=_rally_runner) -> int:
+    """Best-effort release of rally file-claims orphaned by a removed worktree.
+
+    Root cause this addresses: when a dispatch worktree folder is deleted, its
+    file-scope claims (``file:.claude/worktrees/agent-*``) were never released,
+    so they orphan the instant the backing folder vanishes (84 dead-worktree
+    claims observed live for an already-empty .claude/worktrees/).
+
+    Fire-and-forget: swallows all errors and never raises, so a rally outage
+    or CLI error never breaks worktree teardown. No-op when rally is not
+    installed (gated inside ``_rally_runner`` via ``shutil.which``) or when
+    ``path`` doesn't resolve under ``workdir``. Returns the count released.
+    """
+    try:
+        try:
+            wt_relpath = str(Path(path).resolve().relative_to(workdir.resolve()))
+        except ValueError:
+            return 0
+        event_ids = _worktree_claim_event_ids(workdir, wt_relpath, runner=runner)
+        released = 0
+        for ev in event_ids:
+            proc = runner(
+                [
+                    "say",
+                    "release",
+                    "--tool",
+                    _RALLY_TOOL,
+                    "--ref",
+                    ev,
+                    "--subject",
+                    "worktree teardown: releasing orphaned claim",
+                    "--json",
+                ],
+                workdir,
+            )
+            if proc is not None and proc.returncode == 0:
+                released += 1
+        return released
+    except Exception:  # noqa: BLE001 — teardown must never break on rally errors
+        return 0
+
+
 def _remove_worktree(workdir: Path, path: str) -> str | None:
     """Remove a worktree folder. Returns None on success, error string on failure."""
     wt_path = Path(path)
     if not wt_path.exists():
-        # Idempotent: already gone is fine
+        # Idempotent: already gone is fine. Still release any orphaned claims
+        # left behind from a prior removal that predates this fix.
+        try:
+            _release_worktree_claims(workdir, path)
+        except Exception:  # noqa: BLE001 — teardown must never break on rally errors
+            pass
         return None
     try:
         r = _git(workdir, "worktree", "remove", "-f", "-f", str(wt_path), check=False)
         if r.returncode == 0:
+            try:
+                _release_worktree_claims(workdir, path)
+            except Exception:  # noqa: BLE001 — teardown must never break on rally errors
+                pass
             return None
         return (r.stderr or r.stdout).strip() or f"git worktree remove exited {r.returncode}"
     except Exception as exc:
