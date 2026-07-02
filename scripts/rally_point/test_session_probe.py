@@ -203,10 +203,38 @@ class FreshRepoTests(_ProbeTestBase):
         self.assertIn("slug", result)
         self.assertIn("inbox_unread_counts", result)
         self.assertIn("inbox_latest_messages", result)
+        self.assertIn("capability_level", result)
+        self.assertIn("inject_readiness", result)
 
     def test_returns_coordination_file_none_when_no_coord_file(self):
         result = self._run_probe()
         self.assertIsNone(result["coordination_file"])
+
+    def test_rally_start_payload_stamps_inject_readiness(self):
+        readiness = {
+            "tmux": False,
+            "ptyd_socket_live": False,
+            "ptyd_bin": False,
+            "inject_available": False,
+            "recommended_backend": "handoff",
+        }
+        with patch.object(sp, "_probe_inject_readiness", return_value=readiness):
+            result = self._run_probe()
+
+        self.assertEqual(result["inject_readiness"], readiness)
+        changes = self._changes()
+        rally_start_payloads = [
+            c.get("payload") or {}
+            for c in changes
+            if c.get("kind") == "phase"
+            and (c.get("payload") or {}).get("phase") == "rally-start"
+        ]
+        self.assertTrue(rally_start_payloads)
+        self.assertEqual(
+            rally_start_payloads[-1].get("inject_readiness"),
+            readiness,
+        )
+        self.assertIn("capability_level", rally_start_payloads[-1])
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +424,7 @@ class SoloModeContractTests(_ProbeTestBase):
             "status", "active_peers", "inbox_unread_count",
             "inbox_unread_counts", "inbox_latest_messages",
             "watcher_started", "coordination_file", "session_id", "slug",
+            "capability_level", "resolved_via", "inject_readiness",
         }
         missing = required_keys - set(result.keys())
         self.assertFalse(missing, f"Missing envelope keys: {missing}")

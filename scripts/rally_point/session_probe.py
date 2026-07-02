@@ -55,6 +55,35 @@ except ImportError:
     from .discovery_bridge import resolve as _bridge_resolve
 
 
+def _probe_inject_readiness(errors: list[str]) -> dict[str, bool | str]:
+    """Best-effort pane-backend probe; never blocks session start."""
+    try:
+        from rally_point import inject_readiness
+    except ImportError:
+        try:
+            from . import inject_readiness
+        except ImportError as exc:
+            errors.append(f"inject readiness unavailable: {exc}")
+            return {
+                "tmux": False,
+                "ptyd_socket_live": False,
+                "ptyd_bin": False,
+                "inject_available": False,
+                "recommended_backend": "handoff",
+            }
+    try:
+        return inject_readiness.probe()
+    except Exception as exc:  # noqa: BLE001 — session start must stay fail-open
+        errors.append(f"inject readiness probe failed: {exc}")
+        return {
+            "tmux": False,
+            "ptyd_socket_live": False,
+            "ptyd_bin": False,
+            "inject_available": False,
+            "recommended_backend": "handoff",
+        }
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -489,6 +518,7 @@ def probe(
     workdir_path = Path(workdir).expanduser().resolve()
     effective_run_id = run_id or f"probe-{_utc_stamp()}"
     tool = tool or "unknown"
+    inject_readiness = _probe_inject_readiness(errors)
 
     # ------------------------------------------------------------------
     # Step 1: Resolve app identity + channel via the shared bridge (β1)
@@ -497,6 +527,8 @@ def probe(
         envelope = _bridge_resolve(workdir_path)
         slug = envelope.app_slug
         channel_dir = Path(envelope.channel_dir)
+        capability_level = envelope.capability_level
+        resolved_via = envelope.resolved_via
         if envelope.resolved_via == "build-loop-internal":
             channel_dir.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
@@ -513,6 +545,9 @@ def probe(
             "coordination_file": None,
             "session_id": session_id,
             "slug": slug,
+            "capability_level": "unavailable",
+            "resolved_via": None,
+            "inject_readiness": inject_readiness,
             "errors": errors,
         }
 
@@ -571,6 +606,9 @@ def probe(
                 "mode": mode,
                 "scope": "session-entry",
                 "run_id": effective_run_id,
+                "capability_level": capability_level,
+                "resolved_via": resolved_via,
+                "inject_readiness": inject_readiness,
             },
         )
     except Exception as exc:
@@ -632,6 +670,9 @@ def probe(
         "coordination_file": coordination_file,
         "session_id": session_id,
         "slug": slug,
+        "capability_level": capability_level,
+        "resolved_via": resolved_via,
+        "inject_readiness": inject_readiness,
         "errors": errors,
     }
 
