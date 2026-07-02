@@ -14,17 +14,22 @@ A 5-phase development loop with a mandatory Phase 6: assess state and criteria, 
 
 ## Routing
 
-`/build-loop:run <any task>` is the single entry for all coding work — build, fix, optimize, research, debug, or test. The orchestrator classifies intent automatically and routes to the right mode; no flag or command choice required.
+**`/build-loop:run` is the ONLY human-facing command.** Type it with any request in plain language — or just describe what you need — and the orchestrator classifies intent and routes to the right internal mode. No flags, no picking a mode, no other commands to learn. Everything below is reached by intent, not by a separate command; agents/build-loop invoke these internally.
 
-Internal modes:
+Intent → internal mode:
 
-- **Build** (default): Full 5-phase loop plus mandatory Phase 6 Learn — triggered by implementation, fix, refactor, migrate, or update language
-- **Optimize**: Metric-driven optimization loop — triggered by "speed up", "reduce", "improve" + a mechanical metric (`/build-loop:optimize-run` as a direct override)
-- **Research**: Pre-decision analysis, outputs a research packet, no commits — triggered by "research", "evaluate", "compare", "should I" (`/build-loop:research-run` as a direct override)
-- **Debug**: Deep iterative root-cause investigation — triggered by symptom language; also auto-invoked inside the loop on Review-B failures (`/build-loop:debug` as a direct override)
-- **Test**: Static plugin-test suite — triggered by "test plugin", "validate plugin" (`/build-loop:test` as a direct override)
+- **Build** (default): full 5-phase loop + mandatory Phase 6 Learn — implementation / fix / refactor / migrate / update / "add" / "wire up" language.
+- **Debug**: deep iterative root-cause investigation — symptom language ("broken", "doesn't work", "failing"); also auto-invoked on Review-B failures.
+- **Optimize**: metric-driven optimization loop — "speed up", "reduce", "improve" + a mechanical metric.
+- **Research**: pre-decision analysis, research packet, no commits — "research", "evaluate", "compare", "should I".
+- **Test**: static plugin-test suite — "test plugin", "validate plugin".
+- **Root-cause analysis**: blameless RCA producing durable system levers — "root cause", "why did this fail", "post-mortem" (delegates to the `root-cause-analysis` skill).
+- **Retrospective**: recursive learning retrospective on a build/project — "retrospective", "retro", "what did we learn", "review this project's trajectory" (delegates to `recursive-retrospective`). *Example: "I need a root cause and a retrospective" → run does both.*
+- **Plan / spec**: "write a plan", "spec this" → spec-writing + plan-verify.
+- **PRD**: "start a PRD", "spec out a new app" → prd-bridge / start-prd flow.
+- **Self-improve / promote / knowledge / handoff / memory setup**: "scan recent runs", "promote this experiment", "record a decision", "hand this off", "set up memory" → the matching internal skill (self-improve, promotion-reviewer, knowledge, handoff, setup-memory).
 
-The standalone commands are advanced overrides for forcing a specific mode. Normal usage only needs `/build-loop:run`.
+**Design intent:** one command for humans, plain-language routing, everything else agent-invoked within build-loop. If a request doesn't match a mode, run treats it as a Build task or asks one clarifying question — it never makes the user pick a command.
 
 ### Parallelism config
 

@@ -1,5 +1,5 @@
 ---
-description: "The single entry for any coding task — build, fix, refactor, optimize, research, or test. Auto-routes to the right mode; you don't pick."
+description: "The one build-loop command. Describe anything in plain language — build, fix, debug, optimize, research, test, root-cause, retrospective, plan, PRD — and it routes automatically. You never pick a mode."
 argument-hint: "[--parallel] [goal description]"
 ---
 

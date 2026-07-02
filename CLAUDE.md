@@ -26,10 +26,8 @@ Review has internal sub-steps: Critic → Validate → Optimize (opt-in) → Fac
 
 ## Claude Code Integration
 
-- `/build-loop:run [goal]` — triggers the build-loop skill which orchestrates all 5 phases (the bare `/build-loop` form is deprecated due to a namesake collision with the skill of the same qualified name; see `KNOWN-ISSUES.md`)
-- `/build-loop:debug <symptom>` — deep iterative root-cause investigation via the bundled `debug-loop` skill (also auto-invoked by the orchestrator on Review-B failures and Iterate attempts 2 and 3)
-- `/build-loop:debugger`, `/build-loop:debugger-detail`, `/build-loop:debugger-scan`, `/build-loop:debugger-status`, `/build-loop:assess` — native debugger command surface backed by build-loop skills
-- `/build-loop:self-improve` — run Phase 6 Learn alone against recent runs without a new build
+- **`/build-loop:run [anything, in plain language]` is the ONLY human-facing command.** Describe the task — build, fix, debug, optimize, research, test, root-cause, retrospective, plan, PRD, self-improve — and the orchestrator classifies intent and routes to the right internal mode. No other commands, no mode flags. (The bare `/build-loop` form is deprecated — namesake collision with the skill; see `KNOWN-ISSUES.md`.)
+- **All former mode/utility commands are now internal**, reached by intent, not by a separate command: debug, debugger (past-bug search), optimize, research, test, assess, self-improve, promote-experiment, verify-plan, start-prd, setup-memory, review-knowledge, compose-handoff, rally-point. Agents/build-loop invoke the backing skills directly; humans just say what they want. The full intent→mode map lives in `skills/build-loop/SKILL.md` §Routing. Enforced by `scripts/test_command_surface_policy.py` (only `run` is a command).
 - Build orchestrator agent (Opus, Thinking tier — coordination) coordinates phase execution and spawns parallel subagents. Phase 2 plan synthesis runs at **Frontier (Fable)** *when the Advisor dispatch ladder is gated in* (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`) — via the `advisor` agent (Rung 1), a peer host (Rung 2), or an already-Fable session (Rung 0); when no stakes trigger fires or no dispatch path is reachable, the orchestrator synthesizes the plan inline on its own model and labels it honestly (Rung 3, today's behavior). The verification surface (plan-critic, scope-auditor, independent-auditor, …) runs at Fable. See `skills/build-loop/references/advisor-dispatch-ladder.md`. The Advisor v1 ladder covers **Phase 2 plan synthesis only**; Phase 1 Assess synthesis runs inline as today (routing it through the Advisor is v2). "Fable plans" is the *aspiration the ladder makes true on high-stakes Phase 2 plans* — not an unconditional guarantee.
 - Fact-checker and mock-scanner agents run in parallel during Review sub-step D
 - Recurring-pattern-detector (Haiku) + self-improvement-architect (Sonnet) run during Phase 6 Learn
@@ -158,11 +156,11 @@ This project uses build-loop-native debugging memory. Standalone Coding Debugger
 - Patterns from repeated issues can be promoted during Learn
 - Optional Coding Debugger mirror adds cross-project recall when installed
 
-**Commands:**
-- `/build-loop:debug <symptom>` - Run deep root-cause investigation
-- `/build-loop:debugger "symptom"` - Search past local bugs for similar issues
-- `/build-loop:debugger-detail <ID>` - Drill into a specific incident or pattern
-- `/build-loop:debugger-status` - Show memory statistics
-- `/build-loop:debugger-scan` - Scan recent sessions for debugging work
+**How to reach it (no separate commands — just `/build-loop:run` + plain language):**
+- "debug this / why is X failing" → deep root-cause investigation
+- "have we hit this bug before?" → past-incident search
+- "show me incident <ID>" → drill into a specific incident/pattern
+- "debug memory stats" → memory statistics
+- "scan recent sessions for debugging work" → session scan
 
 The system learns through explicit Review-F storage and Learn-phase promotion.
