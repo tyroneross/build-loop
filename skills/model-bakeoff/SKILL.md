@@ -1,6 +1,7 @@
 ---
 name: model-bakeoff
 description: Use to run a controlled multi-model bake-off — have N models (e.g. Opus 4.8, Sonnet 5.0, GPT-5.5) each independently diagnose→plan→execute the SAME bounded change in isolated git worktrees, then deterministically re-score their committed code on a fresh server, merge the best-of (grafting distinct wins from the others), and repeat per change. Triggers on "bake-off", "compare models on this task", "which model is best at", "run the same change across models and score them".
+user-invocable: false
 ---
 
 # Model Bake-off Harness
