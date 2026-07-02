@@ -213,7 +213,17 @@ def _main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Fetch the pinned rally binary.")
     p.add_argument("--force", action="store_true", help="Re-fetch even if cached.")
     p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--print-pin",
+        action="store_true",
+        help="Print PINNED_VERSION only (no fetch, no network) and exit. "
+        "Used by the session-start on-PATH-vs-pin staleness guard.",
+    )
     args = p.parse_args(argv)
+
+    if args.print_pin:
+        print(PINNED_VERSION)
+        return 0
 
     triple = host_triple()
     path = ensure_binary(force=args.force)

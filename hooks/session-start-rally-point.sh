@@ -45,4 +45,22 @@ fi
 # Step 4: advance cursor past probe's own writes (silent; same script, no VERBOSE).
 python3 "$PKG/hooks.py" session-start-advance --workdir "$W" 2>/dev/null || true
 
+# Step 5: on-PATH-vs-pin rally version staleness guard (lane E-a). This is
+# the control that would have caught the rally version-mismatch incident:
+# warn (never block) when the `rally` binary resolved from PATH is not the
+# version build-loop is pinned to. NON-BLOCKING + fail-open — on any error
+# (rally absent, python3 failure, unparseable output) this silently no-ops
+# and NEVER affects the hook's exit code.
+if command -v rally >/dev/null 2>&1; then
+    _rally_raw_ver="$(rally version 2>&1 | head -n1)"
+    _rally_on_path_ver="${_rally_raw_ver#rally }"
+    _rally_on_path_ver="${_rally_on_path_ver%%+*}"
+    _rally_on_path_ver="$(printf '%s' "$_rally_on_path_ver" | tr -d '[:space:]')"
+    _rally_pinned_ver="$(python3 "$PKG/binary_fetch.py" --print-pin 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$_rally_on_path_ver" ] && [ -n "$_rally_pinned_ver" ] \
+        && [ "$_rally_on_path_ver" != "$_rally_pinned_ver" ]; then
+        echo "[rally] WARN: on-PATH rally ${_rally_on_path_ver} != pinned ${_rally_pinned_ver} — run 'python3 scripts/rally_point/binary_fetch.py --force' to reconcile" >&2
+    fi
+fi
+
 exit 0

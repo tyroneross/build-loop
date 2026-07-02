@@ -122,6 +122,30 @@ class FetchFailClosedTests(unittest.TestCase):
         self.assertFalse(bf.cached_binary_path().exists(), "tmp cleaned up")
 
 
+class PrintPinTests(unittest.TestCase):
+    """``--print-pin`` is a network-free introspection flag consumed by the
+    session-start-rally-point.sh on-PATH-vs-pin staleness guard (lane E-a).
+    It must print ONLY the pinned version and must never touch the
+    fetch/verify/network path — the hook calls it on every session start."""
+
+    def test_print_pin_prints_only_pinned_version(self) -> None:
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = bf._main(["--print-pin"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(buf.getvalue().strip(), bf.PINNED_VERSION)
+
+    def test_print_pin_never_touches_network_or_fetch(self) -> None:
+        with mock.patch.object(bf, "ensure_binary") as mock_ensure, \
+             mock.patch.object(bf, "_http_get") as mock_http:
+            bf._main(["--print-pin"])
+        mock_ensure.assert_not_called()
+        mock_http.assert_not_called()
+
+
 class UnsupportedHostLoudTests(unittest.TestCase):
     """An unsupported host yields LOUD coordination_unavailable, never a mirror."""
 
