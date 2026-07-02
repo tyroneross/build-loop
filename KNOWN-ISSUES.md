@@ -97,7 +97,7 @@ This bypasses the resolver entirely and produces the same outcome.
 
 **Sibling colliders — RESOLVED 2026-06-09 (Option 2 rename).** Three sibling command/skill pairs shared the same namesake-collision shape. Rather than carry the latent risk further, the proven Option-2 rename (slash-command file renamed, skill name unchanged) was applied to all three so `/build-loop:<x>` can never shadow `Skill("build-loop:<x>")`:
 
-- `commands/optimize.md` → `commands/optimize-run.md` (`/build-loop:optimize-run`); `skills/optimize/SKILL.md` unchanged → `Skill("build-loop:optimize")` resolves to the skill.
+- `commands/optimize.md` → `commands/optimize-run.md` (`/build-loop:optimize-run`); `skills/optimize/SKILL.md` unchanged → `Skill("build-loop:optimize")` resolves to the skill. *(Historical: the `optimize-run` command was retired 2026-07-02 in the one-command move — optimize is now reached via `/build-loop:run` + "optimize" language.)*
 - `commands/research.md` → `commands/research-run.md` (`/build-loop:research-run`); `skills/research/SKILL.md` unchanged → `Skill("build-loop:research")` resolves to the skill.
 - `commands/plan-verify.md` → `commands/verify-plan.md` (`/build-loop:verify-plan`); `skills/plan-verify/SKILL.md` unchanged → `Skill("build-loop:plan-verify")` resolves to the skill.
 

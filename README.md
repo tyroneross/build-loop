@@ -115,7 +115,7 @@ Deep iterative debugging (also auto-invoked by the loop on review failures):
 Direct advanced modes:
 
 ```text
-/build-loop:optimize-run reduce API latency
+/build-loop:run optimize reduce API latency
 /build-loop:research-run compare queue providers
 /build-loop:test --strict
 /build-loop:self-improve

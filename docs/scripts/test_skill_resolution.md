@@ -24,7 +24,7 @@ renamed, see below):
 
 | Qualified name | Status |
 |---|---|
-| `build-loop:optimize` | Command renamed `optimize.md` → `optimize-run.md` (2026-06-09) — slash `/build-loop:optimize-run`; skill name unchanged so `Skill("build-loop:optimize")` still resolves. No longer collides. |
+| `build-loop:optimize` | Command renamed `optimize.md` → `optimize-run.md` (2026-06-09) — slash `/build-loop:optimize-run`; skill name unchanged so `Skill("build-loop:optimize")` still resolves. No longer collides. *(Since retired 2026-07-02: one-command move dropped `optimize-run`; optimize is reached via `/build-loop:run`.)* |
 | `build-loop:research` | Command renamed `research.md` → `research-run.md`; slash `/build-loop:research-run`; skill name unchanged. No longer collides. |
 | `build-loop:plan-verify` | Command renamed `plan-verify.md` → `verify-plan.md`; slash `/build-loop:verify-plan`; skill name unchanged. No longer collides. |
 
