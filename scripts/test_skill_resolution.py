@@ -45,7 +45,9 @@ SKILLS_DIR = REPO_ROOT / "skills"
 # Empty by design: every namesake collision in build-loop has been fixed via the
 # Option-2 rename (rename the slash-command file; skill name unchanged). The last
 # three — agent-rally-point, handoff, knowledge-review — were renamed to
-# rally-point / compose-handoff / review-knowledge (WP-D, 2026-06-09). The suite
+# rally-point / compose-handoff / review-knowledge (WP-D, 2026-06-09).
+# knowledge-review was later folded into `knowledge` (review mode), 2026-07
+# (pool-consolidation Inc 3) — the skill no longer exists, so it cannot collide. The suite
 # now enforces ZERO collisions: any new sibling pair fails CI. Add an entry here
 # ONLY with a written rationale AND a KNOWN-ISSUES.md note for an intentional pair.
 ACCEPTED_SIBLINGS: set[str] = set()

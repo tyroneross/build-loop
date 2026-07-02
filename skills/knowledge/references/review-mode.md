@@ -1,24 +1,7 @@
----
-name: knowledge-review
-description: Repo-local episodic memory review surface. Use when the user asks to "review my decisions", "show review queue", "check decision rot", "list open conflicts", "find stale procedures", or runs `/knowledge:review`. Read-only — never auto-resolves.
-user-invocable: false
-when_to_use: |
-  - User runs `/knowledge:review` or asks to surface review-needing items
-  - User wants to see decisions older than the staleness threshold
-  - User wants to see `_review/` queue items awaiting promotion
-  - User wants to see open `fact_conflicts` rows
-  - User wants to see procedures whose `depends_on` symbols are missing from the codebase
-namespace: .episodic/decisions/_review/, .episodic/decisions/, .procedural/, agent_memory.<schema>.fact_conflicts
-companion_scripts:
-  - scripts/knowledge_review.py — aggregates all four sections into a markdown report
-  - scripts/detect_decision_rot.py — drives the rot section
-  - scripts/procedural_governance.py — drives the stale-procedures section (validate-symbols mode)
-  - scripts/consolidate_memory.py — referenced as the next-step action when surface items accumulate
----
-
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+<!-- PROVENANCE: folded from skills/knowledge-review/SKILL.md (v0.1.0, user-invocable:false) on 2026-07-02 (pool-consolidation Inc 3). Review-intent selection triggers preserved in skills/knowledge/SKILL.md frontmatter description (W4); this reference holds the review-surface body. Namespace note: this surface reviews the LEGACY .episodic/ paths (the knowledge skill's active writes target build-loop-memory canonical); .episodic is migration/archive input. -->
 
-# knowledge-review — surface review-needing items
+# Knowledge review mode — surface review-needing items
 
 `/knowledge:review` is the read-only review surface for the four-memory-types
 framework (Working / Episodic / Semantic / Procedural). It does NOT modify
@@ -27,6 +10,11 @@ any data; it lists what humans need to decide on.
 The full design lives at
 `~/dev/research/topics/repo-episodic-memory-framework/repo-episodic-memory-framework.md`
 (see §11–§14).
+
+Companion scripts: `scripts/knowledge_review.py` (aggregates all four sections into a
+markdown report), `scripts/detect_decision_rot.py` (rot section),
+`scripts/procedural_governance.py` (stale-procedures section, validate-symbols mode),
+`scripts/consolidate_memory.py` (next-step action when surface items accumulate).
 
 ## What it surfaces
 
@@ -101,7 +89,7 @@ records the action in `.semantic/_candidates_history.jsonl`.
 
 ## Read-only contract
 
-This skill never:
+This surface never:
 - promotes items from `_review/` (user does the `mv`)
 - mutates `last_validated` (user edits the file)
 - resolves conflicts (user updates the rows)

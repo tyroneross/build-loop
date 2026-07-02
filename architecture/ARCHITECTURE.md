@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 49 skills · 339 scripts · 19 hooks** (auto-discovered 2991ba73)
+**28 agents · 48 skills · 339 scripts · 19 hooks** (auto-discovered 22495760)
 
 <details><summary>agents</summary>
 
@@ -76,7 +76,6 @@ Format spec + drift gate: `architecture/README.md`.
 - `handoff`
 - `ibr-bridge`
 - `knowledge`
-- `knowledge-review`
 - `logging-tracer`
 - `logging-tracer-bridge`
 - `loop-builder`

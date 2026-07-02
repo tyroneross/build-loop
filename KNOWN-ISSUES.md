@@ -108,6 +108,7 @@ This bypasses the resolver entirely and produces the same outcome.
 - `commands/agent-rally-point.md` → `commands/rally-point.md` (`/build-loop:rally-point`); `skills/agent-rally-point/SKILL.md` unchanged → `Skill("build-loop:agent-rally-point")` resolves to the skill.
 - `commands/handoff.md` → `commands/compose-handoff.md` (`/build-loop:compose-handoff`); `skills/handoff/SKILL.md` unchanged → `Skill("build-loop:handoff")` resolves to the skill. Self-referential slash mentions in the command + skill bodies were updated to the new name.
 - `commands/knowledge-review.md` → `commands/review-knowledge.md` (`/build-loop:review-knowledge`); `skills/knowledge-review/SKILL.md` unchanged → `Skill("build-loop:knowledge-review")` resolves to the skill.
+  - **Follow-up (2026-07, pool-consolidation Inc 3):** `skills/knowledge-review/` was folded into `knowledge` as a read-only *review mode* (`skills/knowledge/references/review-mode.md`; review-intent triggers appended to `knowledge`'s frontmatter description). `Skill("build-loop:knowledge-review")` no longer resolves — reach the review surface via `knowledge` (review mode) or `/knowledge:review`.
 
 With this batch, build-loop has **zero** namesake collisions and `scripts/test_skill_resolution.py` enforces it (`ACCEPTED_SIBLINGS` is now empty; `collision_scan.py --strict` exits 0). Any new sibling pair fails CI. The guard suite (`collision_scan.py` + `test_skill_resolution.py` + `test_plugin_manifest.py`) runs in CI via the existing `pytest scripts/` invocation in `.github/workflows/pytest.yml`.
 

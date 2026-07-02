@@ -367,8 +367,9 @@ self-heals as more signal arrives.
 
 ## When the user runs `/knowledge:review`, surface…
 
-The review surface (loaded by `build-loop:knowledge-review`, backed by
-`scripts/knowledge_review.py`) shows four sections of decisions and
+The review surface (loaded by `build-loop:knowledge` review mode —
+`references/review-mode.md`, backed by `scripts/knowledge_review.py`)
+shows four sections of decisions and
 procedures awaiting human attention:
 
 1. **Review queue** — tier-3 / inferred captures sitting in

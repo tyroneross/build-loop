@@ -4,7 +4,7 @@
 
 Every former mode/utility command (debug, optimize, research, test, assess,
 self-improve, promote-experiment, verify-plan, start-prd, setup-memory,
-review-knowledge, compose-handoff, rally-point, debugger*) is reached by INTENT
+knowledge review mode, compose-handoff, rally-point, debugger*) is reached by INTENT
 through `/build-loop:run` + plain language, and invoked internally as a skill —
 never as a separate slash-command. This test locks that surface so a stray
 command file can't silently re-clutter the human palette.

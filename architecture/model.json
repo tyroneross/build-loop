@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2991ba73777601e2c71b6cabbd90f8bf058ca7559c317d673199594032fcbca9"
+    "content_sha256": "224957607f9900a1ee89043fd4c7c005f3dcbd5b1254683f844af179dcfc1897"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1292,19 +1292,11 @@
         }
       },
       "knowledge": {
-        "description": "Canonical build-loop-memory framework. Use when the user asks to \"record a decision\", \"log an ADR\", \"write an MADR\", \"capture this choice\", \"regenerate the decisions index\", \"validate knowledge\", \"migrate feedback to decisions\", or \"recall <topic>\". Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only. user-invocable: true",
+        "description": "Canonical build-loop-memory framework. Use when the user asks to \"record a decision\", \"log an ADR\", \"write an MADR\", \"capture this choice\", \"regenerate the decisions index\", \"validate knowledge\", \"migrate feedback to decisions\", or \"recall <topic>\". ALSO the read-only review surface (review mode): \"review my decisions\", \"show review queue\", \"check decision rot\", \"list open conflicts\", \"find stale procedures\", or `/k…",
         "file": "skills/knowledge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-05-30"
-        }
-      },
-      "knowledge-review": {
-        "description": "Repo-local episodic memory review surface. Use when the user asks to \"review my decisions\", \"show review queue\", \"check decision rot\", \"list open conflicts\", \"find stale procedures\", or runs `/knowledge:review`. Read-only — never auto-resolves. user-invocable: false",
-        "file": "skills/knowledge-review/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-05-28"
         }
       },
       "logging-tracer": {

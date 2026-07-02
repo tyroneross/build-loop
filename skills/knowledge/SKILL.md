@@ -1,6 +1,6 @@
 ---
 name: knowledge
-description: Canonical build-loop-memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only.
+description: Canonical build-loop-memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". ALSO the read-only review surface (review mode): "review my decisions", "show review queue", "check decision rot", "list open conflicts", "find stale procedures", or `/knowledge:review`. Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only.
 user-invocable: true
 when_to_use: |
   - User wants to record a substantive choice with rationale
@@ -114,12 +114,23 @@ postgresql://tyroneross@localhost:5432/agent_memory). Per-project schema:
 this repo uses `build_loop_memory`. The schema name is configurable via
 the `--schema` flag on each DB-aware script.
 
+## Review mode (read-only)
+
+The read-only review surface — `/knowledge:review` and asks like "review my
+decisions", "show review queue", "check decision rot", "list open conflicts",
+"find stale procedures" — lists the four sections of decisions/procedures
+awaiting human attention (review queue, decision rot, open conflicts, stale
+procedures) with a suggested action per item. It NEVER auto-resolves; humans
+take the action. Full surface, invocation flags, and the consolidation
+cross-reference: **`references/review-mode.md`**. (Namespace note: this surface
+reviews the legacy `.episodic/` paths; active durable writes target
+build-loop-memory canonical.)
+
 ## What's NOT in this skill
 
 - Auto-capture from conversation — Phase 3 (`auto-decision-capture`
   skill, Stop hook with `scan_transcript_for_decisions.py`)
 - Memory consolidation — Phase 4 (`consolidate_memory.py`)
-- `/knowledge:review` slash command — Phase 4
 - `derived/libraries.json` and `derived/CHANGELOG.md` generators —
   Phase 1.5 / 4
 
