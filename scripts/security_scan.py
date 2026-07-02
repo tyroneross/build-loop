@@ -574,7 +574,7 @@ def check_C_injection(path: Path, lines: list[str]) -> list[dict[str, Any]]:
                 check_id="C",
             ))
 
-        if _EVAL_RE.search(raw):
+        if _EVAL_RE.search(_strip_string_literals(raw)):
             # Only flag in code files (skip .json, .md, .txt, etc. where "eval" appears in text)
             if path.suffix.lower() in _CODE_EXTENSIONS and not _is_test_file(path):
                 findings.append(_finding(
@@ -1010,10 +1010,18 @@ def main() -> int:
         is_content = _is_content_file(path)
         is_test = _is_test_file(path)
 
-        all_findings.extend(check_A_secrets(path, lines, root))
+        secret_findings = check_A_secrets(path, lines, root)
+        if not is_content:
+            secret_findings.extend(check_B_secret_in_logs(path, lines))
+        if is_test:
+            # Test fixtures intentionally embed trigger strings (fake keys, sample
+            # tokens). Keep them visible for human review but don't let them block
+            # the HIGH push-gate — a real leaked value still surfaces at LOW.
+            for _f in secret_findings:
+                _f["severity"] = "LOW"
+        all_findings.extend(secret_findings)
 
         if not is_content:
-            all_findings.extend(check_B_secret_in_logs(path, lines))
             if not is_test:
                 all_findings.extend(check_C_injection(path, lines))
             all_findings.extend(check_D_ssrf(path, lines))
