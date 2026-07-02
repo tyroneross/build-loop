@@ -40,7 +40,7 @@ Highest-leverage phase. Wrong metric = Goodhart's Law. Wrong factors = wasted ru
 |---|---|---|
 | **A. Power-user explicit** | User supplied factors via CLI flag, `.build-loop/optimize/factors.json`, or inline ("optimize batch_size, retries, workers for throughput") | Skip suggestion; use the user's factors directly |
 | **B. Vague optimization** *(default)* | "run optimization", "make my app faster", "improve performance", "speed up", "reduce <metric>" without naming factors | Run factor-identification scan; propose candidates; **AskUserQuestion to confirm before running** |
-| **C. Single-variable explicit** | "simplify this file", "reduce build time", scoped `/build-loop:optimize-run <known-target>` | Skip DOE; run autoresearch (existing behavior, Phase 2 LOOP unchanged) |
+| **C. Single-variable explicit** | "simplify this file", "reduce build time", a scoped optimize request via `/build-loop:run <known-target>` | Skip DOE; run autoresearch (existing behavior, Phase 2 LOOP unchanged) |
 
 ### Step 1.2 — Branch A or B: factor identification
 
@@ -186,7 +186,7 @@ Dispatch the `optimize-runner` agent. It executes:
 
 Phase 4.7 (AUTO-OPTIMIZE): after Phase 4 Execute completes and commits, check for optimization targets. Run sequentially (not parallel with Phase 4).
 
-Standalone: `/build-loop:optimize-run [target]`
+Reached via `/build-loop:run [target]` + optimize language (no separate command).
 
 ## State Files
 

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e898ae50ebcc886ddb88e8054b9d3d15e2e18e6cd3d2e96a65469d0c75605e38"
+    "content_sha256": "1ac8b1530f2b98cf1aa081ab6339a011d0e162de55cb450294fd8898d4a8c7e6"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1208,7 +1208,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-21"
+          "date": "2026-07-02"
         }
       },
       "building-with-deepagents": {

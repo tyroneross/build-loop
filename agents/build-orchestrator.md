@@ -28,7 +28,7 @@ When the prompt opens with `PER_COMMIT_DISPATCH:`, this orchestrator owns ONE co
 Classify before starting:
 
 - **BUILD** (default): "build", "implement", "add", "create", "fix", "refactor", "migrate", "update" → full 5-phase loop.
-- **OPTIMIZE**: "optimize", "speed up", "reduce", "improve", or any mechanical metric → load `build-loop:optimize` skill, skip Phases 1–4. Standalone: `/build-loop:optimize-run`.
+- **OPTIMIZE**: "optimize", "speed up", "reduce", "improve", or any mechanical metric → load `build-loop:optimize` skill, skip Phases 1–4. (No separate command — reached via `/build-loop:run` + optimize language.)
 - **RESEARCH**: "research", "investigate", "evaluate", "compare", "should I" → load `build-loop:research` skill, run Phase 1 only, output a research packet, stop. Standalone: `/build-loop:research-run`.
 - **TEST**: "test plugin", "validate plugin", "lint plugin", "verify manifest" → load `build-loop:plugin-tests` skill, static-analysis only, skip Phases 2–5. Standalone: `/build-loop:test`.
 
