@@ -149,3 +149,21 @@ def test_require_seats_nested_warns_not_fails(tmp_path):
     _write(tmp_path, _runs({"run_id": "r1", "riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}))
     rc, out = _run(tmp_path, "--require-seats", agent_tool="false")
     assert rc == 0 and out["verdict"] == "warn" and out["missing_seats"] == ["security-reviewer"]
+
+
+# --- review f2/f4: wrong-tier seats don't count present; no run_id attests nothing ---
+def test_require_seats_wrong_tier_seat_not_present(tmp_path):
+    _write(tmp_path,
+           _runs({"run_id": "cur", "riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}),
+           ledger_rows=[{"run_id": "cur", "agent": "security-reviewer", "action": "verify", "tier": "code"}])
+    rc, out = _run(tmp_path, "--require-seats", "--run-id", "cur")
+    assert rc == 1 and out["missing_seats"] == ["security-reviewer"]  # tier=code ≠ present
+
+
+def test_require_seats_no_run_id_attests_nothing(tmp_path):
+    # stakes-gated run WITHOUT a run_id; a historical security-reviewer row must NOT count.
+    _write(tmp_path,
+           {"runs": [{"riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}]},
+           ledger_rows=[{"run_id": "OLD", "agent": "security-reviewer", "action": "verify", "tier": "frontier"}])
+    rc, out = _run(tmp_path, "--require-seats")
+    assert rc == 1 and out["missing_seats"] == ["security-reviewer"]

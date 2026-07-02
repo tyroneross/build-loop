@@ -514,3 +514,18 @@ def test_no_stakes_run_writes_no_followup(tmp_path):
     stop_closeout.run_stop(tmp_path, SESSION)
     fu_dir = tmp_path / ".build-loop" / "followup"
     assert not fu_dir.exists() or not list(fu_dir.glob("judgment-owed-*.md"))
+
+
+# --- review f3: owed-judgment followup is removed once the debt clears ---
+def test_judgment_followup_removed_when_debt_clears(tmp_path):
+    (tmp_path / ".build-loop").mkdir(parents=True, exist_ok=True)
+    decision = {"run_id": "bl-f3", "goal": "g", "outcome": "done"}
+    warn = {"verdict": "warn", "stakes_gated": True, "stakes_reasons": ["riskSurfaceChange"],
+            "findings": [{"layer": "independent-auditor"}], "missing_seats": []}
+    p = stop_closeout._write_judgment_followup(tmp_path, decision, warn)
+    assert p is not None and p.exists()
+    # debt cleared → pass verdict must delete the stale followup (no phantom Phase-5 debt)
+    ok = {"verdict": "pass", "stakes_gated": True, "stakes_reasons": ["riskSurfaceChange"],
+          "findings": [], "missing_seats": []}
+    assert stop_closeout._write_judgment_followup(tmp_path, decision, ok) is None
+    assert not p.exists()

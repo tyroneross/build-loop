@@ -214,7 +214,7 @@ The following build-loop 0.9.0+ behaviors cannot be exercised inside a session t
 
 **Assess correction.** The enforcement mostly already existed: `stop_closeout.py` records inline runs, `judgment_gate.py` stakes-gates the Frontier auditor/advisor dispatch (FAIL top-level / WARN nested), `append_run.build_record` already sets `host` + typed `manualInterventions`. The residual gaps were narrow — fixed by P0 (`docs/plans/2026-07-02-P0-inline-vs-agent-activation-closure-plan.md`):
 - **C1** `judgment_gate --require-seats` (opt-in): attests `plan-critic`/`scope-auditor` (synthesisDensity>5) + `security-reviewer` (riskSurfaceChange) via the agent-ledger; reports `missing_seats[]`.
-- **C2** `stop_closeout` writes `followup/judgment-owed-<run-id>.md` on a stakes-gated WARN/FAIL → Phase 5 Iterate drains it, closing the "parent owes it" sidestep loophole.
+- **C2** `stop_closeout` writes `followup/judgment-owed-<run-id>.md` on a stakes-gated WARN/FAIL → Phase 5 Iterate drains it, closing the "parent owes it" sidestep loophole. The inline gate call keeps `require_seats=False` (the seat ledger channel is not yet populated — see residual); the followup is driven by the auditor/advisor floor and is **deleted once the debt clears** (a later passing Stop), so Phase 5 never drains phantom debt. Independent review (Fable + Codex GPT-5.5) hardened C1/C2: wrong-tier ledger rows no longer count a seat present; a missing `run_id` attests nothing.
 - **C3** `write_run_entry` now records `host` (parity with `append_run`) — fixes null-host orchestrator runs.
 
 **Residual (why this stays listed).**

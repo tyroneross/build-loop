@@ -51,9 +51,15 @@ _REQUIRED_SEATS_BY_REASON = {
 
 
 def _seats_present(ledger_path: Path, run_id: str | None) -> set:
-    """Agent names with at least one agent-ledger row for THIS run."""
+    """Frontier-tier agent-ledger rows for THIS run — the only rows that count a seat present.
+
+    Requires run attribution: a falsy run_id means "no run scope", so we attest NOTHING
+    (an unscoped read must not count every historical row as present — review f4). A row at a
+    non-frontier tier is the inline-substitution defect this gate exists to catch, so it does
+    NOT satisfy a required seat (review f2); tier "" is accepted (unrecorded tier, not a violation).
+    """
     present: set = set()
-    if not ledger_path.exists():
+    if not run_id or not ledger_path.exists():
         return present
     for line in ledger_path.read_text().splitlines():
         line = line.strip()
@@ -63,8 +69,10 @@ def _seats_present(ledger_path: Path, run_id: str | None) -> set:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if run_id and row.get("run_id") != run_id:
+        if row.get("run_id") != run_id:
             continue
+        if str(row.get("tier", "")).lower() not in ("frontier", ""):
+            continue  # wrong-tier seat is not "present" — mirrors _ledger_tier_violations
         agent = row.get("agent")
         if agent:
             present.add(str(agent))

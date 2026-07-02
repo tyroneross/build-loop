@@ -362,7 +362,12 @@ def _run_gate(workdir: Path, run_id: str) -> dict:
     """Evaluate judgment_gate with agent_tool_available=False (a Stop hook has none)."""
     state = _read_state(workdir) or {}
     ledger = workdir / ".build-loop" / "agent-ledger.jsonl"
-    return judgment_gate.evaluate(state, ledger, run_id, agent_tool_available=False, require_seats=True)
+    # require_seats stays OFF on the live Stop path (matches the KNOWN-ISSUES residual): the
+    # plan-critic/scope-auditor/security-reviewer ledger channel is not yet populated, so attesting
+    # against it would report ran seats as "missing" (review f1 HIGH). Promote to True only once
+    # every seat writes a ledger row (the documented resolution criterion). The auditor/advisor
+    # floor still drives the owed-judgment followup below.
+    return judgment_gate.evaluate(state, ledger, run_id, agent_tool_available=False, require_seats=False)
 
 
 def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
@@ -403,6 +408,10 @@ def _write_judgment_followup(workdir: Path, decision: dict, verdict: dict) -> Pa
     Skipped entirely when the gate PASSes or the run isn't stakes-gated.
     """
     if verdict.get("verdict") not in ("warn", "fail") or not verdict.get("stakes_gated"):
+        # The debt cleared (owed layer dispatched → passing gate, or run no longer stakes-gated):
+        # remove any prior followup so Phase 5 doesn't drain phantom debt (review f3). Mirrors the
+        # marker, which is refreshed each Stop; the followup is deleted rather than refreshed.
+        _judgment_followup_path(workdir, decision["run_id"]).unlink(missing_ok=True)
         return None
     owed_layers = sorted({str(f.get("layer")) for f in verdict.get("findings", []) if f.get("layer")})
     missing_seats = verdict.get("missing_seats") or []

@@ -57,6 +57,7 @@ Per attempt:
 5. **Execute fixes**; for UI files, run the UI re-validate hook before continuing.
 6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
 7. **Followup overflow**: when the iteration cap (5) is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips its own Plan phase for these entries.
+   - **`judgment-owed-<run-id>.md`** entries (written by `stop_closeout` when a stakes-gated inline run closed at the inline floor) mean: **dispatch the owed verification layer(s) named in the file for that run** (the Frontier auditor/advisor it skipped), then the file is cleared automatically on the next passing Stop. Do not treat it as a code work-item — it is a dispatch-the-judgment debt.
 8. **Track**: attempt count, what failed, what was attempted, what changed, queue depth before/after each pass.
 
 **Convergence detection**:
