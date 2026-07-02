@@ -60,6 +60,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -91,16 +92,37 @@ def _resolve_repo(arg_repo: str | None) -> Path:
 def _git_hooks_dir(repo: Path) -> Path:
     """Resolve the effective hooks dir (handles worktrees + core.hooksPath).
 
-    - In a normal repo: ``<repo>/.git/hooks``
-    - In a worktree: ``<repo>/.git`` is a file pointing to the main repo's
-      ``.git/worktrees/<name>``; we still install into ``<repo>/.git/hooks``
-      because that's the path git resolves for the active worktree by
-      default.  ``core.hooksPath`` overrides; we honour that when set.
+    Resolution delegates to ``git -C <repo> rev-parse --git-path hooks`` —
+    the authoritative source for where git itself will look for hooks,
+    including linked worktrees (``<main-repo>/.git/worktrees/<name>/hooks``,
+    NOT ``<repo>/.git/hooks``) and ``core.hooksPath`` overrides.  We only
+    fall back to the manual ``.git`` file parse below if the ``git``
+    subprocess is unavailable or fails (e.g. git missing, or ``repo`` is not
+    actually a git repo) — so behaviour is never worse than before this
+    delegation was added.
     """
-    # Check core.hooksPath via env or git config — best-effort.
     env_override = os.environ.get("GIT_HOOKS_DIR")
     if env_override:
         return Path(env_override)
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-path", "hooks"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode == 0:
+            out = proc.stdout.strip()
+            if out:
+                path = Path(out)
+                if not path.is_absolute():
+                    path = (repo / path).resolve()
+                return path
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    # Fallback: manual .git file parse (git missing / not a repo / non-zero exit).
     dot_git = repo / ".git"
     if dot_git.is_file():
         # Worktree: read "gitdir: <path>" and append /hooks

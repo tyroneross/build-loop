@@ -21,6 +21,7 @@ Covers (mandated by the build-loop SELF-MOD SAFETY GATE for any new script):
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -35,6 +36,16 @@ SCRIPT = REPO_ROOT / "scripts" / "install_git_hooks.py"
 PUSH_HOLD_SCRIPT = REPO_ROOT / "scripts" / "push_hold.py"
 DEPLOYMENT_POLICY_SCRIPT = REPO_ROOT / "scripts" / "deployment_policy.py"
 HOOK_SOURCE = REPO_ROOT / "hooks" / "git" / "pre-push"
+
+
+def _load_install_git_hooks_module():
+    """Import scripts/install_git_hooks.py directly (not via subprocess) so
+    unit tests can call ``_git_hooks_dir`` in-process."""
+    spec = importlib.util.spec_from_file_location("install_git_hooks_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(*args: str, env_extra: dict[str, str] | None = None) -> tuple[int, str, str]:
@@ -333,6 +344,120 @@ class TestSessionStartAutoInstall(unittest.TestCase):
             env_extra={"CLAUDE_PLUGIN_ROOT": str(self.workdir), "CLAUDE_PROJECT_DIR": str(non_git)},
         )
         self.assertEqual(rc, 0)
+
+
+class TestGitHooksDirWorktreeResolution(unittest.TestCase):
+    """lane E-c — ``_git_hooks_dir`` must delegate to
+    ``git rev-parse --git-path hooks`` so worktree hook installs land where
+    git actually looks, not at ``<worktree>/.git/worktrees/<name>/hooks``
+    (which the old manual ``gitdir:`` parse produced by appending ``/hooks``
+    directly onto the parsed gitdir)."""
+
+    def setUp(self):
+        self._td = TemporaryDirectory()
+        self.parent = Path(self._td.name)
+        self.main_repo = self.parent / "main_repo"
+        self.main_repo.mkdir()
+        subprocess.run(
+            ["git", "init", "--initial-branch=main", str(self.main_repo)],
+            check=True, capture_output=True,
+        )
+        subprocess.run(["git", "-C", str(self.main_repo), "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", str(self.main_repo), "config", "user.name", "T"], check=True)
+        (self.main_repo / "README.md").write_text("test\n")
+        subprocess.run(["git", "-C", str(self.main_repo), "add", "."], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.main_repo), "commit", "-m", "init"], check=True, capture_output=True)
+
+        self.worktree = self.parent / "linked_worktree"
+        subprocess.run(
+            ["git", "-C", str(self.main_repo), "worktree", "add", "-b", "wt-branch", str(self.worktree)],
+            check=True, capture_output=True,
+        )
+
+        self.module = _load_install_git_hooks_module()
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _git_rev_parse_hooks_path(self, repo: Path) -> Path:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-path", "hooks"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        path = Path(out)
+        if not path.is_absolute():
+            path = (repo / path).resolve()
+        return path
+
+    def test_worktree_hooks_dir_matches_git_rev_parse(self):
+        expected = self._git_rev_parse_hooks_path(self.worktree)
+        self.assertTrue(expected.is_absolute())
+
+        actual = self.module._git_hooks_dir(self.worktree)
+        self.assertEqual(actual, expected)
+        self.assertTrue(actual.is_absolute())
+
+        # Ground truth: git hooks are shared across linked worktrees — they
+        # live in the MAIN repo's common .git/hooks, not under
+        # .git/worktrees/<name>/hooks (which is what the old manual
+        # "gitdir:" + "/hooks" parse incorrectly produced).
+        buggy_old_path = self._old_manual_parse(self.worktree) / "hooks"
+        self.assertNotEqual(actual, buggy_old_path)
+        self.assertEqual(actual, (self.main_repo / ".git" / "hooks").resolve())
+
+    def _old_manual_parse(self, repo: Path) -> Path:
+        dot_git = repo / ".git"
+        line = dot_git.read_text().strip()
+        gd = Path(line.split(":", 1)[1].strip())
+        if not gd.is_absolute():
+            gd = (repo / gd).resolve()
+        return gd
+
+    def test_main_repo_hooks_dir_matches_git_rev_parse(self):
+        expected = self._git_rev_parse_hooks_path(self.main_repo)
+        actual = self.module._git_hooks_dir(self.main_repo)
+        self.assertEqual(actual, expected)
+
+    def test_env_override_still_wins(self):
+        override = self.parent / "custom-hooks-dir"
+        old = os.environ.get("GIT_HOOKS_DIR")
+        os.environ["GIT_HOOKS_DIR"] = str(override)
+        try:
+            actual = self.module._git_hooks_dir(self.worktree)
+        finally:
+            if old is None:
+                os.environ.pop("GIT_HOOKS_DIR", None)
+            else:
+                os.environ["GIT_HOOKS_DIR"] = old
+        self.assertEqual(actual, override)
+
+    def test_manual_fallback_used_when_git_subprocess_unavailable(self):
+        """Simulate git being unreachable (binary missing / non-zero exit) by
+        monkeypatching subprocess.run inside the loaded module; the manual
+        ``gitdir:`` parse fallback must still return a sane path rather than
+        raising."""
+        original_run = subprocess.run
+
+        def _raising_run(*args, **kwargs):
+            raise FileNotFoundError("git: command not found (simulated)")
+
+        self.module.subprocess.run = _raising_run
+        try:
+            actual = self.module._git_hooks_dir(self.worktree)
+        finally:
+            self.module.subprocess.run = original_run
+
+        # Manual fallback parses ".git" (a file in a worktree) -> gitdir + "/hooks".
+        dot_git = self.worktree / ".git"
+        self.assertTrue(dot_git.is_file())
+        line = dot_git.read_text().strip()
+        self.assertTrue(line.startswith("gitdir:"))
+        gd = Path(line.split(":", 1)[1].strip())
+        if not gd.is_absolute():
+            gd = (self.worktree / gd).resolve()
+        expected_fallback = gd / "hooks"
+        self.assertEqual(actual, expected_fallback)
+        self.assertTrue(actual.is_absolute())
 
 
 if __name__ == "__main__":
