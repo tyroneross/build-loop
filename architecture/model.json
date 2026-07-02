@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f86fa3e15ebce00aedd55fdb44113775c7681835cad1b75b9f209e63b7d9c6be"
+    "content_sha256": "7175d92ee4096c74d81329a7056f1a85dc1e8b16aa75bcf1bbb04a415d4ec1c0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1058,7 +1058,7 @@
         "file": "agents/security-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-01"
         }
       },
       "self-improvement-architect": {
@@ -1440,7 +1440,7 @@
         "file": "skills/security-methodology/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-29"
+          "date": "2026-07-01"
         }
       },
       "security-scan": {

@@ -29,6 +29,20 @@ hygiene" — Option A accepted by Codex at rev 34):
         When changes.jsonl exceeds either threshold, rotate it to
         ``changes.jsonl.<YYYY-MM-DD>`` and start a fresh file.
 
+Plus one more, ``resolve_addressed_handoffs``, that closes the loop on
+Rally handoffs a run actually addressed. Root cause: ARP's
+``rally say receipt --ref <event_id>`` is the verified handoff-close
+primitive (empirically closes a handoff), but no build-loop automated
+path ever called it, so addressed handoffs stayed open forever. ``rally
+ack`` is a rules-ack, NOT a handoff-close, and must never be used for
+this purpose:
+
+    resolve_addressed_handoffs(repo_root, tool, handoff_event_ids, dry_run=False) -> list[str]
+        For each event_id, shell out to ``rally say receipt --ref
+        <event_id>``. Fire-and-forget per id. Returns the subset of ids
+        that actually resolved (or, under dry_run, the full input list,
+        unfired).
+
 All functions are fire-and-forget — errors are swallowed; the
 orchestrator must never crash because cleanup hit a permission error.
 ``reap_my_sessions`` returns the count of files removed; callers that
@@ -57,6 +71,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -66,6 +81,25 @@ if str(HERE.parent) not in sys.path:
 
 _SESSIONS_DIR_NAME = "sessions"
 _LOG_NAME = "changes.jsonl"
+_RECEIPT_TIMEOUT_SECONDS = 10.0
+
+
+def _rally_binary(repo_root: Path) -> str:
+    """Resolve the ``rally`` binary the same way the rest of the bridge does.
+
+    Delegates to ``discovery_bridge.rust_rally_binary`` (repo-associated
+    candidates, ``AGENT_RALLY_BINARY``, PATH, fetched cache); falls back to
+    the bare ``"rally"`` command (resolved via the child process's PATH) so
+    this stays fail-open when the discovery module is unavailable.
+    """
+    try:
+        from . import discovery_bridge as _disc
+    except ImportError:  # script-mode
+        try:
+            import discovery_bridge as _disc  # type: ignore
+        except ImportError:
+            return "rally"
+    return _disc.rust_rally_binary(repo_root) or "rally"
 
 
 def _full_capability_for_channel(channel_dir: Path) -> bool:
@@ -189,6 +223,71 @@ def rotate_changes_log(
         return target
     except OSError:
         return None
+
+
+def resolve_addressed_handoffs(
+    repo_root: Path,
+    tool: str,
+    handoff_event_ids: list[str],
+    *,
+    dry_run: bool = False,
+) -> list[str]:
+    """Close out Rally handoffs this run actually addressed.
+
+    For each ``event_id`` in ``handoff_event_ids``, shells out to::
+
+        rally say receipt --tool <tool> --ref <event_id> \\
+            --subject 'run-closeout: handoff addressed' --json
+
+    ``rally say receipt --ref <event_id>`` is ARP's verified handoff-close
+    primitive. This function is the only automated caller of it in
+    build-loop — before this, handoffs stayed open forever because nothing
+    ever called the close primitive. Do NOT reuse ``rally ack`` here: ack is
+    a rules-ack, not a handoff-close, and calling it would silently leave
+    the handoff open while looking like progress.
+
+    Fire-and-forget per id: a failing or raising subprocess call for one
+    event_id is swallowed and excluded from the return value; it never
+    prevents the remaining ids from being attempted.
+
+    ``dry_run=True`` performs no subprocess calls at all and returns
+    ``list(handoff_event_ids)`` unchanged — the ids that WOULD be resolved.
+
+    The caller (not this function) is responsible for knowing which
+    handoffs were actually addressed this run; this function only takes an
+    explicit id list so behavior stays deterministic and testable.
+    """
+    ids = list(handoff_event_ids)
+    if dry_run:
+        return ids
+
+    binary = _rally_binary(Path(repo_root))
+    resolved: list[str] = []
+    for event_id in ids:
+        try:
+            proc = subprocess.run(
+                [
+                    binary,
+                    "say",
+                    "receipt",
+                    "--tool",
+                    tool,
+                    "--ref",
+                    event_id,
+                    "--subject",
+                    "run-closeout: handoff addressed",
+                    "--json",
+                ],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=_RECEIPT_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+            continue
+        if proc.returncode == 0:
+            resolved.append(event_id)
+    return resolved
 
 
 def _count_lines(path: Path) -> int:
