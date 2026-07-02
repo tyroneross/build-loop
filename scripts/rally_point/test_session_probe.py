@@ -49,12 +49,23 @@ class _FakeWatcherLauncher:
         self.pid = pid
         self.calls: list[dict] = []
 
-    def __call__(self, *, workdir, session_id, tool, watch_script):
+    def __call__(
+        self,
+        *,
+        workdir,
+        session_id,
+        tool,
+        watch_script,
+        parent_pid=None,
+        max_lifetime_seconds=None,
+    ):
         self.calls.append({
             "workdir": workdir,
             "session_id": session_id,
             "tool": tool,
             "watch_script": watch_script,
+            "parent_pid": parent_pid,
+            "max_lifetime_seconds": max_lifetime_seconds,
         })
         return self.pid
 
@@ -325,6 +336,26 @@ class WatcherStartedTests(_ProbeTestBase):
         self.assertEqual(call["workdir"], str(self.repo.resolve()))
         self.assertEqual(call["tool"], "claude_code")
         self.assertIn("session_id", call)
+        self.assertIsInstance(call["parent_pid"], int)
+
+    def test_watcher_uses_explicit_host_parent_pid(self):
+        launcher = _FakeWatcherLauncher(pid=99998)
+        result = self._run_probe(
+            start_watch=True,
+            watch_parent_pid=424242,
+            watcher_launcher=launcher,
+        )
+        call = launcher.calls[0]
+        self.assertEqual(call["parent_pid"], 424242)
+
+        pid_file = (
+            self.apps_root
+            / self._slug()
+            / "watchers"
+            / f"{result['session_id']}.json"
+        )
+        rec = json.loads(pid_file.read_text())
+        self.assertEqual(rec["parent_pid"], 424242)
 
 
 # ---------------------------------------------------------------------------

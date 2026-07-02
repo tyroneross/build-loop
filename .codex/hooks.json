@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx @tyroneross/bookmark precompact 2>/dev/null || echo '{}'",
+            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/bookmark precompact 2>/dev/null || printf '{}'",
             "timeout": 10000
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx @tyroneross/bookmark restore 2>/dev/null || echo '{}'",
+            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/bookmark restore 2>/dev/null || printf '{}'",
             "timeout": 5000
           },
           {
@@ -28,7 +28,7 @@
           },
           {
             "type": "command",
-            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; [ -f \"$pkg/session_probe.py\" ] && WORKDIR=\"$root\" python3 \"$pkg/session_probe.py\" --workdir \"$root\" --tool codex --mode hook >/dev/null 2>&1 || printf '{}'",
+            "command": "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; pkg=\"$root/scripts/rally_point\"; host_parent=\"${PPID:-0}\"; [ -f \"$pkg/session_probe.py\" ] && WORKDIR=\"$root\" python3 \"$pkg/session_probe.py\" --workdir \"$root\" --tool codex --mode hook --start-watch --watch-parent-pid \"$host_parent\" >/dev/null 2>&1 || printf '{}'",
             "timeout": 4000
           },
           {
@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx @tyroneross/bookmark stop 2>/dev/null || echo '{\"decision\": \"approve\"}'",
+            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/bookmark stop 2>/dev/null || printf '{\"decision\": \"approve\"}'",
             "timeout": 10000
           }
         ]
@@ -62,7 +62,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx @tyroneross/claude-code-debugger mine --days 1 --store 2>/dev/null || true"
+            "command": "NPX=\"$(command -v npx 2>/dev/null || true)\"; [ -n \"$NPX\" ] && \"$NPX\" @tyroneross/claude-code-debugger mine --days 1 --store 2>/dev/null || true",
+            "timeout": 10000
           }
         ]
       },
@@ -70,7 +71,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v rally >/dev/null 2>&1 && rally stop codex --json >/dev/null 2>&1 || true"
+            "command": "command -v rally >/dev/null 2>&1 && rally stop codex --json >/dev/null 2>&1 || true",
+            "timeout": 3000
           }
         ]
       }

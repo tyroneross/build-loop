@@ -480,6 +480,7 @@ def probe(
     *,
     mode: str = "interactive",
     start_watch: bool = False,
+    watch_parent_pid: int | None = None,
     model: str = "unknown",
     run_id: str | None = None,
     clock: Any | None = None,
@@ -497,6 +498,10 @@ def probe(
         "interactive" (default) or "hook" (called from a SessionStart hook).
     start_watch:
         When True, launch coordination_watch.py in the background.
+    watch_parent_pid:
+        Optional long-lived host PID for watcher liveness. Hook callers should
+        pass their shell parent PID so the watcher is not tied to the short-lived
+        probe process.
     model:
         Model identifier, included in presence + post records.
     run_id:
@@ -654,6 +659,7 @@ def probe(
             slug=slug,
             watcher_launcher=watcher_launcher,
             errors=errors,
+            parent_pid=watch_parent_pid,
         )
         watcher_started = pid_file is not None
 
@@ -698,6 +704,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Launch coordination_watch.py as a detached background watcher",
     )
+    p.add_argument(
+        "--watch-parent-pid",
+        type=int,
+        default=None,
+        help=(
+            "Long-lived host PID for watcher liveness. SessionStart hooks should "
+            "pass their shell parent PID so the watcher outlives session_probe.py "
+            "but still exits with the host."
+        ),
+    )
     p.add_argument("--run-id", default=None, help="Run identifier (auto-generated if omitted)")
     p.add_argument("--model", default="unknown", help="Model identifier")
     p.add_argument("--json", action="store_true", help="Print JSON envelope to stdout")
@@ -711,6 +727,7 @@ def main(argv: list[str] | None = None) -> int:
         tool=args.tool,
         mode=args.mode,
         start_watch=args.start_watch,
+        watch_parent_pid=args.watch_parent_pid,
         run_id=args.run_id,
         model=args.model,
     )
