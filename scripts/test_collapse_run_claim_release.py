@@ -174,6 +174,15 @@ def test_no_rally_call_when_rally_unavailable(tmp_path, monkeypatch):
     assert all(c[0] == "git" for c in calls)  # only the git worktree remove call happened
 
 
+def test_rally_tool_honors_host_env(monkeypatch):
+    """Releaser tool id is host-resolved, not hardcoded (Codex A/B review 2026-07-02)."""
+    monkeypatch.delenv("RALLY_POINT_TOOL", raising=False)
+    monkeypatch.delenv("APP_PULSE_TOOL", raising=False)
+    assert collapse_run._rally_tool() == "claude_code"       # default
+    monkeypatch.setenv("RALLY_POINT_TOOL", "codex")
+    assert collapse_run._rally_tool() == "codex"             # non-Claude host
+
+
 def test_idempotent_already_gone_worktree_still_no_ops_cleanly(tmp_path, monkeypatch):
     """A worktree folder already removed (idempotent path) must not error."""
     wt_dir = tmp_path / ".claude" / "worktrees" / "agent-already-gone"

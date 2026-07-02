@@ -148,6 +148,29 @@ def probe(
     }
 
 
+def should_use_handoff(
+    *,
+    env: Mapping[str, str] | None = None,
+    socket_path: str | None = None,
+    timeout_seconds: float = DEFAULT_SOCKET_TIMEOUT_SECONDS,
+) -> bool:
+    """Degradation doctrine: True when agents MUST use ``rally say handoff``, not ``rally inject``.
+
+    When no pane backend is available (``probe()["inject_available"]`` is
+    False), cross-agent signals MUST route through the ledger
+    (``rally say handoff`` / ``post.py``) — ``rally inject`` would fail with
+    no pane host to receive keystrokes. Fail-open to the SAFE default: any
+    error yields True (prefer the always-available ledger path over a
+    doomed inject attempt).
+    """
+    try:
+        return not probe(
+            env=env, socket_path=socket_path, timeout_seconds=timeout_seconds
+        )["inject_available"]
+    except Exception:
+        return True
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Report Rally pane-backend readiness for inject."

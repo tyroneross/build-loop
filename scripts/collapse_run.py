@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -41,8 +42,18 @@ from typing import Any
 # Helpers
 # ---------------------------------------------------------------------------
 
-# This tool's Rally identity, matching scripts/stop_closeout.py::_RALLY_TOOL.
-_RALLY_TOOL = "claude_code"
+def _rally_tool() -> str:
+    """Host tool identity for rally *release* calls (the releaser, not the claim owner).
+
+    Resolved from env so a non-Claude host (Codex, etc.) running worktree
+    teardown releases under its own identity rather than a hardcoded label
+    (per Codex A/B review 2026-07-02). Defaults to claude_code.
+    """
+    return (
+        os.environ.get("RALLY_POINT_TOOL")
+        or os.environ.get("APP_PULSE_TOOL")
+        or "claude_code"
+    )
 
 def _now_utc() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -142,7 +153,7 @@ def _worktree_claim_event_ids(
     claim whose scope contains ``file:<wt_relpath>``. Fail-open: returns []
     on any error (rally absent, non-zero exit, unparseable JSON).
     """
-    proc = runner(["room", "--tool", _RALLY_TOOL, "--json"], workdir)
+    proc = runner(["room", "--tool", _rally_tool(), "--json"], workdir)
     if proc is None or proc.returncode != 0 or not (proc.stdout or "").strip():
         return []
     try:
@@ -209,7 +220,7 @@ def _release_worktree_claims(workdir: Path, path: str, runner=_rally_runner) -> 
                     "say",
                     "release",
                     "--tool",
-                    _RALLY_TOOL,
+                    _rally_tool(),
                     "--ref",
                     ev,
                     "--subject",

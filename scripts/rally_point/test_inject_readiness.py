@@ -140,5 +140,31 @@ class InjectReadinessTests(unittest.TestCase):
         self.assertEqual(result["recommended_backend"], "handoff")
 
 
+class ShouldUseHandoffTests(unittest.TestCase):
+    def test_true_when_no_backend(self):
+        # PATH with no tmux/ptyd and no HOME -> no socket -> inject unavailable.
+        self.assertTrue(ir.should_use_handoff(env={"PATH": "/nonexistent-xyz"}))
+
+    def test_parity_with_probe(self):
+        orig = ir.probe
+        try:
+            ir.probe = lambda **kw: {"inject_available": True, "recommended_backend": "tmux"}
+            self.assertFalse(ir.should_use_handoff())
+            ir.probe = lambda **kw: {"inject_available": False, "recommended_backend": "handoff"}
+            self.assertTrue(ir.should_use_handoff())
+        finally:
+            ir.probe = orig
+
+    def test_fail_open_to_handoff_on_error(self):
+        orig = ir.probe
+        try:
+            def _boom(**kw):
+                raise RuntimeError("probe blew up")
+            ir.probe = _boom
+            self.assertTrue(ir.should_use_handoff())  # safe default
+        finally:
+            ir.probe = orig
+
+
 if __name__ == "__main__":
     unittest.main()
