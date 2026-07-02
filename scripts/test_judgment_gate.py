@@ -110,3 +110,42 @@ def test_this_run_auditor_wrong_tier_fails(tmp_path):
            ledger_rows=[{"run_id": "cur", "agent": "independent-auditor", "action": "verify", "tier": "code", "model": "claude-sonnet-5"}])
     rc, out = _run(tmp_path, "--run-id", "cur")
     assert rc == 1 and any(f["layer"] == "agent-ledger" for f in out["findings"])
+
+
+# --- C1 (opt-in --require-seats): broaden attestation beyond auditor/advisor ---
+def test_require_seats_off_by_default_is_backcompat(tmp_path):
+    # synthesisDensity>5 with NO plan-critic/scope-auditor ledger rows, flag OFF → unchanged pass.
+    _write(tmp_path, _runs({"run_id": "r1", "synthesisDensity": 9, "auditor_status": "ran:dispatched-agent"}))
+    rc, out = _run(tmp_path)
+    assert rc == 0 and out["verdict"] == "pass" and out["missing_seats"] == []
+
+
+def test_require_seats_flags_missing_security_on_risk(tmp_path):
+    _write(tmp_path, _runs({"run_id": "r1", "riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}))
+    rc, out = _run(tmp_path, "--require-seats", agent_tool="true")
+    assert rc == 1 and out["verdict"] == "fail"
+    assert out["missing_seats"] == ["security-reviewer"]
+    assert any(f["layer"] == "security-reviewer" for f in out["findings"])
+
+
+def test_require_seats_present_passes(tmp_path):
+    _write(tmp_path,
+           _runs({"run_id": "cur", "riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}),
+           ledger_rows=[{"run_id": "cur", "agent": "security-reviewer", "action": "verify", "tier": "frontier"}])
+    rc, out = _run(tmp_path, "--require-seats", "--run-id", "cur")
+    assert rc == 0 and out["verdict"] == "pass" and out["missing_seats"] == []
+
+
+def test_require_seats_synthdensity_requires_both_and_reports_partial(tmp_path):
+    # plan-critic present, scope-auditor missing → only scope-auditor flagged.
+    _write(tmp_path,
+           _runs({"run_id": "cur", "synthesisDensity": 9, "auditor_status": "ran:dispatched-agent"}),
+           ledger_rows=[{"run_id": "cur", "agent": "plan-critic", "action": "verify", "tier": "frontier"}])
+    rc, out = _run(tmp_path, "--require-seats", "--run-id", "cur")
+    assert rc == 1 and out["missing_seats"] == ["scope-auditor"]
+
+
+def test_require_seats_nested_warns_not_fails(tmp_path):
+    _write(tmp_path, _runs({"run_id": "r1", "riskSurfaceChange": True, "auditor_status": "ran:dispatched-agent"}))
+    rc, out = _run(tmp_path, "--require-seats", agent_tool="false")
+    assert rc == 0 and out["verdict"] == "warn" and out["missing_seats"] == ["security-reviewer"]

@@ -40,6 +40,46 @@ _STAKES_LEVELS = {"medium", "high", "critical"}
 _GOVERNED_AGENTS = {"independent-auditor", "advisor"}
 _FRONTIER_ACTIONS = {"verify", "author", "re-plan"}
 
+# C1 (opt-in via --require-seats): verification seats whose activation is required
+# when a given stakes REASON fires. auditor/advisor are governed separately via
+# their dedicated *_status fields, so they are excluded here to avoid double-count.
+# A seat is "present" if the agent-ledger carries a row for THIS run naming it.
+_REQUIRED_SEATS_BY_REASON = {
+    "synthesisDensity": ("plan-critic", "scope-auditor"),
+    "riskSurfaceChange": ("security-reviewer",),
+}
+
+
+def _seats_present(ledger_path: Path, run_id: str | None) -> set:
+    """Agent names with at least one agent-ledger row for THIS run."""
+    present: set = set()
+    if not ledger_path.exists():
+        return present
+    for line in ledger_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if run_id and row.get("run_id") != run_id:
+            continue
+        agent = row.get("agent")
+        if agent:
+            present.add(str(agent))
+    return present
+
+
+def _missing_required_seats(reasons: list[str], present: set) -> list[str]:
+    """Seats a stakes reason requires that have no activation evidence this run."""
+    required: set = set()
+    for reason in reasons:
+        # reasons are formatted like "synthesisDensity=6>5" / "riskSurfaceChange"
+        key = reason.split("=", 1)[0].split(":", 1)[0]
+        required.update(_REQUIRED_SEATS_BY_REASON.get(key, ()))
+    return sorted(s for s in required if s not in present)
+
 
 def _load_json(path: Path) -> dict:
     if not path.exists():
@@ -128,11 +168,13 @@ def _ledger_tier_violations(ledger_path: Path, run_id: str | None) -> list[str]:
     return viol
 
 
-def evaluate(state: dict, ledger_path: Path, run_id: str | None, agent_tool_available: bool) -> dict:
+def evaluate(state: dict, ledger_path: Path, run_id: str | None, agent_tool_available: bool,
+             require_seats: bool = False) -> dict:
     run = resolve_run(state, run_id)
     effective_run_id = run.get("run_id") if run else run_id
     reasons = stakes_reasons(run)
     findings: list[dict] = []
+    missing_seats: list[str] = []
 
     if not reasons:
         verdict, why = "pass", "no stakes trigger on this run; inline judgment is the documented Rung-3 floor"
@@ -165,6 +207,21 @@ def evaluate(state: dict, ledger_path: Path, run_id: str | None, agent_tool_avai
         for v in _ledger_tier_violations(ledger_path, effective_run_id):
             findings.append({"severity": "fail", "layer": "agent-ledger", "status": "wrong-tier", "detail": v})
 
+        if require_seats:
+            missing_seats = _missing_required_seats(reasons, _seats_present(ledger_path, effective_run_id))
+            for seat in missing_seats:
+                findings.append({
+                    "severity": "fail" if agent_tool_available else "warn",
+                    "layer": seat,
+                    "status": "not-run",
+                    "detail": (
+                        f"stakes-gated run did not activate the {seat} verification seat "
+                        + ("(Agent tool reachable — dispatch it before Report)"
+                           if agent_tool_available
+                           else "(nested/no-Agent-tool — the dispatching parent owes it)")
+                    ),
+                })
+
         if any(f["severity"] == "fail" for f in findings):
             verdict = "fail"
         elif any(f["severity"] == "warn" for f in findings):
@@ -179,6 +236,7 @@ def evaluate(state: dict, ledger_path: Path, run_id: str | None, agent_tool_avai
         "stakes_gated": bool(reasons),
         "stakes_reasons": reasons,
         "agent_tool_available": agent_tool_available,
+        "missing_seats": missing_seats,
         "findings": findings,
         "summary": why,
     }
@@ -190,13 +248,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--run-id", default="", help="Run to evaluate (default: latest runs[] entry).")
     p.add_argument("--agent-tool-available", choices=["true", "false"], default="true",
                    help="Whether Rung-1 (Agent dispatch) was reachable; top-level interactive runs = true (default).")
+    p.add_argument("--require-seats", action="store_true",
+                   help="C1 (opt-in): also attest stakes-required verification seats "
+                        "(plan-critic/scope-auditor on synthesisDensity>5; security-reviewer on riskSurfaceChange) "
+                        "via the agent-ledger; report gaps in missing_seats[]. Default off (back-compat).")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
 
     workdir = Path(args.workdir).expanduser().resolve()
     state = _load_json(workdir / ".build-loop" / "state.json")
     ledger = workdir / ".build-loop" / "agent-ledger.jsonl"
-    result = evaluate(state, ledger, args.run_id or None, args.agent_tool_available == "true")
+    result = evaluate(state, ledger, args.run_id or None, args.agent_tool_available == "true",
+                      require_seats=args.require_seats)
 
     if args.json:
         print(json.dumps(result))
