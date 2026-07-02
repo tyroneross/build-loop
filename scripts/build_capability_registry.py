@@ -153,7 +153,12 @@ CATEGORY_KEYWORDS = [
                       # reachable when needed) are both validation gates:
                       "acceptance_probe", "acceptance-probe", "acceptance probe",
                       "reference activation", "activation audit",
-                      "reference_activation")),
+                      "reference_activation",
+                      # Skill-routing guard (PreToolUse Skill + UserPromptSubmit
+                      # hooks that route build tasks to build-loop rather than
+                      # superpowers:brainstorming) — routing infrastructure:
+                      "route-guard", "route guard", "pre-skill",
+                      "prompt-submit", "skill-routing", "skill routing")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
