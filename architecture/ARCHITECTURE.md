@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 50 skills · 338 scripts · 19 hooks** (auto-discovered 7e3aebfd)
+**28 agents · 50 skills · 339 scripts · 19 hooks** (auto-discovered 6db74338)
 
 <details><summary>agents</summary>
 
@@ -324,6 +324,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/rally_point/sync_rally.py`
 - `scripts/rally_point/task_heartbeat.py`
 - `scripts/rally_poll_gate.py`
+- `scripts/readme_currency_check.py`
 - `scripts/recall.py`
 - `scripts/recall_graph.py`
 - `scripts/recall_multipliers.py`

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "7e3aebfd3754b5a5f8d28b86a1b5f4664d1b946246c4609d6a2816410ed9b6d1"
+    "content_sha256": "6db74338af64cdb50920dd17aed658449f2c164142e3c9f2a970a826f8f9133b"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1721,6 +1721,7 @@
       "scripts/rally_point/sync_rally.py": "",
       "scripts/rally_point/task_heartbeat.py": "Task heartbeat records for long-running Rally work.",
       "scripts/rally_poll_gate.py": "rally_poll_gate.py — enforce poll-after-post for rally handoffs (all agents).",
+      "scripts/readme_currency_check.py": "readme_currency_check.py — Phase 4 Review-G gate: did a run that changed",
       "scripts/recall.py": "Hybrid retrieval entry point for repo-local episodic memory.",
       "scripts/recall_graph.py": "Knowledge-graph leg for hybrid recall (Phase B).",
       "scripts/recall_multipliers.py": "Quality, recency, and combined-score multipliers for hybrid recall.",
