@@ -17,12 +17,16 @@ detection is intentionally permissive — we don't try to parse a specific
 JS/JSON shape because bridges document the check in prose, code blocks,
 or both.
 
-Bridges in build-loop:
-  - debugger-bridge        → native build-loop debugging / optional Coding Debugger
-  - logging-tracer-bridge  → Coding Debugger (extended observability)
-  - navgator-bridge        → navgator (architecture analysis)
-  - api-registry-bridge    → api-registry (api discovery)
+Bridges in build-loop (post-fold, 2026-07):
   - prd-bridge             → docs/prd-*.md (PRD-grounded planning)
+  - api-registry-bridge    → api-registry (api discovery)
+  - defenseclaw-bridge     → DefenseClaw (spec / threat-model generation)
+  - ibr-bridge             → IBR (UI visual verification)
+
+logging-tracer-bridge was folded into the logging-tracer skill as an internal
+"Coding Debugger escalation" hop (pool-consolidation Inc 4); its preflight is
+now covered by test_non_bridge_escalation_hops_have_preflight (see
+NON_BRIDGE_PREFLIGHT_SKILLS below).
 
 If a new bridge is added without a pre-flight, this test fails with a
 hint pointing at the missing skill body.
@@ -109,6 +113,33 @@ class BridgePreflightTests(unittest.TestCase):
             if not (d / "SKILL.md").is_file() or not has_frontmatter(d / "SKILL.md")
         ]
         self.assertEqual(missing, [], f"bridges missing frontmatter: {missing}")
+
+    # Non-bridge skills that absorbed a former *-bridge as an internal
+    # escalation hop must keep the SAME availability preflight — otherwise the
+    # graceful-degradation contract silently leaves suffix-based test coverage.
+    # logging-tracer absorbed logging-tracer-bridge (2026-07, pool-consolidation
+    # Inc 4); its "Extended capability — Coding Debugger escalation" section must
+    # keep the availablePlugins preflight so it no-ops when standalone is absent.
+    NON_BRIDGE_PREFLIGHT_SKILLS = {"logging-tracer"}
+
+    def test_non_bridge_escalation_hops_have_preflight(self) -> None:
+        if not SKILLS_DIR.is_dir():
+            self.skipTest(f"{SKILLS_DIR} not present")
+        missing: list[str] = []
+        for name in sorted(self.NON_BRIDGE_PREFLIGHT_SKILLS):
+            skill_md = SKILLS_DIR / name / "SKILL.md"
+            if not skill_md.is_file():
+                missing.append(f"{name}: SKILL.md missing")
+            elif not has_preflight(skill_md):
+                missing.append(
+                    f"{name}: no preflight pattern — folded escalation hop lost "
+                    "its graceful-degradation check"
+                )
+        self.assertEqual(
+            missing, [],
+            "Non-bridge escalation hops without an availability pre-flight:\n  "
+            + "\n  ".join(missing),
+        )
 
 
 class UserInvocableFlagTests(unittest.TestCase):

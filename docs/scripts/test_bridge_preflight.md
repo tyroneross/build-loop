@@ -69,7 +69,7 @@ AssertionError: bridge skills/mcp-builder-bridge/SKILL.md missing 'user-invocabl
 
 The test caught two regressions:
 1. `api-registry-bridge` shipped with no `availablePlugins.apiRegistry` guard. The test added the missing line to the body and the bridge now correctly no-ops on machines without the api-registry plugin installed.
-2. A copy-paste error left `user-invocable: true` in `logging-tracer-bridge`'s frontmatter (a holdover from when the user-facing slash command was being designed). The test failed before merge.
+2. A copy-paste error left `user-invocable: true` in `logging-tracer-bridge`'s frontmatter (a holdover from when the user-facing slash command was being designed). The test failed before merge. _(Since folded: `logging-tracer-bridge` was merged into the `logging-tracer` skill as an internal "Coding Debugger escalation" hop — 2026-07, pool-consolidation Inc 4. Its preflight is now covered by `test_non_bridge_escalation_hops_have_preflight`.)_
 
 ## Related files
 

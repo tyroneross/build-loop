@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "224957607f9900a1ee89043fd4c7c005f3dcbd5b1254683f844af179dcfc1897"
+    "content_sha256": "475de26a2067e63a6f510899e40e2a4d3db76c43ad2490a72accb587d2f0b925"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1192,7 +1192,7 @@
         "file": "skills/auto-decision-capture/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-30"
+          "date": "2026-07-02"
         }
       },
       "auto-finding-capture": {
@@ -1296,20 +1296,12 @@
         "file": "skills/knowledge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-30"
+          "date": "2026-07-02"
         }
       },
       "logging-tracer": {
         "description": "Use when the user asks to \"add logging\", \"add tracing\", \"improve observability\", \"OpenTelemetry\", \"structured logging\", or reports silent failures or no runtime visibility. Generates stack-appropriate logging with optional OTel.",
         "file": "skills/logging-tracer/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-04"
-        }
-      },
-      "logging-tracer-bridge": {
-        "description": "Use when the bundled logging-tracer skill signals insufficient tier-selection or codegen, or the user asks for \"extended observability\" or \"cross-build log correlation\". Optional escalation to standalone Coding Debugger for additional tracer backends and advanced placement intelligence.",
-        "file": "skills/logging-tracer-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-06-04"

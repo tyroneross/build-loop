@@ -157,15 +157,31 @@ After the instrumentation lands:
 3. If tests still fail silently → instrumentation did not solve the visibility problem; escalate to user
 4. **Always revert** at session end unless the user explicitly approved keep-in-diff via the prompt above. The orchestrator (or caller) verifies no `build-loop:trace/` stash entries remain and no unguarded trace calls landed.
 
-## Extended capability — escalate to standalone supporting plugin
+## Extended capability — Coding Debugger escalation
 
-If the bundled tier selection / codegen / placement isn't enough (e.g., the project requires a tracer backend or placement intelligence that lives in the standalone supporting plugin only, or you need cross-build log correlation), invoke the bridge:
+When the bundled tier selection / codegen / placement isn't enough — the project requires a tracer backend or placement intelligence that lives only in the standalone Coding Debugger plugin, or you need cross-build log correlation — this skill escalates directly (folded in from the former `logging-tracer-bridge` skill, 2026-07, pool-consolidation Inc 4). This is a secondary, outbound-only hop: the orchestrator owns when-to-fire (Phase 1 Assess observability scan, Phase 5 Iterate `evidence_gap` trigger) and routes to this skill; this skill owns tier selection / codegen / ephemeral policy; the escalation below is optional.
+
+**Pre-flight (always run first):**
 
 ```
-Skill("build-loop:logging-tracer-bridge") with input { symptom, target_files, tier_hint, calledBy: "logging-tracer" }
+if (!state.availablePlugins.codingDebugger) {
+  return { delegated: false, reason: "standalone Coding Debugger plugin not installed" }
+}
 ```
 
-The bridge pre-flights `availablePlugins.codingDebugger`. If standalone Coding Debugger is installed, it delegates to extended observability tooling there. If not installed, returns `{ delegated: false }` and this skill continues with bundled-only Tier 1/2/3 codegen.
+If the standalone plugin is not installed, continue with bundled-only Tier 1/2/3 capability — never hard-fail (graceful degradation).
+
+**Delegations available** (pass through the caller-supplied `{ symptom, target_files, tier_hint }`; fold the enriched result back into this skill's own codegen):
+
+| Capability needed | Standalone Skill / MCP call |
+|---|---|
+| Extended tracer backends not in bundle | `Skill("coding-debugger:logging-tracer")` with `tier: <upstream-only>` |
+| Cross-build log correlation (correlation IDs across multiple build-loop runs) | standalone-only MCP tools |
+| Advanced placement intelligence (function-call-graph-aware insertion) | standalone-only assessor skills |
+
+**Does NOT:** reimplement tier selection / stack detection / ephemeral mechanisms / placement (those stay in this skill); replace the orchestrator's when-to-fire policy; introduce new logging dependencies without explicit user approval; mutate `.build-loop/issues/`; hard-fail when standalone is absent.
+
+**State:** optional escalations log to `.build-loop/state.json.observability.escalations[]` — `{ "ts": "ISO", "calledBy": "logging-tracer", "reason": "tier_3_otel_required", "delegated": true|false }`.
 
 ## Log Analysis Guidance
 
