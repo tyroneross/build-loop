@@ -40,7 +40,7 @@ Determine which type of API issue:
 Check for similar past incidents with native build-loop debugging memory:
 
 ```
-Skill("build-loop:debugging-memory-search") with input { symptom: "<symptom>", domain: "api" }
+Skill("build-loop:debugging-memory") with input { op: "search", symptom: "<symptom>", domain: "api" }
 ```
 
 Filter results for API incidents using tags:

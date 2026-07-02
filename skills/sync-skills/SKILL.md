@@ -1,6 +1,6 @@
 ---
 name: build-loop:sync-skills
-description: Use when the user asks to "check skill drift", "sync skills", or "update architecture skills", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/ and skills/debugging/, recomputes source_hash, reports drift. Read-only.
+description: Use when the user asks to "check skill drift", "sync skills", or "update architecture skills", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/, recomputes source_hash, reports drift. Read-only.
 version: 0.1.0
 user-invocable: false
 ---
@@ -9,7 +9,7 @@ user-invocable: false
 
 # Sync-Skills — Drift Detection for Native Copies
 
-Build-loop's `skills/architecture/` and `skills/debugging/` skills are copied from canonical upstream repos (NavGator, claude-code-debugger). Each carries a `source:` path and `source_hash:` SHA-256 in its frontmatter. This skill recomputes the hash from the canonical source file and reports any drift.
+Build-loop's `skills/architecture/` skills are copied from the canonical upstream repo (NavGator). Each carries a `source:` path and `source_hash:` SHA-256 in its frontmatter. This skill recomputes the hash from the canonical source file and reports any drift. (The former `skills/debugging/` skills were folded into the `debugging-memory` skill on 2026-07 and are no longer drift-checked — native/adapted, no canonical upstream.)
 
 **Read-only.** Never auto-updates a skill — surfaces a list of skills that need refresh and a one-line refresh command.
 
@@ -58,7 +58,7 @@ def find_canonical(rel_path):
 
 drift = []
 checked = 0
-for tree in ["skills/architecture", "skills/debugging"]:
+for tree in ["skills/architecture"]:
     for skill_md in (ROOT / tree).rglob("SKILL.md"):
         fm = read_frontmatter(skill_md)
         src = fm.get("source")
@@ -119,10 +119,11 @@ PY
 - `skills/architecture/rules/SKILL.md`
 - `skills/architecture/dead/SKILL.md`
 - `skills/architecture/review/SKILL.md`
-- `skills/debugging/memory/SKILL.md`
-- `skills/debugging/store/SKILL.md`
-- `skills/debugging/assess/SKILL.md`
-- `skills/debugging/debug-loop/SKILL.md`
+
+(The former `skills/debugging/{memory,store,assess}` skills were folded into the
+`debugging-memory` skill's op reference files on 2026-07, pool-consolidation Inc 5;
+they are native/adapted with no canonical upstream, so drift-detection for them is
+retired. `debug-loop` lives at `skills/debug-loop/` and was never drift-checked.)
 
 ## Sibling Skills
 

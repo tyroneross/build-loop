@@ -1,11 +1,4 @@
----
-name: build-loop:debugging-assess
-description: Parallel domain assessment for complex debugging symptoms — fans out database / frontend / API / performance assessors in parallel and ranks findings. Build-loop's native assessor orchestration, adapted from debugger command workflows (no canonical SKILL.md exists upstream).
-version: 0.1.0
-user-invocable: false
-source: claude-code-debugger/commands/assess.md
-source_hash: f97d4966e110928acea7678124aad0c421e6fc64ddf0a6f53a7e14580650307a
----
+<!-- PROVENANCE: op=assess reference for `build-loop:debugging-memory` (ADR-01 op-routing). Folded from skills/debugging/assess/SKILL.md (former skill name build-loop:debugging-assess, v0.1.0) on 2026-07-02, pool-consolidation Inc 5. Drift-check vs upstream retired (native, adapted; no canonical upstream). Former provenance for record: source=claude-code-debugger/commands/assess.md source_hash=f97d4966e110928acea7678124aad0c421e6fc64ddf0a6f53a7e14580650307a -->
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
@@ -40,7 +33,7 @@ Run multiple specialized assessor agents in parallel against a vague or multi-do
    | API | endpoint, route, request, response, auth, 500, 404, cors, middleware |
    | Performance | slow, latency, timeout, memory, leak, cpu, bottleneck, optimization |
 
-2. **Search memory once** — invoke `build-loop:debugging-memory` with the symptom; pass any matching incidents to each assessor as context. Don't make each assessor re-query memory.
+2. **Search memory once** — invoke `build-loop:debugging-memory` `{op:"search"}` with the symptom; pass any matching incidents to each assessor as context. Don't make each assessor re-query memory.
 
 3. **Launch assessors in parallel** with `Agent`, all in a single message:
    - `database-assessor` — queries, schema, migrations, connection issues
@@ -104,8 +97,8 @@ Write summary to `.build-loop/state.json.debugging.assess[<symptom-hash>]`:
 
 ## Sibling Skills
 
-- `build-loop:debugging-memory` — search before assessing (mandatory pre-step)
+- `build-loop:debugging-memory` `{op:"search"}` (references/search.md) — search before assessing (mandatory pre-step)
 - `build-loop:debug-loop` — escalate when assessment is inconclusive
-- `build-loop:debugging-store` — store the resolved incident after the recommended action lands
+- `build-loop:debugging-memory` `{op:"store"}` (references/store.md) — store the resolved incident after the recommended action lands
 
 *Source: adapted from the standalone debugger assess command plus the four assessor agents. Drift-checked by `build-loop:sync-skills`.*

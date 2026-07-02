@@ -145,7 +145,7 @@ def _plugin_namespace(entry: Dict[str, Any]) -> str:
     """Derive a plugin/family key from an entry's source_path or name.
 
     Multiple surfaces from the same plugin family (e.g. `commands/debug.md`,
-    `commands/debugger.md`, `skills/debugging/*`, `agents/*-debugger.md`) all
+    `commands/debugger.md`, `skills/debugging-memory/*`, `agents/*-debugger.md`) all
     collapse to the same namespace. Used by `apply_plugin_surface_collapse`.
 
     Heuristic by precedence:
@@ -161,7 +161,7 @@ def _plugin_namespace(entry: Dict[str, Any]) -> str:
     src = entry.get("source_path") or ""
     name = (entry.get("name") or "").lower()
     if src.startswith("skills/"):
-        # skills/debugging/memory/SKILL.md → 'debugging'
+        # skills/debugging-memory/SKILL.md → 'debugging-memory'
         parts = src.split("/", 2)
         if len(parts) >= 2:
             return parts[1].replace("-", "_")

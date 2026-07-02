@@ -227,7 +227,7 @@ Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`. See `ref
 
 - Write scorecard to `.build-loop/evals/`.
 - Append run entry via `scripts/write_run_entry.py` (NEVER hand-write JSON).
-- Invoke `Skill("build-loop:debugging-store")` for each newly resolved Review-B/Iterate failure.
+- Invoke `Skill("build-loop:debugging-memory")` with `{op:"store", ...}` for each newly resolved Review-B/Iterate failure.
 - Invoke `Skill("build-loop:architecture-dead")` for the orphan scan.
 - Run the deployment policy gate before any push/deploy.
 - Run the episodic memory capture (transcript scan).

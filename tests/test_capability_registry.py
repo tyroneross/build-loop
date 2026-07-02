@@ -338,7 +338,7 @@ def test_shortlist_collapses_plugin_surface_redundancy(real_registry: dict, tmp_
     Phase 5 debugging intent surfaces many debugger-family entries. The
     collapse rule keeps at most 2 per (category, namespace) group, preferring
     higher-tier surfaces (skill > agent > command). The shortlist should not
-    return 3+ /debug* commands or 3+ skills/debugging/* skills.
+    return 3+ /debug* commands or 3+ debugger-family skills.
     """
     _make_state(tmp_path)
     out = cs.shortlist(
@@ -405,9 +405,11 @@ def test_plugin_namespace_helper() -> None:
         {"source_path": "commands/debugger-detail.md", "name": "/debugger-detail"}
     ) == "debug"
     # Skills group by their parent dir.
+    # (debugging/{memory,store,assess} were folded into the debugging-memory skill,
+    # 2026-07 pool-consolidation Inc 5; use the current skill path as the example.)
     assert cs._plugin_namespace(
-        {"source_path": "skills/debugging/memory/SKILL.md", "name": "build-loop:debugging-memory-search"}
-    ) == "debugging"
+        {"source_path": "skills/debugging-memory/SKILL.md", "name": "build-loop:debugging-memory"}
+    ) == "debugging_memory"
     assert cs._plugin_namespace(
         {"source_path": "skills/architecture/scan/SKILL.md", "name": "build-loop:architecture-scan"}
     ) == "architecture"

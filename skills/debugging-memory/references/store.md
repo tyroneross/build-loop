@@ -1,12 +1,4 @@
----
-name: build-loop:debugging-store
-description: Store a debugging incident after fixing a bug — writes build-loop's native local incident record and optionally mirrors to standalone Coding Debugger. Build-loop's native incident storage; canonical source has no discrete SKILL.md (the §"Incident Documentation" section of debugging-memory).
-version: 0.1.0
-user-invocable: false
-source: claude-code-debugger/skills/debugging-memory/SKILL.md
-source_hash: 5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d
-source_section: "Incident Documentation"
----
+<!-- PROVENANCE: op=store reference for `build-loop:debugging-memory` (ADR-01 op-routing). Folded from skills/debugging/store/SKILL.md (former skill name build-loop:debugging-store, v0.1.0) on 2026-07-02, pool-consolidation Inc 5. Drift-check vs upstream retired (native, adapted; no canonical upstream). Former provenance for record: source=claude-code-debugger/skills/debugging-memory/SKILL.md §Incident-Documentation source_hash=5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d -->
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
@@ -146,8 +138,8 @@ Write to `.build-loop/debugging/incidents/<incident_id>.json`. Flag `debugger JS
 
 ## Sibling Skills
 
-- `build-loop:debugging-memory` — search memory before debugging
-- `build-loop:debugging-assess` — parallel domain assessment
-- `build-loop:debug-loop` — full iterative debugging that produces the incident this skill stores
+- `build-loop:debugging-memory` `{op:"search"}` (references/search.md) — search memory before debugging
+- `build-loop:debugging-memory` `{op:"assess"}` (references/assess.md) — parallel domain assessment
+- `build-loop:debug-loop` — full iterative debugging that produces the incident this op stores
 
 *Source: adapted from the debugger incident-documentation workflow and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

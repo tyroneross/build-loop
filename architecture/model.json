@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "475de26a2067e63a6f510899e40e2a4d3db76c43ad2490a72accb587d2f0b925"
+    "content_sha256": "e3c94be4f622688efaa81482718250ba41477b8627500499eb0dbf3f3e158340"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1235,32 +1235,8 @@
           "date": "2026-06-18"
         }
       },
-      "debugging-assess": {
-        "description": "Parallel domain assessment for complex debugging symptoms — fans out database / frontend / API / performance assessors in parallel and ranks findings. Build-loop's native assessor orchestration, adapted from debugger command workflows (no canonical SKILL.md exists upstream).",
-        "file": "skills/debugging/assess/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-22"
-        }
-      },
-      "debugging-memory-search": {
-        "description": "Search primitive — the memory LOOKUP step invoked BY the `build-loop:debugging-memory` workflow skill and by the domain assessors (api/db/frontend/perf). Searches local build-loop incidents and optional standalone Coding Debugger memory, returning a verdict + compact matches. Not a standalone diagnose entry and not a successor: `build-loop:debugging-memory` owns the verdict-handling workflow and delegates the actual…",
-        "file": "skills/debugging/memory/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-22"
-        }
-      },
-      "debugging-store": {
-        "description": "Store a debugging incident after fixing a bug — writes build-loop's native local incident record and optionally mirrors to standalone Coding Debugger. Build-loop's native incident storage; canonical source has no discrete SKILL.md (the §\"Incident Documentation\" section of debugging-memory).",
-        "file": "skills/debugging/store/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-22"
-        }
-      },
       "debugging-memory": {
-        "description": "Use when the user asks to \"debug this\", \"fix this bug\", \"investigate error\", \"diagnose\", \"root cause\", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback, and delegates the actual lookup to the `build-loop:debugging-memory-search` primitive.",
+        "description": "Use when the user asks to \"debug this\", \"fix this bug\", \"investigate error\", \"diagnose\", \"root cause\", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback. Op-routed (input `{op: \"search\" | \"store\" | \"assess\", ...}`): search = memory lookup, store = incident write, assess = parallel domain assessment; per-op…",
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1304,7 +1280,7 @@
         "file": "skills/logging-tracer/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-07-02"
         }
       },
       "loop-builder": {
@@ -1452,7 +1428,7 @@
         }
       },
       "sync-skills": {
-        "description": "Use when the user asks to \"check skill drift\", \"sync skills\", or \"update architecture skills\", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/ and skills/debugging/, recomputes source_hash, reports drift. Read-only.",
+        "description": "Use when the user asks to \"check skill drift\", \"sync skills\", or \"update architecture skills\", or when Phase 1 Assess detects stale source_hash values. Walks skills/architecture/, recomputes source_hash, reports drift. Read-only.",
         "file": "skills/sync-skills/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

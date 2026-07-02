@@ -1,7 +1,7 @@
 ---
 name: debugging-memory
-description: Use when the user asks to "debug this", "fix this bug", "investigate error", "diagnose", "root cause", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback, and delegates the actual lookup to the `build-loop:debugging-memory-search` primitive.
-version: 1.5.0
+description: Use when the user asks to "debug this", "fix this bug", "investigate error", "diagnose", "root cause", or reports a crash/exception/failure. Memory-first workflow that checks past incidents before investigating — owns verdict-handling and Review-F outcome feedback. Op-routed (input `{op: "search" | "store" | "assess", ...}`): search = memory lookup, store = incident write, assess = parallel domain assessment; per-op detail in `references/{search,store,assess}.md`.
+version: 1.6.0
 user-invocable: false
 ---
 
@@ -11,12 +11,24 @@ user-invocable: false
 
 This skill integrates build-loop's native debugging memory into debugging workflows. The core principle: **never solve the same bug twice**.
 
+## Op-routing interface (ADR-01)
+
+This skill accepts an `op` selector. Callers invoke `Skill("build-loop:debugging-memory") with input { op, ... }`:
+
+| `op` | Purpose | Detail reference |
+|---|---|---|
+| `"search"` | Memory LOOKUP — search local `.build-loop/issues/` (+ optional standalone Coding Debugger), return a verdict + compact matches. Default op for the memory-first gate and the domain assessors. | `references/search.md` |
+| `"store"` | Incident WRITE — persist a resolved bug as a native incident note (Review-F storage path). | `references/store.md` |
+| `"assess"` | Parallel domain ASSESSMENT — fan out api/database/frontend/performance assessors and rank findings. | `references/assess.md` |
+
+Omitting `op` runs the memory-first workflow below (equivalent to `op: "search"` followed by verdict-based routing). The three former skills `debugging-memory-search`, `debugging-store`, `debugging-assess` were folded into these ops (2026-07, pool-consolidation Inc 5); their bodies are the reference files above.
+
 ## Memory-First Approach
 
 Before investigating any bug, always check build-loop's native debugging memory:
 
 ```
-Search `.build-loop/issues/` and invoke `build-loop:debugging-memory-search` with the symptom description.
+Search `.build-loop/issues/` and invoke `build-loop:debugging-memory` `{op:"search"}` with the symptom description.
 ```
 
 The search returns a **verdict** with matching incidents and patterns.
@@ -49,9 +61,9 @@ When `KNOWN_FIX` direct-apply is blocked, the caller should treat the verdict as
 
 Results are returned as compact summaries. Drill into matches on demand:
 
-1. **Initial search**: Use `build-loop:debugging-memory-search` — returns verdict + compact matches when structured memory exists
+1. **Initial search**: Use `build-loop:debugging-memory` `{op:"search"}` — returns verdict + compact matches when structured memory exists
 2. **Drill down**: Read the matching `.build-loop/issues/<id>.md` incident note for full context
-3. **Outcome tracking**: Use `build-loop:debugging-store` after verification to record whether the fix worked, failed, or was modified
+3. **Outcome tracking**: Use `build-loop:debugging-memory` `{op:"store"}` after verification to record whether the fix worked, failed, or was modified
 
 ## Visibility
 
@@ -264,8 +276,8 @@ When a pattern matches:
 If project-local memory misses but cross-project memory might have a hit, re-call this skill with broader scope, or escalate to the assess skill for additional domain assessor coverage:
 
 ```
-Skill("build-loop:debugging-memory") with input { symptom, scope: "global", calledBy: "debugging-memory" }
-Skill("build-loop:debugging-assess") with input { symptom, scope: "global" }
+Skill("build-loop:debugging-memory") with input { op: "search", symptom, scope: "global", calledBy: "debugging-memory" }
+Skill("build-loop:debugging-memory") with input { op: "assess", symptom, scope: "global" }
 ```
 
 Both are native build-loop skills. They search local `.build-loop/issues/` first and may use standalone Coding Debugger only when that plugin is installed and the caller explicitly requests cross-project memory.
@@ -281,11 +293,11 @@ Do NOT use this for: every memory call (it's escalation, not primary path), or w
 
 | Surface | Purpose |
 |------|---------|
-| `build-loop:debugging-memory-search` | Search memory for similar bugs (returns verdict when available) |
-| `build-loop:debugging-store` | Store a new debugging incident |
+| `build-loop:debugging-memory` `{op:"search"}` | Search memory for similar bugs (returns verdict when available) |
+| `build-loop:debugging-memory` `{op:"store"}` | Store a new debugging incident |
 | `.build-loop/issues/<id>.md` | Full incident or pattern detail |
 | `.build-loop/issues/` | Recent incidents and local memory corpus |
-| `build-loop:debugging-assess` | Parallel domain assessment |
+| `build-loop:debugging-memory` `{op:"assess"}` | Parallel domain assessment (`references/assess.md`) |
 
 ## Parallel Domain Assessment
 
@@ -394,7 +406,7 @@ When debugging involves subagents (your own or from other plugins), follow these
 ### Automatic Behavior
 
 **Before spawning debugging-related subagents:**
-1. Search debugging memory first using `build-loop:debugging-memory-search`
+1. Search debugging memory first using `build-loop:debugging-memory` `{op:"search"}`
 2. Pass relevant context to the subagent in its prompt
 3. Include any matching incidents or patterns found
 
@@ -424,7 +436,7 @@ Start your investigation considering this prior knowledge.
 
 When using parallel assessment or multiple debugging subagents:
 
-1. **Pre-query memory once** using `build-loop:debugging-memory-search` before spawning agents
+1. **Pre-query memory once** using `build-loop:debugging-memory` `{op:"search"}` before spawning agents
 2. **Distribute context** - each agent gets relevant subset
 3. **Aggregate findings** - collect new insights from all agents
 4. **Store unified incident** - write a native `.build-loop/issues/*.md` note to document the combined diagnosis

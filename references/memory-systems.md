@@ -214,9 +214,9 @@ Capture `RUN_ID` from stdout and cite it in the scorecard. Always pass `--securi
 
 ### Resolved debugger incidents
 
-Use the native `Skill("build-loop:debugging-store")`. Procedure also in `Skill("build-loop:debugging-memory")` §"Review-F outcome feedback":
+Use the native `Skill("build-loop:debugging-memory")` with `{op:"store", ...}`. Procedure also in `Skill("build-loop:debugging-memory")` §"Review-F outcome feedback":
 
-- For each newly resolved Review-B/Iterate failure: invoke `build-loop:debugging-store` with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`.
+- For each newly resolved Review-B/Iterate failure: invoke `build-loop:debugging-memory` `{op:"store", symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`.
 - For each Review-B memory gate where a prior `KNOWN_FIX` or `LIKELY_MATCH` was applied: invoke `outcome` MCP tool with `{incident_id, result: "worked"|"failed"|"modified", notes}`. This trains the verdict classifier.
 
 Both steps are required to close the memory-first gate's feedback loop. Skipping `outcome` means the verdict classifier never improves from this build's signal.

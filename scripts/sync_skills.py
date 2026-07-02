@@ -5,9 +5,11 @@
 Drift-detection for build-loop's native skills copied from canonical upstream repos
 (NavGator, claude-code-debugger).
 
-Walks skills/architecture/ and skills/debugging/, reads each SKILL.md's `source:` and
+Walks skills/architecture/, reads each SKILL.md's `source:` and
 `source_hash:` frontmatter fields, recomputes the SHA-256 of the canonical source file,
-and reports drift.
+and reports drift. (skills/debugging/ was folded into the debugging-memory skill on
+2026-07 — pool-consolidation Inc 5 — and its op reference files are native/adapted with
+no canonical upstream, so drift-detection for them is retired.)
 
 Read-only. Never auto-updates a skill — exit code signals whether refresh is needed.
 
@@ -33,7 +35,7 @@ from typing import Optional
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 HOME = pathlib.Path.home()
-SKILL_TREES = ("skills/architecture", "skills/debugging")
+SKILL_TREES = ("skills/architecture",)
 
 
 def read_frontmatter(path: pathlib.Path) -> dict[str, str]:

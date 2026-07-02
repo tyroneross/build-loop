@@ -4,7 +4,7 @@ Priority 8 of the architecture-awareness follow-up.
 
 The bridges `build-loop:navgator-bridge` and `build-loop:debugger-bridge` were
 removed in priority 6 (filesystem cleanup) in favor of native skills under
-`skills/architecture/` and `skills/debugging/`. This test asserts no
+`skills/architecture/` and the `debugging-memory` skill. This test asserts no
 load-bearing skill prose still names the removed bridges.
 
 Excluded paths:

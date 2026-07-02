@@ -86,7 +86,7 @@ On any security-relevant or schema-touching pass, **enumerate destructive foreig
 Check for similar past incidents with native build-loop debugging memory:
 
 ```
-Skill("build-loop:debugging-memory-search") with input { symptom: "<symptom>", domain: "database" }
+Skill("build-loop:debugging-memory") with input { op: "search", symptom: "<symptom>", domain: "database" }
 ```
 
 Filter results for database-related incidents using tags:

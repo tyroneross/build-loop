@@ -103,9 +103,9 @@ Runtime data stored in `.build-loop/` within consumer projects (created on first
 Architecture and debugging are load-bearing for nearly every build, so build-loop owns native copies under:
 
 - `skills/architecture/{scan,impact,trace,rules,dead,review}/SKILL.md` — copied from NavGator (a sibling repo checked out alongside build-loop, e.g. `<sibling-repos>/NavGator/`)
-- `skills/debugging/{memory,store,assess,debug-loop}/SKILL.md` — build-loop-native debugging workflows adapted from the standalone debugger lineage
+- `skills/debugging-memory/SKILL.md` — build-loop-native debugging workflow, op-routed (`{op: "search" | "store" | "assess"}`; per-op detail in `references/{search,store,assess}.md`) — plus `skills/debug-loop/SKILL.md` — adapted from the standalone debugger lineage
 
-Each native SKILL.md carries `source:` (relative path from the sibling-repos root) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks both trees, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md.
+Each `skills/architecture/` SKILL.md carries `source:` (relative path from the sibling-repos root) and `source_hash:` (SHA-256 of the canonical file at copy time). The drift-detector at `skills/sync-skills/SKILL.md` (script: `scripts/sync_skills.py`) walks the architecture tree, recomputes hashes, and reports anything that's drifted from upstream. Read-only — never auto-updates a SKILL.md. (The former `skills/debugging/{memory,store,assess}` skills were folded into `debugging-memory` on 2026-07, pool-consolidation Inc 5; they are native/adapted with no canonical upstream, so drift-detection for them is retired.)
 
 The legacy bridges (`skills/navgator-bridge/`, `skills/debugger-bridge/`) are now deprecation stubs that point at the native skills; remove after one release cycle. The orchestrator (`agents/build-orchestrator.md`) calls native skills directly — Phase 1 Assess, Review-B Validate, Review-D Fact-Check, Review-F Report, and Phase 5 Iterate cross-layer pre-step.
 

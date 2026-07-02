@@ -1,11 +1,4 @@
----
-name: build-loop:debugging-memory-search
-description: Search primitive — the memory LOOKUP step invoked BY the `build-loop:debugging-memory` workflow skill and by the domain assessors (api/db/frontend/perf). Searches local build-loop incidents and optional standalone Coding Debugger memory, returning a verdict + compact matches. Not a standalone diagnose entry and not a successor: `build-loop:debugging-memory` owns the verdict-handling workflow and delegates the actual lookup here.
-version: 0.1.0
-user-invocable: false
-source: claude-code-debugger/skills/debugging-memory/SKILL.md
-source_hash: 5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d
----
+<!-- PROVENANCE: op=search reference for `build-loop:debugging-memory` (ADR-01 op-routing). Folded from skills/debugging/memory/SKILL.md (former skill name build-loop:debugging-memory-search, v0.1.0) on 2026-07-02, pool-consolidation Inc 5. Drift-check vs upstream retired (native, adapted; no canonical upstream). Former provenance for record: source=claude-code-debugger/skills/debugging-memory/SKILL.md source_hash=5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d -->
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
@@ -13,7 +6,7 @@ source_hash: 5c4ee5ada781107e7def92abeca4d51fc0efc61700f7cf43e948da34f4c0681d
 
 Memory-first debugging. Core principle: **never solve the same bug twice**. Native to build-loop; initially adapted from the debugger workflow lineage. Search local `.build-loop/issues/` first, then use standalone Coding Debugger for cross-project memory only when that plugin is installed.
 
-> **Naming note**: this skill is `build-loop:debugging-memory-search` to avoid colliding with the legacy in-tree `build-loop:debugging-memory` skill (which the orchestrator continues to call as the memory-first gate's primary entry point). Both have equivalent content; this one carries `source` + `source_hash` provenance and is drift-checked by `build-loop:sync-skills`. New code should prefer the legacy name until the orchestrator is migrated; sibling skills in `skills/debugging/` reference the legacy name where the gate's exact runtime semantics are needed.
+> **Op-routing note**: this is the `op: "search"` reference for `build-loop:debugging-memory` — the memory LOOKUP step. Callers invoke `Skill("build-loop:debugging-memory") with input { op: "search", symptom, domain? }`; this file holds the lookup procedure the workflow delegates to (ADR-01).
 
 ## When to Activate
 
@@ -82,7 +75,7 @@ Also enter the debug loop when:
 
 ## Incident Documentation
 
-After fixing a bug, store via `build-loop:debugging-store`. Required fields: `symptom`, `root_cause`, `fix`. Optional: `category`, `tags`, `files_changed`, `file`.
+After fixing a bug, store via `build-loop:debugging-memory` `{op:"store"}`. Required fields: `symptom`, `root_cause`, `fix`. Optional: `category`, `tags`, `files_changed`, `file`.
 
 ## Quality Indicators
 
@@ -122,7 +115,7 @@ Use these only when standalone Coding Debugger is installed. Build-loop does not
 
 Closes the memory-first gate's feedback loop. Both required:
 
-- For each newly resolved Review-B/Iterate failure: invoke `build-loop:debugging-store` with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
+- For each newly resolved Review-B/Iterate failure: invoke `build-loop:debugging-memory` `{op:"store"}` with `{symptom, root_cause, fix, tags: ["build-loop", project, layer], files}`
 - For each Review-B memory gate where standalone Coding Debugger supplied a prior `KNOWN_FIX` or `LIKELY_MATCH`: invoke its `outcome` tool with `{incident_id, result: "worked"|"failed"|"modified", notes}` — this trains the optional verdict classifier
 
 Skipping `outcome` means the optional verdict classifier never improves.
@@ -134,14 +127,14 @@ When debugging involves subagents:
 1. **Pre-query memory once** through `build-loop:debugging-memory` before spawning agents
 2. **Distribute context** — each agent gets relevant subset
 3. **Aggregate findings** — collect insights from all agents
-4. **Store unified incident** — single `build-loop:debugging-store` call to document combined diagnosis
+4. **Store unified incident** — single `build-loop:debugging-memory` `{op:"store"}` call to document combined diagnosis
 
 Subagents do not inherit Skill or MCP access — pre-load context into their prompt.
 
 ## Sibling Skills
 
-- `build-loop:debugging-store` — write incident after fix
-- `build-loop:debugging-assess` — parallel domain assessment for multi-domain symptoms
+- `build-loop:debugging-memory` `{op:"store"}` — write incident after fix
+- `build-loop:debugging-memory` `{op:"assess"}` — parallel domain assessment for multi-domain symptoms
 - `build-loop:debug-loop` — iterative root-cause analysis with causal-tree investigation
 
 *Source: adapted from the debugger workflow lineage and maintained as a build-loop-native skill. Drift-checked by `build-loop:sync-skills`.*

@@ -55,7 +55,7 @@ This project uses build-loop native debugging memory.
 
 **Before investigating any bug:**
 \`\`\`
-Skill("build-loop:debugging-memory-search") with input { symptom: "<symptom description>" }
+Skill("build-loop:debugging-memory") with input { op: "search", symptom: "<symptom description>" }
 \`\`\`
 
 **Interpret results:**
@@ -88,10 +88,10 @@ When subagents cannot directly access debugging memory (no Bash tool, sandboxed,
 
 **Step 1: Search before spawning**
 
-Use `build-loop:debugging-memory-search` with the symptom description. If the subagent cannot invoke skills, the parent reads `.build-loop/issues/` and passes compact matches:
+Use `build-loop:debugging-memory` `{op:"search"}` with the symptom description. If the subagent cannot invoke skills, the parent reads `.build-loop/issues/` and passes compact matches:
 
 ```
-Skill("build-loop:debugging-memory-search") with input { symptom: "user login failing with 401" }
+Skill("build-loop:debugging-memory") with input { op: "search", symptom: "user login failing with 401" }
 ```
 
 **Step 2: Format context for subagent**

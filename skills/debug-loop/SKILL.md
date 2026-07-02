@@ -217,7 +217,7 @@ When to use parallel assessment vs continuing the linear loop:
 If the bundled assessor coverage isn't enough (e.g., the failure crosses a domain build-loop's bundled assessors don't cover well, or you need cross-build coordination), escalate via the native debugging skills:
 
 ```
-Skill("build-loop:debugging-assess") with input { symptom, scope: "global", calledBy: "debug-loop", reason: "stuck-iteration" }
+Skill("build-loop:debugging-memory") with input { op: "assess", symptom, scope: "global", calledBy: "debug-loop", reason: "stuck-iteration" }
 ```
 
 The native skill includes domain-specific assessors (api / database / frontend / performance). It uses build-loop local memory by default and may use standalone Coding Debugger for cross-build memory when available; otherwise it falls back to grep across `.build-loop/issues/` and `.build-loop/feedback.md` with narrower coverage.

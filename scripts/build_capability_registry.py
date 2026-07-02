@@ -17,7 +17,7 @@ Surfaces crawled (always opt-in / no network):
     agents/*.md                                  (kind=agent)
     skills/<name>/SKILL.md                        (kind=skill)
     skills/architecture/<name>/SKILL.md            (kind=skill, nested)
-    skills/debugging/<name>/SKILL.md               (kind=skill, nested)
+    skills/architecture/<name>/SKILL.md            (kind=skill, nested)
     commands/*.md                                  (kind=command)
     hooks/hooks.json (parsed)                      (kind=hook)
     .mcp.json (parsed) → mcpServers + advertised  (kind=mcp_tool)
