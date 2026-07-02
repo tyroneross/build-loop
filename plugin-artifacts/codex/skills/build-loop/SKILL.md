@@ -345,6 +345,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/phase-1-assess.md` — Full Phase 1 Assess protocol
 - `references/phase-2-plan.md` — Full Phase 2 Plan protocol
 - `references/phase-3-execute.md` — Full Phase 3 Execute protocol
+- `references/verify-dispatch.md` — Post-dispatch 5-step git/test ground-truth checklist; walk after any dispatched agent claims commits landed / tests passed (a solicited peer agreeing is not independent verification)
 - `references/dogfood-reload-checkpoint.md` — Self-recursive stop/reload/resume checkpoint and ACK/fallback protocol
 - `references/phase-4-review.md` — Full Phase 4 Review protocol (sub-steps A–G, including Sub-step F Auto-Resolve with all 4 verdict arms)
 - `references/phase-5-iterate.md` — Full Phase 5 Iterate protocol

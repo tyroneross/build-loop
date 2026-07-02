@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d91186044215104e7021a65f9d2b1e779680a34a1075b59030b77d654fb5ca3c"
+    "content_sha256": "2991ba73777601e2c71b6cabbd90f8bf058ca7559c317d673199594032fcbca9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1489,14 +1489,6 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-06-02"
-        }
-      },
-      "verify-dispatch": {
-        "description": "Use after any dispatched Agent, Task, or orchestrator sub-agent (including background/run_in_background dispatches and headless build-loop orchestrators) claims commits landed and tests passed — especially when the safety classifier was unavailable or when you would say \"classifier unavailable\". Also fires when the user says \"verify the subagent\", \"did the agent actually commit\", or \"confirm the dispatch worked\". A …",
-        "file": "skills/verify-dispatch/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-24"
         }
       }
     },

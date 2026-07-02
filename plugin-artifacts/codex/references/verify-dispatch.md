@@ -1,13 +1,9 @@
----
-name: verify-dispatch
-description: Use after any dispatched Agent, Task, or orchestrator sub-agent (including background/run_in_background dispatches and headless build-loop orchestrators) claims commits landed and tests passed — especially when the safety classifier was unavailable or when you would say "classifier unavailable". Also fires when the user says "verify the subagent", "did the agent actually commit", or "confirm the dispatch worked". A solicited peer agreeing after you asked it to check is NOT independent verification — use this checklist instead.
-version: 0.1.0
-user-invocable: false
----
-
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+<!-- PROVENANCE: folded from skills/verify-dispatch/SKILL.md (v0.1.0) on 2026-07-02 (pool-consolidation Inc 2). Reactive-selection trigger preserved in agents/build-orchestrator.md §"Verify every subagent" + skills/build-loop/SKILL.md; this reference holds the checklist body. -->
 
-# verify-dispatch
+# Verify dispatch — post-dispatch verification checklist
+
+Walk this after any dispatched Agent, Task, or orchestrator sub-agent (including background/`run_in_background` dispatches and headless build-loop orchestrators) claims commits landed and tests passed — especially when the safety classifier was unavailable or when you would say "classifier unavailable". Also applies when the user says "verify the subagent", "did the agent actually commit", or "confirm the dispatch worked". A solicited peer agreeing after you asked it to check is NOT independent verification — use this checklist instead.
 
 ## When this fires / Why
 
@@ -83,7 +79,7 @@ Never emit "the agent confirmed it passed" as your own verification line. Name w
 
 ## What this does NOT replace
 
-- **runtime-parity-verification** — that skill cross-checks a running app's UI against backend state. This skill covers the git/test layer only.
-- **plan-verify** — that skill lints a plan's evidence claims before Phase 2 acceptance. This skill fires after a dispatch reports completion.
+- **runtime-parity-verification** — that skill cross-checks a running app's UI against backend state. This checklist covers the git/test layer only.
+- **plan-verify** — that skill lints a plan's evidence claims before Phase 2 acceptance. This checklist fires after a dispatch reports completion.
 
 Origin lessons: `feedback_solicited_peer_review_is_not_independent.md`, `feedback_buildloop_verify_auditor_ran.md`, `feedback_verify_running_app_not_compile_green.md`.
