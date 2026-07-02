@@ -65,6 +65,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--workdir", required=True, help="Project root containing .build-loop/")
     p.add_argument("--goal", required=True, help="Short goal text for this build")
     p.add_argument("--outcome", required=True, choices=sorted(VALID_OUTCOMES))
+    p.add_argument("--host", default="claude_code",
+                   choices=["claude_code", "codex", "gemini", "other"],
+                   help="Recording host (parity with append_run; default claude_code). Fixes null-host runs.")
     p.add_argument(
         "--scope",
         choices=["build", "chunk", "none"],
@@ -196,6 +199,7 @@ def _build_entry(
         "date": date,
         "goal": args.goal,
         "outcome": args.outcome,
+        "host": getattr(args, "host", "claude_code") or "claude_code",
         "phases": phases,
         "diagnosticCommands": diagnostic_commands,
         "filesTouched": files_touched,

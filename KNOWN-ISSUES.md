@@ -205,3 +205,21 @@ The following build-loop 0.9.0+ behaviors cannot be exercised inside a session t
 **Version-controlled 2026-06-09 (WP3c).** The canonical implementation now lives in this repo at `scripts/marketplace_autoupdate.py` (with `scripts/test_marketplace_autoupdate.py`). The host install at `~/.claude/scripts/hooks/marketplace-autoupdate.py` is now a thin pure-exec shim that execs the repo copy (per the hooks-hygiene lesson: a loose copy at a global path desyncs silently from its source). The shim resolves the canonical file via `$BUILD_LOOP_MARKETPLACE_AUTOUPDATE` → `~/dev/git-folder/build-loop/scripts/marketplace_autoupdate.py` → newest plugin-cache version dir, and exits 0 if none resolve. Edit the repo copy; the shim picks it up with no re-copy.
 
 **Resolution criteria.** Remove this entry once Claude Code's `autoUpdate: true` actually re-installs catalog drift into `installPath`. Then delete the repo script + test, replace the shim with `rm`, and remove the matching SessionStart entry from `~/.claude/settings.json`.
+
+---
+
+## Inline-vs-agent activation gap — verification seats/telemetry skipped on inline runs — 2026-07-02
+
+**Symptom.** An inline `/build-loop:build-loop` run (skill-as-methodology in the host, no `Agent(subagent_type=…)` dispatch) reached neither the Fable-pinned verification seats nor the rich Review-G run record. Effect: Fable-seat routing worked on the agent path but ~0 on the inline path; LLM judges rarely fired; `state.json.runs[]` under-populated (starving `recurring-pattern-detector` + Phase 6 `self-improve`); the human became the de-facto orchestrator. Independently surfaced by Codex ("parent-must-dispatch unresolved", Rally seq 3934).
+
+**Assess correction.** The enforcement mostly already existed: `stop_closeout.py` records inline runs, `judgment_gate.py` stakes-gates the Frontier auditor/advisor dispatch (FAIL top-level / WARN nested), `append_run.build_record` already sets `host` + typed `manualInterventions`. The residual gaps were narrow — fixed by P0 (`docs/plans/2026-07-02-P0-inline-vs-agent-activation-closure-plan.md`):
+- **C1** `judgment_gate --require-seats` (opt-in): attests `plan-critic`/`scope-auditor` (synthesisDensity>5) + `security-reviewer` (riskSurfaceChange) via the agent-ledger; reports `missing_seats[]`.
+- **C2** `stop_closeout` writes `followup/judgment-owed-<run-id>.md` on a stakes-gated WARN/FAIL → Phase 5 Iterate drains it, closing the "parent owes it" sidestep loophole.
+- **C3** `write_run_entry` now records `host` (parity with `append_run`) — fixes null-host orchestrator runs.
+
+**Residual (why this stays listed).**
+- C1 seat-attestation is **opt-in (`--require-seats`, default off)** until telemetry confirms every seat reliably writes an agent-ledger row for its run; promote to always-on (and wire into Review-G + stop_closeout by default) once confirmed.
+- Legacy pre-schema `runs[]` records (null `host`, string `manualInterventions`) are left as historical; only new records are normalized.
+- The CLAUDE.md parity-contract note lands at P0 merge.
+
+**Resolution criteria.** Remove once `--require-seats` is promoted to default-on and the CLAUDE.md contract documents inline-vs-agent parity as enforced.

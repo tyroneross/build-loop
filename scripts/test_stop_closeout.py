@@ -496,3 +496,21 @@ def test_cli_reads_session_id_from_stdin(tmp_path):
     )
     assert res.returncode == 0
     assert len(_runs(tmp_path)) == 1   # session id taken from stdin → recorded
+
+
+# --- C2: owed-judgment followup closes the WARN "parent owes it" loophole ---
+
+def test_stakes_gated_run_writes_judgment_owed_followup(tmp_path):
+    _write_state(tmp_path, _base_state(stakes_trigger=True))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    fu = tmp_path / ".build-loop" / "followup" / "judgment-owed-bl-test-001.md"
+    assert fu.exists(), "stakes-gated inline run must leave an owed-judgment followup"
+    body = fu.read_text()
+    assert "topic: judgment-owed" in body and "independent-auditor" in body
+
+
+def test_no_stakes_run_writes_no_followup(tmp_path):
+    _write_state(tmp_path, _base_state(stakes_trigger=False))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    fu_dir = tmp_path / ".build-loop" / "followup"
+    assert not fu_dir.exists() or not list(fu_dir.glob("judgment-owed-*.md"))

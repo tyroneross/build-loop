@@ -362,7 +362,7 @@ def _run_gate(workdir: Path, run_id: str) -> dict:
     """Evaluate judgment_gate with agent_tool_available=False (a Stop hook has none)."""
     state = _read_state(workdir) or {}
     ledger = workdir / ".build-loop" / "agent-ledger.jsonl"
-    return judgment_gate.evaluate(state, ledger, run_id, agent_tool_available=False)
+    return judgment_gate.evaluate(state, ledger, run_id, agent_tool_available=False, require_seats=True)
 
 
 def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
@@ -387,6 +387,49 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
     )
     append_run.atomic_write_bytes(marker, body.encode())
     return marker
+
+
+def _judgment_followup_path(workdir: Path, run_id: str) -> Path:
+    return workdir / ".build-loop" / "followup" / f"judgment-owed-{run_id}.md"
+
+
+def _write_judgment_followup(workdir: Path, decision: dict, verdict: dict) -> Path | None:
+    """C2: persist an OWED-judgment followup when the gate did not clear.
+
+    The gate WARNs "parent owes it" on a nested/no-Agent-tool Stop, or FAILs on a
+    reachable one. Either way the owed Frontier judgment + any missing verification
+    seats must not evaporate: write a `followup/judgment-owed-<run-id>.md` that
+    Phase 5 Iterate drains, forcing the next run to dispatch what this one skipped.
+    Skipped entirely when the gate PASSes or the run isn't stakes-gated.
+    """
+    if verdict.get("verdict") not in ("warn", "fail") or not verdict.get("stakes_gated"):
+        return None
+    owed_layers = sorted({str(f.get("layer")) for f in verdict.get("findings", []) if f.get("layer")})
+    missing_seats = verdict.get("missing_seats") or []
+    path = _judgment_followup_path(workdir, decision["run_id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    reasons = ", ".join(verdict.get("stakes_reasons") or []) or "stakes-gated"
+    body = (
+        "---\n"
+        f"run_id: {decision['run_id']}\n"
+        f"recorded_at: {_utc_now().strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+        "topic: judgment-owed\n"
+        f"judgment_verdict: {verdict.get('verdict')}\n"
+        f"owed_layers: {json.dumps(owed_layers)}\n"
+        f"missing_seats: {json.dumps(missing_seats)}\n"
+        "source: stop_closeout\n"
+        "skip_plan: true\n"
+        "---\n\n"
+        f"# Judgment owed — {decision['run_id']}\n\n"
+        f"A stakes-gated inline run ({reasons}) closed at the inline floor without the\n"
+        "Frontier verification it required (a Stop hook cannot dispatch agents). The next\n"
+        "`/build-loop:run` MUST dispatch the owed layer(s) before this run is considered\n"
+        "review-complete — this closes the WARN 'parent owes it' loophole.\n\n"
+        f"Owed layer(s): {', '.join(owed_layers) or '(see gate findings)'}\n"
+        + (f"Missing seats: {', '.join(missing_seats)}\n" if missing_seats else "")
+    )
+    append_run.atomic_write_bytes(path, body.encode())
+    return path
 
 
 def _stop_message(decision: dict, verdict: dict, write_result: dict) -> str:
@@ -466,6 +509,7 @@ def run_stop(workdir: Path, session_id: str) -> dict:
     write_result = _record_run(workdir, decision, state)
     verdict = _run_gate(workdir, decision["run_id"])
     _write_marker(workdir, decision, verdict)  # refreshed each Stop → tracks current outcome
+    _write_judgment_followup(workdir, decision, verdict)  # C2: owed judgment → Iterate-drained followup
     if decision["outcome"] == "done":
         # Terminal outcome recorded → close the run's identity so the next
         # effort mints a fresh build_loop_id instead of resuming this one.
