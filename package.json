@@ -23,6 +23,7 @@
     "bin",
     "codex-skills",
     "plugin-artifacts/codex",
+    "assets",
     "commands",
     "skills",
     "scripts/_paths.py",

@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 SCRIPT = HERE / "build_codex_plugin_artifact.py"
 ARTIFACT = REPO_ROOT / "plugin-artifacts" / "codex"
+ICON_REL = Path("assets") / "build-loop-plugin-icon.png"
 
 
 def _load_builder():
@@ -67,6 +68,16 @@ class CodexPluginArtifactTests(unittest.TestCase):
             self.assertEqual(skill_paths, ["skills/build-loop/SKILL.md"])
             manifest = target / ".codex-plugin" / "plugin.json"
             self.assertIn('"skills": "./skills"', manifest.read_text(encoding="utf-8"))
+            self.assertTrue((target / ICON_REL).is_file())
+
+    def test_checked_in_artifact_includes_plugin_icon(self) -> None:
+        icon = ARTIFACT / ICON_REL
+        self.assertTrue(icon.is_file(), "Codex artifact must ship the plugin icon")
+        header = icon.read_bytes()[:24]
+        self.assertEqual(header[:8], b"\x89PNG\r\n\x1a\n")
+        width = int.from_bytes(header[16:20], "big")
+        height = int.from_bytes(header[20:24], "big")
+        self.assertEqual((width, height), (1024, 1024))
 
     def test_checked_in_artifact_reference_pointers_resolve(self) -> None:
         """Every ``references/X.md`` pointer on the shipped bundle's primary

@@ -24,6 +24,7 @@ DEFAULT_TARGET = Path("plugin-artifacts/codex")
 IGNORED_NAMES = {".DS_Store", "__pycache__", ".pytest_cache"}
 IGNORED_SUFFIXES = {".pyc"}
 TOP_LEVEL_FILES = ("AGENTS.md", "README.md", "LICENSE")
+ASSET_FILES = (Path("assets") / "build-loop-plugin-icon.png",)
 
 # Bundle markdown points readers at ``references/<file>.md`` (root-relative).
 # The Claude source resolves that logical namespace across the repo's top-level
@@ -226,6 +227,10 @@ def validate_artifact(target: Path) -> None:
     if rel_files != ["skills/build-loop/SKILL.md"]:
         raise ArtifactError(f"artifact must expose exactly one SKILL.md, got {rel_files}")
 
+    for rel_path in ASSET_FILES:
+        if not (target / rel_path).is_file():
+            raise ArtifactError(f"artifact missing asset: {rel_path}")
+
     check_reference_pointers(target)
 
 
@@ -242,6 +247,8 @@ def build_artifact(source: Path, target: Path) -> None:
         write_codex_manifest(source, tmp / ".codex-plugin" / "plugin.json")
         for name in TOP_LEVEL_FILES:
             copy_file(source / name, tmp / name)
+        for rel_path in ASSET_FILES:
+            copy_file(source / rel_path, tmp / rel_path)
         copy_tree(source / "skills" / "build-loop", tmp / "skills" / "build-loop")
         copy_file(source / "docs" / "agent-surface-policy.md", tmp / "docs" / "agent-surface-policy.md")
         write_notice(tmp / "BUILD-ARTIFACT.md")
