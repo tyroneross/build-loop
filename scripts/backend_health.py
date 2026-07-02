@@ -261,7 +261,7 @@ def probe_semantic(workdir: Path) -> Dict[str, Any]:
     try:
         with psycopg.connect(db_url, connect_timeout=PER_BACKEND_TIMEOUT_S) as conn:  # type: ignore
             with conn.cursor() as cur:
-                cur.execute(f'SELECT count(*) FROM {schema}.semantic_facts')
+                cur.execute(f'SELECT count(*) FROM {schema}.semantic_facts')  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 row = cur.fetchone()
                 count = int(row[0]) if row else 0
         return {

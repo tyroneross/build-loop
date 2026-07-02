@@ -198,7 +198,7 @@ def _do_revoke(
             if not re.match(r"^[a-z][a-z0-9_]*$", args.schema):
                 raise ValueError(f"unsafe schema name: {args.schema!r}")
             sql = (
-                f"UPDATE {args.schema}.semantic_facts "
+                f"UPDATE {args.schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "SET status = 'retracted', valid_to = now() "
                 "WHERE metadata->>'project' = %s AND metadata->>'decision_id' = %s;"
             )

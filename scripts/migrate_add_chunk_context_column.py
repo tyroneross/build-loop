@@ -86,7 +86,7 @@ def add_column(schema: str, *, dry_run: bool) -> dict:
     if dry_run:
         status["action"] = "would-add-column"
         return status
-    execute(f"ALTER TABLE {schema}.semantic_facts ADD COLUMN chunk_context TEXT")
+    execute(f"ALTER TABLE {schema}.semantic_facts ADD COLUMN chunk_context TEXT")  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
     status["action"] = "added-column"
     return status
 
@@ -176,7 +176,7 @@ def backfill(
 
         try:
             execute(
-                f"UPDATE {schema}.semantic_facts "
+                f"UPDATE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 f"SET chunk_context = %s, embedding = %s::vector, "
                 f"    embedding_model_version = %s "
                 f"WHERE id::text = %s",

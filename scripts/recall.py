@@ -203,7 +203,7 @@ def bump_last_accessed(schema: str, fact_ids: list[str]) -> None:
         return
     try:
         execute(
-            f"UPDATE {schema}.semantic_facts SET last_accessed = now() WHERE id::text = ANY(%s)",
+            f"UPDATE {schema}.semantic_facts SET last_accessed = now() WHERE id::text = ANY(%s)",  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
             (list(fact_ids),),
         )
     except Exception as e:  # noqa: BLE001

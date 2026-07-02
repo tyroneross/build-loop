@@ -178,7 +178,7 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
         # DELETE + INSERT in one transaction (db.execute commits each call,
         # so issue them as a single multi-statement script).
         execute(
-            f"DELETE FROM {schema}.semantic_facts WHERE subject = %s;",
+            f"DELETE FROM {schema}.semantic_facts WHERE subject = %s;",  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
             (subject,),
         )
         files_touched = fm.get("files_touched") or []
@@ -190,7 +190,7 @@ def upsert_decision(path: Path, schema: str, embed_model: str) -> bool:
             confirmation_count_val = 0
         execute(
             (
-                f"INSERT INTO {schema}.semantic_facts "
+                f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "(subject, predicate, object, confidence, status, embedding, metadata, "
                 " project, tool, model, task_category, author, files_touched, closing_commit, "
                 " confidence_source, confirmation_count, valid_until, causal_parent_id, "

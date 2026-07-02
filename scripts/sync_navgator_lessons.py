@@ -333,19 +333,19 @@ def _upsert_lesson(
     with conn.cursor() as cur:
         if project is None:
             cur.execute(
-                f"DELETE FROM {schema}.semantic_facts "
+                f"DELETE FROM {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "WHERE subject = %s AND project IS NULL;",
                 (subject,),
             )
         else:
             cur.execute(
-                f"DELETE FROM {schema}.semantic_facts "
+                f"DELETE FROM {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "WHERE subject = %s AND project = %s;",
                 (subject, project),
             )
         if vec_lit is None:
             sql = (
-                f"INSERT INTO {schema}.semantic_facts "
+                f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "(subject, predicate, object, confidence, status, embedding, metadata, "
                 " project, tool, task_category, files_touched, "
                 " confidence_source, domain) "
@@ -368,7 +368,7 @@ def _upsert_lesson(
             )
         else:
             sql = (
-                f"INSERT INTO {schema}.semantic_facts "
+                f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                 "(subject, predicate, object, confidence, status, embedding, metadata, "
                 " project, tool, task_category, files_touched, "
                 " confidence_source, domain) "

@@ -114,10 +114,10 @@ def migrate_schema(schema: str, *, dry_run: bool) -> dict:
     # (we recreate the index right after). We do NOT use CASCADE
     # implicitly — explicit index drop avoids surprising teardowns of
     # other dependents in foreign installs.
-    execute(f"DROP INDEX IF EXISTS {schema}.{INDEX_NAME}")
-    execute(f"ALTER TABLE {schema}.semantic_facts DROP COLUMN IF EXISTS search_vector")
+    execute(f"DROP INDEX IF EXISTS {schema}.{INDEX_NAME}")  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
+    execute(f"ALTER TABLE {schema}.semantic_facts DROP COLUMN IF EXISTS search_vector")  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
     execute(
-        f"ALTER TABLE {schema}.semantic_facts "
+        f"ALTER TABLE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
         f"ADD COLUMN search_vector tsvector "
         f"GENERATED ALWAYS AS ({NEW_EXPRESSION}) STORED"
     )

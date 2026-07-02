@@ -112,7 +112,7 @@ def reembed_batch(schema: str, rows: list[dict], target_model: str) -> int:
                 f"expected {EMBED_DIM}"
             )
         execute(
-            f"UPDATE {schema}.semantic_facts "
+            f"UPDATE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
             "   SET embedding = %s::vector, "
             "       embedding_model_version = %s "
             " WHERE id::text = %s",

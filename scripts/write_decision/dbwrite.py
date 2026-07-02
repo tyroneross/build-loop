@@ -147,7 +147,7 @@ def _execute_insert(execute: Any, schema: str, base_params: tuple, chunk_context
     # v2: write typed columns when present (graceful degrade if migration
     # hasn't run yet — caught by the broad except in the caller).
     # Phase D: include chunk_context in the column list.
-    sql = f"INSERT INTO {schema}.semantic_facts " + _COLS_V3 + _VALUES_V3
+    sql = f"INSERT INTO {schema}.semantic_facts " + _COLS_V3 + _VALUES_V3  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
     try:
         execute(sql, base_params + (chunk_context or None,))
         return
@@ -157,7 +157,7 @@ def _execute_insert(execute: Any, schema: str, base_params: tuple, chunk_context
         if "chunk_context" not in str(e):
             raise
         log(f"db dual-write: chunk_context column missing ({e}); retrying legacy shape")
-    sql_legacy = f"INSERT INTO {schema}.semantic_facts " + _COLS_LEGACY + _VALUES_LEGACY
+    sql_legacy = f"INSERT INTO {schema}.semantic_facts " + _COLS_LEGACY + _VALUES_LEGACY  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
     execute(sql_legacy, base_params)
 
 

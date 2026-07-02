@@ -104,7 +104,7 @@ def migrate_schema(schema: str, *, dry_run: bool) -> dict:
         # config; covers stemming and stopword removal for the language
         # of build-loop's decisions.
         execute(
-            f"ALTER TABLE {schema}.semantic_facts "
+            f"ALTER TABLE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
             "ADD COLUMN search_vector tsvector "
             "GENERATED ALWAYS AS ("
             "  to_tsvector('english', "

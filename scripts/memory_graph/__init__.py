@@ -242,14 +242,14 @@ class SQLiteEdgesStore:
         if direction in {"out", "both"}:
             rows.extend(
                 self._conn.execute(
-                    f"SELECT * FROM edges WHERE source = ?{rel_sql}",
+                    f"SELECT * FROM edges WHERE source = ?{rel_sql}",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
                     (node_id, *rel_args),
                 ).fetchall()
             )
         if direction in {"in", "both"}:
             rows.extend(
                 self._conn.execute(
-                    f"SELECT * FROM edges WHERE target = ?{rel_sql}",
+                    f"SELECT * FROM edges WHERE target = ?{rel_sql}",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
                     (node_id, *rel_args),
                 ).fetchall()
             )

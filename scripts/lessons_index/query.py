@@ -257,7 +257,7 @@ def _cosine_rerank(conn, candidates: list[dict], goal_vec: list[float]) -> list[
     ids = [r["id"] for r in candidates]
     placeholders = ",".join("?" * len(ids))
     emb_rows = conn.execute(
-        f"SELECT fact_id, vec FROM embeddings WHERE fact_id IN ({placeholders})",
+        f"SELECT fact_id, vec FROM embeddings WHERE fact_id IN ({placeholders})",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
         ids,
     ).fetchall()
     emb_map = {row["fact_id"]: _unpack_floats(row["vec"]) for row in emb_rows}

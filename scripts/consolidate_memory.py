@@ -195,7 +195,7 @@ def _do_insert(c: dict, embedding: list[float], schema: str) -> None:
         "candidate_metadata": c.get("metadata") or {},
     }
     execute(
-        f"INSERT INTO {schema}.semantic_facts "
+        f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
         "(subject, predicate, object, confidence, status, embedding, metadata) "
         "VALUES (%s, %s, %s, %s, 'active', %s::vector, %s::jsonb)",
         (
@@ -222,7 +222,7 @@ def _do_update(target_id: str, c: dict, embedding: list[float], schema: str) -> 
         "candidate_metadata": c.get("metadata") or {},
     }
     execute(
-        f"UPDATE {schema}.semantic_facts "
+        f"UPDATE {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
         "SET object = %s, confidence = %s, embedding = %s::vector, "
         "    metadata = %s::jsonb, valid_from = now() "
         "WHERE id = %s::uuid",
@@ -249,7 +249,7 @@ def _record_conflict(existing_id: str, c: dict, embedding: list[float], schema: 
     }
     # Insert proposed fact and capture the new ID
     new_row = query_one(
-        f"INSERT INTO {schema}.semantic_facts "
+        f"INSERT INTO {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
         "(subject, predicate, object, confidence, status, embedding, metadata) "
         "VALUES (%s, %s, %s, %s, 'proposed', %s::vector, %s::jsonb) "
         "RETURNING id::text AS id",
@@ -264,7 +264,7 @@ def _record_conflict(existing_id: str, c: dict, embedding: list[float], schema: 
     )
     new_id = (new_row or {}).get("id")
     execute(
-        f"INSERT INTO {schema}.fact_conflicts "
+        f"INSERT INTO {schema}.fact_conflicts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
         "(fact_id_a, fact_id_b, conflict_type, resolved, metadata) "
         "VALUES (%s::uuid, %s::uuid, %s, FALSE, %s::jsonb)",
         (

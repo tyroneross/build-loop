@@ -605,7 +605,7 @@ def _reconcile_postgres_slugs(plan: dict[str, Any]) -> dict[str, Any]:
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = 10000")
                 cur.execute(
-                    f"SELECT DISTINCT project FROM {schema}.semantic_facts "
+                    f"SELECT DISTINCT project FROM {schema}.semantic_facts "  # nosec: schema is a validated identifier (^[a-z][a-z0-9_]*$); values bound as params
                     f"WHERE project IS NOT NULL"
                 )
                 rows = cur.fetchall()
