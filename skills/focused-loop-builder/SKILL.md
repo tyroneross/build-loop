@@ -1,5 +1,5 @@
 ---
-name: loop-builder
+name: focused-loop-builder
 description: Use when the user asks to "create a custom build loop", "build a loop spec", "make a focused loop", "generate a workflow loop", "adapt a framework into a loop", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.
 version: 0.1.0
 user-invocable: false
@@ -7,7 +7,7 @@ user-invocable: false
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 
-# loop-builder
+# focused-loop-builder
 
 Create declarative focused-loop specs that reuse build-loop's phase discipline outside pure coding work. The skill turns a preset or framework into a small loop pack: `loop.yaml`, `rubric.md`, report template, validator stub, and explicit skill-chain guidance.
 
@@ -37,7 +37,7 @@ Keep the runner generic and the loop domain-specific. Do not create a new orches
 4. **Generate the loop pack.**
    - Run:
      ```bash
-     python3 skills/loop-builder/scripts/loop_builder.py create <loop-id> --preset <preset-name>
+     python3 skills/focused-loop-builder/scripts/loop_builder.py create <loop-id> --preset <preset-name>
      ```
    - Default output is `.build-loop/loops/<loop-id>/`.
    - Use `--output <dir>` for a WorkWiki, ObsidianVault, or non-code project workspace.
@@ -76,19 +76,19 @@ Avoid chaining when:
 List presets:
 
 ```bash
-python3 skills/loop-builder/scripts/loop_builder.py list
+python3 skills/focused-loop-builder/scripts/loop_builder.py list
 ```
 
 Create a loop:
 
 ```bash
-python3 skills/loop-builder/scripts/loop_builder.py create active-project-evidence --preset active-project-evidence
+python3 skills/focused-loop-builder/scripts/loop_builder.py create active-project-evidence --preset active-project-evidence
 ```
 
 Inspect a preset:
 
 ```bash
-python3 skills/loop-builder/scripts/loop_builder.py inspect presentation-audit
+python3 skills/focused-loop-builder/scripts/loop_builder.py inspect presentation-audit
 ```
 
 ## Additional Resources

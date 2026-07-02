@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the loop-builder skill generator."""
+"""Tests for the focused-loop-builder skill generator."""
 from __future__ import annotations
 
 import importlib.util
@@ -14,8 +14,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
-SCRIPT = REPO_ROOT / "skills" / "loop-builder" / "scripts" / "loop_builder.py"
-PRESETS = REPO_ROOT / "skills" / "loop-builder" / "presets"
+SCRIPT = REPO_ROOT / "skills" / "focused-loop-builder" / "scripts" / "loop_builder.py"
+PRESETS = REPO_ROOT / "skills" / "focused-loop-builder" / "presets"
 
 
 def load_module():

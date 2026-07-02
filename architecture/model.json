@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e3c94be4f622688efaa81482718250ba41477b8627500499eb0dbf3f3e158340"
+    "content_sha256": "9eb2e32ca3d4550f2fe2629c658dc1cacaa0fd05e282047610088e0ee35a94d0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -869,7 +869,7 @@
         "file": "agents/api-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-02"
         }
       },
       "architecture-scout": {
@@ -905,7 +905,7 @@
         "file": "agents/database-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-01"
+          "date": "2026-07-02"
         }
       },
       "design-contract-specialist": {
@@ -941,7 +941,7 @@
         "file": "agents/frontend-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-02"
         }
       },
       "implementer": {
@@ -995,7 +995,7 @@
         "file": "agents/performance-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-02"
         }
       },
       "plan-critic": {
@@ -1232,7 +1232,7 @@
         "file": "skills/debug-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-18"
+          "date": "2026-07-02"
         }
       },
       "debugging-memory": {
@@ -1240,7 +1240,7 @@
         "file": "skills/debugging-memory/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-22"
+          "date": "2026-07-02"
         }
       },
       "defenseclaw-bridge": {
@@ -1249,6 +1249,14 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-05-28"
+        }
+      },
+      "focused-loop-builder": {
+        "description": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate a workflow loop\", \"adapt a framework into a loop\", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.",
+        "file": "skills/focused-loop-builder/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
         }
       },
       "handoff": {
@@ -1281,14 +1289,6 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-07-02"
-        }
-      },
-      "loop-builder": {
-        "description": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate a workflow loop\", \"adapt a framework into a loop\", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.",
-        "file": "skills/loop-builder/SKILL.md",
-        "last_updated": {
-          "author": "Tyrone Ross",
-          "date": "2026-06-09"
         }
       },
       "mcp-builder": {
@@ -1432,7 +1432,7 @@
         "file": "skills/sync-skills/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-28"
+          "date": "2026-07-02"
         }
       },
       "telemetry": {
