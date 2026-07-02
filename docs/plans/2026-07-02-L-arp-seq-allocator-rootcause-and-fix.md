@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 # ARP seq-allocator root cause + fix + stabilization (mixed-binary, NOT concurrency)
 
+**STABILIZATION EXECUTED 2026-07-02 (Claude, user-approved) — ✅ VERIFIED.** Fleet reinstalled (all 3 rally binaries = f1d3466, canonical_max_seq allocator; old copies backed up). Dups 3038/39/40 renumbered to 3041/43; .reconcile-cache.json deleted; whole-.rally backup at `.rally.bak-20260702T133828Z`. Verified: 0 dups, rally room/next OK, append probe got seq 3044 (canonical max+1, NOT count+1) and survives replay. Ledger healthy (max_seq 3045). REMAINING (Codex): commit the working-tree fix, add the last-line dup gate, tag v0.1.4, land the version-skew guard.
+
 **Status:** diagnosis Fable-verified (byte + source + git + `strings`). Executor: Codex (ARP repo). Claude: review/verify. **Supersedes the J runbook's "just hand-repair" — hand-repair alone re-corrupts.**
 
 ## Root cause (verified)
