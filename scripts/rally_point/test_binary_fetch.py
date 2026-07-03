@@ -7,7 +7,7 @@ Two layers:
   * Unit (always run): host-triple mapping, version-pin parsing, cache path,
     unsupported-host → None.
   * Native integration (run when the pinned asset is reachable for this host):
-    fetch the REAL v0.1.4 binary, verify sha256 + version pin, and resolve a
+    fetch the REAL v0.1.5 binary, verify sha256 + version pin, and resolve a
     full-capability channel through discovery_bridge using the fetched binary.
     Skips cleanly (never fails) when offline / asset absent / unsupported host.
 """
@@ -42,9 +42,10 @@ class FetchUnitTests(unittest.TestCase):
             self.assertEqual(bf.host_triple(), "x86_64-unknown-linux-gnu")
 
     def test_unsupported_host_returns_none(self) -> None:
-        # Intel macOS has NO published v0.1.4 asset → unsupported → loud upstream.
-        with mock.patch("platform.system", return_value="Darwin"), \
-             mock.patch("platform.machine", return_value="x86_64"):
+        # A host with no published asset (FreeBSD not in the triple map) →
+        # unsupported → loud upstream. (Intel macOS is SUPPORTED as of v0.1.5.)
+        with mock.patch("platform.system", return_value="FreeBSD"), \
+             mock.patch("platform.machine", return_value="amd64"):
             self.assertIsNone(bf.host_triple())
             self.assertIsNone(bf.ensure_binary())
         # musl/Alpine, exotic arch → unsupported.
@@ -172,12 +173,13 @@ class UnsupportedHostLoudTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_unsupported_host_resolves_loud_unavailable(self) -> None:
-        # Intel macOS has no published v0.1.4 asset → unsupported → loud.
+        # FreeBSD has no published asset → unsupported → loud. (Intel macOS is
+        # SUPPORTED as of v0.1.5, so use a host genuinely absent from the map.)
         # Isolate XDG_CACHE_HOME so no real previously-fetched binary leaks in
         # as a repo-local candidate (an unsupported host would have no cache).
         empty_cache = self.tmp / "xdg-cache"
-        with mock.patch("platform.system", return_value="Darwin"), \
-             mock.patch("platform.machine", return_value="x86_64"), \
+        with mock.patch("platform.system", return_value="FreeBSD"), \
+             mock.patch("platform.machine", return_value="amd64"), \
              mock.patch("shutil.which", return_value=None), \
              mock.patch.dict(os.environ, {
                  "BUILD_LOOP_DISABLE_SIBLING_RALLY": "1",
@@ -203,10 +205,10 @@ def _asset_reachable_for_host() -> bool:
 
 @unittest.skipUnless(
     _asset_reachable_for_host(),
-    "pinned v0.1.4 asset not reachable for this host (offline / unsupported)",
+    "pinned v0.1.5 asset not reachable for this host (offline / unsupported)",
 )
 class FetchNativeIntegrationTests(unittest.TestCase):
-    """Runs the FETCHED v0.1.4 binary end-to-end from the build-loop cache."""
+    """Runs the FETCHED v0.1.5 binary end-to-end from the build-loop cache."""
 
     def test_fetch_verify_pin(self) -> None:
         binary = bf.ensure_binary()
@@ -231,7 +233,7 @@ class FetchNativeIntegrationTests(unittest.TestCase):
             self.assertIsNotNone(env, "fetched-binary tier should resolve a channel")
             self.assertEqual(env.resolved_via, "fetched-binary")
             self.assertEqual(env.capability_level, capability.FULL)
-            # v0.1.4 exposes the repo-local (protocol 1.0) surface.
+            # v0.1.5 exposes the repo-local (protocol 1.0) surface.
             self.assertEqual(env.protocol_version, "1.0")
             self.assertTrue(env.channel_dir.endswith(".rally"))
         finally:

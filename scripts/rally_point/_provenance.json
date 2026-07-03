@@ -1,7 +1,7 @@
 {
   "_doc": "Provenance manifest for vendored Rally Point substrate. Maps each scripts/rally_point/<name>.py to its upstream agent-rally-point counterpart (path relative to the ARP repo root) and the SHA-256 of that UPSTREAM file at last reconcile. The drift-detector (sync_rally.py) recomputes the CURRENT upstream hash and flags DRIFT when upstream moved since this baseline \u2014 i.e. 'review whether to port upstream changes into the (intentionally diverged) build-loop copy'. source: null marks a build-loop-original file with no upstream counterpart; the detector skips it cleanly. Read-only; never auto-updates a vendored file. Mirrors scripts/sync_skills.py exactly.",
   "_upstream_repo": "agent-rally-point",
-  "_baseline_set_at": "2026-06-25",
+  "_baseline_set_at": "2026-07-03",
   "files": {
     "changes.py": {
       "source": "build/lib/agent_rally_point/changes.py",
