@@ -12,10 +12,10 @@ is the NORMAL provisioning path — build-loop does NOT commit ~28 MB of binarie
 into git, and does NOT build from source here.
 
 Pinned to ``PINNED_TAG``. The fetched binary must report exactly
-``PINNED_VERSION`` (``rally version`` → ``rally 0.1.3+<sha>``); a binary whose
+``PINNED_VERSION`` (``rally version`` → ``rally 0.1.4+<sha>``); a binary whose
 version line does not match is rejected and re-fetched.
 
-Supported hosts (assets published for v0.1.3):
+Supported hosts (assets published for v0.1.4):
   aarch64-apple-darwin · x86_64-unknown-linux-gnu · aarch64-unknown-linux-gnu
 
 An UNSUPPORTED host (no matching asset — e.g. x86_64-apple-darwin, musl/Alpine,
@@ -42,8 +42,8 @@ import urllib.request
 from pathlib import Path
 
 # --- Pin -------------------------------------------------------------------
-PINNED_TAG = "v0.1.3"
-PINNED_VERSION = "0.1.3"
+PINNED_TAG = "v0.1.4"
+PINNED_VERSION = "0.1.4"
 GH_REPO = "tyroneross/agent-rally-point"
 _RELEASE_BASE = f"https://github.com/{GH_REPO}/releases/download/{PINNED_TAG}"
 
