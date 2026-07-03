@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "ddfd9f77d30a93aebfe545c30bf4408b08a952ad9c140a82efd32fa49865e1a4"
+    "content_sha256": "6e6dbf184810381711eeb43b23089815ad84db9d9fb1031ed9b5e9cb749ba1ab"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1120,7 +1120,7 @@
         "file": "skills/api-registry-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-22"
+          "date": "2026-07-02"
         }
       },
       "architecture-dead": {
@@ -1248,7 +1248,7 @@
         "file": "skills/defenseclaw-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-28"
+          "date": "2026-07-02"
         }
       },
       "focused-loop-builder": {
@@ -1272,7 +1272,7 @@
         "file": "skills/ibr-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-04"
+          "date": "2026-07-02"
         }
       },
       "knowledge": {
@@ -1312,7 +1312,7 @@
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-30"
+          "date": "2026-07-02"
         }
       },
       "native-ax-driver": {
@@ -1360,7 +1360,7 @@
         "file": "skills/prd-bridge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-22"
+          "date": "2026-07-02"
         }
       },
       "recursive-retrospective": {
