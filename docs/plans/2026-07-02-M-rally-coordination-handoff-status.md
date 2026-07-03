@@ -9,7 +9,7 @@
 
 ## LATEST — shipped & verified (done)
 
-**ARP `v0.1.4` released** (tag `v0.1.4`, HEAD `6fbbd95`, 4 public binary assets published, not draft). This closes the ledger-corruption saga:
+**ARP `v0.1.4` released** (tag `v0.1.4`, HEAD `6fbbd95`, release not draft). **3 of 4 platform binaries published** — Linux `x86_64`/`aarch64` + macOS `aarch64` (Apple Silicon) built and attached; **`x86_64-apple-darwin` (Intel Mac) is NOT published** — its `macos-13` job stalled in the runner queue (GitHub is retiring the Intel `macos-13` runner; the original run waited ~5h and never got one). A rebuild was re-dispatched via `workflow_dispatch` against the existing `v0.1.4` tag. This closes the ledger-corruption saga:
 - **Root cause eliminated:** old binaries allocated seq from the derived `facts.db` row-COUNT, not the canonical segment MAX; with a seq gap (June write-drop) COUNT<MAX, so every rebuild made an old binary collide at the tail. NOT concurrency (an flock already serializes writers; ARP is multi-writer by design). Trigger was our own hand-repair (cache delete → rebuild → counter reset).
 - **Fix (committed + released):** `4e575c3` canonical high-water allocator; `0abaf54` last-line dup-gate (loud error, not silent dup) + fingerprinted fast path (order-independent) + 2 regression tests (full suite **407 green**, CI hermetic-green).
 - **Plan/status bus (I-3) SHIPPED** (`63788b7`): `rally backlog add/update --target/--status/--expected-by`; `rally next` surfaces targeted plan items as an actionable `update_plan_status` obligation → peers forecast ETAs, plan requests can't sit unconsumed. (This doc's backlog dogfoods it.)
@@ -25,7 +25,7 @@
 
 | id | owner | status | Expected outcome |
 |---|---|---|---|
-| `release-verify-v0.1.4` | claude_code | in_progress | Confirm release-commit CI green + `release.yml` published (✅ 4 assets, not draft). Reinstall on any OTHER machines — binary-install lag is the recurring systemic cause. |
+| `release-verify-v0.1.4` | claude_code | blocked | ⚠️ **3 of 4 triples published** (Intel `x86_64-apple-darwin` pending — `macos-13` runner starvation; rebuild re-dispatched for `v0.1.4`). Release not draft; the 3 published binaries verify green. Blocked on a `macos-13` runner OR an infra decision to drop the Intel target. Reinstall on any OTHER machines — binary-install lag is the recurring systemic cause. |
 | `plugin-manifest-icon-fix` | codex | blocked | Manifests reference `./assets/app-icon-rally-point-v5.png` which doesn't exist (only v2/v3/v4). Create v5 or repoint to v4, then commit the 5 manifests + REUSE.toml + assets **together**. (Skipped in the v0.1.4 takeover.) |
 | `h-checkout-ownership` | codex | planned | I-1: `rally check before-write` keys conflict on **stable session id** (not tool label, `check.rs:128`) + checkout scope + verdict vocab (ok/block/warn/exempt) + `handoff_command`. WARN-first. Plan `H-*`. |
 | `i2-engagement-arp` | codex | planned | `rally check engagement` → `ready\|not-ready(reason)`; expose watcher/drain state. Plan `I-*`. |
