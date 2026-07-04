@@ -809,6 +809,36 @@ _PROMPT_CONCAT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# RHS extractor for the `prompt +=` form (first _PROMPT_CONCAT_RE alternative)
+_PROMPT_APPEND_RE = re.compile(r"prompt\s*\+=\s*(.*)$", re.IGNORECASE)
+
+
+def _static_prompt_rhs(lines: list[str], lineno: int) -> bool:
+    """True when a `prompt +=` RHS is a fully static literal — a closed plain
+    string or a triple-quoted block with no interpolation (`\\(` Swift, `${` JS)
+    — so it cannot carry user input. Anything else (identifiers, calls,
+    interpolation) stays flagged. Added 2026-07-03 after 4 observed false
+    positives on static instruction blocks in a Swift consumer repo.
+    """
+    m = _PROMPT_APPEND_RE.search(lines[lineno - 1])
+    if not m:
+        return False
+    rhs = m.group(1).strip().rstrip(";").strip()
+    if rhs.startswith('"""'):
+        rest = rhs[3:]
+        if '"""' in rest:  # opened and closed on the same line
+            return "\\(" not in rest and "${" not in rest
+        for follow in lines[lineno:lineno + 200]:  # scan to the closing delimiter
+            if "\\(" in follow or "${" in follow:
+                return False
+            if '"""' in follow:
+                return True
+        return False  # unterminated within window — stay conservative, flag
+    if len(rhs) >= 2 and rhs[0] in "\"'`" and rhs.endswith(rhs[0]):
+        return "\\(" not in rhs and "${" not in rhs
+    return False
+
+
 # Wildcard tool permissions
 _WILDCARD_TOOLS_RE = re.compile(
     r"""(?:tools|allowedTools|tool_choice)\s*[=:]\s*["\[]['"]?\s*\*\s*['"]?["\]]""",
@@ -830,7 +860,7 @@ def check_G_prompt_injection(path: Path, lines: list[str]) -> list[dict[str, Any
         if stripped.startswith("//") or stripped.startswith("#"):
             continue
 
-        if _PROMPT_CONCAT_RE.search(raw):
+        if _PROMPT_CONCAT_RE.search(raw) and not _static_prompt_rhs(lines, lineno):
             findings.append(_finding(
                 severity="MEDIUM",
                 owasp_ids="LLM01/LLM08/ASI02",

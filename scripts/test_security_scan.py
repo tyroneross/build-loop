@@ -147,6 +147,48 @@ class TestCheckE(unittest.TestCase):
         self.assertEqual(self._run("src/lib/helper.ts", lines), [])
 
 
+class TestCheckGStaticPromptRHS(unittest.TestCase):
+    """`prompt +=` with a provably static RHS must not flag; dynamic RHS must."""
+
+    def _g(self, lines, name="src/Coach.swift"):
+        return security_scan.check_G_prompt_injection(Path(name), lines)
+
+    def test_static_single_line_literal_not_flagged(self):
+        self.assertEqual(self._g(['prompt += "\\n\\n"\n']), [])
+
+    def test_static_multiline_block_not_flagged(self):
+        lines = [
+            'prompt += """\n',
+            "Return one JSON object only. No prose outside JSON.\n",
+            '{ "summary": "1 short paragraph" }\n',
+            '"""\n',
+        ]
+        self.assertEqual(self._g(lines), [])
+
+    def test_interpolated_multiline_block_still_flagged(self):
+        lines = [
+            'prompt += """\n',
+            "Topic: \\(topic)\n",
+            '"""\n',
+        ]
+        self.assertEqual(len(self._g(lines)), 1)
+
+    def test_bare_identifier_still_flagged(self):
+        self.assertEqual(len(self._g(["prompt += userInput\n"])), 1)
+
+    def test_wrapped_call_still_flagged(self):
+        # Sanitizer calls are judged at the call site via nosec, not trusted by name.
+        self.assertEqual(
+            len(self._g(["prompt += PromptBoundary.turnBlock(role, content)\n"])), 1
+        )
+
+    def test_js_template_interpolation_still_flagged(self):
+        self.assertEqual(len(self._g(["prompt += `hi ${name}`\n"], "src/x.ts")), 1)
+
+    def test_unterminated_multiline_stays_flagged(self):
+        self.assertEqual(len(self._g(['prompt += """\n', "static text\n"])), 1)
+
+
 class TestCleanFile(unittest.TestCase):
     def test_no_findings_on_clean_code(self):
         lines = [

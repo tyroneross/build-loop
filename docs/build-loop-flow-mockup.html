@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "6e6dbf184810381711eeb43b23089815ad84db9d9fb1031ed9b5e9cb749ba1ab"
+    "content_sha256": "7e7c514439472d100114e59c50552857841876963eaa6b7f40a7ac092019c3b3"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1779,6 +1779,12 @@
       "scripts/enforce_canonical_memory.py": "enforce_canonical_memory.py — C-MEMORY/canonical_writer enforcement gate.",
       "scripts/enforce_retro_signals.py": "enforce_retro_signals.py — second signal source for recurring-pattern-detector.",
       "scripts/exec_state.py": "exec_state.py — producer CLI for execution-state item_iteration telemetry.",
+      "scripts/extensions_approve.py": "extensions_approve.py — list pending drafts; approve one (checks -> move into plugin/).\"\"\"",
+      "scripts/extensions_check.py": "extensions_check.py — deterministic pre-approval checks for a learned skill.\"\"\"",
+      "scripts/extensions_init.py": "extensions_init.py — scaffold ~/.build-loop-extensions (idempotent) + skills-dir registration.\"\"\"",
+      "scripts/extensions_paths.py": "extensions_paths.py — single owner of the ~/.build-loop-extensions layout.\"\"\"",
+      "scripts/extensions_pending_count.py": "extensions_pending_count.py — count pending drafts (for the session-start nudge). Fail-open to 0.\"\"\"",
+      "scripts/extensions_route.py": "extensions_route.py — consumer default: place a drafted skill into pending/ (never loads until approved).\"\"\"",
       "scripts/gate_builder.py": "gate_builder.py — scaffold a DRAFT enforced check from a Prevention-Pattern spec.",
       "scripts/handoff/__main__.py": "Compose a build-loop handoff document from .build-loop/ run state.",
       "scripts/hook_budget_lint.py": "hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.",
@@ -1860,6 +1866,7 @@
       "scripts/plan_verify.py": "",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
       "scripts/prior_art.py": "Cross-project prior-art digest for Phase 1 Assess (P4).",
+      "scripts/privacy.py": "privacy.py — reusable secret/PII deny-pattern scanner.",
       "scripts/procedural_governance.py": "Three-phase procedural memory governance.",
       "scripts/project_resolver.py": "Resolve a current working directory to a project tag.",
       "scripts/promote_violation_to_lesson.py": "Promote recurring architecture violations into build-loop-native lessons.",
@@ -2033,7 +2040,8 @@
         "session-start-plugin-heal.sh",
         "session-start-memory.sh",
         "session-start-closeout.sh",
-        "closeout.sh"
+        "closeout.sh",
+        "session-start-extensions.sh"
       ],
       "UserPromptSubmit": [
         "route-guard.sh"
