@@ -45,8 +45,29 @@ def test_unreadable_transcript_is_treated_trivial(tmp_path):
 
 
 def test_repeated_workflow_becomes_skill_proposal():
+    # non-generic: includes a step outside the core toolset (a Skill invocation)
     cands = [{"kind": "skill_or_workflow_candidate", "shape": "repeated_tool_sequence",
-              "session_count": sweep.SKILL_MIN_SESSIONS, "sequence": ["Bash:command"]}]
+              "session_count": sweep.SKILL_MIN_SESSIONS,
+              "sequence": ["Skill:build-loop", "Bash:command"]}]
+    skills, lessons = sweep.split_candidates(cands)
+    assert len(skills) == 1 and not lessons
+
+
+def test_generic_core_tool_sequence_is_dropped():
+    # the universal edit-test loop (core tools only) is noise at ANY count —
+    # this exact shape re-marked 6 consecutive sessions before the filter
+    cands = [{"kind": "skill_or_workflow_candidate", "shape": "repeated_tool_sequence",
+              "session_count": 24,
+              "sequence": ["Edit:replace_all", "Bash:command", "Bash:command"]}]
+    skills, lessons = sweep.split_candidates(cands)
+    assert not skills and not lessons
+
+
+def test_manual_command_ritual_is_not_gated_by_generic_filter():
+    # rituals carry real command content in other fields; the generic-sequence
+    # filter must not touch them even when a sequence-ish field is absent
+    cands = [{"kind": "skill_or_workflow_candidate", "shape": "manual_command_ritual",
+              "session_count": sweep.SKILL_MIN_SESSIONS}]
     skills, lessons = sweep.split_candidates(cands)
     assert len(skills) == 1 and not lessons
 

@@ -118,12 +118,37 @@ def run_miner(build_loop: Path, out_dir: Path) -> dict:
         return {}
 
 
+# Core-tool steps carry no reusable semantic content: a sequence made only of
+# these is the universal edit-test loop and recurs in EVERY coding session, so
+# proposing it as a skill is permanent noise (observed 2026-07-04: the same two
+# ×24-session `Edit→Bash` candidates re-marked across 6 consecutive sessions).
+GENERIC_TOOL_PREFIXES = {
+    "Bash", "Edit", "MultiEdit", "Read", "Write", "Grep", "Glob",
+    "Task", "Agent", "TodoWrite", "NotebookEdit", "LS",
+}
+
+
+def sequence_is_generic(c: dict) -> bool:
+    """True when a repeated_tool_sequence has only core-tool steps (e.g.
+    `Edit:replace_all → Bash:command`). Sequences with a step outside the core
+    toolset (Skill, MCP tool, slash command) keep their candidacy; shapes that
+    carry content elsewhere (manual_command_ritual) are never gated here."""
+    if c.get("shape") != "repeated_tool_sequence":
+        return False
+    seq = c.get("sequence") or []
+    if not seq:
+        return False
+    return all(str(s).split(":", 1)[0] in GENERIC_TOOL_PREFIXES for s in seq)
+
+
 def split_candidates(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
     """skill proposals (repeated workflow, worth the token/time savings) vs lessons."""
     skills, lessons = [], []
     for c in candidates:
         if not isinstance(c, dict):
             continue
+        if sequence_is_generic(c):
+            continue  # universal edit-test loop — noise, not a skill or lesson
         n = c.get("session_count", 0) or 0
         shape = c.get("shape", "")
         kind = c.get("kind", "")
