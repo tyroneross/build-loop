@@ -17,7 +17,7 @@
 #      mark `.build-loop/architecture/.enrich-needed` and EXIT — DEFER the
 #      actual enriched scan to the scout pass (OQ3); never run it inline.
 #   4. Else bail silently if file extension is not in the source-code
-#      allowlist (.py .ts .tsx .js .jsx .mjs .cjs). Doc-only edits (.md,
+#      allowlist (.py .ts .tsx .js .jsx .mjs .cjs .rs). Doc-only edits (.md,
 #      .txt, plain .json, images) never mark architecture stale or fire a scan.
 #   5. Resolve to repo-relative path; bail if not in file_map.
 #   5. Mark stale (always — even if a scan is in flight, orchestrator must see
@@ -50,7 +50,7 @@ STDIN_JSON=$(cat 2>/dev/null)
 REL_PATH=$(WORKDIR="$WORKDIR" FILE_MAP="$FILE_MAP" STDIN_JSON="$STDIN_JSON" python3 - <<'PYEOF' 2>/dev/null
 import json, os, sys
 from pathlib import Path
-ALLOWED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+ALLOWED_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"}
 MANIFESTS = {
     "package.json", "package-lock.json", "pnpm-lock.yaml", "requirements.txt",
     "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "go.mod", "Gemfile",

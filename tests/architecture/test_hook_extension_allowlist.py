@@ -2,7 +2,7 @@
 
 The hook (`hooks/pre-edit-architecture.sh`) must NOT mark architecture stale
 or fire a scan for doc-only edits (`.md`, `.txt`, `.json`, etc.). Source-code
-edits in the allowlist (`.py .ts .tsx .js .jsx .mjs .cjs`) still mark stale.
+edits in the allowlist (`.py .ts .tsx .js .jsx .mjs .cjs .rs`) still mark stale.
 
 This locks Priority 4 of the architecture-awareness follow-up.
 """
@@ -33,6 +33,7 @@ def _seed_workspace(tmp_path: Path) -> Path:
             "schema_version": "1.0.0",
             "files": {
                 "src/foo.py": "abc123",
+                "src/lib.rs": "cafef00d",
                 "README.md": "deadbeef",
             },
         }),
@@ -115,6 +116,15 @@ def test_py_edit_marks_stale(tmp_path: Path) -> None:
     rc = _run_hook(hook, tmp_path, "src/foo.py")
     assert rc == 0
     assert _is_stale(tmp_path) is True, "stale must flip to true after .py edit"
+
+
+def test_rs_edit_marks_stale(tmp_path: Path) -> None:
+    """A tracked .rs edit must mark stale — Rust source edits previously
+    never marked architecture stale (2026-07-03 harness assessment gap)."""
+    hook = _seed_workspace(tmp_path)
+    rc = _run_hook(hook, tmp_path, "src/lib.rs")
+    assert rc == 0
+    assert _is_stale(tmp_path) is True, "stale must flip to true after .rs edit"
 
 
 def test_untracked_py_does_not_mark_stale(tmp_path: Path) -> None:
