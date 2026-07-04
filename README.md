@@ -100,28 +100,17 @@ python3 scripts/install_memory.py --ensure-project build-loop
 
 ## Commands
 
-Normal coding work, auto-routed to build, fix, refactor, optimize, research, or test:
+`/build-loop:run` is the only command. Describe the task in plain language — build, fix, refactor, optimize, research, debug, test, root-cause, retrospective, or plan — and the orchestrator classifies intent and routes to the right internal mode. You never pick a mode or a flag.
 
 ```text
 /build-loop:run add billing settings with tests
+/build-loop:run tests pass locally but fail in CI        # routes to deep debugging
+/build-loop:run reduce API latency                       # routes to the optimize loop
+/build-loop:run compare queue providers                  # routes to research (no commits)
+/build-loop:run self-improve against recent runs         # runs Phase 6 Learn alone
 ```
 
-Deep iterative debugging (also auto-invoked by the loop on review failures):
-
-```text
-/build-loop:debug tests pass locally but fail in CI
-```
-
-Direct advanced modes:
-
-```text
-/build-loop:run optimize reduce API latency
-/build-loop:research-run compare queue providers
-/build-loop:test --strict
-/build-loop:self-improve
-```
-
-`/build-loop:self-improve` runs Phase 6 Learn alone against recent runs without a new build. The repo also ships native debugger commands (`/build-loop:debugger`, `/build-loop:debugger-detail`, `/build-loop:debugger-scan`, `/build-loop:debugger-status`, `/build-loop:assess`).
+Debugging is also auto-invoked by the loop itself on a review failure. The former mode and utility commands (`debug`, `research-run`, `test`, `self-improve`, `debugger*`, `assess`) are now internal, reached by intent rather than as separate commands.
 
 ## Host surfaces
 
@@ -131,7 +120,7 @@ The repo ships three agent surfaces from one source:
 - **Codex plugin**: Codex metadata plus a slim public skill entrypoint (`plugin-artifacts/codex/`).
 - **Host-neutral [`AGENTS.md`](AGENTS.md)**: the same loop methodology for any AGENTS.md-aware tool (Copilot, Cursor, and others), with no Claude-specific integration required.
 
-Surface counts in this release: ~18 commands, ~40 skills, ~28 agents.
+Surface counts in this release: one command (`/build-loop:run`), 44 skills, 28 agents.
 
 ## Agent start protocol
 
