@@ -136,6 +136,20 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py \
 
 The writer auto-detects `source_repo` from the workdir's git remote, appends a row to the lane-local `INDEX.jsonl`, appends a row to the global update ledger at `indexes/updates.jsonl`, and (on update) preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits. Direct writes are repair/fallback work only: use them only when no canonical writer exists or the current task is explicitly a memory-system repair, then run the host index/check step and verify reachability.
 
+### Codex cross-repo write guard
+
+When using Codex `apply_patch`, path resolution is relative to the active
+workspace, not to a shell command `workdir`. If a memory artifact belongs in a
+different repo such as `build-loop-memory`, use one of these safe paths:
+
+- Prefer `scripts/memory_writer.py` for normal memory writes.
+- If direct repair is unavoidable, pass absolute target paths to `apply_patch`.
+- Before moving a generated file that already appeared in a Codex file card,
+  leave an openable pointer, mirror, or stub at the old path and update any
+  dependent indexes/links. Do not strand UI/Finder file cards at missing paths.
+- After a move, verify both the canonical destination and every old path that a
+  user-facing file card, index, or markdown link still references.
+
 ### Reader side — surface peer writes via INDEX.jsonl
 
 Between phases (or at every M2 heartbeat), tail since your last check:

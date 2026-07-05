@@ -220,6 +220,13 @@ Multiple build-loop sessions can run concurrently against the same project acros
      --type feedback --run-id "$RUN_ID" --workdir "$PWD" --host codex \
      --body-file /tmp/memory-body.md
    ```
+   Codex-specific guard: `apply_patch` has no shell `workdir`; relative patch
+   paths target the active workspace. For direct cross-repo memory repairs, use
+   absolute `apply_patch` paths, or write through `memory_writer.py`. If a file
+   was already exposed as a Codex file card and then moved to canonical memory,
+   leave an openable pointer, mirror, or stub at the old path and update any
+   dependent indexes/links so Finder and Codex file cards do not point at a
+   missing path.
 7. **Memory reads (cross-session discovery)** — between phases, tail the index for new peer learnings:
    ```
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail \

@@ -98,6 +98,17 @@ class CodexPluginArtifactTests(unittest.TestCase):
             "research-trigger-policy.md must be mirrored into the bundle references/",
         )
 
+    def test_codex_artifact_documents_cross_repo_apply_patch_guard(self) -> None:
+        text = (ARTIFACT / "AGENTS.md").read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for needle in (
+            "apply_patch",
+            "relative patch paths target the active workspace",
+            "absolute `apply_patch` paths",
+            "pointer, mirror, or stub at the old path",
+        ):
+            self.assertIn(needle, normalized)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
