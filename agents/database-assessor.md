@@ -79,7 +79,7 @@ Determine which type of database issue:
 
 ### Step 1b: Required destructive-FK / data-integrity sweep (LO-5)
 
-On any security-relevant or schema-touching pass, **enumerate destructive foreign-key actions** — grep the schema for `onDelete: Cascade` and `onDelete: SetNull`, plus merge/delete code paths that destroy rather than reassign rows, and missing FK indexes. A cascade that silently deletes user data is an integrity/security finding **even when every route is authed** — the access-control lens (`security-reviewer`) does not catch it, so this sweep is required, not optional. Pair with the `security-reviewer`'s route-auth enumeration; neither lens is a superset (proven both ways, atomize-ai 2026-06-30). Present findings blast-radius-first (see `Skill("build-loop:security-methodology")` §Required sweeps).
+On any security-relevant or schema-touching pass, **enumerate destructive foreign-key actions** — grep the schema for `onDelete: Cascade` and `onDelete: SetNull`, plus merge/delete code paths that destroy rather than reassign rows, and missing FK indexes. A cascade that silently deletes user data is an integrity/security finding **even when every route is authed** — the access-control lens (`security-reviewer`) does not catch it, so this sweep is required, not optional. Pair with the `security-reviewer`'s route-auth enumeration; neither lens is a superset (proven both ways in a private-app stress test on 2026-06-30). Present findings blast-radius-first (see `Skill("build-loop:security-methodology")` §Required sweeps).
 
 ### Step 2: Search Memory
 
