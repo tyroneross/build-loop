@@ -41,7 +41,7 @@ For the **living, auto-generated diagram** of how the loop actually wires up in 
 Install for all three host surfaces on macOS:
 
 ```bash
-npm install -g @tyroneross/build-loop@0.36.0
+npm install -g @tyroneross/build-loop@0.36.1
 build-loop-install --host all
 ```
 
@@ -69,7 +69,7 @@ For GitHub Packages, authenticate first and point the `@tyroneross` scope at the
 ```bash
 npm config set @tyroneross:registry https://npm.pkg.github.com
 npm login --scope=@tyroneross --registry=https://npm.pkg.github.com
-npm install -g @tyroneross/build-loop@0.36.0
+npm install -g @tyroneross/build-loop@0.36.1
 build-loop-install --host all
 ```
 
@@ -220,7 +220,7 @@ It is for developers running AI coding agents on non-trivial changes: features, 
 
 ### What is the fastest way to try it?
 
-`npm install -g @tyroneross/build-loop@0.36.0`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
+`npm install -g @tyroneross/build-loop@0.36.1`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
 
 ### How is it different from just letting an agent code directly?
 
@@ -291,7 +291,7 @@ python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
 npm run codex:build-artifact
 npm pack --dry-run --json
-python3 scripts/verify_release_surface.py --version v0.36.0 --branch main --remote origin --json
+python3 scripts/verify_release_surface.py --version v0.36.1 --branch main --remote origin --json
 ```
 
 Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.

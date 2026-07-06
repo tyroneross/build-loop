@@ -52,6 +52,25 @@ jobs:
           fi
           echo "Version match: $PKG_VERSION"
 
+      - name: Setup Python
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true')
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Python release preflight
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true')
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          python3 scripts/verify_release_surface.py \
+            --version "$PKG_VERSION" \
+            --branch "${GITHUB_REF_NAME}" \
+            --skip-check local_commit_log \
+            --skip-check local_tag \
+            --skip-check branch_head_sha \
+            --skip-check remote_refs \
+            --json
+
       - name: Check npmjs version
         id: npmjs_version
         run: |

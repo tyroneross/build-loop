@@ -4,25 +4,29 @@
 """Verify the complete release surface for a build-loop / plugin version.
 
 A release is not complete just because manifests were edited and the test
-passed locally. The release surface includes seven checks (per
+passed locally. The release surface includes the checks below (per
 references/coordination-rules.md §"Verification of release surface" and
 memory feedback_verification_checks_release_surface). This script runs
-all seven and emits a structured JSON envelope; exit 0 if all pass, 1
+all enabled checks and emits a structured JSON envelope; exit 0 if all pass, 1
 if any fail.
 
 Checks (in order):
-    1. manifest_versions   — every enforced manifest shows the target version
-    2. manifest_test       — scripts/test_plugin_manifest.py exits 0
-    3. local_commit_log    — git log shows a commit on the branch whose
+    1. manifest_versions   — every enforced manifest/package/artifact shows
+                              the target version
+    2. readme_versions     — versioned README install/release examples show
+                              the target version
+    3. manifest_test       — scripts/test_plugin_manifest.py exits 0
+    4. codex_artifact_current — checked-in Codex artifact matches source
+    5. local_commit_log    — git log shows a commit on the branch whose
                               message references the target version
-    4. local_tag           — git tag --list <tag> returns the tag
-    5. branch_head_sha     — git rev-parse <branch> equals the commit SHA
+    6. local_tag           — git tag --list <tag> returns the tag
+    7. branch_head_sha     — git rev-parse <branch> equals the commit SHA
                               referenced by the tag
-    6. remote_refs         — git ls-remote <remote> <branch> <tag> shows
+    8. remote_refs         — git ls-remote <remote> <branch> <tag> shows
                               BOTH refs at the same SHA (load-bearing —
                               without this, a passing local verification
                               can ship nothing)
-    7. fresh_session_load  — OPTIONAL — when --check-cache is passed,
+    9. fresh_session_load  — OPTIONAL — when --check-cache is passed,
                               diff installed cache vs canonical for the
                               plugin's agents/SKILL.md files
 
@@ -36,7 +40,7 @@ CLI:
     Optional:
         --workdir <path>            (defaults to current dir)
         --plugin-slug <slug>        (defaults to plugin.json name)
-        --check-cache               (enable check #7)
+        --check-cache               (enable fresh_session_load)
         --cache-root <path>         (defaults to ~/.claude/plugins/cache)
         --skip-check <name>         (suppress a check; may repeat)
 
@@ -46,7 +50,7 @@ Exit codes:
     2  fatal error (cannot resolve repo, target version, etc.)
 
 The verifier (Codex, CI, second Claude session) calls this instead of
-running the seven commands manually. Coord-file template references it
+running the release commands manually. Coord-file template references it
 as the canonical release-verification entry point.
 """
 from __future__ import annotations
@@ -60,9 +64,20 @@ from pathlib import Path
 from typing import Any
 
 SEMVER_RE = re.compile(r"^v?\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$")
+SEMVER_FRAGMENT = r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?"
+README_VERSION_PATTERNS = (
+    ("npm_build_loop_install", re.compile(rf"@tyroneross/build-loop@(?P<version>{SEMVER_FRAGMENT})")),
+    ("release_surface_version_arg", re.compile(rf"--version\s+v?(?P<version>{SEMVER_FRAGMENT})")),
+)
+README_VERSION_FILES = (
+    "README.md",
+    "plugin-artifacts/codex/README.md",
+)
 RELEASE_SURFACE_CHECKS = (
     "manifest_versions",
+    "readme_versions",
     "manifest_test",
+    "codex_artifact_current",
     "local_commit_log",
     "local_tag",
     "branch_head_sha",
@@ -101,8 +116,11 @@ def check_manifest_versions(workdir: Path, target: str) -> dict[str, Any]:
     """Every enforced manifest file shows the target version."""
     bare = _strip_v(target)
     manifests = {
+        "package.json": "version",
         ".claude-plugin/plugin.json": "version",
         ".codex-plugin/plugin.json": "version",
+        ".agents/plugins/marketplace.json": "version",
+        "plugin-artifacts/codex/.codex-plugin/plugin.json": "version",
     }
     findings: list[dict[str, Any]] = []
     overall_pass = True
@@ -127,6 +145,29 @@ def check_manifest_versions(workdir: Path, target: str) -> dict[str, Any]:
                 "expected": bare, "actual": actual,
             })
             overall_pass = False
+
+    lock_path = workdir / "package-lock.json"
+    if lock_path.is_file():
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            findings.append({"file": "package-lock.json", "status": "fail",
+                             "reason": f"unreadable: {e}"})
+            overall_pass = False
+        else:
+            lock_fields = {
+                "version": lock.get("version"),
+                'packages[""].version': lock.get("packages", {}).get("", {}).get("version"),
+            }
+            for field, actual in lock_fields.items():
+                if actual == bare:
+                    findings.append({"file": "package-lock.json", "field": field,
+                                     "status": "pass", "value": actual})
+                else:
+                    findings.append({"file": "package-lock.json", "field": field,
+                                     "status": "fail", "expected": bare,
+                                     "actual": actual})
+                    overall_pass = False
 
     # marketplace.json — both metadata.version AND plugins[name=<plugin>].version
     market_path = workdir / ".claude-plugin" / "marketplace.json"
@@ -171,8 +212,105 @@ def check_manifest_versions(workdir: Path, target: str) -> dict[str, Any]:
                                          "status": "fail", "expected": bare, "actual": ev})
                         overall_pass = False
 
+    agents_market_path = workdir / ".agents" / "plugins" / "marketplace.json"
+    if agents_market_path.is_file():
+        try:
+            agents_market = json.loads(agents_market_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            findings.append({"file": ".agents/plugins/marketplace.json",
+                             "status": "fail", "reason": f"unreadable: {e}"})
+            overall_pass = False
+        else:
+            meta_v = agents_market.get("metadata", {}).get("version") \
+                if isinstance(agents_market.get("metadata"), dict) else None
+            if meta_v is not None:
+                if meta_v == bare:
+                    findings.append({"file": ".agents/plugins/marketplace.json",
+                                     "field": "metadata.version", "status": "pass",
+                                     "value": meta_v})
+                else:
+                    findings.append({"file": ".agents/plugins/marketplace.json",
+                                     "field": "metadata.version", "status": "fail",
+                                     "expected": bare, "actual": meta_v})
+                    overall_pass = False
+            plugin_json = workdir / ".claude-plugin" / "plugin.json"
+            plugin_name = None
+            if plugin_json.is_file():
+                try:
+                    plugin_name = json.loads(plugin_json.read_text(encoding="utf-8")).get("name")
+                except (OSError, json.JSONDecodeError):
+                    plugin_name = None
+            for entry in agents_market.get("plugins", []):
+                if plugin_name and entry.get("name") == plugin_name and entry.get("version") is not None:
+                    ev = entry.get("version")
+                    if ev == bare:
+                        findings.append({"file": ".agents/plugins/marketplace.json",
+                                         "field": f"plugins[name={plugin_name}].version",
+                                         "status": "pass", "value": ev})
+                    else:
+                        findings.append({"file": ".agents/plugins/marketplace.json",
+                                         "field": f"plugins[name={plugin_name}].version",
+                                         "status": "fail", "expected": bare, "actual": ev})
+                        overall_pass = False
+
     return {
         "name": "manifest_versions",
+        "pass": overall_pass,
+        "findings": findings,
+    }
+
+
+def check_readme_versions(workdir: Path, target: str) -> dict[str, Any]:
+    """Versioned README install/release examples show the target version."""
+    bare = _strip_v(target)
+    findings: list[dict[str, Any]] = []
+    overall_pass = True
+
+    for rel in README_VERSION_FILES:
+        path = workdir / rel
+        if not path.is_file():
+            findings.append({"file": rel, "status": "skipped", "reason": "not present"})
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as e:
+            findings.append({"file": rel, "status": "fail", "reason": f"unreadable: {e}"})
+            overall_pass = False
+            continue
+
+        matches = 0
+        for pattern_name, pattern in README_VERSION_PATTERNS:
+            for match in pattern.finditer(text):
+                matches += 1
+                actual = match.group("version")
+                line = text.count("\n", 0, match.start()) + 1
+                if actual == bare:
+                    findings.append({
+                        "file": rel,
+                        "line": line,
+                        "pattern": pattern_name,
+                        "status": "pass",
+                        "value": actual,
+                    })
+                else:
+                    findings.append({
+                        "file": rel,
+                        "line": line,
+                        "pattern": pattern_name,
+                        "status": "fail",
+                        "expected": bare,
+                        "actual": actual,
+                    })
+                    overall_pass = False
+        if matches == 0:
+            findings.append({
+                "file": rel,
+                "status": "skipped",
+                "reason": "no versioned README examples found",
+            })
+
+    return {
+        "name": "readme_versions",
         "pass": overall_pass,
         "findings": findings,
     }
@@ -190,6 +328,49 @@ def check_manifest_test(workdir: Path) -> dict[str, Any]:
         "pass": rc == 0,
         "findings": [{
             "command": f"{sys.executable} {test.relative_to(workdir)}",
+            "exit_code": rc,
+            "summary": (stderr or stdout).strip().splitlines()[-3:] if (stderr or stdout) else [],
+        }],
+    }
+
+
+def check_codex_artifact_current(workdir: Path) -> dict[str, Any]:
+    """Checked-in Codex artifact matches the canonical source tree."""
+    script = workdir / "scripts" / "build_codex_plugin_artifact.py"
+    artifact = workdir / "plugin-artifacts" / "codex"
+    if not script.is_file() and not artifact.exists():
+        return {"name": "codex_artifact_current", "pass": True,
+                "findings": [{"status": "skipped",
+                              "reason": "no Codex artifact builder or artifact present"}]}
+    if not script.is_file():
+        return {"name": "codex_artifact_current", "pass": False,
+                "findings": [{"status": "fail",
+                              "reason": f"{script.relative_to(workdir)} not present"}]}
+    if not artifact.exists():
+        return {"name": "codex_artifact_current", "pass": False,
+                "findings": [{"status": "fail",
+                              "reason": f"{artifact.relative_to(workdir)} not present"}]}
+    rc, stdout, stderr = _run(
+        [
+            sys.executable,
+            str(script),
+            "--source",
+            str(workdir),
+            "--target",
+            str(artifact),
+            "--check",
+        ],
+        cwd=workdir,
+        timeout=60,
+    )
+    return {
+        "name": "codex_artifact_current",
+        "pass": rc == 0,
+        "findings": [{
+            "command": (
+                f"{sys.executable} {script.relative_to(workdir)} --source . "
+                f"--target {artifact.relative_to(workdir)} --check"
+            ),
             "exit_code": rc,
             "summary": (stderr or stdout).strip().splitlines()[-3:] if (stderr or stdout) else [],
         }],
@@ -352,8 +533,12 @@ def verify_release_surface(
 
     if "manifest_versions" not in skip_checks:
         results.append(check_manifest_versions(workdir, version))
+    if "readme_versions" not in skip_checks:
+        results.append(check_readme_versions(workdir, version))
     if "manifest_test" not in skip_checks:
         results.append(check_manifest_test(workdir))
+    if "codex_artifact_current" not in skip_checks:
+        results.append(check_codex_artifact_current(workdir))
     if "local_commit_log" not in skip_checks:
         results.append(check_local_commit_log(workdir, branch, version))
     if "local_tag" not in skip_checks:
