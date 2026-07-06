@@ -43,10 +43,26 @@ jobs:
           fi
           echo "Version match: $PKG_VERSION"
 
+      - name: Check GitHub Packages version
+        id: ghpkg_version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if npm view "@tyroneross/build-loop@$PKG_VERSION" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "@tyroneross/build-loop@$PKG_VERSION already exists on GitHub Packages"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "@tyroneross/build-loop@$PKG_VERSION is not published on GitHub Packages"
+          fi
+
       - name: Install dependencies
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' || steps.ghpkg_version.outputs.exists != 'true'
         run: npm ci
 
       - name: Build
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' || steps.ghpkg_version.outputs.exists != 'true'
         run: npm run build
 
       - name: Publish (dry-run)
@@ -56,7 +72,27 @@ jobs:
         run: npm publish --dry-run
 
       - name: Publish
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+        if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')) && steps.ghpkg_version.outputs.exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm publish
+
+      - name: Skip GitHub Packages publish
+        if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')) && steps.ghpkg_version.outputs.exists == 'true'
+        run: echo "Skipping GitHub Packages publish because this version is already present."
+
+      - name: Verify GitHub Packages metadata
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          for attempt in $(seq 1 12); do
+            if npm view "@tyroneross/build-loop@$PKG_VERSION" version --registry=https://npm.pkg.github.com; then
+              exit 0
+            fi
+            echo "GitHub Packages metadata not visible yet for $PKG_VERSION; retry $attempt/12"
+            sleep 30
+          done
+          echo "::error::GitHub Packages metadata did not become visible for @tyroneross/build-loop@$PKG_VERSION"
+          exit 1

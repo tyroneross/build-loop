@@ -52,12 +52,24 @@ jobs:
           fi
           echo "Version match: $PKG_VERSION"
 
+      - name: Check npmjs version
+        id: npmjs_version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if npm view "@tyroneross/build-loop@$PKG_VERSION" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "@tyroneross/build-loop@$PKG_VERSION already exists on npmjs"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "@tyroneross/build-loop@$PKG_VERSION is not published on npmjs"
+          fi
+
       - name: Install dependencies
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.verify_only != 'true'
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.verify_only != 'true') && (github.event_name != 'release' || steps.npmjs_version.outputs.exists != 'true')
         run: npm ci
 
       - name: Build
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.verify_only != 'true'
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.verify_only != 'true') && (github.event_name != 'release' || steps.npmjs_version.outputs.exists != 'true')
         run: npm run build
 
       - name: Publish to npmjs (dry-run)
@@ -67,10 +79,14 @@ jobs:
         run: npm publish --dry-run --provenance --access public --registry=https://registry.npmjs.org
 
       - name: Publish to npmjs
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run != 'true')
+        if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run != 'true')) && steps.npmjs_version.outputs.exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public --registry=https://registry.npmjs.org
+
+      - name: Skip npmjs publish
+        if: (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.verify_only != 'true' && github.event.inputs.dry_run != 'true')) && steps.npmjs_version.outputs.exists == 'true'
+        run: echo "Skipping npmjs publish because this version is already present."
 
       - name: Verify npmjs metadata
         if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.verify_only == 'true' || github.event.inputs.dry_run != 'true'))
