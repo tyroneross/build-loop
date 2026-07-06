@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "7e7c514439472d100114e59c50552857841876963eaa6b7f40a7ac092019c3b3"
+    "content_sha256": "fa45e81b9529249a780ff4c2b4da33b83d118df3c0c3608ac10dca521f33b0da"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -905,7 +905,7 @@
         "file": "agents/database-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-06"
         }
       },
       "design-contract-specialist": {
@@ -1058,7 +1058,7 @@
         "file": "agents/security-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-01"
+          "date": "2026-07-06"
         }
       },
       "self-improvement-architect": {
@@ -1400,7 +1400,7 @@
         "file": "skills/security-methodology/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-01"
+          "date": "2026-07-06"
         }
       },
       "security-scan": {
