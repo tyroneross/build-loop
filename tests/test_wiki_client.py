@@ -182,6 +182,18 @@ def test_is_available_false_for_missing_cli(monkeypatch, tmp_path):
     assert is_available() is False
 
 
+def test_default_cli_uses_current_home(monkeypatch, tmp_path):
+    monkeypatch.delenv(wiki_client.ENV_CLI, raising=False)
+    monkeypatch.setattr(wiki_client.shutil, "which", lambda _: None)
+    cli = tmp_path / "ObsidianVault" / "tools" / "scripts" / "llmwiki"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("#!/bin/sh\nexit 0\n")
+    cli.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    wiki_client._AVAILABILITY_CACHE.clear()
+    assert wiki_client._resolve_cli() == str(cli)
+
+
 # ---------------------------------------------------------------------------
 # Integration test: real wiki CLI on the developer machine
 # ---------------------------------------------------------------------------

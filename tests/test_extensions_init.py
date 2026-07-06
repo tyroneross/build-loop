@@ -5,9 +5,15 @@ from extensions_init import ensure_scaffold  # noqa: E402
 
 class InitTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); os.environ["BUILD_LOOP_EXTENSIONS_ROOT"] = self.tmp.name
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old_extensions_root = os.environ.get("BUILD_LOOP_EXTENSIONS_ROOT")
+        os.environ["BUILD_LOOP_EXTENSIONS_ROOT"] = self.tmp.name
     def tearDown(self):
-        del os.environ["BUILD_LOOP_EXTENSIONS_ROOT"]; self.tmp.cleanup()
+        if self.old_extensions_root is None:
+            os.environ.pop("BUILD_LOOP_EXTENSIONS_ROOT", None)
+        else:
+            os.environ["BUILD_LOOP_EXTENSIONS_ROOT"] = self.old_extensions_root
+        self.tmp.cleanup()
 
     def test_creates_structure_and_versioned_manifest(self):
         ensure_scaffold(git_init=False)
@@ -24,7 +30,9 @@ class InitTests(unittest.TestCase):
 
     def test_registers_only_plugin_root(self):
         import extensions_init
-        home = tempfile.TemporaryDirectory(); os.environ["HOME"] = home.name
+        home = tempfile.TemporaryDirectory()
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = home.name
         try:
             ensure_scaffold(git_init=False)
             res = extensions_init.register_skills_dir()
@@ -34,6 +42,10 @@ class InitTests(unittest.TestCase):
             self.assertEqual(link.resolve(), (Path(self.tmp.name) / "plugin").resolve())
             self.assertEqual(extensions_init.register_skills_dir().get("noop"), True)
         finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
             home.cleanup()
 
 if __name__ == "__main__":

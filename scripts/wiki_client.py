@@ -69,7 +69,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CLI = str(Path.home() / "ObsidianVault" / "tools" / "scripts" / "llmwiki")
+DEFAULT_CLI = "~/ObsidianVault/tools/scripts/llmwiki"
 ENV_CLI = "BUILD_LOOP_WIKI_CLI"
 DEFAULT_TIMEOUT_S = 5.0
 EXCERPT_MAX_CHARS = 400

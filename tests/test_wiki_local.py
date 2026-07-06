@@ -86,6 +86,13 @@ def test_is_available_false_when_embeddings_missing(tmp_path: Path, monkeypatch:
     assert wiki_local.is_available() is False
 
 
+def test_default_vault_root_uses_current_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BUILD_LOOP_VAULT_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    import wiki_local  # type: ignore  # noqa: PLC0415
+    assert wiki_local._vault_root() == tmp_path / "ObsidianVault"
+
+
 # ---------------------------------------------------------------------------
 # cosine + lexical math
 # ---------------------------------------------------------------------------

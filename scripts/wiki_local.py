@@ -74,7 +74,7 @@ from typing import Any
 # Configuration
 # ---------------------------------------------------------------------------
 
-VAULT_ROOT_DEFAULT = Path.home() / "ObsidianVault"
+VAULT_ROOT_DEFAULT = "~/ObsidianVault"
 ENV_VAULT_ROOT = "BUILD_LOOP_VAULT_ROOT"
 
 # Vault-side embedder (768-dim, distinct vector space from build-loop's
