@@ -67,6 +67,11 @@ Item 14 — Handoff document: N/A: no implementation tasks
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
 Item 17 — UI input/output contract: N/A: no UI surface
+Item 18 — Dispatch tier per work item: script for validator/test update, sonnet for source docs
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: Current endpoint absent; target summarise endpoint; gap/action/validation mapped below
+Item 21 — Single-shot build guardrails: guardrails section lists regression controls with evidence
+Item 22 — Read-before-edit map: read-before-edit section maps commit to files to inspect first
 -->
 
 ## Goal
@@ -86,6 +91,7 @@ synthesis_dimensions:
 
 ## Locked Decisions
 
+Analytical lens: QFD — need-to-feature mapping
 - Use OpenAI Chat API
 
 ## Scope
@@ -101,6 +107,24 @@ Mobile app changes.
 | # | Commit subject | Files owned | Depends on |
 |---|----------------|-------------|------------|
 | 1 | feat(api): add summarise endpoint | app/api/summarise/route.ts | — |
+
+## Capability Gap Map
+
+| Capability/Workflow | Current source of truth | Target behavior | Gap | Build action | Owned files/contracts | Validation |
+|---|---|---|---|---|---|---|
+| Summarise podcast | No route exists | Authenticated summary endpoint | Missing API surface | Add POST route | app/api/summarise/route.ts | F-criteria Auth |
+
+## Single-Shot Build Guardrails
+
+| Guardrail | Prevents | Evidence/test |
+|---|---|---|
+| Use existing auth guard | Unauthenticated route drift | Auth F-criteria curl |
+
+## Read-Before-Edit Map
+
+| Chunk/Work item | Read first | Why it matters | Edit after |
+|---|---|---|---|
+| Summarise endpoint | lib/api-auth-guard.ts | Reuse auth boundary | app/api/summarise/route.ts |
 
 ## F-Criteria (functional)
 
@@ -158,6 +182,11 @@ def _partial_checklist(answered_count: int) -> str:
         "Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler",
         "Item 16 — Risk reason: N/A",
         "Item 17 — UI input/output contract: N/A: no UI surface",
+        "Item 18 — Dispatch tier per work item: N/A: no delegated work items",
+        "Item 19 — Env-var manifest: N/A: no new external service",
+        "Item 20 — Capability gap map: N/A: no implementation capability gap",
+        "Item 21 — Single-shot build guardrails: N/A: no implementation tasks",
+        "Item 22 — Read-before-edit map: N/A: no implementation tasks",
     ]
     lines = "\n".join(all_items[:answered_count])
     return f"""\
@@ -199,6 +228,11 @@ Item 14 — Handoff document: N/A: no implementation tasks
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
 Item 17 — UI input/output contract: N/A: no UI surface
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: no implementation capability gap
+Item 21 — Single-shot build guardrails: N/A: no implementation tasks
+Item 22 — Read-before-edit map: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -252,22 +286,21 @@ class TestNoChecklistBlock:
         assert payload["checklist_found"] is False
 
     def test_all_14_flagged(self, tmp_path: Path) -> None:
-        # Despite the legacy name, the checklist is now 17 items (Item 15
-        # synthesis_dimensions, Item 16 risk_reason, and Item 17 UI I/O contract). When no
-        # checklist block is present the verifier returns len(ITEMS) without
-        # filtering optionals, so the count tracks the full ITEMS list.
+        # Despite the legacy name, the checklist is now 22 items. When no checklist
+        # block is present the verifier returns len(ITEMS) without filtering optionals,
+        # so the count tracks the full ITEMS list.
         plan = tmp_path / "plan.md"
         plan.write_text(_no_checklist_block(), encoding="utf-8")
         _, payload = _run(plan)
-        assert payload["missing_count"] == 17
+        assert payload["missing_count"] == 22
 
 
 class TestPartialChecklist:
     @pytest.mark.parametrize("answered,expected_missing", [
-        (0, 14),
-        (4, 10),
-        (7, 7),
-        (13, 1),
+        (0, 19),
+        (4, 15),
+        (7, 12),
+        (13, 6),
     ])
     def test_partial_flags_correct_count(
         self, tmp_path: Path, answered: int, expected_missing: int
@@ -322,6 +355,11 @@ Item 13 — Analytical lens: N/A: trivial widget patch
 Item 14 — Handoff document: N/A: no implementation tasks
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: no implementation capability gap
+Item 21 — Single-shot build guardrails: N/A: no implementation tasks
+Item 22 — Read-before-edit map: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -358,12 +396,11 @@ class TestJsonOutputShape:
                 assert key in f, f"Finding missing key '{key}': {f}"
 
     def test_exactly_14_findings(self, tmp_path: Path) -> None:
-        # Findings list always has one entry per ITEM, regardless of optional
-        # filtering. Now 17 items (Item 15 + Item 16 + Item 17).
+        # Findings list always has one entry per ITEM, regardless of optional filtering.
         plan = tmp_path / "plan.md"
         plan.write_text(_all_8_items_answered(), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 17
+        assert len(payload["findings"]) == 22
 
     def test_structural_warnings_key_present(self, tmp_path: Path) -> None:
         """structural_warnings must always be present in output (may be empty list)."""
@@ -374,13 +411,13 @@ class TestJsonOutputShape:
         assert "structural_warning_count" in payload
 
     def test_exactly_14_findings_with_items_9_to_14(self, tmp_path: Path) -> None:
-        """When all required items are answered, findings list has 17 entries
+        """When all required items are answered, findings list has 22 entries
         (one per ITEM, including optional items)."""
         plan = tmp_path / "plan.md"
         plan.write_text(_all_14_items_answered(tmp_path), encoding="utf-8")
         _, payload = _run(plan)
-        assert len(payload["findings"]) == 17, (
-            f"Expected 17 findings; got {len(payload['findings'])}"
+        assert len(payload["findings"]) == 22, (
+            f"Expected 22 findings; got {len(payload['findings'])}"
         )
 
 
@@ -421,6 +458,11 @@ Item 14 — Handoff document: plan.handoff.md generated alongside this plan
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in POST handler
 Item 16 — Risk reason: N/A: no high-consequence boundary in scope
 Item 17 — UI input/output contract: N/A: no UI surface
+Item 18 — Dispatch tier per work item: script for deterministic route/test setup; sonnet for implementation
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: Current endpoint gap and target behavior mapped below
+Item 21 — Single-shot build guardrails: guardrails section lists regression controls with evidence
+Item 22 — Read-before-edit map: read-before-edit section maps chunks to source files
 -->
 
 ## Goal
@@ -486,6 +528,24 @@ Context: Auth provider choice. Alternatives: NextAuth (more boilerplate), Clerk 
 |---|----------------|-------------|------------|
 | 1 | feat(api): add summarise endpoint | app/api/summarise/route.ts | — |
 
+## Capability Gap Map
+
+| Capability/Workflow | Current source of truth | Target behavior | Gap | Build action | Owned files/contracts | Validation |
+|---|---|---|---|---|---|---|
+| Podcast summary | No summarise route exists | Authenticated POST returns summary | Missing API route | Add route and tests | app/api/summarise/route.ts | T-01 integration test |
+
+## Single-Shot Build Guardrails
+
+| Guardrail | Prevents | Evidence/test |
+|---|---|---|
+| Reuse existing auth guard | Route-level auth drift | Auth criterion curl |
+
+## Read-Before-Edit Map
+
+| Chunk/Work item | Read first | Why it matters | Edit after |
+|---|---|---|---|
+| Summarise endpoint | lib/api-auth-guard.ts, ADR-001, ADR-002 | Preserve auth and low-reversibility decisions | app/api/summarise/route.ts |
+
 ## F-Criteria (functional)
 
 | Criterion | Pass condition | Grader |
@@ -523,6 +583,11 @@ Item 5 — Server/client boundary: import 'server-only' in lib/accessor.ts
 Item 6 — Concurrency: Prisma upsert on unique index
 Item 7 — Observability: structuredLog with userId and outcome
 Item 8 — Input validation: Zod schema at route handler entry
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: test intentionally isolates missing items 9-14
+Item 21 — Single-shot build guardrails: N/A: test intentionally isolates missing items 9-14
+Item 22 — Read-before-edit map: N/A: test intentionally isolates missing items 9-14
 -->
 
 ## Goal
@@ -553,6 +618,11 @@ Item 13 — Analytical lens: JTBD — fuzzy user problem space
 Item 14 — Handoff document: N/A: no implementation tasks
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: no implementation capability gap
+Item 21 — Single-shot build guardrails: N/A: no implementation tasks
+Item 22 — Read-before-edit map: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -587,6 +657,11 @@ Item 13 — Analytical lens: QFD
 Item 14 — Handoff document: N/A
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: no implementation capability gap
+Item 21 — Single-shot build guardrails: N/A: no implementation tasks
+Item 22 — Read-before-edit map: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -630,6 +705,11 @@ Item 13 — Analytical lens: QFD
 Item 14 — Handoff document: N/A
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: no implementation capability gap
+Item 21 — Single-shot build guardrails: N/A: no implementation tasks
+Item 22 — Read-before-edit map: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -674,6 +754,11 @@ Item 14 — Handoff document: N/A
 Item 15 — Synthesis dimensions: required keys present below
 Item 16 — Risk reason: N/A
 Item 17 — UI input/output contract: claimed present
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: UI contract test fixture only
+Item 21 — Single-shot build guardrails: N/A: UI contract test fixture only
+Item 22 — Read-before-edit map: N/A: UI contract test fixture only
 -->
 
 ## Goal
@@ -723,7 +808,12 @@ Item 13 — Analytical lens: QFD
 Item 14 — Handoff document: N/A
 Item 15 — Synthesis dimensions: required keys present below
 Item 16 — Risk reason: N/A
-{item_17}-->
+{item_17}Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: UI contract test fixture only
+Item 21 — Single-shot build guardrails: N/A: UI contract test fixture only
+Item 22 — Read-before-edit map: N/A: UI contract test fixture only
+-->
 
 ## Goal
 
@@ -749,6 +839,79 @@ Analytical lens: QFD
 | Surface | Inputs | Outputs | Data taxonomy | Operation | Component mapping | States | Modality | Validation/security | Traceability |
 |---|---|---|---|---|---|---|---|---|---|
 | SearchResults (`components/search/SearchResults.tsx`) | query string | markdown summary and table rows | scalar text input, markdown/table output, computed | Read/query | search input and table renderer | empty, loading, populated, error | text with table fallback | length validation and markdown sanitization | `/api/search` POST and SearchResponse schema |
+"""
+
+
+def _implementation_plan_for_accuracy_sections(*, include_sections: bool) -> str:
+    """Implementation plan fixture for Items 20-22 structural checks."""
+    sections = ""
+    if include_sections:
+        sections = """
+## Capability Gap Map
+
+| Capability/Workflow | Current source of truth | Target behavior | Gap | Build action | Owned files/contracts | Validation |
+|---|---|---|---|---|---|---|
+| Widget create | app/api/widgets/route.ts | Authenticated create preserves validation | Missing update path | Add route branch | app/api/widgets/route.ts | route test |
+
+## Single-Shot Build Guardrails
+
+| Guardrail | Prevents | Evidence/test |
+|---|---|---|
+| Keep validation before persistence | Invalid writes | route test |
+
+## Read-Before-Edit Map
+
+| Chunk/Work item | Read first | Why it matters | Edit after |
+|---|---|---|---|
+| Widget create | app/api/widgets/route.ts | Preserve route contract | app/api/widgets/route.ts |
+"""
+    return f"""\
+# Plan: Accuracy Sections
+
+<!-- checklist
+Item 1 — Auth guard: requireAuth from lib/api-auth-guard.ts
+Item 2 — External APIs: N/A: no external APIs
+Item 3 — Rate-limit criterion: N/A: no paid APIs
+Item 4 — Discoverability: N/A: API-only
+Item 5 — Server/client boundary: import 'server-only' in lib/accessor.ts
+Item 6 — Concurrency: Prisma upsert on unique index
+Item 7 — Observability: structuredLog with userId and outcome
+Item 8 — Input validation: Zod schema at route handler entry
+Item 9 — Stable ID traceability: N/A: no P0 scope
+Item 10 — JSON spec object: N/A: doc-only
+Item 11 — Blocking-and-novel question gate: N/A: no open questions
+Item 12 — Low-reversibility ADRs: N/A: all reversible
+Item 13 — Analytical lens: QFD
+Item 14 — Handoff document: N/A: no implementation handoff in fixture
+Item 15 — Synthesis dimensions: N/A: no UI surface
+Item 16 — Risk reason: N/A
+Item 17 — UI input/output contract: N/A: no UI surface
+Item 18 — Dispatch tier per work item: sonnet for route implementation
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: claimed present for structural validation
+Item 21 — Single-shot build guardrails: claimed present for structural validation
+Item 22 — Read-before-edit map: claimed present for structural validation
+-->
+
+## Goal
+
+Update `app/api/widgets/route.ts`.
+
+## Locked Decisions
+
+Analytical lens: QFD
+
+## Six-Commit Table
+
+| # | Commit subject | Files owned | Depends on |
+|---|---|---|---|
+| 1 | feat(api): update widgets route | app/api/widgets/route.ts | — |
+{sections}
+## F-Criteria (functional)
+
+| Criterion | Pass condition | Grader |
+|---|---|---|
+| Widget create | route test passes | pytest |
 """
 
 
@@ -852,6 +1015,11 @@ Item 13 — Analytical lens: JTBD for fuzzy user scope
 Item 14 — Handoff document: N/A
 Item 15 — Synthesis dimensions: 1 dim — auth+rate-limit interaction in handler
 Item 16 — Risk reason: N/A
+Item 18 — Dispatch tier per work item: N/A: no delegated work items
+Item 19 — Env-var manifest: N/A: no new external service
+Item 20 — Capability gap map: N/A: no implementation capability gap
+Item 21 — Single-shot build guardrails: N/A: no implementation tasks
+Item 22 — Read-before-edit map: N/A: no implementation tasks
 -->
 
 ## Goal
@@ -925,3 +1093,35 @@ class TestStructuralFailuresItem17:
             if f["item_id"] == "item_17_ui_io_contract"
         ][0]
         assert item_17["status"] == "missing"
+
+
+class TestStructuralWarningsItems20To22:
+    """Implementation plans should include accuracy sections."""
+
+    def test_implementation_plan_missing_accuracy_sections_warns(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(
+            _implementation_plan_for_accuracy_sections(include_sections=False),
+            encoding="utf-8",
+        )
+        _, payload = _run(plan)
+        warn_ids = {w["item_id"] for w in payload.get("structural_warnings", [])}
+        assert {
+            "item_20_capability_gap_map",
+            "item_21_single_shot_guardrails",
+            "item_22_read_before_edit_map",
+        }.issubset(warn_ids)
+
+    def test_implementation_plan_with_accuracy_sections_no_item20_to_22_warnings(
+        self, tmp_path: Path
+    ) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text(
+            _implementation_plan_for_accuracy_sections(include_sections=True),
+            encoding="utf-8",
+        )
+        _, payload = _run(plan)
+        warn_ids = {w["item_id"] for w in payload.get("structural_warnings", [])}
+        assert "item_20_capability_gap_map" not in warn_ids
+        assert "item_21_single_shot_guardrails" not in warn_ids
+        assert "item_22_read_before_edit_map" not in warn_ids

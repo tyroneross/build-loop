@@ -9,7 +9,8 @@ and checks whether each required item is answered (not blank, not
 the literal placeholder text, and not omitted entirely).
 
 Exit codes:
-    0 — all required items answered (Items 15 and 17 are conditional on UI files in scope)
+    0 — all required items answered (Items 15 and 17 are conditional on UI files in scope;
+        Item 16 is optional when no high-consequence boundary is identified)
     1 — one or more items missing or unanswered
     2 — verifier error (file not found, parse failure)
 
@@ -47,6 +48,11 @@ ITEMS: list[tuple[str, str]] = [
     ("item_15_synthesis_dimensions",   "Item 15 — Synthesis dimensions"),
     ("item_16_risk_reason",            "Item 16 — Risk reason"),
     ("item_17_ui_io_contract",         "Item 17 — UI input/output contract"),
+    ("item_18_dispatch_tier",           "Item 18 — Dispatch tier per work item"),
+    ("item_19_env_var_manifest",        "Item 19 — Env-var manifest"),
+    ("item_20_capability_gap_map",      "Item 20 — Capability gap map"),
+    ("item_21_single_shot_guardrails",  "Item 21 — Single-shot build guardrails"),
+    ("item_22_read_before_edit_map",    "Item 22 — Read-before-edit map"),
 ]
 
 # Values that count as "not answered" — case-insensitive, stripped
@@ -113,7 +119,7 @@ def is_answered(value: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Structural validators for items 9-14
+# Structural validators for higher-order checklist items
 # ---------------------------------------------------------------------------
 
 # ID patterns: U-NN, F-NN, D-NN, S-NN, T-NN, A-NN
@@ -155,6 +161,29 @@ _UI_IO_REQUIRED_TERMS = (
     "state", "modality", "validation", "traceability",
 )
 
+# Items 20-22 — implementation accuracy checks.
+_IMPLEMENTATION_SCOPE_RE = re.compile(
+    r"""
+    (
+      ^##\s+Six-Commit\s+Table\b
+      |\bCommit\s+subject\b
+      |\bFiles\s+owned\b
+      |\bmodifies_api\s*:
+      |\bdispatch_tier\s*:
+    )
+    """,
+    re.IGNORECASE | re.MULTILINE | re.VERBOSE,
+)
+_CAPABILITY_GAP_SECTION_RE = re.compile(
+    r"^##\s+Capability\s+Gap\s+Map\b", re.IGNORECASE | re.MULTILINE)
+_SINGLE_SHOT_GUARDRAILS_SECTION_RE = re.compile(
+    r"^##\s+Single-Shot\s+Build\s+Guardrails\b", re.IGNORECASE | re.MULTILINE)
+_READ_BEFORE_EDIT_SECTION_RE = re.compile(
+    r"^##\s+Read-Before-Edit\s+Map\b", re.IGNORECASE | re.MULTILINE)
+_CAPABILITY_GAP_REQUIRED_TERMS = ("current", "target", "gap", "validation")
+_SINGLE_SHOT_REQUIRED_TERMS = ("guardrail", "prevents", "evidence")
+_READ_BEFORE_EDIT_REQUIRED_TERMS = ("read first", "why", "edit after")
+
 
 def check_item_15_synthesis_dimensions(plan_text: str) -> tuple[str, str | None]:
     """OK if no UI in scope; else require synthesis_dimensions block w/ all keys."""
@@ -194,6 +223,71 @@ def check_item_17_ui_io_contract(plan_text: str) -> tuple[str, str | None]:
     return ("OK", None)
 
 
+def _section_body(section_re: re.Pattern, text: str) -> str | None:
+    """Return the section body after a matched level-2 heading, or None if absent."""
+    m = section_re.search(text)
+    if not m:
+        return None
+    section_start = m.end()
+    next_heading = re.search(r"^##\s+", text[section_start:], re.MULTILINE)
+    return (
+        text[section_start: section_start + next_heading.start()]
+        if next_heading else text[section_start:]
+    )
+
+
+def _accuracy_section_findings(text: str) -> list[dict]:
+    """Warn when implementation plans omit sections that prevent rework."""
+    body_text = CHECKLIST_RE.sub("", text)
+    if not _IMPLEMENTATION_SCOPE_RE.search(body_text):
+        return []
+
+    findings: list[dict] = []
+    section_specs = [
+        (
+            "item_20_capability_gap_map",
+            "Item 20 — Capability gap map",
+            _CAPABILITY_GAP_SECTION_RE,
+            _CAPABILITY_GAP_REQUIRED_TERMS,
+            "Implementation scope detected but no `## Capability Gap Map` section found.",
+        ),
+        (
+            "item_21_single_shot_guardrails",
+            "Item 21 — Single-shot build guardrails",
+            _SINGLE_SHOT_GUARDRAILS_SECTION_RE,
+            _SINGLE_SHOT_REQUIRED_TERMS,
+            "Implementation scope detected but no `## Single-Shot Build Guardrails` section found.",
+        ),
+        (
+            "item_22_read_before_edit_map",
+            "Item 22 — Read-before-edit map",
+            _READ_BEFORE_EDIT_SECTION_RE,
+            _READ_BEFORE_EDIT_REQUIRED_TERMS,
+            "Implementation scope detected but no `## Read-Before-Edit Map` section found.",
+        ),
+    ]
+    for item_id, label, section_re, required_terms, missing_message in section_specs:
+        section = _section_body(section_re, body_text)
+        if section is None:
+            findings.append({
+                "item_id": item_id,
+                "label": label,
+                "status": "warn",
+                "message": missing_message,
+            })
+            continue
+        lower = section.lower()
+        missing_terms = [term for term in required_terms if term not in lower]
+        if missing_terms:
+            findings.append({
+                "item_id": item_id,
+                "label": label,
+                "status": "warn",
+                "message": "Section is present but missing term(s): " + ", ".join(missing_terms),
+            })
+    return findings
+
+
 def _structural_findings(text: str, plan_path: Path) -> list[dict]:
     """
     Run structural checks for higher-order checklist items against the full plan text.
@@ -202,9 +296,10 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
     These supplement — they do not replace — the checklist block checks.
     """
     findings = []
+    body_text = CHECKLIST_RE.sub("", text)  # strip the <!-- checklist --> block
 
     # Item 9: P0 lines must have at least one T- reference
-    p0_lines = [ln for ln in text.splitlines() if _P0_LINE_RE.search(ln)]
+    p0_lines = [ln for ln in body_text.splitlines() if _P0_LINE_RE.search(ln)]
     if p0_lines:
         p0_without_test = [ln for ln in p0_lines if not _T_ID_RE.search(ln)]
         if p0_without_test:
@@ -220,9 +315,9 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
         else:
             # Also verify at least one full trace chain appears (U-, F-, T-)
             has_chain = (
-                bool(_ID_RE.search(text))
-                and bool(re.search(r"\bU-\d+\b", text))
-                and bool(re.search(r"\bF-\d+\b", text))
+                bool(_ID_RE.search(body_text))
+                and bool(re.search(r"\bU-\d+\b", body_text))
+                and bool(re.search(r"\bF-\d+\b", body_text))
             )
             if not has_chain:
                 findings.append({
@@ -236,7 +331,7 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
                 })
 
     # Item 10: ## Spec Object (JSON) section must exist
-    if not _JSON_SPEC_SECTION_RE.search(text):
+    if not _JSON_SPEC_SECTION_RE.search(body_text):
         findings.append({
             "item_id": "item_10_json_spec_object",
             "label": "Item 10 — JSON spec object",
@@ -248,12 +343,15 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
         })
 
     # Item 11: Open Questions entries must carry blocking-test: annotation
-    oq_match = _OPEN_Q_SECTION_RE.search(text)
+    oq_match = _OPEN_Q_SECTION_RE.search(body_text)
     if oq_match:
         # Extract the Open Questions section (up to the next ## heading)
         oq_start = oq_match.end()
-        next_heading = re.search(r"^##\s+", text[oq_start:], re.MULTILINE)
-        oq_body = text[oq_start: oq_start + next_heading.start()] if next_heading else text[oq_start:]
+        next_heading = re.search(r"^##\s+", body_text[oq_start:], re.MULTILINE)
+        oq_body = (
+            body_text[oq_start: oq_start + next_heading.start()]
+            if next_heading else body_text[oq_start:]
+        )
         # Count question lines (non-empty, non-heading lines)
         q_lines = [ln.strip() for ln in oq_body.splitlines()
                    if ln.strip() and not ln.strip().startswith("#")]
@@ -270,8 +368,8 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
             })
 
     # Item 12: Low-reversibility decision mentions must have ADR link
-    low_rev_lines = [ln for ln in text.splitlines() if _LOW_REV_RE.search(ln)]
-    adr_headings_exist = bool(_ADR_HEADING_RE.search(text))
+    low_rev_lines = [ln for ln in body_text.splitlines() if _LOW_REV_RE.search(ln)]
+    adr_headings_exist = bool(_ADR_HEADING_RE.search(body_text))
     if low_rev_lines and not adr_headings_exist:
         findings.append({
             "item_id": "item_12_low_reversibility_adrs",
@@ -284,7 +382,6 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
         })
 
     # Item 13: Analytical lens line must appear in the plan body (outside the checklist block)
-    body_text = CHECKLIST_RE.sub("", text)  # strip the <!-- checklist --> block
     if not _LENS_LINE_RE.search(body_text):
         findings.append({
             "item_id": "item_13_analytical_lens",
@@ -329,6 +426,8 @@ def _structural_findings(text: str, plan_path: Path) -> list[dict]:
             "status": "fail",
             "message": msg_17,
         })
+
+    findings.extend(_accuracy_section_findings(text))
 
     return findings
 
