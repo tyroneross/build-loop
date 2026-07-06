@@ -112,7 +112,12 @@ CATEGORY_KEYWORDS = [
                       # Marketplace autoupdate compensator (plugin-cache drift
                       # → registry reconcile) is plugin-lifecycle infra:
                       "marketplace", "autoupdate", "installed_plugins",
-                      "catalog drift")),
+                      "catalog drift",
+                      # Learned-extension lifecycle scripts/hooks route draft
+                      # skills through pending/check/approval and are runtime
+                      # lifecycle infrastructure, not product execution.
+                      "extensions_", "session-start-extensions",
+                      "learned skill", "pending drafts")),
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.
@@ -158,7 +163,9 @@ CATEGORY_KEYWORDS = [
                       # hooks that route build tasks to build-loop rather than
                       # superpowers:brainstorming) — routing infrastructure:
                       "route-guard", "route guard", "pre-skill",
-                      "prompt-submit", "skill-routing", "skill routing")),
+                      "prompt-submit", "skill-routing", "skill routing",
+                      # Privacy/secret scanners are validation gates.
+                      "privacy", "secret", "pii")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",

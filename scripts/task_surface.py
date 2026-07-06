@@ -80,6 +80,35 @@ def _markdown_title(path: Path) -> str:
     return path.stem.replace("-", " ")
 
 
+def _frontmatter(path: Path) -> dict[str, str]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    if not lines or lines[0].strip() != "---":
+        return {}
+    data: dict[str, str] = {}
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        data[key.strip().lower()] = value.strip().strip("\"'")
+    return data
+
+
+def _include_markdown_surface_item(surface: str, root: Path, path: Path) -> bool:
+    if surface != "backlog":
+        return True
+    relative_parts = path.relative_to(root).parts
+    if path.name == "INDEX.md" or "archive" in relative_parts:
+        return False
+    status = _frontmatter(path).get("status", "").lower()
+    return status not in {"done", "dropped"}
+
+
 def _unchecked_items(path: Path) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -229,6 +258,8 @@ def markdown_surface_items(
         if not root.exists():
             continue
         for path in sorted(root.rglob("*.md")):
+            if not _include_markdown_surface_item(surface, root, path):
+                continue
             unchecked = _unchecked_items(path)
             if unchecked:
                 for idx, title in enumerate(unchecked, start=1):

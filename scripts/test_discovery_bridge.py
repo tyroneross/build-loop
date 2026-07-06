@@ -304,8 +304,8 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             with mock.patch.object(bridge.shutil, "which", return_value=str(current)):
                 self.assertEqual(bridge.rust_rally_binary(), str(current))
 
-    def test_workdir_sibling_rally_beats_path_rally(self) -> None:
-        """Build Loop should choose the Rally binary paired with the repo."""
+    def test_path_rally_beats_sibling_dev_rally(self) -> None:
+        """A PATH Rally beats a sibling dev build when binary fetch is disabled."""
         path_dir = self.tmp / "bin"
         path_rally = path_dir / "rally"
         self._write_fake_rally(path_rally, self.tmp / "path-channel")
@@ -324,15 +324,17 @@ class DiscoveryBridgeResolutionOrderTests(unittest.TestCase):
             for k, v in os.environ.items()
             if k not in {
                 "AGENT_RALLY_BINARY",
+                "BUILD_LOOP_DISABLE_BINARY_FETCH",
                 "BUILD_LOOP_APPS_ROOT",
                 "BUILD_LOOP_DISABLE_SIBLING_RALLY",
             }
         }
+        env["BUILD_LOOP_DISABLE_BINARY_FETCH"] = "1"
         env["PATH"] = f"{path_dir}:/usr/bin:/bin"
         with self._patched_env(env):
             self.assertEqual(
                 Path(str(bridge.rust_rally_binary(self.workdir))).resolve(),
-                sibling_rally.resolve(),
+                path_rally.resolve(),
             )
 
     def test_repo_local_enter_say_rally_resolves_to_dot_rally(self) -> None:

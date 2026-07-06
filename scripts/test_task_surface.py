@@ -155,6 +155,51 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertEqual(opt_in.returncode, 0, opt_in.stderr)
         self.assertEqual(json.loads(opt_in.stdout)["counts_by_surface"]["proposals"], 1)
 
+    def test_backlog_surface_excludes_done_archive_and_index(self) -> None:
+        backlog = self.workdir / ".build-loop" / "backlog"
+        items = backlog / "items"
+        archive = backlog / "archive"
+        items.mkdir(parents=True)
+        archive.mkdir()
+        (backlog / "INDEX.md").write_text("# Backlog\n\n- Active items: 0\n", encoding="utf-8")
+        (items / "open.md").write_text(
+            "---\nstatus: open\n---\n# Ship active backlog item\n",
+            encoding="utf-8",
+        )
+        (items / "done.md").write_text(
+            "---\nstatus: done\n---\n# Completed backlog item\n",
+            encoding="utf-8",
+        )
+        (items / "dropped.md").write_text(
+            "---\nstatus: dropped\n---\n# Dropped backlog item\n",
+            encoding="utf-8",
+        )
+        (archive / "old.md").write_text("# Archived backlog item\n", encoding="utf-8")
+
+        result = run_surface("--workdir", str(self.workdir), "--no-memory", "--json")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["counts_by_surface"]["backlog"], 1)
+        titles = [row["title"] for row in payload["items"]]
+        self.assertIn("Ship active backlog item", titles)
+        self.assertNotIn("Completed backlog item", titles)
+        self.assertNotIn("Dropped backlog item", titles)
+        self.assertNotIn("Archived backlog item", titles)
+        self.assertNotIn("Backlog", titles)
+
+    def test_legacy_flat_backlog_item_without_frontmatter_still_surfaces(self) -> None:
+        backlog = self.workdir / ".build-loop" / "backlog"
+        backlog.mkdir(parents=True)
+        (backlog / "legacy.md").write_text("# Legacy backlog item\n", encoding="utf-8")
+
+        result = run_surface("--workdir", str(self.workdir), "--no-memory", "--json")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["counts_by_surface"]["backlog"], 1)
+        self.assertEqual(payload["items"][0]["title"], "Legacy backlog item")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
