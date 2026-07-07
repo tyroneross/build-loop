@@ -35,6 +35,18 @@ Agents declare a `(segment, tier)` ROLE; the resolver (`scripts/model_resolver.p
 
 **Why Frontier sits above Thinking for plan + verification (and not for execution):** wrong plans and wrong verdicts compound — a bad plan dispatches N implementers into the wrong work, and a bad verdict ships a regression. The user's standing priority is Accuracy > Speed > Cost (`feedback_accuracy_speed_cost_priority.md`), so the planning and verification surfaces — where one miscall poisons everything downstream — pay the Frontier premium. Execution and coordination stay on Sonnet/Opus because they're either bounded application (Sonnet implementer applies a settled plan) or routing (Opus orchestrator chooses which subagent runs next, with deterministic gates as the safety net).
 
+## Harness amplifies, does not replace, model capability
+
+A better harness (scaffold, tool-set, context budget, verify loop) lifts a weak model *up to* its capability ceiling — it does not push the model *past* it. Treat the harness as a large, routinely-undervalued multiplier, not a substitute for tier. The evidence:
+
+- **Variance decomposition** over 25k+ agent runs / 8 domains attributes ~41.4% of outcome variance to base-model reasoning vs ~1.5% to scaffold (a ~28:1 ratio) — the ceiling is a model property.
+- **SWE-agent** raised the *same* GPT-4 Turbo from 3.8% (RAG pipeline) to 12.5% (ACI scaffold) — a 3.3× harness lift, yet still only 12.5% *absolute*. A weak base stays absolutely unreliable on hard tasks no matter the harness.
+- Internal dogfood corroboration: after a transport/parser fix unblocked a small local model's tool calls (0→8 parsed), the *model* ceiling remained — it still could not produce compiling Rust.
+
+**Routing consequence (keep as-is):** route hard, open-ended reasoning UP to the frontier tier; route bounded, oracle-checkable work DOWN to local/small models. Do NOT invest harness effort expecting a small/local model to clear reasoning-heavy tasks — that is a ceiling failure, not a scaffold failure, and no amount of harness engineering fixes it. When a reliability failure appears (agent lies about success, doesn't follow through, unsafe action), route to harness/verify/guardrail fixes, not to a bigger prompt or a smaller-model-plus-better-scaffold gamble.
+
+Source: `build-loop-memory/research/2026-07-06-ai-coding-fundamentals-and-harness-claims.md` (Claim 4 — "MIXED, leaning CHALLENGE on the strong form"; variance-decomposition + SWE-agent + internal ledger).
+
 ## Provider-swap recipe
 
 Build-loop's agent frontmatter uses Anthropic model aliases (`fable`, `opus`, `sonnet`, `haiku`) because Claude Code is the primary host. To run on a different provider:

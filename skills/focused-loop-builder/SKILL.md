@@ -52,6 +52,37 @@ Keep the runner generic and the loop domain-specific. Do not create a new orches
      python3 .build-loop/loops/<loop-id>/validators/validate_loop.py
      ```
 
+## Deterministic vs AI Step Rubric
+
+For every step in a generated loop, decide whether it is a hardcoded SCRIPT (deterministic) or an AI/LLM step. **Default to code; earn the LLM call.** A probabilistic step placed on a deterministic problem costs money, latency, and audit-failures on *every* run; a deterministic step on a genuinely ambiguous problem fails *visibly* on the long tail. The costs are asymmetric, so when in doubt, choose deterministic.
+
+**DETERMINISTIC (script / rule)** — pick this when the step has any of:
+
+- Enumerable / bounded inputs.
+- Machine-checkable output against a fixed contract.
+- Commits an irreversible or system-of-record action (write, publish, send, migrate).
+- A safety, compliance, or financial threshold.
+- High call-frequency or cost-sensitivity.
+- Must-not-vary-run-to-run output (determinism is part of the contract).
+- Structure the shell / AST / schema already encodes (parse it, don't ask a model to guess it).
+
+**AI / PROBABILISTIC (LLM)** — pick this only when the step genuinely needs:
+
+- Natural-language understanding of intent, tone, or semantics.
+- Open-ended generation, summarization, or insight-extraction.
+- Long-tail inputs no finite rule covers.
+- Judgment or ambiguity as the *actual work*, not incidental to it.
+
+**HYBRID is the default shape:** deterministic scaffold → a narrow LLM step only where a rule can't reach → a deterministic verify/gate on the LLM output. Every generated LLM step must carry (a) an output schema/type and (b) a deterministic post-check. **If you can't write the post-check, the step's boundary is wrong** — narrow the LLM's job until its output is checkable.
+
+**Tie-breaker:** default to deterministic.
+
+This rubric is the loop-authoring twin of build-loop's Item-18 `dispatch_tier` `script` eligibility test (`skills/spec-writing/SKILL.md` §Item 18 — machine-checkable output, fully enumerable inputs, tool exists or is ≤~50 LOC + colocated test) and the repo's deterministic-first posture (`skills/build-loop/references/deterministic-checks.md` where present). Assign the same way here: a loop step earns an LLM tier only when a script cannot reach the work.
+
+Provenance for the rubric (cite when adapting): Anthropic, "Building Effective Agents" (start with the simplest thing that works; prefer composable *workflows* with deterministic code paths + gates over open-ended agents); OpenAI, "A Practical Guide to Building Agents" (validate you actually NEED an agent before building one; rate each tool/action by write-access, reversibility, and financial impact, and gate high-risk actions deterministically). Both land on the same posture build-loop already runs: deterministic by default, LLM where judgment is the work, a check on every probabilistic output. See `build-loop-memory/research/2026-07-06-ai-coding-fundamentals-and-harness-claims.md` (Claim 5).
+
+> **Loop-spec encoding.** Declare each step's assignment with the optional `step_type` (`script | ai | hybrid`) and `post_check` fields per phase — see `references/spec-format.md` §"Deterministic vs AI Steps". These are advisory today (no generator lint yet — see the note in that section); write them so the rubric is auditable by a reviewer and enforceable later.
+
 ## Skill Chaining Guidance
 
 Use skill chaining when the loop has stable phase boundaries and at least one phase is better handled by an existing specialized skill.

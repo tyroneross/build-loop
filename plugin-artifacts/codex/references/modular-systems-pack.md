@@ -31,6 +31,14 @@ When taking an exception, record:
 MODULARITY EXCEPTION: <why simpler/integrated is better for this use case>
 ```
 
+## Module Shape Is a Cost Lever, Not an Accuracy Gate
+
+Module-shape guidance — **narrow public interface + small, well-named internal files + a testable boundary per capability** — is a **cost** lever, not a correctness gate. Apply it proportionally; **never make it build-blocking.**
+
+A controlled minimal-pair study (matched repos differing only in cleanliness) measured the payoff of cleaner, better-shaped code as roughly **−34% agent file-revisitation/thrash and −7–8% tokens**, with **~0 change in task pass-rate** (91.3% clean vs 92.1% messy). So better module shape makes an agent navigate a codebase *cheaper*, not *more correct*. The "deep module" tension is also illusory: deep constrains *interface width* (fewer symbols the model must hold in context) while "small files" constrains *token load per read* — orthogonal, and the best-supported synthesis is a deep module implemented across small internal files, which modern sub-agent tooling (external refs + exploration summaries) already delivers without fat single files.
+
+Because the win is cost and the accuracy delta is unproven, treat this as guidance the Critic can *surface*, not a gate that can *block*. Do not mandate refactors for module depth; flag avoidable thrash, but ship on correctness. Source: `build-loop-memory/research/2026-07-06-ai-coding-fundamentals-and-harness-claims.md` (Claims 1 & 2).
+
 ## MECE File And Agent Partition
 
 Phase 2 Plan must partition work so every changed file has exactly one owner and every required responsibility has an owner.

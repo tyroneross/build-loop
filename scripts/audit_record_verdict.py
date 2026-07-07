@@ -20,13 +20,63 @@ import sys
 from pathlib import Path
 
 
+_VALID_ORACLE_COVERAGE = {"full", "partial", "thin"}
+
+
+def _parse_oracle_completeness(raw: str | None) -> dict | None:
+    """Parse + lightly validate the optional --oracle-completeness JSON note.
+
+    Observability never blocks (this script exits 0 always), so a malformed note is
+    WARNed to stderr and dropped rather than raised. Shape: object with optional
+    string `covered`/`uncovered` and optional `coverage` in {full,partial,thin}.
+    """
+    if not raw:
+        return None
+    try:
+        oc = json.loads(raw)
+    except ValueError as exc:
+        sys.stderr.write(f"[audit_record_verdict] --oracle-completeness not valid JSON, dropping: {exc}\n")
+        return None
+    if not isinstance(oc, dict):
+        sys.stderr.write("[audit_record_verdict] --oracle-completeness must be an object, dropping\n")
+        return None
+    cov = oc.get("coverage")
+    if cov is not None and cov not in _VALID_ORACLE_COVERAGE:
+        sys.stderr.write(
+            f"[audit_record_verdict] --oracle-completeness.coverage must be one of "
+            f"{sorted(_VALID_ORACLE_COVERAGE)}, dropping note\n"
+        )
+        return None
+    note: dict = {}
+    for key in ("covered", "uncovered"):
+        val = oc.get(key)
+        if isinstance(val, str):
+            note[key] = val[:300]
+    if cov is not None:
+        note["coverage"] = cov
+    return note or None
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--verdict", required=True, choices=["yay", "nay", "suggest", "look-again"])
     p.add_argument("--reason", required=True)
     p.add_argument("--run-id", default=None)
     p.add_argument("--workdir", default=".")
+    p.add_argument(
+        "--oracle-completeness",
+        default=None,
+        help=(
+            "Optional advisory JSON note recording WHAT the check actually covered, e.g. "
+            '\'{"covered":"auth+schema","uncovered":"rate-limit path","coverage":"partial"}\'. '
+            "coverage must be one of full|partial|thin. A green gate with a thin oracle is a "
+            "known false-confidence source (arXiv:2606.09863); recording completeness makes it "
+            "visible. Additive + optional — omit to write no note."
+        ),
+    )
     args = p.parse_args()
+
+    oracle_completeness = _parse_oracle_completeness(args.oracle_completeness)
 
     state_path = Path(args.workdir) / ".build-loop" / "state.json"
     if not state_path.is_file():
@@ -62,6 +112,8 @@ def main() -> int:
     target["verdict"] = args.verdict
     target["reason"] = args.reason[:200]
     target["verdict_ts"] = now
+    if oracle_completeness is not None:
+        target["oracle_completeness"] = oracle_completeness
 
     tmp = state_path.with_suffix(".json.tmp")
     try:

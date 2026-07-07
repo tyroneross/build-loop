@@ -35,6 +35,11 @@ ALL_JUDGE_VERDICTS = VALID_JUDGE_VERDICTS | VALID_AUDITOR_VERDICTS
 AUDITOR_JUDGE_MARKER = "independent-auditor"
 VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned"}
 VALID_BUDGET_MODES = {"default", "long", "custom"}
+# Advisory oracle-completeness note on a verify verdict: how much of the checked
+# surface the oracle actually covered. A "green" gate with a thin oracle is a known
+# false-confidence source (arXiv:2606.09863 false-success; the oracle's completeness
+# is the reliability ceiling). Additive + optional — never required.
+VALID_ORACLE_COVERAGE = {"full", "partial", "thin"}
 
 
 def log(msg: str) -> None:
@@ -238,6 +243,30 @@ def _validate_judge_decision(i: int, item: Any) -> None:
                 f"judge_decisions[{i}].spec_alignment must be one of "
                 f"{sorted(VALID_JUDGE_SPEC_ALIGNMENT)}, got {sa!r}"
             )
+    if "oracle_completeness" in item:
+        _validate_oracle_completeness(f"judge_decisions[{i}]", item["oracle_completeness"])
+
+
+def _validate_oracle_completeness(where: str, oc: Any) -> None:
+    """Validate the optional advisory oracle_completeness note on a verify verdict.
+
+    Shape: {"covered": str?, "uncovered": str?, "coverage": "full|partial|thin"?}.
+    Every field is optional (a partially-filled note is still useful); only present
+    fields are type-checked. Advisory — its purpose is to record WHAT the check
+    actually covered so a thin oracle behind a green gate is visible, not to gate.
+    """
+    if not isinstance(oc, dict):
+        raise ValueError(f"{where}.oracle_completeness must be an object, got {type(oc).__name__}")
+    for key in ("covered", "uncovered"):
+        if key in oc and not isinstance(oc[key], str):
+            raise ValueError(f"{where}.oracle_completeness.{key} must be a string")
+    if "coverage" in oc:
+        cov = oc["coverage"]
+        if not isinstance(cov, str) or cov not in VALID_ORACLE_COVERAGE:
+            raise ValueError(
+                f"{where}.oracle_completeness.coverage must be one of "
+                f"{sorted(VALID_ORACLE_COVERAGE)}, got {cov!r}"
+            )
 
 
 def load_judge_decisions(source: str) -> list[dict] | None:
@@ -263,4 +292,31 @@ def load_judge_decisions(source: str) -> list[dict] | None:
         raise ValueError("--judge-decisions-json must decode to a list (or an object with a 'decisions' list)")
     for i, item in enumerate(data):
         _validate_judge_decision(i, item)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Model + harness config (report at the model+harness level, not model alone)
+# ---------------------------------------------------------------------------
+
+def load_config_object(source: str, flag: str) -> dict | None:
+    """Read an optional free-form config object (models / harness) from a path or stdin ('-').
+
+    Additive + optional. Reporting a run at the model+harness level — the scaffold,
+    tool-set, and context-budget config, not the model id alone — is needed because
+    undisclosed harness config confounds model-vs-model comparisons (arXiv:2605.23950)
+    and the harness is a first-class reliability lever. The `models` and `harness`
+    blocks are pass-through objects (shape owned by the caller / Phase-4 report writer);
+    validated only as "must decode to an object" so downstream readers see a dict, never
+    a scalar. Returns None when the source is missing/empty (caller skips the key).
+    """
+    raw = _read_source(source)
+    if raw is None:
+        log(f"note: {flag} path {source} does not exist; skipping")
+        return None
+    if not raw.strip():
+        return None
+    data = _parse_json(raw, flag)
+    if not isinstance(data, dict):
+        raise ValueError(f"{flag} must decode to an object")
     return data

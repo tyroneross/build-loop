@@ -212,5 +212,93 @@ class ReviewCompletenessGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
 
+class AdditiveOptionalFieldsTests(unittest.TestCase):
+    """oracle_completeness (B1) + models/harness (C) — additive + optional."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.state = self.workdir / ".build-loop" / "state.json"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write_json(self, name: str, obj: object) -> str:
+        p = self.workdir / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(obj))
+        return str(p)
+
+    def _args(self, **overrides: str) -> list[str]:
+        args = {
+            "--workdir": str(self.workdir),
+            "--goal": "additive-fields",
+            "--outcome": "pass",
+            "--phases-json": "{}",
+        }
+        args.update(overrides)
+        flat: list[str] = []
+        for k, v in args.items():
+            flat.extend([k, v])
+        return flat
+
+    def _last_run(self) -> dict:
+        return json.loads(self.state.read_text())["runs"][-1]
+
+    def test_baseline_has_no_new_keys(self) -> None:
+        # A run without the new flags must not carry models/harness keys (purely additive).
+        self.assertEqual(run(self._args()).returncode, 0)
+        r = self._last_run()
+        self.assertNotIn("models", r)
+        self.assertNotIn("harness", r)
+
+    def test_judge_oracle_completeness_accepted(self) -> None:
+        jf = self._write_json("judges.json", [{
+            "judge_id": "review-b-validate",
+            "verdict": "yay",
+            "oracle_completeness": {"covered": "auth+schema", "uncovered": "rate-limit path", "coverage": "partial"},
+        }])
+        result = run(self._args(**{"--judge-decisions-json": jf}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        oc = self._last_run()["judge_decisions"][0]["oracle_completeness"]
+        self.assertEqual(oc["coverage"], "partial")
+        self.assertEqual(oc["uncovered"], "rate-limit path")
+
+    def test_judge_oracle_completeness_invalid_coverage_rejected(self) -> None:
+        jf = self._write_json("judges.json", [{
+            "judge_id": "review-b-validate", "verdict": "yay",
+            "oracle_completeness": {"coverage": "mostly"},  # not in full|partial|thin
+        }])
+        result = run(self._args(**{"--judge-decisions-json": jf}))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("oracle_completeness", result.stderr)
+
+    def test_judge_without_oracle_completeness_still_valid(self) -> None:
+        jf = self._write_json("judges.json", [{"judge_id": "review-b-validate", "verdict": "yay"}])
+        self.assertEqual(run(self._args(**{"--judge-decisions-json": jf})).returncode, 0)
+
+    def test_models_and_harness_written_when_supplied(self) -> None:
+        mf = self._write_json("models.json", {"orchestrator": "opus", "implementer": "sonnet"})
+        hf = self._write_json("harness.json", {"scaffold": "build-loop-mode-A", "context_budget": 200000})
+        result = run(self._args(**{"--models-json": mf, "--harness-json": hf}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        r = self._last_run()
+        self.assertEqual(r["models"]["orchestrator"], "opus")
+        self.assertEqual(r["harness"]["scaffold"], "build-loop-mode-A")
+
+    def test_models_non_object_rejected(self) -> None:
+        mf = self._write_json("models.json", ["opus", "sonnet"])  # list, not object
+        result = run(self._args(**{"--models-json": mf}))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--models-json", result.stderr)
+
+    def test_empty_harness_file_skipped(self) -> None:
+        hf = self.workdir / "empty.json"
+        hf.write_text("")
+        result = run(self._args(**{"--harness-json": str(hf)}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertNotIn("harness", self._last_run())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

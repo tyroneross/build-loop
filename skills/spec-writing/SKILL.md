@@ -31,6 +31,8 @@ A skill that walks a completeness checklist before producing a build-loop-compat
 
 Walk every item before writing a single line of the plan body. For each item, record the answer (or "N/A with reason") inline in a `<!-- checklist -->` HTML comment block at the top of the plan file so the critic can verify it.
 
+> **Architectural-class pre-plan alignment (gated).** When the build is **architectural-class** — it introduces new module boundaries, a schema change, or a cross-surface contract — reach a *shared design concept* with the requester (intent-restatement / brainstorming) **before** the plan asset is created, and carry a **required architecture note** in the plan (goal-level design intent, the boundary/contract being established, and why this shape over the alternatives; link the relevant ADRs from Item 12). Peer-reviewed evidence (ICSE 2026) shows architecture documentation *in the loop* substantially improves functional correctness, architectural conformance, and modularity, and that gated + architecture-anchored spec-driven development reverses the codebase-entropy decay that "never read the code" pipelines cause. For non-architectural changes (isolated fix, single-surface feature), skip this note — it is not a universal gate. Source: `build-loop-memory/research/2026-07-06-ai-coding-fundamentals-and-harness-claims.md` (Claim 3).
+
 ### Item 1 — Auth guard utility
 
 **Prompt:** Name the auth guard utility used by similar endpoints (e.g., `requireAuth` from `lib/api-auth-guard.ts`). Reject "match existing pattern" without naming it.

@@ -51,6 +51,7 @@ from idtime import compute_run_id, iso_utc  # type: ignore  # noqa: E402
 from validators import (  # type: ignore  # noqa: E402
     VALID_OUTCOMES,
     load_budget_summary,
+    load_config_object,
     load_judge_decisions,
     load_security_findings,
     review_completeness_error,
@@ -133,6 +134,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "loop). Captured per plan §14.4 + §14.5 for telemetry / Phase 6 Learn pattern mining."
         ),
     )
+    p.add_argument(
+        "--models-json",
+        default=None,
+        help=(
+            "Path to a JSON object describing the model(s) used this run (or '-' for stdin). "
+            "Free-form pass-through, e.g. {\"orchestrator\": \"opus\", \"implementer\": \"sonnet\"}. "
+            "Optional + additive; omit for runs that don't record model info."
+        ),
+    )
+    p.add_argument(
+        "--harness-json",
+        default=None,
+        help=(
+            "Path to a JSON object describing the harness config alongside the model (or '-' for "
+            "stdin). Free-form pass-through, e.g. {\"tool_set\": [...], \"context_budget\": 200000, "
+            "\"scaffold\": \"build-loop-mode-A\"}. Report at the model+harness level, not the model "
+            "alone: undisclosed harness config confounds model comparisons (arXiv:2605.23950). "
+            "Optional + additive."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -152,18 +173,28 @@ def files_touched_from_git(workdir: Path, pre_sha: str) -> list[str]:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
-def _load_optional_payloads(args: argparse.Namespace) -> tuple[dict, list, object, object, object]:
-    """Parse phases, manual_interventions, and optional security/judge/budget JSON sources."""
+def _load_optional_payloads(args: argparse.Namespace) -> dict:
+    """Parse phases, manual_interventions, and optional JSON sources into a dict.
+
+    Returns a dict of parsed payloads (phases, manual_interventions, and the optional
+    security/judge/budget/models/harness objects). A dict keeps the growing set of
+    optional payloads from turning the signature into an ever-widening tuple.
+    """
     phases = json.loads(args.phases_json)
     if not isinstance(phases, dict):
         raise ValueError("--phases-json must decode to an object")
     manual_interventions = json.loads(args.manual_interventions_json)
     if not isinstance(manual_interventions, list):
         raise ValueError("--manual-interventions-json must decode to a list")
-    security_findings = load_security_findings(args.security_findings_json) if args.security_findings_json else None
-    judge_decisions = load_judge_decisions(args.judge_decisions_json) if args.judge_decisions_json else None
-    budget_summary = load_budget_summary(args.budget_summary_json) if args.budget_summary_json else None
-    return phases, manual_interventions, security_findings, judge_decisions, budget_summary
+    return {
+        "phases": phases,
+        "manual_interventions": manual_interventions,
+        "security_findings": load_security_findings(args.security_findings_json) if args.security_findings_json else None,
+        "judge_decisions": load_judge_decisions(args.judge_decisions_json) if args.judge_decisions_json else None,
+        "budget_summary": load_budget_summary(args.budget_summary_json) if args.budget_summary_json else None,
+        "models": load_config_object(args.models_json, "--models-json") if args.models_json else None,
+        "harness": load_config_object(args.harness_json, "--harness-json") if args.harness_json else None,
+    }
 
 
 def _resolve_files_touched(args: argparse.Namespace, state_path: Path, workdir: Path) -> list[str]:
@@ -184,14 +215,10 @@ def _build_entry(
     args: argparse.Namespace,
     run_id: str,
     date: str,
-    phases: dict,
     files_touched: list[str],
-    manual_interventions: list,
     active: list[str],
     diagnostic_commands: list[str],
-    security_findings: object,
-    judge_decisions: object,
-    budget_summary: object,
+    payloads: dict,
 ) -> dict:
     """Assemble the run entry dict from validated inputs."""
     entry: dict = {
@@ -200,18 +227,16 @@ def _build_entry(
         "goal": args.goal,
         "outcome": args.outcome,
         "host": getattr(args, "host", "claude_code") or "claude_code",
-        "phases": phases,
+        "phases": payloads["phases"],
         "diagnosticCommands": diagnostic_commands,
         "filesTouched": files_touched,
-        "manualInterventions": manual_interventions,
+        "manualInterventions": payloads["manual_interventions"],
         "active_experimental_artifacts": active,
     }
-    if security_findings is not None:
-        entry["security_findings"] = security_findings
-    if judge_decisions is not None:
-        entry["judge_decisions"] = judge_decisions
-    if budget_summary is not None:
-        entry["budget_summary"] = budget_summary
+    # Optional additive blocks — written only when supplied (never break older readers).
+    for key in ("security_findings", "judge_decisions", "budget_summary", "models", "harness"):
+        if payloads.get(key) is not None:
+            entry[key] = payloads[key]
     return entry
 
 
@@ -226,9 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     experiments_dir = workdir / ".build-loop" / "experiments"
 
     try:
-        phases, manual_interventions, security_findings, judge_decisions, budget_summary = (
-            _load_optional_payloads(args)
-        )
+        payloads = _load_optional_payloads(args)
     except (json.JSONDecodeError, ValueError) as e:
         log(f"validation error: {e}")
         return 1
@@ -240,8 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     date = iso_utc()
 
     entry = _build_entry(
-        args, run_id, date, phases, files_touched, manual_interventions, active,
-        diagnostic_commands, security_findings, judge_decisions, budget_summary,
+        args, run_id, date, files_touched, active, diagnostic_commands, payloads,
     )
 
     try:

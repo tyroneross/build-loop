@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "fa45e81b9529249a780ff4c2b4da33b83d118df3c0c3608ac10dca521f33b0da"
+    "content_sha256": "72a9f275c351988ddac95137c5e7dd69900db1e630967d042ea1af1abeeca32d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1634,6 +1634,7 @@
       "scripts/optimize_suggest_factors.py": "Scan a repo for tunable parameters that could be DOE factors.",
       "scripts/orchestrator_heartbeat.py": "orchestrator_heartbeat.py — one fail-open beat: state liveness + rally presence.",
       "scripts/parallelism.py": "",
+      "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
       "scripts/prior_art.py": "Cross-project prior-art digest for Phase 1 Assess (P4).",
