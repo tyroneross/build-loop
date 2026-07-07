@@ -38,14 +38,16 @@ For the **living, auto-generated diagram** of how the loop actually wires up in 
 
 ## Quick start
 
-Install for all three host surfaces on macOS:
+Install the plugin from the marketplace. In Claude Code:
 
-```bash
-npm install -g @tyroneross/build-loop@0.36.1
-build-loop-install --host all
+```text
+/plugin marketplace add tyroneross/build-loop
+/plugin install build-loop@build-loop
 ```
 
-Then, in a Claude Code session inside your project, hand the loop a task:
+In Codex, add the same git marketplace with `/plugin marketplace add` and install `build-loop`. Then **restart the host** so it loads the plugin.
+
+build-loop has **no runtime CLI** — the loop runs *inside* your agent host. The plugin ships the skills, agents, and hooks it drives; there is no `build-loop` binary to run. After restart, in a session inside your project, hand the loop a task:
 
 ```text
 /build-loop:run add billing settings with tests
@@ -57,21 +59,29 @@ You do not pick a mode. `/build-loop:run` auto-routes build, fix, refactor, opti
 
 ## Install
 
-`build-loop-install` runs the package's helpers from the installed npm package:
+The plugin installs and updates through the host's **native marketplace** — no npm step, no global install, no `sudo`:
 
-- Syncs the Claude Code cache from the package root.
-- Syncs the Codex cache from `plugin-artifacts/codex`, the slim Codex install artifact.
-- Bootstraps the build-loop memory root with public templates.
-- Leaves publishing, GitHub releases, and production deploys to explicit release commands.
+```text
+/plugin marketplace add tyroneross/build-loop   # Claude Code or Codex
+/plugin install build-loop@build-loop
+```
 
-For GitHub Packages, authenticate first and point the `@tyroneross` scope at the GitHub registry:
+The host owns install, versioning, and `/plugin update`. Restart the host to load a freshly installed or updated plugin. On first session build-loop seeds a memory scaffold at `~/.build-loop-memory` (constitution, MEMORY.md, indexes).
+
+<details>
+<summary>Alternative: npm installer (exact-pin / offline / pre-marketplace hosts)</summary>
+
+The legacy `build-loop-install` binary syncs the same files into the host caches manually. Prefer the marketplace above; use this only to pin an exact version or on a host without marketplace support.
 
 ```bash
-npm config set @tyroneross:registry https://npm.pkg.github.com
-npm login --scope=@tyroneross --registry=https://npm.pkg.github.com
 npm install -g @tyroneross/build-loop@0.36.1
 build-loop-install --host all
 ```
+
+Global install needs a writable npm prefix. If `npm -g` fails with `EACCES` (Node from the official `.pkg` installer targets root-owned `/usr/local`), avoid the global install entirely with `npx @tyroneross/build-loop build-loop-install --host all`, or set a user prefix: `npm config set prefix ~/.local`.
+
+GitHub Packages is for private/pinned builds only — not needed for the public install. To use it: `npm config set @tyroneross:registry https://npm.pkg.github.com` then `npm login --scope=@tyroneross --registry=https://npm.pkg.github.com`.
+</details>
 
 Installer options:
 
