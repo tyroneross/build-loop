@@ -148,6 +148,35 @@ def test_check_rules_detects_layer_violation() -> None:
     assert layer_v, "expected backend->frontend to flag layer_violation"
 
 
+def test_check_rules_detects_shallow_module() -> None:
+    # HUB imports 4 leaves (fan-out 4) but nobody imports HUB (fan-in 0):
+    # shallownessScore = 4 / (0 + 1) = 4 >= 2 and fan-out 4 >= 4 → shallow.
+    hub = _comp("HUB")
+    leaves = [_comp(n) for n in ("L1", "L2", "L3", "L4")]
+    components = [hub, *leaves]
+    connections = [_conn("HUB", leaf.component_id) for leaf in leaves]
+    violations = check_rules(components, connections, hotspot_threshold=999)
+    shallow = [v for v in violations if v.rule == "shallow_module"]
+    assert shallow, "expected HUB (imports 4, used by 0) to flag shallow_module"
+    hub_v = next(v for v in shallow if v.component_id == "HUB")
+    assert hub_v.severity == "warn"
+    assert hub_v.details["fan_out"] == 4
+    assert hub_v.details["fan_in"] == 0
+    # A leaf (imported once, imports nothing) is not a shallow module.
+    assert not any(v.component_id == "L1" for v in shallow)
+
+
+def test_check_rules_deep_module_not_flagged_shallow() -> None:
+    # DEEP is imported by 3 modules but imports only 1: fan-out 1 < 4 → not shallow.
+    deep = _comp("DEEP")
+    users = [_comp(n) for n in ("U1", "U2", "U3")]
+    dep = _comp("DEP")
+    components = [deep, dep, *users]
+    connections = [_conn(u.component_id, "DEEP") for u in users] + [_conn("DEEP", "DEP")]
+    violations = check_rules(components, connections, hotspot_threshold=999)
+    assert not any(v.rule == "shallow_module" and v.component_id == "DEEP" for v in violations)
+
+
 def test_trace_dataflow_out(synthetic_graph) -> None:
     components, connections = synthetic_graph
     paths = trace_dataflow("A", components, connections, depth=3, direction="out")

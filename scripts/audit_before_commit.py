@@ -458,7 +458,10 @@ def _emit_packet(root: Path) -> int:
     out("**Anti-bias instruction (apply before emitting the verdict):**\n")
     out(ANTI_BIAS_BLOCK + "\n\n")
     out("After rendering the verdict, persist it to runs[] with:\n")
-    out("`python3 scripts/audit_record_verdict.py --verdict <yay|nay|suggest|look-again> --reason \"<one-line>\"`\n\n")
+    out("`python3 scripts/audit_record_verdict.py --verdict <yay|nay|suggest|look-again> --reason \"<one-line>\" "
+        "--oracle-completeness '{\"covered\":\"<what the checks exercise>\",\"uncovered\":\"<paths left unchecked>\",\"coverage\":\"full|partial|thin\"}'`\n\n")
+    out("Include `--oracle-completeness` whenever you can judge how much of the changed surface the tests/checks actually cover — "
+        "a green gate with a thin oracle is false confidence (arXiv:2606.09863); recording coverage makes it visible. The flag is optional and never blocks.\n\n")
     out("This audit packet is independent of any orchestrator dispatch. The hook fires at the git-commit boundary on every commit.\n\n")
 
     return 2 if blocked else 0

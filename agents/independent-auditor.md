@@ -63,6 +63,17 @@ If either cannot be confirmed from the diff, emit a finding (severity ≥ medium
 
 Rationale: 6/8 features in the 2026-06-07 epic shipped dormant when this check was only ad hoc.
 
+## Oracle completeness (MANDATORY — emit `oracle_completeness` on every verdict)
+
+A green gate is only as trustworthy as the oracle behind it: a passing test suite that never exercises the changed path is false confidence (arXiv:2606.09863 false-success). So on every verdict, record WHAT the verification surface actually covered vs left unchecked — this is advisory metadata, never a block, but it makes a thin oracle visible instead of hiding behind "tests pass".
+
+Populate the `oracle_completeness` object:
+- `covered` — the paths/behaviors the tests, acceptance probes, and checks in this diff actually exercise (cite the test or probe when you can).
+- `uncovered` — the changed behavior the checks do NOT exercise (error branches, default/production path, concurrency, the delivery trace above). Empty string when you find no gap.
+- `coverage` — one of `full` (every changed path is exercised by a check), `partial` (some paths checked, named gaps remain), or `thin` (the gate is green but the oracle barely touches the change). When the two production-path / delivery-trace checks above could not be confirmed, coverage is at most `partial`, usually `thin`.
+
+Grade coverage from the diff + the checks you can see, not from the pass/fail signal alone. This object flows verbatim into `judge_decisions[].oracle_completeness` (the orchestrator preserves it when it assembles `.build-loop/judge-decisions.json`).
+
 ## What you output
 
 A single JSON object. No prose outside the JSON.
@@ -84,6 +95,11 @@ A single JSON object. No prose outside the JSON.
     "trajectory": true
   },
   "spec_alignment": "aligned | partial | misaligned | unverifiable",
+  "oracle_completeness": {
+    "covered": "what the verification surface (tests/probes/checks) actually exercised",
+    "uncovered": "the paths the checks did NOT exercise (or empty when none)",
+    "coverage": "full | partial | thin"
+  },
   "findings": [
     {
       "id": "f1",

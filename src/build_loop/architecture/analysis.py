@@ -182,6 +182,16 @@ LAYER_ORDER = ["frontend", "backend", "tooling", "test", "docs", "unknown"]
 CYCLE_LENGTH_BOUND = 12
 MAX_CYCLES_REPORTED = 200
 
+# Shallow-module heuristic (ported from NavGator src/rules.ts `shallow-module`
+# + architecture-insights.ts `detectShallowModules`). A shallow module imports
+# many other modules (high fan-out) but is used by few (low fan-in) — a thin
+# pass-through that adds an indirection layer without deepening behind a narrower
+# interface (Ousterhout module depth). Advisory WARN only. shallownessScore =
+# fanOut / (fanIn + 1); a component is flagged when fanOut >= MIN and score >= MIN.
+SHALLOW_MIN_FAN_OUT = 4
+SHALLOW_MIN_SHALLOWNESS = 2.0
+SHALLOW_LIMIT = 20
+
 
 def _layer_index(layer: str) -> int:
     try:
@@ -201,6 +211,7 @@ def check_rules(
     * circular_dependency: any directed cycle.
     * layer_violation: backend importing frontend.
     * hotspot: component with > ``hotspot_threshold`` total edges.
+    * shallow_module: thin pass-through — high fan-out, low fan-in (advisory WARN).
     """
     violations: List[Violation] = []
     g = build_digraph(components, connections)
@@ -295,6 +306,55 @@ def check_rules(
                 message=f"{c.name} has {deg} total edges (threshold {hotspot_threshold})",
                 details={"total_edges": deg},
             ))
+
+    # Shallow modules (advisory, ported from NavGator `shallow-module`). A module
+    # that imports many but is imported by few is a thin pass-through: fan-out is
+    # high, fan-in is low, so shallownessScore = fan_out / (fan_in + 1) is large.
+    # In this digraph an edge u->v means "u imports v", so out_degree = fan-out
+    # (distinct modules imported) and in_degree = fan-in (distinct importers).
+    # Count ONLY internal `imports` edges (NavGator parity: `getImportConnections`
+    # keeps `connection_type == "imports"` between internal code components). This
+    # excludes `uses-package` edges to external packages and self-loops, which would
+    # otherwise over-flag entry-point scripts that import many external packages.
+    import_fan_out: Dict[str, int] = {}
+    import_fan_in: Dict[str, int] = {}
+    for u, v, data in g.edges(data=True):
+        if u == v:
+            continue
+        conn = data.get("connection")
+        if conn is None or getattr(conn, "type", "imports") != "imports":
+            continue
+        import_fan_out[u] = import_fan_out.get(u, 0) + 1
+        import_fan_in[v] = import_fan_in.get(v, 0) + 1
+
+    shallow: List[Violation] = []
+    for c in components:
+        if c.component_id not in g:
+            continue
+        layer = c.role.layer if hasattr(c.role, "layer") else (c.role or {}).get("layer", "unknown")
+        if layer in ("test", "docs"):
+            continue
+        fan_out = import_fan_out.get(c.component_id, 0)
+        fan_in = import_fan_in.get(c.component_id, 0)
+        shallowness = fan_out / (fan_in + 1)
+        if fan_out >= SHALLOW_MIN_FAN_OUT and shallowness >= SHALLOW_MIN_SHALLOWNESS:
+            shallow.append(Violation(
+                rule="shallow_module",
+                severity="warn",
+                component_id=c.component_id,
+                message=(
+                    f"{c.name} is a shallow module (imports {fan_out}, used by {fan_in}) — "
+                    "thin pass-through; consider deepening behind a narrower interface"
+                ),
+                details={
+                    "fan_out": fan_out,
+                    "fan_in": fan_in,
+                    "shallowness_score": round(shallowness, 3),
+                },
+            ))
+    # Highest shallowness first; name tie-break at the cap boundary (NavGator parity).
+    shallow.sort(key=lambda v: (-v.details.get("shallowness_score", 0.0), v.message))
+    violations.extend(shallow[:SHALLOW_LIMIT])
 
     return violations
 

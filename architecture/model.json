@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "72a9f275c351988ddac95137c5e7dd69900db1e630967d042ea1af1abeeca32d"
+    "content_sha256": "01975aa5c65181ff1ffade499f78a116dba54a768f65f3d198fe939534e448bb"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1256,7 +1256,7 @@
         "file": "skills/focused-loop-builder/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-06"
         }
       },
       "handoff": {
@@ -1312,7 +1312,7 @@
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-06"
         }
       },
       "native-ax-driver": {
@@ -1424,7 +1424,7 @@
         "file": "skills/spec-writing/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-27"
+          "date": "2026-07-06"
         }
       },
       "sync-skills": {

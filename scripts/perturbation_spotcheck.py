@@ -18,7 +18,8 @@ arXiv:2604.15149; "execution is only as reliable as the oracle attached to it").
 
 Scope
 -----
-An AVAILABLE helper, not yet wired into the loop. Self-contained, stdlib-only.
+Wired into Phase-4 Review-B as an advisory gate (outcome-based grader +
+triggers.riskSurfaceChange). Self-contained, stdlib-only.
 WARN-only by contract: a detected flip is advisory (it can be a false alarm when
 the check legitimately depends on the perturbed dimension), so the default exit
 code is 0. Pass ``--strict`` for a CI/test caller that wants exit 1 on a flip.

@@ -145,6 +145,18 @@ The script auto-detects an adapter from the project's manifest. Status `pass` pr
 
 **SSE-specific contract gate** (when `triggers.runtimeServer == true` AND the diff touches `runtimeServerInfo.server_module` OR `runtimeServerInfo.embedded_ui_module`): in addition to the adapter-driven smoke above, run the live HTTP/SSE contract check documented in `skills/build-loop/references/phase-4-review.md` §Sub-step B Validate (5-step procedure: restart server → wait for HTTP 200 → curl POST against `<sse_route>` for 5s → parse handlers in the embedded UI → fail when any observed event type lacks a handler arm). Implements decision `_unscoped/0003`; closes the silent-server / ignored-client class of bug. Skip step 4 (handler parsing) when `embedded_ui_module: null` — API-only services have no embedded UI to compare. Infrastructure failures (server won't start, curl errors) log to `.build-loop/issues/live-smoke-<date>.md` and surface as `⚠️ untested live-flow` in Review-G; only the contract violation itself fails the build.
 
+#### Perturbation spot-check (advisory, WARN-only — outcome-based grader on a risk-surface change)
+
+When a code grader above is **outcome-based** (a test/assertion whose signal is only pass/fail) AND `triggers.riskSurfaceChange` is set, re-run that grader once under an isomorphic perturbation to catch a gamed/overfit oracle (arXiv:2606.09863; arXiv:2604.15149):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/perturbation_spotcheck.py" \
+    --check-cmd "<grader command with {input} = changed source path>" \
+    --input "<changed source file under the outcome gate>" --mode rename
+```
+
+WARN-only by contract (exit 0; omit `--strict`) — **never blocks, never routes to Iterate**. A pass/fail *flip* under the perturbation is advisory evidence the oracle may not be invariant; record `perturbation_spotcheck: WARN (<perturbation> flipped)` (or `clean`) in Review-G `## Notes from judges`. Skip when no outcome-based grader ran or `riskSurfaceChange` is unset. Full rationale: `skills/build-loop/references/phase-4-review.md` §Sub-step B.
+
 #### Plugin-tests advisory check (auto-runs when build touches plugin metadata; non-blocking)
 
 If Phase 3 Execute's diff contains any of these path globs, run `Skill("build-loop:plugin-tests")` as part of Validate:

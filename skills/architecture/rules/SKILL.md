@@ -11,7 +11,7 @@ source_hash: 4a967c08ff3d7cddd408e7caefcd07b09e8931bcaccf9ea70c0f5aa94349e0d1
 
 # Architecture Rules / Violation Check
 
-Run NavGator's rules engine to detect architectural violations using the `mcp__plugin_navgator__rules` MCP tool. Classifies findings as blocking (circular dependency, layer violation, database isolation breach, frontend-direct-DB at error level) vs warning (hotspot, high-fan-out, orphan).
+Run NavGator's rules engine to detect architectural violations using the `mcp__plugin_navgator__rules` MCP tool. Classifies findings as blocking (circular dependency, layer violation, database isolation breach, frontend-direct-DB at error level) vs warning (hotspot, high-fan-out, orphan, shallow-module).
 
 > **Divergence note**: NavGator has no discrete SKILL.md for rules. The canonical wrapper is `commands/test.md`, which orchestrates `navgator rules` + `navgator dead` + pipeline traces. This skill extracts the rules-only workflow.
 
@@ -34,7 +34,7 @@ Run NavGator's rules engine to detect architectural violations using the `mcp__p
 | Severity | Categories |
 |----------|-----------|
 | **Blocking** | `circular-dependency`, `layer-violation`, `database-isolation`, `frontend-direct-db` (error level) |
-| **Warning** | `hotspot`, `high-fan-out`, `orphan` |
+| **Warning** | `hotspot`, `high-fan-out`, `orphan`, `shallow-module` (thin pass-through: high fan-out, low fan-in — advisory design guidance, never blocks) |
 
 3. Diff against the Phase 1 baseline if present in `.build-loop/state.json.architecture.rules.baseline`
 4. Flag recurrences against `.navgator/lessons/lessons.json` (lessons with matching `signature`)

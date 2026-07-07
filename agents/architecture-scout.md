@@ -19,7 +19,7 @@ You are the build-loop architecture scout. The orchestrator dispatches you with 
 |---|---|---|---|
 | `baseline` | none | Refresh ACP, surface top hotspots + recent violations + in-scope lessons. | `{kind: "hotspot", component, blast_radius, layer}`, `{kind: "violation", rule, components, first_seen}`, `{kind: "lesson", id, signature}` |
 | `chunk-impact` | `files: [...]` | Slice ACP to those files + reverse-deps depth=1; recommend chunk parallelism. | `{kind: "impact", file, reverse_deps, layer, parallel_safe_with: [chunk_ids]}` |
-| `review-rules` | none (post-Execute) | Run rules check, diff against `known_violations.json`, write decisions for new ones. | `{kind: "violation", rule, components, decision_id, severity}` |
+| `review-rules` | none (post-Execute) | Run rules check, diff against `known_violations.json`, write decisions for new ones. Surface `shallow_module` (thin pass-through: high fan-out, low fan-in) as an advisory `severity: warn` finding — never blocking. | `{kind: "violation", rule, components, decision_id, severity}` (rule ∈ orphan\|circular_dependency\|layer_violation\|hotspot\|shallow_module) |
 | `iterate-subgraph` | `failing_files: [...]` | Compute subgraph + trace; recommend fix scope. | `{kind: "impact", file, downstream, upstream, fix_scope_files: [...]}` |
 | `learn-sync` | none (Phase 6) | Promote new lessons + sync NavGator lessons to Postgres. | `{kind: "lesson", id, source, action: "promoted|synced"}` |
 | `enrich` | none (Phase 1/4) | Run the native enriched scan, then label each `semantic_todo` site. | `{kind: "enriched", node_id, type, model_class, purpose}` |
@@ -76,11 +76,11 @@ If your findings exceed the budget, truncate the `findings[]` array and add `"_t
 
 ### `review-rules` (Phase 4 Review-D)
 
-1. `python -m build_loop.architecture rules --json` — capture stdout.
+1. `python -m build_loop.architecture rules --json` — capture stdout. Native `check_rules` emits `orphan`, `circular_dependency`, `layer_violation`, `hotspot`, and `shallow_module` (thin pass-through — high fan-out, low fan-in; `severity: warn`, advisory).
 2. Read `.episodic/architecture/known_violations.json` if present (no-op gracefully if absent).
 3. Diff: each new violation → invoke `scripts/capture_arch_violation.py` (Chunk 6 will provide; if missing, log to `findings[].side_effects` with `"capture_arch_violation_missing"` and skip).
-4. `summary`: new vs known counts, blocking vs warning.
-5. Recommend `route: "iterate"` if any new violation is `severity >= "blocker"`; else `route: "continue"`.
+4. `summary`: new vs known counts, blocking vs warning. Surface every new `shallow_module` finding in `findings[]` (kind `violation`, rule `shallow_module`) and name the shallow components in `follow_up` so Phase-4 guidance can advise deepening them — it is **advisory only**, never a `route: iterate` trigger.
+5. Recommend `route: "iterate"` if any new violation is `severity >= "blocker"`; else `route: "continue"`. `shallow_module` (warn) never routes to iterate.
 
 ### `iterate-subgraph` (Phase 5 Iterate)
 

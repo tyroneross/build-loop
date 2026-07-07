@@ -64,7 +64,23 @@ The lint enforces `skills/build-loop/references/output-style.md` (concise headli
 
 ### Mandatory `runs[]` write + `## Judge decisions` block (orchestrator-owned)
 
-`references/phase-gate-checklist.md` §G delegates these to the build-orchestrator agent; dispatch-path-independent, fire every time regardless of how the agent was invoked. Collect every judge/auditor verdict that fired this run (`plan-critic`, `independent-auditor`, `scope-auditor`, `fact-checker`, `mock-scanner`, `security-reviewer`, `synthesis-critic`, `architecture-scout`, `ui-validator`, etc.) into a JSON list at `.build-loop/judge-decisions.json` (shape per `agents/promotion-reviewer.md` §"Verdict envelope"); when no judge fired, write `[]` (the empty array is the signal). Then run:
+`references/phase-gate-checklist.md` §G delegates these to the build-orchestrator agent; dispatch-path-independent, fire every time regardless of how the agent was invoked. Collect every judge/auditor verdict that fired this run (`plan-critic`, `independent-auditor`, `scope-auditor`, `fact-checker`, `mock-scanner`, `security-reviewer`, `synthesis-critic`, `architecture-scout`, `ui-validator`, etc.) into a JSON list at `.build-loop/judge-decisions.json` (shape per `agents/promotion-reviewer.md` §"Verdict envelope"); when no judge fired, write `[]` (the empty array is the signal). **Preserve the `independent-auditor`'s `oracle_completeness` object verbatim** — copy it onto that judge's `judge_decisions[]` entry so a green gate's oracle coverage (`full|partial|thin`) is recorded, not dropped (`write_run_entry` validates it; see `agents/independent-auditor.md` §"Oracle completeness"). Then run:
+
+**Assemble the harness config block (MANDATORY — report at the model+harness level, not model alone).** Reporting a run with only the model id confounds any later model-vs-model read, because undisclosed harness config is itself a first-class reliability lever (arXiv:2605.23950). Before the call, write a small JSON object to a temp file describing THIS run's harness and pass it as `--harness-json`:
+
+```bash
+cat > "$HARNESS_JSON" <<'EOF'
+{
+  "tools": ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Agent"],
+  "context_budget": 200000,
+  "scaffold": "build-loop mode-A (fan-out), orchestrator=opus/thinking, implementer=sonnet/code"
+}
+EOF
+```
+
+- `tools` — the tool-set available this run (a list, or a count when the list is long).
+- `context_budget` — the compaction/context threshold in tokens for this run.
+- `scaffold` — the dispatch mode (A fan-out / B inline) plus the orchestrator + implementer tier mix (mirror the values the orchestrator resolved this run; see `agents/build-orchestrator.md` §"Dual-mode dispatch" and §"Model Tiering").
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py" \
@@ -74,10 +90,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py" \
   --scope build \
   --files-touched-from-git \
   --judge-decisions-json .build-loop/judge-decisions.json \
-  [--budget-summary-json <tmp>]
+  --harness-json "$HARNESS_JSON" \
+  [--budget-summary-json <tmp>] [--models-json <tmp>]
 ```
 
-This invocation MUST fire on every Phase 4G regardless of dispatch path (Skill, Agent tool, per-commit, resume). **`--scope build` arms the review-completeness gate** (`bl-enforce-independent-auditor-dispatch`): a `pass` that touched code with no real `independent-auditor` verdict in `judge-decisions.json` exits **3** and writes no entry — an inline self-audit is not a substitute. On exit 3, dispatch the `independent-auditor` at build scope (Review-A), append its verdict to `judge-decisions.json`, and re-run; do not reach Report with an empty/inline-only auditor record on shipped code. (Use `--scope chunk`/`none` only for per-chunk or non-shipping runs.)
+This invocation MUST fire on every Phase 4G regardless of dispatch path (Skill, Agent tool, per-commit, resume). The `--harness-json` block lands as `state.json.runs[].harness` (additive; older readers ignore it). **`--scope build` arms the review-completeness gate** (`bl-enforce-independent-auditor-dispatch`): a `pass` that touched code with no real `independent-auditor` verdict in `judge-decisions.json` exits **3** and writes no entry — an inline self-audit is not a substitute. On exit 3, dispatch the `independent-auditor` at build scope (Review-A), append its verdict to `judge-decisions.json`, and re-run; do not reach Report with an empty/inline-only auditor record on shipped code. (Use `--scope chunk`/`none` only for per-chunk or non-shipping runs.)
 
 ### Mandatory milestone append (every run, append-only)
 

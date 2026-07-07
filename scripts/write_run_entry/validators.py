@@ -33,7 +33,7 @@ ALL_JUDGE_VERDICTS = VALID_JUDGE_VERDICTS | VALID_AUDITOR_VERDICTS
 # judge_id substring that identifies the independent commit auditor (covers both the
 # dispatched "independent-auditor" agent and the "independent-auditor-hook" record).
 AUDITOR_JUDGE_MARKER = "independent-auditor"
-VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned"}
+VALID_JUDGE_SPEC_ALIGNMENT = {"aligned", "partial", "misaligned", "unverifiable"}
 VALID_BUDGET_MODES = {"default", "long", "custom"}
 # Advisory oracle-completeness note on a verify verdict: how much of the checked
 # surface the oracle actually covered. A "green" gate with a thin oracle is a known
