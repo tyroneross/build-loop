@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "01975aa5c65181ff1ffade499f78a116dba54a768f65f3d198fe939534e448bb"
+    "content_sha256": "68ed0ad0068d0bef25a1bd99eefcc0b92a7a51e769e6739e0b3009e62537970e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -878,7 +878,7 @@
         "file": "agents/architecture-scout.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-07"
         }
       },
       "assessment-orchestrator": {
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-07"
         }
       },
       "database-assessor": {
@@ -959,7 +959,7 @@
         "file": "agents/independent-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-07"
         }
       },
       "mock-scanner": {
@@ -1152,7 +1152,7 @@
         "file": "skills/architecture/rules/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-22"
+          "date": "2026-07-07"
         }
       },
       "architecture-scan": {
@@ -1533,6 +1533,7 @@
       "scripts/coordination_rally.py": "Publish a lightweight Rally Point rally point without creating a coord file.",
       "scripts/coordination_status.py": "Summarize Build Loop coordination state without spending LLM tokens.",
       "scripts/coordination_watch.py": "Compatibility wrapper for the embedded agent-rally-watcher namespace.\"\"\"",
+      "scripts/cost_ledger_hook.py": "Stop-hook producer for the per-dispatch cost ledger.",
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",

@@ -240,6 +240,35 @@ def _build_entry(
     return entry
 
 
+def _ledger_rows_for_run(run_id: str) -> int:
+    """Count cost-ledger rows attributed to this run_id. Fail-open (0 on error).
+
+    Recurrence detector for the cost-attribution activation path: a build that
+    dispatched subagents but shows 0 rows means the Stop cost_ledger_hook stopped
+    firing (the original 2026-06 dead-pipeline class). Advisory only."""
+    if not run_id:
+        return 0
+    ledger = Path.home() / ".bookmark" / "cost-ledger.jsonl"
+    count = 0
+    try:
+        if not ledger.exists():
+            return 0
+        with ledger.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if row.get("run_id") == run_id:
+                    count += 1
+    except Exception:
+        return count
+    return count
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
@@ -280,6 +309,16 @@ def main(argv: list[str] | None = None) -> int:
     if gate_error is not None:
         log(f"review-completeness gate: {gate_error}")
         return 3
+
+    # Cost-attribution recurrence detector (scope=build): record how many ledger
+    # rows carry this run_id so a silent regression (0 rows despite dispatches)
+    # surfaces on the runs[] entry. Advisory — never blocks the run.
+    if args.scope == "build":
+        n = _ledger_rows_for_run(run_id)
+        entry["ledger_rows_for_run"] = n
+        if n == 0:
+            log(f"warn: cost-ledger has 0 rows for run_id={run_id}; per-dispatch "
+                f"attribution may be dead (check the Stop cost_ledger_hook)")
 
     try:
         append_run_entry(state_path, entry)
