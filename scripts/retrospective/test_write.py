@@ -139,3 +139,19 @@ class WriteEnforceCandidatesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_promote_durable_refuses_scratch_slug(tmp_path):
+    """A mktemp workdir must not create projects/tmp.XXXX/ in the curated store.
+    Regression: 2026-07-08 smoke-test leak into build-loop-memory."""
+    from retrospective.write import promote_durable
+    mem = tmp_path / "mem"; mem.mkdir()
+    for bad in ("tmp.aB12Xy", "tmp_scratch", "pytest-of-x"):
+        r = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
+                            repo=bad, memory_root=mem)
+        assert r["status"] == "skipped", (bad, r)
+        assert r["durable_path"] is None
+    # a real slug still writes
+    ok = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
+                        repo="build-loop", memory_root=mem)
+    assert ok["status"] == "ok" and ok["durable_path"]

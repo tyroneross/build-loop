@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
+import re
 from pathlib import Path
 from typing import Any
+
+# mktemp / scratch directory names — never a real project slug.
+_SCRATCH_SLUG_RE = re.compile(r"^(tmp[.\-_]|\.tmp|pytest-|tmp\d)")
 
 from retrospective.sections import SECTION_KEYS, SECTION_TITLES
 
@@ -188,6 +192,15 @@ def promote_durable(
         if memory_root is None:
             memory_root = build_loop_memory_root()
         slug = repo or workdir.name
+        # Guard against scratch pollution: a mktemp workdir (`tmp.XXXX`) must
+        # never create a `projects/tmp.XXXX/` dir in the curated store. The
+        # SessionEnd auto-fire already gates on is_project_dir; this backstops
+        # every OTHER caller (manual runs, tests, future callers). Observed
+        # 2026-07-08: a smoke test with a mktemp workdir leaked a real durable
+        # write into build-loop-memory.
+        if not slug or _SCRATCH_SLUG_RE.match(slug):
+            return {"durable_path": None, "status": "skipped",
+                    "reason": f"non-project slug refused: {slug!r}"}
         date = _today_iso()
         outdir = memory_root / "projects" / slug / "retrospectives" / date
         if not memory_root.exists():
