@@ -27,6 +27,7 @@ CLAUDE_PUBLIC_ENTRYPOINTS = {
     "research",
     "knowledge",
     "handoff",
+    "root-cause-analysis",
 }
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)

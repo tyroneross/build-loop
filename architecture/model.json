@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "68ed0ad0068d0bef25a1bd99eefcc0b92a7a51e769e6739e0b3009e62537970e"
+    "content_sha256": "fbb302c7e142bf3c623ecd2c4b7cc77c3b3d374c55ff6f7e09fef3ff43ac690e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1424,7 +1424,7 @@
         "file": "skills/spec-writing/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-06"
+          "date": "2026-07-07"
         }
       },
       "sync-skills": {
