@@ -120,47 +120,12 @@ The single-axis `--tier`-only form (above) stays the default and is unchanged. F
 
 ## M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)
 
-Complements M1 (envelope persist) and M2 (heartbeat). The orchestrator emits one ledger row at dispatch time and one at return time per subagent invocation. Both rows carry the same `task_id` so wall-clock and status can be correlated post-hoc by Round 4 dispatch-pattern analysis (and any later cost study).
+**Emission is automatic.** `scripts/cost_ledger_hook.py` runs on the `Stop` hook (registered in `hooks/hooks.json`), reconciles the session transcript against the ledger, and appends one row per `Agent` dispatch — foreground AND background — with a deterministic, regex-valid `task_id` (`t-<sha256(session_id|tool_use_id)[:8]}`), scoped to build-loop contexts (writes only when `.build-loop/state.json` exists) and fail-open. **The orchestrator does NOT hand-write per-dispatch rows** — that prose mandate was the dead activation path (2026-07: 1 row ever written) and is retired. See `scripts/cost_ledger_hook.py` + `scripts/test_cost_ledger_hook.py`.
 
-`<resolved-tier-model>` in the rows below is `RESOLVED_MODEL` from M2.5 — the concrete model the resolver returned, after any dispatch-fallback re-resolution.
+**Optional enrichment (only when the data is cheap and on-hand):** the hook cannot see `chunk_id` or precise per-subagent token counts (not in the main transcript). When the orchestrator already holds those from an implementer envelope, it MAY append an enrichment row via `scripts/write_cost_ledger_row.py` sharing the same `task_id`. This is opt-in, never a gate — do not add per-dispatch bookkeeping calls back into the hot path.
 
-Procedure per dispatch:
+**Recurrence detector**: `write_run_entry --scope build` records `ledger_rows_for_run: N` on the `runs[]` entry and WARNs (never blocks) when a build with dispatches shows 0 rows — so a future silent regression of the hook is visible instead of hiding.
 
-1. **Generate `TASK_ID`** before the `Agent(...)` call: `TASK_ID="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dispatch_identity.py --plain)"`. Record `started_at` (ISO 8601 UTC).
-2. **Prepend `[TASK_ID: <id>]` to the implementer brief** as the first line of the prompt body. The implementer echoes it in `task_id` per `references/implementer-envelope-schema.md`.
-3. **Write the dispatch row** (status=`dispatched`):
-   ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_cost_ledger_row.py \
-     --agent implementer \
-     --task-id "$TASK_ID" \
-     --model "<resolved-tier-model>" \
-     --status dispatched \
-     --dispatch-mode "<fan-out|inline|self-recursive>" \
-     --started-at "<iso8601>" \
-     --run-id "$RUN_ID" \
-     --chunk-id "<chunk_id>"
-   ```
-4. **Dispatch** the subagent.
-5. **After return** (at the same point as M1 envelope-persist + M2 `return_chunk` heartbeat), write the return row:
-   ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_cost_ledger_row.py \
-     --agent implementer \
-     --task-id "$TASK_ID" \
-     --model "<resolved-tier-model>" \
-     --status "<envelope.status>" \
-     --dispatch-mode "<same-as-dispatch>" \
-     --files-changed-count <N> \
-     --wall-clock-seconds <envelope.wall_clock_seconds> \
-     --tokens-estimate <envelope.tokens_estimate || omit> \
-     --tokens-source envelope \
-     --started-at "<dispatch-iso8601>" \
-     --completed-at "<return-iso8601>" \
-     --run-id "$RUN_ID" \
-     --chunk-id "<chunk_id>"
-   ```
+**Release caveat**: the `hooks/hooks.json` registration is inert in an INSTALLED plugin copy until a plugin release ships. A local `--plugin-dir` checkout picks it up on next session start.
 
-**Scope**: M3 applies to every `Agent(subagent_type="build-loop:<x>")` call the orchestrator makes — implementer (Phase 3), scope-auditor (Phase 2/3), commit-auditor (Phase 3 step 7 chunk scope + Phase 4-A build scope; replaces retired sonnet-critic), synthesis-critic (Phase 3 step 6), fact-checker (Phase 4-D), architecture-scout (Phase 1 + chunk-impact), optimize-runner (Phase 4-C), overfitting-reviewer (Phase 4-C). Set `--agent` to the subagent's frontmatter name; set `--dispatch-mode` from the active dispatch context.
-
-**Failure mode**: helper exit-0 is success; exit-1 is a validation error (fix the args and retry once); exit-2 is a filesystem error (log once, do NOT block the build — telemetry is best-effort). Never let a ledger-write failure halt a Phase 3 commit.
-
-**Why this is independent of M1/M2**: M1 and M2 protect resume correctness. M3 produces an external measurement record so dispatch-pattern claims like "Mode A burns 4× tokens" can be evidenced rather than estimated. The three writes are sequential at the same orchestrator step; one helper call each, ≤20ms.
+**Failure mode**: the hook exits 0 unconditionally; a ledger-write failure never halts a turn. Telemetry is best-effort. **Why independent of M1/M2**: M1/M2 protect resume correctness; M3 produces the external measurement record so dispatch-pattern claims can be evidenced rather than estimated.

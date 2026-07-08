@@ -166,6 +166,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" stop 2>/dev/null; exit 0",
             "timeout": 6000
+          },
+          {
+            "type": "command",
+            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then nohup python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/cost_ledger_hook.py\" </dev/null >/dev/null 2>&1 & fi; printf '{}'",
+            "timeout": 5000
           }
         ]
       },
