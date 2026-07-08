@@ -57,7 +57,7 @@ class SynthesizeRunTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.tmp_dir = Path(self.tmp.name)
 
-    # ----- F1 — all 9 sections present in active file -----
+    # ----- F1 — all sections present in active file -----
 
     def test_F1_active_file_contains_all_nine_sections(self) -> None:
         workdir, tx = _build_workdir(self.tmp_dir, with_repeats=False)

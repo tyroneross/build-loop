@@ -91,3 +91,56 @@ def test_recurring_lesson_is_kept():
               "session_count": sweep.LESSON_MIN_SESSIONS}]
     skills, lessons = sweep.split_candidates(cands)
     assert not skills and len(lessons) == 1
+
+
+# --- session-retro auto-fire helpers (rich retro on non-run sessions) -------
+
+def test_resolve_project_cwd_reads_cwd_field(tmp_path):
+    t = _transcript(tmp_path, [
+        {"type": "user", "cwd": "/Users/x/dev/myrepo",
+         "message": {"role": "user", "content": "hi"}}])
+    assert sweep.resolve_project_cwd(t) == Path("/Users/x/dev/myrepo")
+
+
+def test_resolve_project_cwd_none_when_absent(tmp_path):
+    t = _transcript(tmp_path, [{"type": "user", "message": {"role": "user", "content": "hi"}}])
+    assert sweep.resolve_project_cwd(t) is None
+
+
+def test_is_project_dir_true_for_build_loop_dir(tmp_path):
+    (tmp_path / ".build-loop").mkdir()
+    assert sweep.is_project_dir(tmp_path) is True
+
+
+def test_is_project_dir_true_for_git_repo(tmp_path):
+    (tmp_path / ".git").mkdir()
+    assert sweep.is_project_dir(tmp_path) is True
+
+
+def test_is_project_dir_false_for_bare_dir(tmp_path):
+    assert sweep.is_project_dir(tmp_path) is False
+
+
+def test_run_session_retro_shells_to_retrospective(tmp_path, monkeypatch):
+    calls = {}
+    def fake_run(cmd, **kw):
+        calls["cmd"] = cmd
+        calls["cwd"] = kw.get("cwd")
+        class R: pass
+        return R()
+    monkeypatch.setattr(sweep.subprocess, "run", fake_run)
+    t = tmp_path / "abc123.jsonl"
+    t.write_text("{}", encoding="utf-8")
+    sweep.run_session_retro(tmp_path, t, tmp_path / "proj")
+    assert "retrospective" in calls["cmd"]
+    assert "--run-id" in calls["cmd"]
+    assert "session-abc123" in calls["cmd"]
+
+
+def test_run_session_retro_fail_open_on_subprocess_error(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("nope")
+    monkeypatch.setattr(sweep.subprocess, "run", boom)
+    t = tmp_path / "x.jsonl"; t.write_text("{}", encoding="utf-8")
+    # must not raise
+    sweep.run_session_retro(tmp_path, t, tmp_path)

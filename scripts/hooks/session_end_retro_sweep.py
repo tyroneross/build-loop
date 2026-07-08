@@ -11,22 +11,31 @@ script is the missing host-level actuator.
 Design (cost-first, deterministic — ZERO LLM / ZERO tokens in this path):
   1. Gate on a NON-TRIVIAL session (enough tool activity or a commit). Trivial
      sessions exit silently — no marker, no noise.
-  2. Run the deterministic `transcript-pattern-miner` (pure stdlib, no network,
+  2. For a real project session (has `.build-loop/` or `.git`) that never opened
+     a build-loop run, AUTO-FIRE the deterministic rich retrospective via
+     `python3 -m retrospective` — the same synthesizer the Phase 4 dispatch uses,
+     run headlessly (sections.py emits captured signals verbatim, no LLM). This
+     writes the 9+2-section file AND promotes a durable copy to build-loop-memory.
+     Closes the "rich retro only fires on formal runs" gap for interactive /
+     Codex / Rally sessions.
+  3. Run the deterministic `transcript-pattern-miner` (pure stdlib, no network,
      no LLM) over the recent window.
-  3. Split candidates:
+  4. Split candidates:
        - skill/workflow proposals  → only when REPEATED (session_count high
          enough that a skill would save time+tokens vs re-deriving the ritual).
        - lesson candidates         → recurring (session_count >= 2) signals.
-  4. Write a digest to a retro-staging dir AND drop a `needs-attention` marker.
+  5. Write a digest to a retro-staging dir AND drop a `needs-attention` marker.
      The marker is surfaced at the NEXT SessionStart by the existing
      `session-start-surface-markers.sh`, where a cheap in-context agent ratifies
-     the recurring signals into well-formed canonical memory + proposed skills.
-     The expensive LLM `recursive-retrospective` stays ON-DEMAND (`/retro`).
+     the recurring signals into well-formed canonical memory + proposed skills,
+     and MAY enrich the auto-written retro with LLM narration. The expensive
+     `recursive-retrospective` deep dive stays ON-DEMAND (`/retro`).
 
-Why not auto-write canonical memory here: the miner emits pattern SIGNALS
-("Bash,Bash,Read ×17"), not lesson prose. Unattended deterministic writes to the
-curated store would be noise (violates the user's memory-discipline). Capture is
-automatic; promotion-to-quality is one cheap in-context step away.
+Deterministic-first / AI-narrates: step 2 writes the objective section signals
+for free; the ONLY LLM cost is the optional, on-demand enrichment at the next
+SessionStart. The miner (step 3) emits pattern SIGNALS ("Bash,Bash,Read ×17"),
+not lesson prose, so its promotion-to-canonical-memory stays a cheap in-context
+step — capture is automatic, promotion-to-quality is one step away.
 
 Contract: fail-open. ANY error → exit 0, silent. Never blocks session end.
 Invoked fire-and-forget (nohup &) by the host SessionEnd hook.
@@ -97,6 +106,67 @@ def session_is_trivial(transcript: Path) -> bool:
     except Exception:
         return True  # unreadable → treat as trivial (do nothing)
     return not (saw_commit or tool_uses >= MIN_TOOL_USES)
+
+
+def resolve_project_cwd(transcript: Path) -> Path | None:
+    """Read the session's working directory from the transcript.
+
+    Claude Code stamps a top-level ``cwd`` field on transcript records. We take
+    the first one we can parse. Returns None when unreadable (fail-open)."""
+    try:
+        with transcript.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if '"cwd"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                cwd = obj.get("cwd")
+                if isinstance(cwd, str) and cwd:
+                    return Path(cwd)
+    except Exception:
+        return None
+    return None
+
+
+def is_project_dir(cwd: Path) -> bool:
+    """Only synthesize a session retro for a REAL project checkout — one with a
+    ``.build-loop/`` state dir or a ``.git`` repo. A bare $HOME / scratch cwd is
+    skipped so we don't scatter retrospectives into non-project directories."""
+    try:
+        if cwd == Path(os.path.expanduser("~")):
+            return False
+        return (cwd / ".build-loop").is_dir() or (cwd / ".git").exists()
+    except Exception:
+        return False
+
+
+def run_session_retro(build_loop: Path, transcript: Path, cwd: Path) -> None:
+    """Fire the DETERMINISTIC rich retrospective for a non-run session.
+
+    This is the auto-actuator for "make the rich retro fire automatically" on
+    interactive / Codex / Rally sessions that never open a build-loop run. It
+    shells to ``python3 -m retrospective`` which is ZERO-LLM (sections.py emits
+    captured signals verbatim), writes the 9+2-section file, and promotes a
+    durable copy to build-loop-memory. The expensive LLM enrichment stays
+    on-demand (the marker invites `/retro`). Fail-open: any error is swallowed.
+    """
+    session_key = transcript.stem or "session"
+    scripts_dir = build_loop / "scripts"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(scripts_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    try:
+        subprocess.run(
+            ["python3", "-m", "retrospective",
+             "--workdir", str(cwd),
+             "--run-id", f"session-{session_key}",
+             "--transcript", str(transcript),
+             "--json"],
+            check=False, capture_output=True, timeout=120, env=env, cwd=str(scripts_dir),
+        )
+    except Exception:
+        return
 
 
 def run_miner(build_loop: Path, out_dir: Path) -> dict:
@@ -219,6 +289,14 @@ def main() -> None:
     build_loop = find_build_loop()
     if build_loop is None:
         _log_and_exit()
+
+    # Auto-fire the deterministic rich retrospective for real project sessions
+    # that never opened a build-loop run. Independent of miner candidates — a
+    # session with issues/tool-usage/automation signal but no repeated ritual
+    # still deserves its retro + memory write. Zero-LLM, fail-open.
+    cwd = resolve_project_cwd(transcript)
+    if cwd is not None and is_project_dir(cwd):
+        run_session_retro(build_loop, transcript, cwd)
 
     with tempfile.TemporaryDirectory() as tmp:
         data = run_miner(build_loop, Path(tmp))

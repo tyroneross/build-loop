@@ -110,6 +110,265 @@ def extract_user_prompts(transcript_jsonl: Path | None) -> list[dict[str, Any]]:
     return list(_iter_user_messages(transcript_jsonl))
 
 
+# ---------------------------------------------------------------------------
+# Tool / plugin / automation signal extraction (deterministic — no LLM).
+#
+# These feed the plugin-observations (§10) and automation-candidate (§11)
+# sections plus the app-issue enrichment of §4/§9. Everything here is pure
+# regex/counting over the transcript so it runs for FREE at SessionEnd; the
+# agent's LLM body only narrates on top of these captured signals.
+# ---------------------------------------------------------------------------
+
+# Core tools carry no reusable semantic content: a sequence made only of these
+# is the universal edit-test loop and recurs in every coding session, so
+# proposing it as a script is permanent noise (mirrors the identical gate in
+# scripts/hooks/session_end_retro_sweep.py — keep the two sets in sync).
+_GENERIC_TOOLS = frozenset({
+    "Bash", "Edit", "MultiEdit", "Read", "Write", "Grep", "Glob",
+    "Task", "Agent", "TodoWrite", "NotebookEdit", "LS",
+})
+
+_MCP_PLUGIN_RE = re.compile(r"^mcp__(?:plugin_)?([a-z0-9]+)")
+_ISSUE_MARKER_RE = re.compile(
+    r"(Traceback \(most recent call last\)|"
+    r"\bError:|\bERROR\b|\bFAILED\b|\bFAIL\b|"
+    r"AssertionError|Exception|\bnot found\b|command not found|"
+    r"exit code [1-9]|non-zero exit|❌)",
+)
+_ISSUE_SIGNAL_CAP = 8
+_AUTOMATION_CANDIDATE_CAP = 6
+
+
+def _tool_plugin_label(name: str) -> str | None:
+    """Best-effort plugin/owner label for a tool name.
+
+    ``mcp__plugin_ibr_ibr__scan`` → ``ibr`` · ``Skill(build-loop:run)`` handled
+    by the caller. Returns None for plain core tools (no owning plugin).
+    """
+    m = _MCP_PLUGIN_RE.match(name or "")
+    return m.group(1) if m else None
+
+
+def _iter_assistant_tool_uses(transcript_jsonl: Path | None) -> Iterable[dict[str, Any]]:
+    """Yield each assistant ``tool_use`` block: ``{id, name, input}``.
+
+    Also yields synthetic records for the ``tool_result`` error side (from user
+    records) tagged ``{"kind": "error", "tool_use_id": ...}`` so the caller can
+    attribute failures back to the tool that produced them.
+    """
+    if transcript_jsonl is None:
+        return
+    try:
+        with open(transcript_jsonl, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rtype = rec.get("type")
+                content = (rec.get("message") or {}).get("content")
+                if not isinstance(content, list):
+                    continue
+                for blk in content:
+                    if not isinstance(blk, dict):
+                        continue
+                    btype = blk.get("type")
+                    if rtype == "assistant" and btype == "tool_use":
+                        yield {
+                            "kind": "use",
+                            "id": blk.get("id"),
+                            "name": blk.get("name") or "",
+                            "input": blk.get("input") or {},
+                        }
+                    elif rtype == "user" and btype == "tool_result" and blk.get("is_error"):
+                        yield {
+                            "kind": "error",
+                            "tool_use_id": blk.get("tool_use_id"),
+                        }
+    except OSError:
+        return
+
+
+def _canonical_tool_label(rec: dict[str, Any]) -> str:
+    """Human-readable label for a tool_use record.
+
+    ``Skill(build-loop:run)`` · ``Task(implementer)`` · ``ibr:scan`` (MCP) ·
+    else the bare tool name. Used both for usage counts and sequence tokens.
+    """
+    name = rec.get("name") or ""
+    inp = rec.get("input") if isinstance(rec.get("input"), dict) else {}
+    if name == "Skill":
+        skill = inp.get("skill") or inp.get("command") or ""
+        return f"Skill({skill})" if skill else "Skill"
+    if name in ("Task", "Agent"):
+        sub = inp.get("subagent_type") or inp.get("description") or ""
+        return f"{name}({sub})" if sub else name
+    plugin = _tool_plugin_label(name)
+    if plugin:
+        tool = name.split("__")[-1]
+        return f"{plugin}:{tool}"
+    return name
+
+
+def extract_tool_usage(transcript_jsonl: Path | None) -> dict[str, Any]:
+    """Deterministic per-tool / per-plugin / per-skill / per-subagent usage.
+
+    Returns::
+
+        {
+          "tools":      {label: count},   # canonical labels, most-used first
+          "plugins":    {plugin: count},  # owning plugin/skill-namespace
+          "subagents":  {type: count},
+          "errored":    {label: count},   # tool_result is_error attributed back
+          "total_uses": int,
+        }
+    """
+    uses: list[dict[str, Any]] = []
+    id_to_label: dict[str, str] = {}
+    error_ids: list[str] = []
+    for rec in _iter_assistant_tool_uses(transcript_jsonl):
+        if rec.get("kind") == "use":
+            uses.append(rec)
+            if rec.get("id"):
+                id_to_label[rec["id"]] = _canonical_tool_label(rec)
+        elif rec.get("kind") == "error" and rec.get("tool_use_id"):
+            error_ids.append(rec["tool_use_id"])
+
+    tools: Counter[str] = Counter()
+    plugins: Counter[str] = Counter()
+    subagents: Counter[str] = Counter()
+    for rec in uses:
+        label = _canonical_tool_label(rec)
+        tools[label] += 1
+        name = rec.get("name") or ""
+        inp = rec.get("input") if isinstance(rec.get("input"), dict) else {}
+        if name == "Skill":
+            skill = inp.get("skill") or inp.get("command") or ""
+            owner = str(skill).split(":", 1)[0] if skill else ""
+            if owner:
+                plugins[owner] += 1
+        elif name in ("Task", "Agent"):
+            sub = str(inp.get("subagent_type") or "")
+            if sub:
+                subagents[sub] += 1  # full type, e.g. "build-loop:implementer"
+                if ":" in sub:
+                    plugins[sub.split(":", 1)[0]] += 1
+        else:
+            p = _tool_plugin_label(name)
+            if p:
+                plugins[p] += 1
+
+    errored: Counter[str] = Counter()
+    for eid in error_ids:
+        label = id_to_label.get(eid)
+        if label:
+            errored[label] += 1
+
+    def _ordered(c: Counter[str]) -> dict[str, int]:
+        return dict(c.most_common())
+
+    return {
+        "tools":      _ordered(tools),
+        "plugins":    _ordered(plugins),
+        "subagents":  _ordered(subagents),
+        "errored":    _ordered(errored),
+        "total_uses": sum(tools.values()),
+    }
+
+
+def extract_tool_sequences(
+    transcript_jsonl: Path | None,
+    *,
+    window: int = 3,
+    min_repeat: int = 3,
+) -> list[dict[str, Any]]:
+    """Recurring consecutive tool n-grams — automation candidates.
+
+    A sequence of ``window`` consecutive tool labels that repeats ``>=
+    min_repeat`` times is a candidate for a script/hook. Sequences composed
+    ENTIRELY of generic core tools (the universal edit-test loop) are dropped
+    as permanent noise; a sequence keeps its candidacy only if it contains at
+    least one Skill / subagent / MCP / plugin tool that carries content.
+
+    Returns clusters sorted by count desc: ``{"sequence": [labels], "count": n}``.
+    """
+    labels = [
+        _canonical_tool_label(r)
+        for r in _iter_assistant_tool_uses(transcript_jsonl)
+        if r.get("kind") == "use"
+    ]
+    if len(labels) < window:
+        return []
+    grams: Counter[tuple[str, ...]] = Counter()
+    for i in range(len(labels) - window + 1):
+        grams[tuple(labels[i:i + window])] += 1
+
+    def _is_generic(gram: tuple[str, ...]) -> bool:
+        # A gram is generic only if EVERY step is a bare core tool.
+        return all(g in _GENERIC_TOOLS for g in gram)
+
+    out: list[dict[str, Any]] = []
+    for gram, count in grams.most_common():
+        if count < min_repeat or _is_generic(gram):
+            continue
+        out.append({"sequence": list(gram), "count": count})
+        if len(out) >= _AUTOMATION_CANDIDATE_CAP:
+            break
+    return out
+
+
+def extract_issue_signals(transcript_jsonl: Path | None) -> list[str]:
+    """App/build issue signals from the transcript — errored tool results and
+    error markers in tool output. Deterministic; the LLM body traces each to a
+    root cause in §9. Deduped, capped at ``_ISSUE_SIGNAL_CAP``."""
+    if transcript_jsonl is None:
+        return []
+    signals: list[str] = []
+    seen: set[str] = set()
+    try:
+        with open(transcript_jsonl, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or "is_error" not in line and not _ISSUE_MARKER_RE.search(line):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                content = (rec.get("message") or {}).get("content")
+                if not isinstance(content, list):
+                    continue
+                for blk in content:
+                    if not isinstance(blk, dict) or blk.get("type") != "tool_result":
+                        continue
+                    if not blk.get("is_error"):
+                        continue
+                    body = blk.get("content")
+                    if isinstance(body, list):
+                        body = " ".join(
+                            b.get("text", "") for b in body
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                    body = str(body or "").strip().replace("\n", " ")
+                    m = _ISSUE_MARKER_RE.search(body)
+                    excerpt = (body[max(0, m.start() - 20):m.start() + 100] if m else body[:120]).strip()
+                    if not excerpt:
+                        continue
+                    key = excerpt[:60].lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    signals.append(excerpt)
+                    if len(signals) >= _ISSUE_SIGNAL_CAP:
+                        return signals
+    except OSError:
+        return signals
+    return signals
+
+
 def cluster_repeated_prompts(
     prompts: list[dict[str, Any]],
     *,
@@ -158,6 +417,8 @@ SECTION_KEYS = [
     "what_should_be_enforced",
     "user_prompts_and_repeats",
     "issues_with_causal_tree",
+    "plugin_tooling_observations",
+    "automation_candidates",
 ]
 
 # Display titles (used by write.py).
@@ -171,6 +432,8 @@ SECTION_TITLES = {
     "what_should_be_enforced":    "What should be enforced",
     "user_prompts_and_repeats":   "User prompts this thread (with repeats)",
     "issues_with_causal_tree":    "Issues (with causal tree)",
+    "plugin_tooling_observations": "Plugin & tooling observations",
+    "automation_candidates":      "Deterministic-automation candidates",
 }
 
 _PASS_VERDICTS = {"yay", "approve", "pass"}
@@ -338,6 +601,58 @@ def _format_simple_bullet_section(items: list[str], empty_msg: str) -> str:
     return "\n".join(f"- {it}" for it in items)
 
 
+def _format_plugin_tooling_section(usage: dict[str, Any]) -> str:
+    """Build §10 (plugin_tooling_observations).
+
+    Deterministic view of which tools/plugins/skills/subagents ran, how often,
+    and which produced errors. The 'errored' line is the objective performance
+    signal; the LLM body appends concrete enhancement ideas per plugin.
+    """
+    tools = usage.get("tools") or {}
+    if not tools:
+        return "_(no tool activity captured — transcript missing or empty)_"
+    lines: list[str] = ["### Tools & plugins exercised this thread", ""]
+    top_tools = list(tools.items())[:12]
+    for label, n in top_tools:
+        lines.append(f"- `{label}` — {n}×")
+    plugins = usage.get("plugins") or {}
+    if plugins:
+        lines += ["", "### By plugin / skill owner", ""]
+        for owner, n in list(plugins.items())[:12]:
+            lines.append(f"- **{owner}** — {n} call(s)")
+    subs = usage.get("subagents") or {}
+    if subs:
+        lines += ["", "### Subagents dispatched", ""]
+        for sub, n in list(subs.items())[:12]:
+            lines.append(f"- {sub} — {n}×")
+    errored = usage.get("errored") or {}
+    if errored:
+        lines += ["", "### Tools that returned errors (performance / reliability signal)", ""]
+        for label, n in list(errored.items())[:12]:
+            lines.append(f"- ⚠️ `{label}` — {n} error(s) — candidate for a fix or a guardrail")
+    lines += ["", "_LLM body: for each plugin above, note how it performed and one "
+              "concrete enhancement (a missing flag, a flaky path, a better default)._"]
+    return "\n".join(lines)
+
+
+def _format_automation_candidates_section(candidates: list[dict[str, Any]]) -> str:
+    """Build §11 (automation_candidates).
+
+    Recurring tool sequences that look like a manual ritual worth turning into
+    a script/hook. Each is ALSO emitted as an enforce-candidate (kind:
+    automation) so it feeds Phase 6 Learn / self-improvement-architect.
+    """
+    if not candidates:
+        return "_No recurring automatable sequence detected this thread._"
+    lines = ["### Recurring sequences worth scripting", ""]
+    for c in candidates:
+        seq = " → ".join(c.get("sequence", []))
+        lines.append(f"- **×{c.get('count', '?')}** · `{seq}` — propose a script/hook to collapse this ritual")
+    lines += ["", "_Each candidate is routed to `proposals/enforce-from-retro/` "
+              "(kind: automation) for Phase 6 Learn to draft the script._"]
+    return "\n".join(lines)
+
+
 def _enforce_signals(
     clusters: list[dict[str, Any]],
     state_json: dict[str, Any],
@@ -400,6 +715,17 @@ def build(
     judges = list(_iter_judge_decisions(run_records))
     enforce = _enforce_signals(clusters, state_json, run_id)
 
+    # Deterministic transcript signals (free — no LLM). Feed §10, §11, and the
+    # app-issue enrichment of §4/§9.
+    usage = extract_tool_usage(transcript_jsonl)
+    automation = extract_tool_sequences(transcript_jsonl)
+    issue_signals = extract_issue_signals(transcript_jsonl)
+    # Automation candidates ARE enforce-candidates — route them into the
+    # existing enforce-from-retro → Phase 6 pipeline (kind: automation).
+    for c in automation:
+        seq = " → ".join(c.get("sequence", []))
+        enforce.append(f"Automate recurring ritual (×{c.get('count')}): {seq} — draft a script/hook")
+
     sections: dict[str, Any] = {}
 
     # 1. lessons_learned — derived from run lessons, judge findings + clusters.
@@ -436,13 +762,18 @@ def build(
         recs, "no recommendations this run"
     )
 
-    # 4. what_could_be_better — pull failures/iterate_failures.
+    # 4. what_could_be_better — failures/iterate_failures + transcript issue
+    #    signals (errored tool calls, tracebacks) + tools that erred.
     bads: list[str] = []
     for run in run_records:
         for f in run.get("failures") or []:
             _append_unique(bads, str(f))
         for f in run.get("iterate_failures") or []:
             _append_unique(bads, f"iterate-failure: {f}")
+    for label, n in (usage.get("errored") or {}).items():
+        _append_unique(bads, f"`{label}` returned {n} error(s) — friction worth removing")
+    for sig in issue_signals:
+        _append_unique(bads, f"issue signal: {sig}")
     sections["what_could_be_better"] = _format_simple_bullet_section(
         bads, "no failures captured this run"
     )
@@ -496,8 +827,21 @@ def build(
     # 8. user_prompts_and_repeats — full list + clusters.
     sections["user_prompts_and_repeats"] = _format_user_prompts_section(prompts, clusters)
 
-    # 9. issues_with_causal_tree — judge-flagged issues + stubs.
-    sections["issues_with_causal_tree"] = _format_issues_section(state_json, run_id)
+    # 9. issues_with_causal_tree — judge-flagged issues + transcript signals.
+    issues_body = _format_issues_section(state_json, run_id)
+    if issue_signals:
+        extra = "\n".join(f"- {s}" for s in issue_signals)
+        if issues_body.startswith("_No issues"):
+            issues_body = "### Issues surfaced (from transcript)\n\n" + extra
+        else:
+            issues_body += "\n\n### Additional issue signals (from transcript)\n\n" + extra
+    sections["issues_with_causal_tree"] = issues_body
+
+    # 10. plugin_tooling_observations — deterministic tool/plugin usage.
+    sections["plugin_tooling_observations"] = _format_plugin_tooling_section(usage)
+
+    # 11. automation_candidates — recurring rituals worth scripting.
+    sections["automation_candidates"] = _format_automation_candidates_section(automation)
 
     sections["enforce_candidates"] = enforce
     sections["meta"] = {
@@ -506,5 +850,9 @@ def build(
         "cluster_count": len(clusters),
         "judge_decision_count": len(judges),
         "transcript_present": transcript_jsonl is not None,
+        "tool_use_count": usage.get("total_uses", 0),
+        "distinct_plugins": len(usage.get("plugins") or {}),
+        "automation_candidate_count": len(automation),
+        "issue_signal_count": len(issue_signals),
     }
     return sections

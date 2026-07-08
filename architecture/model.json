@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "fbb302c7e142bf3c623ecd2c4b7cc77c3b3d374c55ff6f7e09fef3ff43ac690e"
+    "content_sha256": "bb89e1cc522d8ad9c67e51cdcaeb8d9e0ffbf75aba769f6a1772ab6ef48a12f9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1027,7 +1027,7 @@
       },
       "retrospective-synthesizer": {
         "model": "sonnet",
-        "description": "Post-push retrospective synthesizer. Reads the session transcript JSONL + state.json + intent + plan after the Phase 4 Report closing push, and writes a structured 9-section retrospective to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` plus a ≤5-line `<run-id>.summary.md` surfaced inline. Anything prompted ≥2× in the thread, or surfaced for the \"what should be enforced\" section, becomes an auto-drafted enfo…",
+        "description": "Post-push retrospective synthesizer. Reads the session transcript JSONL + state.json + intent + plan after the Phase 4 Report closing push, and writes a structured 11-section retrospective to `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` plus a ≤5-line `<run-id>.summary.md` surfaced inline. The 9 core sections plus §10 (plugin & tooling observations) and §11 (deterministic-automation candidates) are computed…",
         "file": "agents/retrospective-synthesizer.md",
         "last_updated": {
           "author": "Tyrone Ross",
