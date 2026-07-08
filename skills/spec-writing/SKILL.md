@@ -374,6 +374,80 @@ If the change adds no new external service, write "N/A: no new external service.
 
 ---
 
+### Item 20 — Capability gap map (implementation plans)
+
+**Gate:** this item fires for non-trivial implementation plans: code changes, workflow changes, migrations, API/schema changes, UI surfaces, hooks/watchers, or anything with a multi-step execution table. If the plan is doc-only, config-only, or a trivial local edit, write "N/A: no implementation capability gap."
+
+**Why:** this prevents the planner from describing the desired future while skipping the current source of truth. It makes the build plan answer, explicitly, "what already exists, what target behavior is required, what is missing, and how will we close that gap?"
+
+**Prompt:** add a `## Capability Gap Map` section with one row per capability, workflow, or contract the build changes:
+
+- **Capability/Workflow** — the user or system capability being changed.
+- **Current source of truth** — file, schema, route, test, doc, or explicit "none found" evidence.
+- **Target behavior** — the desired behavior after the build.
+- **Gap** — what is missing, stale, broken, duplicated, or misaligned.
+- **Build action** — the concrete change that closes the gap.
+- **Owned files/contracts** — exact files, contracts, or APIs the work will touch.
+- **Validation** — the test, command, or manual check that proves closure.
+
+**How to check:**
+
+```bash
+grep -n "## Capability Gap Map" docs/plans/<feature-slug>.md
+grep -in "current source of truth\|target behavior\|gap\|validation" docs/plans/<feature-slug>.md
+```
+
+The section should be small enough to guide execution. Do not create a separate gap-closure plan unless the user explicitly asks for a standalone artifact or the gap map is too large for the main plan.
+
+---
+
+### Item 21 — Single-shot build guardrails (implementation plans)
+
+**Gate:** this item fires for non-trivial implementation plans. If there is no implementation task, write "N/A: no implementation tasks."
+
+**Why:** this captures the failure modes that would cause rework before code is written. A good plan should name the constraints that keep the first implementation attempt from drifting, overbuilding, omitting validation, or regressing adjacent behavior.
+
+**Prompt:** add a `## Single-Shot Build Guardrails` section. Each guardrail must be concrete and cite evidence:
+
+- **Guardrail** — the rule the implementer must preserve.
+- **Prevents** — the failure mode it blocks.
+- **Evidence/test** — the command, test, existing file, ADR, or acceptance criterion that proves compliance.
+
+**How to check:**
+
+```bash
+grep -n "## Single-Shot Build Guardrails" docs/plans/<feature-slug>.md
+grep -in "guardrail\|prevents\|evidence" docs/plans/<feature-slug>.md
+```
+
+Reject generic rules like "keep it simple" unless they cite the exact file, scope boundary, or validation that makes the rule enforceable.
+
+---
+
+### Item 22 — Read-before-edit map (implementation plans)
+
+**Gate:** this item fires for non-trivial implementation plans. If there is no implementation task, write "N/A: no implementation tasks."
+
+**Why:** this reduces build-from-memory errors. It tells the implementer which files, tests, contracts, or docs must be read before editing each chunk, and why those reads matter.
+
+**Prompt:** add a `## Read-Before-Edit Map` section with one row per work item:
+
+- **Chunk/Work item** — the commit, feature, or task.
+- **Read first** — exact files, tests, contracts, docs, or search commands.
+- **Why it matters** — the invariant or coupling the read protects.
+- **Edit after** — exact files/directories to modify only after the reads are complete.
+
+**How to check:**
+
+```bash
+grep -n "## Read-Before-Edit Map" docs/plans/<feature-slug>.md
+grep -in "read first\|why\|edit after" docs/plans/<feature-slug>.md
+```
+
+The map must be repo-grounded. "Review existing code" is insufficient; name the files or the command that finds them.
+
+---
+
 ## Frontmatter fields used by routing
 
 These fields appear in plan or chunk frontmatter and affect orchestrator routing decisions. They are validated by `scripts/plan_verify.py`.
@@ -411,7 +485,11 @@ Item 14 — Handoff document: <answer>
 Item 15 — Synthesis dimensions: <answer>
 Item 16 — Risk reason: <answer>
 Item 17 — UI input/output contract: <answer>
+Item 18 — Dispatch tier per work item: <answer>
 Item 19 — Env-var manifest: <answer or "N/A: no new external service">
+Item 20 — Capability gap map: <answer or "N/A: no implementation capability gap">
+Item 21 — Single-shot build guardrails: <answer or "N/A: no implementation tasks">
+Item 22 — Read-before-edit map: <answer or "N/A: no implementation tasks">
 -->
 
 ## Goal
@@ -437,6 +515,24 @@ Item 19 — Env-var manifest: <answer or "N/A: no new external service">
 | 1 | feat(...): ... | ... | — |
 | 2 | feat(...): ... | ... | C1 |
 ...
+
+## Capability Gap Map
+
+| Capability/Workflow | Current source of truth | Target behavior | Gap | Build action | Owned files/contracts | Validation |
+|---|---|---|---|---|---|---|
+| ... | ... | ... | ... | ... | ... | ... |
+
+## Single-Shot Build Guardrails
+
+| Guardrail | Prevents | Evidence/test |
+|---|---|---|
+| ... | ... | ... |
+
+## Read-Before-Edit Map
+
+| Chunk/Work item | Read first | Why it matters | Edit after |
+|---|---|---|---|
+| ... | ... | ... | ... |
 
 ## F-Criteria (functional)
 
