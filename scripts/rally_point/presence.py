@@ -475,15 +475,29 @@ def _load_policy(channel_dir: Path):
         return _cp.CoordinationPolicy()
 
 
-def read_active_presence(channel_dir: Path, *, exclude_session: str) -> list:
-    """Live peers (post-reap), excluding ``exclude_session`` and reader
-    cursor stubs. Never locks."""
-    reap_stale(channel_dir)
+def read_active_presence(channel_dir: Path, *, exclude_session: str,
+                         reap: bool = True) -> list:
+    """Live peers, excluding ``exclude_session`` and reader cursor stubs.
+    Never locks.
+
+    ``reap`` (default ``True``, preserving prior behavior) prunes adaptively
+    stale presence in place (Rust-only physical unlink under full capability; a
+    no-op otherwise). Pass ``reap=False`` for a strictly NON-MUTATING read:
+    stale sessions are excluded via a dry-run (``apply=False``) instead of being
+    unlinked, and the SHA cache is never written. Advisory read-only callers —
+    e.g. the SessionStart peer-collision hook — MUST use ``reap=False`` so a hook
+    can never mutate shared room state."""
+    stale: set = set()
+    if reap:
+        reap_stale(channel_dir)
+    else:
+        stale = set(reap_stale(channel_dir, apply=False))
     out = []
     for _f, rec in _iter_presence(channel_dir):
         if rec.get("tool") == "reader":
             continue  # cursor stub is not a peer
-        if rec.get("session_id") != exclude_session:
+        sid = rec.get("session_id")
+        if sid != exclude_session and sid not in stale:
             out.append(rec)
     return out
 

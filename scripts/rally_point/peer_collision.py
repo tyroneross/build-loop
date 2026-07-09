@@ -11,7 +11,8 @@ fail-open, advisory WARN naming the collision so the session mints a worktree
 before committing.
 
 Advisory + fail-open by contract: any error → empty string / exit 0. It reads
-live presence from the workdir's rally room (post-reap) and NEVER writes.
+live presence from the workdir's rally room via a NON-MUTATING read
+(reap=False) — it never unlinks a presence file or writes the SHA cache.
 
 Self-exclusion: when the caller passes ``--session-id`` (or `self_session`), that
 session is excluded and any remaining live peer triggers the WARN. When no self
@@ -72,7 +73,11 @@ def collision_warn(workdir: Path, self_session: str = "") -> str:
         cdir = _channel_dir(workdir)
         if not cdir.is_dir():
             return ""
-        peers = presence.read_active_presence(cdir, exclude_session=self_session or "")
+        # reap=False → strictly non-mutating read: an advisory SessionStart hook
+        # must never unlink presence files or write the SHA cache (would race
+        # peers). Stale sessions are excluded via a dry-run instead.
+        peers = presence.read_active_presence(
+            cdir, exclude_session=self_session or "", reap=False)
         return warn_line_for(peers, self_session)
     except Exception:  # noqa: BLE001 — advisory hook must never raise
         return ""

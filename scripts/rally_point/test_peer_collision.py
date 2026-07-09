@@ -103,3 +103,30 @@ def test_main_exit_zero_and_prints_to_stderr(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""            # advisory goes to stderr, not stdout
     assert "peer active on this workdir" in captured.err
+
+
+def test_peer_collision_read_is_nonmutating(tmp_path, monkeypatch):
+    """collision_warn / read_active_presence(reap=False) must NOT unlink a stale
+    presence file or write the SHA cache — a SessionStart hook is read-only.
+    Regression: Codex audit 2026-07-08 (reap_stale via read_active_presence)."""
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parent))
+    import presence  # type: ignore
+
+    # A channel dir with one very-stale presence file (heartbeat far in the past).
+    cdir = tmp_path / ".build-loop" / "app-room"
+    cdir.mkdir(parents=True)
+    stale = cdir / "sess-stale.json"
+    stale.write_text(json.dumps({
+        "session_id": "sess-stale", "tool": "claude_code",
+        "heartbeat_ts": 1.0,  # epoch → definitely stale
+    }), encoding="utf-8")
+
+    before = sorted(p.name for p in cdir.iterdir())
+    peers = presence.read_active_presence(cdir, exclude_session="me", reap=False)
+    after = sorted(p.name for p in cdir.iterdir())
+
+    assert before == after, "reap=False must not unlink any presence file"
+    # stale session is excluded from the active set (dry-run classified it stale)
+    assert all(r.get("session_id") != "sess-stale" for r in peers)
