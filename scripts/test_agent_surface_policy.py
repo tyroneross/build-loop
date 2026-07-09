@@ -27,7 +27,11 @@ CLAUDE_PUBLIC_ENTRYPOINTS = {
     "research",
     "knowledge",
     "handoff",
-    "root-cause-analysis",
+    # root-cause-analysis is agent-invoked ("no dedicated command"; reachable via
+    # natural language only) per its SKILL description + build-loop's
+    # "only /build-loop:run is human-facing" design. The fix/rca-user-invocable
+    # merge left this list and the SKILL frontmatter inconsistent (SKILL stayed
+    # user-invocable:false); resolved 2026-07-08 toward agent-invoked.
 }
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)

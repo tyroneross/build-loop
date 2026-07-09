@@ -181,7 +181,8 @@ CATEGORY_KEYWORDS = [
                       # Phase C/G additions:
                       "rerank", "wiki", "rrf", "cross-encoder",
                       "federation", "daemon", "lesson")),
-    ("testing",      ("test", "pytest", "jest", "vitest", "spec")),
+    ("testing",      ("test", "pytest", "jest", "vitest", "spec",
+                      "verify gate", "spot-check", "perturbation")),
     ("deployment",   ("deployment", "release", "publish", "version-bump",
                       "version_advisor")),
     ("ux-ui",        ("ux", "ui", "ibr", "design", "accessibility", "a11y",
