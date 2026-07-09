@@ -29,6 +29,7 @@ from _paths import (  # type: ignore  # noqa: E402
     memory_store_root,
     project_decisions_dir,
     project_lessons_dir,
+    project_research_dir,
     project_root,
     top_level_lessons_dir,
 )
@@ -41,6 +42,7 @@ KIND_STATUS = "build-loop-memory-status"
 VALID_MODES = {"fast", "expand"}
 DEFAULT_LIMIT = 5
 DEFAULT_MAX_CHARS = 900
+CAPSULE_MAX_AGE_DAYS = 7
 
 
 def utc_now() -> str:
@@ -147,11 +149,29 @@ def _recent_markdown(
     prefix: str,
     limit: int,
     max_chars: int,
+    query: str = "",
 ) -> list[dict[str, Any]]:
     if not directory.is_dir():
         return []
-    candidates = [p for p in directory.glob("*.md") if p.name not in {"INDEX.md", "README.md", "MEMORY.md"}]
-    candidates.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    excluded_dirs = {"raw-originals", "archive", "indexes", "raw"}
+    candidates = [
+        p for p in directory.rglob("*.md")
+        if p.name not in {"INDEX.md", "README.md", "MEMORY.md"}
+        and not any(part in excluded_dirs for part in p.relative_to(directory).parts[:-1])
+    ]
+    query_tokens = {token.lower() for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", query)}
+
+    def rank(path: Path) -> tuple[int, float]:
+        if not query_tokens:
+            return (0, path.stat().st_mtime if path.exists() else 0)
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            text = ""
+        score = sum(1 for token in query_tokens if token in text)
+        return (score, path.stat().st_mtime if path.exists() else 0)
+
+    candidates.sort(key=rank, reverse=True)
     rows: list[dict[str, Any]] = []
     for path in candidates[:limit]:
         text, reason = _read_text(path, max_chars=max_chars * 2)
@@ -233,6 +253,33 @@ def _freshness(workdir: Path, project: str, project_dir: Path, warnings: list[st
             validity = "stale"
     if not project_dir.exists():
         validity = "unknown"
+    capsule_reasons: list[str] = []
+    capsule_path = project_dir / "context" / "freshness.json"
+    capsule: dict[str, Any] = {}
+    try:
+        if capsule_path.is_file():
+            capsule = json.loads(capsule_path.read_text(encoding="utf-8"))
+            stored_source = str(capsule.get("source_commit") or "")
+            stored_memory = str(capsule.get("memory_commit") or "")
+            if stored_source and source_git.get("commit") and stored_source != source_git.get("commit"):
+                capsule_reasons.append("source_commit_changed")
+            if stored_memory and memory_git.get("commit") and stored_memory != memory_git.get("commit"):
+                capsule_reasons.append("memory_commit_changed")
+            generated_at = str(capsule.get("generated_at") or "")
+            if generated_at:
+                try:
+                    age_seconds = (datetime.now(timezone.utc) - datetime.fromisoformat(generated_at.replace("Z", "+00:00"))).total_seconds()
+                    if age_seconds > CAPSULE_MAX_AGE_DAYS * 86400:
+                        capsule_reasons.append("capsule_older_than_7_days")
+                except ValueError:
+                    capsule_reasons.append("capsule_timestamp_invalid")
+        elif project_dir.exists():
+            capsule_reasons.append("capsule_missing")
+    except (OSError, json.JSONDecodeError):
+        capsule_reasons.append("capsule_unreadable")
+    if capsule_reasons:
+        validity = "stale" if validity == "clean" else validity
+        warnings.extend(f"memory_capsule_{reason}" for reason in capsule_reasons)
     return {
         "validity": validity,
         "generated_at": utc_now(),
@@ -246,6 +293,10 @@ def _freshness(workdir: Path, project: str, project_dir: Path, warnings: list[st
         "memory_branch": memory_git.get("branch", ""),
         "memory_commit": memory_git.get("commit", ""),
         "memory_dirty_count": memory_git.get("dirty_count"),
+        "capsule_generated_at": capsule.get("generated_at"),
+        "capsule_source_commit": capsule.get("source_commit"),
+        "capsule_memory_commit": capsule.get("memory_commit"),
+        "capsule_stale_reasons": capsule_reasons,
         "index": _index_state(),
     }
 
@@ -255,10 +306,16 @@ def _evidence_from_current(current: dict[str, Any]) -> list[dict[str, str]]:
     ctx = current.get("context") or {}
     if ctx.get("exists") and ctx.get("path"):
         evidence.append({"id": ctx.get("id", "context:CONTEXT"), "path": ctx["path"], "type": "context"})
-    for lane in ("decisions", "lessons"):
+    lane_types = {
+        "decisions": "decision",
+        "lessons": "lesson",
+        "research": "research",
+        "references": "reference",
+    }
+    for lane, evidence_type in lane_types.items():
         for item in current.get(lane, []):
             if item.get("id") and item.get("path"):
-                evidence.append({"id": str(item["id"]), "path": str(item["path"]), "type": lane[:-1]})
+                evidence.append({"id": str(item["id"]), "path": str(item["path"]), "type": evidence_type})
     return evidence
 
 
@@ -293,14 +350,45 @@ def build_current(
         prefix="lesson",
         limit=limit,
         max_chars=max_chars,
+        query=query,
     )
     global_lessons = _recent_markdown(
         top_level_lessons_dir(),
         prefix="lesson",
         limit=max(0, limit - len(project_lessons)),
         max_chars=max_chars,
+        query=query,
     )
     lessons = project_lessons + global_lessons
+
+    project_research = _recent_markdown(
+        project_research_dir(project_tag),
+        prefix="research",
+        limit=limit,
+        max_chars=max_chars,
+        query=query,
+    )
+    project_references = _recent_markdown(
+        proj_dir / "references",
+        prefix="reference",
+        limit=limit,
+        max_chars=max_chars,
+        query=query,
+    )
+    global_research = _recent_markdown(
+        memory_store_root() / "research",
+        prefix="research",
+        limit=max(0, limit - len(project_research)),
+        max_chars=max_chars,
+        query=query,
+    )
+    global_references = _recent_markdown(
+        memory_store_root() / "references",
+        prefix="reference",
+        limit=max(0, limit - len(project_references)),
+        max_chars=max_chars,
+        query=query,
+    )
 
     current: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -312,6 +400,8 @@ def build_current(
         "context": context,
         "decisions": project_decisions,
         "lessons": lessons[:limit],
+        "research": (project_research + global_research)[:limit],
+        "references": (project_references + global_references)[:limit],
         "next_commands": [
             'blm context --workdir "$PWD" --mode fast --json',
             'blm context --workdir "$PWD" --mode expand --json',
@@ -354,11 +444,12 @@ def render_current_markdown(current: dict[str, Any]) -> str:
         for item in current["decisions"]:
             lines.append(f"- {item.get('title') or item.get('id')} ({item.get('id')})")
         lines.append("")
-    if current.get("lessons"):
-        lines.extend(["## Relevant Lessons", ""])
-        for item in current["lessons"]:
-            lines.append(f"- {item.get('title') or item.get('id')} ({item.get('id')})")
-        lines.append("")
+    for lane, heading in (("lessons", "Relevant Lessons"), ("research", "Relevant Research"), ("references", "Relevant References")):
+        if current.get(lane):
+            lines.extend([f"## {heading}", ""])
+            for item in current[lane]:
+                lines.append(f"- {item.get('title') or item.get('id')} ({item.get('id')})")
+            lines.append("")
     if current.get("warnings"):
         lines.extend(["## Warnings", ""])
         for warning in current["warnings"]:
@@ -469,11 +560,13 @@ def _expand_with_lessons(query: str, project: str, limit: int) -> dict[str, Any]
 def _expand_with_graph(current: dict[str, Any], limit: int) -> dict[str, Any]:
     project = str(current.get("project") or "")
     seeds = [f"project:{project}"] if project else []
-    if not seeds:
-        for item in current.get("evidence", []):
-            item_id = str(item.get("id") or "")
-            if item_id and not item_id.startswith("context:"):
-                seeds.append(item_id)
+    # Seed with hot evidence as well as the project node. This makes research
+    # and reference lanes reachable instead of relying on a project-only
+    # traversal whose bounded result can be dominated by lessons/decisions.
+    for item in current.get("evidence", []):
+        item_id = str(item.get("id") or "")
+        if item_id and item.get("type") in {"research", "reference"}:
+            seeds.append(item_id)
     # Preserve order while deduping.
     seeds = list(dict.fromkeys(seeds))
     if not seeds:

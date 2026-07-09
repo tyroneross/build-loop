@@ -134,6 +134,26 @@ class MemoryContextTests(unittest.TestCase):
         related_ids = [item["id"] for item in graph["related"]]
         self.assertIn("decision-demo", related_ids)
 
+    def test_research_and_reference_lanes_are_retrievable(self) -> None:
+        import memory_context as mc  # noqa: PLC0415
+
+        research_dir = self.project_dir / "research"
+        research_dir.mkdir()
+        (research_dir / "deep-research.md").write_text(
+            "# Deep Research\n\nEvidence register and claim matrix for retrieval.\n",
+            encoding="utf-8",
+        )
+        envelope = mc.build_context(
+            self.workdir,
+            query="evidence register claim matrix",
+            mode="expand",
+            project=self.project,
+            write=False,
+        )
+        self.assertEqual(envelope["current"]["research"][0]["title"], "Deep Research")
+        names = [item["name"] for item in envelope["expansion"]["lessons"]]
+        self.assertIn("deep-research", names)
+
     def test_open_artifact_reads_evidence_id(self) -> None:
         import memory_context as mc  # noqa: PLC0415
 

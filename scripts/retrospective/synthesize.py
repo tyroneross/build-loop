@@ -161,7 +161,22 @@ def _intent_one_line(intent_md: str) -> str | None:
 
 
 def _derive_repo_slug(workdir: Path) -> str:
-    """Best-effort repo slug: directory name. Caller may override."""
+    """Resolve the canonical project slug, with a test-safe directory fallback.
+
+    Directory names are not stable project identity: isolated build runs often
+    live in ``run-<digits>`` directories.  Use the same resolver as memory
+    writes so retrospective promotion cannot route a transient run into the
+    durable project tree.  Non-git fixture directories retain the historical
+    basename fallback used by unit tests and local smoke runs.
+    """
+    try:
+        from project_resolver import resolve_project  # type: ignore
+
+        slug = resolve_project(workdir)
+        if slug and slug != "_unscoped":
+            return slug
+    except Exception:  # noqa: BLE001 - retrospective synthesis is fail-soft
+        pass
     return workdir.resolve().name
 
 

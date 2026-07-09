@@ -87,6 +87,10 @@ KIND_ALIASES = {
     "lesson": "lessons",
     "semantic_facts": "semantic",
     "debug": "debugger",
+    # Preserve the frozen five-bucket envelope while allowing callers to ask
+    # for research/reference recall through the lessons lane.
+    "research": "lessons",
+    "reference": "lessons",
 }
 
 # ---------------------------------------------------------------------------
@@ -197,6 +201,7 @@ def recall(
     from ``db_unavailable: ...``) so consumers can tell intentional skip
     from genuine backend-down.
     """
+    kind = KIND_ALIASES.get(kind, kind)
     if kind is not None and kind not in KINDS:
         raise ValueError(f"invalid kind {kind!r}; expected one of {KINDS}")
     workdir = (workdir or Path.cwd()).resolve()
