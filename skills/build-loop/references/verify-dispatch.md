@@ -77,9 +77,22 @@ State the outcome in this form:
 
 Never emit "the agent confirmed it passed" as your own verification line. Name which commands you ran and what they returned. If a step was skipped, say why.
 
+## Auditing verdict / classification claims (DONE · PASS · verified)
+
+When a dispatched agent returns *verdicts* — "DONE", "PASS", "already implemented", "complete", "verified" — audit each verdict against the cited evidence, not against its title. An over-optimistic DONE hides a real gap far more often than a REJECT does; the failure mode is **claiming a nearby mechanism satisfies the requirement when it only partially does** ("adjacent" and "partial" read as DONE).
+
+Run the audit as a **second, adversarial pass — a different model where possible** (e.g. Codex when the harness was Claude), prompted to REFUTE, not confirm:
+
+- For every DONE / PASS, open the cited `path:line` and confirm the named control **actually satisfies the requirement** — not merely that a related file exists or a similar mechanism is nearby.
+- Default to skepticism on DONE; a verdict carrying no `path:line` evidence is unverified by definition.
+- Spend the adversarial budget on the DONE claims; sanity-check the rest (ADOPT genuinely not-yet-done, DEFER not actually adoptable).
+- Report corrections as `<id> · claimed <verdict> · actually <truth> · correct <verdict>` with evidence `path:line`.
+
+Worked evidence (2026-07-08, this repo): a Codex audit of a 13-item triage corrected **3 of 9 "DONE" verdicts to ADOPT** (partial/adjacent), each confirmed against `stop_closeout.py` / `session_end_retro_sweep.py`; a separate pre-push Codex audit caught **3 over-optimistic passes** (fire-scope over-firing on runs, a `tempfile` name the scratch-guard missed, a SessionEnd hook the plugin didn't actually ship). A single self-classification pass would have shipped all six.
+
 ## What this does NOT replace
 
 - **runtime-parity-verification** — that skill cross-checks a running app's UI against backend state. This checklist covers the git/test layer only.
 - **plan-verify** — that skill lints a plan's evidence claims before Phase 2 acceptance. This checklist fires after a dispatch reports completion.
 
-Origin lessons: `feedback_solicited_peer_review_is_not_independent.md`, `feedback_buildloop_verify_auditor_ran.md`, `feedback_verify_running_app_not_compile_green.md`.
+Origin lessons: `feedback_solicited_peer_review_is_not_independent.md`, `feedback_buildloop_verify_auditor_ran.md`, `feedback_verify_running_app_not_compile_green.md`, `feedback_duplicate_claim_pivot_to_verifier.md`.
