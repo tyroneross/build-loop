@@ -104,6 +104,24 @@ IN_REPO_NOTIFY_ONLY = (
 _COMMIT_CALL_RE = re.compile(r"""['"]commit['"]|git\s+commit""")
 _WORKTREE_CALL_RE = re.compile(r"worktree|create_guarded_worktree|build-loop\.worktrees")
 
+# A bare python interpreter: `python`, `python3`, `python3.14`, … with NO path
+# separator (so it resolves via PATH, not a pinned venv). A venv-pinned interpreter
+# (e.g. `/Users/x/.venv/bin/python3`) carries a `/` and is therefore stable.
+_PYTHON_BASENAME_RE = re.compile(r"^python(?:\d+(?:\.\d+)?)?$", re.IGNORECASE)
+
+
+def _is_bare_python_interpreter(interp: str) -> bool:
+    """True when ``interp`` is a bare python command name resolved via PATH.
+
+    A background job launched with a bare ``python3`` inherits whatever python
+    happens to be first on PATH; a peer reinstalling the system interpreter
+    (F1 freeze: ``python@3.14`` replaced the shared interpreter) silently breaks
+    the job. A ``.venv``-pinned absolute path is stable. Empty/None → False."""
+    interp = (interp or "").strip()
+    if not interp or "/" in interp:
+        return False
+    return bool(_PYTHON_BASENAME_RE.match(interp))
+
 
 def _finding(
     severity: str, rule: str, location: str, message: str, remedy: str
@@ -184,6 +202,28 @@ def lint_launch_agents(launch_agents_dir: Path) -> list[dict[str, str]]:
             continue
         if not _persistent(plist):
             continue
+
+        # WARN (venv isolation, EC-02 coord): a background job launched with a bare
+        # `python3` resolves the interpreter via PATH, so a peer reinstalling the
+        # system python (F1 freeze: `python@3.14`) silently breaks it. Independent
+        # of the cwd/commit hazard below — a worktree-isolated job can still run a
+        # fragile bare interpreter. Non-gating (WARN never sets the exit code).
+        interp = str(args[0]) if args else program
+        if _is_bare_python_interpreter(interp):
+            findings.append(
+                _finding(
+                    "WARN",
+                    "bare-python-interpreter",
+                    str(plist_path),
+                    f"launchd job '{label}' launches a bare `{interp}` interpreter "
+                    f"(resolved via PATH). A peer reinstalling the system python "
+                    f"(F1 freeze: python@3.14) would silently break this job.",
+                    "Pin the interpreter to a venv-absolute path (e.g. "
+                    "<repo>/.venv/bin/python3) in ProgramArguments[0] so a PATH "
+                    "change cannot swap the interpreter under the job.",
+                )
+            )
+
         # Notify-only programs never commit → no cwd hazard.
         if _is_notify_only_program(program):
             continue

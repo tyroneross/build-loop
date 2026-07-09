@@ -291,3 +291,49 @@ def test_cli_exit_codes(tmp_path, orphan_poller_program):
         ["--workdir", str(tmp_path), "--launch-agents-dir", str(empty), "--json"]
     )
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# EC-02 coord: bare `python3` interpreter → WARN (non-gating)
+# ---------------------------------------------------------------------------
+def test_bare_python_interpreter_warns(tmp_path):
+    """A background autonomy job launched with a bare `python3` → WARN, not BLOCKER."""
+    la_dir = tmp_path / "LaunchAgents"
+    la_dir.mkdir()
+    _write_plist(
+        la_dir / "poller.plist",
+        label="com.x.codex-autonomy-poller.build-loop",
+        program="python3",  # bare interpreter, no venv pin, no cwd
+    )
+    result = lint.run_lint(workdir=tmp_path, launch_agents_dir=la_dir)
+
+    warns = [f for f in result["findings"] if f["rule"] == "bare-python-interpreter"]
+    assert len(warns) == 1
+    assert warns[0]["severity"] == "WARN"
+    # WARN never blocks: no BLOCKER, exit stays clean.
+    assert result["ok"] is True
+    assert result["blocker_count"] == 0
+
+
+def test_venv_pinned_python_does_not_warn(tmp_path):
+    """A venv-absolute interpreter path is stable → no bare-python WARN."""
+    la_dir = tmp_path / "LaunchAgents"
+    la_dir.mkdir()
+    _write_plist(
+        la_dir / "poller.plist",
+        label="com.x.codex-autonomy-poller.build-loop",
+        program="/Users/x/dev/build-loop/.venv/bin/python3",
+    )
+    result = lint.run_lint(workdir=tmp_path, launch_agents_dir=la_dir)
+
+    assert not [f for f in result["findings"] if f["rule"] == "bare-python-interpreter"]
+
+
+def test_bare_python_interpreter_helper():
+    assert lint._is_bare_python_interpreter("python3") is True
+    assert lint._is_bare_python_interpreter("python") is True
+    assert lint._is_bare_python_interpreter("python3.14") is True
+    assert lint._is_bare_python_interpreter("/usr/bin/python3") is False
+    assert lint._is_bare_python_interpreter(".venv/bin/python3") is False
+    assert lint._is_bare_python_interpreter("node") is False
+    assert lint._is_bare_python_interpreter("") is False
