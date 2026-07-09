@@ -70,4 +70,10 @@ fi
 # no-ops and NEVER affects the hook's exit code.
 [ -f "$PKG/peer_collision.py" ] && python3 "$PKG/peer_collision.py" --workdir "$W" 1>/dev/null || true
 
+# Step 7: orphan/stale-session NOTICE (lane EC-04 coord — notify half). Advisory +
+# fail-open + READ-ONLY: a dry-run count of over-TTL sessions surfaced as a WARN.
+# It never reaps (Step 3 already does that capability-gated); it only tells the
+# human cleanup is pending. Prints only to stderr; exit 0 preserved.
+[ -f "$PKG/orphan_notice.py" ] && python3 "$PKG/orphan_notice.py" --workdir "$W" 1>/dev/null || true
+
 exit 0
