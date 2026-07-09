@@ -12,11 +12,16 @@ reaches NEITHER, so it stays invisible to Learn and the judgment gap is silent
 until a human prompts for the closeout. This fires both STRUCTURALLY at the Stop
 boundary — no human prompt.
 
-Honest scope limit: a Stop hook cannot dispatch agents, so this auto-RECORDS the
-run and auto-SURFACES the judgment gap (WARN). It does NOT make the Frontier
-(Fable) judgment happen, and it leaves a ``closeout-pending/<run-id>.md`` marker
-that the next SessionStart surfaces, reminding to run the retrospective-synthesizer
-+ memory closeout (also agent dispatches a Stop hook cannot do).
+Honest scope limit (f6): a Stop hook cannot dispatch agents, so this auto-RECORDS
+the run and auto-SURFACES the judgment gap (WARN). It does NOT make the Frontier
+(Fable) judgment happen. The resolution is to make the ``closeout-pending/<run-id>.md``
+marker ACTIONABLE rather than fake a dispatch: the marker carries a
+``closeout_incomplete`` flag + per-artifact checkboxes (EC-01 rca), and the next
+SessionStart surfaces every OWED marker with the exact next action — dispatch the
+``retrospective-synthesizer`` for that run-id and run the memory closeout — so the
+owed work the Stop path could not perform actually gets run in-session. A marker
+whose closeout already completed (``closeout_incomplete: false``) is archived
+without nagging.
 
 Contract (mirrors build-loop's hook charter):
   * Advisory + fail-open: ``exit 0`` always; valid JSON on stdout; never blocks.
@@ -617,6 +622,22 @@ def _sweep_orphan_run(workdir: Path) -> str | None:
     return run_id
 
 
+def _marker_incomplete(marker: Path) -> bool:
+    """Read the marker's ``closeout_incomplete`` frontmatter flag.
+
+    f6: an inline run's closeout is OWED until both artifacts exist. Default to
+    True (owed) when the flag is absent/unreadable — an older marker predates the
+    flag, so treat it as still owed rather than silently complete. Fail-open."""
+    try:
+        for line in marker.read_text(encoding="utf-8", errors="ignore").splitlines():
+            s = line.strip()
+            if s.startswith("closeout_incomplete:"):
+                return s.split(":", 1)[1].strip().lower() != "false"
+    except OSError:
+        return True
+    return True
+
+
 def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     """SessionStart-mode entrypoint. Return (hook JSON, markers to archive AFTER emit).
 
@@ -625,6 +646,12 @@ def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     it happens only once the reminder has actually been printed — a hook-timeout
     kill before emit then re-surfaces the reminder next session rather than
     losing it permanently.
+
+    f6 (honest scope limit): a Stop hook CANNOT dispatch the retrospective-
+    synthesizer — only record + mark. This SessionStart surface is therefore the
+    actionable half of the resolution: it names the exact next action so the owed
+    synth + memory closeout actually get run in-session. A marker whose closeout
+    already completed (``closeout_incomplete: false``) is archived WITHOUT nagging.
     """
     try:
         _sweep_orphan_run(workdir)
@@ -633,22 +660,37 @@ def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     pending_dir = workdir / ".build-loop" / "closeout-pending"
     if not pending_dir.is_dir():
         return {}, []
-    markers = sorted(p for p in pending_dir.glob("*.md") if p.is_file())
-    if not markers:
+    all_markers = sorted(p for p in pending_dir.glob("*.md") if p.is_file())
+    if not all_markers:
         return {}, []
+    # Only markers still OWED get an actionable prompt; complete ones are archived silently.
+    owed = [m for m in all_markers if _marker_incomplete(m)]
+    if not owed:
+        return {}, all_markers
     lines = [
-        "build-loop closeout-pending — inline run(s) recorded by the Stop hook still owe "
-        "a retrospective-synthesizer pass + memory closeout (a Stop hook cannot dispatch agents):",
+        "build-loop closeout OWED — inline run(s) recorded by the Stop hook still need a "
+        "retrospective + memory closeout. A Stop hook cannot dispatch agents, so run these "
+        "now in-session (this is the owed judgment the Stop path could not make happen):",
+        "",
     ]
-    for m in markers:
-        lines.append(f"  - {m.stem} (see {m.relative_to(workdir)})")
+    for m in owed:
+        rid = m.stem
+        lines.append(f"  - {rid} (marker: {m.relative_to(workdir)})")
+        lines.append(
+            f"      ACTION: dispatch the `retrospective-synthesizer` agent for {rid} "
+            f"(or run `python3 -m retrospective --workdir . --run-id {rid}` from scripts/), "
+            "then extract durable lessons via `scripts/memory_writer.py`."
+        )
     out = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": "\n".join(lines),
         }
     }
-    return out, markers
+    # Archive ALL surfaced markers (owed + complete): the owed ones have now been
+    # prompted; a still-owed run re-marks on its NEXT Stop, so the reminder is not
+    # lost, and completed markers should not linger.
+    return out, all_markers
 
 
 def _archive_markers(workdir: Path, markers: list[Path]) -> None:

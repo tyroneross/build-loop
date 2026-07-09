@@ -474,6 +474,47 @@ def test_session_start_no_markers_is_silent(tmp_path):
     assert stop_closeout.run_session_start(tmp_path) == ({}, [])
 
 
+# --- f6: SessionStart surface of an OWED marker is explicitly actionable -----
+def test_session_start_prompts_action_for_owed_marker(tmp_path):
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "bl-owed-1.md").write_text(
+        "---\nrun_id: bl-owed-1\ncloseout_incomplete: true\nsource: stop_closeout\n---\n\n# owed\n"
+    )
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "bl-owed-1" in ctx
+    assert "retrospective-synthesizer" in ctx           # names the owed agent
+    assert "--run-id bl-owed-1" in ctx                  # actionable command
+    assert "memory_writer.py" in ctx                    # names the memory-closeout step
+    assert [p.name for p in to_archive] == ["bl-owed-1.md"]
+
+
+def test_session_start_archives_complete_marker_without_nagging(tmp_path):
+    """A closeout that already completed (closeout_incomplete: false) is archived
+    silently — no owed-action prompt."""
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "bl-done-1.md").write_text(
+        "---\nrun_id: bl-done-1\ncloseout_incomplete: false\nsource: stop_closeout\n---\n\n# done\n"
+    )
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
+    assert out == {}                                     # no prompt for a done closeout
+    assert [p.name for p in to_archive] == ["bl-done-1.md"]  # still archived (no linger)
+
+
+def test_marker_missing_flag_defaults_to_owed(tmp_path):
+    """An older marker without the closeout_incomplete flag is treated as owed
+    (safer than silently complete)."""
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "bl-legacy.md").write_text(
+        "---\nrun_id: bl-legacy\nsource: stop_closeout\n---\n\n# legacy marker\n"
+    )
+    out, _ = stop_closeout.run_session_start(tmp_path)
+    assert "bl-legacy" in out["hookSpecificOutput"]["additionalContext"]
+
+
 # --- CLI smoke (exit 0 + valid JSON always) --------------------------------
 
 def test_cli_stop_emits_valid_json_exit0(tmp_path):
