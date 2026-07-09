@@ -171,6 +171,91 @@ def test_f4_slug_normalizes_uppercase_and_chars(patched_env, tmp_path):
     assert derive_slug_from_cwd(repo) == "build-loop"
 
 
+def test_f4_slug_pin_overrides_dirname_derivation(patched_env, tmp_path):
+    """Durable-slug-pin (P0-4 RCA) — a `memoryProjectSlug` pin in
+    `.build-loop/config.json` is used verbatim, skipping dirname derivation
+    entirely. This is the regression guard for the RossLabs-AI-Assistant
+    rename that orphaned memory under the old `ai-assistant` slug: pinning
+    the OLD slug on the renamed repo must reclaim it regardless of the
+    current directory name.
+    """
+    from _paths import derive_slug_from_cwd  # type: ignore
+
+    repo = tmp_path / "RossLabs-AI-Assistant"  # renamed dirname
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / ".build-loop").mkdir()
+    (repo / ".build-loop" / "config.json").write_text(
+        '{"memoryProjectSlug": "ai-assistant"}', encoding="utf-8",
+    )
+    # Without the pin this would derive "rosslabs-ai-assistant" from the
+    # dirname — the pin must win instead.
+    assert derive_slug_from_cwd(repo) == "ai-assistant"
+    assert derive_slug_from_cwd(repo) != "rosslabs-ai-assistant"
+
+
+def test_f4_slug_pin_flows_through_resolve_project(patched_env, tmp_path):
+    """The pin isn't a dormant field — `resolve_project` (the primary
+    consumer used by `memory_writer`, `recall`, `charter`, etc.) must see
+    the pinned slug too, since it calls `derive_slug_from_cwd` first."""
+    from project_resolver import resolve_project  # type: ignore
+
+    repo = tmp_path / "renamed-repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / ".build-loop").mkdir()
+    (repo / ".build-loop" / "config.json").write_text(
+        '{"memoryProjectSlug": "pinned-old-name"}', encoding="utf-8",
+    )
+    assert resolve_project(repo) == "pinned-old-name"
+
+
+def test_f4_slug_unpinned_falls_back_to_dirname(patched_env, tmp_path):
+    """No pin (or a `.build-loop/config.json` with no `memoryProjectSlug`
+    key, e.g. one carrying only `selfReview`) — dirname derivation runs
+    exactly as before the pin was added."""
+    from _paths import derive_slug_from_cwd  # type: ignore
+
+    repo = tmp_path / "PlainRepo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / ".build-loop").mkdir()
+    (repo / ".build-loop" / "config.json").write_text(
+        '{"selfReview": {"enabled": true}}', encoding="utf-8",
+    )
+    assert derive_slug_from_cwd(repo) == "plainrepo"
+
+
+def test_f4_slug_pin_invalid_value_falls_back_to_dirname(patched_env, tmp_path):
+    """Malformed pin (empty string, non-string, or a value that fails
+    `_safe_project_tag`, e.g. contains `/..`) degrades gracefully to
+    dirname derivation instead of raising or resolving to a bad slug."""
+    from _paths import derive_slug_from_cwd  # type: ignore
+
+    repo = tmp_path / "SafeRepo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / ".build-loop").mkdir()
+    (repo / ".build-loop" / "config.json").write_text(
+        '{"memoryProjectSlug": "../../etc"}', encoding="utf-8",
+    )
+    assert derive_slug_from_cwd(repo) == "saferepo"
+
+
+def test_f4_slug_pin_malformed_json_falls_back_to_dirname(patched_env, tmp_path):
+    """Unreadable/invalid JSON in config.json must not raise — falls back."""
+    from _paths import derive_slug_from_cwd  # type: ignore
+
+    repo = tmp_path / "BrokenConfigRepo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / ".build-loop").mkdir()
+    (repo / ".build-loop" / "config.json").write_text(
+        "{not valid json", encoding="utf-8",
+    )
+    assert derive_slug_from_cwd(repo) == "brokenconfigrepo"
+
+
 # ---------- F5 ---------------------------------------------------------------
 
 

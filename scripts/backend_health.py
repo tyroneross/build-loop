@@ -31,6 +31,7 @@ summary is for human terminal output.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -112,6 +113,22 @@ def probe_runs(workdir: Path) -> Dict[str, Any]:
 # Backend 2: episodic decisions/
 # ---------------------------------------------------------------------------
 
+def _resolve_project_slug(workdir: Path) -> Optional[str]:
+    """Resolve the memory project slug for `workdir`. `None` on any failure.
+
+    Shared by `_resolve_canonical_decisions_dir` and the rename-detection
+    heuristic in `detect_possible_rename` — both need the same slug.
+    """
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
+        return resolve_project(workdir) or None
+    except Exception:  # noqa: BLE001 — best-effort resolution
+        return None
+
+
 def _resolve_canonical_decisions_dir(workdir: Path) -> Optional[Path]:
     """Resolve the canonical (global) decisions directory for this project.
 
@@ -128,13 +145,101 @@ def _resolve_canonical_decisions_dir(workdir: Path) -> Optional[Path]:
         if str(scripts_dir) not in sys.path:
             sys.path.insert(0, str(scripts_dir))
         from _paths import project_decisions_dir  # type: ignore  # noqa: PLC0415
-        from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
-        proj = resolve_project(workdir)
+        proj = _resolve_project_slug(workdir)
         if not proj:
             return None
         return project_decisions_dir(proj)
     except Exception:  # noqa: BLE001 — best-effort resolution
         return None
+
+
+def _projects_root_dir() -> Optional[Path]:
+    """Return `<memory_store_root()>/projects`. `None` on any failure."""
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from _paths import memory_store_root  # type: ignore  # noqa: PLC0415
+        return memory_store_root() / "projects"
+    except Exception:  # noqa: BLE001 — best-effort resolution
+        return None
+
+
+def _dir_has_content(project_dir: Path) -> int:
+    """Cheap count of `*.md` files under a project dir's `decisions/` +
+    `lessons/` subdirs. `0` on any I/O error or if neither subdir exists."""
+    total = 0
+    for sub in ("decisions", "lessons"):
+        d = project_dir / sub
+        if not d.is_dir():
+            continue
+        try:
+            total += sum(1 for _ in d.glob("*.md"))
+        except OSError:
+            continue
+    return total
+
+
+def detect_possible_rename(
+    current_slug: Optional[str], projects_root: Optional[Path],
+) -> Optional[Dict[str, Any]]:
+    """Advisory rename-detection (actuates the `dir_missing` signal).
+
+    `backend_health` already computes `dir_missing` when the canonical
+    decisions store for the CURRENT slug doesn't exist, but nothing routed
+    that into a surfaced warning (2026-07-09 control-plane RCA, P0-4:
+    a `RossLabs-AI-Assistant` rename orphaned 7 lessons under the old
+    `ai-assistant` slug and this exact condition fired silently).
+
+    Heuristic: list sibling `<projects_root>/<slug>/` dirs (excluding the
+    current slug and `_unscoped`) that have content (decisions or lessons
+    markdown files), rank them by string similarity to `current_slug`
+    (`difflib.SequenceMatcher.ratio`), and report the best match as the
+    likely pre-rename slug when the similarity clears a low bar (renamed
+    repos typically keep a recognizable substring, e.g. `ai-assistant` ->
+    `rosslabs-ai-assistant`). Below that bar, or with several similarly-
+    scored candidates, all candidates are still returned so the operator
+    can eyeball them — this is a hint, not an assertion.
+
+    Returns `None` (never raises) when: `current_slug` or `projects_root`
+    is unavailable, the projects root doesn't exist, or no sibling has any
+    content. Non-blocking by design — callers surface this as a WARNING,
+    never a failure.
+    """
+    if not current_slug or projects_root is None or not projects_root.is_dir():
+        return None
+    candidates: List[Tuple[float, str, int]] = []
+    try:
+        children = sorted(projects_root.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        try:
+            if not child.is_dir():
+                continue
+        except OSError:
+            continue
+        slug = child.name
+        if slug == current_slug or slug == "_unscoped":
+            continue
+        count = _dir_has_content(child)
+        if count <= 0:
+            continue
+        ratio = difflib.SequenceMatcher(None, current_slug, slug).ratio()
+        candidates.append((ratio, slug, count))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: (-t[0], t[1]))
+    best_ratio, best_slug, best_count = candidates[0]
+    likely_old_slug = best_slug if best_ratio >= 0.3 else None
+    return {
+        "current_slug": current_slug,
+        "likely_old_slug": likely_old_slug,
+        "likely_old_slug_file_count": best_count if likely_old_slug else None,
+        "candidates": [
+            {"slug": s, "file_count": c} for _, s, c in candidates[:5]
+        ],
+    }
 
 
 def _probe_one_decisions_dir(path: Optional[Path]) -> Dict[str, Any]:
@@ -186,6 +291,19 @@ def probe_decisions(workdir: Path) -> Dict[str, Any]:
 
     legacy = _probe_one_decisions_dir(legacy_path)
     canonical = _probe_one_decisions_dir(canonical_path)
+
+    # Actuate the dir_missing signal: when the canonical store for the
+    # CURRENT slug is absent, check whether a sibling projects/<slug>/ with
+    # content exists — the signature of an un-pinned repo rename (P0-4 RCA).
+    # Advisory only; never affects `ok`/`count`/`reason` below.
+    if canonical.get("reason") == "dir_missing":
+        try:
+            current_slug = _resolve_project_slug(workdir)
+            rename_warning = detect_possible_rename(current_slug, _projects_root_dir())
+        except Exception:  # noqa: BLE001 — advisory surfacing must never break the probe
+            rename_warning = None
+        if rename_warning is not None:
+            canonical["renameWarning"] = rename_warning
 
     duration_ms = int((time.monotonic() - started) * 1000)
     # Top-level ok/count retain the pre-Priority-20 contract: ok when EITHER
@@ -427,6 +545,25 @@ def _format_one_liner(envelope: Dict[str, Any]) -> str:
             parts.append(f"decisions: OK {decisions.get('count', 0)} entries")
     else:
         parts.append(f"decisions: DOWN {decisions.get('reason', 'unknown')}")
+    rename_warning = (decisions.get("canonical") or {}).get("renameWarning")
+    if rename_warning:
+        current = rename_warning.get("current_slug", "?")
+        likely = rename_warning.get("likely_old_slug")
+        if likely:
+            n = rename_warning.get("likely_old_slug_file_count", "?")
+            parts.append(
+                f"WARNING: canonical memory dir missing for '{current}' but "
+                f"projects/{likely}/ has {n} file(s) — possible un-pinned repo "
+                f"rename; set memoryProjectSlug=\"{likely}\" in .build-loop/config.json "
+                f"to reclaim it, or move projects/{likely}/ into projects/{current}/"
+            )
+        else:
+            slugs = ", ".join(c["slug"] for c in rename_warning.get("candidates", [])[:3])
+            parts.append(
+                f"WARNING: canonical memory dir missing for '{current}' — sibling "
+                f"project dir(s) with content exist ({slugs}); check whether this "
+                f"repo was renamed and pin memoryProjectSlug in .build-loop/config.json"
+            )
     semantic = envelope.get("semantic", {})
     if semantic.get("ok"):
         parts.append(f"semantic: OK")
