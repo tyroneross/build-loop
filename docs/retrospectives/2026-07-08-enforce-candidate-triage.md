@@ -1,6 +1,8 @@
 # Enforce-candidate triage — 2026-07-08
 
-**Headline: 9 DONE · 3 ADOPT · 0 REJECT · 1 DEFER** (13 candidates).
+**Headline: 6 DONE · 6 ADOPT · 0 REJECT · 1 DEFER** (13 candidates).
+
+> **Codex independent audit (2026-07-08):** spot-checked the DONE verdicts adversarially and corrected 3 from DONE → ADOPT — they were *partial*, not complete: `f6` (a Stop hook cannot dispatch the retro-synthesizer, only records + marks — `stop_closeout.py:15`), `EC-01 rca` (writes a pending marker but does not verify both artifacts / emit `closeout_incomplete`), `EC-01 coord` (SessionEnd mining writes to `~/.claude/cache-telemetry/retro-staging`, not `.build-loop/learn/pending/` fed into Phase-6 accruing). The other DONE verdicts (acceptance-probe, E1, EC-04 rca, session-0509e3ca-01/02, EC-03 coord) held.
 
 Classification pass only — no ADOPT items were implemented. Scope: the 13
 auto-drafted enforce-candidates in `.build-loop/proposals/enforce-from-retro/`
@@ -14,14 +16,14 @@ grep/read-confirmed to satisfy it today.
 |---|---|---|---|
 | acceptance-probe-contract | DONE | Probe/baseline/boundary contract + Phase-1 classify + Phase-4 rerun gate + autonomy_gate deferral all shipped | `scripts/acceptance_probe.py`; `references/phase-1-assess.md:214`; `references/phase-4-review.md:134` |
 | E1 · judgment_gate self-application | DONE | Gate is run-scoped (E3 fixed) and fires on build-loop's own runs — BLOCKING at Review-G + structurally at Stop | `scripts/judgment_gate.py`; `references/phase-4-review.md:274`; `scripts/stop_closeout.py:_run_gate` |
-| f6 · structural closeout at run-close | DONE | Stop hook runs append_run + judgment_gate + writes retro/memory marker structurally (Option A) | `scripts/stop_closeout.py`; `hooks/closeout.sh:53`; `hooks/hooks.json` Stop |
-| EC-01 rca · mandatory closeout artifacts | DONE | Retro auto-generated at SessionEnd (no run needed); memory-closeout surfaced by Stop marker — agent-recall dependency removed | `scripts/hooks/session_end_retro_sweep.py`; `scripts/stop_closeout.py:_write_marker` |
+| f6 · structural closeout at run-close | ADOPT (S) | PARTIAL (Codex): append_run + judgment_gate WARN fire structurally, but a Stop hook cannot dispatch the retro-synthesizer — only a marker. Need the SessionStart marker-ratification to actually run the synth, or accept the honest scope limit. | `scripts/stop_closeout.py:15` |
+| EC-01 rca · mandatory closeout artifacts | ADOPT (S) | PARTIAL (Codex): writes a pending marker listing owed steps, but does not verify BOTH artifacts exist or emit a `closeout_incomplete` flag. Add the artifact-existence check + flag. | `scripts/stop_closeout.py:385` |
 | EC-02 rca · countermeasure self-activation | ADOPT (S) | `plan_verify` activation-map rule blocks a *missing* `verified-live:` key but accepts `pending`; no brief `activation_proof`; no post-commit `verified-live:true` assertion | `scripts/plan_verify.py:1385-1414`; `scripts/brief_mece_validator.py` (no match) |
 | EC-03 rca · worktree isolation pre-flight | ADOPT (S) | SessionStart surfaces peers but has no commit-collision WARN ("peer on same workdir → mint a worktree"); the lint only covers background *job configs*, not live interactive sessions | `hooks/session-start-rally-point.sh:3`; `scripts/worktree_isolation_lint.py` |
 | EC-04 rca · experiment quality adjectives | DONE | Template carries a Blinding field, mandatory `n`, certainty, and an explicit "earn every adjective" rail forbidding unearned fair/blind/proven | `references/experiment-results-template.md` |
 | session-0509e3ca-01 · independent-auditor gate | DONE | Auto-stub; independent-auditor already a wired Review-A gate + dispatch enforced by judgment_gate | `agents/independent-auditor` (definition); `references/phase-4-review.md:274` |
 | session-0509e3ca-02 · inline-self-verification gate | DONE | Auto-stub; judgment_gate explicitly closes the inline-self-audit-masquerade hole | `scripts/judgment_gate.py`; `references/phase-4-review.md:274` |
-| EC-01 coord · accruing triggers mining | DONE | SessionEnd auto-fires transcript-pattern-miner deterministically (never idles); Phase-6 accruing runs detector+consolidation; cross-session enforce signals | `scripts/hooks/session_end_retro_sweep.py`; `references/phase-6-learn.md:19,40` |
+| EC-01 coord · accruing triggers mining | ADOPT (M) | ADJACENT (Codex): SessionEnd mining runs, but writes to `~/.claude/cache-telemetry/retro-staging`, not `.build-loop/learn/pending/` fed into Phase-6 accruing. Wire the miner output into the accruing lane. | `scripts/hooks/session_end_retro_sweep.py:337`; `references/phase-6-learn.md:17` |
 | EC-02 coord · venv isolation for bg runners | ADOPT (M) | `worktree_isolation_lint` checks cwd/notify-only isolation but NOT venv-pinned Python vs bare `python3`; live plist still bare | `scripts/worktree_isolation_lint.py` (no venv check) |
 | EC-03 coord · verify-dispatch as Phase-5 default | DONE | Orchestrator mandates walking verify-dispatch after ANY dispatched agent claims commits/tests (broader than the ≥2 asked) | `agents/build-orchestrator.md:180`; `references/verify-dispatch.md` |
 | EC-04 coord · orphan reaper on session start | DEFER | Claims-half auto-cleaned at SessionStart (`reaper.py --apply`); process-count dry-run + threshold warn not wired, and reaper was deliberately retired from physical deletion (rally-owned) | `hooks/session-start-rally-point.sh:43`; `scripts/rally_point/reaper.py:8` |
@@ -54,7 +56,7 @@ session triggers the gate without a human prompt. The proposal's narrower
 pre-push wiring was not added, but its two offered alternatives (pre-push OR
 checklist) are superseded by the stronger Stop + Review-G coverage.
 
-### f6 — structural closeout at run-close — DONE
+### f6 — structural closeout at run-close — ADOPT (Codex-corrected from DONE)
 `scripts/stop_closeout.py` is exactly proposal Option A (Stop-hook), wired via
 `hooks/closeout.sh` (`hooks.json` Stop matcher). On every Stop it releases Rally
 claims, records the run through `append_run` (Learn-visible `runs[]`), runs
@@ -64,7 +66,7 @@ dispatch agents — writes a `closeout-pending/<run-id>.md` marker plus a
 limit is documented in-file: it auto-records + auto-surfaces, it does not itself
 make the Frontier judgment happen.
 
-### EC-01 rca — mandatory closeout artifacts — DONE
+### EC-01 rca — mandatory closeout artifacts — ADOPT (Codex-corrected from DONE)
 The failure mode ("memory closeout + retrospective deferred until the user
 prompts") is structurally closed. `scripts/hooks/session_end_retro_sweep.py`
 (SessionEnd hook) auto-fires the deterministic `retrospective` synthesizer for
@@ -121,7 +123,7 @@ Content-free auto-stub. `scripts/judgment_gate.py` explicitly closes "the inline
 substitution hole — the same class as the inline self-audit masquerading as the
 independent auditor." Already enforced.
 
-### EC-01 coord — accruing triggers mining — DONE
+### EC-01 coord — accruing triggers mining — ADOPT (Codex-corrected from DONE)
 `scripts/hooks/session_end_retro_sweep.py` runs the deterministic
 `transcript-pattern-miner` (pure stdlib, no LLM) over the recent window on every
 non-trivial session — the loop never idles on `accruing`. `phase-6-learn.md:40`
