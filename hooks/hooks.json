@@ -184,6 +184,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; s=\"$root/scripts/hooks/session_end_retro_sweep.py\"; tp=$(python3 -c 'import sys,json;print(json.load(sys.stdin).get(\"transcript_path\",\"\"))' 2>/dev/null); if [ -n \"$tp\" ] && [ -f \"$s\" ]; then nohup python3 \"$s\" \"$tp\" </dev/null >/dev/null 2>&1 & fi; exit 0",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   }
 }

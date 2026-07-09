@@ -21,8 +21,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-# mktemp / scratch directory names — never a real project slug.
-_SCRATCH_SLUG_RE = re.compile(r"^(tmp[.\-_]|\.tmp|pytest-|tmp\d)")
+# mktemp / scratch directory names — never a real project slug. Covers both
+# shell `mktemp -d` (`tmp.XXXX`, with a dot) AND Python tempfile.mkdtemp
+# (`tmpXXXXXXXX`, no separator) — the latter was missed by an earlier `tmp\d`
+# form. `tmp<6+ alnum>` matches tempfile output without catching short real
+# names like `tmpl` or `tmux`. Also guards pytest tmpdirs and scratch dirs.
+_SCRATCH_SLUG_RE = re.compile(r"^(tmp[._-]|tmp[a-z0-9]{6,}$|\.tmp|pytest-|scratchpad$|mktemp)")
 
 from retrospective.sections import SECTION_KEYS, SECTION_TITLES
 

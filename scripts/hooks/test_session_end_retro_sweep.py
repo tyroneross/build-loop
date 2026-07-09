@@ -144,3 +144,43 @@ def test_run_session_retro_fail_open_on_subprocess_error(tmp_path, monkeypatch):
     t = tmp_path / "x.jsonl"; t.write_text("{}", encoding="utf-8")
     # must not raise
     sweep.run_session_retro(tmp_path, t, tmp_path)
+
+
+# --- Fix 1: don't duplicate a formal run's retro (fire only on non-run sessions)
+
+def test_formal_run_retro_exists_true_when_run_retro_written_today(tmp_path):
+    from datetime import datetime, timezone
+    bl = tmp_path / ".build-loop"; bl.mkdir()
+    (bl / "state.json").write_text(json.dumps(
+        {"execution": {"build_loop_id": "bl-run-123"}}), encoding="utf-8")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rdir = bl / "retrospectives" / today; rdir.mkdir(parents=True)
+    (rdir / "bl-run-123.md").write_text("# retro", encoding="utf-8")
+    assert sweep.formal_run_retro_exists(tmp_path) is True
+
+
+def test_formal_run_retro_exists_false_for_runless_session(tmp_path):
+    (tmp_path / ".build-loop").mkdir()
+    # no state.json → run-less session → fire
+    assert sweep.formal_run_retro_exists(tmp_path) is False
+
+
+def test_formal_run_retro_exists_false_when_run_retro_is_stale(tmp_path):
+    bl = tmp_path / ".build-loop"; bl.mkdir()
+    (bl / "state.json").write_text(json.dumps(
+        {"runs": [{"run_id": "bl-old"}]}), encoding="utf-8")
+    # retro exists but under an OLD date dir → today's session still fires
+    old = bl / "retrospectives" / "2020-01-01"; old.mkdir(parents=True)
+    (old / "bl-old.md").write_text("# retro", encoding="utf-8")
+    assert sweep.formal_run_retro_exists(tmp_path) is False
+
+
+# --- Fix 3: the plugin ships the SessionEnd wiring (portability, not host-only)
+
+def test_plugin_hooks_json_wires_sessionend_sweep():
+    from pathlib import Path as _P
+    hooks = json.loads((_P(__file__).parents[2] / "hooks" / "hooks.json").read_text())
+    se = hooks.get("hooks", {}).get("SessionEnd", [])
+    cmds = " ".join(h.get("command", "") for g in se for h in g.get("hooks", []))
+    assert "session_end_retro_sweep.py" in cmds, "SessionEnd must invoke the sweep"
+    assert "transcript_path" in cmds, "must pass transcript_path from stdin"

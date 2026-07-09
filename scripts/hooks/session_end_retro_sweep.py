@@ -142,6 +142,35 @@ def is_project_dir(cwd: Path) -> bool:
         return False
 
 
+def formal_run_retro_exists(cwd: Path) -> bool:
+    """True when a formal build-loop RUN already wrote its retrospective TODAY.
+
+    The session retro is for sessions with NO build-loop run (spec: "non-run
+    sessions"). If Phase 4 already dispatched the retrospective-synthesizer for
+    this session's run, a `<run-id>.md` sits in today's retrospectives dir — so
+    firing again would duplicate it. We key on the run id from state.json AND
+    today's date dir, so a stale run from a PRIOR day never suppresses a genuine
+    run-less session today. Fail-open: any error → False (fire the retro)."""
+    try:
+        state_p = cwd / ".build-loop" / "state.json"
+        if not state_p.is_file():
+            return False
+        state = json.loads(state_p.read_text(encoding="utf-8"))
+        rid = (state.get("execution") or {}).get("build_loop_id")
+        if not rid:
+            runs = state.get("runs") or []
+            for key in ("run_id", "build_loop_id", "id"):
+                if runs and runs[-1].get(key):
+                    rid = runs[-1][key]
+                    break
+        if not rid:
+            return False
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return (cwd / ".build-loop" / "retrospectives" / today / f"{rid}.md").is_file()
+    except Exception:
+        return False
+
+
 def run_session_retro(build_loop: Path, transcript: Path, cwd: Path) -> None:
     """Fire the DETERMINISTIC rich retrospective for a non-run session.
 
@@ -295,7 +324,7 @@ def main() -> None:
     # session with issues/tool-usage/automation signal but no repeated ritual
     # still deserves its retro + memory write. Zero-LLM, fail-open.
     cwd = resolve_project_cwd(transcript)
-    if cwd is not None and is_project_dir(cwd):
+    if cwd is not None and is_project_dir(cwd) and not formal_run_retro_exists(cwd):
         run_session_retro(build_loop, transcript, cwd)
 
     with tempfile.TemporaryDirectory() as tmp:

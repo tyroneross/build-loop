@@ -146,12 +146,15 @@ def test_promote_durable_refuses_scratch_slug(tmp_path):
     Regression: 2026-07-08 smoke-test leak into build-loop-memory."""
     from retrospective.write import promote_durable
     mem = tmp_path / "mem"; mem.mkdir()
-    for bad in ("tmp.aB12Xy", "tmp_scratch", "pytest-of-x"):
+    # shell mktemp (tmp.XXXX), Python tempfile (tmpXXXXXXXX, no dot), pytest,
+    # scratch — all must be refused.
+    for bad in ("tmp.aB12Xy", "tmp_scratch", "pytest-of-x", "tmpabcd12", "scratchpad", "mktemp123"):
         r = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
                             repo=bad, memory_root=mem)
         assert r["status"] == "skipped", (bad, r)
         assert r["durable_path"] is None
-    # a real slug still writes
-    ok = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
-                        repo="build-loop", memory_root=mem)
-    assert ok["status"] == "ok" and ok["durable_path"]
+    # real project slugs — including short tmp-prefixed names — still write.
+    for good in ("build-loop", "tmpl", "tmux-tool", "speak-savvy"):
+        ok = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
+                            repo=good, memory_root=mem)
+        assert ok["status"] == "ok" and ok["durable_path"], good
