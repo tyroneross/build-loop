@@ -12,11 +12,16 @@ reaches NEITHER, so it stays invisible to Learn and the judgment gap is silent
 until a human prompts for the closeout. This fires both STRUCTURALLY at the Stop
 boundary — no human prompt.
 
-Honest scope limit: a Stop hook cannot dispatch agents, so this auto-RECORDS the
-run and auto-SURFACES the judgment gap (WARN). It does NOT make the Frontier
-(Fable) judgment happen, and it leaves a ``closeout-pending/<run-id>.md`` marker
-that the next SessionStart surfaces, reminding to run the retrospective-synthesizer
-+ memory closeout (also agent dispatches a Stop hook cannot do).
+Honest scope limit (f6): a Stop hook cannot dispatch agents, so this auto-RECORDS
+the run and auto-SURFACES the judgment gap (WARN). It does NOT make the Frontier
+(Fable) judgment happen. The resolution is to make the ``closeout-pending/<run-id>.md``
+marker ACTIONABLE rather than fake a dispatch: the marker carries a
+``closeout_incomplete`` flag + per-artifact checkboxes (EC-01 rca), and the next
+SessionStart surfaces every OWED marker with the exact next action — dispatch the
+``retrospective-synthesizer`` for that run-id and run the memory closeout — so the
+owed work the Stop path could not perform actually gets run in-session. A marker
+whose closeout already completed (``closeout_incomplete: false``) is archived
+without nagging.
 
 Contract (mirrors build-loop's hook charter):
   * Advisory + fail-open: ``exit 0`` always; valid JSON on stdout; never blocks.
@@ -370,9 +375,46 @@ def _run_gate(workdir: Path, run_id: str) -> dict:
     return judgment_gate.evaluate(state, ledger, run_id, agent_tool_available=False, require_seats=False)
 
 
+def _retro_artifact_exists(workdir: Path, run_id: str) -> bool:
+    """True when a retrospective file for ``run_id`` exists under any date dir.
+
+    The retro-synthesizer writes ``.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md``
+    (scripts/retrospective/write.py). The date is not known here (a retro may land on
+    a later day), so glob across every date dir. Fail-open: any error → False (owed)."""
+    try:
+        retro_root = workdir / ".build-loop" / "retrospectives"
+        if not retro_root.is_dir():
+            return False
+        return any(retro_root.glob(f"*/{run_id}.md"))
+    except OSError:
+        return False
+
+
+def _lessons_artifact_exists(workdir: Path) -> bool:
+    """True when a durable memory/lessons entry is present for this workdir.
+
+    Uses the same workdir-local durable-lesson signal the closeout classifier reads
+    (scripts/closeout/status.py): a flat ``pending-lessons/*.md`` capture or a queued
+    ``pending-lessons/pending/*.json`` intake. Fail-open: any error → False (owed)."""
+    try:
+        lessons_root = workdir / ".build-loop" / "pending-lessons"
+        if not lessons_root.is_dir():
+            return False
+        return any(lessons_root.glob("*.md")) or any(lessons_root.glob("pending/*.json"))
+    except OSError:
+        return False
+
+
 def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
     marker = _marker_path(workdir, decision["run_id"])
     marker.parent.mkdir(parents=True, exist_ok=True)
+    # EC-01 rca: verify the two owed closeout artifacts actually exist rather than
+    # only listing them. `closeout_incomplete: true` means at least one is still owed.
+    retro_done = _retro_artifact_exists(workdir, decision["run_id"])
+    lessons_done = _lessons_artifact_exists(workdir)
+    closeout_incomplete = not (retro_done and lessons_done)
+    retro_mark = "x" if retro_done else " "
+    lessons_mark = "x" if lessons_done else " "
     body = (
         "---\n"
         f"run_id: {decision['run_id']}\n"
@@ -380,15 +422,22 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
         f"outcome: {decision['outcome']}\n"
         f"judgment_verdict: {verdict.get('verdict')}\n"
         f"stakes_gated: {str(bool(verdict.get('stakes_gated'))).lower()}\n"
+        f"closeout_incomplete: {str(closeout_incomplete).lower()}\n"
+        f"retro_present: {str(retro_done).lower()}\n"
+        f"lessons_present: {str(lessons_done).lower()}\n"
         "source: stop_closeout\n"
         "---\n\n"
         f"# Closeout pending — {decision['run_id']}\n\n"
         "This inline build-loop run was recorded to `state.json.runs[]` by the Stop\n"
         "hook (it did not reach orchestrator Review-G). A Stop hook cannot dispatch\n"
-        "agents, so two closeout steps remain — run them in this session:\n\n"
-        "1. **retrospective-synthesizer** — write the 9-section retrospective.\n"
-        "2. **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n\n"
-        f"judgment_gate: **{str(verdict.get('verdict')).upper()}** — {verdict.get('summary')}\n"
+        "agents, so the closeout steps below are checked-for, not run — complete any\n"
+        "still owed (`[ ]`) in this session:\n\n"
+        f"- [{retro_mark}] **retrospective-synthesizer** — write the 9-section retrospective.\n"
+        f"- [{lessons_mark}] **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n\n"
+        + ("**closeout_incomplete: true** — at least one artifact above is still owed.\n\n"
+           if closeout_incomplete else
+           "**closeout_incomplete: false** — both closeout artifacts are present.\n\n")
+        + f"judgment_gate: **{str(verdict.get('verdict')).upper()}** — {verdict.get('summary')}\n"
     )
     append_run.atomic_write_bytes(marker, body.encode())
     return marker
@@ -573,6 +622,22 @@ def _sweep_orphan_run(workdir: Path) -> str | None:
     return run_id
 
 
+def _marker_incomplete(marker: Path) -> bool:
+    """Read the marker's ``closeout_incomplete`` frontmatter flag.
+
+    f6: an inline run's closeout is OWED until both artifacts exist. Default to
+    True (owed) when the flag is absent/unreadable — an older marker predates the
+    flag, so treat it as still owed rather than silently complete. Fail-open."""
+    try:
+        for line in marker.read_text(encoding="utf-8", errors="ignore").splitlines():
+            s = line.strip()
+            if s.startswith("closeout_incomplete:"):
+                return s.split(":", 1)[1].strip().lower() != "false"
+    except OSError:
+        return True
+    return True
+
+
 def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     """SessionStart-mode entrypoint. Return (hook JSON, markers to archive AFTER emit).
 
@@ -581,6 +646,12 @@ def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     it happens only once the reminder has actually been printed — a hook-timeout
     kill before emit then re-surfaces the reminder next session rather than
     losing it permanently.
+
+    f6 (honest scope limit): a Stop hook CANNOT dispatch the retrospective-
+    synthesizer — only record + mark. This SessionStart surface is therefore the
+    actionable half of the resolution: it names the exact next action so the owed
+    synth + memory closeout actually get run in-session. A marker whose closeout
+    already completed (``closeout_incomplete: false``) is archived WITHOUT nagging.
     """
     try:
         _sweep_orphan_run(workdir)
@@ -589,22 +660,37 @@ def run_session_start(workdir: Path) -> tuple[dict, list[Path]]:
     pending_dir = workdir / ".build-loop" / "closeout-pending"
     if not pending_dir.is_dir():
         return {}, []
-    markers = sorted(p for p in pending_dir.glob("*.md") if p.is_file())
-    if not markers:
+    all_markers = sorted(p for p in pending_dir.glob("*.md") if p.is_file())
+    if not all_markers:
         return {}, []
+    # Only markers still OWED get an actionable prompt; complete ones are archived silently.
+    owed = [m for m in all_markers if _marker_incomplete(m)]
+    if not owed:
+        return {}, all_markers
     lines = [
-        "build-loop closeout-pending — inline run(s) recorded by the Stop hook still owe "
-        "a retrospective-synthesizer pass + memory closeout (a Stop hook cannot dispatch agents):",
+        "build-loop closeout OWED — inline run(s) recorded by the Stop hook still need a "
+        "retrospective + memory closeout. A Stop hook cannot dispatch agents, so run these "
+        "now in-session (this is the owed judgment the Stop path could not make happen):",
+        "",
     ]
-    for m in markers:
-        lines.append(f"  - {m.stem} (see {m.relative_to(workdir)})")
+    for m in owed:
+        rid = m.stem
+        lines.append(f"  - {rid} (marker: {m.relative_to(workdir)})")
+        lines.append(
+            f"      ACTION: dispatch the `retrospective-synthesizer` agent for {rid} "
+            f"(or run `python3 -m retrospective --workdir . --run-id {rid}` from scripts/), "
+            "then extract durable lessons via `scripts/memory_writer.py`."
+        )
     out = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": "\n".join(lines),
         }
     }
-    return out, markers
+    # Archive ALL surfaced markers (owed + complete): the owed ones have now been
+    # prompted; a still-owed run re-marks on its NEXT Stop, so the reminder is not
+    # lost, and completed markers should not linger.
+    return out, all_markers
 
 
 def _archive_markers(workdir: Path, markers: list[Path]) -> None:

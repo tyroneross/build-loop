@@ -474,6 +474,47 @@ def test_session_start_no_markers_is_silent(tmp_path):
     assert stop_closeout.run_session_start(tmp_path) == ({}, [])
 
 
+# --- f6: SessionStart surface of an OWED marker is explicitly actionable -----
+def test_session_start_prompts_action_for_owed_marker(tmp_path):
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "bl-owed-1.md").write_text(
+        "---\nrun_id: bl-owed-1\ncloseout_incomplete: true\nsource: stop_closeout\n---\n\n# owed\n"
+    )
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "bl-owed-1" in ctx
+    assert "retrospective-synthesizer" in ctx           # names the owed agent
+    assert "--run-id bl-owed-1" in ctx                  # actionable command
+    assert "memory_writer.py" in ctx                    # names the memory-closeout step
+    assert [p.name for p in to_archive] == ["bl-owed-1.md"]
+
+
+def test_session_start_archives_complete_marker_without_nagging(tmp_path):
+    """A closeout that already completed (closeout_incomplete: false) is archived
+    silently — no owed-action prompt."""
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "bl-done-1.md").write_text(
+        "---\nrun_id: bl-done-1\ncloseout_incomplete: false\nsource: stop_closeout\n---\n\n# done\n"
+    )
+    out, to_archive = stop_closeout.run_session_start(tmp_path)
+    assert out == {}                                     # no prompt for a done closeout
+    assert [p.name for p in to_archive] == ["bl-done-1.md"]  # still archived (no linger)
+
+
+def test_marker_missing_flag_defaults_to_owed(tmp_path):
+    """An older marker without the closeout_incomplete flag is treated as owed
+    (safer than silently complete)."""
+    pending = tmp_path / ".build-loop" / "closeout-pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    (pending / "bl-legacy.md").write_text(
+        "---\nrun_id: bl-legacy\nsource: stop_closeout\n---\n\n# legacy marker\n"
+    )
+    out, _ = stop_closeout.run_session_start(tmp_path)
+    assert "bl-legacy" in out["hookSpecificOutput"]["additionalContext"]
+
+
 # --- CLI smoke (exit 0 + valid JSON always) --------------------------------
 
 def test_cli_stop_emits_valid_json_exit0(tmp_path):
@@ -514,6 +555,53 @@ def test_no_stakes_run_writes_no_followup(tmp_path):
     stop_closeout.run_stop(tmp_path, SESSION)
     fu_dir = tmp_path / ".build-loop" / "followup"
     assert not fu_dir.exists() or not list(fu_dir.glob("judgment-owed-*.md"))
+
+
+# --- EC-01 rca: marker verifies closeout artifacts + emits closeout_incomplete ---
+def test_marker_flags_closeout_incomplete_when_artifacts_missing(tmp_path):
+    _write_state(tmp_path, _base_state())
+    stop_closeout.run_stop(tmp_path, SESSION)
+    body = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "closeout_incomplete: true" in body
+    assert "retro_present: false" in body
+    assert "lessons_present: false" in body
+    # both owed checkboxes are unchecked
+    assert "- [ ] **retrospective-synthesizer**" in body
+    assert "- [ ] **memory closeout**" in body
+
+
+def test_marker_flags_closeout_complete_when_both_artifacts_present(tmp_path):
+    _write_state(tmp_path, _base_state())
+    bl = tmp_path / ".build-loop"
+    today = _now().strftime("%Y-%m-%d")
+    retro = bl / "retrospectives" / today
+    retro.mkdir(parents=True, exist_ok=True)
+    (retro / "bl-test-001.md").write_text("# retro\n")
+    lessons = bl / "pending-lessons"
+    lessons.mkdir(parents=True, exist_ok=True)
+    (lessons / "lesson-1.md").write_text("# lesson\n")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    body = (bl / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "closeout_incomplete: false" in body
+    assert "retro_present: true" in body
+    assert "lessons_present: true" in body
+    assert "- [x] **retrospective-synthesizer**" in body
+    assert "- [x] **memory closeout**" in body
+
+
+def test_marker_partial_closeout_is_incomplete(tmp_path):
+    """Only the retro present (lessons still owed) → still closeout_incomplete: true."""
+    _write_state(tmp_path, _base_state())
+    bl = tmp_path / ".build-loop"
+    today = _now().strftime("%Y-%m-%d")
+    retro = bl / "retrospectives" / today
+    retro.mkdir(parents=True, exist_ok=True)
+    (retro / "bl-test-001.md").write_text("# retro\n")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    body = (bl / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "closeout_incomplete: true" in body
+    assert "retro_present: true" in body
+    assert "lessons_present: false" in body
 
 
 # --- review f3: owed-judgment followup is removed once the debt clears ---

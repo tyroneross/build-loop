@@ -297,6 +297,35 @@ def write_marker(skills: list[dict], lessons: list[dict], staging_path: Path,
     marker.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_workdir_digest(cwd: Path | None, payload: dict, ts: str) -> Path | None:
+    """ALSO persist the miner digest into the workdir's ``.build-loop/learn/pending/``
+    lane (EC-01 coord).
+
+    The digest was previously written only to the GLOBAL, GC-eligible
+    ``~/.claude/cache-telemetry/retro-staging`` dir, so the mining signal was
+    disconnected from the project's own ``.build-loop/``. This drops a durable,
+    project-scoped copy alongside the deterministic retrospective this same sweep
+    already writes to ``.build-loop/retrospectives/``, so a later Phase-6 accruing
+    pass working in the workdir can consult it.
+
+    Scope note: Phase-6 accruing today reads ``state.json.runs[]`` +
+    ``.build-loop/proposals/enforce-from-retro/`` (references/phase-6-learn.md §Detect);
+    this lane is the durable workdir-local capture, not yet an automated detector
+    input — teaching the detector to fold these candidates in is a follow-up.
+
+    Fail-open: only fires for a real project cwd; any error → None (never blocks)."""
+    if cwd is None or not is_project_dir(cwd):
+        return None
+    try:
+        lane = cwd / ".build-loop" / "learn" / "pending"
+        lane.mkdir(parents=True, exist_ok=True)
+        out = lane / f"{ts}-digest.json"
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return out
+    except Exception:
+        return None
+
+
 def resolve_transcript() -> str:
     """Transcript path comes from the SessionEnd stdin JSON `transcript_path`
     field (Claude Code hooks reference) — there is NO `CLAUDE_TRANSCRIPT_PATH`
@@ -336,12 +365,17 @@ def main() -> None:
 
         RETRO_STAGING.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        payload = {
+            "generated_at": data.get("generated_at"),
+            "window": data.get("window_label"),
+            "skills": skills, "lessons": lessons,
+            "transcript": str(transcript),
+        }
         staging = RETRO_STAGING / f"{ts}-digest.json"
-        staging.write_text(json.dumps(
-            {"generated_at": data.get("generated_at"),
-             "window": data.get("window_label"),
-             "skills": skills, "lessons": lessons,
-             "transcript": str(transcript)}, indent=2), encoding="utf-8")
+        staging.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # ALSO drop a durable, project-scoped copy into the workdir's learn lane
+        # (EC-01 coord) so the signal is not stranded in the global cache.
+        write_workdir_digest(cwd, payload, ts)
         session_key = transcript.stem or ts
         write_marker(skills, lessons, staging, session_key)
 

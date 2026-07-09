@@ -63,4 +63,11 @@ if command -v rally >/dev/null 2>&1; then
     fi
 fi
 
+# Step 6: peer-on-same-workdir commit-collision WARN (lane EC-03 rca). Advisory +
+# fail-open: warns (never blocks) when a peer session is active on THIS workdir —
+# the precondition for the concurrent-write race (two writers on one checkout race
+# on HEAD/index; commits land on the wrong branch). On any error this silently
+# no-ops and NEVER affects the hook's exit code.
+[ -f "$PKG/peer_collision.py" ] && python3 "$PKG/peer_collision.py" --workdir "$W" 1>/dev/null || true
+
 exit 0

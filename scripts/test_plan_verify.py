@@ -547,14 +547,27 @@ class ActivationMapRequiredTests(unittest.TestCase):
         self.assertEqual(findings[0]["claim_kind"], "activation_map_missing")
 
     def test_dormant_component_with_section_passes(self) -> None:
-        """Same dormant-risk plan WITH a well-formed Activation Map → no finding."""
+        """Same dormant-risk plan WITH a well-formed, VERIFIED Activation Map → no finding."""
+        findings = self._findings(
+            "## Plan\n\n"
+            "Add a new Stop hook that records the run outcome on terminal close.\n\n"
+            "## Activation Map\n\n"
+            "- closeout.sh — trigger: Stop hook on terminal-outcome record — verified-live: yes\n"
+        )
+        self.assertEqual(findings, [])
+
+    def test_pending_verified_live_is_warn(self) -> None:
+        """EC-02 rca: an entry with `verified-live: pending` is an unverified
+        activation claim at plan acceptance → a WARN finding (not a pass, not a BLOCKER)."""
         findings = self._findings(
             "## Plan\n\n"
             "Add a new Stop hook that records the run outcome on terminal close.\n\n"
             "## Activation Map\n\n"
             "- closeout.sh — trigger: Stop hook on terminal-outcome record — verified-live: pending\n"
         )
-        self.assertEqual(findings, [])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "WARN")
+        self.assertEqual(findings[0]["claim_kind"], "activation_map_entry_verified_live_pending")
 
     def test_override_silences_rule(self) -> None:
         """Explicit override suppresses the rule even on a dormant-risk plan."""
@@ -597,12 +610,12 @@ class ActivationMapRequiredTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_real_plan_with_activation_map_passes(self) -> None:
-        """A plan whose dormant components all carry trigger + verified-live → no finding."""
+        """A plan whose dormant components all carry trigger + verified-live: yes → no finding."""
         findings = self._findings(
             "## Intent\n\nAdd a new SessionStart hook and a new git pre-commit gate.\n\n"
             "## Activation Map\n\n"
             "- preflight — trigger: SessionStart hook in hooks/hooks.json — verified-live: yes\n"
-            "- lint-gate — trigger: pre-commit hook in .pre-commit-config.yaml — verified-live: pending\n\n"
+            "- lint-gate — trigger: pre-commit hook in .pre-commit-config.yaml — verified-live: yes\n\n"
             "## Next\n\nUnrelated section.\n"
         )
         self.assertEqual(findings, [])

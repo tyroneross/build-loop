@@ -1412,7 +1412,10 @@ def rule_reads_from_dependency(
 #
 # Each entry must carry `trigger:` AND `verified-live:`. An entry missing
 # `verified-live:` triggers a BLOCKER (the whole point is to make the
-# verified/pending state explicit). An explicit override line
+# verified/pending state explicit); an entry whose value is `pending` triggers
+# a WARN — at plan acceptance a `pending` activation is an unverified claim, not
+# a pass (phase-2-plan.md 3c: "the plan does not close while a component's
+# activation is unconfirmed"). An explicit override line
 # `override: activation-map-exempt` silences the entire rule.
 # ---------------------------------------------------------------------------
 
@@ -1511,6 +1514,9 @@ _ACTIVATION_OVERRIDE_RE = re.compile(
 # is a defect (activation state left implicit).
 _ACTIVATION_TRIGGER_KEY_RE = re.compile(r"\btrigger\s*:", re.IGNORECASE)
 _ACTIVATION_VERIFIED_KEY_RE = re.compile(r"\bverified-live\s*:", re.IGNORECASE)
+# Captures the verified-live value so `pending` can be flagged (WARN) distinctly
+# from a verified `yes`. Trailing punctuation is stripped by the caller.
+_ACTIVATION_VERIFIED_VALUE_RE = re.compile(r"\bverified-live\s*:\s*(\S+)", re.IGNORECASE)
 
 
 def rule_activation_map_required(
@@ -1586,19 +1592,39 @@ def rule_activation_map_required(
                 break
             if _ACTIVATION_TRIGGER_KEY_RE.search(line):
                 saw_trigger_entry = True
-            if _ACTIVATION_TRIGGER_KEY_RE.search(line) and not _ACTIVATION_VERIFIED_KEY_RE.search(line):
-                out.append(_finding(
-                    claim_text=line.strip(),
-                    claim_kind="activation_map_entry_missing_verified_live",
-                    subject={"path": None, "symbol": None, "noun": "Activation Map entry"},
-                    verification_command=None,
-                    evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
-                    result="no_match",
-                    marker="❌",
-                    severity="BLOCKER",
-                    confidence="high",
-                    rule_id="activation-map-required",
-                ))
+                if not _ACTIVATION_VERIFIED_KEY_RE.search(line):
+                    out.append(_finding(
+                        claim_text=line.strip(),
+                        claim_kind="activation_map_entry_missing_verified_live",
+                        subject={"path": None, "symbol": None, "noun": "Activation Map entry"},
+                        verification_command=None,
+                        evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                        result="no_match",
+                        marker="❌",
+                        severity="BLOCKER",
+                        confidence="high",
+                        rule_id="activation-map-required",
+                    ))
+                else:
+                    m = _ACTIVATION_VERIFIED_VALUE_RE.search(line)
+                    value = (m.group(1) if m else "").strip().lower().rstrip(".,;:)")
+                    if value.startswith("pending"):
+                        # `pending` is not a pass at plan acceptance — the activation
+                        # claim is unverified. WARN (advisory), not BLOCKER: a plan
+                        # legitimately opens with pending entries, but each must map to
+                        # a verification task before Report (phase-2-plan.md 3c).
+                        out.append(_finding(
+                            claim_text=line.strip(),
+                            claim_kind="activation_map_entry_verified_live_pending",
+                            subject={"path": None, "symbol": None, "noun": "Activation Map entry"},
+                            verification_command=None,
+                            evidence={"file": str(plan_path), "line": lineno, "snippet": line.strip()},
+                            result="inconclusive",
+                            marker="⚠️",
+                            severity="WARN",
+                            confidence="high",
+                            rule_id="activation-map-required",
+                        ))
     if not saw_trigger_entry:
         # A bare heading with zero entries is not a map — the dormant component
         # the signal fired on is still unmapped.

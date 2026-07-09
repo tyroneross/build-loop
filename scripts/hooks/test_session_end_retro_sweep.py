@@ -121,6 +121,27 @@ def test_is_project_dir_false_for_bare_dir(tmp_path):
     assert sweep.is_project_dir(tmp_path) is False
 
 
+# --- EC-01 coord: miner digest ALSO lands in the workdir learn lane ----------
+def test_write_workdir_digest_writes_to_learn_pending(tmp_path):
+    (tmp_path / ".build-loop").mkdir()
+    payload = {"skills": [], "lessons": [{"rationale": "x"}], "window": "1d"}
+    out = sweep.write_workdir_digest(tmp_path, payload, "20260708-120000")
+    assert out is not None
+    expected = tmp_path / ".build-loop" / "learn" / "pending" / "20260708-120000-digest.json"
+    assert out == expected and expected.is_file()
+    assert json.loads(expected.read_text())["lessons"][0]["rationale"] == "x"
+
+
+def test_write_workdir_digest_skips_non_project_dir(tmp_path):
+    # A bare (non-project) cwd → no learn lane written (fail-open, no scatter).
+    assert sweep.write_workdir_digest(tmp_path, {"lessons": []}, "20260708-120000") is None
+    assert not (tmp_path / ".build-loop" / "learn").exists()
+
+
+def test_write_workdir_digest_none_cwd_is_noop(tmp_path):
+    assert sweep.write_workdir_digest(None, {"lessons": []}, "20260708-120000") is None
+
+
 def test_run_session_retro_shells_to_retrospective(tmp_path, monkeypatch):
     calls = {}
     def fake_run(cmd, **kw):
