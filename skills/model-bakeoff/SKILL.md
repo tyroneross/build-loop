@@ -8,6 +8,20 @@ user-invocable: false
 
 Run a fair, evidence-based competition where several models each solve the *same* change end-to-end, then merge the best result. One orchestrator (this session) coordinates; contestants are single agents (measure the model, not a multi-agent loop). Repeat per change, accumulating merges on one experiment branch.
 
+## Validation contract (define BEFORE any dispatch)
+
+Fix the grading before running — a metric invented after seeing outputs bends to them.
+
+1. **Metric + rubric + judge, up front.** Write the exact success metric, the rubric, and the pass/fail threshold BEFORE dispatch. Name the **independent judge** (a non-contestant model, e.g. Fable) for subjective dims. No post-hoc scoring.
+2. **Reproduce the baseline FAILURE first.** To prove an intervention (profile/scaffold/fix) makes a model succeed, first REPRODUCE the failure deterministically. n=1 anecdotal failures don't generalize — a task where the control already passes has no fix to validate. (2026-07-09: "kimi fails multi-crate Rust" did NOT reproduce on synthetic 2-crate tasks — the control passed both a 3-file crate and a 2-crate cross-crate task via the default profile; the original sandbox-dogfood failure was task-specific, not a general ceiling.)
+3. **Task at the failure boundary.** If every arm passes, the task is too easy → no signal to separate arms. Calibrate difficulty until the control fails.
+4. **A control arm.** Always include the default-profile / no-intervention (and, for harness work, the no-harness one-shot) arm to isolate the intervention's marginal value.
+
+## When scoring: check the CODE and the OUTPUT, and distrust the rig
+
+- **Check the produced code AND its oracle output — never "it ran."** Read the code; run the oracle; parse the RIGHT signal. (2026-07-09: an auto-grep matched the lib unit-test line "0 passed" and mislabeled a 2/5-passing control as FAIL; multi-binary `cargo test` needs pass/fail SUMMED across binaries, not first-match. Always confirm the specific test binary that carries the assertions.)
+- **A rig bug masquerades as a model result.** A phantom failure from missing tooling or a wrong command is NOT a model finding — verify the harness command + tooling produce a valid run before trusting a 0. (2026-07-09: `pytest` not installed → a contestant looped on a false-negative; `harness swarm --segments` wants a manifest FILE, not an integer count → the treatment arm produced 0 files twice. Both were rig errors, scored as if the model failed.)
+
 ## Roster & dispatch (verified handles)
 - Opus 4.8 → `Agent(model: "opus")`; Sonnet 5.0 → `Agent(model: "sonnet")` (`sonnet` = latest, NOT 4.x — older Sonnets have no clean subagent handle).
 - GPT-5.5 → Codex MCP `mcp__codex__codex` with `model: "gpt-5.5"`, `config: {model_reasoning_effort: "xhigh", sandbox_workspace_write:{network_access:true}}`, `approval-policy: "never"`, `sandbox: "workspace-write"`. (Check `~/.codex/config.toml` for the exact model id; `-codex` suffixes fail on ChatGPT-account Codex.)
