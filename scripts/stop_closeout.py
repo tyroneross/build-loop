@@ -370,9 +370,46 @@ def _run_gate(workdir: Path, run_id: str) -> dict:
     return judgment_gate.evaluate(state, ledger, run_id, agent_tool_available=False, require_seats=False)
 
 
+def _retro_artifact_exists(workdir: Path, run_id: str) -> bool:
+    """True when a retrospective file for ``run_id`` exists under any date dir.
+
+    The retro-synthesizer writes ``.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md``
+    (scripts/retrospective/write.py). The date is not known here (a retro may land on
+    a later day), so glob across every date dir. Fail-open: any error → False (owed)."""
+    try:
+        retro_root = workdir / ".build-loop" / "retrospectives"
+        if not retro_root.is_dir():
+            return False
+        return any(retro_root.glob(f"*/{run_id}.md"))
+    except OSError:
+        return False
+
+
+def _lessons_artifact_exists(workdir: Path) -> bool:
+    """True when a durable memory/lessons entry is present for this workdir.
+
+    Uses the same workdir-local durable-lesson signal the closeout classifier reads
+    (scripts/closeout/status.py): a flat ``pending-lessons/*.md`` capture or a queued
+    ``pending-lessons/pending/*.json`` intake. Fail-open: any error → False (owed)."""
+    try:
+        lessons_root = workdir / ".build-loop" / "pending-lessons"
+        if not lessons_root.is_dir():
+            return False
+        return any(lessons_root.glob("*.md")) or any(lessons_root.glob("pending/*.json"))
+    except OSError:
+        return False
+
+
 def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
     marker = _marker_path(workdir, decision["run_id"])
     marker.parent.mkdir(parents=True, exist_ok=True)
+    # EC-01 rca: verify the two owed closeout artifacts actually exist rather than
+    # only listing them. `closeout_incomplete: true` means at least one is still owed.
+    retro_done = _retro_artifact_exists(workdir, decision["run_id"])
+    lessons_done = _lessons_artifact_exists(workdir)
+    closeout_incomplete = not (retro_done and lessons_done)
+    retro_mark = "x" if retro_done else " "
+    lessons_mark = "x" if lessons_done else " "
     body = (
         "---\n"
         f"run_id: {decision['run_id']}\n"
@@ -380,15 +417,22 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
         f"outcome: {decision['outcome']}\n"
         f"judgment_verdict: {verdict.get('verdict')}\n"
         f"stakes_gated: {str(bool(verdict.get('stakes_gated'))).lower()}\n"
+        f"closeout_incomplete: {str(closeout_incomplete).lower()}\n"
+        f"retro_present: {str(retro_done).lower()}\n"
+        f"lessons_present: {str(lessons_done).lower()}\n"
         "source: stop_closeout\n"
         "---\n\n"
         f"# Closeout pending — {decision['run_id']}\n\n"
         "This inline build-loop run was recorded to `state.json.runs[]` by the Stop\n"
         "hook (it did not reach orchestrator Review-G). A Stop hook cannot dispatch\n"
-        "agents, so two closeout steps remain — run them in this session:\n\n"
-        "1. **retrospective-synthesizer** — write the 9-section retrospective.\n"
-        "2. **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n\n"
-        f"judgment_gate: **{str(verdict.get('verdict')).upper()}** — {verdict.get('summary')}\n"
+        "agents, so the closeout steps below are checked-for, not run — complete any\n"
+        "still owed (`[ ]`) in this session:\n\n"
+        f"- [{retro_mark}] **retrospective-synthesizer** — write the 9-section retrospective.\n"
+        f"- [{lessons_mark}] **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n\n"
+        + ("**closeout_incomplete: true** — at least one artifact above is still owed.\n\n"
+           if closeout_incomplete else
+           "**closeout_incomplete: false** — both closeout artifacts are present.\n\n")
+        + f"judgment_gate: **{str(verdict.get('verdict')).upper()}** — {verdict.get('summary')}\n"
     )
     append_run.atomic_write_bytes(marker, body.encode())
     return marker

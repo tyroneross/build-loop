@@ -516,6 +516,53 @@ def test_no_stakes_run_writes_no_followup(tmp_path):
     assert not fu_dir.exists() or not list(fu_dir.glob("judgment-owed-*.md"))
 
 
+# --- EC-01 rca: marker verifies closeout artifacts + emits closeout_incomplete ---
+def test_marker_flags_closeout_incomplete_when_artifacts_missing(tmp_path):
+    _write_state(tmp_path, _base_state())
+    stop_closeout.run_stop(tmp_path, SESSION)
+    body = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "closeout_incomplete: true" in body
+    assert "retro_present: false" in body
+    assert "lessons_present: false" in body
+    # both owed checkboxes are unchecked
+    assert "- [ ] **retrospective-synthesizer**" in body
+    assert "- [ ] **memory closeout**" in body
+
+
+def test_marker_flags_closeout_complete_when_both_artifacts_present(tmp_path):
+    _write_state(tmp_path, _base_state())
+    bl = tmp_path / ".build-loop"
+    today = _now().strftime("%Y-%m-%d")
+    retro = bl / "retrospectives" / today
+    retro.mkdir(parents=True, exist_ok=True)
+    (retro / "bl-test-001.md").write_text("# retro\n")
+    lessons = bl / "pending-lessons"
+    lessons.mkdir(parents=True, exist_ok=True)
+    (lessons / "lesson-1.md").write_text("# lesson\n")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    body = (bl / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "closeout_incomplete: false" in body
+    assert "retro_present: true" in body
+    assert "lessons_present: true" in body
+    assert "- [x] **retrospective-synthesizer**" in body
+    assert "- [x] **memory closeout**" in body
+
+
+def test_marker_partial_closeout_is_incomplete(tmp_path):
+    """Only the retro present (lessons still owed) → still closeout_incomplete: true."""
+    _write_state(tmp_path, _base_state())
+    bl = tmp_path / ".build-loop"
+    today = _now().strftime("%Y-%m-%d")
+    retro = bl / "retrospectives" / today
+    retro.mkdir(parents=True, exist_ok=True)
+    (retro / "bl-test-001.md").write_text("# retro\n")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    body = (bl / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "closeout_incomplete: true" in body
+    assert "retro_present: true" in body
+    assert "lessons_present: false" in body
+
+
 # --- review f3: owed-judgment followup is removed once the debt clears ---
 def test_judgment_followup_removed_when_debt_clears(tmp_path):
     (tmp_path / ".build-loop").mkdir(parents=True, exist_ok=True)
