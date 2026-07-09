@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "dd62b7ab358bdfc169b59dbcea075a5a0d3d5f0fbad9fffdc00bae4cc4cbeeb2"
+    "content_sha256": "b77a4476924e3d73caf886aa73677165b43cfb3905e68f9f4e77cd690ca92dcb"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1671,6 +1671,7 @@
       "scripts/rally_point/lifecycle.py": "Rally Point channel lifecycle hygiene.",
       "scripts/rally_point/liveness.py": "In-process ADAPTIVE, MULTI-SIGNAL session-liveness math helper.",
       "scripts/rally_point/mece_gate.py": "MECE ownership validator for handoff payloads.",
+      "scripts/rally_point/orphan_notice.py": "Rally Point orphan-session NOTICE — advisory, read-only, fail-open.",
       "scripts/rally_point/peer_collision.py": "Peer-on-same-workdir commit-collision WARN (EC-03 rca).",
       "scripts/rally_point/post.py": "Canonical \"post a change\" helper — single operation that does the right thing.",
       "scripts/rally_point/presence.py": "Rally Point presence — live session liveness, reaper, and read cursor.",
