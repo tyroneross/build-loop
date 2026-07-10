@@ -10,6 +10,7 @@ decisions backend (sequence-numbered project-tagged store).
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,16 +26,19 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
     out: List[Tuple[Path, str]] = []
     try:
         from _paths import (  # type: ignore  # noqa: PLC0415
+            memory_store_root,
             project_lessons_dir,
+            project_research_dir,
+            project_root,
             top_level_lessons_dir,
         )
         from project_resolver import resolve_project  # type: ignore  # noqa: PLC0415
     except Exception:  # noqa: BLE001 — best-effort
         return out
 
-    global_dir = top_level_lessons_dir()
-    if global_dir.is_dir():
-        out.append((global_dir, "global"))
+    for global_dir in (top_level_lessons_dir(), memory_store_root() / "research", memory_store_root() / "references"):
+        if global_dir.is_dir():
+            out.append((global_dir, "global"))
 
     proj = resolve_project(workdir)
     if proj and proj != "_unscoped":
@@ -44,6 +48,9 @@ def _resolve_memory_dirs(workdir: Path) -> List[Tuple[Path, str]]:
             project_dir = None  # type: ignore[assignment]
         if project_dir is not None and project_dir.is_dir():
             out.append((project_dir, "project"))
+        for project_lane in (project_research_dir(proj), project_root(proj) / "references"):
+            if project_lane.is_dir():
+                out.append((project_lane, "project"))
 
     return out
 
@@ -85,9 +92,12 @@ def read_lessons(
         return [], reasons
 
     by_name: Dict[str, Dict[str, Any]] = {}
+    query_tokens = {token.lower() for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", query)}
     for mem_dir, scope in dirs:
-        for p in sorted(mem_dir.glob("*.md")):
+        for p in sorted(mem_dir.rglob("*.md")):
             if p.name in _SKIP_NAMES:
+                continue
+            if any(part in {"raw-originals", "archive", "indexes", "raw"} for part in p.relative_to(mem_dir).parts[:-1]):
                 continue
             try:
                 text = p.read_text(encoding="utf-8")
@@ -110,8 +120,9 @@ def read_lessons(
                 "title": title or p.stem,
                 "metadata_type": mtype,
                 "path": str(p),
+                "_relevance": sum(1 for token in query_tokens if token in (text + " " + title + " " + p.name).lower()),
             }
 
     out = list(by_name.values())
-    out.sort(key=lambda x: x.get("_recency_ts") or 0, reverse=True)
+    out.sort(key=lambda x: (x.get("_relevance") or 0, x.get("_recency_ts") or 0), reverse=True)
     return out[:limit], reasons

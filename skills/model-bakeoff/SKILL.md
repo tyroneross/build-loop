@@ -8,6 +8,20 @@ user-invocable: false
 
 Run a fair, evidence-based competition where several models each solve the *same* change end-to-end, then merge the best result. One orchestrator (this session) coordinates; contestants are single agents (measure the model, not a multi-agent loop). Repeat per change, accumulating merges on one experiment branch.
 
+## Validation contract (define BEFORE any dispatch)
+
+Fix the grading before running — a metric invented after seeing outputs bends to them.
+
+1. **Metric + rubric + judge, up front.** Write the exact success metric, the rubric, and the pass/fail threshold BEFORE dispatch. Name the **independent judge** (a non-contestant model, e.g. Fable) for subjective dims. No post-hoc scoring.
+2. **Reproduce the baseline FAILURE first.** To prove an intervention (profile/scaffold/fix) makes a model succeed, first REPRODUCE the failure deterministically. n=1 anecdotal failures don't generalize — a task where the control already passes has no fix to validate. (2026-07-09: "kimi fails multi-crate Rust" did NOT reproduce on synthetic 2-crate tasks — the control passed both a 3-file crate and a 2-crate cross-crate task via the default profile; the original sandbox-dogfood failure was task-specific, not a general ceiling.)
+3. **Task at the failure boundary.** If every arm passes, the task is too easy → no signal to separate arms. Calibrate difficulty until the control fails.
+4. **A control arm.** Always include the default-profile / no-intervention (and, for harness work, the no-harness one-shot) arm to isolate the intervention's marginal value.
+
+## When scoring: check the CODE and the OUTPUT, and distrust the rig
+
+- **Check the produced code AND its oracle output — never "it ran."** Read the code; run the oracle; parse the RIGHT signal. (2026-07-09: an auto-grep matched the lib unit-test line "0 passed" and mislabeled a 2/5-passing control as FAIL; multi-binary `cargo test` needs pass/fail SUMMED across binaries, not first-match. Always confirm the specific test binary that carries the assertions.)
+- **Separate the measurement apparatus from the thing measured.** The **rig** = everything that is NOT the model or the code under test: the grading script, the exact command + flags you invoke, the tooling environment (installed binaries, language toolchain, PATH), and the fixtures/scaffold. A **rig bug** is a defect in that apparatus that yields a false pass or a false fail wrongly blamed on the model. Before trusting any `0` or any FAIL, confirm the rig produced a *valid run*: the command parsed, the tools were present, the oracle actually executed against real output. Three rig bugs on 2026-07-08, each first mis-scored as a model failure: (a) `pytest` absent from the grading env → a contestant looped on a false-negative it could never clear; (b) `harness swarm --segments` expects a manifest FILE, not an integer count → the treatment arm produced 0 files twice on a malformed command; (c) an auto-grep read the wrong `cargo test` binary's summary line → a 2-of-5-passing run was labeled FAIL. None were the model; all were the rig.
+
 ## Roster & dispatch (verified handles)
 - Opus 4.8 → `Agent(model: "opus")`; Sonnet 5.0 → `Agent(model: "sonnet")` (`sonnet` = latest, NOT 4.x — older Sonnets have no clean subagent handle).
 - GPT-5.5 → Codex MCP `mcp__codex__codex` with `model: "gpt-5.5"`, `config: {model_reasoning_effort: "xhigh", sandbox_workspace_write:{network_access:true}}`, `approval-policy: "never"`, `sandbox: "workspace-write"`. (Check `~/.codex/config.toml` for the exact model id; `-codex` suffixes fail on ChatGPT-account Codex.)

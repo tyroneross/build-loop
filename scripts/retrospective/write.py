@@ -26,7 +26,9 @@ from typing import Any
 # (`tmpXXXXXXXX`, no separator) — the latter was missed by an earlier `tmp\d`
 # form. `tmp<6+ alnum>` matches tempfile output without catching short real
 # names like `tmpl` or `tmux`. Also guards pytest tmpdirs and scratch dirs.
-_SCRATCH_SLUG_RE = re.compile(r"^(tmp[._-]|tmp[a-z0-9]{6,}$|\.tmp|pytest-|scratchpad$|mktemp)")
+_SCRATCH_SLUG_RE = re.compile(
+    r"^(tmp[._-]|tmp[a-z0-9]{6,}$|\.tmp|pytest-|scratchpad$|mktemp|run[-_][0-9]+$)"
+)
 
 from retrospective.sections import SECTION_KEYS, SECTION_TITLES
 

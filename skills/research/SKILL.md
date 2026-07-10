@@ -95,6 +95,16 @@ against a source before the packet states it. An unverifiable atom is labeled
 - `balanced` — repo scan + selective external research when current facts matter
 - `max_accuracy` — deep scan + external research + self-debug pass
 
+### Max-accuracy completion contract
+
+Do not label a packet `deep research` until it contains these populated, dated
+artifacts: Scope and assumptions; Research questions; Source strategy; Search
+log; Evidence register; Credibility rubric; Claim matrix; Contradiction log;
+Synthesized findings; and Recommendation confidence. The packet generator
+emits this structure and `--validate --mode max_accuracy` is the deterministic
+gate. Empty placeholders remain provisional findings, not evidence-backed
+claims.
+
 ## Integration
 
 - Standalone: `/build-loop:research-run [topic]`

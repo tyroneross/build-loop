@@ -49,6 +49,10 @@ EXCLUDED_DIRS = {
     ".pytest_cache",
     ".mypy_cache",
     "__pycache__",
+    "indexes",
+    "archive",
+    "raw-originals",
+    ".build-loop",
 }
 
 ENTRYPOINT_CANDIDATES = [
@@ -99,6 +103,19 @@ STOPWORDS = {
     "want",
     "with",
 }
+
+DEEP_PACKET_HEADINGS = (
+    "Scope and assumptions",
+    "Research questions",
+    "Source strategy",
+    "Search log",
+    "Evidence register",
+    "Credibility rubric",
+    "Claim matrix",
+    "Contradiction log",
+    "Synthesized findings",
+    "Recommendation confidence",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +218,43 @@ def parse_validation_commands(repo_path: Path, manifests: list[str]) -> dict[str
         commands.setdefault("build", "swift build")
         commands.setdefault("test", "swift test")
 
+    # Repo-native guidance is authoritative when a project uses a custom
+    # command surface (for example a memory repo with validator/rebuild
+    # scripts but no package manifest). Read the small root guidance files and
+    # harvest only recognizable executable commands from inline/fenced text.
+    command_re = re.compile(
+        r"(?:^|[ `$])((?:python3?|pytest|ruff|mypy|npm|pnpm|yarn|cargo|go|swift|xcodebuild|make)\s+[^`\n]+)",
+        re.MULTILINE,
+    )
+    for guidance_name in ("AGENTS.md", "INDEX.md", "README.md"):
+        guidance = repo_path / guidance_name
+        if not guidance.is_file():
+            continue
+        try:
+            text = guidance.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for match in command_re.finditer(text):
+            command = re.sub(r"\s+", " ", match.group(1).strip()).rstrip(".,;")
+            if command.endswith("\\"):
+                # Shell continuations are not executable validation commands.
+                continue
+            lowered = command.lower()
+            command_name = lowered.split()[0]
+            if command_name in {"pytest", "py.test"} or "unittest" in lowered:
+                key = "test"
+            elif command_name in {"ruff", "eslint", "flake8"} or " lint" in lowered:
+                key = "lint"
+            elif command_name == "mypy" or "typecheck" in lowered or "type-check" in lowered:
+                key = "typecheck"
+            elif command_name in {"xcodebuild", "make"} or any(token in lowered for token in (" cargo build", " go build", " swift build")):
+                key = "build"
+            elif any(token in lowered for token in ("validate_", "/validate", "rebuild_", "/rebuild")):
+                key = "check"
+            else:
+                continue
+            commands.setdefault(key, command)
+
     return commands
 
 
@@ -235,13 +289,21 @@ def focus_hits(repo_path: Path, focus_text: str, max_hits: int = 12) -> list[str
     if rg_path:
         pattern = "|".join(re.escape(token) for token in tokens)
         result = subprocess.run(
-            [rg_path, "-n", "-S", pattern, str(repo_path)],
+            [rg_path, "-n", "-S", pattern, str(repo_path),
+             "--glob", "!indexes/**", "--glob", "!**/raw-originals/**",
+             "--glob", "!**/.build-loop/**", "--glob", "!**/archive/**"],
             capture_output=True,
             text=True,
             check=False,
         )
         hits = [line for line in result.stdout.splitlines() if line]
-        return hits[:max_hits]
+        def hit_rank(line: str) -> tuple[int, int, str]:
+            rel = line.split(":", 1)[0]
+            name = Path(rel).name
+            guidance = 0 if name in {"AGENTS.md", "INDEX.md", "README.md"} else 1
+            generated = 1 if Path(rel).suffix.lower() in {".json", ".jsonl", ".lock"} else 0
+            return (guidance, generated, rel)
+        return sorted(dict.fromkeys(hits), key=hit_rank)[:max_hits]
 
     hits_list: list[str] = []
     for path in repo_path.rglob("*"):
@@ -676,6 +738,55 @@ def build_research_packet(
         "- Not collected by the local script.",
         "- In `balanced` and `max_accuracy` mode, add only primary-source research when current external facts materially affect the plan.",
         "",
+    ]
+
+    if mode == "max_accuracy":
+        sections.extend([
+            "## Scope and assumptions",
+            "- Scope: define the decision, audience, time horizon, and explicit out-of-scope items before external research.",
+            "- Assumptions: list every assumption that could change the recommendation; unresolved items remain provisional.",
+            "",
+            "## Research questions",
+            "- RQ1: What decision must the evidence support?",
+            "- RQ2: Which implementation, operational, or external facts could change that decision?",
+            "",
+            "## Source strategy",
+            "- Prefer official primary sources, standards, peer-reviewed synthesis, and reproducible repo evidence in that order.",
+            "- Record source tier, date/version, scope, and limitations for every material claim.",
+            "",
+            "## Search log",
+            "| Date | Source/database | Query | Filters | Hits | Included | Excluded | Notes |",
+            "|---|---|---|---|---:|---:|---:|---|",
+            "| pending | repo scan / primary sources | pending | pending | 0 | 0 | 0 | Populate before calling this deep research |",
+            "",
+            "## Evidence register",
+            "| Claim/RQ | Source ID | Source type | Date/version | Method | Result | Limitations | Confidence |",
+            "|---|---|---|---|---|---|---|---|",
+            "| pending | pending | pending | pending | pending | pending | pending | low |",
+            "",
+            "## Credibility rubric",
+            "- Score provenance, methodological strength, transparency, recency/version status, independence, reproducibility, consistency, and decision relevance.",
+            "- A claim cannot outrank its strongest corroborated source tier.",
+            "",
+            "## Claim matrix",
+            "| Claim | Supporting evidence | Contradicting evidence | Confidence | Decision implication |",
+            "|---|---|---|---|---|",
+            "| pending | pending | pending | low | pending |",
+            "",
+            "## Contradiction log",
+            "| Tension | Likely cause | Resolution path | Residual risk |",
+            "|---|---|---|---|",
+            "| pending | method / timeframe / jurisdiction / data quality | pending | pending |",
+            "",
+            "## Synthesized findings",
+            "- Separate repo findings, externally verified findings, assumptions, and recommendations; do not promote placeholders to facts.",
+            "",
+            "## Recommendation confidence",
+            "- Current packet confidence is provisional until the search log, evidence register, claim matrix, and contradiction log are populated and checked.",
+            "",
+        ])
+
+    sections.extend([
         "## Best path",
         *[f"- {item}" for item in best_path],
         "",
@@ -716,8 +827,28 @@ def build_research_packet(
         "",
         "## Next action",
         f"- {next_action}",
-    ]
+    ])
     return "\n".join(sections)
+
+
+def validate_research_packet(content: str, mode: str = "balanced") -> dict[str, Any]:
+    """Validate the structural and completion contract before deep labeling."""
+    headings = set(re.findall(r"^##\s+(.+?)\s*$", content, flags=re.MULTILINE))
+    required = set(DEEP_PACKET_HEADINGS) if mode == "max_accuracy" else {"Bottom line", "What I found", "Best path", "Verification plan", "Risks / unknowns"}
+    missing = sorted(required - headings)
+    incomplete: list[str] = []
+    if mode == "max_accuracy":
+        heading_pattern = re.compile(r"^##\s+(.+?)\s*$", flags=re.MULTILINE)
+        matches = list(heading_pattern.finditer(content))
+        bodies = {
+            match.group(1): content[match.end(): matches[index + 1].start() if index + 1 < len(matches) else len(content)]
+            for index, match in enumerate(matches)
+        }
+        for heading in DEEP_PACKET_HEADINGS:
+            body = bodies.get(heading, "").lower()
+            if any(marker in body for marker in ("pending", "populate before calling", "provisional until")):
+                incomplete.append(heading)
+    return {"valid": not missing and not incomplete, "mode": mode, "missing": missing, "incomplete": incomplete}
 
 
 # ---------------------------------------------------------------------------
@@ -795,6 +926,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     group.add_argument("--packet", action="store_true", help="Build and print a research packet")
     group.add_argument("--brief", action="store_true", help="Optimize a brief text and print result")
     group.add_argument("--archive", action="store_true", help="Archive packet content to .build-loop/research/")
+    group.add_argument("--validate", action="store_true", help="Validate a packet's structural contract")
 
     parser.add_argument("--workdir", type=Path, default=Path.cwd(), help="Repo root (default: cwd)")
     parser.add_argument("--focus", default="", help="Focus text for --scan (used in focus_hits)")
@@ -808,6 +940,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--text", default="", help="Raw text for --brief")
     parser.add_argument("--topic", default="", help="Topic slug for --archive")
     parser.add_argument("--content", default="", help="Packet content for --archive")
+    parser.add_argument("--packet-file", type=Path, help="Packet file for --validate (default: stdin)")
 
     return parser.parse_args(argv)
 
@@ -819,6 +952,16 @@ def main(argv: list[str] | None = None) -> None:
     if args.scan:
         result = scan_repo(workdir, focus_text=args.focus)
         print(json.dumps(result, indent=2))
+
+    elif args.validate:
+        if args.packet_file:
+            content = args.packet_file.read_text(encoding="utf-8")
+        else:
+            content = sys.stdin.read()
+        result = validate_research_packet(content, mode=args.mode)
+        print(json.dumps(result, indent=2))
+        if not result["valid"]:
+            sys.exit(1)
 
     elif args.packet:
         if not args.task:

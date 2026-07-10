@@ -146,17 +146,24 @@ def _lane_dirs(project: str | None) -> list[tuple[str, Path]]:
         project_decisions_dir,
         project_lessons_dir,
         project_product_dir,
+        project_research_dir,
+        project_root,
         top_level_lessons_dir,
+        memory_store_root,
     )
     if project:
         return [
             ("lessons", project_lessons_dir(project)),
             ("decisions", project_decisions_dir(project)),
             ("product", project_product_dir(project)),
+            ("research", project_research_dir(project)),
+            ("references", project_root(project) / "references"),
         ]
     else:
         return [
             ("lessons", top_level_lessons_dir()),
+            ("research", memory_store_root() / "research"),
+            ("references", memory_store_root() / "references"),
         ]
 
 
@@ -193,8 +200,12 @@ def ingest(
         for lane_name, lane_dir in lanes:
             if not lane_dir.exists():
                 continue
-            for md_path in sorted(lane_dir.glob("*.md")):
-                if md_path.name in {"INDEX.md", "MEMORY.md", "README.md"}:
+            for md_path in sorted(lane_dir.rglob("*.md")):
+                relative_parts = md_path.relative_to(lane_dir).parts[:-1]
+                if md_path.name in {"INDEX.md", "MEMORY.md", "README.md"} or any(
+                    part in {"raw-originals", "archive", "indexes", "raw"}
+                    for part in relative_parts
+                ):
                     continue
                 summary["total_scanned"] += 1
                 try:

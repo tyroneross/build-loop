@@ -148,7 +148,7 @@ def test_promote_durable_refuses_scratch_slug(tmp_path):
     mem = tmp_path / "mem"; mem.mkdir()
     # shell mktemp (tmp.XXXX), Python tempfile (tmpXXXXXXXX, no dot), pytest,
     # scratch — all must be refused.
-    for bad in ("tmp.aB12Xy", "tmp_scratch", "pytest-of-x", "tmpabcd12", "scratchpad", "mktemp123"):
+    for bad in ("tmp.aB12Xy", "tmp_scratch", "pytest-of-x", "tmpabcd12", "scratchpad", "mktemp123", "run-957538", "run_957538"):
         r = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
                             repo=bad, memory_root=mem)
         assert r["status"] == "skipped", (bad, r)

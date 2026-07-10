@@ -128,22 +128,34 @@ def _normalize(p: str | Path) -> str:
 def resolve_project(cwd: Path | str) -> str:
     """Return the project tag for ``cwd``.
 
-    Resolution order (post memory-consolidation PR 1):
-      1. ``derive_slug_from_cwd(cwd)`` — filesystem-driven slug from git
-         toplevel + ``_safe_project_tag`` normalization. The PRIMARY path.
-         Returns ``_unscoped`` when ``cwd`` is outside any git repo.
+    Resolution order (post durable-slug-pin, see P0-4 RCA 2026-07-09):
+      1. ``derive_slug_from_cwd(cwd)`` — the PRIMARY path. Itself checks,
+         in order:
+           1a. A durable ``memoryProjectSlug`` PIN in the enclosing repo's
+               ``.build-loop/config.json`` (``_paths._read_pinned_slug``).
+               When present, used verbatim — a repo-directory rename can no
+               longer change the resolved slug.
+           1b. Filesystem-driven derivation: ``basename(git toplevel)`` run
+               through ``_safe_project_tag`` normalization.
+         Returns ``_unscoped`` when ``cwd`` is outside any git repo and
+         unpinned.
       2. ``projects.yaml`` lookup (exact then longest-prefix) — used ONLY
-         when (a) the filesystem rule returned ``_unscoped`` AND (b) the
-         operator has registered an explicit alias for this cwd. This
-         covers the rare case where the working directory isn't a git
-         repo but should still map to a known project tag.
+         when (a) step 1 returned ``_unscoped`` AND (b) the operator has
+         registered an explicit alias for this cwd. This covers the rare
+         case where the working directory isn't a git repo but should
+         still map to a known project tag. NOTE: for any real git checkout,
+         step 1 always resolves to a non-``_unscoped`` slug (pinned or
+         derived), so this alias table is unreachable there by design —
+         use the PIN (step 1a) to override a git repo's slug instead.
       3. ``projects.yaml`` ``default:`` key, else ``_unscoped``.
 
     Aligns by construction with Postgres ``semantic_facts.project`` —
     ``derive_slug_from_cwd`` routes through ``_safe_project_tag``, which
     is the same validator used by ``decisions_dir_for_project``.
     """
-    # Step 1 — filesystem-driven derivation (the new primary path).
+    # Step 1 — pinned-or-derived slug (the new primary path; pin check
+    # happens inside derive_slug_from_cwd so every caller of that function,
+    # not just this one, benefits from the pin).
     slug = derive_slug_from_cwd(cwd)
     if slug != DEFAULT_PROJECT_TAG:
         return slug

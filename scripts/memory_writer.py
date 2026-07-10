@@ -113,6 +113,11 @@ VALID_TYPES = frozenset({
     "product-idea", "product-backlog", "product-opportunity",
     "product-use-case", "product-ruled-out", "source-summary", "agent",
     "plugin", "skill",
+    # Research catalog types declared by build-loop-memory/config/memory-schema.yaml.
+    "research-report", "research-group", "research-catalog", "research-candidate",
+    "research-ingest-bundle", "synthesized-lessons", "workflow-template",
+    # Existing research bundles use the schema's historical underscore forms.
+    "research_ingest_bundle", "synthesized_lessons", "workflow_template",
 })
 
 REQUIRED_PROVENANCE_FIELDS = frozenset({

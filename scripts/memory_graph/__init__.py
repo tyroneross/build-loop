@@ -120,8 +120,11 @@ class SQLiteEdgesStore:
         self.index_dir = root / "indexes"
         self.nodes_path = self.index_dir / "graph-nodes.jsonl"
         self.edges_path = self.index_dir / "graph-edges.jsonl"
-        self.db_path = db_path or self.index_dir / "graph.sqlite"
+        # SQLite is a rebuildable runtime cache. Keep it out of the tracked
+        # ``indexes/`` surface so expand-mode reads never dirty memory git.
+        self.db_path = db_path or root / "db" / "runtime" / "graph.sqlite"
         self.reasons = list(reasons)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
         self._sync_if_needed()
@@ -160,6 +163,7 @@ class SQLiteEdgesStore:
 
     def _sync_if_needed(self) -> None:
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
         signature = _source_signature(self.nodes_path, self.edges_path)
         current = self._conn.execute(

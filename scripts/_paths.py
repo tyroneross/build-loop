@@ -36,6 +36,7 @@ inspection. They never mkdir or touch files; callers handle creation.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -396,6 +397,53 @@ def _canonical_repo_root(cwd_path: Path) -> Path | None:
         return None
 
 
+MEMORY_SLUG_PIN_KEY = "memoryProjectSlug"
+
+
+def _read_pinned_slug(repo_root: Path) -> str | None:
+    """Read the durable memory-project-slug PIN from a repo's config.
+
+    Field: ``<repo_root>/.build-loop/config.json`` -> top-level
+    ``"memoryProjectSlug"`` (camelCase, matching the existing ``selfReview``
+    / ``deploymentPolicy`` top-level keys in that file).
+
+    This is the anchor that survives a ``basename(repo_root)`` rename: the
+    2026-07-09 control-plane RCA (P0-4) found renaming
+    ``RossLabs-AI-Assistant`` silently orphaned 7 lessons under the old
+    ``ai-assistant`` slug, because the slug was derived purely from the
+    directory name with no durable pin. When this field is set, callers use
+    it verbatim instead of deriving a slug from ``repo_root.name``.
+
+    Returns ``None`` (never raises) when: the config file is absent,
+    unreadable, not valid JSON, not a JSON object, the field is missing or
+    not a non-empty string, or the value fails ``_safe_project_tag``
+    validation — every one of those falls through to the existing
+    dirname-derivation path, so a malformed pin degrades gracefully instead
+    of breaking resolution.
+    """
+    config_path = repo_root / ".build-loop" / "config.json"
+    if not config_path.is_file():
+        return None
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    pinned = data.get(MEMORY_SLUG_PIN_KEY)
+    if not isinstance(pinned, str):
+        return None
+    pinned = pinned.strip()
+    if not pinned:
+        return None
+    try:
+        _safe_project_tag(pinned)
+    except ValueError:
+        return None
+    return pinned
+
+
 def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
     """Derive the project slug from a working directory.
 
@@ -406,6 +454,12 @@ def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
          ``~/.claude/plugins/build-loop`` resolves to ``~/dev/git-folder/build-loop``.
       2. Walk up looking for a ``.git`` entry (file OR dir — worktrees use
          a file). The deepest enclosing ``.git`` defines the repo root.
+      2.5. **Slug PIN check** (durable-slug-pin, added post P0-4 RCA):
+         if the canonical repo root (or, when that lookup fails, the
+         worktree-local repo root) has a valid ``memoryProjectSlug`` pin in
+         ``.build-loop/config.json`` (see ``_read_pinned_slug``), return it
+         verbatim and skip steps 3-4 entirely. A rename of the repo
+         directory no longer changes the slug once pinned.
       3. Slug base = ``basename(repo_root)`` lowercased; non-safe chars
          collapsed to ``-``; runs of ``-`` collapsed; leading/trailing
          ``-`` stripped; capped at 64 chars.
@@ -459,6 +513,17 @@ def derive_slug_from_cwd(cwd: Path | str | None = None) -> str:
         canonical = _canonical_repo_root(cwd_resolved)
         if canonical is not None:
             base_root = canonical
+
+    # Step 2.5 — durable slug PIN. Check the canonical root first (the
+    # preferred place to set the pin — shared by every worktree), then fall
+    # back to the worktree-local root. A hit here bypasses dirname
+    # derivation entirely, so a `basename(repo_root)` rename cannot change
+    # the resolved slug once pinned.
+    pinned = _read_pinned_slug(base_root)
+    if pinned is None and base_root != repo_root:
+        pinned = _read_pinned_slug(repo_root)
+    if pinned is not None:
+        return pinned
 
     base = base_root.name.lower()
     base = re.sub(r"[^a-z0-9._-]", "-", base)
