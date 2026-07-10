@@ -24,11 +24,14 @@ This skill RUNS: a stdlib-only Python scanner, no model, no network, no Fable de
 ## Run it
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_scan.py" --path <repo> [--fail-on {low,medium,high,critical}] [--json]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_scan.py" --path <repo> [--fail-on {low,medium,high,critical}] [--json] [--diff <ref>] [--exclude <glob>]
 ```
 
 - **Exit 0** = nothing at/above threshold · **Exit 1** = found something at/above threshold (this is what gates the pre-push hook).
 - Default threshold is **HIGH**. `--json` emits machine output.
+- **`--diff <ref>`** (opt-in) scopes the scan to files changed in `<ref>..HEAD` — scan what's being pushed, not the whole tree, so pre-existing unrelated debt doesn't block an unrelated push. Fail-safe: a bad ref / non-git path falls back to a full scan (never scans less than intended); an empty range scans nothing (exit 0). The pre-push hook derives `<ref>` from the upstream tracking branch (`@{u}`); no upstream → whole-repo scan.
+- **`--exclude <glob>`** (opt-in, repeatable) skips any file whose repo-relative path matches the fnmatch glob, in both full and `--diff` mode. The hook reads these from `.build-loop/config.json` → `securityScan.excludeGlobs` (best-effort; absent = no-op).
+- With neither `--diff` nor `--exclude`, behavior is unchanged (whole-tree, git-tracked files).
 - Suppress a *confirmed* false positive with an inline `// nosec: <reason>` (JS/TS) or `# nosec: <reason>` (Python/shell) on the flagged line.
 
 ## What it catches (DET layer — the greppable 80/20)

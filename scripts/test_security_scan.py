@@ -2,12 +2,23 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for security_scan.py. Stdlib unittest only."""
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import security_scan  # noqa: E402
+
+_SCANNER = Path(__file__).parent / "security_scan.py"
+
+# A synthetic, obviously-fake GitHub PAT built by concatenation so the literal
+# token never appears verbatim in source (keeps the mock/secret scanners quiet).
+# Matches _PROVIDER_KEY_PATTERNS ghp_[A-Za-z0-9]{36,} → HIGH check-A finding.
+_FAKE_GHP = "ghp_" + "A" * 36
+_SECRET_LINE = f'const token = "{_FAKE_GHP}";\n'
 
 
 class TestCheckA(unittest.TestCase):
@@ -206,6 +217,166 @@ class TestCleanFile(unittest.TestCase):
         all_f.extend(security_scan.check_D_ssrf(path, lines))
         all_f.extend(security_scan.check_G_prompt_injection(path, lines))
         self.assertEqual(all_f, [], f"Unexpected findings: {all_f}")
+
+
+class _DiffScanBase(unittest.TestCase):
+    """Shared helpers for the --diff / --exclude integration tests.
+
+    These drive the real CLI (subprocess) so exit codes and arg parsing are
+    exercised end-to-end, and build throwaway git repos under the OS temp dir
+    (never committed to build-loop). The fake token is synthetic.
+    """
+
+    def _mkdir(self):
+        d = Path(tempfile.mkdtemp(prefix="secscan_"))
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(d)]))
+        return d
+
+    def _git(self, cwd, *args):
+        return subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+            cwd=str(cwd), capture_output=True, text=True,
+        )
+
+    def _init(self, cwd):
+        self._git(cwd, "init", "-q")
+
+    def _write(self, cwd, rel, content):
+        p = cwd / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def _commit(self, cwd, msg="c"):
+        self._git(cwd, "add", "-A")
+        self._git(cwd, "commit", "-q", "-m", msg)
+        return self._git(cwd, "rev-parse", "HEAD").stdout.strip()
+
+    def _scan(self, cwd, *extra):
+        """Run the scanner CLI in --json mode. Returns (rc, parsed_dict)."""
+        proc = subprocess.run(
+            [sys.executable, str(_SCANNER), "--path", str(cwd), "--json", *extra],
+            capture_output=True, text=True,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = None
+        return proc.returncode, data
+
+    def _has_secret(self, data, name_endswith):
+        return any(
+            f["severity"] == "HIGH" and f["check_id"] == "A"
+            and f["file"].endswith(name_endswith)
+            for f in (data or {}).get("findings", [])
+        )
+
+
+class TestDiffIntentPreserved(_DiffScanBase):
+    """The 2026-06 catch must survive delta mode: a planted secret in a file
+    that IS in the <ref>..HEAD range still produces HIGH + rc==1."""
+
+    def test_secret_in_diff_range_still_high(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        base = self._commit(d, "baseline")
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._commit(d, "add auth")
+        rc, data = self._scan(d, "--diff", base)
+        self.assertEqual(rc, 1, "planted secret in diff range must fail the gate")
+        self.assertTrue(self._has_secret(data, "src/auth.ts"),
+                        "secret in changed file must still be reported in delta mode")
+
+
+class TestDiffMisScopeFixed(_DiffScanBase):
+    """A HIGH finding in a file NOT in the range is NOT reported (the
+    unrelated-debt case). A full scan of the same repo DOES report it."""
+
+    def test_out_of_range_debt_not_reported(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/debt.ts", _SECRET_LINE)  # pre-existing debt
+        base = self._commit(d, "baseline with debt")
+        self._write(d, "docs/notes.md", "# just a note\n")
+        self._commit(d, "add doc")
+        # Delta mode: debt.ts is not in base..HEAD → not reported.
+        rc, data = self._scan(d, "--diff", base)
+        self.assertEqual(rc, 0, "unrelated pre-existing debt must not block the push")
+        self.assertFalse(self._has_secret(data, "src/debt.ts"),
+                         "out-of-range debt must not be reported in delta mode")
+        # Full scan (default) still surfaces it — proves scoping, not deletion.
+        rc_full, data_full = self._scan(d)
+        self.assertEqual(rc_full, 1)
+        self.assertTrue(self._has_secret(data_full, "src/debt.ts"))
+
+
+class TestExcludeHonored(_DiffScanBase):
+    """--exclude '<glob>' suppresses a finding in a matching path."""
+
+    def test_exclude_suppresses_matching_path(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "research/vendor.ts", _SECRET_LINE)
+        self._commit(d, "add vendor")
+        rc, data = self._scan(d)  # no exclude → found
+        self.assertEqual(rc, 1)
+        self.assertTrue(self._has_secret(data, "research/vendor.ts"))
+        rc_x, data_x = self._scan(d, "--exclude", "research/*")  # excluded
+        self.assertEqual(rc_x, 0, "excluded path must not block the push")
+        self.assertFalse(self._has_secret(data_x, "research/vendor.ts"))
+
+
+class TestBackCompatDefault(_DiffScanBase):
+    """With neither flag, whole-repo behavior + output shape are unchanged."""
+
+    def test_default_whole_repo_scan_unchanged(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        rc, data = self._scan(d)
+        self.assertEqual(rc, 1, "default whole-repo scan must still catch the secret")
+        self.assertTrue(self._has_secret(data, "src/auth.ts"))
+        self.assertNotIn("diff", data, "default output must not carry a diff key")
+
+
+class TestFallbackFailSafe(_DiffScanBase):
+    """--diff <bad-ref> and a non-git path both fall back to a full scan
+    (never silently pass)."""
+
+    def test_bad_ref_falls_back_to_full_scan(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        rc, data = self._scan(d, "--diff", "no-such-ref-xyz")
+        self.assertEqual(rc, 1, "bad ref must fall back to full scan, not silently pass")
+        self.assertTrue(self._has_secret(data, "src/auth.ts"))
+        self.assertEqual(data.get("diff", {}).get("mode"), "fallback-full-scan")
+
+    def test_non_git_path_falls_back_to_full_scan(self):
+        d = self._mkdir()  # no git init
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        rc, data = self._scan(d, "--diff", "HEAD")
+        self.assertEqual(rc, 1, "non-git path must fall back to full scan")
+        self.assertTrue(self._has_secret(data, "src/auth.ts"))
+        self.assertEqual(data.get("diff", {}).get("mode"), "fallback-full-scan")
+
+
+class TestEmptyDiff(_DiffScanBase):
+    """An empty diff (nothing changed) scans nothing and exits 0."""
+
+    def test_empty_diff_scans_nothing(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        rc, data = self._scan(d, "--diff", "HEAD")  # HEAD..HEAD is empty
+        self.assertEqual(rc, 0, "empty diff must exit 0")
+        self.assertFalse(self._has_secret(data, "src/auth.ts"))
+        self.assertEqual(data.get("files_scanned"), 0)
 
 
 if __name__ == "__main__":

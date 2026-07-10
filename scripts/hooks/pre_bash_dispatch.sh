@@ -165,8 +165,37 @@ case "$CMD" in
     *"git push"*)
         _SCAN="$PLUGIN_ROOT/scripts/security_scan.py"
         if [ -f "$_SCAN" ] && command -v python3 >/dev/null 2>&1; then
+            _SCAN_ARGS=(--path "$CWD" --fail-on high)
+            # Scope the scan to the push delta: only what's actually being pushed
+            # (files changed vs the upstream tracking branch), not the whole tree.
+            # No upstream (detached/new branch) → keep the whole-repo scan (safe
+            # fallback; scanner also falls back on any bad ref).
+            _UPSTREAM=$(git -C "$CWD" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+            if [ -n "$_UPSTREAM" ]; then
+                _SCAN_ARGS+=(--diff "$_UPSTREAM")
+            fi
+            # Optional excludeGlobs from .build-loop/config.json (best-effort; a
+            # missing file/key is a silent no-op — never a hard dependency).
+            if [ -f "$CWD/.build-loop/config.json" ]; then
+                _EX_GLOBS=$(python3 -c 'import sys,json
+try:
+    d=json.load(open(sys.argv[1]))
+    g=d.get("securityScan",{}).get("excludeGlobs",[])
+    if isinstance(g,list):
+        for x in g:
+            if isinstance(x,str) and x: print(x)
+except Exception:
+    pass' "$CWD/.build-loop/config.json" 2>/dev/null || true)
+                while IFS= read -r _glob; do
+                    if [ -n "$_glob" ]; then
+                        _SCAN_ARGS+=(--exclude "$_glob")
+                    fi
+                done <<EOF
+$_EX_GLOBS
+EOF
+            fi
             _SCAN_RC=0
-            _SCAN_OUT=$(python3 "$_SCAN" --path "$CWD" --fail-on high 2>&1) || _SCAN_RC=$?
+            _SCAN_OUT=$(python3 "$_SCAN" "${_SCAN_ARGS[@]}" 2>&1) || _SCAN_RC=$?
             if [ "$_SCAN_RC" = "1" ]; then
                 SECURITY_HARD_BLOCK=1
                 printf '%s\n' "$_SCAN_OUT" >&2

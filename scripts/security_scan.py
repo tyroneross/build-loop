@@ -33,6 +33,7 @@ Exit codes: 0 = nothing at/above threshold, 1 = something at/above threshold,
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -169,13 +170,57 @@ def _git_tracked_files(root: Path) -> set[Path] | None:
     return tracked or None
 
 
-def walk_source_files(root: Path):
+def _git_diff_files(root: Path, ref: str) -> set[Path] | None:
+    """Resolved abs paths of files changed in ``<ref>..HEAD``, else None.
+
+    None is the FAIL-SAFE signal — the caller falls back to a full scan (we
+    never silently scan less than intended). Returned on any failure: not a git
+    repo, an invalid ``<ref>``, or a git error. An EMPTY set is distinct from
+    None: it means the range is empty (nothing changed) → scan nothing.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "diff", "--name-only", f"{ref}..HEAD"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return {
+        (root / rel).resolve()
+        for rel in result.stdout.splitlines()
+        if rel.strip()
+    }
+
+
+def _matches_exclude(root: Path, path: Path, exclude_globs: list[str]) -> bool:
+    """True when ``path``'s repo-relative posix path matches any fnmatch glob."""
+    if not exclude_globs:
+        return False
+    try:
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    return any(fnmatch.fnmatch(rel, g) for g in exclude_globs)
+
+
+def walk_source_files(
+    root: Path,
+    diff_set: set[Path] | None = None,
+    exclude_globs: list[str] | None = None,
+):
     """Yield (path, lines) for non-binary text source files.
 
     Uses os.walk with directory pruning so we never descend into SKIP_DIRS.
     This is essential for large repos (pnpm-store, node_modules, dist). In a git
     repo, additionally restricts to tracked + not-ignored files so gitignored
     artifacts (that will never be pushed) don't produce phantom findings.
+
+    Optional filters (default None/None → byte-for-byte unchanged behavior):
+      - ``diff_set``: when not None, yield only files whose resolved path is in
+        the set (delta scan — restrict to what's being pushed).
+      - ``exclude_globs``: skip files whose repo-relative path matches any glob.
     """
     tracked = _git_tracked_files(root)  # None → not a git repo, scan everything
     for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
@@ -187,6 +232,10 @@ def walk_source_files(root: Path):
             if _skip_file_name(fname):
                 continue
             path = Path(dirpath_str) / fname
+            if exclude_globs and _matches_exclude(root, path, exclude_globs):
+                continue
+            if diff_set is not None and path.resolve() not in diff_set:
+                continue
             if tracked is not None and path.resolve() not in tracked:
                 continue
             if _is_binary(path):
@@ -929,6 +978,7 @@ def format_report(
     threshold: str,
     scan_path: str,
     files_scanned: int,
+    diff_info: dict[str, Any] | None = None,
 ) -> str:
     counts = _summary_counts(findings)
     total = sum(counts.values())
@@ -938,8 +988,18 @@ def format_report(
         "══════════════════════════════════════════════════════════════════",
         f"  security_scan.py — {counts_str}",
         f"  path: {scan_path}  |  files: {files_scanned}  |  threshold: {threshold}",
-        "══════════════════════════════════════════════════════════════════",
     ]
+    if diff_info is not None:
+        if diff_info.get("mode") == "delta":
+            lines.append(
+                f"  scope: delta vs {diff_info['ref']}  |  changed files: {diff_info['changed_files']}"
+            )
+        else:  # fallback-full-scan
+            lines.append(
+                f"  scope: full-tree (fell back from --diff {diff_info['ref']}: "
+                "ref/repo unavailable)"
+            )
+    lines.append("══════════════════════════════════════════════════════════════════")
 
     if not findings:
         lines.append("")
@@ -987,18 +1047,23 @@ def format_json_output(
     threshold: str,
     scan_path: str,
     files_scanned: int,
+    diff_info: dict[str, Any] | None = None,
 ) -> str:
     counts = _summary_counts(findings)
     threshold_idx = SEVERITY_ORDER.get(threshold, 1)
     breached = any(SEVERITY_ORDER.get(f["severity"], 9) <= threshold_idx for f in findings)
-    return json.dumps({
+    out: dict[str, Any] = {
         "scan_path": scan_path,
         "files_scanned": files_scanned,
         "threshold": threshold,
         "threshold_breached": breached,
         "findings": findings,
         "summary": {**counts, "total": sum(counts.values())},
-    }, indent=2)
+    }
+    # Only present when --diff was used, so default output stays byte-identical.
+    if diff_info is not None:
+        out["diff"] = diff_info
+    return json.dumps(out, indent=2)
 
 # ---------------------------------------------------------------------------
 # Main
@@ -1017,6 +1082,21 @@ def main() -> int:
         dest="fail_on",
         help="Exit 1 if any finding at or above this severity (default: high)",
     )
+    parser.add_argument(
+        "--diff",
+        default=None,
+        metavar="REF",
+        help="Restrict the scan to files changed in <ref>..HEAD. Falls back to a "
+             "full scan (never scans less than intended) if <ref>/repo is unusable.",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help="Skip any file whose repo-relative path matches this fnmatch glob "
+             "(repeatable; applies in both full and --diff mode).",
+    )
     args = parser.parse_args()
 
     root = Path(args.path).resolve()
@@ -1026,16 +1106,47 @@ def main() -> int:
 
     threshold = args.fail_on.upper()
 
+    exclude_globs: list[str] = args.exclude or []
+
+    # Diff scoping: opt-in, fail-safe. diff_set None → full scan (either --diff
+    # was not passed, or it was passed but the ref/repo was unusable → fallback).
+    diff_set: set[Path] | None = None
+    diff_active = False
+    diff_info: dict[str, Any] | None = None
+    if args.diff is not None:
+        resolved = _git_diff_files(root, args.diff)
+        if resolved is None:  # fail-safe fallback to full scan
+            diff_info = {"ref": args.diff, "mode": "fallback-full-scan", "changed_files": 0}
+        else:
+            diff_set = resolved
+            diff_active = True
+            diff_info = {"ref": args.diff, "mode": "delta", "changed_files": len(resolved)}
+
     # Walk files
     all_findings: list[dict[str, Any]] = []
     files_scanned = 0
 
-    # Project-level checks first
-    all_findings.extend(check_A_tracked_env_files(root))
-    all_findings.extend(check_F_security_headers(root))
+    # Empty diff range → nothing changed → scan nothing (exit 0).
+    empty_diff = diff_active and not diff_set
 
-    # Per-file checks
-    for path, lines in walk_source_files(root):
+    # Project-level checks first. In delta mode, keep only findings whose file is
+    # in the changed set; the exclude filter applies in every mode.
+    if not empty_diff:
+        proj_findings = check_A_tracked_env_files(root) + check_F_security_headers(root)
+        for f in proj_findings:
+            fp = f.get("file")
+            if exclude_globs and fp and _matches_exclude(root, Path(str(fp)), exclude_globs):
+                continue
+            if diff_active:
+                try:
+                    if Path(str(fp)).resolve() not in diff_set:
+                        continue
+                except OSError:
+                    continue
+            all_findings.append(f)
+
+    # Per-file checks (walk is pruned by diff_set + exclude_globs)
+    for path, lines in walk_source_files(root, diff_set if diff_active else None, exclude_globs):
         files_scanned += 1
         is_content = _is_content_file(path)
         is_test = _is_test_file(path)
@@ -1066,9 +1177,9 @@ def main() -> int:
     scan_path_str = str(root)
 
     if args.json:
-        print(format_json_output(all_findings, threshold, scan_path_str, files_scanned))
+        print(format_json_output(all_findings, threshold, scan_path_str, files_scanned, diff_info))
     else:
-        print(format_report(all_findings, threshold, scan_path_str, files_scanned))
+        print(format_report(all_findings, threshold, scan_path_str, files_scanned, diff_info))
 
     # Exit code
     threshold_idx = SEVERITY_ORDER.get(threshold, 1)
