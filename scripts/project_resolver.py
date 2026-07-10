@@ -28,6 +28,7 @@ import sys
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from _paths import derive_slug_from_cwd, memory_store_root  # type: ignore  # noqa: E402
+import project_registry  # type: ignore  # noqa: E402
 
 DEFAULT_PROJECT_TAG = "_unscoped"
 
@@ -126,56 +127,49 @@ def _normalize(p: str | Path) -> str:
 
 
 def resolve_project(cwd: Path | str) -> str:
-    """Return the project tag for ``cwd``.
+    """Return the canonical project id for ``cwd``.
 
-    Resolution order (post durable-slug-pin, see P0-4 RCA 2026-07-09):
-      1. ``derive_slug_from_cwd(cwd)`` — the PRIMARY path. Itself checks,
-         in order:
+    Resolution contract (memory-identity-graph Phase 1 — stable-ID + alias
+    walking; supersedes the single-value ``memoryProjectSlug`` pin, which
+    is now one alias case):
+
+      1. ``candidate = derive_slug_from_cwd(cwd)`` — unchanged deriver:
            1a. A durable ``memoryProjectSlug`` PIN in the enclosing repo's
-               ``.build-loop/config.json`` (``_paths._read_pinned_slug``).
-               When present, used verbatim — a repo-directory rename can no
-               longer change the resolved slug.
-           1b. Filesystem-driven derivation: ``basename(git toplevel)`` run
-               through ``_safe_project_tag`` normalization.
-         Returns ``_unscoped`` when ``cwd`` is outside any git repo and
-         unpinned.
-      2. ``projects.yaml`` lookup (exact then longest-prefix) — used ONLY
-         when (a) step 1 returned ``_unscoped`` AND (b) the operator has
-         registered an explicit alias for this cwd. This covers the rare
-         case where the working directory isn't a git repo but should
-         still map to a known project tag. NOTE: for any real git checkout,
-         step 1 always resolves to a non-``_unscoped`` slug (pinned or
-         derived), so this alias table is unreachable there by design —
-         use the PIN (step 1a) to override a git repo's slug instead.
-      3. ``projects.yaml`` ``default:`` key, else ``_unscoped``.
+               ``.build-loop/config.json`` (``_paths._read_pinned_slug``),
+               used verbatim when present; the pin still SETS the candidate
+               and the registry can still map it further.
+           1b. Filesystem derivation: ``basename(git toplevel)`` normalized.
+           Returns ``_unscoped`` outside any git repo and unpinned.
+      2. Registry lookup (``project_registry.resolve``): find the project
+         where ``candidate`` ∈ {id, canonical_slug, *aliases} OR ``cwd``
+         matches one of ``paths``, then a BOUNDED, CYCLE-GUARDED alias walk
+         returns that project's terminal canonical id. A hit wins.
+      3. Else, if ``candidate != _unscoped`` → return ``candidate`` verbatim.
+         An unregistered / new / unmigrated repo IS its own id and keeps
+         working with zero registry entry.
+      4. Else (``_unscoped``, no registry hit) → the registry ``default:``
+         (else ``_unscoped``). The registry's ``paths`` seed IS the old
+         ``projects.yaml`` path-fallback, consulted inside step 2.
 
+    Deterministic, no LLM, never raises (degrades to the candidate/_unscoped).
     Aligns by construction with Postgres ``semantic_facts.project`` —
-    ``derive_slug_from_cwd`` routes through ``_safe_project_tag``, which
-    is the same validator used by ``decisions_dir_for_project``.
+    ``derive_slug_from_cwd`` routes through ``_safe_project_tag``.
     """
-    # Step 1 — pinned-or-derived slug (the new primary path; pin check
-    # happens inside derive_slug_from_cwd so every caller of that function,
-    # not just this one, benefits from the pin).
-    slug = derive_slug_from_cwd(cwd)
-    if slug != DEFAULT_PROJECT_TAG:
-        return slug
+    # Step 1 — pinned-or-derived candidate slug.
+    candidate = derive_slug_from_cwd(cwd)
 
-    # Step 2 — fall back to projects.yaml only when filesystem returned
-    # _unscoped. This preserves backward-compat for explicit aliases.
-    data = load_projects_yaml()
-    cwd_norm = _normalize(cwd)
-    best_match: tuple[int, str] | None = None
-    for entry in data["projects"]:
-        path_norm = _normalize(entry["path"])
-        if path_norm == cwd_norm:
-            return entry["project"]
-        if cwd_norm.startswith(path_norm + os.sep):
-            length = len(path_norm)
-            if best_match is None or length > best_match[0]:
-                best_match = (length, entry["project"])
-    if best_match is not None:
-        return best_match[1]
-    return data["default"]
+    # Step 2 — registry lookup + alias walk (returns terminal canonical id).
+    registry = project_registry.load_registry()
+    hit = project_registry.resolve(candidate, cwd, registry)
+    if hit is not None:
+        return hit
+
+    # Step 3 — an unregistered git repo is its own id.
+    if candidate != DEFAULT_PROJECT_TAG:
+        return candidate
+
+    # Step 4 — _unscoped with no registry hit → default.
+    return registry.get("default", DEFAULT_PROJECT_TAG)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual smoke tool

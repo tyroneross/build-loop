@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "7c6b0ea44bbe2154c7c0a6f623485fb2715bcb64c3660306bed99ed3843561ef"
+    "content_sha256": "446b834a5afd6cfc890597ef6ca7ff362fcfaba0cd19afc5d303ef9e045ea984"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1623,6 +1623,7 @@
       "scripts/migrate_extend_search_vector_with_context.py": "Extend the `search_vector` GENERATED column to include `chunk_context`.",
       "scripts/migrate_feedback_to_decisions.py": "One-shot migrate `.build-loop/feedback.md` → canonical decision memory.",
       "scripts/migrate_playbooks_to_procedural.py": "Copy `skills/debugging-memory/references/*-playbook.md` → `.procedural/<name>/procedure.md`.",
+      "scripts/migrate_project_identity.py": "Doctor: migrate a build-loop-memory store to the v2 project registry.",
       "scripts/migrate_project_memory.py": "migrate_project_memory.py — move project memory into the consolidated tree.",
       "scripts/migrate_reembed_to_bgem3.py": "Re-embed semantic_facts rows whose vector was produced by a non-bge-m3 model.",
       "scripts/migrate_state_schema.py": "migrate_state_schema.py — normalize .build-loop/state.json files to canonical schema.",
@@ -1641,6 +1642,7 @@
       "scripts/prior_art.py": "Cross-project prior-art digest for Phase 1 Assess (P4).",
       "scripts/privacy.py": "privacy.py — reusable secret/PII deny-pattern scanner.",
       "scripts/procedural_governance.py": "Three-phase procedural memory governance.",
+      "scripts/project_registry.py": "Stable-ID + alias-walking project registry (memory-identity-graph Phase 1).",
       "scripts/project_resolver.py": "Resolve a current working directory to a project tag.",
       "scripts/promote_violation_to_lesson.py": "Promote recurring architecture violations into build-loop-native lessons.",
       "scripts/prune_codex_plugin_cache.py": "Compatibility wrapper for pruning Codex plugin cache versions.\"\"\"",
