@@ -128,6 +128,17 @@ class CliTests(unittest.TestCase):
         r = _run_cli(["--check-cmd", cmd, "--input", str(inp), "--mode", "rename", "--strict"])
         self.assertEqual(r.returncode, 1, msg=r.stderr)
 
+    def test_check_cmd_runs_argv_not_shell(self) -> None:
+        # The check command is run as argv (shell=False), so shell metacharacters
+        # in the template are inert: a `; touch <marker>` suffix must NOT execute.
+        # (Regression for the A03 shell-injection HIGH: no shell=True.)
+        marker = self.d / "pwned"
+        inp = self.d / "in.txt"
+        inp.write_text("x")
+        tmpl = f'{sys.executable} -c "import sys;sys.exit(0)" ; touch {marker}'
+        ps._run_check_cmd(tmpl, inp, timeout=10)
+        self.assertFalse(marker.exists(), "shell metacharacters must not be interpreted (argv, not shell=True)")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

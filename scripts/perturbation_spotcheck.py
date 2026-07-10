@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -154,11 +155,28 @@ def spotcheck_all(
 # ---------------------------------------------------------------------------
 
 def _run_check_cmd(cmd_template: str, input_path: Path, timeout: int) -> bool:
-    """Return True when the check command exits 0 for the given input file."""
-    cmd = cmd_template.replace("{input}", str(input_path))
+    """Return True when the check command exits 0 for the given input file.
+
+    ``cmd_template`` is an ARGV template, not a shell line: it is ``shlex``-split
+    (quoting parsed the same way a shell splits arguments) and the ``{input}``
+    token in any resulting argument is replaced with the input path, then run
+    WITHOUT a shell. Running argv-with-``shell=False`` removes the shell-injection
+    surface entirely — no path or template content can be reinterpreted as shell
+    syntax (metacharacters like ``;``/``|``/``&&`` become inert literal args). A
+    check that genuinely needs a shell pipeline should wrap it in its own script
+    and name that script here.
+    """
     try:
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+        argv = [tok.replace("{input}", str(input_path)) for tok in shlex.split(cmd_template)]
+    except ValueError:
+        return False  # unbalanced quotes in the template
+    if not argv:
+        return False
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        # FileNotFoundError/OSError: argv[0] not an executable — argv mode surfaces
+        # this (shell=True hid it as a nonzero exit). Treat as a non-passing check.
         return False
     return proc.returncode == 0
 
@@ -189,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--check-cmd",
         required=True,
-        help="Check command template; '{input}' is replaced by a path to the input file. Exit 0 == pass.",
+        help="Check command ARGV template (shell-quoted, but run WITHOUT a shell); "
+             "'{input}' is replaced by a path to the input file. Exit 0 == pass. "
+             "For a shell pipeline, wrap it in a script and name the script here.",
     )
     p.add_argument("--input", required=True, help="Path to the input file (or '-' for stdin).")
     p.add_argument("--mode", choices=["rename", "reorder"], default="rename",
