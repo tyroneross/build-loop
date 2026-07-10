@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.36.3 — 2026-07-10
+
+### Added
+- Eager Phase-6 Learn detector-pass for inline runs: `stop_closeout.py` runs the deterministic pattern detector on the record path and folds an owed "Phase-6 Learn drafting" item into the existing `closeout-pending` marker (surfaced once at SessionStart) when `runs[]>=3` and a root-cause cluster >= threshold has no experimental draft yet. Fills the `learn/pending` lane's "not yet an automated detector pass" TODO so inline runs no longer leave the learning loop dark until the user asks.
+
+
 ## 0.36.2 — 2026-07-10
 
 ### Fixed
