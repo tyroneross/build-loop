@@ -171,7 +171,10 @@ def _git_tracked_files(root: Path) -> set[Path] | None:
             ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
             cwd=root, capture_output=True, text=True, timeout=15,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # ValueError covers UnicodeDecodeError: a non-UTF-8 filename would make
+        # text=True raise at decode. Fail-OPEN (return None → full-tree walk),
+        # never an uncaught traceback the hook misreads as findings (h4).
         return None
     if result.returncode != 0:
         return None
@@ -207,7 +210,11 @@ def _git_diff_files(root: Path, ref: str) -> set[Path] | None:
              f"{ref}..HEAD"],
             capture_output=True, text=True, timeout=15,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # ValueError covers UnicodeDecodeError: a non-UTF-8 filename would make
+        # text=True raise at decode. Fail-OPEN (return None → full-scan
+        # fallback), never an uncaught traceback the hook misreads as findings
+        # → a hard block with a crash trace (h4).
         return None
     if result.returncode != 0:
         return None

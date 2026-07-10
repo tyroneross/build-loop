@@ -171,52 +171,104 @@ case "$CMD" in
             # No upstream (detached/new branch) → keep the whole-repo scan (safe
             # fallback; scanner also falls back on any bad ref).
             _UPSTREAM=$(git -C "$CWD" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+            # Current branch — the push is only plain when the pushed ref IS the
+            # current branch (h2: comparing to the tracking STRING alone let
+            # `git push origin main` on a feature branch scope to the wrong,
+            # empty delta while local main's secret shipped). Empty on detached
+            # HEAD → classifier can't prove plain → full scan.
+            _BRANCH=$(git -C "$CWD" symbolic-ref --short HEAD 2>/dev/null || true)
             if [ -n "$_UPSTREAM" ]; then
-                # f3: only scope to the upstream delta when the push is PLAIN —
+                # Only scope to the upstream delta when the push is PLAIN —
                 # current branch → its tracking remote/ref, no refspec, no
-                # whole-repo flag. `git push backup main`, `... origin main:rel`,
-                # `--mirror`, `--all`, `--tags` etc. push content the
+                # destination-changing flag. Any other shape pushes content the
                 # upstream..HEAD range does NOT cover, so scoping to it would
-                # scan the wrong (often empty) range and let a secret ship.
-                # Anything not positively classified as plain → OMIT --diff →
-                # full-repo scan (fail-safe: never scan less than intended).
-                _PLAIN=$(CMD="$CMD" UPSTREAM="$_UPSTREAM" python3 - <<'PY' 2>/dev/null || true
+                # scan the wrong (often empty) range and let a secret ship. The
+                # classifier is conservative BY CONSTRUCTION: a flag ALLOWLIST
+                # (unknown flag → not plain), EVERY `git push` segment judged
+                # (not just the last), and the pushed ref matched to the current
+                # branch. Anything not positively classified as plain → OMIT
+                # --diff → full-repo scan (fail-safe: never scan less than
+                # intended).
+                _PLAIN=$(CMD="$CMD" UPSTREAM="$_UPSTREAM" BRANCH="$_BRANCH" python3 - <<'PY' 2>/dev/null || true
 import os, re, shlex, sys
 cmd = os.environ.get("CMD", "")
 upstream = os.environ.get("UPSTREAM", "")  # e.g. "origin/main"
-idx = cmd.rfind("git push")
-if idx < 0:
-    print("no"); sys.exit(0)
-seg = cmd[idx:]
-# Drop anything after the first shell control operator (&& || ; |).
-seg = re.split(r"&&|\|\||[;|]", seg, maxsplit=1)[0]
-try:
-    toks = shlex.split(seg)
-except ValueError:
-    print("no"); sys.exit(0)
-toks = toks[2:]  # strip leading `git push`
-NONPLAIN_FLAGS = {
-    "--mirror", "--all", "--tags", "--prune", "--delete",
-    "--recurse-submodules",
+branch = os.environ.get("BRANCH", "")      # current branch, e.g. "feature"
+rem, _, up_branch = upstream.partition("/")
+
+# h3 — ALLOWLIST polarity. Only flags positively known NOT to change the push
+# destination or which refs are pushed stay plain. A denylist defaulted every
+# unknown/future flag (e.g. --repo=backup) to unsafe-but-treated-safe; an
+# allowlist closes them all by construction.
+SAFE_BOOL = {
+    "-q", "--quiet", "-v", "--verbose", "--progress", "--no-progress",
+    "--no-verify", "--verify", "-n", "--dry-run",
+    "-f", "--force", "--force-with-lease", "--no-force-with-lease",
+    "-u", "--set-upstream",
+    "-4", "--ipv4", "-6", "--ipv6", "--atomic", "--no-atomic",
+    "--thin", "--no-thin",
 }
-positionals = []
-for t in toks:
-    if t.startswith("-"):
-        if t.split("=", 1)[0] in NONPLAIN_FLAGS:
-            print("no"); sys.exit(0)
-        continue  # safe flag (-u, --force, --force-with-lease, -v, ...)
-    if ":" in t:  # refspec src:dst
-        print("no"); sys.exit(0)
-    positionals.append(t)
-rem, _, br = upstream.partition("/")
-if not positionals:            # bare `git push` → tracking
-    print("yes")
-elif len(positionals) == 1:    # `git push <remote>`
-    print("yes" if positionals[0] == rem else "no")
-elif len(positionals) == 2:    # `git push <remote> <ref>`
-    print("yes" if (positionals[0] == rem and positionals[1] == br) else "no")
-else:
-    print("no")
+# Value-consuming safe flags: a server-side push option, no dest/ref change.
+SAFE_VALUE = {"-o", "--push-option"}
+
+def is_plain(seg):
+    try:
+        toks = shlex.split(seg)
+    except ValueError:
+        return False
+    if len(toks) < 2 or toks[0] != "git" or toks[1] != "push":
+        return False
+    toks = toks[2:]  # strip leading `git push`
+    positionals = []
+    i, n = 0, len(toks)
+    while i < n:
+        t = toks[i]
+        if t == "--":                      # end of options; rest are positionals
+            positionals.extend(toks[i + 1:])
+            break
+        if t.startswith("-"):
+            key = t.split("=", 1)[0]
+            if key in SAFE_VALUE:
+                # `-o v` / `--push-option v` → consume the following value token;
+                # `-o=v` / `--push-option=v` → value is attached, consume nothing.
+                if "=" not in t and t == key:
+                    i += 1
+                i += 1
+                continue
+            if key in SAFE_BOOL:           # --force-with-lease[=<lease>] via key
+                i += 1
+                continue
+            return False                   # unknown flag → not plain
+        if ":" in t:                       # refspec src:dst
+            return False
+        positionals.append(t)
+        i += 1
+    # Positionals must resolve to the current branch → its tracking remote.
+    if not rem or not branch:              # can't prove plain without both
+        return False
+    if not positionals:                    # bare `git push`
+        # push.default=matching could ship OTHER branches; require the tracked
+        # branch to BE the current branch so that drift can't pass unseen.
+        return up_branch == branch
+    if len(positionals) == 1:              # `git push <remote>`
+        return positionals[0] == rem and up_branch == branch
+    if len(positionals) == 2:              # `git push <remote> <ref>`
+        # h2: the ref must be the CURRENT branch, not merely the tracking name.
+        return positionals[0] == rem and positionals[1] == branch
+    return False                           # 3+ positionals (multi-ref) → not plain
+
+# h1 — classify EVERY `git push` occurrence, each segment up to its next shell
+# control operator (&& || ; | &). Plain ONLY if ALL segments are plain; any
+# segment not provably plain → full scan.
+found = False
+plain = True
+for m in re.finditer(r"git\s+push", cmd):
+    found = True
+    seg = re.split(r"&&|\|\||[;|&]", cmd[m.start():], maxsplit=1)[0]
+    if not is_plain(seg):
+        plain = False
+        break
+print("yes" if (found and plain) else "no")
 PY
 )
                 if [ "$_PLAIN" = "yes" ]; then

@@ -365,6 +365,38 @@ class TestFallbackFailSafe(_DiffScanBase):
         self.assertEqual(data.get("diff", {}).get("mode"), "fallback-full-scan")
 
 
+class TestGitHelperDecodeFailOpen(unittest.TestCase):
+    """h4: a non-UTF-8 filename makes git's ``text=True`` output raise
+    UnicodeDecodeError (a ValueError subclass). The old ``except (OSError,
+    subprocess.SubprocessError)`` did not catch it → uncaught traceback →
+    python exit 1 → the pre-push hook misreads rc==1 as findings and hard-blocks
+    with a crash trace, violating the fail-OPEN-on-scanner-error contract. Both
+    git helpers must swallow it and return None (→ documented full-scan
+    fallback). Driven deterministically by patching subprocess.run to raise —
+    APFS rejects invalid-UTF-8 filenames, so a real fixture is not portable."""
+
+    def _boom(self, *_a, **_k):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    def test_diff_files_returns_none_on_undecodable_output(self):
+        orig = security_scan.subprocess.run
+        security_scan.subprocess.run = self._boom
+        try:
+            self.assertIsNone(
+                security_scan._git_diff_files(Path("/tmp"), "origin/main")
+            )
+        finally:
+            security_scan.subprocess.run = orig
+
+    def test_tracked_files_returns_none_on_undecodable_output(self):
+        orig = security_scan.subprocess.run
+        security_scan.subprocess.run = self._boom
+        try:
+            self.assertIsNone(security_scan._git_tracked_files(Path("/tmp")))
+        finally:
+            security_scan.subprocess.run = orig
+
+
 class TestEmptyDiff(_DiffScanBase):
     """An empty diff (nothing changed) scans nothing and exits 0."""
 

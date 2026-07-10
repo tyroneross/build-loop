@@ -237,6 +237,139 @@ class SecurityPushScopingTests(unittest.TestCase):
             f"plain push with a clean delta must pass; stderr={r.stderr!r}",
         )
 
+    def test_pushed_ref_not_current_branch_full_scans(self) -> None:
+        """h2 (HIGH): the pushed ref must be compared to the CURRENT branch, not
+        just the tracking string. On a branch that tracks origin/<b> but whose
+        checkout differs, `git push origin <b>` pushes a ref that is NOT the
+        current branch — the current checkout's delta does not cover it. Old:
+        classified plain → scoped to the (clean) current-branch delta → the
+        secret carried in the checkout escapes. Fix: ref != current branch →
+        full-scan → block."""
+        # <b> (initial branch) carries the secret; origin/<b> gets it.
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "auth.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/auth.ts")
+        _git(self.repo, "commit", "-q", "-m", "secret on base branch")
+        self._add_remote("origin")
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+        # Branch off (inherits the secret in the working tree), add a CLEAN
+        # commit, and track origin/<b>. Now origin/<b>..HEAD holds only the
+        # clean commit — the secret is out of the current-branch delta but sits
+        # in the working tree.
+        _git(self.repo, "checkout", "-q", "-b", "feature")
+        (self.repo / "note.txt").write_text("clean feature work\n", encoding="utf-8")
+        _git(self.repo, "add", "note.txt")
+        _git(self.repo, "commit", "-q", "-m", "clean feature work")
+        _git(self.repo, "branch", "-u", f"origin/{self.branch}", "feature")
+        r = run_dispatch(self.repo, f"git push origin {self.branch}")
+        self.assertEqual(
+            r.returncode, 2,
+            "pushing a ref that is not the current branch must full-scan and "
+            f"hard-block; stderr={r.stderr!r}",
+        )
+        self.assertIn("security scan found HIGH", r.stderr)
+
+
+class SecurityPushClassifierConservatismTests(unittest.TestCase):
+    """The push classifier must be conservative BY CONSTRUCTION — an allowlist,
+    every push segment, ref-must-be-current-branch. These tests positively
+    assert that every shape that is not provably a plain current-branch →
+    tracking push falls back to a full scan (and therefore hard-blocks a secret
+    that a wrong, narrower delta would miss). Shared rig: the secret already
+    lives on origin/<b> (so <upstream>..HEAD is EMPTY) but is inherited in the
+    working tree — a plain push scopes to the empty delta (exit 0); ANY
+    non-plain push full-scans the working tree and blocks (exit 2)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.repo = make_buildloop_repo(self.tmp)
+        self.branch = _git(self.repo, "branch", "--show-current").stdout.strip()
+        self._setup_inherited_secret()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _add_remote(self, name: str) -> Path:
+        bare = self.tmp / f"{name}.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(self.repo, "remote", "add", name, str(bare))
+        return bare
+
+    def _setup_inherited_secret(self) -> None:
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "auth.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/auth.ts")
+        _git(self.repo, "commit", "-q", "-m", "add auth (with secret)")
+        self._add_remote("origin")
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+        # origin/<b>..HEAD is now EMPTY; the secret lives only in
+        # origin-reachable history + the working tree.
+
+    def _assert_full_scan_blocks(self, command: str) -> None:
+        r = run_dispatch(self.repo, command)
+        self.assertEqual(
+            r.returncode, 2,
+            f"non-plain push {command!r} must full-scan and hard-block; "
+            f"stderr={r.stderr!r}",
+        )
+        self.assertIn("security scan found HIGH", r.stderr)
+
+    def test_h1_compound_leading_push_full_scans(self) -> None:
+        """h1: a compound command's EARLIER push segment is classified too.
+        `git push backup <b> && git push` — old code judged only the trailing
+        bare push (plain → empty delta → exit 0); the leading non-plain push
+        escaped. Fix classifies every segment → full-scan → block."""
+        self._add_remote("backup")
+        self._assert_full_scan_blocks(f"git push backup {self.branch} && git push")
+
+    def test_h3_repo_flag_full_scans(self) -> None:
+        """h3: an unknown flag (`--repo=backup` redirects the destination) is
+        NOT on the plain-safe allowlist → full-scan. Old denylist treated it as
+        plain → wrong (empty) delta → exit 0."""
+        self._assert_full_scan_blocks("git push --repo=backup")
+
+    def test_broad_flag_push_full_scans(self) -> None:
+        """`--mirror` / `--all` push refs the tracking delta does not cover —
+        unknown to the allowlist → full-scan."""
+        self._assert_full_scan_blocks("git push --mirror origin")
+
+    def test_refspec_push_full_scans(self) -> None:
+        """A src:dst refspec pushes content the current-branch delta may not
+        cover → full-scan."""
+        self._assert_full_scan_blocks(
+            f"git push origin {self.branch}:{self.branch}"
+        )
+
+    def test_wrong_ref_push_full_scans(self) -> None:
+        """`git push origin <other>` names a ref that is not the current branch
+        → full-scan."""
+        self._assert_full_scan_blocks("git push origin someotherbranch")
+
+    def test_plain_empty_delta_push_passes(self) -> None:
+        """Intent preserved: a plain current-branch → tracking push still scopes
+        to the (here empty) delta and exits 0 — pre-existing, already-pushed
+        debt does not block."""
+        r = run_dispatch(self.repo, f"git push origin {self.branch}")
+        self.assertEqual(
+            r.returncode, 0,
+            f"plain empty-delta push must pass; stderr={r.stderr!r}",
+        )
+
+    def test_safe_flags_plain_push_still_scopes(self) -> None:
+        """The allowlist keeps genuinely-safe flags plain: `-v
+        --force-with-lease` do not change destination or refs, so the push stays
+        plain and scopes to the empty delta (exit 0) rather than full-scanning."""
+        r = run_dispatch(
+            self.repo,
+            f"git push -v --force-with-lease origin {self.branch}",
+        )
+        self.assertEqual(
+            r.returncode, 0,
+            f"safe-flag plain push must stay delta-scoped (exit 0); "
+            f"stderr={r.stderr!r}",
+        )
+
 
 class DispatchFailOpenTests(unittest.TestCase):
     """Fail-open guarantees: a broken environment never blocks a commit."""
