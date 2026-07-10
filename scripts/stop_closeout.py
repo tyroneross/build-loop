@@ -405,6 +405,46 @@ def _lessons_artifact_exists(workdir: Path) -> bool:
         return False
 
 
+_LEARN_RUN_FLOOR = 3  # phase-6-learn.md: `runs[] >= 3` is the Full-Learn threshold.
+
+
+def _learn_drafting_owed(workdir: Path) -> tuple[bool, str]:
+    """Whether Phase-6 Learn DRAFTING is owed for this inline run.
+
+    The mandatory Phase-6 contract runs the deterministic detector arm
+    (``procedural_governance detect-patterns``) — but that only fires inside the
+    orchestrator's Review-G, so an INLINE run's recurring signals were never
+    detected until the user asked (the ``.build-loop/learn/pending`` lane's own
+    "not yet an automated detector pass" TODO). This closes that: run the
+    deterministic arm here (idempotent — it dedupes into ``.procedural/
+    _candidates.jsonl``) and, when it finds a root-cause cluster >= threshold
+    that has NOT yet been drafted into an experimental skill, report it owed so
+    the marker surfaces "run ``/build-loop:run self-improve``" at the next
+    SessionStart. A Stop hook cannot dispatch the Sonnet architect, so like the
+    retro/lessons checks this is checked-for, not run.
+
+    Owed clears once an experimental draft exists (the "handled" signal, mirroring
+    ``_retro_artifact_exists``/``_lessons_artifact_exists``). Fail-open: any error
+    -> not owed (never block a Stop on a learning nicety)."""
+    try:
+        import procedural_governance as pg  # noqa: PLC0415 — lazy: fail-open if absent
+
+        runs = pg.load_runs(workdir)
+        if len(runs) < _LEARN_RUN_FLOOR:
+            return False, f"accruing ({len(runs)}/{_LEARN_RUN_FLOOR} runs)"
+        pg.detect_patterns(workdir)  # deterministic arm — persist candidates for /self-improve
+        clusters = pg.cluster_root_causes(runs)
+        patterns = [rc for rc, ids in clusters.items() if len(ids) >= pg.PATTERN_THRESHOLD]
+        if not patterns:
+            return False, f"0 patterns above threshold ({len(runs)} runs scanned)"
+        exp = workdir / ".build-loop" / "skills" / "experimental"
+        if exp.is_dir() and any(exp.iterdir()):
+            return False, f"{len(patterns)} pattern(s) above threshold — experimental draft(s) already present"
+        return True, f"{len(patterns)} recurring root-cause pattern(s) above threshold across {len(runs)} runs; no experimental draft yet"
+    except Exception:  # noqa: BLE001 — Learn detection is best-effort; never break Stop
+        return False, "detector-unavailable"
+
+
 def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
     marker = _marker_path(workdir, decision["run_id"])
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -412,9 +452,13 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
     # only listing them. `closeout_incomplete: true` means at least one is still owed.
     retro_done = _retro_artifact_exists(workdir, decision["run_id"])
     lessons_done = _lessons_artifact_exists(workdir)
-    closeout_incomplete = not (retro_done and lessons_done)
+    # Phase-6 Learn: an inline run's detector arm never ran; fire it here and fold
+    # any owed DRAFTING into the same surfaced marker (a third checked-for item).
+    learn_owed, learn_reason = _learn_drafting_owed(workdir)
+    closeout_incomplete = not (retro_done and lessons_done) or learn_owed
     retro_mark = "x" if retro_done else " "
     lessons_mark = "x" if lessons_done else " "
+    learn_mark = " " if learn_owed else "x"
     body = (
         "---\n"
         f"run_id: {decision['run_id']}\n"
@@ -425,6 +469,7 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
         f"closeout_incomplete: {str(closeout_incomplete).lower()}\n"
         f"retro_present: {str(retro_done).lower()}\n"
         f"lessons_present: {str(lessons_done).lower()}\n"
+        f"learn_drafting_owed: {str(learn_owed).lower()}\n"
         "source: stop_closeout\n"
         "---\n\n"
         f"# Closeout pending — {decision['run_id']}\n\n"
@@ -433,10 +478,13 @@ def _write_marker(workdir: Path, decision: dict, verdict: dict) -> Path:
         "agents, so the closeout steps below are checked-for, not run — complete any\n"
         "still owed (`[ ]`) in this session:\n\n"
         f"- [{retro_mark}] **retrospective-synthesizer** — write the 9-section retrospective.\n"
-        f"- [{lessons_mark}] **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n\n"
-        + ("**closeout_incomplete: true** — at least one artifact above is still owed.\n\n"
+        f"- [{lessons_mark}] **memory closeout** — extract durable lessons via `scripts/memory_writer.py`.\n"
+        f"- [{learn_mark}] **Phase-6 Learn drafting** — {learn_reason}."
+        + (" Run `/build-loop:run self-improve` to draft experimental skill(s) for the recurring pattern(s).\n\n"
+           if learn_owed else "\n\n")
+        + ("**closeout_incomplete: true** — at least one item above is still owed.\n\n"
            if closeout_incomplete else
-           "**closeout_incomplete: false** — both closeout artifacts are present.\n\n")
+           "**closeout_incomplete: false** — all closeout items are present.\n\n")
         + f"judgment_gate: **{str(verdict.get('verdict')).upper()}** — {verdict.get('summary')}\n"
     )
     append_run.atomic_write_bytes(marker, body.encode())

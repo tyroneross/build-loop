@@ -617,3 +617,46 @@ def test_judgment_followup_removed_when_debt_clears(tmp_path):
           "findings": [], "missing_seats": []}
     assert stop_closeout._write_judgment_followup(tmp_path, decision, ok) is None
     assert not p.exists()
+
+
+# --- Phase-6 Learn drafting (eager inline detector; fills the learn/pending
+#     "not yet an automated detector pass" TODO) --------------------------------
+
+def _pattern_runs(root_cause="widget-crash", n=3):
+    """n prior runs sharing a root_cause → one cluster >= PATTERN_THRESHOLD (3)."""
+    return [{"run_id": f"bl-seed-{i}", "root_cause": root_cause, "outcome": "done"} for i in range(n)]
+
+
+def test_learn_drafting_owed_surfaces_recurring_pattern(tmp_path):
+    # 3 prior runs share a root_cause → the deterministic detector clusters them,
+    # so Learn drafting is owed (no experimental draft yet). This is the inline
+    # path that previously left the learning loop dark until the user asked.
+    _write_state(tmp_path, _base_state(runs=_pattern_runs()))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: true" in marker
+    assert "[ ] **Phase-6 Learn drafting**" in marker
+    assert "self-improve" in marker
+    assert "closeout_incomplete: true" in marker
+
+
+def test_learn_not_owed_below_run_floor(tmp_path):
+    # Only the current run accrues (< 3) → Learn is still accruing, not owed.
+    _write_state(tmp_path, _base_state(runs=[]))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: false" in marker
+    assert "[x] **Phase-6 Learn drafting**" in marker
+
+
+def test_learn_owed_clears_when_experimental_draft_present(tmp_path):
+    # Same recurring pattern, but a draft already exists → owed clears (the
+    # "handled" signal, mirroring the retro/lessons artifact checks).
+    _write_state(tmp_path, _base_state(runs=_pattern_runs()))
+    draft = tmp_path / ".build-loop" / "skills" / "experimental" / "some-draft"
+    draft.mkdir(parents=True)
+    (draft / "SKILL.md").write_text("x")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: false" in marker
+    assert "draft(s) already present" in marker
