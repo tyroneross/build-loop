@@ -172,7 +172,57 @@ case "$CMD" in
             # fallback; scanner also falls back on any bad ref).
             _UPSTREAM=$(git -C "$CWD" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
             if [ -n "$_UPSTREAM" ]; then
-                _SCAN_ARGS+=(--diff "$_UPSTREAM")
+                # f3: only scope to the upstream delta when the push is PLAIN —
+                # current branch → its tracking remote/ref, no refspec, no
+                # whole-repo flag. `git push backup main`, `... origin main:rel`,
+                # `--mirror`, `--all`, `--tags` etc. push content the
+                # upstream..HEAD range does NOT cover, so scoping to it would
+                # scan the wrong (often empty) range and let a secret ship.
+                # Anything not positively classified as plain → OMIT --diff →
+                # full-repo scan (fail-safe: never scan less than intended).
+                _PLAIN=$(CMD="$CMD" UPSTREAM="$_UPSTREAM" python3 - <<'PY' 2>/dev/null || true
+import os, re, shlex, sys
+cmd = os.environ.get("CMD", "")
+upstream = os.environ.get("UPSTREAM", "")  # e.g. "origin/main"
+idx = cmd.rfind("git push")
+if idx < 0:
+    print("no"); sys.exit(0)
+seg = cmd[idx:]
+# Drop anything after the first shell control operator (&& || ; |).
+seg = re.split(r"&&|\|\||[;|]", seg, maxsplit=1)[0]
+try:
+    toks = shlex.split(seg)
+except ValueError:
+    print("no"); sys.exit(0)
+toks = toks[2:]  # strip leading `git push`
+NONPLAIN_FLAGS = {
+    "--mirror", "--all", "--tags", "--prune", "--delete",
+    "--recurse-submodules",
+}
+positionals = []
+for t in toks:
+    if t.startswith("-"):
+        if t.split("=", 1)[0] in NONPLAIN_FLAGS:
+            print("no"); sys.exit(0)
+        continue  # safe flag (-u, --force, --force-with-lease, -v, ...)
+    if ":" in t:  # refspec src:dst
+        print("no"); sys.exit(0)
+    positionals.append(t)
+rem, _, br = upstream.partition("/")
+if not positionals:            # bare `git push` → tracking
+    print("yes")
+elif len(positionals) == 1:    # `git push <remote>`
+    print("yes" if positionals[0] == rem else "no")
+elif len(positionals) == 2:    # `git push <remote> <ref>`
+    print("yes" if (positionals[0] == rem and positionals[1] == br) else "no")
+else:
+    print("no")
+PY
+)
+                if [ "$_PLAIN" = "yes" ]; then
+                    _SCAN_ARGS+=(--diff "$_UPSTREAM")
+                fi
+                # else: non-plain push → omit --diff → full-repo scan.
             fi
             # Optional excludeGlobs from .build-loop/config.json (best-effort; a
             # missing file/key is a silent no-op — never a hard dependency).

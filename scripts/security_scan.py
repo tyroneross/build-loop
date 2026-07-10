@@ -29,6 +29,19 @@ Suppression: add `# nosec: <reason>` or `// nosec: <reason>` to a line.
 
 Exit codes: 0 = nothing at/above threshold, 1 = something at/above threshold,
             2 = scanner error.
+
+Known limitation (working-tree vs pushed-blob, f5):
+  --diff scopes the scan to the FILES NAMED in ``<ref>..HEAD``, but reads their
+  CURRENT WORKING-TREE content, not the exact blob at HEAD or the sequence of
+  pushed commits. Consequences:
+    - A secret committed and then removed later in the same push range escapes
+      (the net working-tree content no longer shows it).
+    - A secret dirty-edited out of the working tree before the push escapes.
+  This is shared with the pre-delta whole-tree gate (not a regression), so the
+  gate is best described as "scans the working-tree content of every file
+  touched in the range", not "inspects every pushed blob". A future follow-up
+  could scan pushed blobs directly (``git diff <ref>..HEAD -U0`` / per-commit
+  ``git show``) — tracked as a backlog item, not required here.
 """
 from __future__ import annotations
 
@@ -177,10 +190,21 @@ def _git_diff_files(root: Path, ref: str) -> set[Path] | None:
     never silently scan less than intended). Returned on any failure: not a git
     repo, an invalid ``<ref>``, or a git error. An EMPTY set is distinct from
     None: it means the range is empty (nothing changed) → scan nothing.
+
+    Uses ``-z`` (NUL-delimited) so non-ASCII / quote / backslash filenames are
+    NOT octal-escaped-and-quoted by git's default ``core.quotepath=true`` — a
+    quoted name would ``resolve()`` to a path that matches nothing on disk and
+    be silently dropped from the delta (the f1 false-negative). Mirrors
+    ``_git_tracked_files``. ``--relative`` makes the emitted paths relative to
+    the ``-C`` dir, so scanning a subdirectory (``--path <repo>/pkg``) joins
+    correctly instead of prefixing repo-root-relative paths onto the subdir
+    (the f2 false-negative); it also confines the delta to that subdir, matching
+    a full scan rooted there.
     """
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "diff", "--name-only", f"{ref}..HEAD"],
+            ["git", "-C", str(root), "diff", "--name-only", "-z", "--relative",
+             f"{ref}..HEAD"],
             capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
@@ -189,7 +213,7 @@ def _git_diff_files(root: Path, ref: str) -> set[Path] | None:
         return None
     return {
         (root / rel).resolve()
-        for rel in result.stdout.splitlines()
+        for rel in result.stdout.split("\0")
         if rel.strip()
     }
 
@@ -209,6 +233,7 @@ def walk_source_files(
     root: Path,
     diff_set: set[Path] | None = None,
     exclude_globs: list[str] | None = None,
+    stats: dict[str, int] | None = None,
 ):
     """Yield (path, lines) for non-binary text source files.
 
@@ -221,6 +246,10 @@ def walk_source_files(
       - ``diff_set``: when not None, yield only files whose resolved path is in
         the set (delta scan — restrict to what's being pushed).
       - ``exclude_globs``: skip files whose repo-relative path matches any glob.
+      - ``stats``: when a dict is passed, ``stats['excluded']`` is incremented
+        for every real scan candidate (passed skip-name + diff + tracked) that
+        an exclude glob removed — so an over-broad glob (e.g. ``*``) is
+        surfaced instead of silently bypassing the whole scan (f4).
     """
     tracked = _git_tracked_files(root)  # None → not a git repo, scan everything
     for dirpath_str, dirnames, filenames in os.walk(str(root), topdown=True):
@@ -232,11 +261,17 @@ def walk_source_files(
             if _skip_file_name(fname):
                 continue
             path = Path(dirpath_str) / fname
-            if exclude_globs and _matches_exclude(root, path, exclude_globs):
-                continue
             if diff_set is not None and path.resolve() not in diff_set:
                 continue
             if tracked is not None and path.resolve() not in tracked:
+                continue
+            # Exclude is the LAST filter so stats['excluded'] counts only files
+            # that would otherwise have been scanned (real candidates removed).
+            # The yielded set is order-independent (all are AND/continue gates),
+            # so this reorder is behavior-preserving vs the prior placement.
+            if exclude_globs and _matches_exclude(root, path, exclude_globs):
+                if stats is not None:
+                    stats["excluded"] = stats.get("excluded", 0) + 1
                 continue
             if _is_binary(path):
                 continue
@@ -979,6 +1014,7 @@ def format_report(
     scan_path: str,
     files_scanned: int,
     diff_info: dict[str, Any] | None = None,
+    exclude_info: dict[str, Any] | None = None,
 ) -> str:
     counts = _summary_counts(findings)
     total = sum(counts.values())
@@ -995,10 +1031,21 @@ def format_report(
                 f"  scope: delta vs {diff_info['ref']}  |  changed files: {diff_info['changed_files']}"
             )
         else:  # fallback-full-scan
+            reason = diff_info.get("fallback_reason", "ref/repo unavailable")
             lines.append(
                 f"  scope: full-tree (fell back from --diff {diff_info['ref']}: "
-                "ref/repo unavailable)"
+                f"{reason})"
             )
+    # f4: surface the active exclude globs + how many candidate files they
+    # removed, so an over-broad glob (e.g. `*`, which fnmatch matches on every
+    # path) is visible instead of a silent total bypass.
+    if exclude_info is not None:
+        globs = exclude_info.get("globs", [])
+        removed = exclude_info.get("files_removed", 0)
+        lines.append(
+            f"  exclude: {len(globs)} glob(s) [{', '.join(globs)}] — "
+            f"removed {removed} file(s) from scan"
+        )
     lines.append("══════════════════════════════════════════════════════════════════")
 
     if not findings:
@@ -1048,6 +1095,7 @@ def format_json_output(
     scan_path: str,
     files_scanned: int,
     diff_info: dict[str, Any] | None = None,
+    exclude_info: dict[str, Any] | None = None,
 ) -> str:
     counts = _summary_counts(findings)
     threshold_idx = SEVERITY_ORDER.get(threshold, 1)
@@ -1063,7 +1111,75 @@ def format_json_output(
     # Only present when --diff was used, so default output stays byte-identical.
     if diff_info is not None:
         out["diff"] = diff_info
+    # Only present when --exclude was used, so default output stays byte-identical.
+    if exclude_info is not None:
+        out["exclude"] = exclude_info
     return json.dumps(out, indent=2)
+
+# ---------------------------------------------------------------------------
+# Scan driver (re-runnable so the belt-and-braces fallback can redo a full scan)
+# ---------------------------------------------------------------------------
+
+def _perform_scan(
+    root: Path,
+    diff_set: set[Path] | None,
+    diff_active: bool,
+    exclude_globs: list[str],
+    empty_diff: bool,
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    """Run all checks once. Returns (findings, files_scanned, walk_stats).
+
+    Factored out of main() so the f1 belt-and-braces path can re-invoke it for
+    a full scan when a delta scan matched zero of its own changed files.
+    """
+    walk_stats: dict[str, int] = {"excluded": 0}
+    all_findings: list[dict[str, Any]] = []
+    files_scanned = 0
+
+    # Project-level checks first. In delta mode, keep only findings whose file is
+    # in the changed set; the exclude filter applies in every mode.
+    if not empty_diff:
+        proj_findings = check_A_tracked_env_files(root) + check_F_security_headers(root)
+        for f in proj_findings:
+            fp = f.get("file")
+            if exclude_globs and fp and _matches_exclude(root, Path(str(fp)), exclude_globs):
+                continue
+            if diff_active and diff_set is not None:
+                try:
+                    if Path(str(fp)).resolve() not in diff_set:
+                        continue
+                except OSError:
+                    continue
+            all_findings.append(f)
+
+    # Per-file checks (walk is pruned by diff_set + exclude_globs)
+    for path, lines in walk_source_files(
+        root, diff_set if diff_active else None, exclude_globs, walk_stats
+    ):
+        files_scanned += 1
+        is_content = _is_content_file(path)
+        is_test = _is_test_file(path)
+
+        secret_findings = check_A_secrets(path, lines, root)
+        if not is_content:
+            secret_findings.extend(check_B_secret_in_logs(path, lines))
+        if is_test:
+            # Test fixtures intentionally embed trigger strings (fake keys, sample
+            # tokens). Keep them visible for human review but don't let them block
+            # the HIGH push-gate — a real leaked value still surfaces at LOW.
+            for _f in secret_findings:
+                _f["severity"] = "LOW"
+        all_findings.extend(secret_findings)
+
+        if not is_content:
+            if not is_test:
+                all_findings.extend(check_C_injection(path, lines))
+            all_findings.extend(check_D_ssrf(path, lines))
+            all_findings.extend(check_E_rate_limiting(path, lines))
+            all_findings.extend(check_G_prompt_injection(path, lines))
+
+    return all_findings, files_scanned, walk_stats
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -1122,52 +1238,54 @@ def main() -> int:
             diff_active = True
             diff_info = {"ref": args.diff, "mode": "delta", "changed_files": len(resolved)}
 
-    # Walk files
-    all_findings: list[dict[str, Any]] = []
-    files_scanned = 0
-
     # Empty diff range → nothing changed → scan nothing (exit 0).
     empty_diff = diff_active and not diff_set
 
-    # Project-level checks first. In delta mode, keep only findings whose file is
-    # in the changed set; the exclude filter applies in every mode.
-    if not empty_diff:
-        proj_findings = check_A_tracked_env_files(root) + check_F_security_headers(root)
-        for f in proj_findings:
-            fp = f.get("file")
-            if exclude_globs and fp and _matches_exclude(root, Path(str(fp)), exclude_globs):
-                continue
-            if diff_active:
-                try:
-                    if Path(str(fp)).resolve() not in diff_set:
-                        continue
-                except OSError:
-                    continue
-            all_findings.append(f)
+    all_findings, files_scanned, walk_stats = _perform_scan(
+        root, diff_set, diff_active, exclude_globs, empty_diff
+    )
 
-    # Per-file checks (walk is pruned by diff_set + exclude_globs)
-    for path, lines in walk_source_files(root, diff_set if diff_active else None, exclude_globs):
-        files_scanned += 1
-        is_content = _is_content_file(path)
-        is_test = _is_test_file(path)
+    # f1 belt-and-braces: --diff named changed files, yet the walk scanned NONE
+    # of them. That means the delta named files the walk could not match —
+    # misparsed/quoted names, a bad subdir join, or files moved out of the
+    # tracked tree. Never exit 0 on a misparse: fall back to a FULL scan instead
+    # of silently scanning nothing. (The general guard for the rc==0-with-
+    # misparsed-output class, above and beyond the -z/--relative fixes.)
+    if (
+        diff_active
+        and diff_info is not None
+        and diff_info.get("changed_files", 0) > 0
+        and files_scanned == 0
+    ):
+        diff_info = {
+            "ref": args.diff,
+            "mode": "fallback-full-scan",
+            "changed_files": diff_info["changed_files"],
+            "fallback_reason": "delta named changed files but the walk matched none",
+        }
+        diff_set = None
+        diff_active = False
+        all_findings, files_scanned, walk_stats = _perform_scan(
+            root, None, False, exclude_globs, False
+        )
 
-        secret_findings = check_A_secrets(path, lines, root)
-        if not is_content:
-            secret_findings.extend(check_B_secret_in_logs(path, lines))
-        if is_test:
-            # Test fixtures intentionally embed trigger strings (fake keys, sample
-            # tokens). Keep them visible for human review but don't let them block
-            # the HIGH push-gate — a real leaked value still surfaces at LOW.
-            for _f in secret_findings:
-                _f["severity"] = "LOW"
-        all_findings.extend(secret_findings)
-
-        if not is_content:
-            if not is_test:
-                all_findings.extend(check_C_injection(path, lines))
-            all_findings.extend(check_D_ssrf(path, lines))
-            all_findings.extend(check_E_rate_limiting(path, lines))
-            all_findings.extend(check_G_prompt_injection(path, lines))
+    # f4: exclude visibility — carry the active globs + removed count into the
+    # report so an over-broad glob (`*` matches every path) cannot silently
+    # bypass the whole scan unnoticed.
+    exclude_info: dict[str, Any] | None = None
+    if exclude_globs:
+        removed = walk_stats.get("excluded", 0)
+        exclude_info = {"globs": exclude_globs, "files_removed": removed}
+        bare_wildcard = any(g in ("*", "**") for g in exclude_globs)
+        candidates = files_scanned + removed
+        over_half = candidates > 0 and removed > candidates / 2
+        if bare_wildcard or over_half:
+            print(
+                f"warning: --exclude removed {removed} of {candidates} candidate "
+                f"file(s) from the scan (globs: {', '.join(exclude_globs)}) — "
+                "verify this is intended; a bare `*`/`**` bypasses the entire scan.",
+                file=sys.stderr,
+            )
 
     # Sort by severity then file:line
     all_findings.sort(
@@ -1177,9 +1295,9 @@ def main() -> int:
     scan_path_str = str(root)
 
     if args.json:
-        print(format_json_output(all_findings, threshold, scan_path_str, files_scanned, diff_info))
+        print(format_json_output(all_findings, threshold, scan_path_str, files_scanned, diff_info, exclude_info))
     else:
-        print(format_report(all_findings, threshold, scan_path_str, files_scanned, diff_info))
+        print(format_report(all_findings, threshold, scan_path_str, files_scanned, diff_info, exclude_info))
 
     # Exit code
     threshold_idx = SEVERITY_ORDER.get(threshold, 1)

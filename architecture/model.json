@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "446b834a5afd6cfc890597ef6ca7ff362fcfaba0cd19afc5d303ef9e045ea984"
+    "content_sha256": "5e91e9c354dddbd08cf2e2f67d8d65ada7893bd80f9286097ed6941cba57ddbd"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1408,7 +1408,7 @@
         "file": "skills/security-scan/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-29"
+          "date": "2026-07-10"
         }
       },
       "self-improve": {

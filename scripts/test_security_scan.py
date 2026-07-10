@@ -379,5 +379,106 @@ class TestEmptyDiff(_DiffScanBase):
         self.assertEqual(data.get("files_scanned"), 0)
 
 
+class TestDiffQuotepathFilename(_DiffScanBase):
+    """f1 (HIGH): a secret in a delta file whose name is non-ASCII must still be
+    caught. git's default core.quotepath octal-escapes-and-quotes such names in
+    plain `--name-only`; without `-z` the file is silently dropped from the
+    delta (rc 0). RED on the pre-fix code (no `-z`, no belt-and-braces)."""
+
+    def test_nonascii_filename_secret_in_delta_caught(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        self._write(d, "src/café.py", _SECRET_LINE)  # café.py
+        self._commit(d, "add non-ascii-named secret")
+        rc, data = self._scan(d, "--diff", "HEAD~1")
+        self.assertEqual(rc, 1, "secret in a non-ASCII-named delta file must fail the gate")
+        self.assertTrue(self._has_secret(data, "café.py"),
+                        "quotepath-mangled filename must not be dropped from the delta")
+
+
+class TestDiffSubdirPath(_DiffScanBase):
+    """f2 (HIGH): --path <subdir> --diff <ref> must scan the subdir's delta.
+    Without `--relative`, git emits repo-root-relative diff paths that the
+    subdir-rooted join mangles → whole delta dropped (rc 0). RED on pre-fix."""
+
+    def test_secret_under_subdir_caught_with_subdir_path(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "pkg/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        self._write(d, "pkg/secret.ts", _SECRET_LINE)
+        self._commit(d, "add secret under pkg/")
+        rc, data = self._scan(d / "pkg", "--diff", "HEAD~1")
+        self.assertEqual(rc, 1, "secret in the subdir delta must fail the gate")
+        self.assertTrue(self._has_secret(data, "secret.ts"),
+                        "subdir --path must not drop the whole delta")
+
+    def test_subdir_full_scan_agrees(self):
+        """Control: a full scan rooted at the subdir also finds it (proves the
+        --diff result is scoping, not luck)."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "pkg/secret.ts", _SECRET_LINE)
+        self._commit(d, "add secret under pkg/")
+        rc, data = self._scan(d / "pkg")  # full scan at subdir
+        self.assertEqual(rc, 1)
+        self.assertTrue(self._has_secret(data, "secret.ts"))
+
+
+class TestExcludeVisibility(_DiffScanBase):
+    """f4 (MED): an active --exclude must surface its globs + the count of files
+    it removed, so an over-broad glob cannot silently bypass the scan."""
+
+    def _scan_human(self, cwd, *extra):
+        proc = subprocess.run(
+            [sys.executable, str(_SCANNER), "--path", str(cwd), *extra],
+            capture_output=True, text=True,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def test_report_names_globs_and_removed_count(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "research/vendor.ts", _SECRET_LINE)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        rc, out, _err = self._scan_human(d, "--exclude", "research/*")
+        self.assertEqual(rc, 0, "excluded secret must not block")
+        self.assertIn("research/*", out, "report must name the active exclude glob")
+        self.assertIn("removed 1 file", out, "report must state how many files the glob removed")
+
+    def test_json_carries_exclude_block(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "research/vendor.ts", _SECRET_LINE)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        rc, data = self._scan(d, "--exclude", "research/*")
+        self.assertEqual(rc, 0)
+        self.assertEqual(data.get("exclude", {}).get("globs"), ["research/*"])
+        self.assertEqual(data.get("exclude", {}).get("files_removed"), 1)
+
+    def test_bare_wildcard_warns_on_stderr(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/auth.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        rc, _out, err = self._scan_human(d, "--exclude", "*")
+        self.assertEqual(rc, 0, "bare `*` bypasses everything (documented, but must warn)")
+        self.assertIn("bypasses the entire scan", err,
+                      "a bare `*` exclude must emit a stderr warning")
+
+    def test_default_no_exclude_block(self):
+        """Back-compat: no --exclude → no exclude key in JSON output."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        _rc, data = self._scan(d)
+        self.assertNotIn("exclude", data, "default output must not carry an exclude key")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

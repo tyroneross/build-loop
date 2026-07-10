@@ -151,6 +151,93 @@ class DispatchRoutingTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
 
 
+# A synthetic, obviously-fake GitHub PAT built by concatenation so the literal
+# token never appears verbatim in source. Matches ghp_[A-Za-z0-9]{36,}.
+_FAKE_GHP = "ghp_" + "A" * 36
+_SECRET_LINE = f'const token = "{_FAKE_GHP}";\n'
+
+
+class SecurityPushScopingTests(unittest.TestCase):
+    """f3 (HIGH): the pre-push security gate must NOT scope the scan to the
+    upstream tracking delta when the push is not a plain current-branch →
+    tracking push. `git push <other-remote> <branch>` pushes content that
+    `<upstream>..HEAD` does not cover, so scoping to that (often empty) range
+    lets a secret ship. Non-plain pushes must full-scan and hard-block."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.repo = make_buildloop_repo(self.tmp)
+        self.branch = _git(self.repo, "branch", "--show-current").stdout.strip()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _add_remote(self, name: str) -> Path:
+        bare = self.tmp / f"{name}.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(self.repo, "remote", "add", name, str(bare))
+        return bare
+
+    def test_nontracking_push_full_scans_and_blocks(self) -> None:
+        """RED on pre-fix: secret is in HEAD but NOT in origin/<b>..HEAD (already
+        on origin). `git push backup <b>` newly ships it to a fresh remote. The
+        old hook scoped to the empty upstream delta → exit 0; the fix full-scans
+        → exit 2."""
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "auth.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/auth.ts")
+        _git(self.repo, "commit", "-q", "-m", "add auth (with secret)")
+        # origin now holds the secret too; origin/<b>..HEAD is EMPTY.
+        self._add_remote("origin")
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+        # A fresh, non-tracking remote — pushing to it ships the whole history.
+        self._add_remote("backup")
+        r = run_dispatch(self.repo, f"git push backup {self.branch}")
+        self.assertEqual(
+            r.returncode, 2,
+            f"non-tracking push must full-scan and hard-block; stderr={r.stderr!r}",
+        )
+        self.assertIn("security scan found HIGH", r.stderr)
+
+    def test_plain_tracking_push_with_indelta_secret_blocks(self) -> None:
+        """Control (green on old + new): a PLAIN `git push origin <b>` still
+        catches a secret that IS in the upstream..HEAD delta — proves the fix
+        did not break plain delta-scoping."""
+        self._add_remote("origin")
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+        # Secret committed AFTER upstream is set → it is inside origin/<b>..HEAD.
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "auth.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/auth.ts")
+        _git(self.repo, "commit", "-q", "-m", "add auth (with secret)")
+        r = run_dispatch(self.repo, f"git push origin {self.branch}")
+        self.assertEqual(
+            r.returncode, 2,
+            f"plain push with an in-delta secret must still block; stderr={r.stderr!r}",
+        )
+
+    def test_plain_tracking_push_clean_delta_passes(self) -> None:
+        """Control: a plain push whose delta holds no secret exits 0 (delta
+        scoping still works — unrelated pre-existing debt does not block)."""
+        # Pre-existing debt committed BEFORE upstream is set → out of delta.
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "debt.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/debt.ts")
+        _git(self.repo, "commit", "-q", "-m", "pre-existing debt")
+        self._add_remote("origin")
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+        # A clean commit ahead of upstream.
+        (self.repo / "note.txt").write_text("just a note\n", encoding="utf-8")
+        _git(self.repo, "add", "note.txt")
+        _git(self.repo, "commit", "-q", "-m", "clean change")
+        r = run_dispatch(self.repo, f"git push origin {self.branch}")
+        self.assertEqual(
+            r.returncode, 0,
+            f"plain push with a clean delta must pass; stderr={r.stderr!r}",
+        )
+
+
 class DispatchFailOpenTests(unittest.TestCase):
     """Fail-open guarantees: a broken environment never blocks a commit."""
 
