@@ -371,6 +371,134 @@ class SecurityPushClassifierConservatismTests(unittest.TestCase):
         )
 
 
+class SecurityPushConfigAwarenessTests(unittest.TestCase):
+    """f1/f2/f3/f4 (HIGH) — the last four pre-push false-negatives.
+
+    The command string alone does NOT determine what a `git push` ships, and the
+    dispatcher must SEE the push at all. These tests prove each closure:
+
+      f1  a 2-positional `git push <remote> <branch>` where the branch tracks a
+          DIFFERENTLY-NAMED upstream (e.g. main tracks origin/develop) was
+          classified plain (positionals matched) without the up_branch==branch
+          guard the other arms carry → scoped to origin/develop..HEAD (wrong).
+      f2  push.default=matching (ships all matching branches) and triangular
+          config (bare push goes to the pushRemote, not @{u}'s remote) both
+          route content the upstream..HEAD range does not cover — the classifier
+          never read push config.
+      f3  a multi-line Bash command whose push is not on line 1 was never
+          extracted (CMD/CWD both corrupted) → NO gate ran at all.
+      f4  `git -C <path> push` / `git<TAB>push` / double-space matched neither
+          the literal `git push` case guard nor the `git\\s+push` finditer → the
+          gate never fired.
+
+    Shared rig (as SecurityPushClassifierConservatismTests): the secret lives on
+    origin/<b> AND the working tree, so origin/<b>..HEAD is EMPTY. A plain,
+    delta-scoped push scans the empty delta (exit 0 — the pre-fix escape); any
+    correctly-conservative path full-scans the working tree and blocks (exit 2)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.repo = make_buildloop_repo(self.tmp)
+        self.branch = _git(self.repo, "branch", "--show-current").stdout.strip()
+        self._setup_inherited_secret()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _add_remote(self, name: str) -> Path:
+        bare = self.tmp / f"{name}.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(self.repo, "remote", "add", name, str(bare))
+        return bare
+
+    def _setup_inherited_secret(self) -> None:
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "auth.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/auth.ts")
+        _git(self.repo, "commit", "-q", "-m", "add auth (with secret)")
+        self._add_remote("origin")
+        _git(self.repo, "push", "-u", "-q", "origin", self.branch)
+
+    def _assert_blocks(self, command: str) -> None:
+        r = run_dispatch(self.repo, command)
+        self.assertEqual(
+            r.returncode, 2,
+            f"{command!r} must full-scan and hard-block; stderr={r.stderr!r}",
+        )
+        self.assertIn("security scan found HIGH", r.stderr)
+
+    def test_f1_two_positional_wrong_tracking_branch_full_scans(self) -> None:
+        """f1: `git push origin <b>` where <b> tracks origin/develop (a
+        different name). Also ship the secret to origin/develop so
+        origin/develop..HEAD is EMPTY, then re-point tracking. On c401f68 the
+        len==2 arm returns plain WITHOUT `up_branch==branch` → scoped to the
+        empty develop delta → secret escapes (exit 0). Fix: up_branch (develop)
+        != current branch → not plain → full scan → block."""
+        _git(self.repo, "push", "-q", "origin", f"{self.branch}:develop")
+        _git(self.repo, "branch", "-u", "origin/develop", self.branch)
+        self._assert_blocks(f"git push origin {self.branch}")
+
+    def test_f2_matching_push_default_full_scans(self) -> None:
+        """f2(a): push.default=matching ships ALL matching branches, not just the
+        current one. The command string + ref-name equality say plain (c401f68)
+        → scoped to the empty origin/<b>..HEAD → exit 0. Fix reads
+        push.default=matching (excluded from the config-plain allowlist) →
+        non-plain → full scan → block."""
+        _git(self.repo, "config", "push.default", "matching")
+        self._assert_blocks("git push")
+
+    def test_f2_triangular_pushremote_full_scans(self) -> None:
+        """f2(b): triangular config — bare `git push` goes to the pushRemote
+        (backup), NOT @{u}'s remote (origin). @{push} != @{u}, so scoping to
+        origin/<b>..HEAD scans the wrong (empty) range. c401f68 never reads push
+        config → classifies plain → exit 0. Fix: @{push} != upstream →
+        non-plain → full scan → block."""
+        self._add_remote("backup")
+        _git(self.repo, "config", f"branch.{self.branch}.pushRemote", "backup")
+        self._assert_blocks("git push")
+
+    def test_f3_multiline_push_on_third_line_fires(self) -> None:
+        """f3: a 3-line Bash command; the push is on line 3. On c401f68 only
+        line 1 is extracted (CMD='git add -A', CWD corrupted to line 2) → the
+        gate never fires, NO scan runs → exit 0. Fix passes the full command
+        (newlines normalized to ';') → the gate FIRES → `git push --mirror
+        backup` is non-plain → full scan → block."""
+        self._add_remote("backup")
+        cmd = "git add -A\ngit status\ngit push --mirror backup"
+        self._assert_blocks(cmd)
+
+    def test_f4_git_dash_c_push_fires(self) -> None:
+        """f4: `git -C <path> push` — the standard worktree/agent spelling. On
+        c401f68 the literal `git push` case guard AND the `git\\s+push` finditer
+        both miss the `-C <path>` between git and push → the gate never fires →
+        exit 0. Fix widens the case guard to `*git*push*` and the finditer to
+        tolerate global git options; the segment's toks[1]!='push' → not plain →
+        full scan → block."""
+        self._add_remote("backup")
+        self._assert_blocks(f"git -C {self.repo} push --mirror backup")
+
+    def test_f4_tab_spacing_push_fires(self) -> None:
+        """f4 (spacing variant): `git<TAB>push` and double-space `git  push`
+        matched the `git\\s+push` finditer but NOT the literal-space `git push`
+        case guard on c401f68 → the guard filtered the command out before the
+        classifier ran → no scan → exit 0. Fix's `*git*push*` guard admits both.
+        `--mirror backup` keeps it non-plain → full scan → block."""
+        self._assert_blocks("git\tpush --mirror backup")
+
+    def test_plain_push_config_default_still_scopes(self) -> None:
+        """Control: with default (unset → simple) push.default and no triangular
+        config, @{push} == @{u}, so a plain current-branch push stays config-plain
+        and scopes to the empty delta (exit 0). Proves the f2 config gate did not
+        break the legitimate delta-scope path."""
+        r = run_dispatch(self.repo, f"git push origin {self.branch}")
+        self.assertEqual(
+            r.returncode, 0,
+            f"plain default-config push must stay delta-scoped (exit 0); "
+            f"stderr={r.stderr!r}",
+        )
+
+
 class DispatchFailOpenTests(unittest.TestCase):
     """Fail-open guarantees: a broken environment never blocks a commit."""
 

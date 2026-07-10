@@ -36,19 +36,32 @@ if [ "${BUILD_LOOP_HOOKS:-}" = "off" ]; then
 fi
 
 # Extract command + cwd ONCE (was: 2 python spawns per sub-hook).
+#
+# f3: the COMMAND can be multi-line (`git add -A\ngit commit\ngit push`), so it
+# cannot be a fixed line-N field. Print the single-line CWD FIRST, then the
+# command as everything after it — CMD = lines 2..$ captures the whole command
+# regardless of embedded newlines. (The old order — command then cwd on line 2
+# — put line 2 of a multi-line command into CWD and dropped every push/commit
+# past line 1, so NO gate ran.) Embedded newlines are then normalized to `;` so
+# the `case` guards and the classifier's `[;|&]` segment splitter see every
+# segment; the sub-gates still receive the raw event on stdin (unaffected).
+# Normalization happens INSIDE python (newlines → ';') so the command emerges as
+# a single line — the shell path stays python3 + sed only (no `tr`), preserving
+# the minimal-PATH fail-open contract.
 read -r -d '' _EXTRACT <<'PY' || true
 import sys, json
 try:
     d = json.load(sys.stdin)
-    print(d.get("tool_input", {}).get("command", ""))
     print(d.get("cwd", ""))
+    cmd = d.get("tool_input", {}).get("command", "")
+    print(cmd.replace("\r", "\n").replace("\n", ";"))
 except Exception:
     print("")
     print("")
 PY
 _PARSED=$(printf '%s' "$INPUT" | python3 -c "$_EXTRACT" 2>/dev/null) || _PARSED=$'\n'
-CMD=$(printf '%s' "$_PARSED" | sed -n '1p')
-CWD=$(printf '%s' "$_PARSED" | sed -n '2p')
+CWD=$(printf '%s' "$_PARSED" | sed -n '1p')
+CMD=$(printf '%s' "$_PARSED" | sed -n '2,$p')
 
 # No command — pass through silently.
 if [ -z "$CMD" ]; then
@@ -160,9 +173,17 @@ esac
 # them. Fail-open on any other rc (missing python3, scanner crash) — a broken
 # scanner must never wedge `git push`. Escape: `// nosec: <reason>` on a confirmed
 # false positive, or BUILD_LOOP_HOOKS=off to bypass.
+# f4: the guard must ADMIT `git -C <path> push` (the standard worktree/agent
+# spelling this repo uses), `git<TAB>push`, and double-space `git  push`. The
+# literal `git push` (single-space) substring matched none of these, so the gate
+# never fired. `*git*push*` admits every shape; over-matching is SAFE by
+# construction — a segment that is not provably a plain push (e.g. `git -C x
+# push` has toks[1]!='push') classifies non-plain → OMIT --diff → full scan, the
+# correct conservative default. Worst case for a false-substring match (`echo
+# 'git ... push'`) is an unnecessary full scan, never a missed one.
 SECURITY_HARD_BLOCK=0
 case "$CMD" in
-    *"git push"*)
+    *git*push*)
         _SCAN="$PLUGIN_ROOT/scripts/security_scan.py"
         if [ -f "$_SCAN" ] && command -v python3 >/dev/null 2>&1; then
             _SCAN_ARGS=(--path "$CWD" --fail-on high)
@@ -177,6 +198,29 @@ case "$CMD" in
             # empty delta while local main's secret shipped). Empty on detached
             # HEAD → classifier can't prove plain → full scan.
             _BRANCH=$(git -C "$CWD" symbolic-ref --short HEAD 2>/dev/null || true)
+            # f2: the command string does NOT determine the push destination —
+            # push config does. Two shapes classify "plain" from ref-name
+            # equality alone yet ship content outside upstream..HEAD:
+            #   - push.default=matching → bare `git push` ships ALL matching
+            #     branches, not just the current one.
+            #   - triangular config (remote.pushDefault / branch.<n>.pushRemote)
+            #     → bare push goes to the PUSH remote, not @{u}'s remote.
+            # @{push} resolves the triangular destination; the explicit
+            # push.default check excludes `matching`, whose multi-branch
+            # semantics @{push} (current-branch destination only) cannot
+            # represent. The push is config-plain ONLY when push.default is
+            # empty/simple/upstream/current AND @{push} == @{u}. Anything else →
+            # _CFG_PLAIN=no → OMIT --diff → full scan (fail-safe).
+            _PDEF=$(git -C "$CWD" config --get push.default 2>/dev/null || true)
+            _PUSHDEST=$(git -C "$CWD" rev-parse --abbrev-ref @{push} 2>/dev/null || true)
+            _CFG_PLAIN=no
+            case "$_PDEF" in
+                ""|simple|upstream|current)
+                    if [ -n "$_UPSTREAM" ] && [ "$_PUSHDEST" = "$_UPSTREAM" ]; then
+                        _CFG_PLAIN=yes
+                    fi
+                    ;;
+            esac
             if [ -n "$_UPSTREAM" ]; then
                 # Only scope to the upstream delta when the push is PLAIN —
                 # current branch → its tracking remote/ref, no refspec, no
@@ -254,15 +298,24 @@ def is_plain(seg):
         return positionals[0] == rem and up_branch == branch
     if len(positionals) == 2:              # `git push <remote> <ref>`
         # h2: the ref must be the CURRENT branch, not merely the tracking name.
-        return positionals[0] == rem and positionals[1] == branch
+        # f1: AND the tracked branch must BE the current branch — mirror the
+        # bare/1-positional arms. Without `up_branch == branch`, a branch that
+        # tracks a differently-named upstream (main tracks origin/develop) let
+        # `git push origin main` classify plain and scope to develop..HEAD (the
+        # wrong range), shipping main's secret unseen.
+        return positionals[0] == rem and positionals[1] == branch and up_branch == branch
     return False                           # 3+ positionals (multi-ref) → not plain
 
 # h1 — classify EVERY `git push` occurrence, each segment up to its next shell
 # control operator (&& || ; | &). Plain ONLY if ALL segments are plain; any
 # segment not provably plain → full scan.
+# f4 — tolerate global git options between `git` and `push` (`git -C <path>
+# push`, `git -c k=v push`, `git --no-pager push`) and any whitespace (TAB /
+# double-space). Over-matching stays safe: `is_plain` re-parses the segment and
+# a leading global option makes toks[1] != 'push' → not plain → full scan.
 found = False
 plain = True
-for m in re.finditer(r"git\s+push", cmd):
+for m in re.finditer(r"git(\s+(-[cC]|--[a-z-]+)(\s+\S+|=\S*)?)*\s+push", cmd):
     found = True
     seg = re.split(r"&&|\|\||[;|&]", cmd[m.start():], maxsplit=1)[0]
     if not is_plain(seg):
@@ -271,7 +324,11 @@ for m in re.finditer(r"git\s+push", cmd):
 print("yes" if (found and plain) else "no")
 PY
 )
-                if [ "$_PLAIN" = "yes" ]; then
+                # Scope to the delta ONLY when the command classifies plain AND
+                # push config agrees the destination is @{u} (f2). Either alone
+                # is insufficient: the command can't see config, and config
+                # can't see a refspec/flag in the command.
+                if [ "$_PLAIN" = "yes" ] && [ "$_CFG_PLAIN" = "yes" ]; then
                     _SCAN_ARGS+=(--diff "$_UPSTREAM")
                 fi
                 # else: non-plain push → omit --diff → full-repo scan.
