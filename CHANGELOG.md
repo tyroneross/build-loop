@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.36.2 — 2026-07-10
+
+### Fixed
+- Pre-push security gate scans the **push delta**, not the whole tree, so a pre-existing HIGH in an unrelated file no longer hard-blocks unrelated pushes (delta-scoping + 9 false-negative closures + conservative-by-construction classifier).
+- `perturbation_spotcheck --check-cmd` now runs as an argv list (`shell=False`), closing the A03/LLM02 shell-injection HIGH (metacharacters in the path/template are inert).
+
+
 ## 0.36.0 — 2026-06-26
 
 ### Changed
