@@ -265,5 +265,74 @@ class ResolveProjectMissingYamlTests(unittest.TestCase):
                 )
 
 
+class ResolveProjectRegistryIntegrationTests(unittest.TestCase):
+    """resolve_project wires the v2 registry between derive + fallback.
+
+    derive_slug_from_cwd is patched to isolate the registry step from the
+    filesystem/git deriver (which needs a real repo).
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.mkdtemp()
+        self.root = Path(self.tmpdir) / "memroot"
+        (self.root / "config").mkdir(parents=True)
+        (self.root / "config" / "projects.yaml").write_text(
+            "default: _unscoped\n"
+            "projects:\n"
+            "  - id: rosslabs-ai-assistant\n"
+            "    canonical_slug: rosslabs-ai-assistant\n"
+            "    paths: [/repo/RossLabs-AI-Assistant]\n"
+            "    aliases: [ai-assistant]\n"
+            "    derived_from: null\n"
+            "    depends_on: []\n"
+            "  - id: build-loop\n"
+            "    canonical_slug: build-loop\n"
+            "    paths: [/repo/build-loop]\n"
+            "    aliases: []\n"
+            "    derived_from: null\n"
+            "    depends_on: []\n",
+            encoding="utf-8",
+        )
+        self._env = mock.patch.dict(os.environ, {
+            "BUILD_LOOP_MEMORY_STORE_ROOT": "",
+            "BUILD_LOOP_MEMORY_ROOT": "",
+            "AGENT_MEMORY_ROOT": str(self.root),
+        }, clear=False)
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_old_slug_resolves_to_canonical_via_alias(self) -> None:
+        # A repo renamed to RossLabs-AI-Assistant-v3 derives 'ai-assistant'
+        # (via a stale pin, say) → alias walk lands on the canonical id.
+        with mock.patch.object(project_resolver, "derive_slug_from_cwd",
+                               return_value="ai-assistant"):
+            self.assertEqual(
+                project_resolver.resolve_project("/repo/RossLabs-AI-Assistant-v3"),
+                "rosslabs-ai-assistant",
+            )
+
+    def test_registered_slug_resolves_to_itself(self) -> None:
+        with mock.patch.object(project_resolver, "derive_slug_from_cwd",
+                               return_value="build-loop"):
+            self.assertEqual(project_resolver.resolve_project("/repo/build-loop"),
+                             "build-loop")
+
+    def test_unregistered_repo_is_its_own_id(self) -> None:
+        # Zero registry entry → the derived candidate is returned verbatim.
+        with mock.patch.object(project_resolver, "derive_slug_from_cwd",
+                               return_value="brand-new-repo"):
+            self.assertEqual(project_resolver.resolve_project("/repo/brand-new-repo"),
+                             "brand-new-repo")
+
+    def test_unscoped_with_no_hit_returns_default(self) -> None:
+        with mock.patch.object(project_resolver, "derive_slug_from_cwd",
+                               return_value="_unscoped"):
+            self.assertEqual(project_resolver.resolve_project("/nowhere"), "_unscoped")
+
+
 if __name__ == "__main__":
     unittest.main()

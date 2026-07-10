@@ -306,7 +306,15 @@ def _project_relpath(project: str) -> Path:
 
 
 def ensure_project_scaffold(dest: Path, project: str) -> Path:
-    """Create the per-project raw-source scaffold and return the project dir."""
+    """Create the per-project raw-source scaffold and return the project dir.
+
+    Stable-ID-at-init hook (memory-identity-graph Phase 1): the first time a
+    project folder is scaffolded, freeze ``id == project`` in the v2 project
+    registry (``<dest>/config/projects.yaml``). This is what makes a later
+    repo rename a no-op — the id is registered once and never re-derived; the
+    old dirname becomes an alias instead of orphaning the store. Best-effort:
+    a registry-write failure never blocks scaffolding.
+    """
     project_dir = dest / "projects" / _project_relpath(project)
     raw_dir = project_dir / "raw"
     for subdir in PROJECT_RAW_SUBDIRS:
@@ -315,7 +323,31 @@ def ensure_project_scaffold(dest: Path, project: str) -> Path:
         keep = leaf / KEEP_FILENAME
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
+    _register_stable_id(dest, project)
     return project_dir
+
+
+def _register_stable_id(dest: Path, project: str) -> None:
+    """Freeze ``id == project`` in the v2 registry under ``dest`` (best-effort).
+
+    Skips the ``_unscoped`` sentinel and any sub-component slug (``a/b``) —
+    those are not standalone project identities.
+    """
+    if not project or project == "_unscoped" or "/" in project:
+        return
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        import project_registry  # type: ignore  # noqa: PLC0415
+
+        project_registry.register_project(
+            project,
+            slug=project,
+            registry_path=dest / "config" / "projects.yaml",
+        )
+    except Exception:  # noqa: BLE001 — init hook must never break scaffolding
+        pass
 
 
 def link_private_repo(dest: Path, repo_url: str) -> tuple[bool, str]:

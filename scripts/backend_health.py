@@ -554,15 +554,22 @@ def _format_one_liner(envelope: Dict[str, Any]) -> str:
             parts.append(
                 f"WARNING: canonical memory dir missing for '{current}' but "
                 f"projects/{likely}/ has {n} file(s) — possible un-pinned repo "
-                f"rename; set memoryProjectSlug=\"{likely}\" in .build-loop/config.json "
-                f"to reclaim it, or move projects/{likely}/ into projects/{current}/"
+                f"rename. FIX: register '{likely}' as an alias so old references "
+                f"walk to the current id — run `python3 scripts/migrate_project_identity.py "
+                f"--apply` (adds the alias in build-loop-memory/config/projects.yaml, "
+                f"folders stay put), or hand-add '{likely}' to the matching project's "
+                f"aliases: []. The single-value memoryProjectSlug pin in "
+                f".build-loop/config.json still works as the fallback."
             )
         else:
             slugs = ", ".join(c["slug"] for c in rename_warning.get("candidates", [])[:3])
             parts.append(
                 f"WARNING: canonical memory dir missing for '{current}' — sibling "
-                f"project dir(s) with content exist ({slugs}); check whether this "
-                f"repo was renamed and pin memoryProjectSlug in .build-loop/config.json"
+                f"project dir(s) with content exist ({slugs}). Check whether this repo "
+                f"was renamed; if so register the old slug as an ALIAS of the current "
+                f"id (build-loop-memory/config/projects.yaml, or run "
+                f"`python3 scripts/migrate_project_identity.py --apply`). The "
+                f"memoryProjectSlug pin remains the single-value fallback."
             )
     semantic = envelope.get("semantic", {})
     if semantic.get("ok"):
