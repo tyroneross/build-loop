@@ -190,8 +190,10 @@ def classify_command(cmd: str) -> set[str]:
     if unterminated:
         # A `<<WORD` opener with no matching delimiter — our text-level detection likely
         # mis-fired on a quoted bit-shift and would have eaten a real command. Degrade to
-        # the conservative both-subcommands trigger rather than risk a missed push/commit.
-        return set(SUBCOMMANDS_OF_INTEREST)
+        # the conservative both-subcommands trigger rather than risk a missed push/commit —
+        # but only when the raw text mentions `git` at all: if it never does, no push/commit
+        # can hide in the eaten region, so set() is provably safe and skips an idle scan.
+        return set(SUBCOMMANDS_OF_INTEREST) if "git" in cmd else set()
     for segment in _SPLIT_RE.split(stripped):
         seg = segment.strip()
         if not seg:

@@ -144,6 +144,15 @@ class ClassifyCommandTests(unittest.TestCase):
         cmd = "cat <<EOF\ngit push origin main\nEOF"
         self.assertEqual(gcc.classify_command(cmd), set())
 
+    def test_f4_unterminated_without_git_is_clean(self) -> None:
+        # A lone quoted bit-shift with NO git anywhere cannot hide a push/commit → set().
+        self.assertEqual(gcc.classify_command('python3 -c "print(x << shift)"'), set())
+
+    def test_f4_unterminated_with_git_still_fires(self) -> None:
+        # Guard that the miss-fix survives: git present + unterminated → conservative both.
+        cmd = 'python3 -c "print(x << shift)"\ngit push origin main'
+        self.assertEqual(gcc.classify_command(cmd), {"commit", "push"})
+
 
 class SubprocessRoundTripTests(unittest.TestCase):
     """Drive the classifier as the dispatcher does: event JSON on stdin → space-sep stdout."""
