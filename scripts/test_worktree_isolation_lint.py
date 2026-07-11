@@ -337,3 +337,66 @@ def test_bare_python_interpreter_helper():
     assert lint._is_bare_python_interpreter(".venv/bin/python3") is False
     assert lint._is_bare_python_interpreter("node") is False
     assert lint._is_bare_python_interpreter("") is False
+
+
+# ---------------------------------------------------------------------------
+# Widened doctrine (2026-07-11): commit-LESS file-editing writers are the hazard too.
+
+def test_wake_path_grows_a_file_edit_fails(tmp_path):
+    """A wake file that EDITS files (write_text) with no commit and no worktree still
+    reintroduces the shared-checkout race — commit authority is not required."""
+    wake = tmp_path / "scripts" / "wake_scheduler.py"
+    wake.parent.mkdir(parents=True)
+    wake.write_text(
+        'from pathlib import Path\n'
+        'Path("Theme.swift").write_text("stale re-applied edit")\n'
+    )
+
+    findings = lint.lint_in_repo_wake_path(tmp_path)
+
+    assert any(f["rule"] == "wake-path-grew-a-file-edit" for f in findings), findings
+    assert all(f["severity"] == "BLOCKER" for f in findings)
+
+
+def test_wake_path_git_add_without_worktree_fails(tmp_path):
+    """A commit-less `git add` (staging) in a wake file is a tree mutation → flagged."""
+    wake = tmp_path / "scripts" / "wake_scheduler.py"
+    wake.parent.mkdir(parents=True)
+    wake.write_text(
+        'import subprocess\n'
+        'subprocess.run(["git", "add", "-A"])  # stages into the shared index\n'
+    )
+
+    findings = lint.lint_in_repo_wake_path(tmp_path)
+
+    assert any(f["rule"] == "wake-path-grew-a-file-edit" for f in findings), findings
+
+
+def test_wake_path_file_edit_inside_worktree_passes(tmp_path):
+    """A file edit guarded by worktree provisioning is fine (notify-only contract intact)."""
+    wake = tmp_path / "scripts" / "wake_scheduler.py"
+    wake.parent.mkdir(parents=True)
+    wake.write_text(
+        'from pathlib import Path\n'
+        'create_guarded_worktree(...)  # dispatch into a dedicated worktree\n'
+        'Path("Theme.swift").write_text("edit in worktree")\n'
+    )
+
+    findings = lint.lint_in_repo_wake_path(tmp_path)
+
+    assert findings == [], findings
+
+
+def test_wake_path_read_only_stays_clean(tmp_path):
+    """A genuinely notify-only wake file (reads + emits an event, no writes) → no finding."""
+    wake = tmp_path / "scripts" / "wake_scheduler.py"
+    wake.parent.mkdir(parents=True)
+    wake.write_text(
+        'import json\n'
+        'data = json.load(open("state.json"))  # read-only\n'
+        'print(json.dumps({"event": "rally_wake_due"}))\n'
+    )
+
+    findings = lint.lint_in_repo_wake_path(tmp_path)
+
+    assert findings == [], findings

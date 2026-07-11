@@ -15,9 +15,17 @@ pushed stale. The exact class is documented in CLAUDE.md §"Concurrent dispatch 
 — but that control was ADVISORY ("the caller's contract") and scoped only to the
 Agent-tool dispatch path, leaving headless launchd pollers/watchers uncovered.
 
-This lint is the enforcement artifact: it flags any background committing writer that
-would write to a live interactive checkout instead of a dedicated git worktree, and it
-covers BOTH the headless launchd path and the in-repo wake/dispatch path.
+This lint is the enforcement artifact: it flags any background writer — one that COMMITS
+*or* one that only EDITS FILES (commit authority is not required) — that would write to a
+live interactive checkout instead of a dedicated git worktree, and it covers BOTH the
+headless launchd path and the in-repo wake/dispatch path.
+
+WIDENED 2026-07-11: a commit-LESS Lane-5 file-editing subagent outlived its dispatch ~8h
+and re-applied stale edits onto a live shared checkout after a branch switch (contaminating
+3 files; caught and restored). The prior doctrine scoped isolation to writers that COMMIT,
+so a long-running editor that never commits fell through the gap. The rule is now
+commit-authority-agnostic: any long-running FILE-EDITING writer against a live checkout
+must be isolated.
 
 THE STRUCTURAL HAZARD WE DETECT
 -------------------------------
@@ -103,6 +111,18 @@ IN_REPO_NOTIFY_ONLY = (
 # it only fires on a LITERAL commit call, never on a doc mention of the word "commit".
 _COMMIT_CALL_RE = re.compile(r"""['"]commit['"]|git\s+commit""")
 _WORKTREE_CALL_RE = re.compile(r"worktree|create_guarded_worktree|build-loop\.worktrees")
+# A commit-LESS tree-mutation signal: a file write / stage / restore with no worktree
+# provisioning. Deliberately narrow — literal write/stage calls, not the word "edit" in
+# prose. Mirrors _COMMIT_CALL_RE's narrowness; the _WORKTREE_CALL_RE escape still applies.
+# Motivated by the 2026-07-11 commit-less file-editing incident.
+_EDIT_CALL_RE = re.compile(
+    r"""\.write_text\(|\.write_bytes\(|"""
+    r"""\bshutil\.(?:copy|copy2|copyfile|move)\(|"""
+    r"""\bos\.replace\(|"""
+    r"""git\s+(?:add|restore|checkout|reset|stash|apply|rm)\b|"""              # shell-string form
+    r"""['"]git['"]\s*,\s*['"](?:add|restore|checkout|reset|stash|apply|rm)['"]|"""  # argv-list form
+    r"""\bopen\([^)]*,\s*['"][wax]"""
+)
 
 # A bare python interpreter: `python`, `python3`, `python3.14`, … with NO path
 # separator (so it resolves via PATH, not a pinned venv). A venv-pinned interpreter
@@ -248,8 +268,9 @@ def lint_launch_agents(launch_agents_dir: Path) -> list[dict[str, str]]:
                 str(plist_path),
                 f"launchd job '{label}' is a persistent autonomy/poller/watcher whose "
                 f"WorkingDirectory '{workdir}' is a LIVE git checkout, not a dedicated "
-                f"worktree. A committing writer woken here races the interactive session "
-                f"on HEAD/index/branch (RCA 2026-06-22).",
+                f"worktree. A committing OR long-running file-editing writer woken here "
+                f"races the interactive session on HEAD/index/branch — commit authority is "
+                f"not required (RCA 2026-06-22; commit-less editor reproduced 2026-07-11).",
                 "Point WorkingDirectory at a dedicated worktree (build-loop.worktrees/"
                 "<agent>-<task> or .build-loop/worktrees/<slug>), OR set "
                 f"EnvironmentVariables {ISOLATION_ENV_KEY}=1 to declare the program "
@@ -267,7 +288,9 @@ def lint_in_repo_wake_path(workdir: Path) -> list[dict[str, str]]:
         if not path.exists():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if _COMMIT_CALL_RE.search(text) and not _WORKTREE_CALL_RE.search(text):
+        if _WORKTREE_CALL_RE.search(text):
+            continue  # provisions/uses a worktree → not the shared-checkout hazard
+        if _COMMIT_CALL_RE.search(text):
             findings.append(
                 _finding(
                     "BLOCKER",
@@ -280,6 +303,22 @@ def lint_in_repo_wake_path(workdir: Path) -> list[dict[str, str]]:
                     "Keep watchers narrow: detect a transition and notify/inject only. If "
                     "work must be committed, dispatch it into a dedicated worktree via "
                     "scripts/worktree_guard.create_guarded_worktree; never commit inline.",
+                )
+            )
+        elif _EDIT_CALL_RE.search(text):
+            findings.append(
+                _finding(
+                    "BLOCKER",
+                    "wake-path-grew-a-file-edit",
+                    rel,
+                    f"{rel} is a canonical wake/dispatch file that must stay notify-only, "
+                    f"but it now contains a file-editing call (write/stage/restore) with no "
+                    f"worktree provisioning — and commit authority is NOT required to race "
+                    f"the shared checkout. A commit-less editor here reintroduces the class "
+                    f"observed 2026-07-11 (stale edits re-applied onto the live checkout).",
+                    "Keep watchers narrow: detect a transition and notify/inject only. If "
+                    "work must edit files, dispatch it into a dedicated worktree via "
+                    "scripts/worktree_guard.create_guarded_worktree; never edit inline.",
                 )
             )
     return findings

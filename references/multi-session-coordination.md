@@ -148,6 +148,8 @@ acknowledge, or explicitly override the verdict before advancing the step.
 
 ## R5 — Pre/post canonical snapshot around isolated dispatch
 
+**Isolation applies to any long-running FILE-EDITING dispatch, not just committing ones (widened 2026-07-11).** A commit-less editing subagent that outlives its turn can re-apply stale edits onto the live shared checkout after a branch switch (3 files contaminated, 2026-07-11). Pass `isolation: "worktree"` to any dispatch expected to run beyond one turn or that edits files while another session works the same workdir — commit authority is not the trigger; long-running file mutation is.
+
 Every `Agent(subagent_type=..., isolation: "worktree", ...)` dispatch MUST be wrapped in a `git status --porcelain` snapshot of the canonical working tree. After the dispatch returns, re-snapshot. Non-empty diff with no canonical edits in between = isolation contract broken; surface as an error in the run report.
 
 ```bash
