@@ -117,6 +117,19 @@ _run_gate() {
     printf '%s' "$out"
 }
 
+# Classify the command's GENUINE git subcommands ONCE (segment-wise + heredoc-aware).
+# Replaces the coarse `case "$CMD" in *commit*` / `*git*push*` substring globs that
+# false-fired on repo paths containing "git", prose containing "push"/"pushed", and heredoc
+# TEXT containing example git commands (6+ false fires, 2026-07-11 — each dumping a
+# ~40-finding full-repo scan into context, the heredoc also tripping the commit-audit
+# packet builder). The classifier reads the RAW command (newlines intact) from $INPUT, so
+# it sees heredoc structure the normalized $CMD has already flattened.
+#
+# Fail-open: a classifier error (or missing python3) yields "commit push" so BOTH
+# conservative gates still run — never scan less than intended. Emptiness (neither word)
+# is the correct no-op for a non-git command.
+_GITCLASS=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/hooks/git_command_classifier.py" 2>/dev/null) || _GITCLASS="commit push"
+
 # Collect envelopes only from the gates whose command class is present.
 ENVELOPES=()
 
@@ -151,8 +164,8 @@ esac
 # blocking reason) has already been passed through. Every OTHER rc (0, 1, a
 # crash, a missing python3) stays fail-open: we do not block on auditor errors.
 COMMIT_AUDIT_HARD_BLOCK=0
-case "$CMD" in
-    *commit*)
+case " $_GITCLASS " in
+    *" commit "*)
         GATE_RC_FILE=$(mktemp 2>/dev/null || echo "")
         ENVELOPES+=("$(_run_gate "$PLUGIN_ROOT/scripts/audit_before_commit.py")")
         if [ -n "$GATE_RC_FILE" ] && [ -f "$GATE_RC_FILE" ]; then
@@ -173,17 +186,17 @@ esac
 # them. Fail-open on any other rc (missing python3, scanner crash) — a broken
 # scanner must never wedge `git push`. Escape: `// nosec: <reason>` on a confirmed
 # false positive, or BUILD_LOOP_HOOKS=off to bypass.
-# f4: the guard must ADMIT `git -C <path> push` (the standard worktree/agent
-# spelling this repo uses), `git<TAB>push`, and double-space `git  push`. The
-# literal `git push` (single-space) substring matched none of these, so the gate
-# never fired. `*git*push*` admits every shape; over-matching is SAFE by
-# construction — a segment that is not provably a plain push (e.g. `git -C x
-# push` has toks[1]!='push') classifies non-plain → OMIT --diff → full scan, the
-# correct conservative default. Worst case for a false-substring match (`echo
-# 'git ... push'`) is an unnecessary full scan, never a missed one.
+# The guard is now driven by git_command_classifier.py (see $_GITCLASS above):
+# a `push` word appears ONLY when a real `git push` segment was parsed — heredoc
+# TEXT, repo paths, and prose no longer false-fire. This admits every genuine
+# spelling (`git -C <path> push`, `git<TAB>push`, compound/piped pushes) because
+# the classifier parses argv, not substrings. The INNER classifier below then
+# decides delta-scope vs full-scan; a push that is not provably plain OMITs
+# --diff → full scan, the correct conservative default (never scan less than
+# intended).
 SECURITY_HARD_BLOCK=0
-case "$CMD" in
-    *git*push*)
+case " $_GITCLASS " in
+    *" push "*)
         _SCAN="$PLUGIN_ROOT/scripts/security_scan.py"
         if [ -f "$_SCAN" ] && command -v python3 >/dev/null 2>&1; then
             _SCAN_ARGS=(--path "$CWD" --fail-on high)

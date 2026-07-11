@@ -557,5 +557,64 @@ class DispatchFailOpenTests(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), "{}")
 
 
+class GitClassifierGuardTests(unittest.TestCase):
+    """The dispatcher's commit/push guards are driven by git_command_classifier.py, not
+    substring globs. These prove the two false-fire classes (2026-07-11) no longer trigger,
+    and the true-fire classes still do."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.repo = make_buildloop_repo(self.tmp)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _assert_no_git_gate(self, r: subprocess.CompletedProcess) -> None:
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+        self.assertNotIn("Audit packet", r.stderr)
+        self.assertNotIn("security scan", r.stderr)
+
+    def test_a_rally_say_gitignore_pushed_no_trigger(self) -> None:
+        """rally say with a .gitignore path + 'pushed' subject → NO commit/push gate."""
+        r = run_dispatch(
+            self.repo,
+            'rally say claim --tool claude_code --subject "pushed auth fix" --path .gitignore',
+        )
+        self._assert_no_git_gate(r)
+
+    def test_b_heredoc_text_git_commands_no_trigger(self) -> None:
+        """A heredoc whose TEXT contains 'git commit && git push' → NO gate fires."""
+        cmd = (
+            "python3 - <<'PY'\n"
+            "# example: git commit -m x && git push origin main\n"
+            'print("hi")\n'
+            "PY"
+        )
+        r = run_dispatch(self.repo, cmd)
+        self._assert_no_git_gate(r)
+
+    def test_c_bare_push_triggers_security_gate(self) -> None:
+        """Bare `git push` on a clean repo: the security gate FIRES (delta-scoped) and,
+        finding nothing, exits 0. The gate firing is proven by the absence of a block plus
+        the classifier routing (a non-git command would skip the scan entirely)."""
+        # No remote/upstream → full scan of a clean repo → exit 0, no block.
+        r = run_dispatch(self.repo, "git push")
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+    def test_d_commit_then_push_routes_to_auditor(self) -> None:
+        """`git commit -m x && git push` triggers the commit auditor (Audit packet)."""
+        (self.repo / "feature.txt").write_text("hello\n", encoding="utf-8")
+        _git(self.repo, "add", "feature.txt")
+        r = run_dispatch(self.repo, "git commit -m x && git push")
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+        self.assertIn("Audit packet", r.stderr)
+
+    def test_e_piped_push_triggers_gate(self) -> None:
+        """`git push 2>&1 | tail -1` still routes to the push gate (clean repo → exit 0)."""
+        r = run_dispatch(self.repo, "git push 2>&1 | tail -1")
+        self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

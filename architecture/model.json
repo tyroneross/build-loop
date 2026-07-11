@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "475bb494c327023c2ec2caa5c0dcce11b31198f5a2c90e7d954354f1305b96bf"
+    "content_sha256": "f07b0d4cf0fd0e7215fc94e0c5231a9a3cd0b4086ea4cdacc16372a0f4ac49f4"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1561,6 +1561,7 @@
       "scripts/handoff/__main__.py": "Compose a build-loop handoff document from .build-loop/ run state.",
       "scripts/hook_budget_lint.py": "hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.",
       "scripts/hook_hygiene_lint.py": "hook_hygiene_lint.py — deterministic hook reliability lint for build-loop.",
+      "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
