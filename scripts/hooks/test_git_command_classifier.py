@@ -104,6 +104,46 @@ class ClassifyCommandTests(unittest.TestCase):
         # `git log --oneline` mentions nothing of interest.
         self.assertEqual(gcc.classify_command("git log --oneline -3"), set())
 
+    # ---- f1: wrapper-prefixed genuine pushes must still trigger ----
+
+    def test_f1_nohup_push(self) -> None:
+        self.assertEqual(gcc.classify_command("nohup git push"), {"push"})
+
+    def test_f1_time_push(self) -> None:
+        self.assertEqual(gcc.classify_command("time git push"), {"push"})
+
+    def test_f1_env_assignment_push(self) -> None:
+        self.assertEqual(gcc.classify_command("env FOO=bar git push"), {"push"})
+
+    def test_f1_leading_assignment_push(self) -> None:
+        self.assertEqual(gcc.classify_command("GIT_SSH=x git push origin main"), {"push"})
+
+    def test_f1_sudo_and_timeout_push(self) -> None:
+        self.assertEqual(gcc.classify_command("sudo git push"), {"push"})
+        self.assertEqual(gcc.classify_command("timeout 30 git push"), {"push"})
+
+    def test_f1_command_and_env_opt_push(self) -> None:
+        self.assertEqual(gcc.classify_command("command git push"), {"push"})
+        self.assertEqual(gcc.classify_command("env -u FOO git push"), {"push"})
+
+    def test_f1_wrapper_commit(self) -> None:
+        self.assertEqual(gcc.classify_command("nohup git commit -m x"), {"commit"})
+
+    def test_f1_non_wrapper_prefix_no_false_fire(self) -> None:
+        # `echo git push` is NOT a wrapper — must stay a no-op (echo prints text).
+        self.assertEqual(gcc.classify_command("echo git push"), set())
+
+    # ---- f2: unterminated pseudo-heredoc (quoted <<) → conservative both ----
+
+    def test_f2_quoted_bitshift_then_real_push_fires(self) -> None:
+        cmd = 'python3 -c "print(x << shift)"\ngit push origin main'
+        self.assertIn("push", gcc.classify_command(cmd))
+
+    def test_f2_terminated_heredoc_stays_clean(self) -> None:
+        # Control: a properly-terminated heredoc is NOT flagged unterminated.
+        cmd = "cat <<EOF\ngit push origin main\nEOF"
+        self.assertEqual(gcc.classify_command(cmd), set())
+
 
 class SubprocessRoundTripTests(unittest.TestCase):
     """Drive the classifier as the dispatcher does: event JSON on stdin → space-sep stdout."""

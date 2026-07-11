@@ -58,6 +58,19 @@ _GIT_VALUE_OPTS = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix",
 })
 
+# Command wrappers that PREFIX a real command without changing what it does. A genuine
+# `nohup git push` / `env FOO=bar git push` / `time git push` / `timeout 30 git push` must
+# still be seen — the old `*git*push*` substring glob caught these, so missing them would
+# be a conservatism regression (never scan less than intended). Some take their own args
+# (timeout/sudo/xargs); we can't always count those, so when a wrapper is argv[0] we fall
+# back to scanning the whole segment for a nested `git <push|commit>`.
+_WRAPPER_COMMANDS = frozenset({
+    "env", "nohup", "command", "time", "sudo", "doas", "timeout", "gtimeout",
+    "stdbuf", "caffeinate", "builtin", "exec", "nice", "ionice", "xargs",
+})
+# A leading VAR=val assignment (env-style): `FOO=bar git push`.
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
 
 def _read_command_from_stdin() -> str:
     """Extract the raw command (newlines intact) from a PreToolUse event JSON on stdin."""
@@ -71,15 +84,22 @@ def _read_command_from_stdin() -> str:
     return cmd if isinstance(cmd, str) else ""
 
 
-def strip_heredoc_bodies(cmd: str) -> str:
-    """Remove heredoc BODY lines, keeping the opener line (which holds the real command).
+def strip_heredoc_bodies(cmd: str) -> tuple[str, bool]:
+    """Remove heredoc BODY lines; return (stripped_text, unterminated).
 
     A heredoc's text is data, not commands, so example git invocations inside it must not
     trigger a gate. We keep the opener line (`cat <<'PY'` may sit after a real `git push &&`)
     and drop every line until the delimiter, for each heredoc opened on that line in order.
+
+    ``unterminated`` is True when a detected ``<<WORD`` opener has NO matching delimiter line
+    (a real shell heredoc is always terminated within one command; an UNTERMINATED one means
+    our text-level `<<` detection likely mis-fired on a bit-shift inside a quoted string,
+    e.g. ``python3 -c "print(x << shift)"``, and we would otherwise eat the real command that
+    follows). The caller degrades that ambiguity to a conservative both-subcommands trigger.
     """
     lines = cmd.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out: list[str] = []
+    unterminated = False
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
@@ -91,24 +111,25 @@ def strip_heredoc_bodies(cmd: str) -> str:
         i += 1
         # Consume each heredoc's body up to (and including) its delimiter line.
         for term in terminators:
-            while i < n and lines[i].strip() != term:
+            found = False
+            while i < n:
+                if lines[i].strip() == term:
+                    found = True
+                    break
                 i += 1
-            if i < n:  # skip the terminator line itself
-                i += 1
-    return "\n".join(out)
+            if not found:
+                unterminated = True
+                break  # consumed to EOF; nothing more to scan
+            i += 1  # skip the terminator line itself
+    return "\n".join(out), unterminated
 
 
-def _git_subcommand(tokens: list[str]) -> str | None:
-    """Return the git subcommand for a segment's argv, or None if it is not a git call.
+def _subcommand_after_git(tokens: list[str]) -> str | None:
+    """Given argv whose ``tokens[0]`` is a git binary, return its subcommand or None.
 
-    argv[0] must be ``git`` or a path ending in ``/git``. Global options (incl. value-taking
-    ones) are skipped; the first positional token is the subcommand.
+    Global options (incl. value-taking ones like ``-C <path>``) are skipped; the first
+    positional token is the subcommand.
     """
-    if not tokens:
-        return None
-    base = tokens[0].rsplit("/", 1)[-1]
-    if base != "git":
-        return None
     i, n = 1, len(tokens)
     while i < n:
         t = tokens[i]
@@ -122,6 +143,39 @@ def _git_subcommand(tokens: list[str]) -> str | None:
     return None
 
 
+def _strip_leading_wrappers(tokens: list[str]) -> list[str]:
+    """Drop leading no-arg command wrappers and VAR=val assignments (`nohup`, `env FOO=bar`)."""
+    i, n = 0, len(tokens)
+    while i < n:
+        base = tokens[i].rsplit("/", 1)[-1]
+        if base in _WRAPPER_COMMANDS or _ASSIGNMENT_RE.match(tokens[i]):
+            i += 1
+            continue
+        break
+    return tokens[i:]
+
+
+def _git_subcommand(tokens: list[str]) -> str | None:
+    """Return the git subcommand for a segment's argv, or None if it is not a git call.
+
+    Handles wrapper prefixes so a genuine push/commit is never hidden (f1): strip leading
+    no-arg wrappers + assignments and re-check argv[0]==git; and, when the ORIGINAL argv[0]
+    is any known wrapper (incl. arg-taking ones like `timeout`/`sudo`), scan the whole
+    segment for a nested `git <push|commit>`. A false fire here is only an unnecessary scan;
+    a miss would let a secret ship — so we bias to firing (never scan less than intended).
+    """
+    if not tokens:
+        return None
+    stripped = _strip_leading_wrappers(tokens)
+    if stripped and stripped[0].rsplit("/", 1)[-1] == "git":
+        return _subcommand_after_git(stripped)
+    if tokens[0].rsplit("/", 1)[-1] in _WRAPPER_COMMANDS:
+        for idx in range(len(tokens)):
+            if tokens[idx].rsplit("/", 1)[-1] == "git":
+                return _subcommand_after_git(tokens[idx:])
+    return None
+
+
 def classify_command(cmd: str) -> set[str]:
     """Return the set of {commit, push} subcommands genuinely invoked in ``cmd``.
 
@@ -132,7 +186,12 @@ def classify_command(cmd: str) -> set[str]:
     if not cmd or not cmd.strip():
         return set()
     found: set[str] = set()
-    stripped = strip_heredoc_bodies(cmd)
+    stripped, unterminated = strip_heredoc_bodies(cmd)
+    if unterminated:
+        # A `<<WORD` opener with no matching delimiter — our text-level detection likely
+        # mis-fired on a quoted bit-shift and would have eaten a real command. Degrade to
+        # the conservative both-subcommands trigger rather than risk a missed push/commit.
+        return set(SUBCOMMANDS_OF_INTEREST)
     for segment in _SPLIT_RE.split(stripped):
         seg = segment.strip()
         if not seg:
