@@ -321,15 +321,35 @@ def _record_runs_judge_entry(root: Path, commit_hash: str, status: str, brief: s
         return
     runs = data.setdefault("runs", [])
     now_dt = _dt.datetime.now(_dt.timezone.utc)
-    if not runs:
-        runs.append({
+
+    def _fresh_hook_run() -> dict:
+        return {
             "run_id": f"hook_{now_dt.strftime('%Y%m%dT%H%M%SZ')}",
             "date": now_dt.strftime("%Y%m%dT%H%M%SZ"),
             "goal": "(hook-only commit; no orchestrator run)",
             "outcome": "partial", "phases": {}, "filesTouched": [],
             "diagnosticCommands": [], "manualInterventions": [],
             "active_experimental_artifacts": [], "judge_decisions": [],
-        })
+        }
+
+    if not runs:
+        runs.append(_fresh_hook_run())
+    else:
+        # Membership guard (RCA 2026-07-11): do NOT attach this commit's packet to
+        # runs[-1] when the trigger time falls outside that run's own window — a stale
+        # runs[-1] from a prior/other session would otherwise absorb today's verdict.
+        # Open the packet on a fresh hook-run entry instead. Fail-open: any import/parse
+        # error keeps the historical append-to-last behavior.
+        attach_to_last = True
+        try:
+            from temporal_membership import run_window as _rw, is_member as _im
+
+            ws, we = _rw(runs[-1])
+            attach_to_last, _reason = _im(now_dt, now_dt, ws, we)
+        except Exception:
+            attach_to_last = True
+        if not attach_to_last:
+            runs.append(_fresh_hook_run())
     decisions = runs[-1].setdefault("judge_decisions", [])
     for existing in decisions:
         if existing.get("target") == commit_hash and existing.get("status") == status:

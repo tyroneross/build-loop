@@ -13,7 +13,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from retrospective.synthesize import run as synth_run  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+sys.path.insert(0, str(HERE.parent.parent))  # scripts/ for temporal_membership
+from retrospective import locate  # noqa: E402
+from retrospective.synthesize import run as synth_run, _merge_judge_decisions  # noqa: E402
+import temporal_membership as tm  # noqa: E402
 
 
 def _build_workdir(tmp: Path, *, with_repeats: bool = True) -> tuple[Path, Path]:
@@ -208,6 +212,82 @@ class CLITests(unittest.TestCase):
         data = json.loads(out.stdout)
         self.assertEqual(data["status"], "ok")
         self.assertTrue(Path(data["active_path"]).exists())
+
+
+class TemporalMembershipMergeTests(unittest.TestCase):
+    """RCA 2026-07-11 #2: a month-old verdict must NOT fold into a different run."""
+
+    def _state(self):
+        return {"runs": [{"run_id": "r1", "date": "2026-07-10T08:37:46Z",
+                          "host": "claude_code", "judge_decisions": []}]}
+
+    def test_stale_verdict_excluded_from_merge(self) -> None:
+        state = self._state()
+        ws, we = tm.run_window(state["runs"][0])
+        stale = [{"judge_id": "independent-auditor", "verdict": "approve",
+                  "ts": "2026-06-09T21:47:28Z"}]
+        merged = _merge_judge_decisions(state, stale, "r1", ws, we, "claude_code")
+        jd = merged["runs"][0]["judge_decisions"]
+        self.assertTrue(all(d.get("verdict") != "approve" for d in jd),
+                        f"stale verdict leaked: {jd}")
+
+    def test_in_window_verdict_kept(self) -> None:
+        state = self._state()
+        ws, we = tm.run_window(state["runs"][0])
+        fresh = [{"judge_id": "independent-auditor", "verdict": "approve",
+                  "ts": "2026-07-10T10:00:00Z"}]
+        merged = _merge_judge_decisions(state, fresh, "r1", ws, we, "claude_code")
+        jd = merged["runs"][0]["judge_decisions"]
+        self.assertTrue(any(d.get("verdict") == "approve" for d in jd))
+
+    def test_undated_hostless_verdict_kept_conservatively(self) -> None:
+        state = self._state()
+        ws, we = tm.run_window(state["runs"][0])
+        undated = [{"judge_id": "independent-auditor", "verdict": "suggest"}]
+        merged = _merge_judge_decisions(state, undated, "r1", ws, we, "claude_code")
+        self.assertEqual(len(merged["runs"][0]["judge_decisions"]), 1)
+
+
+class CodexHostAbsenceTests(unittest.TestCase):
+    """RCA 2026-07-11 #1: a codex-hosted run with no Claude transcript must produce an
+    explicit absence marker in the retrospective — ZERO substitution of a stale transcript."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.tmp_dir = Path(self.tmp.name)
+
+    def test_codex_run_emits_absence_and_no_substitution(self) -> None:
+        workdir = self.tmp_dir / "codexproj"
+        bl = workdir / ".build-loop"
+        bl.mkdir(parents=True)
+        (bl / "state.json").write_text(json.dumps({
+            "execution": {"build_loop_id": "codex-run"},
+            "runs": [{"run_id": "codex-run", "outcome": "pass",
+                      "host": "codex", "date": "2026-07-10T08:37:46Z"}],
+        }), encoding="utf-8")
+
+        # Plant a stale, UNRELATED Claude transcript at the workdir's slug so the OLD
+        # locator would have substituted it. Patch Path.home so the slug resolves here.
+        fake_home = self.tmp_dir / "home"
+        slug = locate.cwd_to_slug(workdir.resolve())
+        proj_dir = fake_home / ".claude" / "projects" / slug
+        proj_dir.mkdir(parents=True)
+        (proj_dir / "stale.jsonl").write_text(
+            json.dumps({"type": "user", "timestamp": "2026-06-15T00:00:00Z",
+                        "message": {"role": "user", "content": "STALE_UNRELATED_PROMPT"}}) + "\n",
+            encoding="utf-8",
+        )
+
+        with patch("retrospective.locate.Path.home", return_value=fake_home):
+            r = synth_run(workdir, run_id="codex-run",
+                          memory_root=self.tmp_dir / "no-memory")
+
+        self.assertEqual(r["status"], "ok")
+        body = Path(r["active_path"]).read_text(encoding="utf-8")
+        self.assertIn("no transcript for this run", body)
+        self.assertIn("host=codex", body)
+        self.assertNotIn("STALE_UNRELATED_PROMPT", body)
 
 
 if __name__ == "__main__":

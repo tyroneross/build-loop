@@ -539,12 +539,21 @@ def _judge_signal_summaries(judge: dict[str, Any]) -> list[str]:
     return []
 
 
-def _format_user_prompts_section(prompts: list[dict[str, Any]], clusters: list[dict[str, Any]]) -> str:
+def _format_user_prompts_section(
+    prompts: list[dict[str, Any]],
+    clusters: list[dict[str, Any]],
+    transcript_note: str | None = None,
+) -> str:
     """Build section 8 (user_prompts_and_repeats).
 
     Lists each user prompt with its turn ordinal, then a 'Repeated ≥N×' block.
+    When the transcript was absent for a verified reason (RCA 2026-07-11: a run with no
+    membership-passing transcript), state that reason explicitly rather than implying an
+    empty thread.
     """
     if not prompts:
+        if transcript_note:
+            return f"_{transcript_note}_"
         return ("_(no user prompts captured — transcript missing or empty)_")
     lines = ["### All user prompts in this thread", ""]
     for i, p in enumerate(prompts, start=1):
@@ -601,7 +610,9 @@ def _format_simple_bullet_section(items: list[str], empty_msg: str) -> str:
     return "\n".join(f"- {it}" for it in items)
 
 
-def _format_plugin_tooling_section(usage: dict[str, Any]) -> str:
+def _format_plugin_tooling_section(
+    usage: dict[str, Any], transcript_note: str | None = None
+) -> str:
     """Build §10 (plugin_tooling_observations).
 
     Deterministic view of which tools/plugins/skills/subagents ran, how often,
@@ -610,6 +621,8 @@ def _format_plugin_tooling_section(usage: dict[str, Any]) -> str:
     """
     tools = usage.get("tools") or {}
     if not tools:
+        if transcript_note:
+            return f"_{transcript_note}_"
         return "_(no tool activity captured — transcript missing or empty)_"
     lines: list[str] = ["### Tools & plugins exercised this thread", ""]
     top_tools = list(tools.items())[:12]
@@ -684,6 +697,7 @@ def build(
     run_id: str,
     *,
     prompted_threshold: int = 2,
+    transcript_note: str | None = None,
 ) -> dict[str, Any]:
     """Build the 9 named sections.
 
@@ -825,7 +839,7 @@ def build(
     )
 
     # 8. user_prompts_and_repeats — full list + clusters.
-    sections["user_prompts_and_repeats"] = _format_user_prompts_section(prompts, clusters)
+    sections["user_prompts_and_repeats"] = _format_user_prompts_section(prompts, clusters, transcript_note)
 
     # 9. issues_with_causal_tree — judge-flagged issues + transcript signals.
     issues_body = _format_issues_section(state_json, run_id)
@@ -838,7 +852,7 @@ def build(
     sections["issues_with_causal_tree"] = issues_body
 
     # 10. plugin_tooling_observations — deterministic tool/plugin usage.
-    sections["plugin_tooling_observations"] = _format_plugin_tooling_section(usage)
+    sections["plugin_tooling_observations"] = _format_plugin_tooling_section(usage, transcript_note)
 
     # 11. automation_candidates — recurring rituals worth scripting.
     sections["automation_candidates"] = _format_automation_candidates_section(automation)
@@ -854,5 +868,6 @@ def build(
         "distinct_plugins": len(usage.get("plugins") or {}),
         "automation_candidate_count": len(automation),
         "issue_signal_count": len(issue_signals),
+        "transcript_absence_reason": transcript_note,
     }
     return sections

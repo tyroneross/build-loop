@@ -22,7 +22,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-from retrospective.locate import find_transcript_for_cwd
+from retrospective.locate import find_transcript_for_cwd, find_transcript_for_run
+
+try:
+    import temporal_membership as tm
+except ImportError:  # pragma: no cover - path fallback
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import temporal_membership as tm
 from retrospective.sections import build as build_sections
 from retrospective.write import (
     write_active,
@@ -81,8 +89,33 @@ def _merge_judge_decisions(
     state: dict[str, Any],
     judge_decisions: list[dict[str, Any]],
     run_id: str,
+    run_start=None,
+    run_end=None,
+    run_host: str | None = None,
 ) -> dict[str, Any]:
-    """Fold file-backed judge decisions into the state used for synthesis."""
+    """Fold file-backed judge decisions into the state used for synthesis.
+
+    RCA 2026-07-11: a month-old ``approve`` verdict was folded into a different run's
+    synthesis and surfaced as its "what went well". Filter out any decision whose own
+    timestamp/host provably falls outside this run's window before merging; keep
+    timestamp-and-host-less decisions (cannot be disproved) to stay conservative.
+    """
+    if not judge_decisions:
+        return state
+
+    kept: list[dict[str, Any]] = []
+    for d in judge_decisions:
+        ts = tm.parse_ts(d.get("verdict_ts") or d.get("ts") or d.get("timestamp"))
+        rec_host = (str(d.get("host") or "").strip() or None)
+        if ts is None and rec_host is None:
+            kept.append(d)  # no evidence to disprove membership
+            continue
+        ok, _reason = tm.is_member(
+            ts, ts, run_start, run_end, record_host=rec_host, run_host=run_host,
+        )
+        if ok:
+            kept.append(d)
+    judge_decisions = kept
     if not judge_decisions:
         return state
 
@@ -180,6 +213,20 @@ def _derive_repo_slug(workdir: Path) -> str:
     return workdir.resolve().name
 
 
+def _find_run(state: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Return the runs[] entry matching ``run_id`` (latest match), else the last run, else {}.
+
+    The run window + host the membership preflight needs come from this entry.
+    """
+    runs = [r for r in (state.get("runs") or []) if isinstance(r, dict)]
+    if not runs:
+        return {}
+    for run in reversed(runs):
+        if _run_identifier(run) == str(run_id):
+            return run
+    return runs[-1]
+
+
 def run(
     workdir: Path,
     *,
@@ -212,12 +259,25 @@ def run(
         intent_md = _load_md(workdir, "intent.md")
         plan_md = _load_md(workdir, "plan.md")
         rid = run_id or _derive_run_id(state)
-        state = _merge_judge_decisions(state, _load_judge_decisions_json(workdir), rid)
-        tx = transcript if transcript is not None else find_transcript_for_cwd(workdir)
+        target_run = _find_run(state, rid)
+        run_host = (str(target_run.get("host") or "").strip() or None)
+        run_start, run_end = tm.run_window(target_run)
+        state = _merge_judge_decisions(
+            state, _load_judge_decisions_json(workdir), rid,
+            run_start, run_end, run_host,
+        )
+        tx_reason = None
+        if transcript is not None:
+            tx = transcript
+        else:
+            tx, tx_reason = find_transcript_for_run(
+                workdir, run_start=run_start, run_end=run_end, run_host=run_host,
+            )
         repo = _derive_repo_slug(workdir)
         intent_one = _intent_one_line(intent_md)
 
-        sections = build_sections(tx, state, intent_md, plan_md, rid)
+        sections = build_sections(tx, state, intent_md, plan_md, rid,
+                                  transcript_note=tx_reason)
 
         active = write_active(workdir, rid, sections,
                               intent_one_line=intent_one, repo=repo)

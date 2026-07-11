@@ -3,6 +3,7 @@
 """Tests for scripts/retrospective/locate."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -14,7 +15,10 @@ from unittest.mock import patch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
+sys.path.insert(0, str(HERE.parent.parent))  # scripts/ for temporal_membership
+from retrospective import locate  # noqa: E402
 from retrospective.locate import cwd_to_slug, find_transcript_for_cwd, sessions_root  # noqa: E402
+import temporal_membership as tm  # noqa: E402
 
 
 class CwdToSlugTests(unittest.TestCase):
@@ -97,6 +101,77 @@ class SessionsRootTests(unittest.TestCase):
     def test_sessions_root_under_home(self) -> None:
         r = sessions_root()
         self.assertEqual(r, Path.home() / ".claude" / "projects")
+
+
+class FindTranscriptForRunTests(unittest.TestCase):
+    """RCA 2026-07-11: the run-scoped locator must attach ONLY a temporally +
+    host-matching transcript, and emit an explicit absence marker otherwise
+    (never substitute the nearest-in-time-but-wrong transcript)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.fake_home = Path(self.tmp.name)
+        self.home_patch = patch(
+            "retrospective.locate.Path.home", return_value=self.fake_home
+        )
+        self.home_patch.start()
+        self.addCleanup(self.home_patch.stop)
+        self.cwd = Path("/Users/test/proj")
+        self.slug = "-Users-test-proj"
+        self.proj_dir = self.fake_home / ".claude" / "projects" / self.slug
+        self.proj_dir.mkdir(parents=True)
+
+    def _write_tx(self, name: str, timestamps: list[str]) -> Path:
+        f = self.proj_dir / name
+        lines = [
+            json.dumps({"type": "user", "timestamp": ts,
+                        "message": {"role": "user", "content": "hi"}})
+            for ts in timestamps
+        ]
+        f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return f
+
+    def test_right_window_transcript_attaches(self) -> None:
+        self._write_tx("s1.jsonl", ["2026-07-10T09:00:00Z", "2026-07-10T10:00:00Z"])
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            self.cwd, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNotNone(path)
+        self.assertIsNone(reason)
+
+    def test_wrong_window_rejected_with_marker(self) -> None:
+        # The observed stale span: 2026-06-12 .. 2026-06-20; run is 2026-07-10.
+        self._write_tx("stale.jsonl", ["2026-06-12T01:04:02Z", "2026-06-20T14:47:07Z"])
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            self.cwd, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNone(path)
+        self.assertIn("no transcript for this run", reason)
+        self.assertIn("stale by", reason)
+
+    def test_codex_host_run_with_claude_transcript_is_absence(self) -> None:
+        # A time-overlapping Claude transcript EXISTS, but the run is codex-hosted.
+        # Host mismatch → explicit absence, ZERO substitution.
+        self._write_tx("s.jsonl", ["2026-07-10T09:00:00Z"])
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            self.cwd, run_start=ws, run_end=we, run_host="codex",
+        )
+        self.assertIsNone(path)
+        self.assertIn("host=codex", reason)
+
+    def test_no_transcript_dir_is_absence_marker(self) -> None:
+        # Different cwd → no slug dir at all.
+        other = Path("/Users/test/other")
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            other, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNone(path)
+        self.assertIn("no transcript for this run", reason)
 
 
 if __name__ == "__main__":
