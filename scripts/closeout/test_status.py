@@ -228,3 +228,119 @@ def test_run_source_is_normalized(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
     env = run(workdir, run_id="src", source="unknown-source-name")
     assert env["source"] == "ad-hoc"
+
+
+# ---------------------------------------------------------------------------
+# FIX-1: milestone enforcement — a shipped run without a milestone append MUST
+# produce a blocking owed-item marker (the detectable-failure contract).
+# ---------------------------------------------------------------------------
+
+from closeout.status import ensure_milestone, MILESTONE_OWED_PREFIX  # noqa: E402
+
+
+def _shipped_state(workdir: Path, run_id: str, commit: str = "abc123") -> None:
+    bl = workdir / ".build-loop"
+    bl.mkdir(parents=True, exist_ok=True)
+    (bl / "state.json").write_text(json.dumps({
+        "runs": [{"run_id": run_id, "commit": commit, "files_touched": "3",
+                  "goal": "ship the memory-flow enforcement"}]
+    }))
+
+
+def _slug(workdir: Path) -> str:
+    sys.path.insert(0, str(HERE.parent))
+    from _paths import derive_slug_from_cwd  # noqa: PLC0415
+    return derive_slug_from_cwd(workdir)
+
+
+def test_shipped_run_without_milestone_produces_owed_marker(tmp_path):
+    run_id = "bl-run-1"
+    _shipped_state(tmp_path, run_id, commit="deadbeef")
+    mem = tmp_path / "mem"
+    mem.mkdir()
+
+    env = run(tmp_path, run_id=run_id, source="post-push", memory_root=str(mem))
+    assert env["milestone"]["status"] == "owed"
+
+    marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    assert marker.exists()
+    text = marker.read_text()
+    assert "closeout_incomplete: true" in text
+    assert run_id in text
+
+
+def test_recorded_milestone_no_owed_marker(tmp_path):
+    run_id = "bl-run-2"
+    _shipped_state(tmp_path, run_id, commit="cafebabe")
+    mem = tmp_path / "mem"
+    slug = _slug(tmp_path)
+    mpath = mem / "projects" / slug / "milestones.jsonl"
+    mpath.parent.mkdir(parents=True, exist_ok=True)
+    mpath.write_text(json.dumps({"run_id": run_id, "commit": "cafebabe",
+                                 "summary": "already recorded"}) + "\n")
+
+    res = ensure_milestone(tmp_path, run_id, memory_root=str(mem))
+    assert res["status"] == "recorded"
+    marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    assert not marker.exists()
+
+
+def test_queued_milestone_no_owed_marker(tmp_path):
+    """A still-busy store leaves the milestone queued (not drained) — no owed marker."""
+    run_id = "bl-run-3"
+    _shipped_state(tmp_path, run_id, commit="0ff1ce")
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    sys.path.insert(0, str(HERE.parent))
+    import promotion_queue as pq  # noqa: PLC0415
+    pq.enqueue(tmp_path, kind="milestone",
+               payload={"summary": "s", "commit": "0ff1ce"}, run_id=run_id)
+    # Peer-hold marker → drain is skipped, so the milestone stays queued.
+    (mem / pq.PEER_HOLD_MARKER).write_text("")
+
+    res = ensure_milestone(tmp_path, run_id, memory_root=str(mem))
+    assert res["status"] == "queued"
+    marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    assert not marker.exists()
+
+
+def test_not_shipped_run_no_enforcement(tmp_path):
+    run_id = "bl-run-4"
+    bl = tmp_path / ".build-loop"
+    bl.mkdir(parents=True)
+    # runs[] entry with no commit and no files → not shipped.
+    (bl / "state.json").write_text(json.dumps({"runs": [{"run_id": run_id, "goal": "wip"}]}))
+    res = ensure_milestone(tmp_path, run_id, memory_root=str(tmp_path / "mem"))
+    assert res["status"] == "not_shipped"
+
+
+def test_ad_hoc_source_does_not_enforce_by_default(tmp_path):
+    run_id = "bl-run-5"
+    _shipped_state(tmp_path, run_id, commit="feed")
+    env = run(tmp_path, run_id=run_id, source="ad-hoc", memory_root=str(tmp_path / "mem"))
+    # ad-hoc is not an ENFORCE_SOURCE → milestone enforcement skipped.
+    assert env["milestone"] is None
+
+
+def test_drain_runs_before_owed_check(tmp_path):
+    """A queued milestone drains to the store first, so no owed marker fires."""
+    run_id = "bl-run-6"
+    commit = "d1ad1a"
+    _shipped_state(tmp_path, run_id, commit=commit)
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    slug = _slug(tmp_path)
+    sys.path.insert(0, str(HERE.parent))
+    import promotion_queue as pq  # noqa: PLC0415
+    # Queue a milestone whose payload targets this fixture store.
+    pq.enqueue(tmp_path, kind="milestone",
+               payload={"summary": "queued ship", "commit": commit,
+                        "project": slug, "memory_root": str(mem)}, run_id=run_id)
+
+    res = ensure_milestone(tmp_path, run_id, memory_root=str(mem))
+    # Drain wrote it → recorded, not owed.
+    assert res["status"] == "recorded"
+    mpath = mem / "projects" / slug / "milestones.jsonl"
+    assert mpath.exists()
+    marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    assert not marker.exists()

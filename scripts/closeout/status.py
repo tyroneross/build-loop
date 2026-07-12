@@ -51,6 +51,11 @@ CLOSEOUT_DIRNAME = "closeout"
 PENDING_LESSONS_DIRNAME = "pending-lessons"
 RETRO_ENFORCE_DIRNAME = "proposals/enforce-from-retro"
 RETROSPECTIVES_DIRNAME = "retrospectives"
+MILESTONE_OWED_PREFIX = "milestone-owed-"
+CLOSEOUT_PENDING_DIRNAME = "closeout-pending"
+DEFAULT_MEMORY_ROOT = "~/dev/git-folder/build-loop-memory"
+# Sources for which milestone enforcement + queue drain fire (a real shipped run).
+ENFORCE_SOURCES = ("post-push", "post-push-armed", "phase-6-learn")
 
 
 def _iso_now() -> str:
@@ -197,11 +202,184 @@ def _normalize_source(source: str | None) -> str:
     return source if source in VALID_SOURCES else "ad-hoc"
 
 
+
+def _row_identities(row: Any) -> set[str]:
+    if not isinstance(row, dict):
+        return set()
+    return {
+        v.strip()
+        for k in ("build_loop_id", "run_id", "id")
+        if isinstance((v := row.get(k)), str) and v.strip()
+    }
+
+
+def _run_shipped(workdir: Path, run_id: str) -> tuple[bool, str | None, str]:
+    """Did the run identified by ``run_id`` ship anything?
+
+    Reads ``.build-loop/state.json.runs[]`` — the record Review-G writes. A run
+    "shipped" when its record carries a non-empty commit or files_touched/
+    files_changed. Returns (shipped, commit, summary). Fail-soft → (False, None, "").
+    """
+    state_path = workdir / ".build-loop" / "state.json"
+    try:
+        if not state_path.exists():
+            return (False, None, "")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (False, None, "")
+    runs = state.get("runs") if isinstance(state, dict) else None
+    if not isinstance(runs, list):
+        return (False, None, "")
+    for r in runs:
+        if not isinstance(r, dict) or run_id not in _row_identities(r):
+            continue
+        commit = str(r.get("commit") or "").strip() or None
+        files = r.get("files_touched") or r.get("files_changed") or r.get("files")
+        has_files = bool(files) and str(files).strip() not in ("", "0", "[]")
+        shipped = bool(commit) or has_files
+        summary = str(r.get("goal") or r.get("summary") or r.get("run_label") or "").strip()
+        return (shipped, commit, summary[:300])
+    return (False, None, "")
+
+
+def _milestone_recorded(memory_root: Path, slug: str, run_id: str, commit: str | None) -> bool:
+    """True when milestones.jsonl already carries this run_id or commit. Read-only."""
+    try:
+        path = memory_root / "projects" / Path(*slug.split("/")) / "milestones.jsonl"
+        if not path.exists():
+            return False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if run_id and row.get("run_id") == run_id:
+                return True
+            if commit and row.get("commit") == commit:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _milestone_queued(workdir: Path, run_id: str, commit: str | None) -> bool:
+    """True when a milestone for this run is already sitting in the promotion queue."""
+    try:
+        import sys as _sys
+        _here = str(Path(__file__).resolve().parent.parent)
+        if _here not in _sys.path:
+            _sys.path.insert(0, _here)
+        import promotion_queue as _pq  # noqa: PLC0415
+        for r in _pq.list_pending(workdir):
+            if r.get("kind") != "milestone":
+                continue
+            if run_id and r.get("run_id") == run_id:
+                return True
+            pl = r.get("payload") or {}
+            if commit and pl.get("commit") == commit:
+                return True
+    except Exception:  # noqa: BLE001 — advisory; absence → not queued
+        return False
+    return False
+
+
+def _drain_promotions(workdir: Path, memory_root: Path) -> dict[str, Any]:
+    """Drain any queued durable promotions (FIX-2). Fail-soft → {}."""
+    try:
+        import sys as _sys
+        _here = str(Path(__file__).resolve().parent.parent)
+        if _here not in _sys.path:
+            _sys.path.insert(0, _here)
+        import promotion_queue as _pq  # noqa: PLC0415
+        return _pq.drain(workdir, memory_root=str(memory_root))
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _write_milestone_owed_marker(workdir: Path, run_id: str, commit: str | None, summary: str) -> Path:
+    """Write a blocking owed-item marker, mirroring the closeout-pending markers.
+
+    Reuses the existing SessionStart sweep (``stop_closeout.run_session_start``),
+    which surfaces any ``.build-loop/closeout-pending/*.md`` carrying
+    ``closeout_incomplete: true``. This is the "emit a blocking owed-item"
+    branch of FIX-1 — the enforcement net that catches a shipped run whose
+    milestone the orchestrator skipped.
+    """
+    marker = workdir / ".build-loop" / CLOSEOUT_PENDING_DIRNAME / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    body = (
+        "---\n"
+        f"run_id: {run_id}\n"
+        f"recorded_at: {_iso_now()}\n"
+        "topic: milestone-owed\n"
+        f"commit: {commit or ''}\n"
+        "closeout_incomplete: true\n"
+        "source: closeout.status\n"
+        "---\n\n"
+        f"# Milestone owed — {run_id}\n\n"
+        "This run SHIPPED (a `runs[]` record carries a commit / changed files) but no\n"
+        "milestone line was appended to `build-loop-memory/projects/<slug>/milestones.jsonl`.\n"
+        "The permanent progress record must not be skipped. Append it now:\n\n"
+        "```\n"
+        f"python3 scripts/append_milestone.py --workdir . --summary {json.dumps(summary or '(what shipped)')} \\\n"
+        f"  --commit {commit or '<HEAD>'} --run-id {run_id}\n"
+        "```\n\n"
+        "A peer-held store will QUEUE the append (drained at the next closeout); this\n"
+        "marker clears once the milestone is recorded.\n"
+    )
+    tmp = marker.with_suffix(".md.tmp")
+    tmp.write_text(body, encoding="utf-8")
+    os.replace(tmp, marker)
+    return marker
+
+
+def ensure_milestone(
+    workdir: Path,
+    run_id: str,
+    memory_root: Path | str | None = None,
+) -> dict[str, Any]:
+    """FIX-1: mechanically enforce the Review-G milestone append.
+
+    1. Drain any queued durable promotions (writes previously-queued milestones
+       now that the store may be free).
+    2. If the run shipped and no milestone is recorded (and none is queued),
+       write a blocking owed-item marker.
+
+    Deterministic + fail-soft. Returns a status block for the envelope.
+    """
+    workdir = Path(workdir).resolve()
+    mem_root = Path(os.path.expanduser(str(memory_root or DEFAULT_MEMORY_ROOT)))
+    drain_result = _drain_promotions(workdir, mem_root)
+
+    shipped, commit, summary = _run_shipped(workdir, run_id)
+    if not shipped:
+        return {"status": "not_shipped", "drain": drain_result}
+
+    try:
+        from _paths import derive_slug_from_cwd  # noqa: PLC0415
+        slug = derive_slug_from_cwd(workdir)
+    except Exception:  # noqa: BLE001
+        slug = workdir.name
+
+    if _milestone_recorded(mem_root, slug, run_id, commit):
+        return {"status": "recorded", "commit": commit, "drain": drain_result}
+    if _milestone_queued(workdir, run_id, commit):
+        return {"status": "queued", "commit": commit, "drain": drain_result}
+
+    marker = _write_milestone_owed_marker(workdir, run_id, commit, summary)
+    return {"status": "owed", "commit": commit, "marker": str(marker), "drain": drain_result}
+
+
 def run(
     workdir: Path | str,
     *,
     run_id: str | None = None,
     source: str = "ad-hoc",
+    memory_root: str | None = None,
+    enforce_milestone: bool | None = None,
 ) -> dict[str, Any]:
     """Execute the closeout. Returns the envelope and writes it atomically.
 
@@ -238,6 +416,7 @@ def run(
         "workdir": str(workdir),
         "signal": {},
         "written_to": None,
+        "milestone": None,
         "error": None,
     }
 
@@ -250,6 +429,16 @@ def run(
     except Exception as exc:  # noqa: BLE001 — closeout never raises
         envelope["error"] = f"{type(exc).__name__}: {exc}"
         envelope["reason"] = f"degraded: {envelope['error']}"
+
+    # FIX-1: mechanically enforce the Review-G milestone append + drain the
+    # durable-promotion queue. Fires on real shipped-run sources (or when the
+    # caller forces it), never on ad-hoc/test unless asked. Fail-soft.
+    do_enforce = enforce_milestone if enforce_milestone is not None else (source in ENFORCE_SOURCES)
+    if do_enforce and run_id:
+        try:
+            envelope["milestone"] = ensure_milestone(workdir, run_id, memory_root)
+        except Exception as exc:  # noqa: BLE001 — enforcement never blocks closeout
+            envelope["milestone"] = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
     # Atomic persist.
     out_path = workdir / ".build-loop" / CLOSEOUT_DIRNAME / f"{rid}.json"

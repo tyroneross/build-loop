@@ -41,13 +41,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         choices=sorted(VALID_SOURCES),
         help="closeout trigger",
     )
+    ap.add_argument("--memory-root", default=None, help="build-loop-memory root override")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     return ap.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    envelope = run(Path(args.workdir), run_id=args.run_id, source=args.source)
+    envelope = run(Path(args.workdir), run_id=args.run_id, source=args.source, memory_root=args.memory_root)
     if args.json:
         print(json.dumps(envelope, indent=2, sort_keys=True))
     else:
