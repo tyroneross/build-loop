@@ -184,6 +184,27 @@ def _parse_iso(value: str) -> datetime | None:
         return None
 
 
+def _canonical_run_identity(row: dict | None) -> str:
+    """Current and legacy state rows share this identity precedence."""
+    if not isinstance(row, dict):
+        return ""
+    for key in ("build_loop_id", "run_id", "id"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _row_identities(row: dict | None) -> set[str]:
+    if not isinstance(row, dict):
+        return set()
+    return {
+        value.strip()
+        for key in ("build_loop_id", "run_id", "id")
+        if isinstance((value := row.get(key)), str) and value.strip()
+    }
+
+
 def _read_state(workdir: Path) -> dict | None:
     """Parse .build-loop/state.json; None when absent or unparseable (fail-open)."""
     path = workdir / ".build-loop" / "state.json"
@@ -272,15 +293,15 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
         each idle turn.
     """
     execution = state.get("execution") or {}
-    run_id = str(execution.get("build_loop_id") or "").strip()
+    run_id = _canonical_run_identity(execution)
     if not run_id:
-        return {"action": "skip", "reason": "no build_loop_id — no run initialized in this repo"}
+        return {"action": "skip", "reason": "no run identity — no run initialized in this repo"}
 
     outcome = _derive_outcome(state)
     runs = state.get("runs")
     runs = runs if isinstance(runs, list) else []
     for r in runs:
-        if isinstance(r, dict) and r.get("run_id") == run_id:
+        if isinstance(r, dict) and run_id in _row_identities(r):
             if r.get("source") != "append_run":
                 # A richer orchestrator (Review-G) record owns this run. Idempotent no-op.
                 # Surface terminal outcome so run_stop's skip-path release also
@@ -554,6 +575,111 @@ def _stop_message(decision: dict, verdict: dict, write_result: dict) -> str:
     return base
 
 
+def _materialize_branch_ledger(
+    state: dict,
+    execution: dict,
+    run_id: str,
+) -> bool:
+    """Persist open branch/worktree ownership before execution is archived.
+
+    Stop is a turn boundary, not owner-release authority. This function writes
+    only the existing ``createdRefs.status=open`` vocabulary and a pending
+    branch-closeout projection; it never writes a receipt or release token.
+    """
+    branch = str(
+        execution.get("run_worktree_branch")
+        or execution.get("branch")
+        or execution.get("branch_name")
+        or ""
+    ).strip()
+    path = str(
+        execution.get("run_worktree_path")
+        or execution.get("worktree")
+        or execution.get("worktree_path")
+        or ""
+    ).strip()
+    if not branch and not path:
+        return True
+    if not branch:
+        return False  # createdRefs requires an attributable branch
+
+    identities = _row_identities(execution) | {run_id}
+    runs = state.get("runs")
+    runs = runs if isinstance(runs, list) else []
+    matches = [
+        row
+        for row in runs
+        if isinstance(row, dict) and bool(_row_identities(row) & identities)
+    ]
+    if len(matches) != 1:
+        return False
+    run = matches[0]
+
+    refs = run.setdefault("createdRefs", [])
+    if not isinstance(refs, list):
+        return False
+    entry = next(
+        (
+            ref
+            for ref in refs
+            if isinstance(ref, dict)
+            and (
+                ref.get("branch") == branch
+                or (path and (ref.get("path") == path or ref.get("worktree") == path))
+            )
+        ),
+        None,
+    )
+    now = _utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    if entry is None:
+        kind = "worktree" if path else "branch"
+        entry = {
+            "kind": kind,
+            "path": path or None,
+            "branch": branch,
+            "merge_target": "main",
+            "purpose": "run-entry isolation worktree",
+            "close_criteria": [
+                f"{branch} is merged into main",
+                *(
+                    ["worktree folder is removed from .build-loop/worktrees"]
+                    if path
+                    else []
+                ),
+                "branch is deleted after merge",
+            ],
+            "status": "open",
+            "close_reason": None,
+            "review_hold": False,
+            "created_ts": now,
+            "closed_ts": None,
+            "last_status_ts": now,
+        }
+        refs.append(entry)
+    else:
+        entry.setdefault("kind", "worktree" if path else "branch")
+        entry.setdefault("branch", branch)
+        if path and not entry.get("path"):
+            entry["path"] = path
+        entry.setdefault("merge_target", "main")
+        entry.setdefault("purpose", "run-entry isolation worktree")
+        entry.setdefault("review_hold", False)
+        entry.setdefault("status", "open")
+        entry.setdefault("created_ts", now)
+        entry.setdefault("closed_ts", None)
+        entry.setdefault("last_status_ts", now)
+
+    branch_closeout = run.setdefault("branch_closeout", {})
+    if not isinstance(branch_closeout, dict):
+        return False
+    if branch_closeout.get("status") != "complete":
+        branch_closeout["status"] = "pending_external_merge"
+        branch_closeout["updated_ts"] = now
+        branch_closeout["branch"] = branch
+        branch_closeout["path"] = path or None
+    return True
+
+
 def _release_identity(workdir: Path, run_id: str) -> None:
     """Release the run identity after a TERMINAL outcome is recorded.
 
@@ -572,11 +698,13 @@ def _release_identity(workdir: Path, run_id: str) -> None:
         if state is None:
             return
         execution = state.get("execution")
-        if not isinstance(execution, dict) or execution.get("build_loop_id") != run_id:
+        if not isinstance(execution, dict) or run_id not in _row_identities(execution):
             return  # identity changed under us — never clear someone else's run
+        if not _materialize_branch_ledger(state, execution, run_id):
+            return  # attribution is incomplete/ambiguous — preserve execution
         hist = state.get("historicalExecutions")
         hist = hist if isinstance(hist, list) else []
-        hist.append(execution)
+        hist.append(dict(execution))
         state["historicalExecutions"] = hist[-10:]
         state["execution"] = {}
         append_run.atomic_write_bytes(
@@ -643,12 +771,12 @@ def _sweep_orphan_run(workdir: Path) -> str | None:
     if state is None:
         return None
     execution = state.get("execution") or {}
-    run_id = str(execution.get("build_loop_id") or "").strip()
+    run_id = _canonical_run_identity(execution)
     if not run_id:
         return None
     runs = state.get("runs")
     runs = runs if isinstance(runs, list) else []
-    if any(isinstance(r, dict) and r.get("run_id") == run_id for r in runs):
+    if any(isinstance(r, dict) and run_id in _row_identities(r) for r in runs):
         return None  # recorded (Stop path or Review-G) — nothing orphaned
     ts = _parse_iso(str(execution.get("last_heartbeat_at") or "")) or _parse_iso(
         str(execution.get("started_at") or "")

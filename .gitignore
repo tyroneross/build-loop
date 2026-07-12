@@ -6,6 +6,13 @@ Thumbs.db
 .build-loop/
 .claude/
 .agent-rally-point/
+
+# build-loop backlog (added by `backlog.py adopt` — keep so the backlog travels)
+!.build-loop/
+.build-loop/*
+!.build-loop/backlog/
+!.build-loop/backlog/**
+!BACKLOG.md
 # NOTE: .codex/ is intentionally TRACKED in this repo — .codex/hooks.json is a
 # distributable hook config (Codex Stop/SessionStart → hooks/closeout.sh), the
 # Codex-side counterpart to the tracked hooks/hooks.json.

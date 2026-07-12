@@ -516,25 +516,27 @@ Runs by default at the end of every run (after Phase 6 Learn if it ran, otherwis
 2. Stop coordination watchers: SIGTERM any `coordination_watch.py --interval N` processes started during this run (PIDs tracked in `state.json.runs[N].watcherPids[]`).
 3. **Collapse branches and worktrees (merge winner first, then collapse):** for solo-on-main runs the work is already on `main` — nothing to merge. For multi-worktree runs, merge the winning/validated line(s) to `main` via the normal single-writer commit flow before calling collapse. Then run:
    ```bash
-   python3 ${RUNTIME_PLUGIN_ROOT}/scripts/collapse_run.py --workdir "$PWD" --run-id latest --json
+   python3 ${RUNTIME_PLUGIN_ROOT}/scripts/collapse_run.py --workdir "$PWD" \
+     --run-id <exact-run-id> --branch <exact-branch> \
+     --strict --merged-only --owner-released --release-source phase-d-integrator --json
    ```
-   The script normalizes `dispatchedWorktrees[]` + `riskyBranches[]` + `createdRefs[]` into one ref list, creates a `git bundle ... --all` under `.build-loop/bundles/` (reversibility), then per ref: MERGED → delete branch + remove worktree folder; UNMERGED+`review_hold` → keep branch ref, remove worktree folder (→ `kept_for_review`); UNMERGED+no-hold → keep branch ref, remove worktree folder (→ `surfaced_unmerged`). Output: `{run_id, bundle_path, deleted[], kept_for_review[], surfaced_unmerged[], errors[], dry_run}`. Fail-soft — errors logged, closeout continues.
+   Run this from the integrating/primary worktree only after positive owner release; Stop and missing liveness evidence are not release. The script creates and verifies an exact-branch bundle, writes a prepared receipt, rechecks safety and exact branch-to-worktree registration, removes without force, then rechecks the OID and uses Git's checked-out-aware safe branch deletion. Branch hygiene is complete only when output has `strict_success:true`, `bundle_verified:true`, a terminal `receipt_path`, and `errors:[]`. Unmerged/unsafe/ambiguous refs are retained. Full contract: `references/phase-d-closeout.md`.
 4. Archive the coordination file: move `.build-loop/coordination/<this-coord-file>.md` to `.build-loop/coordination/archived/`.
 5. Optional `changes.jsonl` rotation: `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)`.
-6. Final post: `post(kind="phase", payload={"phase": "run-closeout", ...})` signals to the channel that this run is done.
+6. Final post: `post(kind="phase", run_id=<exact-run-id>, workdir=Path("$PWD"), payload={"phase": "run-closeout", ...})` signals to the channel that this run is done. The post returns `None` and writes nothing unless `branch_closeout_gate.py` verifies terminal branch hygiene (solo-on-main/no-ref runs pass directly).
 7. Write `state.json.runs[N].closeout_status`.
 
 **`## Branch hygiene` report block** — every run's final report includes:
 ```
 ## Branch hygiene
-created N · merged-to-main M (deleted) · kept-for-review R: [<branch-name>, ...]
-· surfaced-unmerged U: [<branch-name>, ...] (ask keep/discard) · bundle: <path>
+created N · closed M · retained R: [<branch-name>, ...]
+· bundle-verified: yes|no · receipt: <path/status> · strict-success: yes|no
 ```
 When a run created zero refs: `Branch hygiene: clean — no run-created branches/worktrees; on main.`
 
 **Structural run-close (Stop hook).** Phase D above is the orchestrator path. An INLINE run (skill-as-methodology, no orchestrator dispatch) never reaches it, so a host `Stop` hook fires the minimum structural closeout with no human prompt — `hooks/closeout.sh stop` → `scripts/stop_closeout.py`:
 
-1. **Record + surface.** Records the run via `append_run.py` (so Phase 6 Learn's `runs[]` sees it) and runs `judgment_gate.py --agent-tool-available false`, surfacing a WARN `systemMessage` when a stakes-gated run skipped the Frontier judgment layer. A Stop hook cannot dispatch agents, so it auto-records + auto-surfaces the gap — it does not run the retrospective-synthesizer or memory closeout; it leaves `.build-loop/closeout-pending/<run-id>.md` for the next SessionStart (`hooks/closeout.sh session-start`) to surface once. A terminal (`pass`) record also releases the run identity — the `execution` block is archived to `historicalExecutions` and cleared — so the next inline effort mints a fresh `build_loop_id` instead of silently resuming a finished run (partial/blocked outcomes keep identity for crash-resume).
+1. **Record + surface.** Records the run via `append_run.py` (so Phase 6 Learn's `runs[]` sees it) and runs `judgment_gate.py --agent-tool-available false`, surfacing a WARN `systemMessage` when a stakes-gated run skipped the Frontier judgment layer. A Stop hook cannot dispatch agents, so it auto-records + auto-surfaces the gap — it does not run the retrospective-synthesizer or memory closeout; it leaves `.build-loop/closeout-pending/<run-id>.md` for the next SessionStart (`hooks/closeout.sh session-start`) to surface once. Before a terminal (`pass`) record archives and clears `execution`, Stop materializes its branch/worktree as `createdRefs.status=open` with `branch_closeout.status=pending_external_merge`. Stop is a turn boundary: it never writes owner release or a prepared cleanup receipt.
 
 2. **Contract.** Advisory + fail-open (always exit 0, never `decision: block`), self-gated on `.build-loop/` presence + this-session match (`current_session_id`, heartbeat-freshness fallback when the host passes no session id), minimal-PATH safe, idempotent with Phase D — the marker is the inline-path sentinel and `runs[]` membership is the Phase-D sentinel, so neither double-records the other. Tests: `scripts/test_stop_closeout.py` + `hooks/test_closeout.sh`.
 
@@ -545,9 +547,10 @@ When a run created zero refs: `Branch hygiene: clean — no run-created branches
 1. **Append the run record** — `python3 "$root"/scripts/append_run.py …` so Phase 6 Learn's `runs[]` sees this run. Without it, the run is invisible to the recurring-pattern detector and the milestone log.
 2. **Run the judgment gate** — `python3 "$root"/scripts/judgment_gate.py --workdir "$PWD" --run-id <run-id> --agent-tool-available false --json`. On a stakes-gated run that stayed at the inline floor, it surfaces the skipped-Frontier-judgment WARN that the Stop hook would otherwise have surfaced.
 3. **Write the closeout status** — record `state.json.runs[N].closeout_status` (and the inline-path marker `.build-loop/closeout-pending/<run-id>.md` if a follow-up surface is needed), matching what `stop_closeout.py` would have written.
-4. **Phase 6 Learn recording** — run the cheap detector + consolidation and emit the `## Learn` outcome line (accruing / deferred / full) explicitly; it does not auto-fire without the hook.
+4. **Finalize branch hygiene after merge and positive owner release** — from the integrating/primary worktree run `python3 "$root/scripts/collapse_run.py" --workdir "$PWD" --run-id <exact-run-id> --branch <exact-branch> --strict --merged-only --owner-released --release-source codex-manual --json`. Do not declare branch hygiene clean unless `strict_success:true`, `bundle_verified:true`, a terminal receipt, and `errors:[]` are present.
+5. **Phase 6 Learn recording** — run the cheap detector + consolidation and emit the `## Learn` outcome line (accruing / deferred / full) explicitly; it does not auto-fire without the hook.
 
-These are idempotent with the hook path (the marker is the inline sentinel; `runs[]` membership is the Phase-D sentinel), so a later host that DOES fire the hook will not double-record. The rule: **never let "the hook will catch it" stand in for run recording under Codex** — confirm the hook fired, or do the four steps by hand.
+These are idempotent with the hook path (the marker is the inline sentinel; `runs[]` membership is the Phase-D sentinel), so a later host that DOES fire the hook will not double-record. The rule: **never let "the hook will catch it" stand in for run recording or branch finalization under Codex** — confirm the hook fired, or do the five steps by hand.
 
 ## Post-Build
 

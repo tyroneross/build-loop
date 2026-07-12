@@ -660,3 +660,103 @@ def test_learn_owed_clears_when_experimental_draft_present(tmp_path):
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
     assert "learn_drafting_owed: false" in marker
     assert "draft(s) already present" in marker
+
+
+# --- branch ownership survives terminal identity release -------------------
+
+def test_terminal_stop_materializes_open_ref_before_archive(tmp_path):
+    state = _base_state()
+    state["execution"]["run_worktree_branch"] = "bl/run-test-001"
+    state["execution"]["run_worktree_path"] = str(
+        tmp_path / ".build-loop" / "worktrees" / "run-test-001"
+    )
+    _write_state(tmp_path, state)
+
+    stop_closeout.run_stop(tmp_path, SESSION)
+
+    final = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert final["execution"] == {}
+    assert final["historicalExecutions"][-1]["build_loop_id"] == "bl-test-001"
+    run = final["runs"][0]
+    assert run["createdRefs"][0]["branch"] == "bl/run-test-001"
+    assert run["createdRefs"][0]["status"] == "open"
+    assert run["branch_closeout"]["status"] == "pending_external_merge"
+    assert "owner_release" not in run["branch_closeout"]
+    assert not (tmp_path / ".build-loop" / "branch-closeout").exists()
+
+
+def test_release_identity_matches_legacy_run_and_id_fields(tmp_path):
+    state = {
+        "execution": {
+            "run_id": "legacy-run-id",
+            "branch_name": "bl/run-legacy",
+            "worktree_path": str(tmp_path / "legacy-wt"),
+        },
+        "runs": [{"id": "legacy-run-id", "createdRefs": []}],
+    }
+    _write_state(tmp_path, state)
+
+    stop_closeout._release_identity(tmp_path, "legacy-run-id")
+
+    final = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert final["execution"] == {}
+    assert final["runs"][0]["createdRefs"][0]["branch"] == "bl/run-legacy"
+    assert final["runs"][0]["createdRefs"][0]["path"] == str(tmp_path / "legacy-wt")
+
+
+def test_canonical_run_identity_precedence():
+    assert stop_closeout._canonical_run_identity(
+        {"build_loop_id": "bli", "run_id": "run", "id": "id"}
+    ) == "bli"
+    assert stop_closeout._canonical_run_identity({"run_id": "run", "id": "id"}) == "run"
+    assert stop_closeout._canonical_run_identity({"id": "id"}) == "id"
+
+
+def test_release_does_not_duplicate_or_downgrade_terminal_ref(tmp_path):
+    path = str(tmp_path / "wt")
+    state = {
+        "execution": {
+            "build_loop_id": "bl-terminal",
+            "run_worktree_branch": "bl/run-terminal",
+            "run_worktree_path": path,
+        },
+        "runs": [{
+            "run_id": "bl-terminal",
+            "createdRefs": [{
+                "kind": "worktree",
+                "path": path,
+                "branch": "bl/run-terminal",
+                "status": "closed",
+                "closed_ts": "2026-07-01T00:00:00Z",
+                "custom": "preserve-me",
+            }],
+            "branch_closeout": {"status": "complete", "receipt_path": "receipt.json"},
+        }],
+    }
+    _write_state(tmp_path, state)
+
+    stop_closeout._release_identity(tmp_path, "bl-terminal")
+
+    run = json.loads((tmp_path / ".build-loop" / "state.json").read_text())["runs"][0]
+    assert len(run["createdRefs"]) == 1
+    assert run["createdRefs"][0]["status"] == "closed"
+    assert run["createdRefs"][0]["custom"] == "preserve-me"
+    assert run["branch_closeout"] == {"status": "complete", "receipt_path": "receipt.json"}
+
+
+def test_release_preserves_execution_when_ref_has_no_matching_run(tmp_path):
+    state = {
+        "execution": {
+            "build_loop_id": "bl-unmatched",
+            "run_worktree_branch": "bl/run-unmatched",
+            "run_worktree_path": str(tmp_path / "wt"),
+        },
+        "runs": [{"run_id": "different-run"}],
+    }
+    _write_state(tmp_path, state)
+
+    stop_closeout._release_identity(tmp_path, "bl-unmatched")
+
+    final = json.loads((tmp_path / ".build-loop" / "state.json").read_text())
+    assert final["execution"]["build_loop_id"] == "bl-unmatched"
+    assert "historicalExecutions" not in final

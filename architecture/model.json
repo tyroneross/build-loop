@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "f07b0d4cf0fd0e7215fc94e0c5231a9a3cd0b4086ea4cdacc16372a0f4ac49f4"
+    "content_sha256": "50ddcb9206e6d245701a6dc1219051840c82611533994b1459e624b98915b397"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1392,7 +1392,7 @@
         "file": "skills/runtime-parity-verification/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-08"
+          "date": "2026-07-11"
         }
       },
       "security-methodology": {
@@ -1499,6 +1499,7 @@
       "scripts/backlog.py": "backlog.py — host-agnostic, multi-repo BACKLOG SYSTEM for build-loop.",
       "scripts/blm.py": "Host-neutral build-loop-memory CLI.",
       "scripts/blm_api.py": "Optional local HTTP adapter for build-loop-memory.",
+      "scripts/branch_closeout_gate.py": "Verify branch hygiene before a run can post its terminal closeout phase.",
       "scripts/bridge_lesson_to_harness.py": "Mirror a build-loop-memory lesson/feedback into the harness auto-memory store.",
       "scripts/brief_mece_validator.py": "Validate peer handoff briefs for the seven MECE ownership fields.\"\"\"",
       "scripts/budget_check.py": "Wall-clock budget tracker for the autonomous iterate loop (plan §14.4 B).",
@@ -1784,9 +1785,9 @@
       "scripts/working_state_writer.py": "working_state_writer.py — per-step execution observability for build-loop.",
       "scripts/worktree_guard.py": "Guard build-loop worktree creation so worktrees never sprawl outside the canonical location.",
       "scripts/worktree_isolation_lint.py": "Worktree-isolation lint — block background committing agents from the live checkout.",
-      "scripts/worktree_reaper/__init__.py": "Scan ``.build-loop/worktrees/run-*`` for crashed-run leaks and reap them.",
-      "scripts/worktree_reaper/__main__.py": "CLI entry point: ``python3 -m scripts.worktree_reaper``.",
-      "scripts/worktree_reaper/reaper.py": "Core reaper logic: detect leaked run worktrees and bundle-then-remove them.",
+      "scripts/worktree_reaper/__init__.py": "Report stale ``.build-loop/worktrees/run-*`` candidates.",
+      "scripts/worktree_reaper/__main__.py": "CLI entry point for report-only worktree discovery and explicit delegation.",
+      "scripts/worktree_reaper/reaper.py": "Report leaked run worktrees and explicitly delegate safe finalization.",
       "scripts/worktree_reaper/tests/__init__.py": "",
       "scripts/write_cost_ledger_row.py": "Append a single row to ~/.bookmark/cost-ledger.jsonl.",
       "scripts/write_decision/__init__.py": "write_decision package — atomic decision writer for repo-local episodic memory.",

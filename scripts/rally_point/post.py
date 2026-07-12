@@ -55,6 +55,20 @@ except ImportError:  # script import (sys.path-inserted, no parent package)
     from revision import bump_revision  # type: ignore
 
 
+def _terminal_closeout_ready(workdir: Path | None, run_id: str) -> bool:
+    """Gate the canonical terminal phase post on verified branch hygiene."""
+    if workdir is None or not run_id:
+        return False
+    try:
+        try:
+            from scripts.branch_closeout_gate import check_branch_closeout
+        except ImportError:
+            from branch_closeout_gate import check_branch_closeout  # type: ignore
+        return bool(check_branch_closeout(workdir, run_id).get("ready"))
+    except Exception:
+        return False
+
+
 def post(
     *,
     channel_dir: Path,
@@ -85,6 +99,9 @@ def post(
     channel) visible during the migration window.
     """
     try:
+        if kind == "phase" and (payload or {}).get("phase") == "run-closeout":
+            if not _terminal_closeout_ready(workdir, run_id):
+                return None
         d = Path(channel_dir)
         d.mkdir(parents=True, exist_ok=True)
 

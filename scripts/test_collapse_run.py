@@ -109,7 +109,7 @@ class TestMergedBranch:
             "createdRefs": [{"branch": "feat-merged", "path": None, "review_hold": False}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert len(result["deleted"]) == 1
         assert result["deleted"][0]["branch"] == "feat-merged"
@@ -136,7 +136,7 @@ class TestMergedBranch:
             "createdRefs": [{"branch": "feat-wt", "path": fake_wt, "review_hold": False}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert any(d["branch"] == "feat-wt" for d in result["deleted"])
         assert result["kept_for_review"] == []
@@ -157,7 +157,7 @@ class TestMergedBranch:
             "createdRefs": [{"branch": "feat-live-wt", "path": str(wt), "review_hold": False}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert any(d["branch"] == "feat-live-wt" for d in result["deleted"])
         assert not wt.exists(), "worktree folder should have been removed"
@@ -179,7 +179,7 @@ class TestUnmergedReviewHold:
             "riskyBranches": [{"branch": "risky-branch", "path": str(wt), "summary": "risky work"}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert result["deleted"] == []
         assert len(result["kept_for_review"]) == 1
@@ -211,7 +211,7 @@ class TestUnmergedNoReviewHold:
             "dispatchedWorktrees": [{"branch": "dispatch-wt", "path": str(wt), "dispatch_ts": "2026-01-01T00:00:00Z"}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert result["deleted"] == []
         assert result["kept_for_review"] == []
@@ -242,7 +242,7 @@ class TestBundle:
             "createdRefs": [{"branch": "feat-bundle", "path": None, "review_hold": False}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert result["bundle_path"] is not None
         assert Path(result["bundle_path"]).exists()
@@ -253,7 +253,7 @@ class TestBundle:
 
         _write_state(repo, {"run_id": "run_empty"})
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert result["bundle_path"] is None
 
@@ -270,12 +270,12 @@ class TestIdempotent:
             "createdRefs": [{"branch": "feat-idem", "path": None, "review_hold": False}],
         })
 
-        result1 = collapse_run.collapse(repo, run_id="latest")
+        result1 = collapse_run.collapse(repo, run_id="latest", owner_released=True)
         assert len(result1["deleted"]) == 1
         assert result1["errors"] == []
 
         # Second run: closed ledger rows are skipped, so closeout is idempotent.
-        result2 = collapse_run.collapse(repo, run_id="latest")
+        result2 = collapse_run.collapse(repo, run_id="latest", owner_released=True)
         assert result2["deleted"] == []
         assert result2["errors"] == []
 
@@ -292,7 +292,7 @@ class TestFailSoft:
         })
 
         # Must not raise; exit code handled by main(), here we call collapse() directly
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         assert len(result["errors"]) == 1
         assert "ghost-branch-does-not-exist" in result["errors"][0]
@@ -346,7 +346,7 @@ class TestMainNeverDeleted:
             "createdRefs": [{"branch": "main", "path": None, "review_hold": False}],
         })
 
-        result = collapse_run.collapse(repo, run_id="latest")
+        result = collapse_run.collapse(repo, run_id="latest", owner_released=True)
 
         # main listed in errors as skipped, not deleted
         assert result["deleted"] == []
@@ -371,13 +371,53 @@ class TestCLI:
 
         r = subprocess.run(
             [sys.executable, str(_SCRIPTS / "collapse_run.py"),
-             "--workdir", str(repo), "--run-id", "latest", "--json"],
+             "--workdir", str(repo), "--run-id", "latest", "--owner-released", "--json"],
             capture_output=True, text=True,
         )
         assert r.returncode == 0
         data = json.loads(r.stdout)
         assert data["run_id"] == "run_cli"
         assert isinstance(data["deleted"], list)
+        assert data["bundle_verified"] is True
+
+    def test_strict_cli_requires_owner_release_and_terminal_receipt(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _make_branch(repo, "feat-strict-cli", merge_to_main=True)
+        _write_state(repo, {
+            "run_id": "run_strict_cli",
+            "createdRefs": [{
+                "branch": "feat-strict-cli",
+                "path": None,
+                "review_hold": False,
+            }],
+        })
+        base = [
+            sys.executable,
+            str(_SCRIPTS / "collapse_run.py"),
+            "--workdir",
+            str(repo),
+            "--run-id",
+            "run_strict_cli",
+            "--branch",
+            "feat-strict-cli",
+            "--strict",
+            "--json",
+        ]
+
+        denied = subprocess.run(base, capture_output=True, text=True)
+        assert denied.returncode == 1
+        assert "owner release required" in denied.stdout
+        assert _git(repo, "show-ref", "--verify", "refs/heads/feat-strict-cli").returncode == 0
+
+        allowed = subprocess.run(
+            [*base[:-1], "--owner-released", "--json"],
+            capture_output=True,
+            text=True,
+        )
+        assert allowed.returncode == 0, allowed.stderr
+        payload = json.loads(allowed.stdout)
+        assert payload["strict_success"] is True
+        assert payload["receipt_status"] == "complete"
 
     def test_cli_missing_state_exits_1(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)

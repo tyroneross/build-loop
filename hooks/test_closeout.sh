@@ -32,7 +32,9 @@ make_project() {
     "current_session_id": "sess-itest",
     "started_by_session_id": "sess-itest",
     "last_heartbeat_at": "2999-01-01T00:00:00Z",
-    "run_label": "itest#001"
+    "run_label": "itest#001",
+    "run_worktree_branch": "bl/run-itest-001",
+    "run_worktree_path": ".build-loop/worktrees/run-itest-001"
   },
   "runs": []
 }
@@ -41,6 +43,7 @@ JSON
 }
 
 runs_count() { python3 -c "import json,sys;print(len(json.load(open(sys.argv[1])).get('runs',[])))" "$1/.build-loop/state.json"; }
+branch_ledger_ok() { python3 -c 'import json,sys;s=json.load(open(sys.argv[1]));r=s["runs"][0];x=r["createdRefs"][0];raise SystemExit(0 if s["execution"]=={} and x["branch"]=="bl/run-itest-001" and x["status"]=="open" and r["branch_closeout"]["status"]=="pending_external_merge" and "owner_release" not in r["branch_closeout"] else 1)' "$1/.build-loop/state.json"; }
 
 # --- 1. present + matching session → records + surfaces WARN + exit 0 -------
 P="$(make_project)"
@@ -51,7 +54,16 @@ if [ "$RC" -eq 0 ] && [ "$(runs_count "$P")" = "1" ] && printf '%s' "$OUT" | gre
 else
     bad "present+stakes (rc=$RC runs=$(runs_count "$P") out=$OUT)"
 fi
-[ -f "$P/.build-loop/closeout-pending/bl-itest-001.md" ] && ok "closeout-pending marker written" || bad "marker not written"
+if [ -f "$P/.build-loop/closeout-pending/bl-itest-001.md" ]; then
+    ok "closeout-pending marker written"
+else
+    bad "marker not written"
+fi
+if branch_ledger_ok "$P"; then
+    ok "Stop archived identity after persisting open branch ownership"
+else
+    bad "branch ownership missing or over-authorized"
+fi
 
 # --- 1b. second Stop in the same run → no-op (no double-record, no advisory) -
 OUT2="$(printf '{"session_id":"sess-itest"}' | CLAUDE_PROJECT_DIR="$P" CLAUDE_PLUGIN_ROOT="$REPO" bash "$HOOK" stop)"
@@ -73,7 +85,7 @@ fi
 rm -rf "$P"
 
 # --- 2. no .build-loop/ → silent exit 0 ------------------------------------
-P2="$(mktemp -d)"
+P2="$(mktemp -d /tmp/build-loop-closeout-none.XXXXXX)"
 OUT="$(printf '{"session_id":"x"}' | CLAUDE_PROJECT_DIR="$P2" CLAUDE_PLUGIN_ROOT="$REPO" bash "$HOOK" stop)"
 RC=$?
 if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then

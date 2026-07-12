@@ -1,17 +1,6 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for ``scripts/worktree_reaper``.
-
-Acceptance criteria (from SPEC-run-worktree-isolation.md):
-  AC-R1: A leaked run worktree older than --min-age-hours is bundled then
-         removed; the bundle survives.
-  AC-R2: An active run's worktree (state.execution.run_worktree_branch) is
-         NEVER reaped.
-  AC-R3: A young worktree (< min-age-hours) is skipped.
-  AC-R4: --dry-run performs no destructive actions.
-  AC-R5: Idempotent — running twice in a row is a no-op the second time.
-  AC-R6: An orphan folder (no backing branch) is removed without bundling.
-"""
+"""Safety contract tests for the report-only worktree reaper."""
 from __future__ import annotations
 
 import json
@@ -21,22 +10,16 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 _HERE = Path(__file__).resolve().parent
 _PKG = _HERE.parent
 _SCRIPTS = _PKG.parent
-for _d in (_SCRIPTS, _PKG):
-    sd = str(_d)
-    if sd not in sys.path:
-        sys.path.insert(0, sd)
+_REPO = _SCRIPTS.parent
+for _d in (_REPO, _SCRIPTS, _PKG):
+    if str(_d) not in sys.path:
+        sys.path.insert(0, str(_d))
 
 from worktree_reaper.reaper import reap_worktrees  # noqa: E402
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _git(workdir: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -49,7 +32,7 @@ def _git(workdir: Path, *args: str, check: bool = True) -> subprocess.CompletedP
 
 def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
-    repo.mkdir()
+    repo.mkdir(parents=True)
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "Test")
@@ -59,173 +42,297 @@ def _make_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _make_run_worktree(repo: Path, short: str, with_commit: bool = True) -> tuple[Path, str]:
+def _make_run_worktree(
+    repo: Path,
+    short: str,
+    *,
+    unmerged: bool = False,
+) -> tuple[Path, str, str]:
+    run_id = f"bl-20260711T000000Z-test-{short}"
     branch = f"bl/run-{short}"
     path = repo / ".build-loop" / "worktrees" / f"run-{short}"
     path.parent.mkdir(parents=True, exist_ok=True)
     _git(repo, "worktree", "add", "-b", branch, str(path), "main")
-    if with_commit:
+    if unmerged:
         (path / "work.txt").write_text(f"work-{short}\n")
         _git(path, "add", "work.txt")
         _git(path, "commit", "-m", f"work {short}")
-    return path, branch
+    return path, branch, run_id
 
 
-def _age_folder(path: Path, hours: float) -> None:
-    """Backdate a folder's mtime by ``hours`` hours."""
-    t = time.time() - (hours * 3600.0)
-    os.utime(path, (t, t))
+def _age_folder(path: Path, hours: float = 24) -> None:
+    timestamp = time.time() - (hours * 3600)
+    os.utime(path, (timestamp, timestamp))
 
 
-def _write_state_with_active(repo: Path, active_branch: str | None) -> None:
+def _write_state(
+    repo: Path,
+    run_id: str,
+    branch: str,
+    path: Path,
+    *,
+    active: bool = False,
+    duplicate: bool = False,
+) -> None:
+    execution = {
+        "build_loop_id": run_id,
+        "run_worktree_branch": branch,
+        "run_worktree_path": str(path.resolve()),
+    }
+    row = {
+        "run_id": run_id,
+        "createdRefs": [{
+            "kind": "worktree",
+            "branch": branch,
+            "path": str(path.resolve()),
+            "status": "open",
+        }],
+    }
+    state = {
+        "execution": execution if active else {},
+        "historicalExecutions": [] if active else [execution],
+        "runs": [row],
+    }
+    if duplicate:
+        state["runs"].append(
+            {
+                "run_id": run_id + "-other",
+                "createdRefs": [{
+                    "branch": branch,
+                    "path": str(path.resolve()),
+                    "status": "open",
+                }],
+            }
+        )
     bl = repo / ".build-loop"
     bl.mkdir(exist_ok=True)
-    state = {"execution": {"build_loop_id": "bl-active", "run_worktree_branch": active_branch}}
     (bl / "state.json").write_text(json.dumps(state, indent=2))
 
 
-# ---------------------------------------------------------------------------
-# AC-R1 — leaked run worktree gets bundled and removed
-# ---------------------------------------------------------------------------
-
-def test_leaked_run_worktree_is_bundled_and_removed(tmp_path: Path) -> None:
+def test_default_is_report_only_and_non_destructive(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
-    wt_path, branch = _make_run_worktree(repo, "111111")
-    _age_folder(wt_path, hours=24)
-    # No state.json execution block -> nothing active.
+    path, branch, run_id = _make_run_worktree(repo, "111111")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
 
     result = reap_worktrees(repo)
-
-    assert any(e["branch"] == branch for e in result.bundled_and_removed), (
-        f"expected {branch} reaped; result={result.to_dict()}"
-    )
-    assert not wt_path.exists(), "worktree folder must be removed"
-    # Bundle present and non-empty.
-    bundles = list((repo / ".build-loop" / "bundles").glob("reaped-*.bundle"))
-    assert bundles, "bundle file must exist"
-    assert all(b.stat().st_size > 0 for b in bundles)
-    # Branch ref deleted.
-    assert not _git(repo, "branch", "--list", branch, check=False).stdout.strip()
-
-
-# ---------------------------------------------------------------------------
-# AC-R2 — active run's worktree is NEVER reaped
-# ---------------------------------------------------------------------------
-
-def test_active_run_worktree_is_skipped(tmp_path: Path) -> None:
-    repo = _make_repo(tmp_path)
-    wt_path, branch = _make_run_worktree(repo, "222222")
-    _age_folder(wt_path, hours=24)  # old enough to be reapable...
-    _write_state_with_active(repo, active_branch=branch)  # ...but it's active.
-
-    result = reap_worktrees(repo)
-
-    assert result.bundled_and_removed == []
-    assert any(e["branch"] == branch for e in result.skipped_active), (
-        f"expected {branch} in skipped_active; result={result.to_dict()}"
-    )
-    assert wt_path.exists(), "active worktree must remain"
-
-
-# ---------------------------------------------------------------------------
-# AC-R3 — young worktree is skipped
-# ---------------------------------------------------------------------------
-
-def test_young_worktree_is_skipped(tmp_path: Path) -> None:
-    repo = _make_repo(tmp_path)
-    wt_path, branch = _make_run_worktree(repo, "333333")
-    # No aging — folder is fresh (mtime ≈ now).
-
-    result = reap_worktrees(repo, min_age_hours=2.0)
-
-    assert result.bundled_and_removed == []
-    assert any(e["path"] == str(wt_path) for e in result.skipped_too_young), (
-        f"expected {wt_path} in skipped_too_young; result={result.to_dict()}"
-    )
-    assert wt_path.exists()
-
-
-# ---------------------------------------------------------------------------
-# AC-R4 — dry-run is non-destructive
-# ---------------------------------------------------------------------------
-
-def test_dry_run_makes_no_changes(tmp_path: Path) -> None:
-    repo = _make_repo(tmp_path)
-    wt_path, branch = _make_run_worktree(repo, "444444")
-    _age_folder(wt_path, hours=24)
-
-    result = reap_worktrees(repo, dry_run=True)
 
     assert result.dry_run is True
-    assert any(e["branch"] == branch for e in result.bundled_and_removed)
-    # Nothing actually changed.
-    assert wt_path.exists()
-    assert _git(repo, "branch", "--list", branch).stdout.strip()
-    assert not (repo / ".build-loop" / "bundles").exists() or not list(
-        (repo / ".build-loop" / "bundles").glob("reaped-*.bundle")
+    assert result.candidates == [{"path": str(path), "branch": branch, "run_id": run_id}]
+    assert result.bundled_and_removed == []
+    assert path.exists()
+    assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}").returncode == 0
+    assert not (repo / ".build-loop" / "bundles").exists()
+
+
+def test_act_without_owner_release_remains_report_only(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    path, branch, run_id = _make_run_worktree(repo, "222222")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    result = reap_worktrees(repo, dry_run=False, act=True, owner_released=False)
+
+    assert result.dry_run is True
+    assert any("owner-released" in row["reason"] for row in result.errors)
+    assert path.exists()
+    assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}").returncode == 0
+
+
+def test_explicit_owner_released_act_delegates_to_strict_collapse(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    path, branch, run_id = _make_run_worktree(repo, "333333")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    result = reap_worktrees(
+        repo,
+        dry_run=False,
+        act=True,
+        owner_released=True,
     )
 
+    assert result.errors == []
+    assert len(result.bundled_and_removed) == 1
+    finalized = result.bundled_and_removed[0]
+    assert Path(finalized["bundle"]).is_file()
+    assert Path(finalized["receipt"]).is_file()
+    assert not path.exists()
+    assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode != 0
 
-# ---------------------------------------------------------------------------
-# AC-R5 — idempotent
-# ---------------------------------------------------------------------------
 
-def test_idempotent_second_run_is_noop(tmp_path: Path) -> None:
+def test_active_worktree_is_never_delegated(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
-    wt_path, branch = _make_run_worktree(repo, "555555")
-    _age_folder(wt_path, hours=24)
+    path, branch, run_id = _make_run_worktree(repo, "444444")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path, active=True)
 
-    first = reap_worktrees(repo)
-    assert first.bundled_and_removed, "first pass must reap"
+    result = reap_worktrees(
+        repo,
+        dry_run=False,
+        act=True,
+        owner_released=True,
+    )
 
-    second = reap_worktrees(repo)
-    assert second.bundled_and_removed == []
-    assert second.removed_orphan == []
-    assert second.errors == []
+    assert any(row["branch"] == branch for row in result.skipped_active)
+    assert result.bundled_and_removed == []
+    assert path.exists()
 
 
-# ---------------------------------------------------------------------------
-# AC-R6 — orphan folder (no backing branch) is removed without bundling
-# ---------------------------------------------------------------------------
-
-def test_orphan_folder_without_branch_is_removed(tmp_path: Path) -> None:
+def test_young_and_unmerged_worktrees_are_preserved(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
-    # Create a folder that LOOKS like a leak but has no git linkage.
-    orphan = repo / ".build-loop" / "worktrees" / "run-666666"
+    young, young_branch, young_run = _make_run_worktree(repo, "555555")
+    _write_state(repo, young_run, young_branch, young)
+    result = reap_worktrees(repo)
+    assert any(row["path"] == str(young) for row in result.skipped_too_young)
+    assert young.exists()
+
+    # Use a separate repo because state attribution deliberately names one run.
+    repo2 = _make_repo(tmp_path / "second")
+    unmerged, branch, run_id = _make_run_worktree(repo2, "666666", unmerged=True)
+    _age_folder(unmerged)
+    _write_state(repo2, run_id, branch, unmerged)
+    result2 = reap_worktrees(
+        repo2,
+        dry_run=False,
+        act=True,
+        owner_released=True,
+    )
+    assert any(row["branch"] == branch for row in result2.skipped_unmerged)
+    assert unmerged.exists()
+    assert _git(repo2, "show-ref", "--verify", f"refs/heads/{branch}").returncode == 0
+
+
+def test_orphan_and_ambiguous_candidates_are_preserved(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    orphan = repo / ".build-loop" / "worktrees" / "run-orphan"
     orphan.mkdir(parents=True)
-    (orphan / "stray.txt").write_text("not a real worktree\n")
-    _age_folder(orphan, hours=24)
-    # Defensively assert: the corresponding branch does not exist.
-    assert not _git(repo, "branch", "--list", "bl/run-666666", check=False).stdout.strip()
+    (orphan / "data.txt").write_text("unknown\n")
+    _age_folder(orphan)
+    (repo / ".build-loop" / "state.json").write_text(json.dumps({"runs": []}))
 
-    result = reap_worktrees(repo)
-
-    # Either bundled_and_removed (if `git worktree remove` happened) or
-    # removed_orphan — both are acceptable terminal states; the folder MUST be gone.
-    classified = (
-        any(e["path"] == str(orphan) for e in result.removed_orphan)
-        or any(e["path"] == str(orphan) for e in result.bundled_and_removed)
+    orphan_result = reap_worktrees(
+        repo,
+        dry_run=False,
+        act=True,
+        owner_released=True,
     )
-    assert classified, f"orphan folder not classified; result={result.to_dict()}"
-    assert not orphan.exists(), "orphan folder must be gone"
-    # And critically: no bundle was made for a no-ref orphan (no work to save).
-    bundles = list((repo / ".build-loop" / "bundles").glob("reaped-*.bundle"))
-    assert not bundles, "no bundle should be created for an orphan with no branch"
+    assert any(row["path"] == str(orphan) for row in orphan_result.skipped_unattributed)
+    assert orphan.exists()
+    assert orphan_result.removed_orphan == []
+
+    path, branch, run_id = _make_run_worktree(repo, "777777")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path, duplicate=True)
+    ambiguous = reap_worktrees(
+        repo,
+        dry_run=False,
+        act=True,
+        owner_released=True,
+    )
+    assert any(
+        row.get("branch") == branch and "ambiguous" in row["reason"]
+        for row in ambiguous.skipped_unattributed
+    )
+    assert path.exists()
 
 
-# ---------------------------------------------------------------------------
-# Bonus: non-run-prefixed siblings under worktrees/ are left alone
-# ---------------------------------------------------------------------------
-
-def test_non_run_prefixed_folders_are_skipped(tmp_path: Path) -> None:
+def test_pathless_or_mismatched_attribution_is_never_delegated(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
-    # E.g. a dispatch worktree from collapse_run that uses a different naming
-    # convention; should not be touched by the run-worktree reaper.
-    other = repo / ".build-loop" / "worktrees" / "dispatch-chunk-7"
+    path, branch, run_id = _make_run_worktree(repo, "787878")
+    _age_folder(path)
+    state = {
+        "execution": {},
+        "runs": [{
+            "run_id": run_id,
+            "createdRefs": [{"branch": branch, "status": "open"}],
+        }],
+    }
+    (repo / ".build-loop/state.json").write_text(json.dumps(state, indent=2))
+
+    pathless = reap_worktrees(
+        repo,
+        dry_run=False,
+        act=True,
+        owner_released=True,
+    )
+
+    assert pathless.bundled_and_removed == []
+    assert any(
+        row.get("branch") == branch and "no unique durable run attribution" in row["reason"]
+        for row in pathless.skipped_unattributed
+    )
+    assert path.exists()
+    assert _git(repo, "show-ref", "--verify", f"refs/heads/{branch}").returncode == 0
+
+
+def test_non_run_prefixed_folder_is_ignored(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    other = repo / ".build-loop" / "worktrees" / "dispatch-1"
     other.mkdir(parents=True)
-    _age_folder(other, hours=48)
+    _age_folder(other)
+    (repo / ".build-loop" / "state.json").write_text(json.dumps({"runs": []}))
 
     result = reap_worktrees(repo)
 
-    assert any(e["path"] == str(other) for e in result.skipped_not_run)
+    assert any(row["path"] == str(other) for row in result.skipped_not_run)
     assert other.exists()
+
+
+def test_both_cli_entry_modes_default_to_report_only(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    path, branch, run_id = _make_run_worktree(repo, "888888")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    commands = [
+        [sys.executable, "-m", "scripts.worktree_reaper"],
+        [sys.executable, str(_PKG / "__main__.py")],
+    ]
+    for command in commands:
+        proc = subprocess.run(
+            [
+                *command,
+                "--workdir",
+                str(repo),
+                "--min-age-hours",
+                "0",
+                "--json",
+            ],
+            cwd=_REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        payload = json.loads(proc.stdout)
+        assert payload["dry_run"] is True
+        assert payload["candidates"][0]["branch"] == branch
+        assert path.exists()
+
+
+def test_cli_act_requires_owner_release(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    path, branch, run_id = _make_run_worktree(repo, "999999")
+    _age_folder(path)
+    _write_state(repo, run_id, branch, path)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.worktree_reaper",
+            "--workdir",
+            str(repo),
+            "--act",
+            "--json",
+        ],
+        cwd=_REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 1
+    assert path.exists()
+    assert "owner-released" in proc.stdout

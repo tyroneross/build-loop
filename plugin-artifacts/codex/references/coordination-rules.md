@@ -510,10 +510,10 @@ Plugin version bumps in the RossLabs ecosystem update **three** files in lockste
 
 1. **Reap this run's session presence:** `scripts/rally_point/lifecycle.reap_my_sessions(channel_dir, my_session_id)`.
 2. **Stop watchers:** SIGTERM any `coordination_watch.py --interval N` processes started during the run.
-3. **Collapse branches and worktrees:** merge the winning/validated line(s) to `main` first (solo-on-main runs skip this — work is already on main), then call `scripts/collapse_run.py` as described in `agents/build-orchestrator.md` §"Phase D: Closeout" step 4. That step is the single source of truth for the collapse invocation, ordering, JSON-to-report wiring, and `createdRefs[]` lifecycle status updates.
+3. **Finalize branches and worktrees:** merge the winning/validated line(s) to `main` first (solo-on-main runs skip this — work is already on main), confirm explicit owner release, then call the exact-run/exact-branch strict `scripts/collapse_run.py` invocation described in `references/phase-d-closeout.md` step 4. `collapse_run.py` is the only destructive authority. A verified terminal receipt, `strict_success:true`, and `errors:[]` are required before the integrator marks branch hygiene complete. The canonical `run-closeout` phase post enforces that receipt through `branch_closeout_gate.py`; direct Rally handoff resolution remains outside the gate and is backlog item `BUILDLOOP-COORD-001`.
 4. **Archive the coord file:** `mv .build-loop/coordination/<this-coord-file>.md .build-loop/coordination/archived/`. Not deletion — preserves the durable record while clearing the active queue.
 5. **Optional changes.jsonl rotation:** `scripts/rally_point/lifecycle.rotate_changes_log(channel_dir, max_mb=1, max_entries=500)` rotates when either threshold is exceeded.
-6. **Final post:** `post(kind="phase", payload={"phase": "run-closeout", ...})` signals to channel that this run is done; future readers know to skip its presence/changes when scoping.
+6. **Final post:** `post(kind="phase", run_id=<exact-run-id>, workdir=Path("$PWD"), payload={"phase": "run-closeout", ...})` rejects nonterminal branch hygiene before signaling that the run is done.
 7. **Track in state:** `state.json.runs[N].closeout_status`.
 
 The protocol is automated, not operator-discipline-dependent. Memory citation: `feedback_close_out_stops_the_watcher`.
