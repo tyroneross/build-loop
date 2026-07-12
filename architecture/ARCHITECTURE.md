@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**28 agents · 45 skills · 358 scripts · 21 hooks** (auto-discovered 57806885)
+**28 agents · 45 skills · 358 scripts · 21 hooks** (auto-discovered 8b4ce81d)
 
 <details><summary>agents</summary>
 
@@ -25,7 +25,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `api-assessor` — sonnet · _updated 2026-07-02 by Tyrone Ross_ — Use this agent when the debugging symptom involves API endpoints, REST/GraphQL errors, request/response issues, authentication, rate limiting, or server-side route handlers. Examples - "500 error", "endpoint not found", "auth failed", "CORS error".
 - `architecture-scout` — sonnet · _updated 2026-07-07 by Tyrone Ross_ — Read-only architecture analyst. Dispatched by build-loop orchestrator with a task type ('baseline', 'chunk-impact', 'review-rules', 'iterate-subgraph', 'learn-sync'). Decides native engine vs NavGator escalation per task. Returns ≤500-word structured JSON envelope. Owns architecture-related side effects (violation capture, lessons sync).
 - `assessment-orchestrator` — opus · _updated 2026-06-24 by Tyrone Ross_ — Use this agent when debugging requires multi-domain analysis, when the symptom is unclear about which domain is affected, or when you need to coordinate parallel assessments across database, frontend, API, and performance domains.
-- `build-orchestrator` — opus · _updated 2026-07-07 by Tyrone Ross_ — Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.
+- `build-orchestrator` — opus · _updated 2026-07-12 by Tyrone Ross_ — Coordinates the 5-phase development loop for significant multi-step code changes (Assess → Plan → Execute → Review → Iterate, with optional Learn). Review runs seven ordered sub-steps: Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report; Iterate loops back to Review on failure.
 - `database-assessor` — sonnet · _updated 2026-07-06 by Tyrone Ross_ — Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - "slow query", "migration failed", "constraint error", "Prisma error", "connection timeout", "vector search is stale".
 - `design-contract-specialist` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Build-loop-owned designer and sole writer to `.build-loop/app-contract/{ui.md, data.md, traceability.json}`. In Phase 2 it loads `Skill("build-loop:ui-design")` and chooses UI design direction from the needs of the thing being built: user goal, workflow density, data shape, platform, project tokens, mockups, screenshots, local design artifacts, and `skills/build-loop/references/recent-design-structures.md`. Existing…
 - `fact-checker` — fable · _updated 2026-06-24 by Tyrone Ross_ — Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.
