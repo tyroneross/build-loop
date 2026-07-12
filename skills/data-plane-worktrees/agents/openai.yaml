@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data-Plane Worktrees"
+  short_description: "Isolate mutable state across Git worktrees"
+  default_prompt: "Use $data-plane-worktrees to isolate this database and generated-state workflow across concurrent Git worktrees."
