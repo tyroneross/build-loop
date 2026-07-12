@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "50ddcb9206e6d245701a6dc1219051840c82611533994b1459e624b98915b397"
+    "content_sha256": "5e6a632274f48fc2c041f38f7ddac9f6a7ef6ef8c1583fd5d99e6e7c206378be"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1647,6 +1647,7 @@
       "scripts/project_registry.py": "Stable-ID + alias-walking project registry (memory-identity-graph Phase 1).",
       "scripts/project_resolver.py": "Resolve a current working directory to a project tag.",
       "scripts/promote_violation_to_lesson.py": "Promote recurring architecture violations into build-loop-native lessons.",
+      "scripts/promotion_queue.py": "promotion_queue.py — durable-store \"queue-and-report\", not silent-skip.",
       "scripts/prune_codex_plugin_cache.py": "Compatibility wrapper for pruning Codex plugin cache versions.\"\"\"",
       "scripts/prune_plugin_cache.py": "Prune stale plugin cache versions for Claude Code and Codex.",
       "scripts/push_hold.py": "push_hold.py — manage and evaluate the build-loop \"push HOLD\" marker.",

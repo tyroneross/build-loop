@@ -207,6 +207,28 @@ def promote_durable(
         if not slug or _SCRATCH_SLUG_RE.match(slug):
             return {"durable_path": None, "status": "skipped",
                     "reason": f"non-project slug refused: {slug!r}"}
+        # FIX-2 (2026-07-11): a peer-held store must QUEUE the durable promotion
+        # into the consumer repo, not silently skip it. Replaces the observed
+        # "point --memory-root at scratch to skip" data-loss pattern.
+        try:
+            import sys as _sys
+            _scripts = str(Path(__file__).resolve().parent.parent)
+            if _scripts not in _sys.path:
+                _sys.path.insert(0, _scripts)
+            import promotion_queue as _pq  # noqa: PLC0415
+            if _pq.store_busy(memory_root):
+                env = _pq.enqueue(
+                    workdir,
+                    kind="retro-durable",
+                    payload={"sections": sections, "intent_one_line": intent_one_line,
+                             "repo": repo},
+                    reason="store peer-held — retro durable promotion queued",
+                    run_id=run_id,
+                )
+                return {"durable_path": None, "status": "queued",
+                        "reason": env.get("reason"), "queue_id": env.get("id")}
+        except Exception as _exc:  # noqa: BLE001 — queueing is best-effort; fall through to write
+            pass
         date = _today_iso()
         outdir = memory_root / "projects" / slug / "retrospectives" / date
         if not memory_root.exists():

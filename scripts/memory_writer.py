@@ -850,6 +850,40 @@ def migrate(
 # ---------------------------------------------------------------------------
 
 
+def _maybe_queue_lesson_on_busy(args: argparse.Namespace, body: str, file_rel: str) -> dict | None:
+    """FIX-2: when the canonical store is peer-held, QUEUE the lesson into the
+    consumer repo's ``.build-loop/pending-promotions/`` instead of silently
+    skipping. Returns the enqueue envelope when queued, else None (write proceeds).
+
+    Guarded by ``--on-busy queue`` (default). A ``--memory-dir`` override to a
+    caller-chosen path is respected verbatim (advanced/test path) — the busy
+    signal is checked against the canonical ``memory_store_root`` only.
+    """
+    if getattr(args, "on_busy", "queue") != "queue":
+        return None
+    import promotion_queue  # noqa: PLC0415
+    from _paths import memory_store_root  # noqa: PLC0415
+    if not promotion_queue.store_busy(memory_store_root()):
+        return None
+    workdir = getattr(args, "workdir", None) or "."
+    return promotion_queue.enqueue(
+        workdir,
+        kind="lesson",
+        payload={
+            "name": args.name,
+            "description": args.description,
+            "type": args.type,
+            "body": body,
+            "file": file_rel,
+            "scope": args.scope,
+            "project": _cli_resolved_project(args),
+            "host": args.host,
+        },
+        reason="store peer-held — lesson queued for next closeout drain",
+        run_id=getattr(args, "run_id", None),
+    )
+
+
 def _cli_write(args: argparse.Namespace) -> int:
     body = args.body
     if args.body_file:
@@ -859,6 +893,12 @@ def _cli_write(args: argparse.Namespace) -> int:
         body = sys.stdin.read()
     # P2: --file is optional; auto-derive ``<date>-<type>-<slug>.md`` when missing.
     file_rel = args.file or canonical_filename(type_=args.type, name=args.name)
+    queued = _maybe_queue_lesson_on_busy(args, body, file_rel)
+    if queued is not None:
+        if args.json:
+            json.dump(queued, sys.stdout, sort_keys=True, default=str)
+            sys.stdout.write("\n")
+        return 0
     try:
         fm = write(
             _cli_memory_dir(args),
@@ -952,6 +992,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     bodygrp = w.add_mutually_exclusive_group()
     bodygrp.add_argument("--body", default=None, help="Inline body")
     bodygrp.add_argument("--body-file", default=None, help="Read body from this file")
+    w.add_argument("--on-busy", choices=("queue", "skip"), default="queue",
+                   help="Peer-held store behavior: queue (default) or skip.")
     w.add_argument("--json", action="store_true")
 
     a = sub.add_parser("mark-applied", help="Record cross-repo application")
