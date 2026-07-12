@@ -265,6 +265,7 @@ def _apply_retro(record: dict[str, Any], workdir: Path, memory_root: Path | None
         intent_one_line=p.get("intent_one_line"),
         repo=p.get("repo") or "",
         memory_root=memory_root,
+        bypass_busy=True,
     )
 
 
@@ -307,30 +308,41 @@ def drain(
     still_pending: list[dict[str, Any]] = []
     all_rows = _read_jsonl(queue_path(workdir))
 
-    for row in all_rows:
-        if row.get("status") != "pending":
-            continue
-        kind = row.get("kind")
-        applier = _APPLIERS.get(str(kind))
-        if applier is None:
-            row["status"] = "error"
-            row["drain_reason"] = f"no applier for kind {kind!r}"
-            drained_rows.append(row)
-            results.append({"id": row.get("id"), "kind": kind, "status": "error"})
-            continue
-        try:
-            outcome = applier(row, workdir, mem_root)
-            row["status"] = "drained"
-            row["drained_at"] = _iso_utc()
-            row["drain_result"] = outcome
-            drained_rows.append(row)
-            results.append({"id": row.get("id"), "kind": kind, "status": "drained",
-                            "outcome": outcome})
-        except Exception as exc:  # noqa: BLE001 — one bad record must not stop the drain
-            row["drain_error"] = f"{type(exc).__name__}: {exc}"
-            still_pending.append(row)
-            results.append({"id": row.get("id"), "kind": kind, "status": "failed",
-                            "error": row["drain_error"]})
+    # f2 producer: HOLD the store for the multi-write apply phase so a concurrent
+    # peer writer sees store_busy and QUEUES (its record is then carried forward by
+    # the locked re-read below). This is the real default-path producer — drain runs
+    # on every post-push closeout. The hold is always cleared (try/finally).
+    _hold = peer_hold(mem_root) if mem_root is not None else None
+    if _hold is not None:
+        _hold.__enter__()
+    try:
+        for row in all_rows:
+            if row.get("status") != "pending":
+                continue
+            kind = row.get("kind")
+            applier = _APPLIERS.get(str(kind))
+            if applier is None:
+                row["status"] = "error"
+                row["drain_reason"] = f"no applier for kind {kind!r}"
+                drained_rows.append(row)
+                results.append({"id": row.get("id"), "kind": kind, "status": "error"})
+                continue
+            try:
+                outcome = applier(row, workdir, mem_root)
+                row["status"] = "drained"
+                row["drained_at"] = _iso_utc()
+                row["drain_result"] = outcome
+                drained_rows.append(row)
+                results.append({"id": row.get("id"), "kind": kind, "status": "drained",
+                                "outcome": outcome})
+            except Exception as exc:  # noqa: BLE001 — one bad record must not stop the drain
+                row["drain_error"] = f"{type(exc).__name__}: {exc}"
+                still_pending.append(row)
+                results.append({"id": row.get("id"), "kind": kind, "status": "failed",
+                                "error": row["drain_error"]})
+    finally:
+        if _hold is not None:
+            _hold.__exit__()
 
     # Rewrite the queue with only still-pending rows; append drained rows to the audit log.
     # f3 (concurrency): the snapshot (all_rows) was read WITHOUT the lock, so a peer

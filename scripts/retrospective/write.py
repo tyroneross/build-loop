@@ -183,6 +183,7 @@ def promote_durable(
     intent_one_line: str | None = None,
     repo: str = "",
     memory_root: Path | None = None,
+    bypass_busy: bool = False,
 ) -> dict[str, Any]:
     """Best-effort durable promotion to build-loop-memory.
 
@@ -216,7 +217,10 @@ def promote_durable(
             if _scripts not in _sys.path:
                 _sys.path.insert(0, _scripts)
             import promotion_queue as _pq  # noqa: PLC0415
-            if _pq.store_busy(memory_root):
+            # bypass_busy: the drain path already confirmed the store is free and
+            # itself HOLDS it while applying — re-checking here would re-queue and
+            # never drain the retro records.
+            if not bypass_busy and _pq.store_busy(memory_root):
                 env = _pq.enqueue(
                     workdir,
                     kind="retro-durable",

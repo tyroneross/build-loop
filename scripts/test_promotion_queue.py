@@ -208,3 +208,22 @@ def test_drain_preserves_row_enqueued_mid_drain(monkeypatch, tmp_path):
     ids = {r["run_id"] for r in pending}
     assert "concurrent" in ids  # survived the rewrite
     assert "orig" not in ids    # the processed one is gone from the queue
+
+
+def test_drain_holds_store_during_apply(monkeypatch, tmp_path):
+    """f2 producer: the store is marked busy WHILE drain applies, then released."""
+    monkeypatch.delenv(pq.BUSY_ENV, raising=False)
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    pq.enqueue(tmp_path, kind="milestone", payload={"summary": "s"}, run_id="r")
+
+    observed = {}
+
+    def _observing_applier(record, workdir, memory_root):
+        observed["busy_during_apply"] = pq.store_busy(memory_root)
+        return {"status": "ok"}
+
+    monkeypatch.setitem(pq._APPLIERS, "milestone", _observing_applier)
+    pq.drain(tmp_path, memory_root=str(mem))
+    assert observed["busy_during_apply"] is True     # held during apply
+    assert pq.store_busy(mem) is False               # released after

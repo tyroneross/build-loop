@@ -250,6 +250,17 @@ Run once after this version of build-loop is installed; the migration completes 
 - `memory_index.py append` — `fcntl.flock(LOCK_EX)` on `INDEX.jsonl.lock`; multi-writer safe across hosts.
 - `memory_update_ledger.py append` — `fcntl.flock(LOCK_EX)` on `updates.jsonl.lock`; append-only and multi-writer safe.
 
+### Peer-held store — queue, never silent-skip (`promotion_queue.py`)
+
+When the canonical store is busy / peer-held, a durable write MUST enqueue, not skip. Observed 2026-07-11: three retrospectives skipped durable promotion because a peer held the store (agents pointed `--memory-root` at a scratch path) — silent loss. `scripts/promotion_queue.py` is the queue-and-report primitive.
+
+- **Busy signal** (`store_busy`): the env `BUILD_LOOP_MEMORY_BUSY` OR a `<memory_root>/.peer-hold` marker.
+- **Producer** — raise the signal around a long store batch so peers queue instead of racing:
+  - `with promotion_queue.peer_hold(memory_root): ...` (context manager), or the `hold` / `release` CLI (`python3 scripts/promotion_queue.py --memory-root <root> hold`).
+  - `promotion_queue.drain` already wraps its multi-write apply phase in `peer_hold` (fires on every post-push closeout), and `append_milestone.py`'s fcntl lock-timeout is the organic milestone-lane producer.
+- **Queue** lives in the CONSUMER repo (`.build-loop/pending-promotions/queue.jsonl`), never in build-loop-memory, so a held store cannot block enqueue.
+- **Drain** replays queued milestone / lesson / retro-durable records via the existing writers at the next closeout (`python3 -m closeout --source post-push`) or `promotion_queue.py drain`. A record enqueued mid-drain is carried forward (locked re-read), never dropped.
+
 ## Append-only milestones (anti-rewrite-drift)
 
 ### The problem this solves
