@@ -93,6 +93,54 @@ class RealAgentsBackCompat(unittest.TestCase):
         self.assertEqual(env["source"], "role-preferred")
 
 
+class OpenAIAgentApprovals(unittest.TestCase):
+    """Codex resolves approved roles to the right GPT-5.6 family member."""
+
+    EXPECT = {
+        # Planning + gating verification: strongest model.
+        "advisor": "gpt-5.6-sol",
+        "fact-checker": "gpt-5.6-sol",
+        "fix-critique": "gpt-5.6-sol",
+        "plan-critic": "gpt-5.6-sol",
+        "independent-auditor": "gpt-5.6-sol",
+        "overfitting-reviewer": "gpt-5.6-sol",
+        "promotion-reviewer": "gpt-5.6-sol",
+        "scope-auditor": "gpt-5.6-sol",
+        "security-reviewer": "gpt-5.6-sol",
+        # Coordination + bounded execution: capable lower-cost workhorse.
+        "build-orchestrator": "gpt-5.6-terra",
+        "assessment-orchestrator": "gpt-5.6-terra",
+        "implementer": "gpt-5.6-terra",
+        "api-assessor": "gpt-5.6-terra",
+        "architecture-scout": "gpt-5.6-terra",
+        "database-assessor": "gpt-5.6-terra",
+        "design-contract-specialist": "gpt-5.6-terra",
+        "frontend-assessor": "gpt-5.6-terra",
+        "optimize-runner": "gpt-5.6-terra",
+        "performance-assessor": "gpt-5.6-terra",
+        "retrospective-synthesizer": "gpt-5.6-terra",
+        "self-improvement-architect": "gpt-5.6-terra",
+        "synthesis-critic": "gpt-5.6-terra",
+        "ui-validator": "gpt-5.6-terra",
+        "alignment-checker": "gpt-5.6-terra",
+        # Bounded recognition: fastest efficient model.
+        "mock-scanner": "gpt-5.6-luna",
+        "recurring-pattern-detector": "gpt-5.6-luna",
+        "transcript-pattern-miner": "gpt-5.6-luna",
+    }
+
+    def test_openai_host_role_resolution(self):
+        for agent, expected in self.EXPECT.items():
+            with self.subTest(agent=agent):
+                env = ram.resolve(
+                    agent=agent,
+                    workdir=HERE.parent,
+                    host_providers={"openai"},
+                )
+                self.assertEqual(env["model"], expected, env)
+                self.assertEqual(env["source"], "role-preferred")
+
+
 class InheritAgent(unittest.TestCase):
     def test_root_cause_investigator_is_inherit(self):
         cp = run("root-cause-investigator", "--workdir", str(HERE.parent), "--plain")

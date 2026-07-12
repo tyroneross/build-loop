@@ -13,7 +13,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 
 **Legacy aliases (back-compat, never removed):** the four legacy tier tokens fold onto the ladder — `frontier→T1`, `thinking→T2`, `code→T3`, `pattern→T4`. Existing config `modelOverrides`, plan `tier:` frontmatter, `route_decision`, and every existing test reference the legacy tokens and keep resolving to the same models.
 
-**Selection policy (Hybrid):** per `(segment, tier)` there is an ORDERED preferred-model list (order = capability rank, honoring Accuracy>Speed>Cost). The resolver (`scripts/model_resolver.py resolve_role`) picks the highest-ranked AVAILABLE + host-reachable id; ties / equal-or-unranked candidates are broken by release recency (newer wins). Users reorder via `.build-loop/config.json`. On a Claude host, a host-unreachable cross-vendor model is filtered out, so a generative_reasoning/thinking role resolves to `opus`, never the recency-newer but unreachable `gpt-5.5`.
+**Selection policy (Hybrid):** per `(segment, tier)` there is an ORDERED preferred-model list (order = capability rank, honoring Accuracy>Speed>Cost). The resolver (`scripts/model_resolver.py resolve_role`) picks the highest-ranked AVAILABLE + host-reachable id; ties / equal-or-unranked candidates are broken by release recency (newer wins). Users reorder via `.build-loop/config.json`. Host filtering prevents a Claude dispatch from receiving an OpenAI id and prevents a Codex dispatch from receiving an Anthropic id.
 
 **Classification (host-LLM, no vendor API):** an unseen model is classified into BOTH segment + tier by the host LLM (`scripts/classify_model_tier.py` — rubric + WebSearch packet → `record`). Specialist segments grade on their own metrics (MTEB / recall / NDCG / WER / latency), not SWE-bench.
 
@@ -29,7 +29,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** clears the Thinking-tier contract AND benchmarks above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond.
 - **Cost expectation:** highest. Use only on the planning + verification surface; never default for execution or coordination.
 - **Anthropic default:** Fable 5 (`claude-fable-5`)
-- **Verified equivalents (2026 Q2, advisory):** GPT-5.5 (`gpt-5.5`, OpenAI's frontier Codex model — complex coding, agentic, 1.1M ctx), GPT-5.4 (`gpt-5.4`, lower-cost frontier); future Claude generations above Opus
+- **Verified equivalents (2026 Q3, advisory):** GPT-5.6 Sol (`gpt-5.6-sol`) for open, complex, hard-to-verify, or high-consequence planning and verdicts; GPT-5.5 and GPT-5.4 remain fallback seeds
 - **Local equivalents:** none — Frontier-class capability is not yet matched locally
 
 ### Thinking tier
@@ -37,7 +37,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** SWE-bench Verified ≥78% AND competitive on ARC-AGI / GPQA Diamond / MMLU-Pro.
 - **Cost expectation:** middle-high tier. Use for orchestration and the escalation target when execution hits ambiguity. Never default to Thinking for bounded execution.
 - **Anthropic default:** Opus 4.8 (`claude-opus-4-8`; alias `opus` auto-tracks the latest Opus generation)
-- **Verified equivalents (2026 Q2, advisory):** GPT-5.4 (`gpt-5.4`), Gemini 2.5 Pro
+- **Verified equivalents (2026 Q3, advisory):** GPT-5.6 Sol for genuinely ambiguous escalation; GPT-5.6 Terra for ordinary orchestration with bounded contracts and deterministic verification; GPT-5.4 and Gemini 2.5 Pro remain fallback seeds
 - **Local equivalents:** none yet — Thinking-tier work needs frontier-class context length and judgment; local models lag
 
 ### Code tier
@@ -45,7 +45,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** SWE-bench Verified ≥75% AND tool-use accuracy ≥85% AND multi-turn coding rollout ≥80%.
 - **Cost expectation:** ~3-5× cheaper than Thinking tier per token. The default for the bulk of build-loop work.
 - **Anthropic default:** Sonnet 5 (`claude-sonnet-5`; alias `sonnet` auto-tracks the latest Sonnet generation)
-- **Verified equivalents:** Sonnet 4.7+ (when available), GPT-5.4 Mini (`gpt-5.4-mini` — fast coding + subagents)
+- **Verified equivalents:** GPT-5.6 Terra (`gpt-5.6-terra`) is the Codex-host default for scoped implementation, bounded assessment, and routine coordination; GPT-5.4 Mini remains a fallback seed
 - **Local equivalents:** qwen2.5-coder-32B-instruct (mid-quality), Codestral 22B (reasonable substitute for bounded refactor work)
 
 ### Pattern tier (a.k.a. Recognition)
@@ -53,19 +53,31 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Benchmark contract:** none formal. Empirical: doesn't hallucinate on bounded structured tasks; runs fast.
 - **Cost expectation:** ~10-20× cheaper than Thinking tier. Use for high-volume mechanical sweeps.
 - **Anthropic default:** Haiku 4.5 (`claude-haiku-4-5-20251001`)
-- **Verified equivalents:** Haiku 4.6+ (when available), GPT-5 Nano (`gpt-5-nano` — fastest/cheapest, classify + summarize)
+- **Verified equivalents:** GPT-5.6 Luna (`gpt-5.6-luna`) for short, repeatable extraction, classification, scanning, and structured summaries with an output check; GPT-5 Nano remains a fallback seed
 - **Local equivalents:** llama3.2-3b, qwen2.5-3b
 
-## Substitution table (advisory, 2026 Q2)
+## Substitution table (advisory, 2026 Q3)
 
 | Provider | Frontier | Thinking | Code | Pattern |
 |---|---|---|---|---|
 | Anthropic (default) | Fable 5 (`fable`) | Opus 4.8 (`opus`) | Sonnet 5 (`sonnet`) | Haiku 4.5 (`haiku`) |
-| OpenAI | `gpt-5.5` (Codex) | `gpt-5.4` | `gpt-5.4-mini` | `gpt-5-nano` |
+| OpenAI | `gpt-5.6-sol` | `gpt-5.6-sol` for hard escalation; `gpt-5.6-terra` for routine orchestration | `gpt-5.6-terra` | `gpt-5.6-luna` |
 | Google | next-gen Gemini Ultra (when it clears the contract) | `gemini-2.5-pro` | `gemini-2.5-flash` | `gemini-flash-lite` |
 | Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | `qwen2.5-coder-32b` | `llama3.2-3b` |
 
 ⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying.
+
+## GPT-5.6 Codex routing and approved agents
+
+Codex resolves these assignments live from each agent's `(segment, tier)` role. The names below are approval groups, not hand-pinned frontmatter; `scripts/test_resolve_agent_model.py` prevents routing drift.
+
+| Model | Approved Build Loop roles | Default thinking level | Escalate when |
+|---|---|---|---|
+| **Sol** | `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, `promotion-reviewer` | `medium`; `high` for adversarial or security verdicts | Use `xhigh` only after evidence that medium/high missed; `max` is rare. Ultra is reserved for work with meaningful independent streams. |
+| **Terra** | `build-orchestrator`, `assessment-orchestrator`, `implementer`, domain assessors, `ui-validator`, `alignment-checker`, `synthesis-critic`, `retrospective-synthesizer`, `self-improvement-architect` | `medium`; `high` for a complex bounded chunk or first retry | Move to Sol when the specification becomes ambiguous, the work becomes high-consequence, or repeated verified attempts fail. |
+| **Luna** | `mock-scanner`, `recurring-pattern-detector`, `transcript-pattern-miner`; bounded extraction/classification helpers | `low` or `medium` | Move to Terra when rule application or multi-step transformation appears; move to Sol for novel judgment or a gating verdict. |
+
+Use the lowest thinking level that passes the real verifier. Deterministic scripts remain preferred over Luna when they fully express the rule. All three GPT-5.6 models retain the same least-privilege, confirmation, sandboxing, and independent-verification controls; the system card classifies the family as High capability in cybersecurity and biological/chemical risk.
 
 ### Selectable model registry (the machine-readable source of truth)
 
@@ -102,38 +114,24 @@ python3 scripts/model_overrides.py --workdir "$PWD" --tier frontier \
 
 ## Three ways to swap
 
-### 1. Edit agent frontmatter (one-time, per-host)
+### 1. Edit the canonical model index
 
-Each `agents/*.md` carries a `model:` field. Replace `opus` / `sonnet` / `haiku` with your provider's identifier. Example for OpenAI on a Codex host:
-
-```yaml
-# agents/build-orchestrator.md
----
-name: build-orchestrator
-model: gpt-5.4             # was: opus (Thinking tier)
----
-
-# agents/implementer.md
----
-name: implementer
-model: gpt-5.4-mini        # was: sonnet (Code tier)
----
-```
-
-This is durable but requires re-editing on every plugin update. Prefer #2 below.
+Change the ordered preferred list for the relevant `(segment, tier)` cell in `references/model-taxonomy.json`, then run `python3 scripts/sync_agent_model_defaults.py --apply`. Do not hand-edit cross-provider ids into agent frontmatter: Codex resolves the concrete OpenAI id live, while generated frontmatter retains a harness-valid Claude fallback.
 
 ### 2. Runtime override via `.build-loop/config.json` (recommended)
 
 ```json
 {
   "modelOverrides": {
-    "frontier": "gpt-5.5",
-    "thinking": "gpt-5.4",
-    "code": "gpt-5.4-mini",
-    "pattern": "gpt-5-nano"
+    "frontier": "gpt-5.6-sol",
+    "thinking": "gpt-5.6-sol",
+    "code": "gpt-5.6-terra",
+    "pattern": "gpt-5.6-luna"
   }
 }
 ```
+
+The flat legacy override cannot express the segment-specific routine-orchestration exception; live agent-role resolution selects Terra for `agentic_execution/thinking`. Use the override only when you intentionally want one model for the entire legacy tier.
 
 Configs that predate the `frontier` tier resolve `frontier` → `fable` automatically (built-in tier default in `scripts/model_overrides.py`), so older repos keep working without edits.
 

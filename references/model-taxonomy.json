@@ -79,20 +79,20 @@
     "_comment": "Ordered preferred-model list per (segment, tier). Order = capability rank, honoring Accuracy>Speed>Cost. The resolver picks the highest-ranked AVAILABLE + host-reachable id; ties / equal-or-unranked broken by release recency (newer wins). Users reorder via .build-loop/config.json. ALL 7 segments carry at least one cell so the data shape is uniform; dormant cells are data only — no resolver walks them yet.",
     "generative_reasoning": {
       "T0": ["mythos"],
-      "T1": ["fable"],
+      "T1": ["fable", "gpt-5.6-sol"],
       "T2": ["opus", "gpt-5.5"],
-      "T3": ["sonnet", "gpt-5.4", "gemini-2.5-pro"],
-      "T4": ["haiku", "gpt-5.4-mini"],
+      "T3": ["sonnet", "gpt-5.6-terra", "gpt-5.4", "gemini-2.5-pro"],
+      "T4": ["haiku", "gpt-5.6-luna", "gpt-5.4-mini"],
       "T5": ["gpt-5.4-nano", "gemini-flash-lite"]
     },
     "agentic_execution": {
-      "T2": ["opus"],
-      "T3": ["sonnet", "gpt-5.4", "qwen2.5-coder-32b"]
+      "T2": ["opus", "gpt-5.6-terra", "gpt-5.6-sol"],
+      "T3": ["sonnet", "gpt-5.6-terra", "gpt-5.4", "qwen2.5-coder-32b"]
     },
     "governance_evaluation": {
-      "T1": ["fable"],
-      "T3": ["sonnet"],
-      "T4": ["haiku"],
+      "T1": ["fable", "gpt-5.6-sol"],
+      "T3": ["sonnet", "gpt-5.6-terra"],
+      "T4": ["haiku", "gpt-5.6-luna"],
       "T5": ["gpt-5.4-nano"],
       "T-S": ["omni-moderation"]
     },
@@ -139,6 +139,27 @@
       "tags": ["frontier", "coding", "tool-capable"],
       "released": "2026-02-01", "status": "verified",
       "aliases": ["gpt-5.5-codex"]
+    },
+    "gpt-5.6-sol": {
+      "provider": "openai", "label": "GPT-5.6 Sol",
+      "segment": "generative_reasoning", "tier": "T1",
+      "tags": ["ultra-frontier", "coding", "agentic", "tool-capable", "multimodal-input", "high-consequence"],
+      "released": "2026-07-09", "status": "verified",
+      "aliases": []
+    },
+    "gpt-5.6-terra": {
+      "provider": "openai", "label": "GPT-5.6 Terra",
+      "segment": "generative_reasoning", "tier": "T2",
+      "tags": ["balanced-workhorse", "coding", "agentic", "tool-capable", "cost-sensitive", "multimodal-input"],
+      "released": "2026-07-09", "status": "verified",
+      "aliases": []
+    },
+    "gpt-5.6-luna": {
+      "provider": "openai", "label": "GPT-5.6 Luna",
+      "segment": "generative_reasoning", "tier": "T4",
+      "tags": ["efficient", "fast", "cost-sensitive", "bounded-work", "multimodal-input"],
+      "released": "2026-07-09", "status": "verified",
+      "aliases": []
     },
     "sonnet": {
       "provider": "anthropic", "label": "Claude Sonnet 5",
@@ -256,10 +277,10 @@
 
   "legacy_registry": {
     "_comment": "Back-compat VIEW for model_overrides.MODEL_REGISTRY. The legacy 4-token tier surface advertised a curated selectable-model list per tier (broader than a single capability rung — e.g. frontier accepted cross-vendor frontier-equivalents). These ordered id lists preserve that exact contract (--list-models, is_registered) while keeping ALL model ids in this one file. The precise per-(segment,tier) capability assignment lives in `models` + `preferred`; this is only the legacy advisory registry. First id per tier is the default.",
-    "frontier": ["fable", "gpt-5.5", "gpt-5.4"],
-    "thinking": ["opus", "gpt-5.4", "gemini-2.5-pro"],
-    "code": ["sonnet", "gpt-5.4-mini", "gemini-2.5-flash", "qwen2.5-coder-32b"],
-    "pattern": ["haiku", "gpt-5-nano", "gemini-flash-lite", "llama3.2-3b"]
+    "frontier": ["fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"],
+    "thinking": ["opus", "gpt-5.6-terra", "gpt-5.4", "gemini-2.5-pro"],
+    "code": ["sonnet", "gpt-5.6-terra", "gpt-5.4-mini", "gemini-2.5-flash", "qwen2.5-coder-32b"],
+    "pattern": ["haiku", "gpt-5.6-luna", "gpt-5-nano", "gemini-flash-lite", "llama3.2-3b"]
   },
 
   "classification_rubric": {

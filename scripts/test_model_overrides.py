@@ -517,7 +517,8 @@ class TwoAxisRoleTests(unittest.TestCase):
                 segment="generative_reasoning", tier="frontier",
                 workdir=Path(td),
             )
-            self.assertEqual(r["model"], "fable")
+            # Host-neutral resolution uses the newer equal-rung seed.
+            self.assertEqual(r["model"], "gpt-5.6-sol")
             self.assertEqual(r["tier"], "T1")
             self.assertEqual(r["source"], "role-preferred")
 
@@ -526,7 +527,7 @@ class TwoAxisRoleTests(unittest.TestCase):
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="T4", workdir=Path(td),
             )
-            self.assertEqual(r["model"], "haiku")
+            self.assertEqual(r["model"], "gpt-5.6-luna")
 
     def test_resolve_role_unavailable_falls_to_next_preferred(self) -> None:
         # GR/T2 preferred = [opus, gpt-5.5]; opus down -> gpt-5.5.
@@ -538,13 +539,13 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["model"], "gpt-5.5")
 
     def test_resolve_role_floor_inherited_for_generative(self) -> None:
-        # GR/T1 = [fable]; fable down + the whole T1 cell exhausted -> the
+        # GR/T1 = [fable, Sol]; both down + the whole T1 cell exhausted -> the
         # legacy ladder floor walk takes over and stops at thinking (opus),
         # never below. Floor invariant preserved under the new ladder.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="frontier",
-                workdir=Path(td), unavailable={"fable"},
+                workdir=Path(td), unavailable={"fable", "gpt-5.6-sol"},
             )
             self.assertEqual(r["model"], "opus")
             self.assertNotEqual(r["model"], "sonnet")

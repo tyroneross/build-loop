@@ -115,12 +115,16 @@ class TaxonomyTests(unittest.TestCase):
 
     # --- Preferred lists --------------------------------------------------
     def test_preferred_accepts_both_tier_vocabularies(self) -> None:
-        # frontier == T1 for generative_reasoning -> ["fable"]
+        # frontier == T1 for generative_reasoning; provider filtering chooses
+        # the host-reachable entry at dispatch.
         self.assertEqual(
             self.mt.preferred("generative_reasoning", "frontier"),
             self.mt.preferred("generative_reasoning", "T1"),
         )
-        self.assertEqual(self.mt.preferred("generative_reasoning", "T1"), ["fable"])
+        self.assertEqual(
+            self.mt.preferred("generative_reasoning", "T1"),
+            ["fable", "gpt-5.6-sol"],
+        )
 
     def test_preferred_empty_cell_returns_list(self) -> None:
         # A dormant segment's non-specialist tier is empty, not an error.
@@ -144,6 +148,24 @@ class TaxonomyTests(unittest.TestCase):
     def test_released_dates_present_for_seeds(self) -> None:
         self.assertEqual(self.mt.released("fable"), "2025-11-01")
         self.assertEqual(self.mt.released("gpt-5.5"), "2026-02-01")
+        self.assertEqual(self.mt.released("gpt-5.6-sol"), "2026-07-09")
+
+    def test_gpt_5_6_family_is_classified_by_work_role(self) -> None:
+        expected = {
+            "gpt-5.6-sol": "T1",
+            "gpt-5.6-terra": "T2",
+            "gpt-5.6-luna": "T4",
+        }
+        for model, tier in expected.items():
+            with self.subTest(model=model):
+                meta = self.mt.model_meta(model)
+                self.assertIsNotNone(meta)
+                self.assertEqual(meta["provider"], "openai")
+                self.assertEqual(meta["tier"], tier)
+
+        self.assertIn("gpt-5.6-sol", self.mt.preferred("governance_evaluation", "frontier"))
+        self.assertIn("gpt-5.6-terra", self.mt.preferred("agentic_execution", "code"))
+        self.assertIn("gpt-5.6-luna", self.mt.preferred("governance_evaluation", "pattern"))
 
     def test_break_ties_by_recency_newer_first(self) -> None:
         # gpt-5.5 (2026-02) is newer than opus (2025-11): recency puts it first

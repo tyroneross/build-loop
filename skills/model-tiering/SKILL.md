@@ -26,10 +26,10 @@ Agents declare a `(segment, tier)` ROLE; the resolver (`scripts/model_resolver.p
 
 | Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
 |---|---|---|---|
-| **Frontier** | Fable 5 | **Phase 2 Plan synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) via the Advisor dispatch ladder when stakes-gated** — `advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise (`references/advisor-dispatch-ladder.md`). (Advisor v1 = Phase 2 only; Phase 1 Assess synthesis runs inline as today until v2.) AND verification judgment (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer) | GPT-5.5 Thinking (or whichever tier scores above the prior Thinking-tier ceiling), future Claude tier above Opus; any model that benchmarks above the Thinking-tier contract on SWE-bench Verified AND ARC-AGI / GPQA Diamond |
-| **Thinking** | Opus 4.8 | Coordination — build-orchestrator, assessment-orchestrator — and the escalation target for execution (ambiguous spec, 2 consecutive failures, cross-file surprise) and audit/learnings synthesis when Frontier is unavailable | GPT-5 Thinking, Gemini 2.5 Pro; any model >= Opus 4.6 on SWE-bench Verified + Frontier-class on ARC-AGI / MMLU-Pro |
-| **Code** | Sonnet 5 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | GPT-5 Codex, qwen2.5-coder-32B (local); any model with SWE-bench Verified within ~5pt of the Code-tier default (last published Anthropic Sonnet figure: 4.6 ~79.6%; Sonnet 5 reaches prior Opus-tier coding/agentic quality per claude-api T1) |
-| **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | Haiku 4.6, GPT-5 Mini, llama3.2-3b (local); any small/fast model that handles structured pattern matching |
+| **Frontier** | Fable 5 | **Phase 2 Plan synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) via the Advisor dispatch ladder when stakes-gated** — `advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise (`references/advisor-dispatch-ladder.md`). (Advisor v1 = Phase 2 only; Phase 1 Assess synthesis runs inline as today until v2.) AND verification judgment (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer) | GPT-5.6 Sol; future models that clear the Thinking-tier contract and prior ceiling |
+| **Thinking** | Opus 4.8 | Coordination — build-orchestrator, assessment-orchestrator — and the escalation target for execution (ambiguous spec, 2 consecutive failures, cross-file surprise) and audit/learnings synthesis when Frontier is unavailable | GPT-5.6 Terra for routine orchestration; GPT-5.6 Sol for genuinely ambiguous escalation; Gemini Pro-class equivalents |
+| **Code** | Sonnet 5 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | GPT-5.6 Terra, qwen2.5-coder-32B (local); any model within the Code-tier benchmark tolerance |
+| **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | GPT-5.6 Luna, Haiku-class or local small/fast models that handle bounded structured work |
 
 **Rule of substitution:** tier A's swap target must score within tolerance of the default on the benchmark relevant to its role. For Code tier that's SWE-bench Verified ≥75% AND tool-use accuracy ≥85%; for Thinking tier that's SWE-bench ≥78% AND ARC-AGI / GPQA Diamond competitive; for Frontier tier that's clearing the Thinking-tier contract AND scoring above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond; for Pattern tier no benchmark — just "fast and cheap, doesn't hallucinate on bounded structured tasks."
 
@@ -56,6 +56,16 @@ Build-loop's agent frontmatter uses Anthropic model aliases (`fable`, `opus`, `s
 3. **Per-dispatch override:** any orchestrator dispatch may pass `model: <id>` in the subagent prompt to force that call.
 
 The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
+
+### GPT-5.6 Codex policy
+
+- **Sol** is approved for planning synthesis and gating verification agents: `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, and `promotion-reviewer`.
+- **Terra** is approved for ordinary orchestration, bounded implementation, domain assessment, advisory review, and Learn drafting. It is the Codex default for `build-orchestrator`, `assessment-orchestrator`, and `implementer`.
+- **Luna** is approved for bounded recognition agents: `mock-scanner`, `recurring-pattern-detector`, and `transcript-pattern-miner`. Prefer a deterministic script when the rule is fully expressible.
+- Start at the lowest effort that passes the real verifier: Luna `low|medium`, Terra `medium` (`high` for complex bounded work or first retry), Sol `medium` (`high` for adversarial/security verdicts). Use `xhigh` only after evidence of a miss; reserve `max` and Ultra for rare cases with justified consequence or meaningful independent streams.
+- Escalate Luna→Terra when rule application appears; Terra→Sol when ambiguity, high consequence, or repeated verified failure appears. Model size never weakens least privilege, confirmation, sandboxing, or independent verification.
+
+Source: OpenAI GPT-5.6 System Card (2026-07-09), retained in build-loop-memory with the full PDF and routing extract.
 
 ## Chat-triggered index maintenance (host-LLM-driven)
 
