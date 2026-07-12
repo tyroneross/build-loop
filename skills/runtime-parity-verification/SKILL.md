@@ -35,6 +35,41 @@ This is stronger than "did it render" (which UI validators check). It is also st
 5. **Encode it as a per-repo smoke** (a script that returns non-zero on divergence). **Validate the smoke is real**: confirm it returns non-zero on a known-broken state, not just zero on green — a check that cannot fail is worthless.
 6. **Gate on it**: run the smoke before any "done" claim. Never substitute compile-green, a passing unit test, or a screenshot.
 
+## Doc ↔ interface parity (documented CLIs, tools & flows)
+
+A second parity gap, same shape: the **documented interface diverges from the
+runtime interface**, and the CLI **silently accepts malformed input**. A green
+unit-test suite over the core logic structurally **cannot** catch either — tests
+exercise the functions, not the CLI surface or the commands the docs tell a user
+to run. A tool/CLI/flow is not "done" until:
+
+1. **Every command in a flow doc runs against the live CLI.** Extract each
+   documented command (fenced shell blocks in the flow's `.md`) and validate its
+   subcommand + every `--flag` against the real interface — `--help` for a
+   Python/argparse CLI (side-effect-free), the parsed-flags list in source for a
+   node CLI. A documented flag/subcommand that doesn't exist is a FAIL. (This is
+   the "doc says `--params`, the CLI never had it" defect.)
+2. **Every CLI boundary rejects malformed input.** Feed each command a typo'd
+   sub-argument / unknown enum value and assert a **nonzero exit with an error** —
+   never a deadlock, never a silent default substitution. (A typo'd argument that
+   auto-creates a junk record and hangs the loop, or a bad value silently swapped
+   for a default, both ship a tool the user can't trust.)
+
+**Validate the check the same way step 5 demands** — mutate the real files (a
+bogus doc flag; a disabled validator) and confirm the check FAILS; a check that
+can't fail is worthless. A subtle trap seen in practice: input-validation cases
+that run against an **absent** state file pass even with validation disabled,
+because the missing-file crash also exits nonzero — the oracle confounds
+"rejected" with "crashed." Run the malformed-input cases against a **real, valid**
+state so a reject is the ONLY cause of a nonzero exit.
+
+**Reusable exemplar:** groundwork `designer/conformance/flow_cli_check.py` — scans
+`references/*.md` + `SKILL.md`, validates every documented `python3 -m …` / `node
+…` command against the live CLI, feeds each a malformed value, and
+`--selftest`-mutation-proves it bites. Wired to fire via `scripts/check.sh` →
+`npm test` + a committed `.githooks/pre-push` (a check that only runs when recalled
+is dormant — put it in the gate).
+
 ## Anti-patterns (each one shipped a real bug)
 
 - "Build is green, committed — done." → compile ≠ runtime; never exercised the flow.
@@ -45,7 +80,7 @@ This is stronger than "did it render" (which UI validators check). It is also st
 ## Build-loop integration
 
 - **Phase 4 Review sub-step B / Phase 5 Iterate**: when `uiTarget != null` OR the diff touches a user-visible flow, a runtime parity check is **required**. The existing drivers do the probing — web: `ui-validator`; macOS: `native-ax-driver` / IBR `scan_macos`; iOS: `idb`. THIS skill adds the missing step: **cross-check the probe against source-of-truth**, and keep a validated per-repo smoke.
-- **Phase 4 sub-step G (`verification-before-completion`)**: for app/UI changes, "confirm output" includes the runtime parity smoke, not only test/build/lint.
+- **Phase 4 sub-step G (`verification-before-completion`)**: for app/UI changes, "confirm output" includes the runtime parity smoke, not only test/build/lint. For a **CLI / tool / documented-flow** change, it also includes the doc↔interface parity smoke (every documented command runs; every boundary rejects malformed input), likewise validated by mutation.
 - The `verify` skill ("run the app and observe behavior") is the manual counterpart; this skill is the automatable, source-of-truth-anchored form.
 
 Origin lesson: build-loop-memory `lessons/2026-06-08-pattern-runtime-ui-source-of-truth-parity-verification.md` (easy-terminal launch/no-pane bug — UI projection diverged from daemon, missed across a whole UI pass because verification was compile-green + screenshot-only).
