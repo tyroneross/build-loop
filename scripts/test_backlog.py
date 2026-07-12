@@ -674,10 +674,10 @@ class TestAdopt(_Base):
                                               encoding="utf-8")
         res = self._adopt(apply=True)
         self.assertTrue(res["gitignore"]["was_ignored"])
-        self.assertIn("!.build-loop/backlog/", res["gitignore"]["added"])
+        self.assertIn("!/.build-loop/backlog/", res["gitignore"]["added"])
         gi = (self.repo / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("!.build-loop/backlog/", gi)
-        self.assertIn("!BACKLOG.md", gi)
+        self.assertIn("!/.build-loop/backlog/", gi)
+        self.assertIn("!/BACKLOG.md", gi)
 
     def test_gitignore_guard_idempotent(self):
         (self.repo / ".gitignore").write_text(".build-loop/\n", encoding="utf-8")
@@ -688,8 +688,52 @@ class TestAdopt(_Base):
         gi2 = (self.repo / ".gitignore").read_text(encoding="utf-8")
         self.assertEqual(gi1, gi2, "un-ignore rules must not duplicate on re-adopt")
         # Exact-line count (avoid the !.build-loop/backlog/** substring match).
-        exact = [ln.strip() for ln in gi2.splitlines() if ln.strip() == "!.build-loop/backlog/"]
+        exact = [ln.strip() for ln in gi2.splitlines() if ln.strip() == "!/.build-loop/backlog/"]
         self.assertEqual(len(exact), 1)
+
+    def test_gitignore_unignore_is_root_scoped(self):
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        (self.repo / ".gitignore").write_text(
+            ".build-loop/\n"
+            "# build-loop backlog (added by `backlog.py adopt` — keep so the backlog travels)\n"
+            "!.build-loop/\n"
+            ".build-loop/*\n"
+            "!.build-loop/backlog/\n"
+            "!.build-loop/backlog/**\n"
+            "!BACKLOG.md\n",
+            encoding="utf-8",
+        )
+        report = self._adopt(apply=True)
+        self.assertEqual(report["gitignore"]["action"], "gitignore_unignore_migrated")
+        migrated = (self.repo / ".gitignore").read_text(encoding="utf-8")
+        self.assertNotIn("!.build-loop/backlog/", migrated)
+        self.assertIn("!/.build-loop/backlog/", migrated)
+        root_item = self.repo / ".build-loop" / "backlog" / "items" / "root.md"
+        nested_item = (
+            self.repo
+            / "agent-rally-point"
+            / ".build-loop"
+            / "backlog"
+            / "items"
+            / "nested.md"
+        )
+        root_item.parent.mkdir(parents=True, exist_ok=True)
+        nested_item.parent.mkdir(parents=True, exist_ok=True)
+        root_item.write_text("root\n", encoding="utf-8")
+        nested_item.write_text("nested\n", encoding="utf-8")
+
+        root = subprocess.run(
+            ["git", "-C", str(self.repo), "check-ignore", "-q", str(root_item)],
+            check=False,
+        )
+        nested = subprocess.run(
+            ["git", "-C", str(self.repo), "check-ignore", "-q", str(nested_item)],
+            check=False,
+        )
+        self.assertEqual(root.returncode, 1, "repo-root backlog must be visible")
+        self.assertEqual(nested.returncode, 0, "nested runtime backlog must stay ignored")
 
     def test_gitignore_not_ignored_is_noop(self):
         # No .gitignore at all -> nothing to fix.

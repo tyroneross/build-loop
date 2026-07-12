@@ -1190,9 +1190,22 @@ def cmd_sync(args: argparse.Namespace) -> dict[str, Any]:
 # `.build-loop/{followup,issues,proposals}/*.md` as backlog items that LINK to
 # (never move/delete) their source. A trailing `sync` regenerates the INDEX.
 
-# The un-ignore rules adopt appends so a gitignored .build-loop/ still lets the
-# backlog + root pointer commit and travel with the repo.
-_UNIGNORE_RULES = ("!.build-loop/backlog/", "!.build-loop/backlog/**", "!BACKLOG.md")
+# Anchor the rules at the repo root. Unanchored ``!.build-loop/**`` patterns
+# also expose nested runtime stores (for example a checked-out sibling under
+# ``agent-rally-point/.build-loop``) and make unrelated data appear untracked.
+_UNIGNORE_RULES = (
+    "!/.build-loop/",
+    "/.build-loop/*",
+    "!/.build-loop/backlog/",
+    "!/.build-loop/backlog/**",
+    "!/BACKLOG.md",
+)
+_LEGACY_UNIGNORE_RULES = {
+    "!.build-loop/",
+    "!.build-loop/backlog/",
+    "!.build-loop/backlog/**",
+    "!BACKLOG.md",
+}
 
 _ADOPT_MARKER = "# build-loop backlog (added by `backlog.py adopt` — keep so the backlog travels)"
 
@@ -1202,8 +1215,9 @@ def _backlog_is_gitignored(repo: Path) -> tuple[bool, list[str]]:
 
     Pure text inspection of `.gitignore` (no git invocation — host-agnostic and
     works on a non-repo tmp dir). Returns (ignored_and_unfixed, gitignore_lines).
-    Considered ignored when a broad `.build-loop/` (or `.build-loop`) rule is
-    present and our `!.build-loop/backlog/` un-ignore is NOT yet present.
+    Considered unfixed when the rooted rules are missing or any legacy
+    unanchored rule remains. Legacy rules expose nested runtime stores and must
+    be migrated even though they make the repo-root backlog visible.
     """
     gi = repo / ".gitignore"
     if not gi.is_file():
@@ -1217,29 +1231,43 @@ def _backlog_is_gitignored(repo: Path) -> tuple[bool, list[str]]:
         s in (".build-loop/", ".build-loop", "/.build-loop/", "/.build-loop")
         for s in stripped
     )
-    already_unignored = "!.build-loop/backlog/" in stripped
-    return (ignores_buildloop and not already_unignored), lines
+    rooted = "!/.build-loop/backlog/" in stripped
+    legacy = bool(set(stripped) & _LEGACY_UNIGNORE_RULES)
+    return (legacy or (ignores_buildloop and not rooted)), lines
 
 
 def _append_unignore_rules(repo: Path, existing_lines: list[str], apply: bool) -> dict[str, Any]:
-    """Append the un-ignore rules to .gitignore so the backlog travels.
+    """Normalize the managed un-ignore block so only rooted rules remain.
 
-    Idempotent: skips any rule already present. Returns an action report;
-    writes only when ``apply`` is True.
+    Legacy unanchored rules are removed as one managed migration and replaced
+    by the complete rooted block. Idempotent; writes only when ``apply`` is True.
     """
     present = {ln.strip() for ln in existing_lines}
-    to_add = [r for r in _UNIGNORE_RULES if r not in present]
-    if not to_add:
+    legacy_present = sorted(present & _LEGACY_UNIGNORE_RULES)
+    rooted_complete = all(rule in present for rule in _UNIGNORE_RULES)
+    if rooted_complete and not legacy_present:
         return {"action": "gitignore_already_fixed", "added": []}
+    managed = set(_UNIGNORE_RULES) | _LEGACY_UNIGNORE_RULES | {_ADOPT_MARKER}
+    base_lines = [line for line in existing_lines if line.strip() not in managed]
+    to_add = list(_UNIGNORE_RULES)
     if apply:
         gi = repo / ".gitignore"
         block = ["", _ADOPT_MARKER, *to_add, ""]
-        text = "\n".join(existing_lines)
+        text = "\n".join(base_lines).rstrip()
         if text and not text.endswith("\n"):
             text += "\n"
         text += "\n".join(block).lstrip("\n") + "\n"
         gi.write_text(text, encoding="utf-8")
-    return {"action": "gitignore_unignore_appended", "added": to_add, "applied": apply}
+    return {
+        "action": (
+            "gitignore_unignore_migrated"
+            if legacy_present
+            else "gitignore_unignore_appended"
+        ),
+        "added": to_add,
+        "removed": legacy_present,
+        "applied": apply,
+    }
 
 
 def _scaffold_actions(repo: Path, apply: bool) -> list[dict[str, Any]]:

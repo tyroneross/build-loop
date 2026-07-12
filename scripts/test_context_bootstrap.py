@@ -715,9 +715,33 @@ class TestBacklogDiscoverability(unittest.TestCase):
     def test_gitignored_false_when_unignore_present(self):
         self._backlog_with_index()
         (self.repo / ".gitignore").write_text(
-            ".build-loop/\n!.build-loop/backlog/\n", encoding="utf-8")
+            ".build-loop/\n!/.build-loop/backlog/\n", encoding="utf-8")
         res = cb.backlog_discoverability(self.repo)
         self.assertFalse(res["gitignored"])
+
+    def test_legacy_unignore_is_flagged_for_rooted_migration(self):
+        self._backlog_with_index()
+        (self.repo / ".gitignore").write_text(
+            ".build-loop/\n!.build-loop/backlog/\n", encoding="utf-8")
+        res = cb.backlog_discoverability(self.repo)
+        self.assertTrue(res["gitignored"])
+        self.assertIn("adopt --apply", res["notice"])
+
+    def test_mixed_rooted_and_legacy_rules_still_require_migration(self):
+        self._backlog_with_index()
+        (self.repo / ".gitignore").write_text(
+            ".build-loop/\n"
+            "!/.build-loop/\n"
+            "/.build-loop/*\n"
+            "!/.build-loop/backlog/\n"
+            "!/.build-loop/backlog/**\n"
+            "!/BACKLOG.md\n"
+            "!.build-loop/backlog/**\n",
+            encoding="utf-8",
+        )
+        res = cb.backlog_discoverability(self.repo)
+        self.assertTrue(res["gitignored"])
+        self.assertIn("adopt --apply", res["notice"])
 
     def test_silent_when_nothing_to_surface(self):
         res = cb.backlog_discoverability(self.repo)

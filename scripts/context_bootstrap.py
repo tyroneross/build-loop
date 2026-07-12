@@ -335,7 +335,9 @@ def backlog_discoverability(workdir: Path) -> dict[str, Any]:
 
     # Is the backlog dir gitignored? Pure text inspection of .gitignore (no git
     # call — works in any harness). Ignored when a broad `.build-loop/` rule is
-    # present and the `!.build-loop/backlog/` un-ignore is NOT.
+    # present and the rooted backlog un-ignore is absent. A legacy unanchored
+    # rule is intentionally NOT accepted: adopt must migrate it because it also
+    # exposes nested runtime stores.
     gitignored = False
     if backlog_dir.is_dir():
         gi = workdir / ".gitignore"
@@ -346,7 +348,17 @@ def backlog_discoverability(workdir: Path) -> dict[str, Any]:
                     s in (".build-loop/", ".build-loop", "/.build-loop/", "/.build-loop")
                     for s in stripped
                 )
-                gitignored = ignores and ("!.build-loop/backlog/" not in stripped)
+                unignored = "!/.build-loop/backlog/" in stripped
+                legacy_present = bool(
+                    set(stripped)
+                    & {
+                        "!.build-loop/",
+                        "!.build-loop/backlog/",
+                        "!.build-loop/backlog/**",
+                        "!BACKLOG.md",
+                    }
+                )
+                gitignored = legacy_present or (ignores and not unignored)
             except OSError:
                 gitignored = False
 
