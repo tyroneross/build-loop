@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Official marketplace for build-loop \u2014 orchestrated 5-phase development loop with optional Learn phase",
-    "version": "0.36.1"
+    "version": "0.36.4"
   },
   "plugins": [
     {
@@ -32,7 +32,7 @@
         "self-improvement",
         "prompt-engineering"
       ],
-      "version": "0.36.1"
+      "version": "0.36.4"
     }
   ]
 }

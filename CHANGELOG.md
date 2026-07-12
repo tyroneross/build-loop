@@ -2,13 +2,27 @@
 
 ## Unreleased
 
-## 0.36.3 — 2026-07-10
+## 0.36.4 — 2026-07-11
+
+First published release since v0.36.1. The 0.36.2/0.36.3 entries below were
+staged (plugin manifests + CHANGELOG only) but never tagged, released, or
+published; their changes first ship here. Release notes: `docs/releases/v0.36.4.md`.
+
+### Fixed
+- Git commit/push hook trigger is segment-parsed instead of substring-globbed, ending classifier false-fires on prose/paths that merely contain "git commit" (`54268bd`).
+- Retrospective temporal-membership preflight stops attaching wrong-run records to a run's retro (`422a5c1`).
+- Independent-auditor finding closures: wrapper push detection, heredoc over-strip, audit-guard test (`93fe6c8`); idle-scan skip when an unterminated heredoc has no git (`673a7fa`).
+
+### Changed
+- Worktree-isolation doctrine widened to commit-less file editors: any long-running background writer that edits files must use a dedicated worktree — commit authority no longer required; lint rule `wake-path-grew-a-file-edit` added (`e45cfa6`).
+
+## 0.36.3 — 2026-07-10 (not published; first shipped in v0.36.4)
 
 ### Added
 - Eager Phase-6 Learn detector-pass for inline runs: `stop_closeout.py` runs the deterministic pattern detector on the record path and folds an owed "Phase-6 Learn drafting" item into the existing `closeout-pending` marker (surfaced once at SessionStart) when `runs[]>=3` and a root-cause cluster >= threshold has no experimental draft yet. Fills the `learn/pending` lane's "not yet an automated detector pass" TODO so inline runs no longer leave the learning loop dark until the user asks.
 
 
-## 0.36.2 — 2026-07-10
+## 0.36.2 — 2026-07-10 (not published; first shipped in v0.36.4)
 
 ### Fixed
 - Pre-push security gate scans the **push delta**, not the whole tree, so a pre-existing HIGH in an unrelated file no longer hard-blocks unrelated pushes (delta-scoping + 9 false-negative closures + conservative-by-construction classifier).

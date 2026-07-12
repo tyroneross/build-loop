@@ -1,6 +1,6 @@
 {
   "name": "build-loop",
-  "version": "0.36.3",
+  "version": "0.36.4",
   "plugins": [
     {
       "name": "build-loop",
