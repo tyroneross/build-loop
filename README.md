@@ -74,7 +74,7 @@ The host owns install, versioning, and `/plugin update`. Restart the host to loa
 The legacy `build-loop-install` binary syncs the same files into the host caches manually. Prefer the marketplace above; use this only to pin an exact version or on a host without marketplace support.
 
 ```bash
-npm install -g @tyroneross/build-loop@0.36.1
+npm install -g @tyroneross/build-loop@0.36.4
 build-loop-install --host all
 ```
 
@@ -230,7 +230,7 @@ It is for developers running AI coding agents on non-trivial changes: features, 
 
 ### What is the fastest way to try it?
 
-`npm install -g @tyroneross/build-loop@0.36.1`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
+`npm install -g @tyroneross/build-loop@0.36.4`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
 
 ### How is it different from just letting an agent code directly?
 
@@ -301,7 +301,7 @@ python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
 npm run codex:build-artifact
 npm pack --dry-run --json
-python3 scripts/verify_release_surface.py --version v0.36.1 --branch main --remote origin --json
+python3 scripts/verify_release_surface.py --version v0.36.4 --branch main --remote origin --json
 ```
 
 Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.
