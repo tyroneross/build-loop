@@ -16,6 +16,9 @@ published; their changes first ship here. Release notes: `docs/releases/v0.36.4.
 ### Changed
 - Worktree-isolation doctrine widened to commit-less file editors: any long-running background writer that edits files must use a dedicated worktree — commit authority no longer required; lint rule `wake-path-grew-a-file-edit` added (`e45cfa6`).
 
+### Added
+- runtime-parity-verification: doc↔interface parity checks for CLIs, tools, and flows (`7dc1854`).
+
 ## 0.36.3 — 2026-07-10 (not published; first shipped in v0.36.4)
 
 ### Added
