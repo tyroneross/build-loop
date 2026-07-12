@@ -1279,6 +1279,59 @@ def decision_quality_doctrine() -> dict[str, Any]:
                 "text": "", "reason": f"read_error: {exc}"}
 
 
+def emit_read_telemetry(
+    packet: dict[str, Any],
+    *,
+    telemetry_path: Path | None = None,
+) -> str | None:
+    """FIX-3 (2026-07-11): record a ``memory-read`` event for the lessons this
+    Phase-1 bootstrap surfaced into the packet.
+
+    Lesson recall was un-measurable — TELEMETRY.jsonl held only ``memory-write``
+    rows, zero reads, so "measure usage before removing" had no read data. This
+    emits ONE append-only ``memory-read`` row into the SAME per-lane
+    TELEMETRY.jsonl the writes use, listing the lesson ids surfaced. Cheap,
+    append-only, no LLM. Skips silently when nothing was surfaced or the store
+    is absent (never creates the store). Returns the correlation id, or None.
+    """
+    try:
+        import memory_telemetry as _mt  # noqa: PLC0415
+
+        ids: list[str] = []
+        for lesson in packet.get("lessons_progressive") or []:
+            if not isinstance(lesson, dict):
+                continue
+            mid = lesson.get("source_path") or lesson.get("name")
+            if mid:
+                ids.append(str(mid))
+        # De-dup, preserve order.
+        seen: set[str] = set()
+        ids = [i for i in ids if not (i in seen or seen.add(i))]
+        if not ids:
+            return None
+        # Do not CREATE the store: skip when the canonical root is absent, unless
+        # the caller injected an explicit telemetry_path (tests / redirected store).
+        if telemetry_path is None:
+            try:
+                from _paths import memory_store_root  # noqa: PLC0415
+                if not memory_store_root().exists():
+                    return None
+            except Exception:  # noqa: BLE001
+                return None
+        return _mt.emit_read(
+            phase="1-assess",
+            reader="context_bootstrap",
+            query=str(packet.get("query") or ""),
+            memory_ids_seen=ids,
+            reason="lessons surfaced into Phase-1 packet",
+            telemetry_path=telemetry_path,
+        )
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget; never break bootstrap
+        import sys as _sys
+        print(f"WARN: emit_read_telemetry failed: {exc}", file=_sys.stderr)
+        return None
+
+
 def build_packet(
     workdir: Path,
     query: str,
@@ -1362,6 +1415,9 @@ def build_packet(
     if lesson_reasons:
         packet["sources"]["canonical_memory"].setdefault("reasons", []).extend(lesson_reasons)
     packet["agent_brief"] = agent_brief(packet)
+
+    # FIX-3: record a memory-read telemetry event for the surfaced lessons.
+    emit_read_telemetry(packet)
 
     # f1 — deterministic prior-art delivery: write the digest into intent.md by
     # CODE so Phase 1 always has it, not just via the advisory brief pointer.
