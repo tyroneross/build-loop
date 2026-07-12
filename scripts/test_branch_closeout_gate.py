@@ -13,6 +13,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from branch_closeout_gate import check_branch_closeout  # noqa: E402
+import data_plane as dp  # noqa: E402
 from rally_point.post import post  # noqa: E402
 
 
@@ -96,6 +97,46 @@ def test_solo_main_run_can_post_without_receipt(tmp_path: Path) -> None:
     assert check_branch_closeout(repo, run_id)["ready"] is True
     assert _post_closeout(repo, channel, run_id) == 1
     assert (channel / "changes.jsonl").is_file()
+
+
+def test_data_manifest_blocks_terminal_post_until_owned_surface_is_terminal(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    channel = tmp_path / "channel"
+    run_id = "bl-gate-data"
+    worktree = repo / ".build-loop/worktrees/data"
+    worktree.mkdir(parents=True)
+    manifest = dp.initialize_manifest(
+        repo, run_id=run_id, worktree_path=worktree, branch="bl/run-data"
+    )
+    manifest_path = dp.manifest_path(repo, run_id)
+    manifest["surfaces"] = [{
+        "id": "fixture-db",
+        "kind": "sqlite",
+        "authority": "canonical",
+        "isolation": "per_worktree",
+        "writable": True,
+        "resource_key": "sqlite:fixture-db",
+        "path": "fixture.sqlite",
+        "status": "active",
+    }]
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    state = {
+        "execution": {
+            "build_loop_id": run_id,
+            "data_manifest_path": str(manifest_path),
+        },
+        "runs": [{"run_id": run_id, "createdRefs": []}],
+    }
+    (repo / ".build-loop/state.json").write_text(json.dumps(state, indent=2))
+
+    blocked = check_branch_closeout(repo, run_id)
+    assert blocked["ready"] is False
+    assert blocked["data_manifest_path"] == str(manifest_path)
+    assert any("owned writable surfaces" in error for error in blocked["errors"])
+    assert _post_closeout(repo, channel, run_id) is None
+
+    dp.set_surface_status(manifest_path, surface_id="fixture-db", status="retained")
+    assert check_branch_closeout(repo, run_id)["ready"] is True
 
 
 def test_verified_terminal_receipt_unlocks_run_closeout_post(tmp_path: Path) -> None:

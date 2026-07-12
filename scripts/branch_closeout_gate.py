@@ -159,6 +159,54 @@ def _attributable_refs(
     return refs, ambiguous_paths
 
 
+def _data_manifest_path(state: dict[str, Any], run: dict[str, Any]) -> str | None:
+    """Return the exact run's data-manifest projection, if it has one.
+
+    Absence is intentionally legacy-compatible: historical runs were created
+    before the data-plane contract. New provisioned runs persist this field on
+    ``execution`` and therefore cannot bypass the terminal check.
+    """
+    direct = run.get("data_manifest_path")
+    if isinstance(direct, str) and direct:
+        return direct
+    run_ids = _identities(run)
+    executions: list[dict[str, Any]] = []
+    active = state.get("execution")
+    if isinstance(active, dict):
+        executions.append(active)
+    executions.extend(
+        row for row in state.get("historicalExecutions") or [] if isinstance(row, dict)
+    )
+    for execution in executions:
+        if run_ids & _identities(execution):
+            value = execution.get("data_manifest_path")
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _check_data_closeout(
+    workdir: Path,
+    run: dict[str, Any],
+    state: dict[str, Any],
+    run_id: str,
+) -> tuple[str | None, list[str]]:
+    raw_path = _data_manifest_path(state, run)
+    if raw_path is None:
+        return None, []
+    path = _resolve_path(workdir, raw_path)
+    if path is None:
+        return None, ["data manifest path is invalid"]
+    try:
+        import data_plane
+    except ImportError as exc:  # pragma: no cover — deployment defect
+        return str(path), [f"data-plane validator unavailable: {exc}"]
+    verdict = data_plane.check_terminal_manifest(workdir, path, expected_run_id=run_id)
+    if verdict.get("ok"):
+        return str(path), []
+    return str(path), [f"data manifest: {error}" for error in verdict.get("errors", [])]
+
+
 def check_branch_closeout(workdir: Path | str, run_id: str) -> dict[str, Any]:
     """Return a machine-readable terminal-closeout verdict for one exact run."""
     root = Path(workdir).resolve()
@@ -166,6 +214,7 @@ def check_branch_closeout(workdir: Path | str, run_id: str) -> dict[str, Any]:
         "ready": False,
         "run_id": run_id,
         "receipt_path": None,
+        "data_manifest_path": None,
         "branches": [],
         "errors": [],
     }
@@ -182,6 +231,11 @@ def check_branch_closeout(workdir: Path | str, run_id: str) -> dict[str, Any]:
     run = _find_run(state, run_id)
     if run is None:
         result["errors"].append(f"no exact runs[] row for {run_id}")
+        return result
+    data_manifest_path, data_errors = _check_data_closeout(root, run, state, run_id)
+    result["data_manifest_path"] = data_manifest_path
+    if data_errors:
+        result["errors"].extend(data_errors)
         return result
     refs, ambiguous_paths = _attributable_refs(state, run)
     if ambiguous_paths:

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "db31da3cd005921c117a7aea8f75ce8afce742321aae871928191099d7080f20"
+    "content_sha256": "e394e6e901f598aaa697a9f36fd3f1f830dde0fa31b2d29951fd7ad896d896fa"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1537,6 +1537,7 @@
       "scripts/coordination_watch.py": "Compatibility wrapper for the embedded agent-rally-watcher namespace.\"\"\"",
       "scripts/cost_ledger_hook.py": "Stop-hook producer for the per-dispatch cost ledger.",
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
+      "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",

@@ -162,7 +162,7 @@ class _FuncAnalyzer:
                 kind = self._quadratic_kind(child, outer, outer_name)
                 if kind is None:
                     continue
-                self._add(getattr(child, "lineno", outer.lineno),
+                self._add(getattr(child, "lineno", getattr(outer, "lineno", self.fn.lineno)),
                           "accidental_quadratic",
                           f"{kind} '{outer_name}' inside loop in "
                           f"'{self.fn.name}' (O(n^2))", "high", 2.0)
