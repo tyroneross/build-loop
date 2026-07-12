@@ -158,3 +158,31 @@ def test_promote_durable_refuses_scratch_slug(tmp_path):
         ok = promote_durable(tmp_path, "session-x", {k: "" for k in SECTION_KEYS},
                             repo=good, memory_root=mem)
         assert ok["status"] == "ok" and ok["durable_path"], good
+
+
+def test_promote_durable_falls_through_when_enqueue_fails(monkeypatch, tmp_path):
+    """f6: if the enqueue itself fails on a busy store, promote_durable must NOT
+    claim status=queued (silent loss) — it falls through to the direct write."""
+    import sys as _sys
+    _scripts = str(Path(__file__).resolve().parent.parent)
+    if _scripts not in _sys.path:
+        _sys.path.insert(0, _scripts)
+    import promotion_queue as pq
+    from retrospective import write as retro_write
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    (mem / pq.PEER_HOLD_MARKER).write_text("")  # store busy
+
+    # Enqueue fails (returns queued=False).
+    monkeypatch.setattr(pq, "enqueue", lambda *a, **k: {"queued": False, "reason": "boom"})
+    res = retro_write.promote_durable(
+        workdir=repo, run_id="run-f6", sections={"summary": "x"}, repo="demo",
+        memory_root=mem,
+    )
+    # Must have fallen through to the direct write (status ok), not silently "queued".
+    assert res["status"] != "queued"
+    assert res["status"] == "ok"
+    assert (mem / "projects" / "demo").exists()

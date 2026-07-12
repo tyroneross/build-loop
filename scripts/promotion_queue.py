@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,40 @@ def store_busy(memory_root: Path | str | None = None) -> bool:
         return False
 
 
+class peer_hold:
+    """Producer for the busy signal: hold the canonical store during a long op.
+
+    f2 (auditor): ``store_busy`` had no producer in-repo, leaving enqueue-on-busy
+    dormant. A session about to do an extended store operation wraps it in
+    ``with peer_hold(memory_root):`` (or calls the ``hold`` / ``release`` CLI) to
+    drop a ``<memory_root>/.peer-hold`` marker that peers see as busy. The
+    complementary organic producer is ``append_milestone``'s fcntl lock-timeout,
+    which already queues without any cooperative marker.
+
+    Fail-soft: a missing/unwritable root degrades to a no-op (never raises).
+    """
+
+    def __init__(self, memory_root: Path | str) -> None:
+        self.marker = Path(os.path.expanduser(str(memory_root))) / PEER_HOLD_MARKER
+        self._held = False
+
+    def __enter__(self) -> "peer_hold":
+        try:
+            self.marker.parent.mkdir(parents=True, exist_ok=True)
+            self.marker.write_text(_iso_utc(), encoding="utf-8")
+            self._held = True
+        except OSError as exc:
+            print(f"WARN: peer_hold could not set marker: {exc}", file=sys.stderr)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._held:
+            try:
+                self.marker.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def queue_path(workdir: Path | str) -> Path:
     return Path(workdir) / ".build-loop" / QUEUE_DIRNAME / QUEUE_FILENAME
 
@@ -128,7 +163,7 @@ def enqueue(
         return {"queued": False, "reason": f"invalid kind: {kind!r}"}
     ts = _iso_utc()
     row: dict[str, Any] = {
-        "id": f"{ts.replace(':', '').replace('-', '')}-{kind}",
+        "id": f"{ts.replace(':', '').replace('-', '')}-{kind}-{secrets.token_hex(3)}",
         "ts": ts,
         "kind": kind,
         "status": "pending",
@@ -197,9 +232,9 @@ def _apply_lesson(record: dict[str, Any], workdir: Path, memory_root: Path | Non
     p = record.get("payload") or {}
     scope = p.get("scope") or "project"
     project = p.get("project")
-    if p.get("memory_dir"):
-        mem_dir = Path(p["memory_dir"])
-    elif scope == "project" and project:
+    # Enqueue sites never carry an explicit --memory-dir (those writes bypass the
+    # queue, per _maybe_queue_lesson_on_busy), so resolve the canonical lane here.
+    if scope == "project" and project:
         mem_dir = project_root(project) / "lessons"
     else:
         mem_dir = memory_store_root() / "lessons"
@@ -298,12 +333,24 @@ def drain(
                             "error": row["drain_error"]})
 
     # Rewrite the queue with only still-pending rows; append drained rows to the audit log.
+    # f3 (concurrency): the snapshot (all_rows) was read WITHOUT the lock, so a peer
+    # may have enqueued between snapshot and here. Re-read UNDER the lock and carry
+    # forward any row we did not process (by id) so a concurrent enqueue is never
+    # lost — the anti-silent-loss mechanism must not itself drop records.
+    processed_ids = {r.get("id") for r in drained_rows} | {r.get("id") for r in still_pending}
     try:
         with LockedFile(queue_path(workdir), timeout_s=LOCK_TIMEOUT_S):
+            fresh = _read_jsonl(queue_path(workdir))
+            carried = [
+                r for r in fresh
+                if r.get("status") == "pending" and r.get("id") not in processed_ids
+            ]
+            keep = still_pending + carried
             body = "".join(
-                json.dumps(r, separators=(",", ":"), default=str) + "\n" for r in still_pending
+                json.dumps(r, separators=(",", ":"), default=str) + "\n" for r in keep
             ).encode("utf-8")
             atomic_write_bytes(queue_path(workdir), body)
+            still_pending = keep
     except Exception as exc:  # noqa: BLE001
         print(f"WARN: promotion_queue rewrite failed: {exc}", file=sys.stderr)
     for r in drained_rows:
@@ -324,12 +371,28 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list", help="List pending queued promotions.")
     d = sub.add_parser("drain", help="Replay pending promotions against the store.")
     d.add_argument("--dry-run", action="store_true")
+    sub.add_parser("hold", help="Set the peer-hold marker (requires --memory-root).")
+    sub.add_parser("release", help="Clear the peer-hold marker (requires --memory-root).")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
 
     workdir = Path(os.path.expanduser(args.workdir))
     if args.cmd == "list":
         out: dict[str, Any] = {"pending": list_pending(workdir)}
+    elif args.cmd in ("hold", "release"):
+        if not args.memory_root:
+            out = {"ok": False, "reason": "hold/release requires --memory-root"}
+        else:
+            marker = Path(os.path.expanduser(args.memory_root)) / PEER_HOLD_MARKER
+            try:
+                if args.cmd == "hold":
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text(_iso_utc(), encoding="utf-8")
+                else:
+                    marker.unlink(missing_ok=True)
+                out = {"ok": True, "cmd": args.cmd, "marker": str(marker)}
+            except OSError as exc:
+                out = {"ok": False, "reason": str(exc)}
     else:
         out = drain(workdir, memory_root=args.memory_root, apply=not args.dry_run)
 

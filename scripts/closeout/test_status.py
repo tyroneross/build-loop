@@ -344,3 +344,54 @@ def test_drain_runs_before_owed_check(tmp_path):
     assert mpath.exists()
     marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{run_id}.md"
     assert not marker.exists()
+
+
+# ---------------------------------------------------------------------------
+# f1: the deterministic hook path passes a SYNTHETIC run id (postpush-<ts>) that
+# never matches runs[]. Enforcement MUST still fire via the latest-shipped-run
+# fallback — otherwise the net is inert on exactly the automated path.
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_hook_rid_falls_back_to_latest_shipped_run(tmp_path):
+    real_run = "bl-real-run-99"
+    bl = tmp_path / ".build-loop"
+    bl.mkdir(parents=True)
+    (bl / "state.json").write_text(json.dumps({
+        "runs": [{"run_id": real_run, "commit": "abcd1234", "files_touched": "5",
+                  "goal": "shipped the thing"}]
+    }))
+    mem = tmp_path / "mem"
+    mem.mkdir()
+
+    # The post-push hook passes a synthetic id that matches no runs[] row.
+    res = ensure_milestone(tmp_path, "postpush-20260711T120000Z", memory_root=str(mem))
+    assert res["status"] == "owed"
+    # Owed marker keyed on the RESOLVED real run id, not the synthetic one.
+    assert res["run_id"] == real_run
+    marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}{real_run}.md"
+    assert marker.exists()
+    synthetic_marker = tmp_path / ".build-loop" / "closeout-pending" / f"{MILESTONE_OWED_PREFIX}postpush-20260711T120000Z.md"
+    assert not synthetic_marker.exists()
+
+
+def test_synthetic_rid_no_shipped_run_stays_noop(tmp_path):
+    bl = tmp_path / ".build-loop"
+    bl.mkdir(parents=True)
+    # runs[] has a row but no commit → nothing shipped → no fallback target.
+    (bl / "state.json").write_text(json.dumps({"runs": [{"run_id": "wip", "goal": "x"}]}))
+    res = ensure_milestone(tmp_path, "postpush-20260711T120000Z", memory_root=str(tmp_path / "mem"))
+    assert res["status"] == "not_shipped"
+
+
+def test_candidate_aging_surfaced_in_envelope(tmp_path):
+    # A shipped run + one aged undisposed candidate → both surface in the envelope.
+    run_id = "bl-run-ca"
+    _shipped_state(tmp_path, run_id, commit="c0ffee")
+    cand_dir = tmp_path / ".build-loop" / "proposals" / "enforce-from-retro"
+    cand_dir.mkdir(parents=True)
+    (cand_dir / "old.md").write_text(
+        "---\nproposal_id: old\nstatus: proposed\ndate: 2026-01-01\n---\n# x\n")
+    env = run(tmp_path, run_id=run_id, source="post-push", memory_root=str(tmp_path / "mem"))
+    assert env["candidate_aging"]["aged_undisposed"] == 1
+    assert "aged undisposed" in env["candidate_aging"]["report_line"]

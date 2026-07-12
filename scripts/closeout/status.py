@@ -213,33 +213,79 @@ def _row_identities(row: Any) -> set[str]:
     }
 
 
-def _run_shipped(workdir: Path, run_id: str) -> tuple[bool, str | None, str]:
-    """Did the run identified by ``run_id`` ship anything?
+def _git_head(workdir: Path) -> str | None:
+    """HEAD sha for workdir, or None. Used to cross-check the latest-run fallback."""
+    import subprocess  # noqa: PLC0415
+    try:
+        r = subprocess.run(["git", "-C", str(workdir), "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip() or None
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        pass
+    return None
 
-    Reads ``.build-loop/state.json.runs[]`` — the record Review-G writes. A run
-    "shipped" when its record carries a non-empty commit or files_touched/
-    files_changed. Returns (shipped, commit, summary). Fail-soft → (False, None, "").
+
+def _row_shipped(r: dict) -> tuple[bool, str | None, str]:
+    commit = str(r.get("commit") or "").strip() or None
+    files = r.get("files_touched") or r.get("files_changed") or r.get("files")
+    has_files = bool(files) and str(files).strip() not in ("", "0", "[]")
+    summary = str(r.get("goal") or r.get("summary") or r.get("run_label") or "").strip()
+    return (bool(commit) or has_files, commit, summary[:300])
+
+
+def _resolve_shipped_run(workdir: Path, run_id: str) -> dict[str, Any]:
+    """Resolve the shipped run this closeout should enforce a milestone for.
+
+    Reads ``.build-loop/state.json.runs[]`` (the record Review-G writes).
+
+    1. Exact identity match on ``run_id`` → use that row (a real orchestrator /
+       retro-synth run id).
+    2. FALLBACK (f1 — the deterministic hook path): the post-push / session-start
+       hooks pass a SYNTHETIC id (``postpush-<ts>`` / ``armed-<ts>``) that never
+       matches ``runs[]``. Without a fallback the enforcement net is inert on
+       exactly the automated path it exists for. So when no row matches, pick the
+       newest ``runs[]`` row whose commit == the repo HEAD (the just-pushed run),
+       else the newest row carrying any commit. Key the owed marker on THAT row's
+       real run id.
+
+    Returns ``{shipped, run_id, commit, summary}``. Fail-soft → shipped False.
     """
     state_path = workdir / ".build-loop" / "state.json"
     try:
         if not state_path.exists():
-            return (False, None, "")
+            return {"shipped": False, "run_id": run_id, "commit": None, "summary": ""}
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return (False, None, "")
+        return {"shipped": False, "run_id": run_id, "commit": None, "summary": ""}
     runs = state.get("runs") if isinstance(state, dict) else None
     if not isinstance(runs, list):
-        return (False, None, "")
+        return {"shipped": False, "run_id": run_id, "commit": None, "summary": ""}
+
+    # 1. Exact identity match.
     for r in runs:
-        if not isinstance(r, dict) or run_id not in _row_identities(r):
-            continue
-        commit = str(r.get("commit") or "").strip() or None
-        files = r.get("files_touched") or r.get("files_changed") or r.get("files")
-        has_files = bool(files) and str(files).strip() not in ("", "0", "[]")
-        shipped = bool(commit) or has_files
-        summary = str(r.get("goal") or r.get("summary") or r.get("run_label") or "").strip()
-        return (shipped, commit, summary[:300])
-    return (False, None, "")
+        if isinstance(r, dict) and run_id in _row_identities(r):
+            shipped, commit, summary = _row_shipped(r)
+            return {"shipped": shipped, "run_id": run_id, "commit": commit, "summary": summary}
+
+    # 2. Latest-shipped-run fallback (hook-synthetic id).
+    head = _git_head(workdir)
+    rows = [r for r in runs if isinstance(r, dict)]
+    head_match = None
+    any_commit = None
+    for r in reversed(rows):  # newest last
+        _, commit, _ = _row_shipped(r)
+        if commit and head and commit == head and head_match is None:
+            head_match = r
+        if commit and any_commit is None:
+            any_commit = r
+    chosen = head_match or any_commit
+    if chosen is not None:
+        shipped, commit, summary = _row_shipped(chosen)
+        ids = _row_identities(chosen)
+        resolved = next(iter(sorted(ids)), run_id) if ids else run_id
+        return {"shipped": shipped, "run_id": resolved, "commit": commit, "summary": summary}
+    return {"shipped": False, "run_id": run_id, "commit": None, "summary": ""}
 
 
 def _milestone_recorded(memory_root: Path, slug: str, run_id: str, commit: str | None) -> bool:
@@ -354,9 +400,14 @@ def ensure_milestone(
     mem_root = Path(os.path.expanduser(str(memory_root or DEFAULT_MEMORY_ROOT)))
     drain_result = _drain_promotions(workdir, mem_root)
 
-    shipped, commit, summary = _run_shipped(workdir, run_id)
-    if not shipped:
+    resolved = _resolve_shipped_run(workdir, run_id)
+    if not resolved["shipped"]:
         return {"status": "not_shipped", "drain": drain_result}
+    # Use the RESOLVED run id (the real runs[] row, even when a hook passed a
+    # synthetic id) for the marker + recorded/queued checks.
+    eff_run_id = resolved["run_id"]
+    commit = resolved["commit"]
+    summary = resolved["summary"]
 
     try:
         from _paths import derive_slug_from_cwd  # noqa: PLC0415
@@ -364,13 +415,14 @@ def ensure_milestone(
     except Exception:  # noqa: BLE001
         slug = workdir.name
 
-    if _milestone_recorded(mem_root, slug, run_id, commit):
-        return {"status": "recorded", "commit": commit, "drain": drain_result}
-    if _milestone_queued(workdir, run_id, commit):
-        return {"status": "queued", "commit": commit, "drain": drain_result}
+    if _milestone_recorded(mem_root, slug, eff_run_id, commit):
+        return {"status": "recorded", "run_id": eff_run_id, "commit": commit, "drain": drain_result}
+    if _milestone_queued(workdir, eff_run_id, commit):
+        return {"status": "queued", "run_id": eff_run_id, "commit": commit, "drain": drain_result}
 
-    marker = _write_milestone_owed_marker(workdir, run_id, commit, summary)
-    return {"status": "owed", "commit": commit, "marker": str(marker), "drain": drain_result}
+    marker = _write_milestone_owed_marker(workdir, eff_run_id, commit, summary)
+    return {"status": "owed", "run_id": eff_run_id, "commit": commit,
+            "marker": str(marker), "drain": drain_result}
 
 
 def run(
@@ -417,6 +469,7 @@ def run(
         "signal": {},
         "written_to": None,
         "milestone": None,
+        "candidate_aging": None,
         "error": None,
     }
 
@@ -439,6 +492,23 @@ def run(
             envelope["milestone"] = ensure_milestone(workdir, run_id, memory_root)
         except Exception as exc:  # noqa: BLE001 — enforcement never blocks closeout
             envelope["milestone"] = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+    # f5: surface aged undisposed enforce-from-retro candidates on every closeout
+    # (cheap dir glob; fail-soft). Turns candidate_aging from computed-not-delivered
+    # into a real report line the caller can print in the ## Closeout block.
+    try:
+        import sys as _sys
+        _here = str(Path(__file__).resolve().parent.parent)
+        if _here not in _sys.path:
+            _sys.path.insert(0, _here)
+        import candidate_aging as _ca  # noqa: PLC0415
+        _res = _ca.scan(Path(workdir))
+        envelope["candidate_aging"] = {
+            "aged_undisposed": len(_res.get("aged_undisposed") or []),
+            "report_line": _ca.report_line(_res),
+        }
+    except Exception as exc:  # noqa: BLE001 — advisory; never blocks closeout
+        envelope["candidate_aging"] = {"error": f"{type(exc).__name__}: {exc}"}
 
     # Atomic persist.
     out_path = workdir / ".build-loop" / CLOSEOUT_DIRNAME / f"{rid}.json"

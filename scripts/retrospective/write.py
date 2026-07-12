@@ -225,8 +225,12 @@ def promote_durable(
                     reason="store peer-held — retro durable promotion queued",
                     run_id=run_id,
                 )
-                return {"durable_path": None, "status": "queued",
-                        "reason": env.get("reason"), "queue_id": env.get("id")}
+                # f6: only report "queued" when the enqueue actually landed;
+                # otherwise fall through to the direct write attempt below rather
+                # than silently claiming a queue that failed.
+                if env.get("queued"):
+                    return {"durable_path": None, "status": "queued",
+                            "reason": env.get("reason"), "queue_id": env.get("id")}
         except Exception as _exc:  # noqa: BLE001 — queueing is best-effort; fall through to write
             pass
         date = _today_iso()

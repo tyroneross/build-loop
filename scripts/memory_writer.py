@@ -861,6 +861,10 @@ def _maybe_queue_lesson_on_busy(args: argparse.Namespace, body: str, file_rel: s
     """
     if getattr(args, "on_busy", "queue") != "queue":
         return None
+    # f4: an explicit --memory-dir override targets a caller-chosen path, NOT the
+    # canonical store, so it is written verbatim (never hijacked into the queue).
+    if getattr(args, "memory_dir", None):
+        return None
     import promotion_queue  # noqa: PLC0415
     from _paths import memory_store_root  # noqa: PLC0415
     if not promotion_queue.store_busy(memory_store_root()):

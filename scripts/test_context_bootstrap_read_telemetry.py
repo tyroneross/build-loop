@@ -71,9 +71,10 @@ def test_absent_store_no_write_no_creation(tmp_path, monkeypatch):
     assert not (tmp_path / "does-not-exist").exists()
 
 
-def test_build_packet_end_to_end_emits_read(tmp_path, monkeypatch):
-    """Full build_packet against a fixture store writes a memory-read row when
-    lessons are surfaced (guard: at minimum, never raises and store not polluted)."""
+def test_emit_read_telemetry_writes_to_indexes_path(tmp_path, monkeypatch):
+    """emit_read_telemetry writes a memory-read row into a fixture indexes/
+    TELEMETRY.jsonl (the lane path build_packet targets in production; the
+    build_packet->emit_read_telemetry call site is at context_bootstrap.py)."""
     store = tmp_path / "mem"
     (store / "indexes").mkdir(parents=True)
     monkeypatch.setenv("BUILD_LOOP_MEMORY_STORE_ROOT", str(store))

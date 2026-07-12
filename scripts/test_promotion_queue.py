@@ -162,3 +162,49 @@ def test_drain_free_applies_retro_durable(monkeypatch, tmp_path):
     assert out["drained"] == 1
     durable = list((mem / "projects" / "demo" / "retrospectives").rglob("run-r.md"))
     assert len(durable) == 1
+
+
+def test_peer_hold_producer_sets_and_clears_marker(monkeypatch, tmp_path):
+    """f2: peer_hold gives the busy signal a real producer."""
+    monkeypatch.delenv(pq.BUSY_ENV, raising=False)
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    assert pq.store_busy(mem) is False
+    with pq.peer_hold(mem):
+        assert (mem / pq.PEER_HOLD_MARKER).exists()
+        assert pq.store_busy(mem) is True
+    assert not (mem / pq.PEER_HOLD_MARKER).exists()
+    assert pq.store_busy(mem) is False
+
+
+def test_cli_hold_release(monkeypatch, tmp_path):
+    monkeypatch.delenv(pq.BUSY_ENV, raising=False)
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    pq.main(["--workdir", str(tmp_path), "--memory-root", str(mem), "hold"])
+    assert pq.store_busy(mem) is True
+    pq.main(["--workdir", str(tmp_path), "--memory-root", str(mem), "release"])
+    assert pq.store_busy(mem) is False
+
+
+def test_drain_preserves_row_enqueued_mid_drain(monkeypatch, tmp_path):
+    """f3: a record enqueued between the unlocked snapshot and the locked rewrite
+    must NOT be silently dropped."""
+    monkeypatch.delenv(pq.BUSY_ENV, raising=False)
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    # Original queued record.
+    pq.enqueue(tmp_path, kind="milestone", payload={"summary": "orig"}, run_id="orig")
+
+    # Applier that simulates a concurrent peer enqueue during processing.
+    def _racy_applier(record, workdir, memory_root):
+        pq.enqueue(workdir, kind="milestone", payload={"summary": "concurrent"}, run_id="concurrent")
+        return {"status": "ok"}
+
+    monkeypatch.setitem(pq._APPLIERS, "milestone", _racy_applier)
+    out = pq.drain(tmp_path, memory_root=str(mem))
+    assert out["drained"] == 1  # the original
+    pending = pq.list_pending(tmp_path)
+    ids = {r["run_id"] for r in pending}
+    assert "concurrent" in ids  # survived the rewrite
+    assert "orig" not in ids    # the processed one is gone from the queue

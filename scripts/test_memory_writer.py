@@ -737,3 +737,22 @@ class CanonicalFilenameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_explicit_memory_dir_bypasses_busy_queue(monkeypatch, tmp_path):
+    """f4: an explicit --memory-dir write is honored verbatim even on a busy store
+    (never hijacked into the promotion queue)."""
+    import argparse
+    import memory_writer as mw
+    monkeypatch.setenv("BUILD_LOOP_MEMORY_BUSY", "1")  # store "busy"
+    args = argparse.Namespace(
+        on_busy="queue", memory_dir=str(tmp_path / "custom"), name="n",
+        description="d", type="lesson", scope="top-level", workdir=str(tmp_path),
+        run_id="r", host="claude_code",
+    )
+    # memory_dir set → guard returns None → NO queue.
+    assert mw._maybe_queue_lesson_on_busy(args, "body", "f.md") is None
+    # And with no memory_dir, the same busy store DOES queue.
+    args.memory_dir = None
+    env = mw._maybe_queue_lesson_on_busy(args, "body", "f.md")
+    assert env is not None and env.get("queued") is True
