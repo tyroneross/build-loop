@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "5e6a632274f48fc2c041f38f7ddac9f6a7ef6ef8c1583fd5d99e6e7c206378be"
+    "content_sha256": "db31da3cd005921c117a7aea8f75ce8afce742321aae871928191099d7080f20"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1508,6 +1508,7 @@
       "scripts/build_capability_registry.py": "Capability registry builder.",
       "scripts/build_codex_plugin_artifact.py": "Build the slim Codex plugin artifact.",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
+      "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",
       "scripts/capability_classifier.py": "Deterministic capability classification for Phase 1 prior-art injection.",
       "scripts/capability_shortlist.py": "Capability shortlist matcher.",
       "scripts/capture_arch_violation.py": "Capture architecture violations into the known_violations registry.",
