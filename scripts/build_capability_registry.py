@@ -117,7 +117,9 @@ CATEGORY_KEYWORDS = [
                       # skills through pending/check/approval and are runtime
                       # lifecycle infrastructure, not product execution.
                       "extensions_", "session-start-extensions",
-                      "learned skill", "pending drafts")),
+                      "learned skill", "pending drafts",
+                      "candidate_aging", "candidate aging",
+                      "promotion_queue", "promotion queue")),
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.
