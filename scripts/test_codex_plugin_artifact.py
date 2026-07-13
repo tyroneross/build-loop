@@ -46,7 +46,7 @@ class CodexPluginArtifactTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
 
-    def test_builder_outputs_one_visible_skill(self) -> None:
+    def test_builder_outputs_approved_public_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_raw:
             target = Path(tmp_raw) / "codex"
             result = subprocess.run(
@@ -65,10 +65,15 @@ class CodexPluginArtifactTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
             skill_paths = sorted(str(path.relative_to(target)) for path in target.rglob("SKILL.md"))
-            self.assertEqual(skill_paths, ["skills/build-loop/SKILL.md"])
+            self.assertEqual(
+                skill_paths,
+                ["skills/build-loop/SKILL.md", "skills/repo-closeout/SKILL.md"],
+            )
             manifest = target / ".codex-plugin" / "plugin.json"
             self.assertIn('"skills": "./skills"', manifest.read_text(encoding="utf-8"))
             self.assertTrue((target / ICON_REL).is_file())
+            self.assertTrue((target / "skills" / "repo-closeout" / "scripts" / "audit_repo_closeout.py").is_file())
+            self.assertFalse((target / "skills" / "repo-closeout" / "scripts" / "test_audit_repo_closeout.py").exists())
 
     def test_checked_in_artifact_includes_plugin_icon(self) -> None:
         icon = ARTIFACT / ICON_REL
