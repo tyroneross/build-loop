@@ -24,7 +24,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 ## Canonical tier definitions (legacy 4-tier view — the Generative Reasoning T1–T4 cells)
 
 ### Frontier tier
-- **Role:** Planning synthesis AND verification verdicts. **Phase 2 Plan synthesis reaches Fable via the stakes-gated Advisor dispatch ladder** (`advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise — `skills/build-loop/references/advisor-dispatch-ladder.md`); the Advisor v1 ladder is Phase 2 only, so Phase 1 Assess synthesis runs inline as today until v2. Plan content: frame goal, draft spec/ADRs, F-criteria, MECE partition. Verification-shaped agents whose verdicts gate downstream work: plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer.
+- **Role:** Planning synthesis and the highest-consequence verification verdicts. **Phase 2 Plan synthesis reaches Fable via the stakes-gated Advisor dispatch ladder** (`advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise — `skills/build-loop/references/advisor-dispatch-ladder.md`); the Advisor v1 ladder is Phase 2 only, so Phase 1 Assess synthesis runs inline as today until v2. The Frontier verification agents are `plan-critic`, `independent-auditor`, and `security-reviewer`.
 - **Why this tier exists (above Thinking):** wrong plans dispatch N implementers into the wrong work, and wrong verdicts ship regressions. The user's standing priority is Accuracy > Speed > Cost; the compounding-risk surfaces pay the Frontier premium.
 - **Benchmark contract:** clears the Thinking-tier contract AND benchmarks above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond.
 - **Cost expectation:** highest. Use only on the planning + verification surface; never default for execution or coordination.
@@ -33,7 +33,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Local equivalents:** none — Frontier-class capability is not yet matched locally
 
 ### Thinking tier
-- **Role:** Coordination + escalation. Routes work between subagents, ladders severity, runs causal-tree on stuck iterations, writes audit/learnings when no Frontier verdict is being rendered.
+- **Role:** Coordination + escalation, plus medium-risk verification with strong external or deterministic checks. Routes work between subagents, ladders severity, runs causal-tree on stuck iterations, and powers `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer`.
 - **Benchmark contract:** SWE-bench Verified ≥78% AND competitive on ARC-AGI / GPQA Diamond / MMLU-Pro.
 - **Cost expectation:** middle-high tier. Use for orchestration and the escalation target when execution hits ambiguity. Never default to Thinking for bounded execution.
 - **Anthropic default:** Opus 4.8 (`claude-opus-4-8`; alias `opus` auto-tracks the latest Opus generation)
@@ -78,6 +78,8 @@ Codex resolves these assignments live from each agent's `(segment, tier)` role. 
 | **Luna** | `mock-scanner`, `recurring-pattern-detector`, `transcript-pattern-miner`; bounded extraction/classification helpers | `low` or `medium` | Move to Terra when rule application or multi-step transformation appears; move to Sol for novel judgment or a gating verdict. |
 
 Use the lowest thinking level that passes the real verifier. Deterministic scripts remain preferred over Luna when they fully express the rule. All three GPT-5.6 models retain the same least-privilege, confirmation, sandboxing, and independent-verification controls; the system card classifies the family as High capability in cybersecurity and biological/chemical risk.
+
+**Claude verification split:** `plan-critic`, `independent-auditor`, and `security-reviewer` remain on Fable. `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` default to Opus. On Codex, all eight still resolve to Sol through the segment-specific Governance/Evaluation cells.
 
 ### Selectable model registry (the machine-readable source of truth)
 
@@ -176,7 +178,7 @@ When you see a task in build-loop, classify it before assigning a tier:
 | Implement commit's owned files | Application | Code |
 | Severity-rank findings (post-verdict routing) | Coordination synthesis | Thinking |
 | Mock-data scan | Recognition | Pattern |
-| Trace caller-paths (scope-auditor) | Verification synthesis | Frontier |
+| Trace caller-paths (scope-auditor) | Medium-risk verification synthesis | Thinking role: Opus on Claude, Sol on Codex |
 | Independent-auditor vs diff | Verification synthesis | Frontier |
 | Audit / learnings write (no verdict being rendered) | Coordination synthesis | Thinking |
 | Recurring-pattern detection | Recognition | Pattern |
@@ -230,7 +232,8 @@ The orchestrator **judges each subtask's complexity at dispatch time** and assig
 | Pure recognition, extraction, classification, mechanical sweep — "find X", "list/grep Y", "scan for Z", "extract these fields", "run detector + summarize its JSON", "does this match the pattern". No rule-application, no cross-file reasoning. | **Pattern / Haiku** |
 | Apply a known rule or spec to bounded input. Scoped implementation per owned-files. The "how" when the "what" is settled. | **Code / Sonnet** — default workhorse; prefer Sonnet over Haiku when in doubt |
 | Coordination, routing, ambiguous-spec interpretation, novel architecture decision mid-execution, causal-tree on stuck iterations, user-trust prose where no verification verdict is being rendered. | **Thinking / Opus** — orchestrator default, AND available to accelerate genuinely complex execution subtasks |
-| Planning synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) **when stakes-gated via the Advisor dispatch ladder** (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`) OR verification verdicts (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer). | **Frontier / Fable** — wrong plans and wrong verdicts compound; pays the premium. Plan synthesis reaches Fable through the `advisor` agent / peer host / already-Fable session; when no trigger fires or no dispatch path is reachable it runs inline on the orchestrator's model (Opus), labeled honestly — the floor equals today's behavior. See `skills/build-loop/references/advisor-dispatch-ladder.md`. |
+| Planning synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) **when stakes-gated via the Advisor dispatch ladder** (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`) OR highest-consequence verification verdicts (`plan-critic`, `independent-auditor`, `security-reviewer`). | **Frontier / Fable** — wrong plans and high-consequence verdicts compound; pays the premium. Plan synthesis reaches Fable through the `advisor` agent / peer host / already-Fable session; when no trigger fires or no dispatch path is reachable it runs inline on the orchestrator's model (Opus), labeled honestly. |
+| Medium-risk verification with strong checks (`scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, `promotion-reviewer`). | **Thinking role** — Opus on Claude; the Governance/Evaluation T2 cell resolves Sol on Codex. |
 
 **Prefer Sonnet.** Sonnet is the workhorse for the bulk of build-loop's work. Down-tier to Haiku only for tasks that are genuinely trivial/mechanical — pure pattern-match, no judgment, no gradient. When in doubt, use Sonnet.
 
@@ -238,7 +241,7 @@ The orchestrator **judges each subtask's complexity at dispatch time** and assig
 
 Both escalation directions are active on every dispatch decision: escalate up when complexity exceeds the assigned tier; down-tier when the task is genuinely below it.
 
-For `model: inherit` agents (fact-checker, fix-critique, root-cause-investigator), the **caller** passes the appropriate tier — the agent inherits what the caller assigned.
+For `model: inherit` agents such as `root-cause-investigator`, the **caller** passes the appropriate tier — the agent inherits what the caller assigned.
 
 ### Verify every subagent (the safety net for dynamic tiering)
 

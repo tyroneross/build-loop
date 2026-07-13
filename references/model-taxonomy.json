@@ -91,6 +91,7 @@
     },
     "governance_evaluation": {
       "T1": ["fable", "gpt-5.6-sol"],
+      "T2": ["opus", "gpt-5.6-sol"],
       "T3": ["sonnet", "gpt-5.6-terra"],
       "T4": ["haiku", "gpt-5.6-luna"],
       "T5": ["gpt-5.4-nano"],

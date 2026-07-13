@@ -71,8 +71,13 @@ class RealAgentsBackCompat(unittest.TestCase):
     EXPECT = {
         "advisor": "fable",
         "build-orchestrator": "opus",
+        "fact-checker": "opus",
+        "fix-critique": "opus",
         "implementer": "sonnet",
         "mock-scanner": "haiku",
+        "overfitting-reviewer": "opus",
+        "promotion-reviewer": "opus",
+        "scope-auditor": "opus",
         "self-improvement-architect": "sonnet",
         "plan-critic": "fable",
     }

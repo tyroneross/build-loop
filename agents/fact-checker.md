@@ -14,8 +14,8 @@ description: |
   user: "Check if the dashboard metrics are real or hardcoded"
   assistant: "I'll use the fact-checker agent to trace each metric to its source."
   </example>
-model: fable
-tier: frontier
+model: opus
+tier: thinking
 segment: governance_evaluation
 color: yellow
 tools: ["Read", "Grep", "Glob"]

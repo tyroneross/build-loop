@@ -26,8 +26,8 @@ Agents declare a `(segment, tier)` ROLE; the resolver (`scripts/model_resolver.p
 
 | Tier | Anthropic default | Role | Equivalents (advisory — verify benchmarks before swapping) |
 |---|---|---|---|
-| **Frontier** | Fable 5 | **Phase 2 Plan synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) via the Advisor dispatch ladder when stakes-gated** — `advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise (`references/advisor-dispatch-ladder.md`). (Advisor v1 = Phase 2 only; Phase 1 Assess synthesis runs inline as today until v2.) AND verification judgment (plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer) | GPT-5.6 Sol; future models that clear the Thinking-tier contract and prior ceiling |
-| **Thinking** | Opus 4.8 | Coordination — build-orchestrator, assessment-orchestrator — and the escalation target for execution (ambiguous spec, 2 consecutive failures, cross-file surprise) and audit/learnings synthesis when Frontier is unavailable | GPT-5.6 Terra for routine orchestration; GPT-5.6 Sol for genuinely ambiguous escalation; Gemini Pro-class equivalents |
+| **Frontier** | Fable 5 | **Phase 2 Plan synthesis via the Advisor dispatch ladder when stakes-gated**, plus the highest-consequence verification agents (`plan-critic`, `independent-auditor`, `security-reviewer`) | GPT-5.6 Sol; future models that clear the Thinking-tier contract and prior ceiling |
+| **Thinking** | Opus 4.8 | Coordination and escalation, plus medium-risk verification (`scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, `promotion-reviewer`) | GPT-5.6 Terra for routine orchestration; GPT-5.6 Sol for the Governance/Evaluation T2 cell and genuinely ambiguous escalation |
 | **Code** | Sonnet 5 | Application — apply rule to bounded input, scoped implementation, mechanical refactor, bounded domain assessment | GPT-5.6 Terra, qwen2.5-coder-32B (local); any model within the Code-tier benchmark tolerance |
 | **Pattern** | Haiku 4.5 | Recognition — regex/syntactic match, classification into known buckets, log scan, deterministic checklist | GPT-5.6 Luna, Haiku-class or local small/fast models that handle bounded structured work |
 
@@ -66,6 +66,8 @@ The role-and-task table below uses tier names. The Anthropic-default mapping in 
 - Escalate Luna→Terra when rule application appears; Terra→Sol when ambiguity, high consequence, or repeated verified failure appears. Model size never weakens least privilege, confirmation, sandboxing, or independent verification.
 
 Source: OpenAI GPT-5.6 System Card (2026-07-09), retained in build-loop-memory with the full PDF and routing extract.
+
+**Claude exception:** `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` use Opus at medium effort. `plan-critic`, `independent-auditor`, and `security-reviewer` remain on Fable. The Codex mapping remains Sol for every gating verification agent.
 
 ## Chat-triggered index maintenance (host-LLM-driven)
 
@@ -113,8 +115,8 @@ Before consulting the role table, classify the task by reasoning shape. The MECE
 
 | Reasoning shape | Model | What it means | Example tasks |
 |---|---|---|---|
-| **Planning + Verification synthesis** — frame the goal, draft the spec/ADRs, define F-criteria, MECE-partition the work, then later judge whether a plan, a commit, a fix, a claim, or a security/scope boundary actually holds | **Fable (Frontier)** | The "what to do" and "did it actually work" calls. Wrong calls poison every downstream dispatch. | Phase 2 Plan drafting (reaches Fable via the stakes-gated Advisor ladder; Phase 1 Assess synthesis stays inline until v2), plan-critic, scope-auditor, independent-auditor, fix-critique, fact-checker, security-reviewer, overfitting-reviewer, promotion-reviewer |
-| **Coordination + escalation synthesis** — route work between subagents, ladder severity, run causal-tree on stuck iterations, write audit/learnings | **Opus (Thinking)** | The "who runs next" + "why did the rule run out" calls. Deterministic gates backstop the routing. | build-orchestrator, assessment-orchestrator, severity ranking after critic findings, causal-tree after 2 consecutive failures, Phase 6 Learn audit synthesis (when no Frontier escalation needed) |
+| **Planning + highest-consequence verification synthesis** — frame the goal and judge verdicts where a miss has the largest blast radius | **Fable (Frontier)** | Wrong calls poison every downstream dispatch. | Phase 2 Plan drafting, plan-critic, independent-auditor, security-reviewer |
+| **Coordination + bounded verification synthesis** — route work, run causal trees, or judge a bounded surface with strong checks | **Opus (Thinking)** | Strong judgment at lower cost than Fable, backed by deterministic gates. | build-orchestrator, assessment-orchestrator, scope-auditor, fact-checker, fix-critique, overfitting-reviewer, promotion-reviewer |
 | **Application** — apply a known rule, spec, or pattern to bounded input; produce an artifact that matches a contract | **Sonnet (Code)** | The "how" call when "what" is decided. Single-correct-answer derivable from a rule. | Implement a commit's owned files per spec, write tests for given F-criteria, mechanical simplify, bounded domain assessment (api/db/frontend/perf), design-contract reconciliation, ui-validator, retrospective-synthesizer, self-improvement-architect drafting |
 | **Recognition** — pure regex/syntactic match; classify into known buckets; no judgment | **Haiku (Pattern)** | No gradient — matches or doesn't. | Mock-data scan, log pattern detection, file inventory, cross-run pattern detection, deterministic checklist verification |
 
@@ -127,17 +129,17 @@ Before consulting the role table, classify the task by reasoning shape. The MECE
 | Frame & plan: goal, ADRs, scope, F-criteria, MECE partition | Planning synthesis | Fable | medium | A wrong plan dispatches N implementers into the wrong work; user's standing priority Accuracy > Speed > Cost |
 | Plan-verify deterministic checklist | Recognition | (script) | — | No model; runs `plan_verify.py` |
 | Plan-critic adversarial review against rubric+checklist | Verification synthesis | Fable | high | Verification verdict — separation drives quality; verdict gates Phase 3 dispatch |
-| Scope auditor (Plan→Execute boundary): trace callers of every modified-API symbol; annotate `caller_audit:` per commit | Verification synthesis | Fable | medium | Cross-file call-path tracing AND a gating verdict on whether a commit is `internal_only`; verification compound risk |
+| Scope auditor (Plan→Execute boundary): trace callers of every modified-API symbol; annotate `caller_audit:` per commit | Bounded verification synthesis | Opus | medium | Read-only caller tracing has a strong grep/plan oracle; Codex resolves Sol through Governance/Evaluation T2 |
 | Code execution — bounded chunk, spec clear | Application | Sonnet | medium | Default workhorse. Spec is settled; apply the rule |
 | Code execution — ambiguous spec or cross-file surprise mid-execution | Coordination synthesis | Opus | medium | Escalation target; interpretation cost cheaper than rework |
 | Independent-auditor adversarial pass (read-only diff vs rubric at chunk + build scope) | Verification synthesis | Fable | high | Verdict gates the build's outcome line; a missed regression in production-impacting work is the most expensive miss in the loop |
 | Severity ranking + recommendation order (given findings) | Coordination synthesis | Opus | medium | Cross-finding routing; no per-finding verdict being rendered, the verdicts are upstream |
 | Mock data scanning | Recognition | Haiku | low | Regex only |
-| Fact-checking — trace metric → source, judge accuracy | Verification synthesis | Fable | medium | Final read on "is this number real" before report ships; user-trust verdict |
-| Fix-critique — pressure-test a proposed fix before "resolved" | Verification synthesis | Fable | medium | Verdict on whether the fix addresses root cause vs symptom; wrong verdict reopens the bug downstream |
+| Fact-checking — trace metric → source, judge accuracy | Bounded verification synthesis | Opus | medium | Source trace supplies an external oracle; Codex resolves Sol |
+| Fix-critique — pressure-test a proposed fix before "resolved" | Bounded verification synthesis | Opus | medium | Counterfactual and regression evidence backstop the verdict; Codex resolves Sol |
 | Security-reviewer — adversarial OWASP/ATLAS pass | Verification synthesis | Fable | high | Verdict gates riskSurfaceChange dispatch; missed exposure is the most expensive verification miss |
-| Overfitting-reviewer — Goodhart / test-gaming verdict on optimize runs | Verification synthesis | Fable | medium | Verdict on whether optimization is genuine; cheap to wrong-call into a regression |
-| Promotion-reviewer — Phase 6 Learn experimental promotion verdict | Verification synthesis | Fable | medium | Gates the move from `experimental/` to `active/`; durable surface |
+| Overfitting-reviewer — Goodhart / test-gaming verdict on optimize runs | Bounded verification synthesis | Opus | medium | Read-only experiment history and guard metrics provide the oracle; Codex resolves Sol |
+| Promotion-reviewer — Phase 6 Learn experimental promotion verdict | Bounded advisory verification | Opus | medium | Advisory verdict remains subject to explicit promotion confirmation; Codex resolves Sol |
 | Simplify — apply known simplifications | Application | Sonnet | medium | Inline single-use helper, delete dead branch — bounded |
 | Debugging — symptom-to-known-pattern match | Application | Sonnet | high | Memory-first gate's "Application until the rule runs out" |
 | Debugging — causal-tree after 2 consecutive failures | Coordination synthesis | Opus | high | Synthesis takes over routing when rule-match exhausts |
@@ -148,7 +150,7 @@ Before consulting the role table, classify the task by reasoning shape. The MECE
 
 ### Deliberate exceptions (Sonnet retained for cost where the surface is high-frequency advisory)
 
-Two verification-shaped agents stay on Sonnet rather than escalating to Fable. The tension with round-2 evidence ("rubric-application = Sonnet is robust") is real; the user chose Fable for the rest of the verification surface anyway because the compound risk of a wrong verification verdict outweighs the per-call premium. Pins are defaults, not locks — these can be overridden per dispatch or re-tiered after telemetry.
+Two high-frequency advisory agents stay on Sonnet. Five bounded verification agents use Opus, while the three highest-consequence verification agents remain on Fable. Pins are defaults, not locks and should be re-tiered when telemetry disagrees.
 
 | Agent | Pin | Why retained on Sonnet |
 |---|---|---|
@@ -174,11 +176,11 @@ Findings that updated the model tiering:
 3. **Inline-Opus is faster wall-clock** when there's no real parallelism to exploit. Fan-out parallelism is only a win when ≥3 chunks are truly independent.
 4. **Plan-critic on Sonnet caught 17 substantive findings** on a written spec — confirms "rubric-application = Sonnet" is robust.
 
-These findings informed the earlier rubric-application=Sonnet split for code review. The current org overrides that for the verification surface specifically — the user chose Fable for verification because a missed verdict at this stage compounds, even though round-2 showed Sonnet rubric-application was substantively robust on a 17-finding plan-critic pass. The exceptions table above (alignment-checker, synthesis-critic) preserves the Sonnet split where the surface is high-frequency advisory and non-gating.
+These findings support a three-level verification split: Fable for the highest-consequence gates, Opus for bounded verdicts with strong external evidence, and Sonnet for high-frequency advisory checks. The exceptions table preserves Sonnet where the surface is non-gating.
 
 ## Escalation triggers (Sonnet execution → Opus, NOT to Fable)
 
-Execution escalates to **Opus**, not Fable. Fable is reserved for planning and verification; execution under genuine ambiguity is a coordination call (interpret the spec, route to a new chunk, decide whether to re-plan) that the orchestrator owns.
+Execution escalates to **Opus**, not Fable. Fable is reserved for planning and the highest-consequence verification; execution under genuine ambiguity is a coordination call that the orchestrator owns.
 
 - 2 consecutive failures on the same chunk after a retry at effort=high → respawn implementer at Opus
 - Spec is ambiguous and interpretation will materially change implementation → Opus
@@ -226,9 +228,9 @@ If the ambiguity surfaces a **planning** problem (the original plan no longer fi
 
 ## How the build-loop uses this
 
-**Fable plans (when stakes-gated) and verifies. Opus coordinates. Sonnet executes. Haiku recognizes.**
+**Fable plans and handles the highest-consequence verification. Opus coordinates and handles bounded verification. Sonnet executes. Haiku recognizes.**
 
-Phase 2 Plan synthesis reaches **Fable** through the **Advisor dispatch ladder** when stakes-gating trips (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`): the orchestrator dispatches the `advisor` agent (Rung 1), routes to a peer host (Rung 2), or — if its own session is already Fable — synthesizes inline at Frontier (Rung 0). When no trigger fires or no dispatch path is reachable, the orchestrator synthesizes the plan **inline on its own model (Opus)** and labels it honestly (Rung 3 = today's behavior; the floor equals current state). So "Fable plans" is the *guarantee on high-stakes plans*, with an honestly-labeled inline fallback otherwise — not unconditional. Full protocol: `references/advisor-dispatch-ladder.md`. The Advisor frames the goal, drafts the spec/ADRs, sets F-criteria, and MECE-partitions the work. The orchestrator (**Opus**, `build-orchestrator`, `assessment-orchestrator`) coordinates: it routes dispatches, runs deterministic gates, manages parallel fan-out, walks the Advisor ladder, and handles the escalation ladder. Phase 3 implementer subagents run on **Sonnet** at effort=high (default workhorse; xhigh on hard/code-heavy chunks) → external verification gate (tests/lint/types) → adversarial **Fable** verification surface (`plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, `promotion-reviewer`). On a first execution-problem chunk failure, retry the same Sonnet 5 implementer at **effort=xhigh** (intermediate rung — near-Opus coding at lower cost) before paying for Opus; a strong-checkpoint finding or a 2nd consecutive failure after the xhigh retry escalates to **Opus** for judgment; if the failure traces back to a planning miss, route back to Fable to re-plan. See `agents/build-orchestrator.md §Escalation Triggers`. The **tier mapping** is the policy; the cost numbers above are advisory context, not the basis for overrides.
+Phase 2 Plan synthesis reaches **Fable** through the **Advisor dispatch ladder** when stakes-gating trips. The orchestrator (**Opus**) coordinates; Phase 3 implementers run on **Sonnet** at high effort. Verification then splits by consequence: **Fable** for `plan-critic`, `independent-auditor`, and `security-reviewer`; **Opus** for `scope-auditor`, `fix-critique`, `fact-checker`, `overfitting-reviewer`, and `promotion-reviewer`; **Sonnet** for the advisory `alignment-checker` and `synthesis-critic`. On Codex, both governance verification cells resolve to GPT-5.6 Sol. Execution retries Sonnet at `xhigh` before escalating to Opus; planning misses route back to Fable.
 
 Haiku is only used for Phase 7B mock scanning and recurring-pattern detection across `runs[]`. Never for reasoning tasks.
 
@@ -236,7 +238,7 @@ Haiku is only used for Phase 7B mock scanning and recurring-pattern detection ac
 
 Not every agent should hard-pin its model. Use this rule:
 
-- **Pin** (`model: fable | opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. Examples: `plan-critic` / `independent-auditor` / `scope-auditor` / `fact-checker` / `fix-critique` / `security-reviewer` / `overfitting-reviewer` / `promotion-reviewer` (Fable — verification verdicts gate downstream work), `mock-scanner` (Haiku, pattern matching only), `build-orchestrator` and `assessment-orchestrator` (Opus, coordination at plan/review boundaries), `implementer` (Sonnet, default execution workhorse).
+- **Pin** (`model: fable | opus | sonnet | haiku`) when the task has a clear right tier and cost/quality drift from user's session choice would be a bug. `plan-critic`, `independent-auditor`, and `security-reviewer` pin Fable. `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` pin Opus. `mock-scanner` pins Haiku; orchestrators pin Opus; `implementer` pins Sonnet.
 - **Inherit** (`model: inherit`) when user intent should flow through. The user's main-session choice is itself a cost/speed preference; respect it. Pair with a "recommended: X" note in this skill rather than forcing via frontmatter. Example: `root-cause-investigator` — recommended Opus on causal-tree work, but inherit honors whatever tier the user picked upstream.
 - **Override mechanism**: users can override any pin by passing `model:` when spawning the agent or by editing the frontmatter. Pins are defaults, not locks. The deliberate exceptions documented above (`alignment-checker`, `synthesis-critic` on Sonnet despite being verification-shaped) are exactly this kind of cost-vs-judgment pin and can be lifted if telemetry says so.
 

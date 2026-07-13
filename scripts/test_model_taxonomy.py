@@ -164,6 +164,10 @@ class TaxonomyTests(unittest.TestCase):
                 self.assertEqual(meta["tier"], tier)
 
         self.assertIn("gpt-5.6-sol", self.mt.preferred("governance_evaluation", "frontier"))
+        self.assertEqual(
+            self.mt.preferred("governance_evaluation", "thinking"),
+            ["opus", "gpt-5.6-sol"],
+        )
         self.assertIn("gpt-5.6-terra", self.mt.preferred("agentic_execution", "code"))
         self.assertIn("gpt-5.6-luna", self.mt.preferred("governance_evaluation", "pattern"))
 

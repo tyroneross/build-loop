@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "db31da3cd005921c117a7aea8f75ce8afce742321aae871928191099d7080f20"
+    "content_sha256": "579100bc016d29c11cd51d2572bf2b2224b45b5764fe859c3f6bd4983726df10"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -425,7 +425,7 @@
         ],
         [
           "scope-auditor",
-          "fable",
+          "opus",
           "Orchestrator"
         ],
         [
@@ -485,7 +485,7 @@
             ],
             [
               "scope-auditor",
-              "fable",
+              "opus",
               "Orchestrator"
             ]
           ]
@@ -636,7 +636,7 @@
         ],
         [
           "fact-checker",
-          "fable",
+          "opus",
           "Orchestrator"
         ],
         [
@@ -694,7 +694,7 @@
           "agents": [
             [
               "fact-checker",
-              "fable",
+              "opus",
               "Orchestrator"
             ],
             [
@@ -879,7 +879,7 @@
         ],
         [
           "promotion-reviewer",
-          "fable",
+          "opus",
           "Orchestrator"
         ],
         [
@@ -927,7 +927,7 @@
           "agents": [
             [
               "promotion-reviewer",
-              "fable",
+              "opus",
               "Orchestrator"
             ]
           ],
@@ -1147,7 +1147,7 @@
         }
       },
       "fact-checker": {
-        "model": "fable",
+        "model": "opus",
         "description": "Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.",
         "file": "agents/fact-checker.md",
         "last_updated": {
@@ -1156,7 +1156,7 @@
         }
       },
       "fix-critique": {
-        "model": "fable",
+        "model": "opus",
         "description": "Use this agent to pressure-test a proposed fix before declaring a bug resolved. Challenges whether the fix addresses the root cause or just a symptom, checks for potential regressions, and verifies evidence exists for the claimed fix. Run after a fix is implemented but before declaring it done.",
         "file": "agents/fix-critique.md",
         "last_updated": {
@@ -1210,7 +1210,7 @@
         }
       },
       "overfitting-reviewer": {
-        "model": "fable",
+        "model": "opus",
         "description": "Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.",
         "file": "agents/overfitting-reviewer.md",
         "last_updated": {
@@ -1237,7 +1237,7 @@
         }
       },
       "promotion-reviewer": {
-        "model": "fable",
+        "model": "opus",
         "description": "Advisory judge for Phase 6 Learn experimental-artifact promotion. Reads a candidate experimental skill or agent (drafted by `self-improvement-architect`), its A/B track record, and the build-loop constitution, then returns a variance-shaped verdict (`approve | rethink | new_approach`). Never blocks — orchestrator policy still requires async user confirmation on the move from `experimental/` to `active/` per the irre…",
         "file": "agents/promotion-reviewer.md",
         "last_updated": {
@@ -1273,7 +1273,7 @@
         }
       },
       "scope-auditor": {
-        "model": "fable",
+        "model": "opus",
         "description": "Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the \"fan-out scope-blindness\" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-0…",
         "file": "agents/scope-auditor.md",
         "last_updated": {
@@ -1541,7 +1541,7 @@
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-06"
+          "date": "2026-07-12"
         }
       },
       "native-ax-driver": {
