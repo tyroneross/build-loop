@@ -17,6 +17,19 @@ Fix the grading before running — a metric invented after seeing outputs bends 
 3. **Task at the failure boundary.** If every arm passes, the task is too easy → no signal to separate arms. Calibrate difficulty until the control fails.
 4. **A control arm.** Always include the default-profile / no-intervention (and, for harness work, the no-harness one-shot) arm to isolate the intervention's marginal value.
 
+## Model + thinking identity (mandatory data contract)
+
+A benchmark measures a **model at a thinking level and mode**, not a model name alone. Use Benchmark Lab's existing `abc-comparison/v2` artifact; do not create a Build Loop-only benchmark schema. Every arm adds:
+
+- `model`: exact provider model/version, separate from the host or harness.
+- `effort`: exact effective provider/runtime label, or `unknown`.
+- `effort_normalized`: `none|minimal|low|medium|high|xhigh|max|ultra|unknown`.
+- `effort_provenance`: `source_document|experiment_config|runtime_log|unknown`.
+- `effort_evidence`: source page/table/footnote for published data, or exact config/command/log evidence for our test.
+- `mode`: `single_agent|multi_agent|adaptive|unknown`.
+
+These are additive arm fields on the canonical artifact, following the existing field-observation contract. Benchmark Lab owns validation, normalization, and aggregation, but its current converter does not retain these additive fields. Preserve the raw artifact as source evidence until that Lab-owned extension lands; ingest acceptance alone is not proof of retention. Never infer effort from a model default or translate provider labels without evidence. If a source omits row-level effort, record `unknown`, cite the omission, and mark the comparison effort-confounded/directional. `ultra` or another multi-agent mode is a distinct treatment arm, never a higher single-agent score.
+
 ## When scoring: check the CODE and the OUTPUT, and distrust the rig
 
 - **Check the produced code AND its oracle output — never "it ran."** Read the code; run the oracle; parse the RIGHT signal. (2026-07-09: an auto-grep matched the lib unit-test line "0 passed" and mislabeled a 2/5-passing control as FAIL; multi-binary `cargo test` needs pass/fail SUMMED across binaries, not first-match. Always confirm the specific test binary that carries the assertions.)
@@ -24,20 +37,22 @@ Fix the grading before running — a metric invented after seeing outputs bends 
 
 ## Roster & dispatch (verified handles)
 - Opus 4.8 → `Agent(model: "opus")`; Sonnet 5.0 → `Agent(model: "sonnet")` (`sonnet` = latest, NOT 4.x — older Sonnets have no clean subagent handle).
-- GPT-5.5 → Codex MCP `mcp__codex__codex` with `model: "gpt-5.5"`, `config: {model_reasoning_effort: "xhigh", sandbox_workspace_write:{network_access:true}}`, `approval-policy: "never"`, `sandbox: "workspace-write"`. (Check `~/.codex/config.toml` for the exact model id; `-codex` suffixes fail on ChatGPT-account Codex.)
+- Codex/OpenAI → read the exact model id and requested effort from the experiment manifest; pass both explicitly (for example `model: "gpt-5.6-terra"`, `config: {model_reasoning_effort: "high"}`). Capture the effective runtime config in the arm log; do not rely on `~/.codex/config.toml` defaults or guess `-codex` suffixes.
+- Claude effort → use a host surface that can set the requested effort. If the available dispatch primitive cannot set it, record the effective value as `unknown`; do not label the arm `xhigh` from intent alone.
 - Independent judge: prefer a NON-contestant model (e.g. Fable). If unavailable, the orchestrator scores subjective dims with over-cited evidence + a stated caveat, and leans on deterministic dims.
 
 ## Per-change protocol
 1. **Baseline:** branch the experiment off clean `origin/main` (not a dirty/active branch). Confirm no concurrent session collides.
-2. **Scaffold** one worktree per contestant off the experiment branch HEAD: `git worktree add -b bakeoff/<Cn>-<model> <path> <branch>`; `npm ci` (or lockfile-equiv) per worktree; copy `.env.local`.
-3. **Brief** (IDENTICAL for all): give the *symptom* + acceptance criteria + a fair equal entrypoint pointer — WITHHOLD the diagnosis (that's what's scored). Add repo guardrails (see below).
-4. **Dispatch** all contestants in parallel (Agent arms `run_in_background: true`; Codex arm blocks the turn — fine, the others run concurrently).
-5. **Commit stranded Codex work:** Codex's sandbox usually cannot write an external worktree's `.git` (`index.lock: Operation not permitted`). The orchestrator commits it: `git -C <worktree> add -A && git commit`. (RESULT.md is often gitignored → `git add -f`.)
-6. **Score deterministically** (don't trust self-reports — re-run each contestant's committed code):
+2. **Manifest:** pre-register each arm's exact model/version, requested thinking level, mode, dispatch surface, and evidence path in the run manifest. Pre-create the `abc-comparison/v2` arm fields above; update `effort` and `effort_evidence` from effective runtime evidence before scoring.
+3. **Scaffold** one worktree per contestant off the experiment branch HEAD: `git worktree add -b bakeoff/<Cn>-<model> <path> <branch>`; `npm ci` (or lockfile-equiv) per worktree; copy `.env.local`.
+4. **Brief** (IDENTICAL for all): give the *symptom* + acceptance criteria + a fair equal entrypoint pointer — WITHHOLD the diagnosis (that's what's scored). Add repo guardrails (see below).
+5. **Dispatch** all contestants in parallel (Agent arms `run_in_background: true`; Codex arm blocks the turn — fine, the others run concurrently). Write the effective thinking setting and its runtime evidence back to the run manifest and observation arm before scoring.
+6. **Commit stranded Codex work:** Codex's sandbox usually cannot write an external worktree's `.git` (`index.lock: Operation not permitted`). The orchestrator commits it: `git -C <worktree> add -A && git commit`. (RESULT.md is often gitignored → `git add -f`.)
+7. **Score deterministically** (don't trust self-reports — re-run each contestant's committed code):
    - Objective dims computed in code: typecheck, build, test, betterer, + the change-specific success criterion run on a fresh server. Weight these highest.
    - Subjective dims (diagnosis depth, plan, code quality, intent fidelity) by the judge reading diffs + captured outputs.
-7. **Scorecard** (rubric below) → **merge** best base onto the experiment branch, **grafting** distinct wins from the others (each graft: fixes a real gap the winner has, is isolable from the loser's *harmful* parts, verified by re-running). Document graft rationale.
-8. **Re-verify the merged result**, regenerate coverage, commit. Then next change.
+8. **Scorecard** (rubric below) → **merge** best base onto the experiment branch, **grafting** distinct wins from the others (each graft: fixes a real gap the winner has, is isolable from the loser's *harmful* parts, verified by re-running). Document graft rationale.
+9. **Re-verify the merged result**, regenerate coverage, validate the canonical observation through Benchmark Lab when available, commit. Then next change.
 
 ## Rubric (max 50; tune weights per task)
 success-criteria attainment ×3 (objective) · build/typecheck/test/betterer ×2 (objective) · diagnosis accuracy ×2 · plan quality ×1 · code quality+scope ×1 · intent fidelity ×1. Objective dims dominate; the LLM judge is confined to subjective dims.
@@ -55,4 +70,13 @@ success-criteria attainment ×3 (objective) · build/typecheck/test/betterer ×2
 Work ONLY in your worktree; no edits outside it; no deploy/push; no `--no-verify`; no DDL against the shared DB; unique per-model test-user id + id-scoped cleanup; verify by RUNNING (name the exact verification mechanism: curl the endpoint, CDP virtual authenticator for WebAuthn, function-level test for cleaners, screenshots for UI).
 
 ## Output
-Per stage: a `SCORECARD.md` (rubric table + verdict + merge/graft rationale). At the end: a consolidated `RESULTS.md` (cross-stage scoreboard, per-model performance pattern, where multi-model merge beat any single model, scoring-integrity caveats).
+Per stage: a `SCORECARD.md` (rubric table + verdict + merge/graft rationale). At the end:
+
+- `RESULTS.md`: cross-stage scoreboard, each arm labeled `model_id @ thinking level/mode`, per-model performance pattern, where multi-model merge beat any single model, and scoring-integrity caveats.
+- `OBSERVATION.json`: canonical `abc-comparison/v2` rounds with each arm's exact model,
+  thinking fields, result metrics, and provenance. This is the machine-readable source of
+  truth; Benchmark Lab is the sole normalization and aggregation owner.
+
+Preserve the raw JSON whether or not Benchmark Lab ingestion is available. Until the Lab
+converter and storage retain these fields, do not use successful ingest as evidence that
+thinking provenance survived, and do not aggregate results across thinking settings.

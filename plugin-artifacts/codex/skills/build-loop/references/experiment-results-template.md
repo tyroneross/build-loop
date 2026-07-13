@@ -33,6 +33,11 @@ certainty, "not computed — why").
   - Backtest: data + window = <...> · in/out-of-sample split = <...>
   - Ablation: component removed = <...> · baseline = <...>
 - **Held constant (confounds managed):** <model, environment, inputs, seed, …>
+- **Model/thinking identity** (required for model or agent comparisons):
+  - `<arm>`: model `<provider/model/version>` · normalized level `<none|minimal|low|medium|high|xhigh|max|ultra|unknown>` · provider value `<exact label|null>` · mode `<single_agent|multi_agent|adaptive|unknown>`
+  - Provenance: `<source_document|experiment_config|runtime_log|unknown>` · evidence `<URL + table/footnote OR exact command/config/log>`
+  - Evidence kind: `<published_document|local_test>` · observed at `<ISO-8601>`
+  - Mixed/unknown effort confound: `<none | explain why ranking is directional>`
 - **Measurement:** <who/what scored, against what ground truth, and exactly how>
   - Blinding: <none | labels withheld | fully blinded> — <if you claim blinded, say what made it so; if a tell leaked, say so>
 
@@ -51,9 +56,9 @@ certainty, "not computed — why").
 | <cost> | effort/latency/$ | lower better (only counts when quality ties or wins) | <calls · s · $> |
 
 **Data:**
-| <arm / run / config> | <m1> | <m2> | <cost> |
-|---|---|---|---|
-| <...> | | | |
+| <arm / run> | Model ID | Thinking level / mode | Thinking provenance | <m1> | <m2> | <cost> |
+|---|---|---|---|---|---|---|
+| <...> | <provider/model/version> | <high / single_agent> | <runtime_log: path#line> | | | |
 
 **Statistics — fill what you actually computed; for the rest write "not computed — <why>":**
 - **Effect size:** <metric: value (e.g. Δ, Cohen's d, lift %)> | not computed — <why>
@@ -99,3 +104,10 @@ certainty, "not computed — why").
    inconclusive", how sure, and on how much data, from the first line.
 6. **Pre-register when the result will drive a real decision** — commit Objective +
    Hypothesis + decision rule before running, so the verdict can't be retrofit.
+7. **Thinking level is part of the treatment.** Never collapse scores by model name when
+   effort or mode differs. Preserve the source's exact label and a normalized level. For
+   published rows, cite the page/table/footnote; for our tests, cite the effective runtime
+   config or log. If the value is not reported, write `unknown` and name the confound.
+   Model bake-offs carry these fields in each arm of the existing `abc-comparison/v2`
+   observation artifact. Preserve that raw artifact: Benchmark Lab retention is a pending
+   Lab-owned extension, and current ingest acceptance does not prove the fields survived.

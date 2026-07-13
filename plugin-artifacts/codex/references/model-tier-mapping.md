@@ -65,7 +65,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 | Google | next-gen Gemini Ultra (when it clears the contract) | `gemini-2.5-pro` | `gemini-2.5-flash` | `gemini-flash-lite` |
 | Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | `qwen2.5-coder-32b` | `llama3.2-3b` |
 
-⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying.
+⚠️ **Always verify benchmarks before swapping.** Table cells are best-effort as of build-loop's last update; model versions and rankings drift. Use `Skill("research")` or Context7 MCP to confirm current SWE-bench Verified scores before relying. Treat model + thinking level/mode as the comparison identity: capture the exact source-reported or runtime-configured value and its evidence. If a document omits row-level effort, record `unknown` and mark the ranking effort-confounded rather than inferring a default. Build Loop bake-offs preserve this metadata in the existing `abc-comparison/v2` observation artifact. Prompt Model Benchmark Lab owns normalization and aggregation; structured retention there is pending, so preserve raw observations and do not aggregate across thinking settings.
 
 ## GPT-5.6 Codex routing and approved agents
 
