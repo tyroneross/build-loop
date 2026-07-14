@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
+- Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
+
 ## 0.36.4 — 2026-07-11
 
 First published release since v0.36.1. The 0.36.2/0.36.3 entries below were

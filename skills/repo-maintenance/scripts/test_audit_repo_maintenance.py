@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Tests for the read-only repository closeout inventory."""
+"""Tests for the read-only repository maintenance inventory."""
 
 from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
-MODULE_PATH = Path(__file__).with_name("audit_repo_closeout.py")
-SPEC = importlib.util.spec_from_file_location("audit_repo_closeout", MODULE_PATH)
+MODULE_PATH = Path(__file__).with_name("audit_repo_maintenance.py")
+SPEC = importlib.util.spec_from_file_location("audit_repo_maintenance", MODULE_PATH)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
@@ -30,15 +32,15 @@ def git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-class AuditRepoCloseoutTests(unittest.TestCase):
+class AuditRepoMaintenanceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
         self.repo = Path(self.tempdir.name) / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-b", "main")
-        git(self.repo, "config", "user.email", "closeout@example.test")
-        git(self.repo, "config", "user.name", "Closeout Test")
+        git(self.repo, "config", "user.email", "maintenance@example.test")
+        git(self.repo, "config", "user.name", "Maintenance Test")
         (self.repo / "tracked.txt").write_text("base\n", encoding="utf-8")
         git(self.repo, "add", "tracked.txt")
         git(self.repo, "commit", "-m", "base")
@@ -64,6 +66,27 @@ class AuditRepoCloseoutTests(unittest.TestCase):
         feature = next(item for item in report["branches"] if item["name"] == "feature")
         self.assertEqual(feature["ahead_base"], 1)
         self.assertFalse(feature["merged_into_base"])
+
+    def test_missing_registered_worktree_is_reported_without_aborting(self) -> None:
+        worktree = Path(self.tempdir.name) / "missing-worktree"
+        git(self.repo, "worktree", "add", "-b", "missing-lane", str(worktree))
+        git(self.repo, "worktree", "lock", "--reason", "test missing path", str(worktree))
+        shutil.rmtree(worktree)
+
+        report = MODULE.audit(self.repo)
+
+        missing = next(
+            item
+            for item in report["worktrees"]
+            if Path(item["worktree"]).resolve() == worktree.resolve()
+        )
+        self.assertFalse(missing["exists"])
+        self.assertFalse(missing["dirty"])
+        self.assertEqual(missing["dirty_paths"], [])
+        self.assertEqual(
+            [Path(path).resolve() for path in report["missing_worktrees"]],
+            [worktree.resolve()],
+        )
 
     def test_merged_branch_becomes_removal_candidate(self) -> None:
         git(self.repo, "checkout", "-b", "feature")
@@ -96,7 +119,6 @@ class AuditRepoCloseoutTests(unittest.TestCase):
         report = MODULE.audit(
             self.repo,
             include_artifacts=True,
-            protected_artifacts={"build"},
             stale_days=7,
         )
 
@@ -106,6 +128,119 @@ class AuditRepoCloseoutTests(unittest.TestCase):
         self.assertEqual(artifacts["build-old-lane"]["disposition"], "cleanup-candidate")
         self.assertTrue(artifacts["build-old-lane"]["ignored_by_git"])
         self.assertGreater(report["artifacts"]["cleanup_candidate_bytes"], 0)
+        self.assertEqual(report["artifacts"]["default_protected"], ["build", "build-rust"])
+
+    def test_artifact_inventory_discovers_nested_cache_without_double_counting(self) -> None:
+        (self.repo / ".gitignore").write_text(".build/\n", encoding="utf-8")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-m", "ignore nested builds")
+        nested = self.repo / "Tests" / "FeatureTests" / ".build"
+        descendant = nested / "target"
+        descendant.mkdir(parents=True)
+        old_file = descendant / "cache.bin"
+        old_file.write_bytes(b"nested-cache")
+        old = time.time() - (10 * 86_400)
+        os.utime(old_file, (old, old))
+        os.utime(descendant, (old, old))
+        os.utime(nested, (old, old))
+
+        report = MODULE.audit(self.repo, include_artifacts=True, stale_days=7)
+
+        artifacts = report["artifacts"]["artifacts"]
+        self.assertEqual([item["path"] for item in artifacts], ["Tests/FeatureTests/.build"])
+        self.assertTrue(artifacts[0]["cleanup_candidate"])
+
+    def test_artifact_inventory_prunes_python_environments(self) -> None:
+        false_artifact = (
+            self.repo
+            / ".venv"
+            / "lib"
+            / "python3.13"
+            / "site-packages"
+            / "build_loop-0.12.16.dist-info"
+        )
+        false_artifact.mkdir(parents=True)
+        custom_env = self.repo / ".python-runtime"
+        custom_env.mkdir()
+        (custom_env / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+        (custom_env / "build_generated").mkdir()
+
+        paths = MODULE.discover_artifact_paths(self.repo.resolve(), MODULE.DEFAULT_ARTIFACT_PATTERNS)
+
+        self.assertEqual(paths, [])
+
+    def test_release_artifact_requires_explicit_disposition(self) -> None:
+        (self.repo / ".gitignore").write_text("dist/\n", encoding="utf-8")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-m", "ignore dist")
+        dist = self.repo / "dist"
+        dist.mkdir()
+        dmg = dist / "Example-1.0.dmg"
+        dmg.write_bytes(b"release")
+        old = time.time() - (10 * 86_400)
+        os.utime(dmg, (old, old))
+        os.utime(dist, (old, old))
+
+        report = MODULE.audit(self.repo, include_artifacts=True, stale_days=7)
+
+        artifact = report["artifacts"]["artifacts"][0]
+        self.assertEqual(artifact["disposition"], "release-artifact")
+        self.assertFalse(artifact["cleanup_candidate"])
+        self.assertEqual(artifact["release_artifact_evidence"], ["dist/Example-1.0.dmg"])
+
+    def test_build_product_app_bundle_remains_a_cache_candidate(self) -> None:
+        (self.repo / ".gitignore").write_text("build-lane/\n", encoding="utf-8")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-m", "ignore lane build")
+        app = self.repo / "build-lane" / "Build" / "Products" / "Release" / "Example.app"
+        app.mkdir(parents=True)
+        binary = app / "Example"
+        binary.write_bytes(b"generated-product")
+        old = time.time() - (10 * 86_400)
+        os.utime(binary, (old, old))
+        for parent in (
+            app,
+            app.parent,
+            app.parent.parent,
+            app.parent.parent.parent,
+            app.parent.parent.parent.parent,
+        ):
+            os.utime(parent, (old, old))
+
+        report = MODULE.audit(self.repo, include_artifacts=True, stale_days=7)
+
+        artifact = report["artifacts"]["artifacts"][0]
+        self.assertEqual(artifact["path"], "build-lane")
+        self.assertEqual(artifact["disposition"], "cleanup-candidate")
+        self.assertFalse(artifact["contains_release_artifact"])
+
+    def test_existing_and_missing_process_artifacts_are_protected(self) -> None:
+        (self.repo / ".gitignore").write_text("build-*/\n", encoding="utf-8")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-m", "ignore lane builds")
+        active = self.repo / "build-live"
+        active.mkdir()
+        active_file = active / "ptyd"
+        active_file.write_bytes(b"daemon")
+        old = time.time() - (10 * 86_400)
+        os.utime(active_file, (old, old))
+        os.utime(active, (old, old))
+        resolved_repo = self.repo.resolve()
+        processes = [
+            (101, f"{active.resolve()}/ptyd --socket /tmp/live.sock"),
+            (202, f"{resolved_repo}/build-deleted/daemon/ptyd --socket /tmp/deleted.sock"),
+        ]
+
+        with mock.patch.object(MODULE, "process_snapshot", return_value=processes):
+            report = MODULE.audit(self.repo, include_artifacts=True, stale_days=7)
+
+        artifact = report["artifacts"]["artifacts"][0]
+        self.assertEqual(artifact["path"], "build-live")
+        self.assertEqual(artifact["disposition"], "active")
+        self.assertFalse(artifact["cleanup_candidate"])
+        missing = report["artifacts"]["active_missing_artifacts"]
+        self.assertEqual([item["path"] for item in missing], ["build-deleted"])
+        self.assertEqual(missing[0]["disposition"], "active-missing-artifact")
 
     def test_source_comparison_matches_sibling_tree_to_target_prefix(self) -> None:
         sibling = Path(self.tempdir.name) / "source"
@@ -156,7 +291,7 @@ class AuditRepoCloseoutTests(unittest.TestCase):
         report = MODULE.audit(self.repo)
         profile = report["profile_signals"]
 
-        self.assertEqual(report["schema_version"], 3)
+        self.assertEqual(report["schema_version"], 4)
         self.assertEqual(profile["source_ref"], "main")
         self.assertTrue(
             {"Swift", "Rust"}.issubset({item["name"] for item in profile["languages"]})

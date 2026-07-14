@@ -26,7 +26,7 @@ Intent → internal mode:
 - **Root-cause analysis**: blameless RCA producing durable system levers — "root cause", "why did this fail", "post-mortem" (delegates to the `root-cause-analysis` skill).
 - **Retrospective**: recursive learning retrospective on a build/project — "retrospective", "retro", "what did we learn", "review this project's trajectory" (delegates to `recursive-retrospective`). *Example: "I need a root cause and a retrospective" → run does both.*
 - **Plan / spec**: "write a plan", "spec this" → spec-writing + plan-verify.
-- **Repository maintenance / closeout**: repository structure, duplicate source, sibling consolidation, build artifacts, branches, worktrees, stashes, or local-main closeout → `repo-closeout`.
+- **Repository maintenance / closeout**: repository structure, duplicate source, sibling consolidation, build artifacts, branches, worktrees, stashes, or local-main closeout → `repo-maintenance` (`repo-closeout` remains a temporary compatibility alias).
 - **PRD**: "start a PRD", "spec out a new app" → prd-bridge / start-prd flow.
 - **Self-improve / promote / knowledge / handoff / memory setup**: "scan recent runs", "promote this experiment", "record a decision", "hand this off", "set up memory" → the matching internal skill (self-improve, promotion-reviewer, knowledge, handoff, setup-memory).
 
@@ -374,7 +374,7 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:architecture-{scan,impact,trace,rules,dead,review}` — native architecture skills sourced from NavGator (provenance + drift-detection via `build-loop:sync-skills`)
 - `build-loop:debugging-memory` · `build-loop:debug-loop` · `build-loop:logging-tracer` — bundled debugger primitives (orchestrator owns when-to-fire, these own the procedural detail)
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
-- `build-loop:repo-closeout` — repository structure, source-of-truth, artifact retention, sibling consolidation, and safe local-main closeout
+- `build-loop:repo-maintenance` — repository structure, source-of-truth, artifact retention, sibling consolidation, and safe local-main closeout (`build-loop:repo-closeout` is the temporary compatibility alias)
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
 - `build-loop:ui-design` — build-loop-owned UI design direction skill loaded before non-trivial UI implementation; `design-contract-specialist` writes the resulting `.build-loop/app-contract/ui.md`.

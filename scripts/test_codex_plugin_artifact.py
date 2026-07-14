@@ -67,13 +67,18 @@ class CodexPluginArtifactTests(unittest.TestCase):
             skill_paths = sorted(str(path.relative_to(target)) for path in target.rglob("SKILL.md"))
             self.assertEqual(
                 skill_paths,
-                ["skills/build-loop/SKILL.md", "skills/repo-closeout/SKILL.md"],
+                [
+                    "skills/build-loop/SKILL.md",
+                    "skills/repo-closeout/SKILL.md",
+                    "skills/repo-maintenance/SKILL.md",
+                ],
             )
             manifest = target / ".codex-plugin" / "plugin.json"
             self.assertIn('"skills": "./skills"', manifest.read_text(encoding="utf-8"))
             self.assertTrue((target / ICON_REL).is_file())
-            self.assertTrue((target / "skills" / "repo-closeout" / "scripts" / "audit_repo_closeout.py").is_file())
-            self.assertFalse((target / "skills" / "repo-closeout" / "scripts" / "test_audit_repo_closeout.py").exists())
+            self.assertTrue((target / "skills" / "repo-maintenance" / "scripts" / "audit_repo_maintenance.py").is_file())
+            self.assertFalse((target / "skills" / "repo-maintenance" / "scripts" / "test_audit_repo_maintenance.py").exists())
+            self.assertFalse((target / "skills" / "repo-closeout" / "scripts").exists())
 
     def test_checked_in_artifact_includes_plugin_icon(self) -> None:
         icon = ARTIFACT / ICON_REL

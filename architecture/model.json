@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "76f0b26a9d1b5ff30a7794a2dfaad08513045ce2c04c81ce7d5128665324f9cc"
+    "content_sha256": "046ee509dd1f2143eb99ea98db7b2d86f3450c5062bde9ce4f1bd1c94fbbd82d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1372,11 +1372,19 @@
         }
       },
       "repo-closeout": {
-        "description": "\"Audit and evolve repository structure safely across the full maintenance lifecycle: repository topology and scope, application and build-system profiles, module and folder boundaries, canonical source-of-truth and monorepo decisions, sibling consolidation, generated/build artifact retention, worktree and branch hygiene, local-versus-remote state, and verified closeout into local main. Use when asked how any kind of…",
+        "description": "\"Compatibility alias for Repository Maintenance. Use when an existing prompt or workflow invokes repo-closeout; route all repository structure, artifact, branch, worktree, sibling consolidation, and local-main maintenance work to repo-maintenance. Deprecated: prefer repo-maintenance for new work.\" user-invocable: true",
         "file": "skills/repo-closeout/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-07-13"
+        }
+      },
+      "repo-maintenance": {
+        "description": "\"Audit and evolve repository structure safely across the full maintenance lifecycle: repository topology and scope, application and build-system profiles, module and folder boundaries, canonical source-of-truth and monorepo decisions, sibling consolidation, generated/build artifact retention, worktree and branch hygiene, local-versus-remote state, and verified closeout into local main. Use when asked how any kind of…",
+        "file": "skills/repo-maintenance/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
         }
       },
       "research": {

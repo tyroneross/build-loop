@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repository Maintenance"
+  short_description: "Audit repo architecture, artifacts, and closeout"
+  default_prompt: "Use $build-loop:repo-maintenance to classify the application and build profile, audit repository structure and artifacts, and close completed local work safely."

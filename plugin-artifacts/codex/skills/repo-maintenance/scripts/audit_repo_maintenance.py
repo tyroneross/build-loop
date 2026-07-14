@@ -7,6 +7,7 @@ import argparse
 import fnmatch
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -28,6 +29,30 @@ DEFAULT_ARTIFACT_PATTERNS = (
     ".mypy_cache",
     ".ruff_cache",
 )
+
+DEFAULT_PROTECTED_ARTIFACTS = frozenset({"build", "build-rust"})
+DISCOVERY_PRUNE_NAMES = frozenset(
+    {".git", ".nox", ".tox", ".venv", "node_modules", "site-packages", "venv"}
+)
+RELEASE_ARTIFACT_SUFFIXES = (
+    ".aab",
+    ".apk",
+    ".appx",
+    ".deb",
+    ".dmg",
+    ".exe",
+    ".ipa",
+    ".msi",
+    ".msix",
+    ".pkg",
+    ".rpm",
+    ".tar.gz",
+    ".xcarchive",
+    ".zip",
+)
+RELEASE_CONTAINER_NAMES = frozenset({"artifacts", "dist", "release", "releases"})
+RELEASE_BUNDLE_SUFFIXES = (".app",)
+RELEASE_EVIDENCE_LIMIT = 20
 
 LANGUAGE_EXTENSIONS = {
     ".c": "C/C++",
@@ -104,7 +129,8 @@ def parse_worktrees(repo: Path) -> list[dict[str, Any]]:
                 if isinstance(branch, str) and branch.startswith("refs/heads/"):
                     current["branch"] = branch.removeprefix("refs/heads/")
                 path = Path(str(current["worktree"]))
-                current["dirty_paths"] = parse_status(repo=path)
+                current["exists"] = path.exists()
+                current["dirty_paths"] = parse_status(repo=path) if path.exists() else []
                 current["dirty"] = bool(current["dirty_paths"])
                 records.append(current)
                 current = {}
@@ -644,6 +670,100 @@ def process_snapshot() -> list[tuple[int, str]]:
     return processes
 
 
+def matches_artifact_pattern(name: str, patterns: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+
+def discover_artifact_paths(repo: Path, patterns: tuple[str, ...]) -> list[Path]:
+    """Find artifact roots recursively without counting descendants twice."""
+    discovered: list[Path] = []
+    for current_root, directories, _files in os.walk(repo, followlinks=False):
+        current = Path(current_root)
+        retained: list[str] = []
+        for name in sorted(directories):
+            candidate = current / name
+            if (
+                candidate.is_symlink()
+                or name in DISCOVERY_PRUNE_NAMES
+                or (candidate / "pyvenv.cfg").is_file()
+            ):
+                continue
+            if matches_artifact_pattern(name, patterns):
+                discovered.append(candidate)
+                continue
+            retained.append(name)
+        directories[:] = retained
+    return sorted(discovered, key=lambda path: path.relative_to(repo).as_posix())
+
+
+def command_references_path(command: str, path: Path) -> bool:
+    target = str(path)
+    start = 0
+    while True:
+        index = command.find(target, start)
+        if index < 0:
+            return False
+        end = index + len(target)
+        before = command[index - 1] if index else " "
+        after = command[end] if end < len(command) else " "
+        if before in " \t\"'=:([" and after in " \t\"'/)]":
+            return True
+        start = index + 1
+
+
+def command_artifact_paths(
+    repo: Path, command: str, patterns: tuple[str, ...]
+) -> set[Path]:
+    """Extract artifact-root prefixes under repo from a process command."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    repo_prefix = f"{repo}{os.sep}"
+    roots: set[Path] = set()
+    for token in tokens:
+        index = token.find(repo_prefix)
+        if index < 0:
+            continue
+        path_text = token[index:].rstrip("\"'`,;:)]}")
+        try:
+            relative = Path(path_text).relative_to(repo)
+        except ValueError:
+            continue
+        current = repo
+        for part in relative.parts:
+            current /= part
+            if matches_artifact_pattern(part, patterns):
+                roots.add(current)
+                break
+    return roots
+
+
+def active_missing_artifacts(
+    repo: Path,
+    patterns: tuple[str, ...],
+    processes: list[tuple[int, str]],
+) -> list[dict[str, Any]]:
+    refs: dict[str, list[dict[str, Any]]] = {}
+    for pid, command in processes:
+        for path in command_artifact_paths(repo, command, patterns):
+            if path.exists():
+                continue
+            relative = path.relative_to(repo).as_posix()
+            refs.setdefault(relative, []).append(
+                {"pid": pid, "command": command[:300]}
+            )
+    return [
+        {
+            "path": relative,
+            "exists": False,
+            "disposition": "active-missing-artifact",
+            "active_process_refs": process_refs,
+        }
+        for relative, process_refs in sorted(refs.items())
+    ]
+
+
 def directory_stats(path: Path) -> tuple[int, int, int, float]:
     allocated_bytes = 0
     apparent_bytes = 0
@@ -666,24 +786,45 @@ def directory_stats(path: Path) -> tuple[int, int, int, float]:
     return allocated_bytes, apparent_bytes, file_count, latest_mtime
 
 
+def release_artifact_evidence(repo: Path, path: Path) -> list[str]:
+    evidence: list[str] = []
+    release_container = (
+        path.name.lower() in RELEASE_CONTAINER_NAMES
+        or path.name.lower().endswith(RELEASE_ARTIFACT_SUFFIXES)
+        or path.name.lower().endswith(RELEASE_BUNDLE_SUFFIXES)
+    )
+    for current_root, directories, files in os.walk(path, followlinks=False):
+        current = Path(current_root)
+        directories[:] = [
+            name
+            for name in directories
+            if not (current / name).is_symlink()
+        ]
+        for name in [*directories, *files]:
+            lower_name = name.lower()
+            high_confidence = lower_name.endswith(RELEASE_ARTIFACT_SUFFIXES)
+            bundle_in_release_container = (
+                release_container and lower_name.endswith(RELEASE_BUNDLE_SUFFIXES)
+            )
+            if not high_confidence and not bundle_in_release_container:
+                continue
+            evidence.append((current / name).relative_to(repo).as_posix())
+            if len(evidence) >= RELEASE_EVIDENCE_LIMIT:
+                return evidence
+    return evidence
+
+
 def artifact_inventory(
     repo: Path,
     patterns: tuple[str, ...],
     protected: set[str],
     stale_days: float,
+    *,
+    use_default_protections: bool = True,
 ) -> dict[str, Any]:
     processes = process_snapshot()
     now = time.time()
-    paths = sorted(
-        {
-            child
-            for child in repo.iterdir()
-            if child.is_dir()
-            and not child.is_symlink()
-            and any(fnmatch.fnmatch(child.name, pattern) for pattern in patterns)
-        },
-        key=lambda path: path.name,
-    )
+    paths = discover_artifact_paths(repo, patterns)
     artifacts: list[dict[str, Any]] = []
     for path in paths:
         relative = path.relative_to(repo).as_posix()
@@ -691,17 +832,28 @@ def artifact_inventory(
         active_refs = [
             {"pid": pid, "command": command[:300]}
             for pid, command in processes
-            if str(path) in command
+            if command_references_path(command, path)
         ]
         ignored = run_git(repo, "check-ignore", "-q", "--", relative, check=False).returncode == 0
         age_days = max(0.0, (now - latest_mtime) / 86_400)
-        is_protected = relative in protected or path.name in protected
+        default_protected = use_default_protections and relative in DEFAULT_PROTECTED_ARTIFACTS
+        is_protected = default_protected or relative in protected or path.name in protected
+        release_evidence = release_artifact_evidence(repo, path)
+        contains_release_artifact = bool(release_evidence)
         stale = age_days >= stale_days
-        cleanup_candidate = ignored and stale and not is_protected and not active_refs
+        cleanup_candidate = (
+            ignored
+            and stale
+            and not is_protected
+            and not active_refs
+            and not contains_release_artifact
+        )
         if is_protected:
             disposition = "protected"
         elif active_refs:
             disposition = "active"
+        elif contains_release_artifact:
+            disposition = "release-artifact"
         elif not ignored:
             disposition = "review-tracked-or-unignored"
         elif not stale:
@@ -719,7 +871,10 @@ def artifact_inventory(
                 "age_days": round(age_days, 2),
                 "ignored_by_git": ignored,
                 "protected": is_protected,
+                "default_protected": default_protected,
                 "active_process_refs": active_refs,
+                "contains_release_artifact": contains_release_artifact,
+                "release_artifact_evidence": release_evidence,
                 "stale": stale,
                 "cleanup_candidate": cleanup_candidate,
                 "disposition": disposition,
@@ -727,7 +882,12 @@ def artifact_inventory(
         )
     return {
         "patterns": list(patterns),
-        "protected": sorted(protected),
+        "default_protected": (
+            sorted(DEFAULT_PROTECTED_ARTIFACTS) if use_default_protections else []
+        ),
+        "protected": sorted(set(protected) | (
+            set(DEFAULT_PROTECTED_ARTIFACTS) if use_default_protections else set()
+        )),
         "stale_days": stale_days,
         "total_bytes": sum(item["bytes"] for item in artifacts),
         "total_apparent_bytes": sum(item["apparent_bytes"] for item in artifacts),
@@ -737,6 +897,7 @@ def artifact_inventory(
         "cleanup_candidate_apparent_bytes": sum(
             item["apparent_bytes"] for item in artifacts if item["cleanup_candidate"]
         ),
+        "active_missing_artifacts": active_missing_artifacts(repo, patterns, processes),
         "artifacts": artifacts,
     }
 
@@ -805,6 +966,7 @@ def audit(
     include_artifacts: bool = False,
     artifact_patterns: tuple[str, ...] = DEFAULT_ARTIFACT_PATTERNS,
     protected_artifacts: set[str] | None = None,
+    use_default_artifact_protections: bool = True,
     stale_days: float = 7,
     compare_repo: Path | None = None,
     compare_prefix: str | None = None,
@@ -832,7 +994,7 @@ def audit(
         if branch["name"] != base and branch.get("merged_into_base", False)
     ]
     report: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "repo_root": str(root),
         "base": base,
         "base_exists": base_exists,
@@ -842,6 +1004,11 @@ def audit(
         "canonical_dirty_paths": parse_status(root),
         "operations_in_progress": operation_state(root),
         "worktrees": worktrees,
+        "missing_worktrees": [
+            str(worktree["worktree"])
+            for worktree in worktrees
+            if not worktree.get("exists", True)
+        ],
         "branches": branches,
         "stashes": stash_inventory(root),
         "unmerged_candidates": candidates,
@@ -856,6 +1023,7 @@ def audit(
             artifact_patterns,
             protected_artifacts or set(),
             stale_days,
+            use_default_protections=use_default_artifact_protections,
         )
     if compare_repo is not None or compare_prefix is not None:
         if compare_repo is None or not compare_prefix:
@@ -881,6 +1049,7 @@ def render_text(report: dict[str, Any]) -> str:
         f"upstream: {upstream_text}",
         f"canonical dirty paths: {len(report['canonical_dirty_paths'])}",
         f"worktrees: {len(report['worktrees'])}",
+        f"missing worktrees: {', '.join(report['missing_worktrees']) or 'none'}",
         f"local branches: {len(report['branches'])}",
         f"unmerged candidates: {', '.join(report['unmerged_candidates']) or 'none'}",
         f"merged branch candidates: {', '.join(report['merged_branch_candidates']) or 'none'}",
@@ -912,6 +1081,11 @@ def render_text(report: dict[str, Any]) -> str:
                 f"artifact directories: {len(artifacts['artifacts'])}",
                 f"artifact bytes: {artifacts['total_bytes']}",
                 f"artifact cleanup candidates: {', '.join(candidates) or 'none'}",
+                "active missing artifacts: "
+                + (
+                    ", ".join(item["path"] for item in artifacts["active_missing_artifacts"])
+                    or "none"
+                ),
             ]
         )
     comparison = report.get("source_comparison")
@@ -938,19 +1112,24 @@ def main() -> int:
     parser.add_argument(
         "--artifacts",
         action="store_true",
-        help="Inventory common top-level build, cache, and generated directories",
+        help="Inventory common build, cache, and generated directories recursively",
     )
     parser.add_argument(
         "--artifact-pattern",
         action="append",
         default=[],
-        help="Additional top-level artifact glob (repeatable)",
+        help="Additional artifact-directory glob (repeatable)",
     )
     parser.add_argument(
         "--protect-artifact",
         action="append",
         default=[],
         help="Artifact path or name that must not be a cleanup candidate (repeatable)",
+    )
+    parser.add_argument(
+        "--no-default-artifact-protection",
+        action="store_true",
+        help="Do not automatically protect canonical top-level build and build-rust roots",
     )
     parser.add_argument(
         "--stale-days",
@@ -974,6 +1153,7 @@ def main() -> int:
             include_artifacts=args.artifacts,
             artifact_patterns=patterns,
             protected_artifacts=set(args.protect_artifact),
+            use_default_artifact_protections=not args.no_default_artifact_protection,
             stale_days=args.stale_days,
             compare_repo=Path(args.compare_repo) if args.compare_repo else None,
             compare_prefix=args.compare_prefix,

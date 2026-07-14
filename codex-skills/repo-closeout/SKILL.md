@@ -1,14 +1,14 @@
 ---
 name: repo-closeout
-description: "Audit repository structure, canonical source boundaries, sibling consolidation, build artifacts, worktrees, branches, stashes, and verified local-main closeout. Use for repository maintenance, cleanup, consolidation, and safe merge/closeout work."
+description: "Compatibility alias for Repository Maintenance. Use only when an existing prompt invokes repo-closeout; prefer repo-maintenance for new repository structure, artifact, worktree, branch, sibling consolidation, and local-main maintenance work."
 ---
 
 <!-- SPDX-FileCopyrightText: 2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Repository Maintenance and Closeout
+# Repository Closeout Compatibility Alias
 
-Load and follow the canonical workflow and its bundled resources:
+Load and follow the compatibility router, which delegates to the canonical workflow:
 
 ```text
 ../../skills/repo-closeout/SKILL.md

@@ -19,6 +19,7 @@ SKILLS_DIR = REPO_ROOT / "skills"
 CODEX_PUBLIC_ENTRYPOINTS = {
     "build-loop",
     "repo-closeout",
+    "repo-maintenance",
 }
 
 CLAUDE_PUBLIC_ENTRYPOINTS = {
@@ -29,6 +30,7 @@ CLAUDE_PUBLIC_ENTRYPOINTS = {
     "knowledge",
     "handoff",
     "repo-closeout",
+    "repo-maintenance",
     # root-cause-analysis is agent-invoked ("no dedicated command"; reachable via
     # natural language only) per its SKILL description + build-loop's
     # "only /build-loop:run is human-facing" design. The fix/rca-user-invocable
@@ -92,12 +94,20 @@ class CodexSurfaceTests(unittest.TestCase):
         )
         self.assertEqual(
             skill_paths,
-            ["skills/build-loop/SKILL.md", "skills/repo-closeout/SKILL.md"],
+            [
+                "skills/build-loop/SKILL.md",
+                "skills/repo-closeout/SKILL.md",
+                "skills/repo-maintenance/SKILL.md",
+            ],
         )
         self.assertEqual(read_name(CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "SKILL.md"), "build-loop")
         self.assertEqual(
             read_name(CODEX_ARTIFACT_DIR / "skills" / "repo-closeout" / "SKILL.md"),
             "repo-closeout",
+        )
+        self.assertEqual(
+            read_name(CODEX_ARTIFACT_DIR / "skills" / "repo-maintenance" / "SKILL.md"),
+            "repo-maintenance",
         )
 
     def test_codex_artifact_is_included_in_npm_package_files(self) -> None:
@@ -106,11 +116,18 @@ class CodexSurfaceTests(unittest.TestCase):
         self.assertIn(".agents/plugins", data.get("files", []))
         self.assertNotIn(".agents", data.get("files", []))
 
-    def test_repo_closeout_documents_audit_limits(self) -> None:
-        text = (SKILLS_DIR / "repo-closeout" / "SKILL.md").read_text(encoding="utf-8")
+    def test_repo_maintenance_documents_audit_limits(self) -> None:
+        text = (SKILLS_DIR / "repo-maintenance" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("source-tree evidence only", text)
         self.assertIn("does not prove reproducibility", text)
-        self.assertIn("current inventory covers top-level roots", text)
+        self.assertIn("recursive inventory", text)
+        self.assertIn("release-artifact", text)
+        self.assertIn("active-missing-artifact", text)
+
+    def test_repo_closeout_is_compatibility_alias(self) -> None:
+        text = (SKILLS_DIR / "repo-closeout" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("retained for one release", text.lower())
+        self.assertIn("../repo-maintenance/SKILL.md", text)
 
 
 class ClaudeSurfaceTests(unittest.TestCase):
