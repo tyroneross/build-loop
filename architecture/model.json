@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "54749b740d5ea61bbc04a3b28ef289213df96118df4a892a69bafad4becb5aef"
+    "content_sha256": "06153a5229dc4d514ffc9f3c44e7415fec6bfa2931ef4fc09ac2493ee2f49011"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1567,6 +1567,7 @@
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",
       "scripts/detect_attribution_layers.py": "Detect whether a repo carries the canonical four-layer attribution stack.",
       "scripts/detect_decision_rot.py": "Decision rot detector — flag decisions older than threshold-days.",
+      "scripts/detect_plugin_distribution.py": "detect_plugin_distribution.py — classify a plugin repo's distribution shape, then",
       "scripts/detect_runtime_server.py": "Detect whether a project ships a live HTTP/SSE runtime server.",
       "scripts/detect_self_recursive.py": "Detect whether the working directory IS the runtime executing build-loop.",
       "scripts/dev-tools/experiment_metrics.py": "experiment_metrics.py — Compute performance metrics from optimize experiments.",

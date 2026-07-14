@@ -327,3 +327,24 @@ Core references (load as needed — don't pre-load all):
 Related skills:
 - **`mcp-builder`** — MCP server implementation companion
 - **`skill-builder`** — SKILL.md authoring (for skills shipped inside a plugin)
+
+## Distribution & versioning — DETECT, don't mandate
+
+Before touching any `version` field, run the detector:
+
+```bash
+python3 scripts/detect_plugin_distribution.py <repo> --hub <fleet marketplace.json>
+```
+
+The install SOURCE decides the policy (auto-SHA vs semver) — a blanket rule gets it wrong.
+What is NOT negotiable is *consistency*: the version state must agree across `plugin.json`,
+the codex manifest, and the marketplace entry, or one silently masks the others. Every plugin
+repo should call the shared CI workflow, which enforces that invariant for all shapes:
+
+```yaml
+jobs:
+  verify-manifests:
+    uses: tyroneross/RossLabs-AI-Toolkit/.github/workflows/verify-plugin-manifests.yml@plugin-ci-v1
+```
+
+Full decision table + the failure that motivated it: `references/plugin-distribution.md`.
