@@ -128,7 +128,18 @@ _run_gate() {
 # Fail-open: a classifier error (or missing python3) yields "commit push" so BOTH
 # conservative gates still run — never scan less than intended. Emptiness (neither word)
 # is the correct no-op for a non-git command.
-_GITCLASS=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/hooks/git_command_classifier.py" 2>/dev/null) || _GITCLASS="commit push"
+_GITCLASS=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/hooks/git_command_classifier.py" 2>/dev/null) || {
+    # Classifier subprocess could not RUN (e.g. python3 unresolvable in a minimal-PATH hook
+    # env, or spawn failure under load). Fail-open conservatively — but ONLY for commands that
+    # actually mention `git`. Otherwise a transient classifier failure turns every echo/python/
+    # grep into a full-repo scan that HARD-BLOCKS the command (observed 2026-07-14: a whole
+    # session's bash frozen in any .build-loop repo with findings). A command with no `git`
+    # substring cannot be a push/commit, so scanning it is pure false-positive.
+    case "$CMD" in
+        *git*) _GITCLASS="commit push" ;;
+        *)     _GITCLASS="" ;;
+    esac
+}
 
 # Collect envelopes only from the gates whose command class is present.
 ENVELOPES=()
