@@ -90,10 +90,13 @@ and was routinely ignored, which is why it is linted now):
 | `weak-verb` | nominalizations that hide the action: `was responsible for`, `performed an analysis of`, `made a decision`, `in order to` | use the strong verb: `caused`, `analyzed`, `decided`, `to` |
 | `filler-opener` | `Now,` `Basically,` `It's worth noting` `Let me` `I'll now` | delete it and start with the action |
 | `hedge` | `I think`, `perhaps`, `somewhat`, `arguably` | state it, or mark confidence (✅ / ⚠️ / ❓). A line already carrying a status marker is calibrated and exempt. |
-| `em-dash` | more than 2 em dashes in the report (density, not per-line) | periods, colons, commas |
 
-An occasional em dash is fine. Leaning on them is not. Calibrated uncertainty is required and is
-never a "hedge" finding: `❓ uncertain` is honest, `I think` is padding.
+Calibrated uncertainty is required and is never a "hedge" finding: `❓ uncertain` is honest,
+`I think` is padding.
+
+**Em dashes (guidance, not linted):** prefer periods, colons, and commas. An occasional em dash
+is fine; leaning on them reads as rushed. This is a taste call, so it stays guidance — a lint that
+fired on every dash would be noise you learn to ignore.
 
 ## Precision and Brevity — sentence architecture
 

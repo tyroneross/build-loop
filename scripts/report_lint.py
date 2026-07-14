@@ -353,12 +353,10 @@ HEDGE_RE = re.compile(
 )
 CALIBRATED_RE = re.compile(r"[✅⚠❓]|\bunverified\b|\bassumed\b|\binferred\b|\buncertain\b", re.IGNORECASE)
 
-EM_DASH_RE = re.compile(r"\u2014")
-EM_DASH_MAX = 2  # an occasional em dash is fine; leaning on them is not
 
 
 def lint_direct_language(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
-    """Clear verb, clear outcome. Flags weak verbs, filler, uncalibrated hedges, em dashes."""
+    """Clear verb, clear outcome. Flags weak verbs, filler openers, and uncalibrated hedges."""
     findings: list[dict[str, Any]] = []
     for lineno, line in lines:
         stripped = line.strip()
@@ -390,14 +388,6 @@ def lint_direct_language(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
                             f"(✅ verified / ⚠️ untested / ❓ uncertain).",
                 ))
 
-    # Em dashes: DENSITY, not per-line. An occasional one is fine; leaning on them is not.
-    total = sum(len(EM_DASH_RE.findall(l)) for _, l in lines)
-    if total > EM_DASH_MAX:
-        findings.append(_finding(
-            rule_id="em-dash", severity="warn", line=None, snippet=None,
-            message=f"{total} em dashes (limit {EM_DASH_MAX}). Leaning on em dashes. "
-                    f"Use periods, colons, or commas.",
-        ))
     return findings
 
 

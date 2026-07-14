@@ -417,14 +417,5 @@ class TestDirectLanguage(unittest.TestCase):
         # A status marker IS calibration. Flagging it would punish the honesty we require.
         self.assertNotIn("hedge", self._ids("❓ uncertain: I think the cache is slow.\n"))
 
-    def test_occasional_em_dash_passes(self):
-        # The rule is "avoid HEAVY use", not zero. build-loop's own good example uses one.
-        self.assertNotIn("em-dash", self._ids("✅ Verified by scripts/test_x.py — 14 passed.\n"))
-
-    def test_heavy_em_dash_use_is_flagged(self):
-        self.assertIn("em-dash", self._ids("a — b — c — d\n"))
-
-
-
 if __name__ == "__main__":
     unittest.main(verbosity=2)
