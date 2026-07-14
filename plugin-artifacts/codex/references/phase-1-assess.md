@@ -122,6 +122,14 @@
 
    **Supersedes** the legacy `ps aux | grep -c "[c]laude$"` advisory below — Rally Point presence is the canonical signal. Keep the legacy line as a fallback only when Rally Point is unavailable (older plugin cache without `scripts/rally_point/`).
 
+9b. **Data-plane worktree router**: Inspect the goal and repo signals using
+`references/capability-routing.md` § `data-plane-worktrees`. When any signal
+fires, set `state.json.triggers.dataPlaneWorktree: true` and load
+`Skill("build-loop:data-plane-worktrees")` before Phase 2. Inventory every
+mutable non-Git surface in the baseline manifest created by step 9a, then require
+manifest validation before the first write. No signal means the baseline empty
+manifest is an explicit source-only run record.
+
 10. **Load PRD if present** (strategic frame check): load `build-loop:prd-bridge`, run its Phase 1 Assess step. If `docs/prd-*.md` exists, the bridge reads frontmatter (`core_principles`, `load_when`, `evolves_when`), Navigation Map, and Section Index, mirrors them to `.build-loop/state.json.prd`, and surfaces staleness signals. If no PRD exists, the bridge writes a one-line recommendation in `state.json.prd.recommendation` pointing to `prd-builder` skill / `/build-loop:start-prd` command — surfaces in Sub-step G Report's `## Held` section, doesn't block. Step 11 below uses PRD as primary source of truth when present; falls back to fresh capture when absent.
 11. **Capture north star + update intent**: When `state.json.prd.core_principles` is non-empty (a PRD was loaded by step 10), use it as the strategic frame; `intent.md` cites the PRD path + revision rather than re-deriving. Otherwise use `references/intent-capability-pack.md` to identify app/repo purpose, primary users, core jobs, update intent, user value, and non-goals fresh. Write `.build-loop/intent.md` and mirror compact fields to `.build-loop/state.json.intent`.
 

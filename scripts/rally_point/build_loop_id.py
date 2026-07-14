@@ -29,6 +29,8 @@ State persistence (``<workdir>/.build-loop/state.json``)::
     state.execution.run_label                (str, human-readable)
     state.execution.run_worktree_path        (str, abs path; set when isolation provisioned)
     state.execution.run_worktree_branch      (str, e.g. "bl/run-<id>"; set when isolation provisioned)
+    state.execution.data_manifest_path       (str, abs path; set when isolation provisioned)
+    state.execution.data_root                (str, abs path; set when isolation provisioned)
 
 API
 ---
@@ -233,6 +235,46 @@ def _provision_run_worktree(
     return str(Path(result["path"]).resolve()), str(result["branch"])
 
 
+def _initialize_data_plane(
+    workdir_path: Path,
+    build_loop_id: str,
+    worktree_path: str,
+    branch: str,
+) -> tuple[str, str]:
+    """Create the baseline non-Git state contract for an isolated run.
+
+    Data-plane initialization is intentionally adapter-neutral: it allocates a
+    per-run data directory and writes an empty schema-v1 manifest but does not
+    copy databases, create service projects, or contact external systems.
+    Failure is fail-closed alongside worktree provisioning because otherwise a
+    run could claim source isolation while silently sharing mutable state.
+    """
+    import importlib.util
+    import sys as _sys
+
+    scripts_dir = Path(__file__).resolve().parent.parent
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+    try:
+        spec = importlib.util.spec_from_file_location("data_plane", scripts_dir / "data_plane.py")
+        if spec is None or spec.loader is None:  # pragma: no cover — defensive
+            raise RuntimeError("could not import data_plane.py from scripts/")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[arg-type]
+        manifest = module.initialize_manifest(
+            workdir_path,
+            run_id=build_loop_id,
+            worktree_path=worktree_path,
+            branch=branch,
+        )
+        manifest_path = module.manifest_path(workdir_path, build_loop_id)
+    except Exception as exc:
+        raise RunWorktreeProvisionError(
+            f"data-plane initialization failed for run {build_loop_id}: {exc}"
+        ) from exc
+    return str(Path(manifest_path).resolve()), str(manifest["data_root"])
+
+
 def generate_or_resume(
     workdir: Path | str,
     *,
@@ -341,6 +383,11 @@ def generate_or_resume(
             )
             execution["run_worktree_path"] = wt_path
             execution["run_worktree_branch"] = wt_branch
+            manifest_path, data_root = _initialize_data_plane(
+                workdir_path, build_loop_id, wt_path, wt_branch
+            )
+            execution["data_manifest_path"] = manifest_path
+            execution["data_root"] = data_root
         except RunWorktreeProvisionError:
             state["execution"] = execution
             _atomic_write_state(workdir_path, state)

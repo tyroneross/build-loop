@@ -376,6 +376,7 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
 - `build-loop:repo-maintenance` — repository structure, source-of-truth, artifact retention, sibling consolidation, and safe local-main closeout (`build-loop:repo-closeout` is the temporary compatibility alias)
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
+- `build-loop:data-plane-worktrees` — isolates mutable non-Git state across run worktrees; loads for SQLite/PostgreSQL migrations, generated indexes, Docker volumes/projects, mutable file stores, or external namespaces and drives the run manifest through terminal closeout.
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
 - `build-loop:ui-design` — build-loop-owned UI design direction skill loaded before non-trivial UI implementation; `design-contract-specialist` writes the resulting `.build-loop/app-contract/ui.md`.
 - `build-loop:telemetry` — OpenTelemetry-first observability guidance (LLM/agent → Phoenix/Langfuse + OpenInference/OpenLLMetry; web/server → OTel SDK + Sentry; mobile/iOS → Embrace/OTel-swift over Firebase). Loaded in Phase 1 when a build touches a server/LLM/mobile app with no telemetry, or Phase 2 when adding a service/LLM path; encodes the user's decided OTel + GenAI-semconv stack.

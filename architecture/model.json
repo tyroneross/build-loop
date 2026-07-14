@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c40b0edd77836c309cf4f81847f4b416acbf00d612ea9075a9b5236f2bb4dfcb"
+    "content_sha256": "95b310bc4465a42387e75c8a3c6f89e9e362a59cb0fd77906df352fe5f0b550e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1227,6 +1227,14 @@
           "date": "2026-06-04"
         }
       },
+      "data-plane-worktrees": {
+        "description": "\"Use when a Build Loop run or Git worktree touches mutable non-Git state: SQLite or file-backed databases, PostgreSQL databases/schemas and migrations, generated search/vector indexes, Docker volumes or service projects, mutable file trees, caches that cannot be rebuilt safely, or external cloud/account namespaces. Inventories each surface, selects per-worktree, shared-readonly, shared-serialized, or external-namesp…",
+        "file": "skills/data-plane-worktrees/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
+        }
+      },
       "debug-loop": {
         "description": "Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues. NOT for blameless postmortem system-lever analysis (use `root-cause-analysis`) or memory search/store (use `debugging-memory`).",
         "file": "skills/debug-loop/SKILL.md",
@@ -1553,6 +1561,7 @@
       "scripts/coordination_watch.py": "Compatibility wrapper for the embedded agent-rally-watcher namespace.\"\"\"",
       "scripts/cost_ledger_hook.py": "Stop-hook producer for the per-dispatch cost ledger.",
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
+      "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
       "scripts/db_substrate_lint.py": "db_substrate_lint.py — ADVISORY, WARN-only substrate-boundary lint.",
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",

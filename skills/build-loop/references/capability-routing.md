@@ -24,6 +24,7 @@ Phase 1 runs `node ${CLAUDE_PLUGIN_ROOT}/skills/build-loop/detect-plugins.mjs` a
 | Intent capability pack | Phases 1-4 | Read `references/intent-capability-pack.md`; write `.build-loop/intent.md`; pass the intent packet to every subagent |
 | Modular systems pack | Phases 1-4 | Read `references/modular-systems-pack.md`; partition files/tasks MECE; prefer modular scalable boundaries unless an exception is documented |
 | Codex subagent adapter | Phase 3 (Execute, Codex only) | Read `references/codex-subagents.md`; use `templates/codex-worker-prompt.md` for authorized Codex workers |
+| `build-loop:data-plane-worktrees` | Phase 1 Assess through terminal closeout when a worktree touches mutable non-Git state | Inventory surfaces inline, keep writable paths under `.build-loop/data/<run-id>/`, namespace external resources by run id, and serialize any unavoidable shared writer |
 
 ### Spec/Plan author router (intent-driven, ordered)
 
@@ -137,6 +138,27 @@ Tie-breaker: if signals are mixed (an Apple project with both `ios/` and a macOS
 ## Trigger Conditions
 
 Some capabilities should fire proactively based on goal phrasing or files touched. Phase 1 ASSESS sets these flags in `.build-loop/state.json.triggers`, and Phase 4 EXECUTE consults them before dispatching each subagent.
+
+**data-plane-worktrees** (mutable non-Git state isolation)
+
+Fires when a Build Loop worktree can read or write state that Git does not
+isolate.
+
+Trigger if any of:
+
+- Goal mentions SQLite, PostgreSQL/Postgres, database/schema migration,
+  generated/search/vector index, Docker/Compose volume or project, mutable file
+  store, cache with canonical writes, bucket, queue, or external namespace.
+- Changed code opens `*.sqlite`, `*.sqlite3`, or `*.db`; connects to PostgreSQL;
+  runs migrations; builds an index; or provisions a persistent service.
+- Repo signals include migration directories, Compose volume definitions,
+  file-backed stores, or generated indexes shared across worktrees.
+
+Action: set `state.json.triggers.dataPlaneWorktree: true`, load
+`Skill("build-loop:data-plane-worktrees")` before Phase 2, inventory every data
+surface in the run manifest, and require `validate` before the first write plus
+`terminal` before closeout. A baseline empty manifest is not evidence that no
+data surface exists; Assess must make that determination from the goal and repo.
 
 **pyramid-principle** (structured writing)
 

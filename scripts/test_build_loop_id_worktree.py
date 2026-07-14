@@ -79,11 +79,19 @@ def test_provision_creates_worktree_under_canonical_root(tmp_path: Path) -> None
     assert exec_block["run_worktree_path"] == str(expected_path)
     assert exec_block["run_worktree_branch"] == expected_branch
     assert expected_path.is_dir(), "worktree directory not created"
+    manifest_path = Path(exec_block["data_manifest_path"])
+    assert manifest_path.is_file(), "data manifest not created"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["run_id"] == bli_id
+    assert manifest["worktree_path"] == str(expected_path)
+    assert manifest["surfaces"] == []
+    assert Path(exec_block["data_root"]).is_dir()
 
     # State.json persisted.
     state = json.loads((repo / ".build-loop" / "state.json").read_text())
     assert state["execution"]["run_worktree_path"] == str(expected_path)
     assert state["execution"]["run_worktree_branch"] == expected_branch
+    assert state["execution"]["data_manifest_path"] == str(manifest_path)
 
     # git knows about the worktree.
     wt_list = _git(repo, "worktree", "list").stdout
@@ -92,6 +100,11 @@ def test_provision_creates_worktree_under_canonical_root(tmp_path: Path) -> None
     # Branch exists.
     branches = _git(repo, "branch", "--list", expected_branch).stdout.strip()
     assert expected_branch in branches
+
+    # The manifest data root lives in the canonical run-state directory rather
+    # than inside the linked worktree, so normal Git cleanup stays non-force.
+    assert _git(repo, "worktree", "remove", str(expected_path)).returncode == 0
+    assert not expected_path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +119,8 @@ def test_resume_preserves_worktree_path(tmp_path: Path) -> None:
     )
     original_path = first["run_worktree_path"]
     original_branch = first["run_worktree_branch"]
+    original_manifest = first["data_manifest_path"]
+    original_data_root = first["data_root"]
 
     # Simulate a resume — same workdir, new session, provision_worktree still True.
     second = bli.generate_or_resume(
@@ -114,6 +129,8 @@ def test_resume_preserves_worktree_path(tmp_path: Path) -> None:
 
     assert second["run_worktree_path"] == original_path
     assert second["run_worktree_branch"] == original_branch
+    assert second["data_manifest_path"] == original_manifest
+    assert second["data_root"] == original_data_root
     assert Path(original_path).is_dir(), "resume must not delete the worktree"
     # No second worktree got added.
     wt_list = _git(repo, "worktree", "list").stdout
@@ -147,6 +164,8 @@ def test_provision_fail_closed_raises(tmp_path: Path) -> None:
     # No worktree keys when provisioning failed.
     assert "run_worktree_path" not in state["execution"]
     assert "run_worktree_branch" not in state["execution"]
+    assert "data_manifest_path" not in state["execution"]
+    assert "data_root" not in state["execution"]
 
 
 # ---------------------------------------------------------------------------
@@ -162,5 +181,7 @@ def test_default_provision_false_is_legacy_behaviour(tmp_path: Path) -> None:
 
     assert "run_worktree_path" not in exec_block
     assert "run_worktree_branch" not in exec_block
+    assert "data_manifest_path" not in exec_block
+    assert "data_root" not in exec_block
     # And no worktree dir was created.
     assert not (repo / ".build-loop" / "worktrees").exists()
