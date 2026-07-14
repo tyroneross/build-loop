@@ -77,6 +77,24 @@ filter; outages persist to model-availability.json with a TTL.
 
 Why this is bad: it is the exact same change, but described as the feature/implementation. The reader learns what files exist, not that their runs stop stalling during an outage or that quality holds on the backup. It leads with the mechanism (`dispatch_fallback.py`, `canonical-id normalization`, `host-provider filter`, `model-availability.json`, `TTL`) and never states the user outcome. The fix is the rewrite above: keep this detail, but move it below an outcome-first lead.
 
+## Governing rule: direct language. Clear verb, clear outcome.
+
+Every sentence names who did what, and what resulted. If a reader cannot extract the verb and
+the outcome in one pass, rewrite it.
+
+These are now ENFORCED by `scripts/report_lint.py`, not merely taught (the doctrine below existed
+and was routinely ignored, which is why it is linted now):
+
+| Rule | Fires on | Fix |
+|---|---|---|
+| `weak-verb` | nominalizations that hide the action: `was responsible for`, `performed an analysis of`, `made a decision`, `in order to` | use the strong verb: `caused`, `analyzed`, `decided`, `to` |
+| `filler-opener` | `Now,` `Basically,` `It's worth noting` `Let me` `I'll now` | delete it and start with the action |
+| `hedge` | `I think`, `perhaps`, `somewhat`, `arguably` | state it, or mark confidence (✅ / ⚠️ / ❓). A line already carrying a status marker is calibrated and exempt. |
+| `em-dash` | more than 2 em dashes in the report (density, not per-line) | periods, colons, commas |
+
+An occasional em dash is fine. Leaning on them is not. Calibrated uncertainty is required and is
+never a "hedge" finding: `❓ uncertain` is honest, `I think` is padding.
+
 ## Precision and Brevity — sentence architecture
 
 Clear, concise statements depend less on better words and more on sentence architecture. Strongest pattern: concrete noun + strong verb + specific object/outcome + cause/evidence when needed.

@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "06153a5229dc4d514ffc9f3c44e7415fec6bfa2931ef4fc09ac2493ee2f49011"
+    "content_sha256": "8575e262dafac89ff32afab547d021c149e61e81496906cfe3e0f08514ac40d6"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1352,7 +1352,7 @@
         "file": "skills/plugin-builder/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-06"
+          "date": "2026-07-14"
         }
       },
       "plugin-tests": {

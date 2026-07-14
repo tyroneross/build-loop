@@ -312,6 +312,95 @@ def lint_contrastive_pivot(lines: list[tuple[int, str]]) -> list[dict[str, Any]]
     return findings
 
 
+# --- Direct language: clear verb, clear outcome ------------------------------------------
+# The doctrine already lives in references/output-style.md ("Precision and Brevity": strong
+# verb + specific outcome; adverbs replaced by data). It was TAUGHT but never ENFORCED, so it
+# was routinely ignored. These rules close that gap. Sourced from that doc's own verb table so
+# doctrine and enforcement cannot drift apart.
+
+# Weak verb / nominalization -> the strong verb it is hiding.
+WEAK_VERBS = {
+    r"had an impact on": "changed",
+    r"was responsible for": "caused",
+    r"made improvements to": "improved",
+    r"experienced delays": "slipped",
+    r"provided support for": "supported",
+    r"made a decision": "decided",
+    r"performed an analysis of": "analyzed",
+    r"conducted a review of": "reviewed",
+    r"took steps to": "(name the step)",
+    r"is able to": "can",
+    r"in order to": "to",
+    r"has the ability to": "can",
+    r"gave consideration to": "considered",
+    r"reached a conclusion": "concluded",
+}
+WEAK_VERB_RES = [(re.compile(rf"\b{p}\b", re.IGNORECASE), r) for p, r in WEAK_VERBS.items()]
+
+# Filler openers: they carry no information and delay the verb.
+FILLER_OPENER_RE = re.compile(
+    r"^\s*(?:Now,|Basically,|Essentially,|Of course,|As you know,|It'?s worth noting|"
+    r"I'?ll now|Let me (?:now )?|First of all,|To be clear,)",
+    re.IGNORECASE,
+)
+
+# Hedges that add no calibration. A line already carrying a status marker or an explicit
+# confidence word IS calibrated, so it is exempt (that hedging is required, not padding).
+HEDGE_RE = re.compile(
+    r"\b(?:I think|I believe|perhaps|kind of|sort of|somewhat|arguably|"
+    r"it seems like|fairly confident|pretty much)\b",
+    re.IGNORECASE,
+)
+CALIBRATED_RE = re.compile(r"[✅⚠❓]|\bunverified\b|\bassumed\b|\binferred\b|\buncertain\b", re.IGNORECASE)
+
+EM_DASH_RE = re.compile(r"\u2014")
+EM_DASH_MAX = 2  # an occasional em dash is fine; leaning on them is not
+
+
+def lint_direct_language(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """Clear verb, clear outcome. Flags weak verbs, filler, uncalibrated hedges, em dashes."""
+    findings: list[dict[str, Any]] = []
+    for lineno, line in lines:
+        stripped = line.strip()
+        if not stripped or HEADING_RE.match(line):
+            continue
+
+        for pattern, strong in WEAK_VERB_RES:
+            m = pattern.search(stripped)
+            if m:
+                findings.append(_finding(
+                    rule_id="weak-verb", severity="warn", line=lineno, snippet=m.group(0),
+                    message=f"Weak verb {m.group(0)!r} hides the action. Use {strong!r}.",
+                ))
+                break
+
+        m = FILLER_OPENER_RE.match(stripped)
+        if m:
+            findings.append(_finding(
+                rule_id="filler-opener", severity="warn", line=lineno, snippet=m.group(0),
+                message=f"Filler opener {m.group(0).strip()!r} delays the verb. Start with the action.",
+            ))
+
+        if not CALIBRATED_RE.search(stripped):
+            m = HEDGE_RE.search(stripped)
+            if m:
+                findings.append(_finding(
+                    rule_id="hedge", severity="warn", line=lineno, snippet=m.group(0),
+                    message=f"Hedge {m.group(0)!r} adds no calibration. State it, or mark confidence "
+                            f"(✅ verified / ⚠️ untested / ❓ uncertain).",
+                ))
+
+    # Em dashes: DENSITY, not per-line. An occasional one is fine; leaning on them is not.
+    total = sum(len(EM_DASH_RE.findall(l)) for _, l in lines)
+    if total > EM_DASH_MAX:
+        findings.append(_finding(
+            rule_id="em-dash", severity="warn", line=None, snippet=None,
+            message=f"{total} em dashes (limit {EM_DASH_MAX}). Leaning on em dashes. "
+                    f"Use periods, colons, or commas.",
+        ))
+    return findings
+
+
 def lint_length(
     lines: list[tuple[int, str]], cap: int = DEFAULT_LENGTH_CAP
 ) -> list[dict[str, Any]]:
@@ -370,6 +459,7 @@ def run_lint(
     findings.extend(lint_validation_line(lines))
     findings.extend(lint_jargon(lines))
     findings.extend(lint_contrastive_pivot(lines))
+    findings.extend(lint_direct_language(lines))
     findings.extend(lint_length(lines, cap=length_cap))
     findings.extend(lint_context_density(workdir))
     summary = {

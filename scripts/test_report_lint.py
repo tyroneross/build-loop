@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from report_lint import (  # noqa: E402
+    lint_direct_language,
+    _strip_fenced_blocks,
     run_lint,
     lint_headline,
     lint_validation_line,
@@ -387,6 +389,41 @@ class TestAntiDormancy(unittest.TestCase):
             text,
             "references/phase-4-review.md is missing the exact report_lint.py command string.",
         )
+
+
+
+class TestDirectLanguage(unittest.TestCase):
+    """Clear verb, clear outcome. The doctrine existed in output-style.md but was never linted."""
+
+    def _ids(self, text):
+        return {f["rule_id"] for f in lint_direct_language(_strip_fenced_blocks(text))}
+
+    def test_weak_verb_is_flagged(self):
+        self.assertIn("weak-verb", self._ids("The change was responsible for the timeout.\n"))
+
+    def test_nominalization_is_flagged(self):
+        self.assertIn("weak-verb", self._ids("We performed an analysis of the logs.\n"))
+
+    def test_strong_verb_passes(self):
+        self.assertNotIn("weak-verb", self._ids("The change caused the timeout.\n"))
+
+    def test_filler_opener_is_flagged(self):
+        self.assertIn("filler-opener", self._ids("Now, the build passes.\n"))
+
+    def test_hedge_is_flagged(self):
+        self.assertIn("hedge", self._ids("I think the cache is slow.\n"))
+
+    def test_calibrated_uncertainty_is_exempt(self):
+        # A status marker IS calibration. Flagging it would punish the honesty we require.
+        self.assertNotIn("hedge", self._ids("❓ uncertain: I think the cache is slow.\n"))
+
+    def test_occasional_em_dash_passes(self):
+        # The rule is "avoid HEAVY use", not zero. build-loop's own good example uses one.
+        self.assertNotIn("em-dash", self._ids("✅ Verified by scripts/test_x.py — 14 passed.\n"))
+
+    def test_heavy_em_dash_use_is_flagged(self):
+        self.assertIn("em-dash", self._ids("a — b — c — d\n"))
+
 
 
 if __name__ == "__main__":
