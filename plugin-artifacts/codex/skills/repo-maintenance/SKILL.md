@@ -1,6 +1,6 @@
 ---
 name: repo-maintenance
-description: "Audit and evolve repository structure safely across the full maintenance lifecycle: repository topology and scope, application and build-system profiles, module and folder boundaries, canonical source-of-truth and monorepo decisions, sibling consolidation, generated/build artifact retention, worktree and branch hygiene, local-versus-remote state, and verified closeout into local main. Use when asked how any kind of repo should be structured or maintained, what application/build profile it has, why it has duplicate source or many build directories, whether repositories or modules should split or merge, to clean generated artifacts, to review open commits/worktrees/branches/stashes, or to merge and close completed local work. Never push, delete unique source, or remove recovery refs unless explicitly authorized."
+description: "Audit and evolve repository structure safely across the full maintenance lifecycle: repository topology and scope, application and build-system profiles, module and folder boundaries, canonical source-of-truth and monorepo decisions, sibling consolidation, generated/build artifact retention, worktree and branch hygiene, local-versus-remote state, verified closeout into local main, and preparing a repository for open-source or external distribution (personal-content and secret scrub, internal-artifact de-tracking, .git bloat and history-leak review, distribution signing/notarization). Use when asked how any kind of repo should be structured or maintained, what application/build profile it has, why it has duplicate source or many build directories, whether repositories or modules should split or merge, to clean generated artifacts, to review open commits/worktrees/branches/stashes, to merge and close completed local work, or to get a repo ready to open-source / ship to external users. Never push, delete unique source, remove recovery refs, or rewrite history unless explicitly authorized."
 user-invocable: true
 ---
 
@@ -25,7 +25,7 @@ python3 "$REPO_MAINTENANCE_ROOT/scripts/audit_repo_maintenance.py" \
 
 Read [references/safety-protocol.md](references/safety-protocol.md) before changing structure, refs, worktrees, stashes, or generated directories.
 
-For repository-boundary, module, or folder-layout work, read [references/repository-taxonomy.md](references/repository-taxonomy.md). For application-specific, build-system, cache, or generated-layout work, read [references/stack-profiles.md](references/stack-profiles.md). Classify signals before recommending a target structure.
+For repository-boundary, module, or folder-layout work, read [references/repository-taxonomy.md](references/repository-taxonomy.md). For application-specific, build-system, cache, or generated-layout work, read [references/stack-profiles.md](references/stack-profiles.md). When preparing a repository for open-source publication or external/paid distribution — personal-content and secret scrub, de-tracking internal artifacts, `.git` bloat and history-leak review, and distribution signing — read [references/pre-public-hygiene.md](references/pre-public-hygiene.md). Classify signals before recommending a target structure.
 
 ## Classify the repository without forcing one label
 
