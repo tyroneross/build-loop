@@ -53,6 +53,8 @@ Concise output — say only what the user needs to decide or act; cut narration,
 
 Lead each point with the finding. Progressive disclosure: headline first, files/detail below. Number points as standalone **bold-number** paragraphs with a blank line between (plain `1.` list syntax renders compressed). Never use the contrastive-pivot construction ("not X — it's Y", "isn't X, it's Y", "not just X but Y"); state the point directly. Style only, never a gate.
 
+Direct language — clear verb, clear outcome (the leverage stack): fix clarity top-down — message logic (lead with the answer to the question actually asked; `suggesting` when evidence implies a cause, `because` only when proven), then sentence emphasis (match the opening to the job: actor / outcome / cause / metric / contrast-first; default spine `[Actor] [strong verb] [specific outcome] because [specific cause]`), then word spine (strong verb over weak-verb-plus-filler `was responsible for`→`caused`; data over adverbs `significantly increased`→`increased 42%`; concrete nouns over vague). Enforced by `report_lint.py` (weak-verb / filler-opener / hedge); full tables in `references/output-style.md`.
+
 ## Phases
 
 | # | Phase | Purpose | Output |
