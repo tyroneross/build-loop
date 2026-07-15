@@ -88,7 +88,7 @@ If `2`, surface to Iterate as a blocker rather than retrying — the user has to
 ### Scan a running app
 
 ```bash
-python3 .../native_driver.py scan --app "Secrets Vault"      # by name (substring, case-insensitive)
+python3 .../native_driver.py scan --app "MyApp"      # by name (substring, case-insensitive)
 python3 .../native_driver.py scan --pid 44330                # by pid
 ```
 
@@ -169,8 +169,8 @@ Stdout JSON shape: `{"success": bool, "action": "press", "error": "AXPress faile
 `resolve` and `apps` work without AX permission — useful for the orchestrator to confirm a freshly-launched app has actually started before the AX-gated operations.
 
 ```bash
-python3 .../native_driver.py resolve --app "Secrets Vault"
-# {"pid": 44330, "name": "Secrets Vault", "bundleIdentifier": "com.secretsvault.app"}
+python3 .../native_driver.py resolve --app "MyApp"
+# {"pid": 44330, "name": "MyApp", "bundleIdentifier": "com.example.myapp"}
 
 python3 .../native_driver.py apps
 # [{"name": "Finder", "pid": 612, "bundleIdentifier": "com.apple.finder"}, ...]

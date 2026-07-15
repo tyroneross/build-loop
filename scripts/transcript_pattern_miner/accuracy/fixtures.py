@@ -175,8 +175,8 @@ def make_repeated_tool_sequences_fixture() -> dict[str, Any]:
 #      churn: file with ≥5 touches in one project (file_count_per_project)
 # ---------------------------------------------------------------------------
 
-_CROSS_FILE = "/Users/tyroneross/dev/git-folder/shared-config/settings.json"
-_CHURN_FILE = "/Users/tyroneross/dev/git-folder/project-a/src/frequently-edited.ts"
+_CROSS_FILE = "/Users/devuser/dev/git-folder/shared-config/settings.json"
+_CHURN_FILE = "/Users/devuser/dev/git-folder/project-a/src/frequently-edited.ts"
 _CHURN_PROJ = "project-a"
 
 

@@ -14,10 +14,10 @@ synthetic mouse or keyboard events — the user's hardware cursor is never moved
 Usage (from a build-loop run, project cwd):
 
     # Resolve a running app to its pid (no AX permission needed for this)
-    python3 native_driver.py resolve --app "Secrets Vault"
+    python3 native_driver.py resolve --app "MyApp"
 
     # Scan AX tree of running app
-    python3 native_driver.py scan --app "Secrets Vault" --json
+    python3 native_driver.py scan --app "MyApp" --json
     python3 native_driver.py scan --pid 12345 --json
 
     # Perform an AX action on a specific element

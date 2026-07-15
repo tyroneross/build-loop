@@ -68,7 +68,7 @@ All categories pass the documented bar (precision=1.0, recall=1.0). On a determi
 
 **Known failure modes:**
 - Shared config filenames inflate project_count: `package.json`, `tsconfig.json`, `pyproject.toml`, `.gitignore`, `README.md` appear in virtually every project, so the cross list is dominated by generic filenames rather than genuinely shared modules.
-- Path normalization is exact-string: `/Users/tyroneross/dev/git-folder/project-a/src/util.ts` and `/Users/tyrone/project-a/src/util.ts` count as different files. Symlinks and checked-out-twice repos produce no cross-project signal.
+- Path normalization is exact-string: `/Users/alexchen/dev/git-folder/project-a/src/util.ts` and `/Users/alex/project-a/src/util.ts` count as different files. Symlinks and checked-out-twice repos produce no cross-project signal.
 - `project_from_cwd` in `textproc.py` extracts the project name from the path segment after `/dev/git-folder/`; any path outside that convention gets project `"(other)"`, so all files in non-standard directories are bucketed into one fake "project".
 - Churn counts raw `files_touched` list insertions, which include Read operations. A file that is read 5 times but never written shows up in churn output alongside files that were actually churned by edits.
 

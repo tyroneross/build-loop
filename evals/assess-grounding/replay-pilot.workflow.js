@@ -27,7 +27,14 @@ export const meta = {
   ],
 }
 
-const REPO = '/Users/tyroneross/dev/git-folder/build-loop'
+// args may arrive as a JSON string depending on host; normalize to an object.
+const ARGS = (typeof args === 'string') ? JSON.parse(args || '{}') : (args || {})
+const reps = ARGS.reps || 1
+
+// REPO defaults to '.' — the workflow is invoked with cwd = the build-loop
+// checkout being replayed (see docs/assess-grounding-harness.md). Override
+// with args.repo for a different checkout without editing this file.
+const REPO = ARGS.repo || '.'
 const CHALLENGES = `${REPO}/evals/assess-grounding/challenges.jsonl`
 const SCORER = `${REPO}/scripts/assess_grounding_score.py`
 
@@ -37,9 +44,6 @@ const VARIANTS = [
   { id: 'G0', desc: 'baseline: phase-1-assess.md protocol as-is; step-5 architecture tier = raw-read fallback; no mandatory citation' },
   { id: 'G1', desc: 'grounded: step-5 = navgator-full architecture map injected; step-5b reads-deps enumerated; EVERY trigger must carry a file:line citation or be dropped' },
 ]
-// args may arrive as a JSON string depending on host; normalize to an object.
-const ARGS = (typeof args === 'string') ? JSON.parse(args || '{}') : (args || {})
-const reps = ARGS.reps || 1
 
 const ASSESS_SCHEMA = {
   type: 'object',

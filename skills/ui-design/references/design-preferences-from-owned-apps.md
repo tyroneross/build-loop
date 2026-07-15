@@ -7,7 +7,7 @@
 > Sourced from `.build-loop/design-evidence/*.md` (8 apps scanned 2026-05-26). Every claim in this file traces to a specific evidence file. The evidence files are the ground truth — when this doc and an evidence file disagree, the evidence file wins.
 >
 > **Primary preferred references** (per intent.md): Sample Voice iOS, Sample Timer (iPad primary), Sample Reader, Sample Product App.
-> **Secondary / directional** (note what works AND what user dislikes): Secrets Vault macOS, Sample Decision App, Sample Offline iOS, Sample Onboarding App.
+> **Secondary / directional** (note what works AND what user dislikes): Sample Secrets App (macOS), Sample Decision App, Sample Offline iOS, Sample Onboarding App.
 
 ---
 
@@ -16,7 +16,7 @@
 **Universal non-negotiable:** *"Visual hierarchy is one-glance recoverable"* (alt doc §2.12) + Calm Precision's *"Title (14-16px bold) → Description (12-14px) → Metadata (11-12px muted)"*.
 
 **What works (primary apps):**
-- **Secrets Vault** — verbatim CP 6.4.1 implementation in `VaultTypography.swift` (evidence: `secrets-vault-macos.md`). Token comment in source code: *"L1: Title 15px medium high contrast → L2: Description 13px regular medium contrast → L3: Metadata 11px regular low contrast."* This is the textbook reference.
+- **Sample Secrets App** — verbatim CP 6.4.1 implementation in a dedicated typography token file (evidence: `sample-secrets-app.md`). Three named tiers (title/description/metadata) map directly to size + contrast rung. This is the textbook reference.
 - **Sample Timer App** — `TextRole` enum (`Theme.swift:689-721` per `sample-timer.md`) ladders seven named roles (display/title/headline/subheadline/body/caption/micro) with explicit baseSize + defaultWeight per rung. Tokens cite role purpose: *"display: 30pt — single largest element on a screen."*
 - **Sample Voice App** — nine named typography tokens (`Theme.swift:31-35,70-75` per `sample-voice-ios.md`) including `fontTabular` (10pt mono-equivalent for numerics) — a use-case that single-purpose token sets miss.
 
@@ -34,7 +34,7 @@
 **What works (primary apps):**
 - **Sample Product App** — strictest single-accent enforcement in inventory: `--primary === --accent === --ring === #f0b65e` (`index.css:18,22,26` per `sample-product.md`). The entire palette is warm-monochromatic; the only "second color" is `--success: #7bc67e` (muted sage) and `--destructive: #e06356` (warm red-orange, not pure red — palette discipline holds even on error).
 - **Sample Reader** — explicit semantic separation: `--color-error-bg` and `--color-error-border` exist for tinted alert containers, but they are tokens distinct from `--status-error` (the foreground text color). Container surfaces are gated to reading flow where text-color-only would underread (`sample-reader.md` cites the divergence with rationale).
-- **Secrets Vault** — three-tier text contrast (`textPrimary / textSecondary / textMuted` = stone-900 / stone-600 / stone-400 in light; stone-100 / stone-300 / stone-450 in dark, per `secrets-vault-macos.md`). Each tier maps directly to L1/L2/L3 of the typography ladder — text size + text contrast move together.
+- **Sample Secrets App** — three-tier text contrast (primary/secondary/muted = stone-900 / stone-600 / stone-400 in light; stone-100 / stone-300 / stone-450 in dark, per `sample-secrets-app.md`). Each tier maps directly to L1/L2/L3 of the typography ladder — text size + text contrast move together.
 
 **Anti-pattern (secondary apps):**
 - **Sample Decision App theme-toggle pattern** — three switchable themes (F default, A "Case File," B "Conversation") via `[data-theme="A"|"B"]` on `<html>` (evidence: `sample-decision-app.md`). Each theme owns the same 6 token names but different brand colors. *Works for*: keeping semantic meaning constant across visual presentation. *Fails for*: brand identity — a brand that can become blue or terracotta or red is brand-fungible. Likely user-dislike: the existence of the toggle dilutes the canonical voice (Theme F).
@@ -86,7 +86,7 @@
 **What works (primary apps):**
 - **Sample Decision App** — `@media (prefers-reduced-motion: reduce)` overrides all animations to 0.01ms at the globals level (`app/globals.css:65-71` per `sample-decision-app.md`). Single CSS rule covers the whole app.
 - **Sample Voice App** — `@Environment(\.accessibilityReduceMotion)` honored on HomeView; first-time onboarding animation gated to once per AppStorage flag (`HomeView.swift:16,47` per `sample-voice-ios.md`).
-- **Secrets Vault** — stagger animation capped at 400ms total (`60ms × N items, max 400ms`) — prevents the long-list "wave" anti-pattern (per project CLAUDE.md cited in `secrets-vault-macos.md`).
+- **Sample Secrets App** — stagger animation capped at 400ms total (`60ms × N items, max 400ms`) — prevents the long-list "wave" anti-pattern (per its project guidance, cited in `sample-secrets-app.md`).
 - **Sample Onboarding App** — StatusBanner's `phase label itself stays visible briefly after a stage transition so the user sees the most recent phase without flicker` (verbatim from `StatusBanner.swift` per `sample-onboarding-app.md`). Anti-flicker is a documented design decision, encoded in code comments.
 
 **Preference recorded:** **`prefers-reduced-motion` / `accessibilityReduceMotion` must be respected by default, not opt-in. Stagger animations have a total-time cap, not just a per-item interval. Anti-flicker behavior is a first-class design concern, not an afterthought.**
@@ -98,7 +98,7 @@
 **Universal non-negotiable:** *"When something fails, explain what happened, preserve context, give a next step"* (alt doc §1.5 Recover) + *"Resilient to imperfect input"* (alt doc §2.9).
 
 **What works (primary apps):**
-- **Secrets Vault** — explicit three-part error pattern named in project CLAUDE.md (cited `secrets-vault-macos.md`): *"Errors: what → why → fix pattern."* Plus voice rule: *"Verb+Object labels, contextual loading ('Deriving encryption key…')"* — loading messages name the actual operation.
+- **Sample Secrets App** — explicit three-part error pattern named in its project guidance (cited `sample-secrets-app.md`): what happened, why, and how to fix it. Loading states use verb+object labels naming the actual operation in progress (e.g. a key-derivation step), not a generic "Loading…".
 - **Sample Offline iOS** — *"Errors surface inline (red footnote) without removing cached rows — offline still shows the last good list"* (`CampsListView.swift` code comment per `sample-offline-ios.md`). On error, the cache is preserved — graceful degradation in action.
 - **Sample Voice App** — `Haptics.impact(.light)` paired with state change on every CTA tap (`HomeView.swift:81` per `sample-voice-ios.md`) — action feedback via haptic + visible state, not just one or the other.
 
@@ -122,12 +122,12 @@
 
 A new app in this ecosystem should, in priority order:
 
-1. **Token files first** — `Theme/Colors`, `Theme/Typography` (or `index.css`-equivalent for web) before the first view is written. Use Sample Voice App / Sample Timer App / Secrets Vault as templates.
+1. **Token files first** — `Theme/Colors`, `Theme/Typography` (or `index.css`-equivalent for web) before the first view is written. Use Sample Voice App / Sample Timer App / Sample Secrets App as templates.
 2. **One accent. Single. Don't theme-toggle.** Sample Product App is the strictest example.
-3. **Three-line text hierarchy** baked into the typography enum. Secrets Vault's `VaultTypography.title/.description/.metadata` is the textbook.
+3. **Three-line text hierarchy** baked into the typography enum. Sample Secrets App's title/description/metadata tier naming is the textbook.
 4. **Touch targets at the component layer.** Sample Product App's `.btn-primary` is the example.
 5. **`prefers-reduced-motion` / `accessibilityReduceMotion` from day one.** The sample decision app's single-CSS-rule approach is the cheapest implementation.
-6. **Errors are calm, informative, non-destructive.** The sample offline app's offline-preserves-cache + Secrets Vault's what→why→fix pattern combine into a single rule.
+6. **Errors are calm, informative, non-destructive.** The sample offline app's offline-preserves-cache + Sample Secrets App's what→why→fix pattern combine into a single rule.
 7. **Multi-form-factor via viewport-scale tokens, not forked themes.** Sample Timer App's `\.viewportScale` is the reference; the multi-pattern framework draft (`design-patterns-multi.md`) is where this becomes formal if/when prototyped.
 
 When deviating: name the deviation in the token file's comments, the way Sample Timer App flags off-grid spacing and Sample Reader flags tinted error containers. The discipline is the comment.

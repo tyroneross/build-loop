@@ -7,8 +7,8 @@ Claude Code stores transcripts at::
     ~/.claude/projects/<cwd-slug>/<session-uuid>.jsonl
 
 where ``<cwd-slug>`` is the absolute working directory with ``/`` replaced by
-``-`` (e.g. ``/Users/tyroneross/dev/git-folder/build-loop`` →
-``-Users-tyroneross-dev-git-folder-build-loop``).
+``-`` (e.g. ``/Users/<username>/dev/git-folder/build-loop`` →
+``-Users-<username>-dev-git-folder-build-loop``).
 
 This module returns the **most-recently-modified** JSONL for the given cwd,
 or None when none exists. It is the locator the ``transcript_pattern_miner``

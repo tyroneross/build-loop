@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
 # Codex handoff: validate + independent opinion + A/B build + test (Rally lifecycle work)
 
-**From:** claude_code · **To:** codex · **Date:** 2026-07-02 · **Repo:** `/Users/tyroneross/dev/git-folder/build-loop` (branch `main`)
+**From:** claude_code · **To:** codex · **Date:** 2026-07-02 · **Repo:** `/Users/<username>/dev/git-folder/build-loop` (branch `main`)
 **Purpose:** Codex independently (1) VALIDATES what Claude shipped, (2) gives an INDEPENDENT OPINION on the RCA + designs, (3) BUILDS its own inject-readiness probe for an A/B comparison + dogfood, (4) TESTS both. Do NOT trust this doc's claims — re-derive them.
 
 ---

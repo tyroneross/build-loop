@@ -31,7 +31,7 @@
 4. **Verify set:** (a) dup-scan (per-seq distinct event_ids over `log/*.jsonl`+archive) → 0 dups, max=3043, distinct=3040; (b) `rally room` ×2 exit 0; (c) **append probe:** post one fact via the NEW binary → `seq==3044` AND `payload.seq==3044` AND it **survives a forced replay** (`rally room` again) — persistence-through-rebuild is the success criterion; (d) no `payload.seq:0` in new appends.
 
 ## Interim operating rule (until PATH reinstall lands)
-**Single-BINARY, not single-writer.** Keep concurrent multi-agent writes (the flock makes them safe once allocation is canonical-max). Everyone sets `RALLY_BIN=/Users/tyroneross/dev/git-folder/agent-rally-point/target/debug/rally` (hooks honor it, `hooks/rally-coordination-hook.sh:126`) and uses that absolute path for direct calls, until step 1 completes (minutes). Any call that hits old `~/.local/bin/rally` re-corrupts on the next append batch.
+**Single-BINARY, not single-writer.** Keep concurrent multi-agent writes (the flock makes them safe once allocation is canonical-max). Everyone sets `RALLY_BIN=<agent-rally-point-checkout>/target/debug/rally` (hooks honor it, `hooks/rally-coordination-hook.sh:126`) and uses that absolute path for direct calls, until step 1 completes (minutes). Any call that hits old `~/.local/bin/rally` re-corrupts on the next append batch.
 
 ## Confidence
 Allocator mechanism, lock coverage, dup provenance, binary attribution, count/max math — ✅ verified. The 2481-2483 gap = the June write-drop, and the repair-cache-deletion being the Jul-1 trigger — high-confidence inferred (TAG:INFERRED; consistent with both observed incidents).

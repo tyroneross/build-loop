@@ -24,8 +24,8 @@ import temporal_membership as tm  # noqa: E402
 class CwdToSlugTests(unittest.TestCase):
     def test_basic_slug(self) -> None:
         self.assertEqual(
-            cwd_to_slug("/Users/tyroneross/dev/git-folder/build-loop"),
-            "-Users-tyroneross-dev-git-folder-build-loop",
+            cwd_to_slug("/Users/devuser/dev/git-folder/build-loop"),
+            "-Users-devuser-dev-git-folder-build-loop",
         )
 
     def test_relative_path_resolves_to_absolute(self) -> None:

@@ -37,9 +37,9 @@ _T4 = "2026-01-15T10:20:00.000Z"
 # Fake-but-shaped Anthropic secret (40+ chars after sk-ant-)
 _FAKE_SECRET = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE1234"
 
-_CWD_A = "/Users/tyroneross/dev/git-folder/my-project-alpha/src"
-_CWD_B = "/Users/tyroneross/dev/git-folder/my-project-beta/src"
-_CWD_C = "/Users/tyroneross/dev/git-folder/my-project-gamma/src"
+_CWD_A = "/Users/devuser/dev/git-folder/my-project-alpha/src"
+_CWD_B = "/Users/devuser/dev/git-folder/my-project-beta/src"
+_CWD_C = "/Users/devuser/dev/git-folder/my-project-gamma/src"
 
 # Correction messages — same 3-gram spine "no actually you should use uv not pip"
 # Each has ≥2 shared 3-grams with the others so they cluster.
@@ -127,7 +127,7 @@ def _session_1(sessions_dir: Path) -> None:
     r.append(_user_text(_T2, _CORRECTIONS[1], cwd, sid, "u-corr-2"))
 
     # Cross-project shared file
-    r.append(_asst_tool(_T3, "Read", {"file_path": "/Users/tyroneross/dev/git-folder/shared-config/settings.json"}, "r1-xread", cwd, sid))
+    r.append(_asst_tool(_T3, "Read", {"file_path": "/Users/devuser/dev/git-folder/shared-config/settings.json"}, "r1-xread", cwd, sid))
     r.append(_tool_result(_T3, "r1-xread", "config", False, cwd, sid))
 
     # Rituals (3 git status invocations)
@@ -166,7 +166,7 @@ def _session_2(sessions_dir: Path) -> None:
     r.append(_asst_text(_T2, "Updated.", cwd, sid, "b-resp"))
     r.append(_user_text(_T2, _CORRECTIONS[3], cwd, sid, "u-corr-4"))
 
-    r.append(_asst_tool(_T3, "Read", {"file_path": "/Users/tyroneross/dev/git-folder/shared-config/settings.json"}, "r2-xread", cwd, sid))
+    r.append(_asst_tool(_T3, "Read", {"file_path": "/Users/devuser/dev/git-folder/shared-config/settings.json"}, "r2-xread", cwd, sid))
     r.append(_tool_result(_T3, "r2-xread", "config", False, cwd, sid))
 
     for i, ts in enumerate([_T0, _T1]):
@@ -198,7 +198,7 @@ def _session_3(sessions_dir: Path) -> None:
     r.append(_tool_result(_T1, "r3-bash", "7 passed", False, cwd, sid))
 
     # Edit the shared-config file (3rd project touch)
-    r.append(_asst_tool(_T2, "Edit", {"file_path": "/Users/tyroneross/dev/git-folder/shared-config/settings.json"}, "r3-xedit", cwd, sid))
+    r.append(_asst_tool(_T2, "Edit", {"file_path": "/Users/devuser/dev/git-folder/shared-config/settings.json"}, "r3-xedit", cwd, sid))
     r.append(_tool_result(_T2, "r3-xedit", "edited", False, cwd, sid))
 
     # 5 git status rituals — pushes total to 10
@@ -493,7 +493,7 @@ class TestTrap2DeduplicationPreventsInflation:
         from transcript_pattern_miner.session import process_session_file
         import json as _json
 
-        cwd = "/Users/tyroneross/dev/git-folder/some-project/src"
+        cwd = "/Users/devuser/dev/git-folder/some-project/src"
         sid = "dedup-test-session"
 
         # A tool_use + correction record with a uuid
@@ -556,7 +556,7 @@ class TestIsMetaRecordsExcluded:
         from transcript_pattern_miner.session import process_session_file
         import json as _json
 
-        cwd = "/Users/tyroneross/dev/git-folder/some-project/src"
+        cwd = "/Users/devuser/dev/git-folder/some-project/src"
         sid = "ismeta-test-session"
 
         # 1. Genuine assistant turn that uses a tool.
