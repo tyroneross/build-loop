@@ -131,6 +131,8 @@ def _is_test_file(path: Path) -> bool:
         or "__tests__" in parts_lower
         or "spec" in parts_lower
         or "fixtures" in parts_lower
+        or "golden" in name          # golden/fixture files carry deliberately-fake secrets
+        or "fixture" in name
         or name.startswith("test_")
         or name.endswith("_test.py")
         or name.endswith(".test.ts")
@@ -351,6 +353,26 @@ _ENV_LOOKUP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Canonical fake/example secrets embed a marker ANYWHERE in the value (not just
+# at the start, which _PLACEHOLDER_RE anchors on): sk-test..., the AWS doc keys
+# (which end in "EXAMPLE" -> caught by the "example" marker), sk-proj-ZZZTEST...,
+# ...ABC123..., and the sequential runs ("0123456789", "abcdefg") that fixtures
+# use to look key-shaped. Applied ONLY in test-fixture files (see _is_test_file)
+# so a real secret pasted into a test is still caught. The scanner's own
+# detection unit tests exercise these patterns via a NON-test path (fake.ts), so
+# the aggressive markers never apply there and those fixtures stay flagged.
+_TEST_MARKER_RE = re.compile(
+    r"(?i)(test|example|dummy|fake|sample|mock|placeholder|redacted|changeme|"
+    r"foobar|deadbeef|\bzzz|abc123|abcdef|0123456789|123456789|1234567890)")
+
+
+def _is_known_fake_secret(val: str, is_test: bool) -> bool:
+    """A value is a non-finding when it looks like a placeholder anywhere, or —
+    inside a test-fixture file — matches an obvious fake marker."""
+    if _PLACEHOLDER_RE.search(val):
+        return True
+    return bool(is_test and _TEST_MARKER_RE.search(val))
+
 _ENV_FILE_RE = re.compile(r"^(\.env[.\w]*|\.dev\.vars)$", re.IGNORECASE)
 
 def check_A_secrets(path: Path, lines: list[str], root_path: Path | None) -> list[dict[str, Any]]:
@@ -360,6 +382,7 @@ def check_A_secrets(path: Path, lines: list[str], root_path: Path | None) -> lis
     if _ENV_FILE_RE.match(path.name):
         return findings
     is_env_example = bool(re.search(r"\.env\.(example|sample|template|test)$", path.name, re.IGNORECASE))
+    is_test = _is_test_file(path)
 
     for lineno, raw in enumerate(lines, 1):
         if NOSEC_RE.search(raw):
@@ -375,7 +398,7 @@ def check_A_secrets(path: Path, lines: list[str], root_path: Path | None) -> lis
             if m:
                 val = m.group(0).strip()
                 # Skip obvious test/example values or env lookups
-                if _PLACEHOLDER_RE.search(val):
+                if _is_known_fake_secret(val, is_test):
                     continue
                 if _ENV_LOOKUP_RE.search(raw[:m.start() + 30]):
                     continue
@@ -408,7 +431,7 @@ def check_A_secrets(path: Path, lines: list[str], root_path: Path | None) -> lis
             m = _GENERIC_SECRET_RE.search(raw)
             if m:
                 val = m.group(1)
-                if not _PLACEHOLDER_RE.search(val) and not _ENV_LOOKUP_RE.search(raw):
+                if not _is_known_fake_secret(val, is_test) and not _ENV_LOOKUP_RE.search(raw):
                     findings.append(_finding(
                         severity="HIGH",
                         owasp_ids="A07/LLM06",
@@ -975,7 +998,11 @@ def check_G_prompt_injection(path: Path, lines: list[str]) -> list[dict[str, Any
                 check_id="G",
             ))
 
-        if _SHELL_TOOL_AGENT_RE.search(raw):
+        _shell_tool_m = _SHELL_TOOL_AGENT_RE.search(raw)
+        # A quoted token immediately followed by ':' is a dict KEY (a config flag
+        # like `"terminal": True`), not a tool named in an agent's tool LIST.
+        # Only the list-element form is the excessive-agency risk.
+        if _shell_tool_m and raw[_shell_tool_m.end():_shell_tool_m.end() + 1] != ":":
             findings.append(_finding(
                 severity="MEDIUM",
                 owasp_ids="LLM08/ASI02/ASI05",

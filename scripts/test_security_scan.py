@@ -40,6 +40,38 @@ class TestCheckA(unittest.TestCase):
         lines = ['const apiKey = "your-api-key-here";\n']
         self.assertEqual(self._run(lines), [])
 
+    def _run_at(self, path_str, line):
+        return security_scan.check_A_secrets(Path(path_str), [line], root_path=None)
+
+    def test_fake_secrets_in_test_fixtures_suppressed(self):
+        # Canonical fake/example keys in test-fixture files must NOT flag: they
+        # embed a marker mid-value (sk-test / EXAMPLE / ZZZTEST / ABC123 / digit
+        # runs) that the ^-anchored placeholder check used to miss.
+        cases = [
+            ("scripts/ws_jk_golden.py", 'secret = "api_key=sk-test12345678901234567890"\n'),
+            ("scripts/test_persist_security.py", '"aws AKIAIOSFODNN7EXAMPLE and x"\n'),
+            ("scripts/test_persist_security.py", '"github_pat_11ABCDEFG0123456789abcdefghij"\n'),
+            ("scripts/test_persist_security.py", '"sk-proj-ABC123def456GHI789jkl0MNOpqr"\n'),
+            ("scripts/test_x.py", '_S = "sk-proj-ZZZTESTSECRETVALUE1234567890ABCDEFGH"\n'),
+        ]
+        for path_str, line in cases:
+            self.assertEqual(self._run_at(path_str, line), [],
+                             f"fixture fake should be suppressed: {path_str} :: {line!r}")
+
+    def test_real_secret_in_test_file_still_flagged(self):
+        # A real-looking secret with NO fake marker, even in a test file, MUST
+        # still flag — the suppression is marker-scoped, not a blanket test skip.
+        line = 'KEY = "xkeysib-9f8q7w6e5r4t3y2u1i0o9p8a7s6d5f4g3h2j"\n'
+        self.assertTrue(self._run_at("scripts/test_x.py", line),
+                        "unmarked real secret in a test file must still flag")
+
+    def test_marker_does_not_leak_to_nontest_files(self):
+        # The aggressive markers apply ONLY in test files; a "test"-bearing value
+        # in a production file is still evaluated by the strict placeholder rule.
+        line = 'const k = "sk-testeryZ9mLpQrXwGhIjKlMnOpQrStUv";\n'
+        self.assertTrue(self._run_at("src/app.ts", line),
+                        "non-test file must not get test-marker leniency")
+
     def test_generic_secret_assignment(self):
         lines = ['const CLIENT_SECRET = "z9mLpQrXwAbCdEfGhIjKlMn";\n']
         findings = self._run(lines)
@@ -124,6 +156,18 @@ class TestCheckC(unittest.TestCase):
         lines = ['  child_process.exec("ls " + userInput);\n']
         findings = self._run(lines)
         self.assertTrue(len(findings) > 0)
+
+    def test_shell_tool_dict_key_not_flagged(self):
+        # `"terminal": True` is a config flag (dict KEY), not a tool named in an
+        # agent tool LIST — it must not raise the excessive-agency finding.
+        findings = security_scan.check_G_prompt_injection(
+            Path("core/router.py"), ['                "terminal": True,\n'])
+        self.assertFalse(any("Shell/exec" in f["message"] for f in findings))
+
+    def test_shell_tool_in_list_still_flagged(self):
+        findings = security_scan.check_G_prompt_injection(
+            Path("agent.py"), ['    tools = ["bash", "read_file"]\n'])
+        self.assertTrue(any("Shell/exec" in f["message"] for f in findings))
 
 
 class TestCheckE(unittest.TestCase):

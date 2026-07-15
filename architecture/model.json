@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e641c9be520ecd32c84c6806c4475d5ec26a1e19f0720616f3b0dd53ca53ce65"
+    "content_sha256": "cfef594fe4f621150b28fc55b362bdb0ad6a32b814e4c49e764391ab343bc8b0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1352,7 +1352,7 @@
         "file": "skills/plugin-builder/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-06"
+          "date": "2026-07-14"
         }
       },
       "plugin-tests": {
@@ -1392,7 +1392,7 @@
         "file": "skills/repo-maintenance/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-13"
+          "date": "2026-07-14"
         }
       },
       "research": {
@@ -1567,6 +1567,7 @@
       "scripts/deployment_policy.py": "Classify deployment commands against a repo-local build-loop policy.",
       "scripts/detect_attribution_layers.py": "Detect whether a repo carries the canonical four-layer attribution stack.",
       "scripts/detect_decision_rot.py": "Decision rot detector — flag decisions older than threshold-days.",
+      "scripts/detect_plugin_distribution.py": "detect_plugin_distribution.py — classify a plugin repo's distribution shape, then",
       "scripts/detect_runtime_server.py": "Detect whether a project ships a live HTTP/SSE runtime server.",
       "scripts/detect_self_recursive.py": "Detect whether the working directory IS the runtime executing build-loop.",
       "scripts/dev-tools/experiment_metrics.py": "experiment_metrics.py — Compute performance metrics from optimize experiments.",
