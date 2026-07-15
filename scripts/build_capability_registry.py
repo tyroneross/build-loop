@@ -113,6 +113,9 @@ CATEGORY_KEYWORDS = [
                       # → registry reconcile) is plugin-lifecycle infra:
                       "marketplace", "autoupdate", "installed_plugins",
                       "catalog drift",
+                      # Plugin distribution-shape detection is plugin-lifecycle infra:
+                      "plugin distribution", "plugin_distribution",
+                      "distribution shape",
                       # Learned-extension lifecycle scripts/hooks route draft
                       # skills through pending/check/approval and are runtime
                       # lifecycle infrastructure, not product execution.
