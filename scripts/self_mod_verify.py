@@ -265,10 +265,11 @@ def _all_script_tests(workdir: Path) -> list[str]:
     return sorted(str(f) for f in scripts_dir.glob("test_*.py"))
 
 
-def _git_changed_files(workdir: Path) -> list[str]:
+def _git_changed_files(workdir: Path) -> tuple[list[str], list[str]]:
     """Derive the changed-file set from git when --changed-files was omitted.
 
-    Returns repo-relative paths for BOTH:
+    Returns ``(files, derivation_errors)`` where ``files`` is repo-relative paths
+    for BOTH:
       * tracked files with staged OR unstaged modifications
         (``git diff --name-only HEAD``), and
       * untracked NEW files (``git ls-files --others --exclude-standard``).
@@ -278,27 +279,42 @@ def _git_changed_files(workdir: Path) -> list[str]:
     tracked changes), so without it the gate would map to no tests and report a
     green-looking no_tests — the exact false-negative logged as BUIL-SELFMOD-001.
 
-    Fail-soft: any git error (not a repo, git missing, timeout) → empty list.
-    The caller then emits the explicit ``no_changes`` verdict.
+    ``derivation_errors`` records any git arm that FAILED (exception OR nonzero
+    exit). Previously a per-arm ``continue`` swallowed those failures silently:
+    a failed ``git diff --name-only HEAD`` arm with a succeeding ``ls-files``
+    arm yielded a TRUNCATED change set that could pass green with
+    ``derived_from_git=True`` and nothing recorded. The caller now appends these
+    into ``result["errors"]``, and — when the ``tracked-diff`` arm specifically
+    failed — escalates to ``verdict=error`` (a green over a knowingly-partial
+    set is the false-green class this gate exists to kill).
+
+    Fail-soft on the collection itself: a missing/erroring arm never raises; it
+    is recorded and skipped. An all-arms-empty result maps to the caller's
+    explicit ``no_changes`` verdict.
     """
     out: list[str] = []
     seen: set[str] = set()
-    for cmd in (
-        ["git", "-C", str(workdir), "diff", "--name-only", "HEAD"],
-        ["git", "-C", str(workdir), "ls-files", "--others", "--exclude-standard"],
-    ):
+    derivation_errors: list[str] = []
+    arms = (
+        ("tracked-diff", ["git", "-C", str(workdir), "diff", "--name-only", "HEAD"]),
+        ("untracked", ["git", "-C", str(workdir), "ls-files", "--others", "--exclude-standard"]),
+    )
+    for label, cmd in arms:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            derivation_errors.append(f"git change-set arm '{label}' errored: {exc}")
             continue
         if r.returncode != 0:
+            detail = r.stderr.strip() or f"exit {r.returncode}"
+            derivation_errors.append(f"git change-set arm '{label}' failed: {detail}")
             continue
         for line in r.stdout.splitlines():
             name = line.strip()
             if name and name not in seen:
                 seen.add(name)
                 out.append(name)
-    return out
+    return out, derivation_errors
 
 
 # ---------------------------------------------------------------------------
@@ -408,28 +424,114 @@ def _classify_error_reason(stdout: str, stderr: str) -> str:
 # Revert helper
 # ---------------------------------------------------------------------------
 
-def _revert_files(workdir: Path, changed_files: list[str], errors: list[str]) -> bool:
-    """Run git restore on changed_files. Return True on success."""
+def _partition_tracked(
+    workdir: Path, changed_files: list[str]
+) -> tuple[list[str], list[str]]:
+    """Split ``changed_files`` into (tracked, untracked) via ``git ls-files``.
+
+    Each path is normalised to repo-relative posix form (absolute paths inside
+    the repo are accepted). A path present in ``git ls-files`` is tracked;
+    anything else — a new/untracked file, or a path outside the repo — is
+    treated as untracked. Fail-soft: a git error yields everything-untracked so
+    the caller reports rather than blindly restores.
+    """
+    rels: list[str] = []
+    for raw in changed_files:
+        p = Path(raw)
+        if not p.is_absolute():
+            p = workdir / p
+        try:
+            rel = p.resolve().relative_to(workdir.resolve()).as_posix()
+        except ValueError:
+            rel = raw  # outside the repo → falls through to untracked
+        rels.append(rel)
+
+    tracked_set: set[str] = set()
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(workdir), "ls-files", "--"] + rels,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0:
+            tracked_set = {ln.strip() for ln in r.stdout.splitlines() if ln.strip()}
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        tracked_set = set()
+
+    tracked = [rel for rel in rels if rel in tracked_set]
+    untracked = [rel for rel in rels if rel not in tracked_set]
+    return tracked, untracked
+
+
+def _revert_files(
+    workdir: Path,
+    changed_files: list[str],
+    errors: list[str],
+    *,
+    derived_from_git: bool = False,
+) -> bool:
+    """Revert the TRACKED files in ``changed_files`` via git restore.
+
+    Return True only when a tracked file was actually restored.
+
+    Partitions the list first (the fix for the silent no-op revert): handing an
+    untracked path to ``git restore`` makes it exit 1 having restored NOTHING,
+    and the old code's nonzero-branch appended nothing to ``errors`` — a silent
+    no-op. So:
+      * only TRACKED files go to ``git restore``;
+      * untracked files are REPORTED (``untracked, not reverted: <f>``), never
+        deleted, so concurrent WIP on a shared checkout is never swept;
+      * ``stderr`` is appended to ``errors`` on ANY nonzero returncode.
+
+    When the change set was DERIVED from git (``derived_from_git=True``), the
+    revert sweeps EVERY dirty tracked file — not just this run's edits — so a
+    breadth warning naming the files is surfaced in the result for a
+    shared-checkout caller.
+    """
     if not changed_files:
         errors.append("--auto-revert requested but no --changed-files given; revert skipped")
         return False
+
+    tracked, untracked = _partition_tracked(workdir, changed_files)
+
+    for f in untracked:
+        errors.append(f"untracked, not reverted: {f}")
+
+    if derived_from_git and tracked:
+        errors.append(
+            "breadth warning: change set derived from git; --auto-revert restores "
+            f"ALL {len(tracked)} dirty tracked file(s), which may include concurrent "
+            "uncommitted work on a shared checkout: " + ", ".join(tracked)
+        )
+
+    if not tracked:
+        # Nothing tracked to restore (any untracked files were reported above).
+        return False
+
     try:
         r = subprocess.run(
             ["git", "-C", str(workdir), "restore", "--staged", "--worktree", "--"]
-            + changed_files,
+            + tracked,
             capture_output=True,
             text=True,
             timeout=15,
         )
         if r.returncode != 0:
-            # Try legacy git checkout -- fallback
+            if r.stderr.strip():
+                errors.append(f"git restore failed: {r.stderr.strip()}")
+            # Legacy git checkout -- fallback (older git without `restore`).
             r2 = subprocess.run(
-                ["git", "-C", str(workdir), "checkout", "--"] + changed_files,
+                ["git", "-C", str(workdir), "checkout", "--"] + tracked,
                 capture_output=True,
                 text=True,
                 timeout=15,
             )
-            return r2.returncode == 0
+            if r2.returncode != 0:
+                if r2.stderr.strip():
+                    errors.append(f"git checkout fallback failed: {r2.stderr.strip()}")
+                return False
+            return True
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         errors.append(f"revert failed: {exc}")
@@ -496,8 +598,28 @@ def verify(
     # auto/changed consume changed_files for test selection; full runs the whole
     # suite regardless, so leave it untouched.
     if not changed_files and scope in ("auto", "changed"):
-        changed_files = _git_changed_files(workdir)
+        changed_files, derivation_errors = _git_changed_files(workdir)
         derived_from_git = bool(changed_files)
+        errors.extend(derivation_errors)
+        if any("'tracked-diff'" in e for e in derivation_errors):
+            # The tracked-modified arm failed → the derived set is knowingly
+            # partial. A green (or even a real fail) over a partial set is the
+            # false-green this gate exists to kill: escalate to verdict=error.
+            result = {
+                "scope": scope,
+                "effective_scope": scope if scope != "auto" else "changed",
+                "ran": [],
+                "passed": 0,
+                "failed": 0,
+                "failed_tests": [],
+                "reverted": False,
+                "verdict": "error",
+                "timed_out": False,
+                "error_reason": "git change-set derivation failed (tracked-diff arm)",
+                "errors": errors,
+                "derived_from_git": derived_from_git,
+            }
+            return result, EXIT_ERROR
         if not changed_files:
             # Nothing staged, modified, or untracked → the gate verified nothing.
             # This is NOT pass: a self-mod gate with no diff is a caller mistake
@@ -634,7 +756,9 @@ def verify(
         verdict = "fail"
         exit_code = EXIT_FAIL
         if auto_revert:
-            reverted = _revert_files(workdir, changed_files, errors)
+            reverted = _revert_files(
+                workdir, changed_files, errors, derived_from_git=derived_from_git
+            )
 
     error_reason: str | None = None
     if verdict == "error":

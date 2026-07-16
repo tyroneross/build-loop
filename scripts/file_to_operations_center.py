@@ -142,15 +142,25 @@ def build_add_argv(
     task_type: str | None = DEFAULT_TASK_TYPE,
     db: str | None = None,
 ) -> list[str]:
-    """Build the `oc add` argv. Global flags (--db) precede the subcommand."""
+    """Build the `oc add` argv. Global flags (--db) precede the subcommand.
+
+    The title is a clap positional (`add [OPTIONS] <TITLE>`). A caller-supplied
+    title starting with '-' (e.g. "--db=/evil.db") would otherwise be
+    flag-parsed by clap — worst case redirecting the queue db or failing intake
+    with a missing-<TITLE> error. So every flag precedes a `--` end-of-options
+    separator and the title is passed LAST: after `--`, clap takes the title
+    literally. Verified against the real CLI: `add --repo R -- "--db=x"` files a
+    task titled exactly `--db=x`.
+    """
     argv: list[str] = [binary]
     if db:
         argv += ["--db", db]
-    argv += ["add", title, "--repo", repo, "--priority", str(priority)]
+    argv += ["add", "--repo", repo, "--priority", str(priority)]
     if spec:
         argv += ["--spec", spec]
     if task_type:
         argv += ["--task-type", task_type]
+    argv += ["--", title]
     return argv
 
 

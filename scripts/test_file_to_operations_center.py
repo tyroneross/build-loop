@@ -83,15 +83,39 @@ class TestBuildArgv(unittest.TestCase):
             "oc", title="My Title", repo="WorkWiki", priority=3,
             spec="desc", task_type="fix",
         )
-        self.assertEqual(argv[:3], ["oc", "add", "My Title"])
+        # Subcommand first, then flags; the title is the LAST token, after `--`.
+        self.assertEqual(argv[:2], ["oc", "add"])
+        self.assertEqual(argv[-2:], ["--", "My Title"])
         self.assertIn("--repo", argv)
         self.assertEqual(argv[argv.index("--repo") + 1], "WorkWiki")
         self.assertEqual(argv[argv.index("--priority") + 1], "3")
         self.assertEqual(argv[argv.index("--task-type") + 1], "fix")
+        # Every flag precedes the `--` separator (so clap parses them as flags).
+        dd = argv.index("--")
+        self.assertLess(argv.index("--repo"), dd)
+        self.assertLess(argv.index("--task-type"), dd)
 
     def test_spec_omitted_when_none(self) -> None:
         argv = mod.build_add_argv("oc", title="T", repo="R", priority=2, spec=None)
         self.assertNotIn("--spec", argv)
+
+    def test_leading_dash_title_cannot_be_flag_parsed(self) -> None:
+        """A title starting with '-' (e.g. "--db=/tmp/evil.db") must be protected
+        by the `--` end-of-options separator so clap takes it literally and can
+        never hijack the global --db or fail intake with a missing-<TITLE> error.
+        Verified against the real CLI: `add --repo R -- "--db=x"` files title
+        exactly "--db=x"."""
+        argv = mod.build_add_argv(
+            "oc", title="--db=/tmp/evil.db", repo="R", priority=3,
+        )
+        self.assertIn("--", argv)
+        dd = argv.index("--")
+        # Title is the last token, immediately after the separator.
+        self.assertEqual(argv[-1], "--db=/tmp/evil.db")
+        self.assertEqual(argv[dd + 1], "--db=/tmp/evil.db")
+        # The malicious title never appears BEFORE the separator, where clap
+        # would flag-parse it and hijack --db.
+        self.assertNotIn("--db=/tmp/evil.db", argv[:dd])
 
 
 class TestParseOutput(unittest.TestCase):
@@ -134,9 +158,11 @@ class TestFileTaskEndToEnd(unittest.TestCase):
             # full_id is forward-compat only (the CLI `show` needs a full id, not
             # a prefix), so it stays null — the 8-char task_id is the receipt.
             self.assertIsNone(result["full_id"])
-            # verify the fake actually received an `add` with our args
+            # verify the fake actually received an `add` with our args; the
+            # title is passed last, after the `--` end-of-options separator.
             calls = (Path(str(fake) + ".calls")).read_text()
-            self.assertIn("add parameterize SQL", calls)
+            self.assertIn("add ", calls)
+            self.assertIn("-- parameterize SQL", calls)
             self.assertIn("--repo WorkWiki", calls)
             self.assertIn("--priority 3", calls)
 

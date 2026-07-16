@@ -900,5 +900,150 @@ class TestGitDerivedChangeSet(unittest.TestCase):
         self.assertFalse(payload["derived_from_git"])
 
 
+# ---------------------------------------------------------------------------
+# f1: --auto-revert partitions tracked vs untracked (no silent no-op revert)
+# ---------------------------------------------------------------------------
+
+class TestRevertPartitioning(unittest.TestCase):
+    """A failing derived-set revert must restore the TRACKED file, report the
+    UNTRACKED file (never delete it), and populate errors[]. Regression: the old
+    code handed the mixed list to one `git restore`, which exits 1 on any
+    untracked path having restored NOTHING — a silent no-op revert."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.scripts_dir = self.workdir / "scripts"
+        self.scripts_dir.mkdir()
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_fail_path_reverts_tracked_reports_untracked(self) -> None:
+        # Commit a tracked impl + a FAILING mapped test (fail → revert fires).
+        impl = self.scripts_dir / "impl.py"
+        impl.write_text("VALUE = 1\n")
+        (self.scripts_dir / "test_impl.py").write_text(
+            "def test_broken():\n    assert False, 'intentional'\n"
+        )
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", "baseline"],
+                       check=True, capture_output=True)
+
+        # Tracked-mod: edit the committed impl (unstaged self-mod).
+        impl.write_text("VALUE = 2  # broken self-mod\n")
+        # Untracked-new: a brand-new file, part of the git-derived change set.
+        extra = self.scripts_dir / "extra.py"
+        extra.write_text("EXTRA = True\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--auto-revert",
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        # Change set derived from git spans BOTH files; test_impl.py fails.
+        self.assertTrue(payload["derived_from_git"], msg=payload)
+        self.assertEqual(payload["verdict"], "fail", msg=payload)
+        self.assertEqual(r.returncode, 1, msg=f"stderr={r.stderr!r}")
+
+        # The TRACKED file was restored to its committed content.
+        self.assertTrue(payload["reverted"],
+                        msg="tracked file must be restored on the fail path")
+        restored = impl.read_text()
+        self.assertIn("VALUE = 1", restored)
+        self.assertNotIn("VALUE = 2", restored)
+
+        # The UNTRACKED file is NOT deleted (concurrent WIP is never swept)...
+        self.assertTrue(extra.exists(),
+                        msg="untracked file must never be deleted by revert")
+
+        # ...and errors[] is non-empty, reporting the untracked file explicitly
+        # plus the derived-set breadth warning.
+        self.assertTrue(payload["errors"], "errors[] must be non-empty")
+        joined = "\n".join(payload["errors"])
+        self.assertIn("untracked, not reverted", joined, msg=joined)
+        self.assertIn("extra.py", joined, msg=joined)
+        self.assertIn("breadth warning", joined, msg=joined)
+
+
+# ---------------------------------------------------------------------------
+# f2: a failing git change-set arm is recorded; tracked-arm failure → error
+# ---------------------------------------------------------------------------
+
+class TestGitDerivationErrors(unittest.TestCase):
+    """A failing `git diff --name-only HEAD` (tracked) arm must not yield a
+    truncated green change set: the failure is recorded in errors[] and the
+    verdict escalates to error. Regression: per-arm `continue` swallowed the
+    failure and could pass green over a knowingly-partial set."""
+
+    def setUp(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("self_mod_verify", SCRIPT)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        scripts_dir = self.workdir / "scripts"
+        scripts_dir.mkdir()
+        _write_passing_test(scripts_dir, "test_thing.py")
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_helper_records_tracked_arm_failure(self) -> None:
+        import unittest.mock as mock
+        original_run = subprocess.run
+
+        def mock_run(cmd, **kwargs):
+            if "diff" in cmd and "--name-only" in cmd:
+                return subprocess.CompletedProcess(
+                    cmd, 128, stdout="", stderr="fatal: bad revision 'HEAD'")
+            return original_run(cmd, **kwargs)
+
+        with mock.patch("subprocess.run", side_effect=mock_run):
+            files, derivation_errors = self.mod._git_changed_files(self.workdir)
+
+        self.assertTrue(
+            any("tracked-diff" in e for e in derivation_errors),
+            msg=f"derivation_errors must name the failed arm: {derivation_errors}",
+        )
+
+    def test_tracked_arm_failure_escalates_to_verdict_error(self) -> None:
+        import unittest.mock as mock
+        original_run = subprocess.run
+
+        def mock_run(cmd, **kwargs):
+            # Let runner --version probes through so _find_runner succeeds.
+            if "--version" in cmd:
+                return original_run(cmd, **kwargs)
+            if "diff" in cmd and "--name-only" in cmd:
+                return subprocess.CompletedProcess(
+                    cmd, 128, stdout="", stderr="fatal: bad revision 'HEAD'")
+            return original_run(cmd, **kwargs)
+
+        with mock.patch("subprocess.run", side_effect=mock_run):
+            result, exit_code = self.mod.verify(
+                workdir=self.workdir,
+                scope="auto",
+                changed_files=[],
+                auto_revert=False,
+                timeout=60,
+            )
+
+        self.assertEqual(result["verdict"], "error", msg=f"result={result}")
+        self.assertEqual(exit_code, 2, msg=f"result={result}")
+        self.assertTrue(result["errors"], "errors[] must be populated")
+        self.assertTrue(
+            any("tracked-diff" in e for e in result["errors"]),
+            msg=f"errors[] must name the failed arm: {result['errors']}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
