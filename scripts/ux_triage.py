@@ -106,6 +106,31 @@ def iter_ui_files(workdir: Path) -> list[Path]:
     return out
 
 
+# The `missing-empty-state` check is a SwiftUI list-render concern (a View that
+# maps a collection into rows without an empty/error branch). Applied blindly to
+# every .swift file it false-flags pure engine/service code where `.map { }` is
+# ordinary data processing (FocusIntelligence correlation math, DictationRepairing
+# token folding) — none of which is a list render. Gate the swift arm of this
+# check to files that actually declare a SwiftUI View, preserving every real
+# true positive (View files) while dropping the engine/service noise.
+_SWIFT_VIEW_MARKERS = ("some View", ": View", "var body")
+_swift_view_cache: dict[Path, bool] = {}
+
+
+def _swift_file_is_view(path: Path) -> bool:
+    cached = _swift_view_cache.get(path)
+    if cached is not None:
+        return cached
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        _swift_view_cache[path] = False
+        return False
+    is_view = "import SwiftUI" in text and any(m in text for m in _SWIFT_VIEW_MARKERS)
+    _swift_view_cache[path] = is_view
+    return is_view
+
+
 def grep_file(path: Path, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
     hits: list[tuple[int, str]] = []
     try:
@@ -337,6 +362,15 @@ def main() -> int:
                 if "-swift" in label and path.suffix not in SWIFT_EXT:
                     continue
                 if "-web" in label and path.suffix not in WEB_EXT:
+                    continue
+                # SwiftUI list-render check only fires inside actual View files;
+                # engine/service .swift code where `.map { }` is data processing
+                # is not a list render and must not be flagged.
+                if (
+                    label == "missing-empty-state"
+                    and path.suffix in SWIFT_EXT
+                    and not _swift_file_is_view(path)
+                ):
                     continue
                 for line_no, snippet in grep_file(path, pattern):
                     rel = str(path.relative_to(workdir))
