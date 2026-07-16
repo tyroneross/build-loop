@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "91bf19ffa3ba32748f37e08879109d2a046a470cfb6de377fbfa27249abb6e81"
+    "content_sha256": "0513841a3390fa78c147259af4bf9ce587e6a22ec29f3190638157392f3453ff"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -960,6 +960,15 @@
         "last_updated": {
           "author": "Tyrone Ross",
           "date": "2026-07-07"
+        }
+      },
+      "leak-scanner": {
+        "model": "sonnet",
+        "description": "Static scan for memory and resource leaks in long-lived code paths: unbounded collections fed by external input, terminal-only eviction predicates, registration without deregistration, retain cycles, spawn-without-reap, and accumulating stream buffers.",
+        "file": "agents/leak-scanner.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
         }
       },
       "mock-scanner": {

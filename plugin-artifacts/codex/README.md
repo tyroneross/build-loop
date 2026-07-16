@@ -206,6 +206,7 @@ Resolution is availability-aware across dispatches: a model observed unavailable
 | `ui-validator` | UI behavior, state, accessibility, layout, console, and rendering evidence validation. | Code |
 | `root-cause-investigator` | Causal-tree investigation for persistent or ambiguous failures. | inherit |
 | `mock-scanner` | Production-path scan for placeholder, fake, fixture, and mock data. | Pattern |
+| `leak-scanner` | Lifecycle accounting for memory/resource leaks in long-lived code paths (unbounded maps, eviction predicates, spawn-without-reap, retain cycles, uncapped buffers). | Code |
 
 ### Learning agents
 
