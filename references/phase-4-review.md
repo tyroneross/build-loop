@@ -34,6 +34,8 @@ Only when a mechanical metric exists. See `references/phase-gate-checklist.md` �
 
 Scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate (below). The blocking **no-critical/high exit gate** (`review_finding_gate.py` — any open `critical`/`high` without closure routes back to Phase 5 Iterate), the **report-section spec** (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` + forbidden patterns), and **auto-version-bump** are documented in `references/phase-gate-checklist.md` §"Sub-step G — Report (final pass only)" — execute them from there; do not re-derive their procedures here.
 
+**Flagged-issue disposition gate (no bare flags).** Every open finding surfaced during the run MUST be DISPOSITIONED in the report, never merely listed with a "want me to?" question. Route by where the issue lives (full policy: `references/keep-going-policy.md` §"Flagged-issue default route"): build-loop's OWN repo → fixed (self-heal/iterate, cite the commit); ANY OTHER repo → filed on the Operations Center queue via `scripts/file_to_operations_center.py` (cite the returned task id, or surface the intake blocker if the CLI is unavailable); PRODUCTION-class/ambiguous → surfaced under `## Held`/`## Blocked`. A cross-repo finding left as prose is a workflow violation.
+
 **Research citation gate.** Before emitting the final report, read
 `.build-loop/state.json.researchGate`. When `blocks_final_claims: true`, any
 current/external/API/package claim in the report must cite the research packet

@@ -122,7 +122,13 @@ CATEGORY_KEYWORDS = [
                       "extensions_", "session-start-extensions",
                       "learned skill", "pending drafts",
                       "candidate_aging", "candidate aging",
-                      "promotion_queue", "promotion queue")),
+                      "promotion_queue", "promotion queue",
+                      # Cross-repo issue/proposal routing — the flagged-issue
+                      # default route (file to Operations Center) and the
+                      # proposal-drain gate are self-heal / keep-going lifecycle:
+                      "operations center", "operations-center",
+                      "cross-repo issue", "flagged-issue",
+                      "proposal-drain", "proposal drain", "cross-repo proposal")),
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.

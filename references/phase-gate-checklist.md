@@ -226,12 +226,15 @@ The report markdown sections, in this order:
 - `## Status markers` — ✅ Known / ⚠️ Untested / ❓ Unfixed (existing convention; preserve).
 - `## Net LOC` — one line from `scripts/run_loc_delta.py` over the run's diff range: lines added / deleted / net + files changed / created. Pure observability, NO gate — it surfaces growth so the "no additional code" goal is visible and Phase 6 can watch the trend. Compute via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/run_loc_delta.py --workdir "$PWD" --range "<base>..<head>"` (use the run's first commit's parent .. HEAD; fall back to `--working` when no range is known). Fail-open — an unavailable delta renders `_(loc delta unavailable: ...)_` and never blocks the report.
 
+**Flagged-issue disposition (no bare flags).** Every open finding surfaced this run is DISPOSITIONED, not just listed: build-loop's OWN repo → fixed (cite commit) in `## Done`; ANY OTHER repo → filed on the Operations Center queue via `python3 scripts/file_to_operations_center.py --repo <repo> --title <..> --urgency <..> --json` and reported in `## Done` with the returned task id (or the intake blocker in `## Blocked` if the CLI is unavailable); PRODUCTION-class/ambiguous → `## Held`/`## Blocked`. Full policy: `references/keep-going-policy.md` §"Flagged-issue default route".
+
 **Forbidden in the report**:
 
 - "Open Recommendations" headers
 - "Next Action" sentences phrased as questions
 - Bullets phrased as `Want me to X?` / `Should I Y?`
 - Lists that invite operator selection of which items to execute
+- A cross-repo issue left as a prose flag instead of an Operations Center task id (or a stated intake blocker)
 
 Empty categories get the header followed by `_(none)_`. Do not omit empty sections. The autonomy gate (`scripts/autonomy_gate.py`) is the authority — see `references/autonomy-config.md` for precedence.
 

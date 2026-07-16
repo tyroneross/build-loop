@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2c20471bb665105cab6ca17d61476c60ee7ad5730fb08cfdbf3f4ba4d74f6cec"
+    "content_sha256": "2345ff19fd0805d921c44f4dfb19fb678e23f1b78b76b807f2a28cd77a6cea55"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1231,8 +1231,8 @@
         "description": "Use for structured cost-impact root-cause analysis — quantify what a context/caching/model change did to token spend and dollars. Reads MEASURED tokens from the cost ledger (never estimates), splits inbound/outbound + cache-read/cache-write, computes context-window utilization, then prices each bucket against the CURRENT rate card fetched LIVE (never from memory). Triggers on \"tokens saved\", \"cache impact\", \"cost of…",
         "file": "skills/cost-rca/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-07-16"
         }
       },
       "data-plane-worktrees": {
@@ -1595,6 +1595,7 @@
       "scripts/extensions_paths.py": "extensions_paths.py — single owner of the ~/.build-loop-extensions layout.\"\"\"",
       "scripts/extensions_pending_count.py": "extensions_pending_count.py — count pending drafts (for the session-start nudge). Fail-open to 0.\"\"\"",
       "scripts/extensions_route.py": "extensions_route.py — consumer default: place a drafted skill into pending/ (never loads until approved).\"\"\"",
+      "scripts/file_to_operations_center.py": "file_to_operations_center.py — mechanically file a CROSS-REPO issue as a task",
       "scripts/gate_builder.py": "gate_builder.py — scaffold a DRAFT enforced check from a Prevention-Pattern spec.",
       "scripts/handoff/__main__.py": "Compose a build-loop handoff document from .build-loop/ run state.",
       "scripts/hook_budget_lint.py": "hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.",

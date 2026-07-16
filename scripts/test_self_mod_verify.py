@@ -254,7 +254,11 @@ class TestScopeChanged(unittest.TestCase):
         self.assertNotIn("test_other.py", ran_names)
 
     def test_scope_changed_no_mapped_test_gives_no_tests(self) -> None:
-        """An impl file with no matching test file → verdict no_tests."""
+        """An impl file with no matching test file → verdict no_tests, exit 3.
+
+        no_tests is NOT green: the gate exercised nothing, so it must not read as
+        pass. Exit 3 (inconclusive) is distinct from a real fail (1) or error (2).
+        """
         impl = self.scripts_dir / "orphan.py"
         impl.write_text("pass\n")
         r = _run([
@@ -264,8 +268,9 @@ class TestScopeChanged(unittest.TestCase):
             "--json",
         ])
         payload = json.loads(r.stdout)
-        self.assertEqual(r.returncode, 0)
-        self.assertIn(payload["verdict"], ("no_tests", "pass"))
+        self.assertEqual(payload["verdict"], "no_tests")
+        self.assertEqual(r.returncode, 3,
+                         msg="no_tests must be non-green (exit 3), never exit 0")
 
     def test_changed_test_named_markdown_doc_is_not_run_as_pytest(self) -> None:
         """A changed doc whose basename starts with `test_` (the per-script doc
@@ -273,7 +278,9 @@ class TestScopeChanged(unittest.TestCase):
 
         Regression: pytest exits 4 on a .md path, which the gate surfaced as
         verdict=error and falsely blocked a docs-only commit. A non-.py change
-        with no sibling .py test maps to no target → verdict no_tests, exit 0."""
+        with no sibling .py test maps to no target → verdict no_tests (exit 3,
+        inconclusive — the doc change is not a green pass, but it is not a real
+        test failure/error either)."""
         docs = self.workdir / "docs" / "scripts"
         docs.mkdir(parents=True)
         doc = docs / "test_thing.md"
@@ -285,13 +292,13 @@ class TestScopeChanged(unittest.TestCase):
             "--json",
         ])
         payload = json.loads(r.stdout)
-        self.assertEqual(r.returncode, 0, msg=f"stderr={r.stderr!r}")
-        self.assertEqual(payload["verdict"], "no_tests")
+        self.assertEqual(payload["verdict"], "no_tests", msg=f"stderr={r.stderr!r}")
+        self.assertEqual(r.returncode, 3, msg=f"stderr={r.stderr!r}")
         self.assertEqual(payload["ran"], [])
 
 
 class TestNoPytest(unittest.TestCase):
-    """When pytest is not available, verdict = no_tests, exit 0."""
+    """When no tests are found, verdict = no_tests, exit 3 (inconclusive)."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -306,9 +313,10 @@ class TestNoPytest(unittest.TestCase):
 
     def test_no_scripts_dir_gives_no_tests(self) -> None:
         r = _run(["--workdir", str(self.workdir), "--scope", "full", "--json"])
-        self.assertEqual(r.returncode, 0, msg=f"stderr: {r.stderr}")
         payload = json.loads(r.stdout)
         self.assertEqual(payload["verdict"], "no_tests")
+        self.assertEqual(r.returncode, 3,
+                         msg=f"no_tests must be non-green (exit 3); stderr: {r.stderr}")
         self.assertEqual(payload["ran"], [])
 
 
@@ -400,7 +408,8 @@ class TestNoMetaHalt(unittest.TestCase):
                             msg=f"Gate file must not trigger needs_human: {payload}")
         self.assertIn(payload["verdict"], ("pass", "no_tests"),
                       msg=f"Expected pass or no_tests, got: {payload['verdict']}")
-        self.assertEqual(r.returncode, 0)
+        # pass is green (0); no_tests is inconclusive (3) — never needs_human.
+        self.assertEqual(r.returncode, 0 if payload["verdict"] == "pass" else 3)
 
     def test_test_file_changed_not_needs_human(self) -> None:
         """Listing a test_*.py file as changed → verdict reflects test outcome,
@@ -737,6 +746,158 @@ class TestVerdictError(unittest.TestCase):
         if payload["verdict"] == "error":
             self.assertIn("error_reason", r.stderr,
                           msg=f"stderr summary must include error_reason; stderr={r.stderr!r}")
+
+
+# ---------------------------------------------------------------------------
+# Tests: git-derived change set + no_changes verdict
+# ---------------------------------------------------------------------------
+# The documented gate invocation is `--scope auto --auto-revert` with NO
+# --changed-files. Historically that resolved to an empty test set → a green
+# no_tests that gated nothing. These cover the fix: derive the change set from
+# git (tracked diff + untracked new files), and emit an explicit non-green
+# no_changes verdict when git shows no changes at all.
+
+class TestGitDerivedChangeSet(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.scripts_dir = self.workdir / "scripts"
+        self.scripts_dir.mkdir()
+        _init_git_repo(self.workdir)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _commit(self, msg: str = "wip") -> None:
+        subprocess.run(["git", "-C", str(self.workdir), "add", "-A"],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workdir), "commit", "-m", msg],
+                       check=True, capture_output=True)
+
+    def test_explicit_changed_files_bypasses_git_derivation(self) -> None:
+        """When --changed-files IS given, the gate uses it verbatim and does not
+        touch git (derived_from_git=False)."""
+        impl = self.scripts_dir / "impl.py"
+        impl.write_text("pass\n")
+        _write_passing_test(self.scripts_dir, "test_impl.py")
+        self._commit("add impl + test")
+        # Modify impl so there IS a git change too — but pass it explicitly.
+        impl.write_text("pass  # edited\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--changed-files", str(impl),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "pass",
+                         msg=f"test_impl.py should run and pass: {payload}")
+        self.assertFalse(payload["derived_from_git"],
+                         msg="explicit --changed-files must NOT set derived_from_git")
+        self.assertEqual(r.returncode, 0)
+
+    def test_fallback_derives_tracked_modified_file(self) -> None:
+        """No --changed-files + a tracked-but-modified impl.py → the gate derives
+        impl.py from `git diff HEAD`, runs its mapped test, and marks
+        derived_from_git=True. This is the documented `--scope auto` path."""
+        impl = self.scripts_dir / "impl.py"
+        impl.write_text("VALUE = 1\n")
+        _write_passing_test(self.scripts_dir, "test_impl.py")
+        self._commit("baseline")
+        # Modify the tracked file WITHOUT staging — the exact self-mod shape.
+        impl.write_text("VALUE = 2\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertTrue(payload["derived_from_git"],
+                        msg=f"gate must auto-derive the change set from git: {payload}")
+        self.assertEqual(payload["verdict"], "pass",
+                         msg=f"mapped test_impl.py should run and pass: {payload}")
+        ran_names = [Path(f).name for f in payload["ran"]]
+        self.assertIn("test_impl.py", ran_names,
+                      msg="the git-derived file's mapped test must actually run")
+        self.assertEqual(r.returncode, 0)
+
+    def test_fallback_derives_untracked_new_file(self) -> None:
+        """Regression BUIL-SELFMOD-001: a self-mod that ADDS a new foo.py +
+        test_foo.py (both untracked) must be picked up under --scope auto with no
+        --changed-files. `git diff` alone misses untracked files; the
+        `ls-files --others` arm closes it. Expect the new test to actually run."""
+        (self.scripts_dir / "newmod.py").write_text("def f(): return 42\n")
+        (self.scripts_dir / "test_newmod.py").write_text(
+            "from newmod import f\n"
+            "def test_f(): assert f() == 42\n"
+        )
+        # Deliberately do NOT commit or stage — both files are untracked.
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--json",
+        ], cwd=str(self.scripts_dir))
+        payload = json.loads(r.stdout)
+        self.assertTrue(payload["derived_from_git"],
+                        msg=f"untracked new files must be derived: {payload}")
+        ran_names = [Path(f).name for f in payload["ran"]]
+        self.assertIn("test_newmod.py", ran_names,
+                      msg=f"the NEW untracked test must run (BUIL-SELFMOD-001): {payload}")
+        self.assertEqual(payload["verdict"], "pass",
+                         msg=f"expected pass, not a green no_tests: {payload}")
+        self.assertEqual(r.returncode, 0)
+
+    def test_no_changes_verdict_when_clean(self) -> None:
+        """No --changed-files + a fully clean tree → verdict no_changes, exit 3.
+        A self-mod gate with nothing to verify must NOT read as pass."""
+        impl = self.scripts_dir / "impl.py"
+        impl.write_text("pass\n")
+        _write_passing_test(self.scripts_dir, "test_impl.py")
+        self._commit("everything committed, tree clean")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "auto",
+            "--auto-revert",
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "no_changes",
+                         msg=f"clean tree must yield no_changes, not pass/no_tests: {payload}")
+        self.assertEqual(r.returncode, 3,
+                         msg="no_changes must be non-green (exit 3)")
+        self.assertFalse(payload["derived_from_git"])
+        self.assertEqual(payload["ran"], [])
+
+    def test_no_changes_is_distinct_from_pass(self) -> None:
+        """The no_changes verdict string is distinct from pass — a caller keying
+        on verdict=='pass' will not be fooled by an empty run."""
+        # _init_git_repo already leaves a clean tree (README committed); no diff.
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertNotEqual(payload["verdict"], "pass")
+        self.assertEqual(payload["verdict"], "no_changes")
+
+    def test_full_scope_ignores_git_derivation(self) -> None:
+        """--scope full runs the whole suite regardless, so an empty
+        --changed-files must NOT trigger the no_changes short-circuit."""
+        _write_passing_test(self.scripts_dir, "test_thing.py")
+        self._commit("add a test")
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "full",
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "pass",
+                         msg=f"full scope must run the suite, not no_changes: {payload}")
+        self.assertFalse(payload["derived_from_git"])
 
 
 if __name__ == "__main__":

@@ -32,20 +32,33 @@ Output JSON::
       "failed":          int,
       "failed_tests":    [str, ...],    # short names of failing tests
       "reverted":        bool,
-      "verdict":         "pass" | "fail" | "no_tests" | "error",
+      "verdict":         "pass" | "fail" | "no_tests" | "no_changes" | "error",
       "timed_out":       bool,
       "error_reason":    str | null,    # present (non-null) only when verdict="error"
-      "errors":          [str, ...]
-    }
+      "errors":          [str, ...],
+      "derived_from_git": bool          # True when the change set was auto-derived
+    }                                    # from git (no --changed-files given)
 
 Exit codes:
-  0  — verdict "pass" or "no_tests"
-  1  — verdict "fail"  (real test failures)
-  2  — verdict "error" (infrastructure error: collection failure, timeout, worker crash)
+  0  — verdict "pass"       (the ONLY green result — tests ran and passed)
+  1  — verdict "fail"       (real test failures)
+  2  — verdict "error"      (infrastructure error: collection failure, timeout, worker crash)
+  3  — verdict "no_tests" | "no_changes"  (INCONCLUSIVE — the gate verified nothing)
 
-Fail-soft on infrastructure errors (no pytest, unreadable output):
-  verdict = "no_tests", exit 0.  A missing test suite never blocks a deploy;
-  the absence is itself surfaced in the JSON for the caller to act on.
+"no_tests" and "no_changes" are NOT green.  A self-modification safety gate that
+ran zero tests has verified nothing, so it must not read as pass — it exits 3
+(distinct from a real fail/error) so a caller can tell "verified pass" from
+"nothing verified" and, if it genuinely wants soft behaviour, opt into it
+explicitly (`|| [ $? -eq 3 ]`).  Historically these exited 0, which made the
+documented invocation (`--scope auto --auto-revert` with no --changed-files)
+gate nothing while looking green.
+
+Change-set derivation:
+  When --changed-files is omitted under scope auto/changed, the gate derives the
+  change set from git — `git diff --name-only HEAD` (tracked staged+unstaged)
+  PLUS `git ls-files --others --exclude-standard` (untracked NEW files, so a
+  self-mod that adds foo.py+test_foo.py still runs test_foo.py).  If git shows
+  no changes at all → verdict "no_changes", exit 3.
 
 When pytest exits non-zero AND no "N passed"/"N failed" summary line was parsed
 (collection error, INTERNALERROR, timeout at the pytest layer, etc.), the gate
@@ -70,6 +83,14 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+# Exit codes. 0 is the ONLY green result. no_tests / no_changes are inconclusive
+# (the gate verified nothing) and get their own code so they never read as pass.
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_ERROR = 2
+EXIT_INCONCLUSIVE = 3
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +265,42 @@ def _all_script_tests(workdir: Path) -> list[str]:
     return sorted(str(f) for f in scripts_dir.glob("test_*.py"))
 
 
+def _git_changed_files(workdir: Path) -> list[str]:
+    """Derive the changed-file set from git when --changed-files was omitted.
+
+    Returns repo-relative paths for BOTH:
+      * tracked files with staged OR unstaged modifications
+        (``git diff --name-only HEAD``), and
+      * untracked NEW files (``git ls-files --others --exclude-standard``).
+
+    The untracked arm is load-bearing: a self-modification that ADDS a new
+    ``foo.py`` + ``test_foo.py`` is invisible to ``git diff`` (which only sees
+    tracked changes), so without it the gate would map to no tests and report a
+    green-looking no_tests — the exact false-negative logged as BUIL-SELFMOD-001.
+
+    Fail-soft: any git error (not a repo, git missing, timeout) → empty list.
+    The caller then emits the explicit ``no_changes`` verdict.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for cmd in (
+        ["git", "-C", str(workdir), "diff", "--name-only", "HEAD"],
+        ["git", "-C", str(workdir), "ls-files", "--others", "--exclude-standard"],
+    ):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if r.returncode != 0:
+            continue
+        for line in r.stdout.splitlines():
+            name = line.strip()
+            if name and name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Scope resolution for "auto"
 # ---------------------------------------------------------------------------
@@ -394,19 +451,26 @@ def verify(
     """Run the verification gate. Return (result_dict, exit_code).
 
     Exit codes:
-      0  — verdict "pass" or "no_tests"
+      0  — verdict "pass"  (the ONLY green result: tests ran and passed)
       1  — verdict "fail"  (real test failures; failed > 0 OR returncode != 0
                              with a parseable summary)
       2  — verdict "error" (infrastructure failure: no summary parsed despite
                              non-zero exit — collection error, INTERNALERROR,
                              per-test timeout, worker crash, etc.)
+      3  — verdict "no_tests" | "no_changes" (INCONCLUSIVE: the gate verified
+                             nothing — no mapped tests, no pytest, or no diff.
+                             Not green; a caller wanting soft behaviour opts in.)
     """
     errors: list[str] = []
     reverted = False
+    derived_from_git = False
 
     # --- Runner discovery ---
     runner_base = _find_runner(workdir)
     if runner_base is None:
+        # A safety gate that cannot run pytest has verified nothing → inconclusive,
+        # not green. Callers key on verdict=="pass"; the non-zero exit keeps a
+        # naive `if verify; then commit` shell wrapper from treating it as a pass.
         result = {
             "scope": scope,
             "effective_scope": scope if scope != "auto" else "changed",
@@ -419,8 +483,44 @@ def verify(
             "timed_out": False,
             "error_reason": None,
             "errors": ["pytest not available (uv run pytest and python3 -m pytest both failed)"],
+            "derived_from_git": False,
         }
-        return result, 0
+        return result, EXIT_INCONCLUSIVE
+
+    # --- Change-set derivation fallback ---
+    # The documented gate invocation is `--scope auto --auto-revert` with no
+    # --changed-files. Without a fallback that path resolves to an empty test set
+    # → a green-looking no_tests that gates NOTHING. Derive the real change set
+    # from git (tracked diff + untracked new files) so the documented invocation
+    # actually verifies AND so --auto-revert has files to restore. Only
+    # auto/changed consume changed_files for test selection; full runs the whole
+    # suite regardless, so leave it untouched.
+    if not changed_files and scope in ("auto", "changed"):
+        changed_files = _git_changed_files(workdir)
+        derived_from_git = bool(changed_files)
+        if not changed_files:
+            # Nothing staged, modified, or untracked → the gate verified nothing.
+            # This is NOT pass: a self-mod gate with no diff is a caller mistake
+            # or a lost working tree, never a green light. Distinct verdict so the
+            # caller can tell it apart from a real no_tests.
+            result = {
+                "scope": scope,
+                "effective_scope": scope if scope != "auto" else "changed",
+                "ran": [],
+                "passed": 0,
+                "failed": 0,
+                "failed_tests": [],
+                "reverted": False,
+                "verdict": "no_changes",
+                "timed_out": False,
+                "error_reason": None,
+                "errors": [
+                    "no --changed-files given and git shows no staged/unstaged/"
+                    "untracked changes; gate verified nothing"
+                ],
+                "derived_from_git": False,
+            }
+            return result, EXIT_INCONCLUSIVE
 
     # --- Scope resolution ---
     effective_scope = scope
@@ -444,8 +544,9 @@ def verify(
             "timed_out": False,
             "error_reason": None,
             "errors": errors,
+            "derived_from_git": derived_from_git,
         }
-        return result, 0
+        return result, EXIT_INCONCLUSIVE
 
     # --- Build pytest command ---
     # Full scope: serial (no xdist), per-test timeout so hangs fail cleanly,
@@ -490,8 +591,9 @@ def verify(
             "timed_out": True,
             "error_reason": "Timeout",
             "errors": errors,
+            "derived_from_git": derived_from_git,
         }
-        return result, 2
+        return result, EXIT_ERROR
     except (FileNotFoundError, OSError) as exc:
         errors.append(f"pytest runner error: {exc}")
         result = {
@@ -506,19 +608,20 @@ def verify(
             "timed_out": False,
             "error_reason": None,
             "errors": errors,
+            "derived_from_git": derived_from_git,
         }
-        return result, 0
+        return result, EXIT_INCONCLUSIVE
 
     passed, failed, failed_tests, has_summary = _parse_pytest_output(r.stdout, r.stderr)
 
     # --- Determine verdict from test results only ---
     if r.returncode == 0 and failed == 0:
         verdict = "pass"
-        exit_code = 0
+        exit_code = EXIT_PASS
     elif r.returncode == 5:
-        # pytest exit 5 = no tests collected
+        # pytest exit 5 = no tests collected. Inconclusive, not green (exit 3).
         verdict = "no_tests"
-        exit_code = 0
+        exit_code = EXIT_INCONCLUSIVE
     elif not has_summary and r.returncode != 0:
         # Non-zero exit with no parseable summary → infrastructure failure.
         # This is the "0 passed / 0 failed / verdict=fail" silent-failure case.
@@ -526,10 +629,10 @@ def verify(
         reason = _classify_error_reason(r.stdout, r.stderr)
         errors.append(f"pytest exited {r.returncode} with no summary line: {reason}")
         verdict = "error"
-        exit_code = 2
+        exit_code = EXIT_ERROR
     else:
         verdict = "fail"
-        exit_code = 1
+        exit_code = EXIT_FAIL
         if auto_revert:
             reverted = _revert_files(workdir, changed_files, errors)
 
@@ -549,6 +652,7 @@ def verify(
         "timed_out": timed_out,
         "error_reason": error_reason,
         "errors": errors,
+        "derived_from_git": derived_from_git,
     }
     return result, exit_code
 
