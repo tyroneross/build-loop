@@ -91,6 +91,19 @@ from typing import Any
 
 DEFAULT_ALLOWLIST = ["@tyroneross/*"]
 NPM_NATIVE_MIN = (11, 10, 0)  # first npm with native min-release-age
+
+# Documenting header for the written .npmrc. Marker line makes the prepend
+# idempotent across re-runs. npm's native min-release-age has NO scope-exclusion
+# (npm/cli#8994), so it also applies to own-scope packages that C-SUPPLY exempts —
+# name the per-command override so an own-package same-week bump isn't a silent footgun.
+_NPM_COOLDOWN_MARKER = "# build-loop:dependency-cooldown"
+_NPM_COOLDOWN_HEADER = (
+    f"{_NPM_COOLDOWN_MARKER} (constitution C-SUPPLY) — don't install a package\n"
+    "# version until it's been public for the configured number of days. npm's native\n"
+    "# min-release-age has no scope-exclusion, so this also applies to own-scope\n"
+    "# packages. Pull a same-week bump of an own-scope package with a per-command\n"
+    "# override:  npm install --min-release-age=0 <pkg>\n"
+)
 UNKNOWN_CONFIG_RE = re.compile(r"Unknown project config", re.IGNORECASE)
 
 
@@ -292,6 +305,10 @@ def _write_npm(workdir: Path, allowlist: list[str], days: int, check: bool) -> d
     # Write path. npm key is DAYS. No exclude key (npm has none).
     updates = {"min-release-age=": f"min-release-age={days}"}
     new, changed = _merge_lines(existing, updates)
+    # Prepend the documenting header once (idempotent via the marker line).
+    if _NPM_COOLDOWN_MARKER not in new:
+        new = _NPM_COOLDOWN_HEADER + new
+        changed = changed or new != existing
     if changed:
         _atomic_write(target, new)
     ok, why = _verify_npm_recognizes(workdir, "min-release-age", str(days))
