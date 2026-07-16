@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 48 skills · 366 scripts · 21 hooks** (auto-discovered 0513841a)
+**29 agents · 48 skills · 366 scripts · 21 hooks** (auto-discovered 1cca62f4)
 
 <details><summary>agents</summary>
 
@@ -33,7 +33,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `frontend-assessor` — sonnet · _updated 2026-07-02 by Tyrone Ross_ — Use this agent when the debugging symptom involves React, hooks, rendering, UI components, state management, hydration errors, or client-side performance. Examples - "useEffect infinite loop", "component not rendering", "hydration mismatch", "state not updating".
 - `implementer` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Apply a single ux-fix-plan.md (or per-criterion targeted fix plan) from the build-loop Phase 5 work list. One queue entry per invocation. Returns changed files + status. Designed for parallel fan-out (≤4 in flight per orchestrator pass).
 - `independent-auditor` — fable · _updated 2026-07-07 by Tyrone Ross_ — LLM-grade escalation path for the boundary-gated commit auditor. The primary mechanism is the deterministic PreToolUse hook script (`scripts/audit_before_commit.py`); this agent fires only when the orchestrator wants a deeper read on a specific commit (e.g., before squash-merge of a multi-chunk build, or when a chunk's diff is unusually large or crosses an architectural boundary). Gathers the same on-disk context th…
-- `leak-scanner` — sonnet · _updated  by —_ — Static scan for memory and resource leaks in long-lived code paths: unbounded collections fed by external input, terminal-only eviction predicates, registration without deregistration, retain cycles, spawn-without-reap, and accumulating stream buffers.
+- `leak-scanner` — sonnet · _updated 2026-07-16 by Tyrone Ross_ — Static scan for memory and resource leaks in long-lived code paths: unbounded collections fed by external input, terminal-only eviction predicates, registration without deregistration, retain cycles, spawn-without-reap, and accumulating stream buffers.
 - `mock-scanner` — haiku · _updated 2026-06-24 by Tyrone Ross_ — Fast, lightweight scan for residual mock, placeholder, fake, private, or secret data in production/public code paths.
 - `optimize-runner` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Executes the optimization loop. Generates hypotheses, makes atomic changes within scope, measures metrics, keeps improvements or reverts regressions. Runs autonomously until convergence or budget exhaustion.
 - `overfitting-reviewer` — opus · _updated 2026-07-12 by Tyrone Ross_ — Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.

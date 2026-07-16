@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "0513841a3390fa78c147259af4bf9ce587e6a22ec29f3190638157392f3453ff"
+    "content_sha256": "1cca62f423887e6ac95d0be8602a4863454676beb0c781d94a4e5aa813559edf"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -967,8 +967,8 @@
         "description": "Static scan for memory and resource leaks in long-lived code paths: unbounded collections fed by external input, terminal-only eviction predicates, registration without deregistration, retain cycles, spawn-without-reap, and accumulating stream buffers.",
         "file": "agents/leak-scanner.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-07-16"
         }
       },
       "mock-scanner": {
