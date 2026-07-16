@@ -54,6 +54,45 @@ class ClassifyCommandTests(unittest.TestCase):
         cmd = 'echo "pre_bash_dispatch push-scan trigger: replace glob (git push)"'
         self.assertEqual(gcc.classify_command(cmd), set())
 
+    # ---- quoted-operator false-fire class (observed live 2026-07-15) ----
+    # A `;`/`|`/`&` INSIDE quotes (or backslash-escaped) is DATA, not a command separator.
+    # The old regex splitter broke the quote apart → unbalanced fragment → shlex ValueError →
+    # conservative both-fire → pre-push scan ran on read-only commands.
+
+    def test_g_grep_pattern_with_semicolon_and_pipe(self) -> None:
+        self.assertEqual(gcc.classify_command(r"grep -rn '\[;|' scripts/hooks/*.sh"), set())
+
+    def test_g_grep_quoted_semicolon(self) -> None:
+        self.assertEqual(gcc.classify_command("grep ';' file"), set())
+
+    def test_g_echo_quoted_pipe(self) -> None:
+        self.assertEqual(gcc.classify_command('echo "a|b|c"'), set())
+
+    def test_g_grep_alternation_pipe(self) -> None:
+        self.assertEqual(gcc.classify_command("grep -E 'a|b' file"), set())
+
+    def test_g_find_exec_escaped_semicolon(self) -> None:
+        self.assertEqual(gcc.classify_command(r"find . -exec rm {} \;"), set())
+
+    def test_g_ls_pipe_grep(self) -> None:
+        self.assertEqual(gcc.classify_command("ls -la | grep foo"), set())
+
+    def test_g_task_matrix_readonly_no_fire(self) -> None:
+        for cmd in ("ls -la", "grep x y", "wc -l f", "a | b", "a; b", "python3 f.py"):
+            self.assertEqual(gcc.classify_command(cmd), set(), cmd)
+
+    def test_g_real_push_after_quoted_operator_still_fires(self) -> None:
+        # The quote-aware split must not swallow a genuine push next to a quoted operator.
+        self.assertEqual(
+            gcc.classify_command('git push origin main && echo "done|now"'), {"push"}
+        )
+
+    def test_g_task_matrix_push_forms_fire(self) -> None:
+        # Guardrail: every real push spelling still classifies as push, so the downstream
+        # pre-push security scan (HIGH+ → block) still engages.
+        for cmd in ("git push", "git push origin main", "foo && git push", "git push --force"):
+            self.assertEqual(gcc.classify_command(cmd), {"push"}, cmd)
+
     # ---- TRUE-FIRE classes: must trigger ----
 
     def test_c_bare_push(self) -> None:

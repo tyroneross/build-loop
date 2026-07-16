@@ -44,9 +44,13 @@ import sys
 
 SUBCOMMANDS_OF_INTEREST = ("commit", "push")
 
-# Split a command line into segments at shell control operators. A segment is the run of
-# text up to the next operator; argv[0] of each segment is what we classify.
-_SPLIT_RE = re.compile(r"&&|\|\||[;|&\n]")
+# Shell control operators that separate segments: && || ; | & and newline. A segment is the
+# run of text up to the next operator; argv[0] of each segment is what we classify. Splitting
+# is done QUOTE-AWARE by _split_on_unquoted_operators (below) — a regex splitter blindly
+# broke operators INSIDE quotes (`grep ';|' f`, `find … \;`), leaving a fragment with an
+# unbalanced quote that shlex could not parse, which forced the conservative both-subcommands
+# fallback and false-fired the pre-push security scan on read-only commands (observed live
+# 2026-07-15: `grep -rn '\[;|' file`, `echo "a|b"`, `find . -exec rm {} \;`).
 
 # A heredoc opener: << or <<- , optional whitespace, an optionally-quoted word delimiter.
 # We only need the delimiter word to know where the body ends.
@@ -124,6 +128,59 @@ def strip_heredoc_bodies(cmd: str) -> tuple[str, bool]:
     return "\n".join(out), unterminated
 
 
+def _split_on_unquoted_operators(text: str) -> list[str]:
+    """Split ``text`` at shell control operators (``&&`` ``||`` ``;`` ``|`` ``&`` newline)
+    that are OUTSIDE single/double quotes and are not backslash-escaped.
+
+    Quote-awareness is the whole point: an operator character INSIDE a quoted string
+    (a grep pattern ``';|'``, an ``echo "a|b"``, a ``find … \\;`` terminator) is DATA, not a
+    command separator. The old ``re.split`` broke such quotes apart, yielding a fragment with
+    an unbalanced quote that ``shlex.split`` rejected — which drove the conservative
+    both-subcommands fallback and false-fired the pre-push security scan on read-only commands.
+
+    A genuinely UNTERMINATED quote (real ambiguity) is preserved intact in the final segment,
+    so the caller's ``shlex.split`` still raises there and the conservatism contract still fires.
+    """
+    segments: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None  # "'" or '"' while inside that quote
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            # Backslash escape outside quotes (`\;`, `\|`) — keep both chars literally so the
+            # escaped operator neither splits nor leaves a dangling backslash for shlex.
+            buf.append(ch)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        if ch in ("&", "|") and i + 1 < n and text[i + 1] == ch:  # && or ||
+            segments.append("".join(buf))
+            buf = []
+            i += 2
+            continue
+        if ch in (";", "|", "&", "\n"):  # single-char operators
+            segments.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    segments.append("".join(buf))
+    return segments
+
+
 def _subcommand_after_git(tokens: list[str]) -> str | None:
     """Given argv whose ``tokens[0]`` is a git binary, return its subcommand or None.
 
@@ -194,7 +251,7 @@ def classify_command(cmd: str) -> set[str]:
         # but only when the raw text mentions `git` at all: if it never does, no push/commit
         # can hide in the eaten region, so set() is provably safe and skips an idle scan.
         return set(SUBCOMMANDS_OF_INTEREST) if "git" in cmd else set()
-    for segment in _SPLIT_RE.split(stripped):
+    for segment in _split_on_unquoted_operators(stripped):
         seg = segment.strip()
         if not seg:
             continue
