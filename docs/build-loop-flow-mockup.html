@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "01b2350be3dd9decb93e9f3fa4d04223a178041058b43ccb9a62a54f75a3b2b9"
+    "content_sha256": "2c20471bb665105cab6ca17d61476c60ee7ad5730fb08cfdbf3f4ba4d74f6cec"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1456,6 +1456,14 @@
           "date": "2026-06-04"
         }
       },
+      "cost-rca": {
+        "description": "Use for structured cost-impact root-cause analysis — quantify what a context/caching/model change did to token spend and dollars. Reads MEASURED tokens from the cost ledger (never estimates), splits inbound/outbound + cache-read/cache-write, computes context-window utilization, then prices each bucket against the CURRENT rate card fetched LIVE (never from memory). Triggers on \"tokens saved\", \"cache impact\", \"cost of…",
+        "file": "skills/cost-rca/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
+        }
+      },
       "data-plane-worktrees": {
         "description": "\"Use when a Build Loop run or Git worktree touches mutable non-Git state: SQLite or file-backed databases, PostgreSQL databases/schemas and migrations, generated search/vector indexes, Docker volumes or service projects, mutable file trees, caches that cannot be rebuilt safely, or external cloud/account namespaces. Inventories each surface, selects per-worktree, shared-readonly, shared-serialized, or external-namesp…",
         "file": "skills/data-plane-worktrees/SKILL.md",
@@ -1789,6 +1797,7 @@
       "scripts/coordination_status.py": "Summarize Build Loop coordination state without spending LLM tokens.",
       "scripts/coordination_watch.py": "Compatibility wrapper for the embedded agent-rally-watcher namespace.\"\"\"",
       "scripts/cost_ledger_hook.py": "Stop-hook producer for the per-dispatch cost ledger.",
+      "scripts/cost_rca.py": "cost_rca.py — deterministic measured-token aggregation for cost-impact RCA.",
       "scripts/credential_preflight.py": "Credential preflight for build-loop Phase 1.",
       "scripts/data_plane.py": "Run-scoped data-plane manifests for Build Loop worktree isolation.",
       "scripts/db.py": "psycopg-based DB helper for repo-local episodic memory scripts.",
