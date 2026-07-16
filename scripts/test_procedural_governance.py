@@ -22,6 +22,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "procedural_governance.py"
+sys.path.insert(0, str(HERE))
 
 
 def _make_procedure(workdir: Path, name: str, depends_on: list[dict] | None = None) -> Path:
@@ -89,6 +90,41 @@ class ProceduralGovernanceTests(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0]["incident_count"], 3)
         self.assertEqual(lines[0]["root_cause"], "auth-token-mismatch")
+
+    def test_detect_patterns_clusters_nested_phase_root_cause(self) -> None:
+        # f1: no production writer emits a TOP-LEVEL root_cause; the failing
+        # phase records it under phases[N].root_cause (canonical Review-G schema).
+        # The clusterer must harvest that nested field.
+        runs = [
+            {
+                "run_id": f"r-{i}",
+                "outcome": "fail",
+                "phases": {
+                    "3": {"status": "pass"},
+                    "4": {"status": "fail", "root_cause": "db-connection-timeout"},
+                },
+            }
+            for i in range(3)
+        ]
+        _make_state_json(self.workdir, runs)
+        r = run_gov(self.workdir, "detect-patterns")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        cand_path = self.workdir / ".procedural" / "_candidates.jsonl"
+        self.assertTrue(cand_path.exists())
+        lines = [json.loads(l) for l in cand_path.read_text().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["root_cause"], "db-connection-timeout")
+        self.assertEqual(lines[0]["incident_count"], 3)
+
+    def test_cluster_dedupes_top_and_phase_same_cause_per_run(self) -> None:
+        # A cause present at BOTH levels of one run is one incident, not two.
+        import procedural_governance as pg
+        runs = [
+            {"run_id": "r-1", "root_cause": "flaky-oracle",
+             "phases": {"4": {"status": "fail", "root_cause": "flaky-oracle"}}}
+        ]
+        clusters = pg.cluster_root_causes(runs)
+        self.assertEqual(clusters["flaky-oracle"], ["r-1"])
 
     def test_detect_patterns_below_threshold_writes_nothing(self) -> None:
         runs = [{"run_id": "r-1", "outcome": "fail", "root_cause": "rare"}]

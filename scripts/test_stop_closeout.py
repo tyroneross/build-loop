@@ -650,16 +650,101 @@ def test_learn_not_owed_below_run_floor(tmp_path):
 
 
 def test_learn_owed_clears_when_experimental_draft_present(tmp_path):
-    # Same recurring pattern, but a draft already exists → owed clears (the
-    # "handled" signal, mirroring the retro/lessons artifact checks).
+    # Same recurring pattern, and a draft NAMED FOR THAT PATTERN exists → owed
+    # clears (the per-pattern "handled" signal). The draft dir name must join to
+    # the candidate slug (slug("widget-crash") == "widget-crash"); mere directory
+    # presence no longer clears owed (f2).
     _write_state(tmp_path, _base_state(runs=_pattern_runs()))
-    draft = tmp_path / ".build-loop" / "skills" / "experimental" / "some-draft"
+    draft = tmp_path / ".build-loop" / "skills" / "experimental" / "widget-crash"
     draft.mkdir(parents=True)
     (draft / "SKILL.md").write_text("x")
     stop_closeout.run_stop(tmp_path, SESSION)
     marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
     assert "learn_drafting_owed: false" in marker
-    assert "draft(s) already present" in marker
+    assert "draft present for each" in marker
+
+
+def test_stale_draft_for_other_pattern_does_not_suppress_new_pattern(tmp_path):
+    # f2 core: a draft for pattern A must NOT clear owed for an undrafted pattern
+    # B. Only "widget-crash" is drafted; "db-timeout" (3 runs) stays owed.
+    runs = _pattern_runs("widget-crash") + _pattern_runs("db-timeout")
+    _write_state(tmp_path, _base_state(runs=runs))
+    drafted = tmp_path / ".build-loop" / "skills" / "experimental" / "widget-crash"
+    drafted.mkdir(parents=True)
+    (drafted / "SKILL.md").write_text("x")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: true" in marker
+    assert "1 of 2" in marker  # one of two patterns still undrafted
+
+
+def test_ds_store_only_experimental_dir_does_not_clear_owed(tmp_path):
+    # f2: a lone .DS_Store (non-directory) in skills/experimental must NOT clear
+    # owed when a real undrafted pattern exists.
+    _write_state(tmp_path, _base_state(runs=_pattern_runs()))
+    exp = tmp_path / ".build-loop" / "skills" / "experimental"
+    exp.mkdir(parents=True)
+    (exp / ".DS_Store").write_text("junk")
+    stop_closeout.run_stop(tmp_path, SESSION)
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: true" in marker
+
+
+def test_cluster_under_threshold_at_run_floor_not_owed(tmp_path):
+    # >= run floor (3 runs) but no single root_cause reaches PATTERN_THRESHOLD
+    # (3 distinct causes, count 1 each) → no pattern owed.
+    runs = [
+        {"run_id": f"bl-seed-{i}", "root_cause": f"cause-{i}", "outcome": "done"}
+        for i in range(3)
+    ]
+    _write_state(tmp_path, _base_state(runs=runs))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: false" in marker
+    assert "0 patterns above threshold" in marker
+
+
+def test_pattern_is_drafted_boundary_anchored_not_substring(tmp_path):
+    # f2 match is boundary-anchored: a short slug must NOT be false-cleared by an
+    # unrelated draft that merely contains it mid-name (auditor finding f1-obs).
+    fn = stop_closeout._pattern_is_drafted
+    # legitimate tolerances clear owed:
+    assert fn("widget-crash", {"widget-crash"})            # exact
+    assert fn("widget-crash", {"widget-crash-v2"})         # <slug>-suffix
+    assert fn("widget-crash", {"exp-widget-crash"})        # prefix-<slug>
+    # mid-name / unrelated containment must NOT clear owed:
+    assert not fn("db", {"database-migration"})            # not a hyphen boundary
+    assert not fn("crash", {"widget-crash-handler"})       # mid-name occurrence
+    assert not fn("widget", {"some-widgets"})              # partial token
+
+
+def test_candidates_persist_to_procedural_after_stop_record(tmp_path):
+    # The Stop path runs the deterministic detector arm (pg.detect_patterns),
+    # which persists a candidate row to .procedural/_candidates.jsonl for the
+    # recurring pattern → /self-improve can later draft from it.
+    _write_state(tmp_path, _base_state(runs=_pattern_runs()))
+    stop_closeout.run_stop(tmp_path, SESSION)
+    cand = tmp_path / ".procedural" / "_candidates.jsonl"
+    assert cand.exists()
+    rows = [json.loads(l) for l in cand.read_text().splitlines() if l.strip()]
+    assert any(r.get("root_cause") == "widget-crash" and r.get("incident_count") == 3 for r in rows)
+
+
+def test_raising_detector_fails_open_stop_survives(tmp_path, monkeypatch):
+    # A raising detector must not break the Stop, and must not falsely satisfy
+    # closeout: learn falls to not-owed (detector-unavailable) while retro/lessons
+    # keep closeout_incomplete true.
+    import procedural_governance
+    def _boom(*a, **k):
+        raise RuntimeError("detector exploded")
+    monkeypatch.setattr(procedural_governance, "detect_patterns", _boom)
+    _write_state(tmp_path, _base_state(runs=_pattern_runs()))
+    out = stop_closeout.run_stop(tmp_path, SESSION)  # must not raise
+    marker = (tmp_path / ".build-loop" / "closeout-pending" / "bl-test-001.md").read_text()
+    assert "learn_drafting_owed: false" in marker
+    assert "detector-unavailable" in marker
+    assert "closeout_incomplete: true" in marker  # retro + lessons still owed
+    assert isinstance(out, dict)
 
 
 # --- branch ownership survives terminal identity release -------------------

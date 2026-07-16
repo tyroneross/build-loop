@@ -67,14 +67,34 @@ def load_runs(workdir: Path) -> list[dict]:
 
 
 def cluster_root_causes(runs: list[dict]) -> dict[str, list[str]]:
-    """Group run_ids by root_cause. Skip runs with no/empty root_cause."""
+    """Group run_ids by root_cause, harvesting BOTH levels of the schema.
+
+    Two sources per run: the TOP-LEVEL ``root_cause`` and every
+    ``phases[*].root_cause`` (the canonical Review-G run schema —
+    ``skills/self-improve/SKILL.md``: ``phases: {"N": {status, duration_s,
+    root_cause}}``). No production writer emits a top-level ``root_cause``, so
+    clustering on it alone left the detector dormant on its own target path; a
+    failing phase records its cause in the nested field, and that is where the
+    clusterable signal actually lives. A run contributes its id at most once per
+    distinct cause (a cause repeated across top-level + phases is one incident).
+    Runs with no non-empty ``root_cause`` at any level are skipped.
+    """
     out: dict[str, list[str]] = {}
     for r in runs:
-        rc = (r.get("root_cause") or "").strip()
-        if not rc:
-            continue
-        rid = r.get("run_id") or r.get("id") or ""
-        out.setdefault(rc, []).append(str(rid))
+        rid = str(r.get("run_id") or r.get("id") or "")
+        causes: list[str] = []
+        top = r.get("root_cause")
+        if isinstance(top, str) and top.strip():
+            causes.append(top.strip())
+        phases = r.get("phases")
+        if isinstance(phases, dict):
+            for ph in phases.values():
+                if isinstance(ph, dict):
+                    pc = ph.get("root_cause")
+                    if isinstance(pc, str) and pc.strip():
+                        causes.append(pc.strip())
+        for rc in dict.fromkeys(causes):  # dedupe per run, preserve order
+            out.setdefault(rc, []).append(rid)
     return out
 
 

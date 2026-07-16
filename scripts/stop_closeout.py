@@ -332,6 +332,36 @@ def decide(workdir: Path, state: dict, session_id: str, now: datetime) -> dict:
     }
 
 
+def _derive_root_cause(state: dict) -> str:
+    """Best-effort ``root_cause`` for a Stop-recorded inline run.
+
+    An inline run never reaches Review-G, so its recurring failures were never
+    clusterable (``procedural_governance.cluster_root_causes`` found no cause at
+    any level). A Stop hook has no per-phase failure ledger, but when the
+    orchestrator left a per-phase note in ``state.phases[*]`` (canonical schema
+    ``{status, root_cause}``), harvest the LAST non-passing phase's
+    ``root_cause`` (or ``note``) so the run carries a clusterable signal. Absent
+    any such note, return '' — an inline run with no recorded failure signal
+    honestly contributes no cluster. Fail-open: any error -> ''.
+    """
+    try:
+        phases = state.get("phases")
+        found = ""
+        if isinstance(phases, dict):
+            for ph in phases.values():
+                if not isinstance(ph, dict):
+                    continue
+                status = str(ph.get("status") or "").lower()
+                if "pass" in status:
+                    continue
+                cause = ph.get("root_cause") or ph.get("note") or ""
+                if isinstance(cause, str) and cause.strip():
+                    found = cause.strip()
+        return found[:300]
+    except Exception:  # noqa: BLE001 — root-cause derivation is best-effort
+        return ""
+
+
 def _stakes_extra(state: dict) -> dict:
     """Propagate this run's stakes signal + a FLOOR auditor_status into the record.
 
@@ -361,6 +391,14 @@ def _stakes_extra(state: dict) -> dict:
     extra["auditor_status"] = "not-run:parent-must-dispatch"
     # advisor_status deliberately left unset: the gate only flags the advisor when
     # advisor_status is non-null, and a Stop hook has no advisor signal to assert.
+
+    # f1: carry a clusterable root_cause when the run left a per-phase failure
+    # note, so an inline run's recurring failures reach cluster_root_causes (which
+    # otherwise found nothing at any level for Stop-recorded runs). Only set when
+    # non-empty — an empty root_cause is skipped by the clusterer anyway.
+    rc = _derive_root_cause(state)
+    if rc:
+        extra["root_cause"] = rc
     return extra
 
 
@@ -429,6 +467,44 @@ def _lessons_artifact_exists(workdir: Path) -> bool:
 _LEARN_RUN_FLOOR = 3  # phase-6-learn.md: `runs[] >= 3` is the Full-Learn threshold.
 
 
+def _drafted_pattern_dirs(exp: Path) -> set[str]:
+    """Names of experimental-draft DIRECTORIES under ``skills/experimental``.
+
+    f2: filter non-directory entries so a stray metadata file (``.DS_Store``)
+    cannot masquerade as a draft and falsely clear owed. Each real experimental
+    skill is authored as its own directory (``<name>/SKILL.md``)."""
+    if not exp.is_dir():
+        return set()
+    try:
+        return {p.name for p in exp.iterdir() if p.is_dir()}
+    except OSError:
+        return set()
+
+
+def _pattern_is_drafted(pattern_slug: str, drafted_dirs: set[str]) -> bool:
+    """Whether one recurring pattern already has an experimental draft.
+
+    The self-improvement-architect drafts each experimental skill FROM a
+    candidate whose ``name`` is ``procedural_governance.slug(root_cause)``
+    (``detect_patterns``), so the candidate slug is the reliable join key against
+    the draft directory name — NOT directory non-emptiness, which let a stale
+    draft for pattern A suppress a brand-new pattern B forever. Match is
+    BOUNDARY-ANCHORED: exact equality, or the FULL slug as a hyphen-delimited
+    prefix (``<slug>-v2``) / suffix (``exp-<slug>``). A bare substring match is
+    deliberately NOT used — it false-clears (hides undrafted work) when a short
+    slug appears mid-name in an unrelated draft, the opposite of f2's required
+    'err toward owed' bias. No match -> NOT drafted -> the pattern stays owed:
+    the safe direction surfaces a reminder rather than silently hiding work."""
+    if not pattern_slug:
+        return False
+    return any(
+        name == pattern_slug
+        or name.startswith(pattern_slug + "-")
+        or name.endswith("-" + pattern_slug)
+        for name in drafted_dirs
+    )
+
+
 def _learn_drafting_owed(workdir: Path) -> tuple[bool, str]:
     """Whether Phase-6 Learn DRAFTING is owed for this inline run.
 
@@ -458,10 +534,18 @@ def _learn_drafting_owed(workdir: Path) -> tuple[bool, str]:
         patterns = [rc for rc, ids in clusters.items() if len(ids) >= pg.PATTERN_THRESHOLD]
         if not patterns:
             return False, f"0 patterns above threshold ({len(runs)} runs scanned)"
+        # f2: clear owed PER PATTERN, not on directory non-emptiness. A draft for
+        # pattern A must not suppress an undrafted pattern B, and a lone .DS_Store
+        # must not clear owed.
         exp = workdir / ".build-loop" / "skills" / "experimental"
-        if exp.is_dir() and any(exp.iterdir()):
-            return False, f"{len(patterns)} pattern(s) above threshold — experimental draft(s) already present"
-        return True, f"{len(patterns)} recurring root-cause pattern(s) above threshold across {len(runs)} runs; no experimental draft yet"
+        drafted_dirs = _drafted_pattern_dirs(exp)
+        undrafted = [rc for rc in patterns if not _pattern_is_drafted(pg.slug(rc), drafted_dirs)]
+        if not undrafted:
+            return False, f"{len(patterns)} pattern(s) above threshold — experimental draft present for each"
+        return True, (
+            f"{len(undrafted)} of {len(patterns)} recurring root-cause pattern(s) "
+            f"above threshold across {len(runs)} runs have no experimental draft yet"
+        )
     except Exception:  # noqa: BLE001 — Learn detection is best-effort; never break Stop
         return False, "detector-unavailable"
 
