@@ -196,6 +196,25 @@ def main() -> int:
             sys.stderr.write(_format_block_message(verdict))
             return int(verdict.get("exit_code") or 1)
 
+        # --- STAGE 1.5: dist auto-rebuild gate (composes with stage 1) ---
+        # Keeps the committed ``dist/`` (tsc output of ``src/*.ts``) in sync so the
+        # recurring manual ``build: rebuild dist`` commit is automatic. On a stale
+        # dist it rebuilds + auto-commits, then BLOCKS so the operator re-pushes WITH
+        # the fresh output. Fails OPEN on any tooling error (a broken build tool must
+        # never wedge a push — correctness is stage 2's job, not this artifact gate).
+        try:
+            import prepush_dist_gate  # type: ignore
+
+            dist_verdict = prepush_dist_gate.evaluate(repo, stdin_lines, env=os.environ)
+            if dist_verdict.get("action") == "block":
+                sys.stderr.write(prepush_dist_gate.format_block_message(dist_verdict))
+                return int(dist_verdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — dist-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] dist gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
         # --- STAGE 2: deterministic TEST gate (composes with stage 1) ---
         # Runs the fast deterministic gate subset (the integration-gate class CI
         # also runs) and BLOCKS the push on a real failure.  Import + evaluate are

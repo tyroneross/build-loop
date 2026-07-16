@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c5d59edd1ddde07a5f15d26a824abbba07e883b537e3dd26c296e6061296cdbd"
+    "content_sha256": "afc3431486cad72913b785b095c0a12c38684089f5ec1dab6bd181a972702e6c"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1803,6 +1803,7 @@
       "scripts/dispatch_fallback.py": "Dispatch-time fallback helper — record a model outage and re-resolve.",
       "scripts/dispatch_identity.py": "Generate and validate build-loop dispatch task ids.",
       "scripts/dogfood_reload_checkpoint.py": "Dogfood reload checkpoint helper.\"\"\"",
+      "scripts/drain_proposals.py": "drain_proposals.py — cross-repo proposal-drain gate (the multiplier).",
       "scripts/embed_backend.py": "Embedding backend abstraction for repo-local episodic memory.",
       "scripts/embed_daemon.py": "Long-running embedder daemon (Phase H).",
       "scripts/enforce_canonical_memory.py": "enforce_canonical_memory.py — C-MEMORY/canonical_writer enforcement gate.",
@@ -1896,6 +1897,7 @@
       "scripts/parallelism.py": "",
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
+      "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
       "scripts/prior_art.py": "Cross-project prior-art digest for Phase 1 Assess (P4).",
       "scripts/privacy.py": "privacy.py — reusable secret/PII deny-pattern scanner.",
