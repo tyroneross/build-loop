@@ -215,6 +215,25 @@ def main() -> int:
                 f"allowing push: {exc!r}\n"
             )
 
+        # --- STAGE 1.6: BLOCKING judgment gate for self-modifying pushes ---
+        # Closes learn-gates-01: the Stop-hook judgment check can only WARN, so a
+        # stakes-gated self-mod run with a skipped Frontier layer could still reach
+        # origin. This blocks such a push. Scoped to build-loop's own enforcement
+        # surface + attributed to THIS run (temporal_membership) so it never wedges
+        # an ordinary push. Fails OPEN on any internal error.
+        try:
+            import prepush_judgment_gate  # type: ignore
+
+            jverdict = prepush_judgment_gate.evaluate(repo, stdin_lines, env=os.environ)
+            if jverdict.get("action") == "block":
+                sys.stderr.write(prepush_judgment_gate.format_block_message(jverdict))
+                return int(jverdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — judgment-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] judgment gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
         # --- STAGE 2: deterministic TEST gate (composes with stage 1) ---
         # Runs the fast deterministic gate subset (the integration-gate class CI
         # also runs) and BLOCKS the push on a real failure.  Import + evaluate are
