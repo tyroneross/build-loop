@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2345ff19fd0805d921c44f4dfb19fb678e23f1b78b76b807f2a28cd77a6cea55"
+    "content_sha256": "91bf19ffa3ba32748f37e08879109d2a046a470cfb6de377fbfa27249abb6e81"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-13"
+          "date": "2026-07-16"
         }
       },
       "database-assessor": {
@@ -1676,6 +1676,7 @@
       "scripts/optimize_loop.py": "optimize_loop.py — Core loop mechanics for the build-loop optimize skill.",
       "scripts/optimize_suggest_factors.py": "Scan a repo for tunable parameters that could be DOE factors.",
       "scripts/orchestrator_heartbeat.py": "orchestrator_heartbeat.py — one fail-open beat: state liveness + rally presence.",
+      "scripts/outcome_reconcile.py": "outcome_reconcile.py — never stamp a SHIPPED run as fail (Item 3 part B).",
       "scripts/parallelism.py": "",
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",

@@ -90,6 +90,26 @@ def build_record(args: argparse.Namespace, workdir: Path) -> dict:
             for k in _IMMUTABLE:
                 extra.pop(k, None)  # identity fields are not overridable
             record.update(extra)
+    # Item 3B: never stamp a SHIPPED run as fail. Reconcile the proposed outcome
+    # against ground truth (git merge state + auditor verdict + Rally facts) BEFORE
+    # the record is validated/written. A crash-orphaned run whose work actually
+    # merged would otherwise poison Phase 6 Learn with a false-negative fail.
+    if record.get("outcome") == "fail":
+        try:
+            import outcome_reconcile  # noqa: WPS433 (deferred; fail-open if absent)
+
+            rec = outcome_reconcile.reconcile(
+                workdir, "fail", record, run_id=record.get("run_id"))
+            if rec.get("changed"):
+                record["outcome"] = rec["outcome"]
+                record["outcome_reconciled"] = {
+                    "proposed": "fail",
+                    "final": rec["outcome"],
+                    "reason": rec.get("reason"),
+                    "evidence": rec.get("evidence"),
+                }
+        except Exception:  # noqa: BLE001 — reconciliation must never break the write
+            pass
     if validate_entry is not None:
         validate_entry(record)  # raises on a non-canonical record
     return record
