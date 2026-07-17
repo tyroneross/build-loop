@@ -14,7 +14,7 @@ description: |
   user: "Promote this experiment"
   assistant: "I'll run promotion-reviewer first to surface any policy variances, then present the verdict + diff for user confirmation."
   </example>
-model: opus
+model: fable
 tier: thinking
 segment: governance_evaluation
 color: purple

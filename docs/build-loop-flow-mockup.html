@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "5946740036a37425c522ededf5b1086e562ba1298b049051794b84b515f15dfa"
+    "content_sha256": "eac90af88b27455639e20650e50130237f49c74567add8711498154e991b6a80"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -425,7 +425,7 @@
         ],
         [
           "scope-auditor",
-          "opus",
+          "fable",
           "Orchestrator"
         ],
         [
@@ -485,7 +485,7 @@
             ],
             [
               "scope-auditor",
-              "opus",
+              "fable",
               "Orchestrator"
             ]
           ]
@@ -636,7 +636,7 @@
         ],
         [
           "fact-checker",
-          "opus",
+          "fable",
           "Orchestrator"
         ],
         [
@@ -694,7 +694,7 @@
           "agents": [
             [
               "fact-checker",
-              "opus",
+              "fable",
               "Orchestrator"
             ],
             [
@@ -879,7 +879,7 @@
         ],
         [
           "promotion-reviewer",
-          "opus",
+          "fable",
           "Orchestrator"
         ],
         [
@@ -927,7 +927,7 @@
           "agents": [
             [
               "promotion-reviewer",
-              "opus",
+              "fable",
               "Orchestrator"
             ]
           ],
@@ -1125,7 +1125,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-16"
+          "date": "2026-07-17"
         }
       },
       "database-assessor": {
@@ -1147,7 +1147,7 @@
         }
       },
       "fact-checker": {
-        "model": "opus",
+        "model": "fable",
         "description": "Validates all rendered data, claims, and metrics before completion. Traces data sources to prevent false or unverifiable information reaching users.",
         "file": "agents/fact-checker.md",
         "last_updated": {
@@ -1156,7 +1156,7 @@
         }
       },
       "fix-critique": {
-        "model": "opus",
+        "model": "fable",
         "description": "Use this agent to pressure-test a proposed fix before declaring a bug resolved. Challenges whether the fix addresses the root cause or just a symptom, checks for potential regressions, and verifies evidence exists for the claimed fix. Run after a fix is implemented but before declaring it done.",
         "file": "agents/fix-critique.md",
         "last_updated": {
@@ -1219,7 +1219,7 @@
         }
       },
       "overfitting-reviewer": {
-        "model": "opus",
+        "model": "fable",
         "description": "Reviews optimization results for overfitting, Goodhart violations, and test-gaming shortcuts. Read-only adversarial review.",
         "file": "agents/overfitting-reviewer.md",
         "last_updated": {
@@ -1246,7 +1246,7 @@
         }
       },
       "promotion-reviewer": {
-        "model": "opus",
+        "model": "fable",
         "description": "Advisory judge for Phase 6 Learn experimental-artifact promotion. Reads a candidate experimental skill or agent (drafted by `self-improvement-architect`), its A/B track record, and the build-loop constitution, then returns a variance-shaped verdict (`approve | rethink | new_approach`). Never blocks — orchestrator policy still requires async user confirmation on the move from `experimental/` to `active/` per the irre…",
         "file": "agents/promotion-reviewer.md",
         "last_updated": {
@@ -1282,7 +1282,7 @@
         }
       },
       "scope-auditor": {
-        "model": "opus",
+        "model": "fable",
         "description": "Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the \"fan-out scope-blindness\" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-0…",
         "file": "agents/scope-auditor.md",
         "last_updated": {
@@ -1446,7 +1446,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-13"
+          "date": "2026-07-17"
         }
       },
       "building-with-deepagents": {

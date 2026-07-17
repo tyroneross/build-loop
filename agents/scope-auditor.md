@@ -1,7 +1,7 @@
 ---
 name: scope-auditor
 description: Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the "fan-out scope-blindness" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-07).
-model: opus
+model: fable
 tier: thinking
 segment: governance_evaluation
 tools: ["Read", "Grep", "Glob"]

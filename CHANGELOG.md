@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- Verification-verdict agents (`fix-critique`, `fact-checker`, `overfitting-reviewer`, `promotion-reviewer`, `scope-auditor`) repinned `model: opus` → `model: fable`, closing the drift against the standing model org (2026-06-09: Fable owns verification verdicts). Orchestrators stay Opus; execution stays Sonnet; pattern scanners stay Haiku.
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
 - Repository artifact audits now discover nested caches recursively, protect canonical build roots by default, distinguish distributable release artifacts from ordinary build products, and surface live processes that reference already-removed artifact roots.
 
