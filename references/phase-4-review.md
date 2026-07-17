@@ -10,6 +10,19 @@ Extracted from `agents/build-orchestrator.md` §"Phase 4: Review (sub-steps A–
 
 After independent-auditor returns, dispatch `Agent(subagent_type="build-loop:design-contract-specialist", prompt='trigger_point: phase4-review-a')` once per build with the aggregate of all chunks' `design_doc_delta` + `schema_delta` envelopes. Specialist writes the build-wide app-contract update; its `violations_found[]` flow into the Phase 4 Report alongside independent-auditor's findings.
 
+**Owed-verification manifest (GAP-1 made mechanical — MANDATORY on the parent-must-dispatch rung).** The auditor dispatch ladder above records `auditor_status`, but a nested orchestrator with no Agent tool can only reach `not-run:parent-must-dispatch` — and prose alone never forced the dispatching parent to actually run the owed verifier. When the ladder lands on `not-run:parent-must-dispatch` or `cross-vendor-deferred` for `independent-auditor`, OR `plan-critic` / `security-reviewer` (when `triggers.riskSurfaceChange`) were un-run for the same no-Agent-tool reason, write the manifest:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/owed_verification.py" write \
+  --workdir "$PWD" \
+  --run-id "<run_id>" \
+  --diff-range "<pre_build_sha>..HEAD" \
+  --owe independent-auditor [--owe plan-critic] [--owe security-reviewer] \
+  --json
+```
+
+This writes `.build-loop/owed-verification.json` — the owed verifier list plus the exact `Agent(...)` dispatch command the parent must issue per verifier — and flips `state.json.review_incomplete = true`. The manifest is the machine-checkable substitute for the parent remembering. The dispatching parent (which HAS the Agent tool) reads the manifest, dispatches each owed verifier, appends its verdict to `.build-loop/judge-decisions.json`, then `owed_verification.py clear --verifier <name>` (or `--all`); clearing the last owed verifier removes the manifest and flips `review_incomplete` back to `false`. Colocated helper + tests: `scripts/owed_verification.py` / `scripts/test_owed_verification.py`.
+
 ## Sub-step B — Validate (routing detail)
 
 UI-validator-first when `uiTarget != null` (see `agents/ui-validator.md`); UI input/output contract check; code graders; runtime smoke gate (`scripts/runtime_smoke.py` + SSE-specific contract gate when server module touched); **pytest-collection gate (`scripts/pytest_collect_gate.py` — full-suite-load check, every run on Python-bearing repos; `fail` routes to Iterate with the broken import as the rubric; closes the changed-area-only blindspot)**; LLM-as-judge; plugin-tests advisory; memory-first gate on every failure. Full procedural detail in `references/phase-gate-checklist.md` §"Sub-step B — Validate".
@@ -33,6 +46,8 @@ Only when a mechanical metric exists. See `references/phase-gate-checklist.md` �
 ## Sub-step G — Report (final pass only)
 
 Scorecard, debugger outcomes, episodic memory capture, deployment policy gate, post-deploy verification gate (below). The blocking **no-critical/high exit gate** (`review_finding_gate.py` — any open `critical`/`high` without closure routes back to Phase 5 Iterate), the **report-section spec** (`## Done`/`## Held`/`## Blocked`/`## Status markers` + evidence contract + `build_report_lint.py` + forbidden patterns), and **auto-version-bump** are documented in `references/phase-gate-checklist.md` §"Sub-step G — Report (final pass only)" — execute them from there; do not re-derive their procedures here.
+
+**`## PARENT MUST DISPATCH` block (MANDATORY when the owed-verification manifest is present — GAP-1).** Before assembling the report, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/owed_verification.py" check --workdir "$PWD" --json`. On `status: incomplete` (exit 1) the review is NOT complete — a nested orchestrator wrote owed verifiers to `.build-loop/owed-verification.json` at Sub-step A. Emit a prominent, non-optional `## PARENT MUST DISPATCH` section (its own top-level header, never folded into `## Held` or a soft note): one row per owed verifier with the manifest's `dispatch_commands[verifier]` verbatim, plus the line "run status is `review_incomplete: true` until every owed verifier returns and is cleared." Set the run `outcome: partial` (never `pass`) while the manifest is incomplete. The dispatching parent dispatches each owed verifier, appends the verdict to `.build-loop/judge-decisions.json`, `clear`s it (`owed_verification.py clear --verifier <name>`), and re-runs `write_run_entry --scope build`; the last `clear` removes the manifest and flips `review_incomplete` to `false`. On `status: complete`/`absent` (exit 0) omit the block entirely. This is the mechanical enforcement of the Sub-step A parent-dispatch contract — the manifest cannot be silently skipped because `check` is a gate, not a memory.
 
 **Flagged-issue disposition gate (no bare flags).** Every open finding surfaced during the run MUST be DISPOSITIONED in the report, never merely listed with a "want me to?" question. Route by where the issue lives (full policy: `references/keep-going-policy.md` §"Flagged-issue default route"): build-loop's OWN repo → fixed (self-heal/iterate, cite the commit); ANY OTHER repo → filed on the Operations Center queue via `scripts/file_to_operations_center.py` (cite the returned task id, or surface the intake blocker if the CLI is unavailable); PRODUCTION-class/ambiguous → surfaced under `## Held`/`## Blocked`. A cross-repo finding left as prose is a workflow violation.
 
