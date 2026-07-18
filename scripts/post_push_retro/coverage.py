@@ -217,9 +217,9 @@ def _files_for_commits(repo: Path, commits: list[str]) -> list[str]:
     if not commits:
         return []
     files: dict[str, None] = {}
-    # One diff per commit vs its first parent; robust for merges via --name-only.
-    for sha in commits[:200]:  # bound work; huge unions are already "substantial"
-        out = _git(repo, "show", "--no-patch", "--pretty=format:", sha)  # touch objectdb
+    # Files touched per commit; robust for merges via --name-only. Bounded to 200
+    # commits — a union that large is already classified "substantial".
+    for sha in commits[:200]:
         names = _git(repo, "show", "--name-only", "--pretty=format:", sha)
         for line in names.splitlines():
             line = line.strip()
