@@ -79,8 +79,14 @@ RETRO_DRAIN="${CLOSEOUT_LOG_DIR}/retro-drain-$(date -u +%Y%m%dT%H%M%SZ).json"
     2>/dev/null \
     >"$RETRO_DRAIN" \
     || true
-# Drop the drain log unless it recorded real work (keep the dir clean).
-if [ ! -s "$RETRO_DRAIN" ] || ! grep -q '"reran_batons": \[{' "$RETRO_DRAIN" 2>/dev/null && ! grep -q '"escalated": true' "$RETRO_DRAIN" 2>/dev/null; then
+# The drain emits a machine-checkable `"did_work": true` + a one-line `summary`.
+# When work happened, ECHO the summary to stdout (SessionStart's injection
+# surface, same as the sibling closeout step) so the in-context agent sees a
+# pending upgrade / re-filed witness this turn; keep the log. Otherwise drop it.
+if [ -s "$RETRO_DRAIN" ] && grep -q '"did_work": true' "$RETRO_DRAIN" 2>/dev/null; then
+    "$_py" -c "import json,sys; print(json.load(open(sys.argv[1])).get('summary',''))" \
+        "$RETRO_DRAIN" 2>/dev/null || true
+else
     rm -f "$RETRO_DRAIN" 2>/dev/null || true
 fi
 

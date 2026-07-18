@@ -179,6 +179,59 @@ def test_drain_fresh_upgrade_surfaced_not_escalated(tmp_path):
     assert (state / "upgrade.json").exists()  # left for the in-context agent
 
 
+def test_drain_delivers_failed_witness(tmp_path, monkeypatch):
+    # auditor f2: a durable failed/ witness must be DELIVERED (re-filed) by the
+    # drain, not left unread in .git/. CLI back up => marker re-filed + deleted.
+    repo = tmp_path / "r"
+    _init(repo)
+    _commit(repo, "a.py")
+    marker = fallback.failed_dir(repo) / "retro-failed-20200101T000000Z.json"
+    marker.write_text(json.dumps({"repo": "r", "ref_range": "a..b", "tier": "substantial",
+                                  "reason": "Fable down"}))
+    monkeypatch.setattr(fallback, "write", lambda *a, **k: {"filed": True, "witness": None})
+    out = m.cmd_drain(_ns(repo))
+    assert out["failed_witnesses"][0]["refiled"] is True
+    assert not marker.exists()               # delivered => removed
+    assert out["did_work"] is True
+    assert "witness" in out["summary"]
+
+
+def test_drain_keeps_witness_when_refile_still_fails(tmp_path, monkeypatch):
+    repo = tmp_path / "r"
+    _init(repo)
+    _commit(repo, "a.py")
+    marker = fallback.failed_dir(repo) / "retro-failed-20200101T000000Z.json"
+    marker.write_text(json.dumps({"ref_range": "a..b", "tier": "medium", "reason": "x"}))
+    monkeypatch.setattr(fallback, "write", lambda *a, **k: {"filed": False, "witness": None})
+    out = m.cmd_drain(_ns(repo))
+    assert out["failed_witnesses"][0]["refiled"] is False
+    assert marker.exists()                   # still failing => witness retained (no loss)
+
+
+def test_drain_did_work_false_and_summary_empty_when_idle(tmp_path):
+    repo = tmp_path / "r"
+    _init(repo)
+    _commit(repo, "a.py")
+    out = m.cmd_drain(_ns(repo))
+    assert out["did_work"] is False
+    assert out["summary"] == ""
+
+
+def test_drain_json_matches_shell_grep_contract(tmp_path, monkeypatch):
+    # auditor f3: the shell keep/surface condition greps '"did_work": true'.
+    # Lock that the emitted indent-2 JSON actually contains that exact substring
+    # when work happened (the old grep '"reran_batons": [{' never matched).
+    repo = tmp_path / "r"
+    _init(repo)
+    _commit(repo, "a.py")
+    marker = fallback.failed_dir(repo) / "retro-failed-20200101T000000Z.json"
+    marker.write_text(json.dumps({"ref_range": "a..b", "tier": "medium", "reason": "x"}))
+    monkeypatch.setattr(fallback, "write", lambda *a, **k: {"filed": True, "witness": None})
+    out = m.cmd_drain(_ns(repo))
+    emitted = json.dumps(out, indent=2, sort_keys=True)
+    assert '"did_work": true' in emitted  # exact substring the hook greps for
+
+
 def test_main_cli_run_exits_zero(tmp_path, monkeypatch):
     repo = tmp_path / "r"
     _init(repo)

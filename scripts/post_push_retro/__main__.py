@@ -94,12 +94,18 @@ def cmd_run(args) -> dict:
 
 
 def cmd_drain(args) -> dict:
-    """Session-start durable fallback (zero-LLM shell hook calls this)."""
+    """Session-start durable fallback (zero-LLM shell hook calls this).
+
+    Three responsibilities: re-run a stale baton, escalate a stale queued Fable
+    upgrade, and DELIVER any last-resort ``failed/`` witness (re-file it now that
+    the CLI may be back up) — without which the witness would sit in ``.git/``
+    read by no one (auditor f2). Emits ``did_work`` + a one-line ``summary`` the
+    shell surfaces to the session (auditor f3)."""
     repo = Path(args.workdir).resolve()
     cfg = _config.load(repo)
-    result: dict = {"reran_batons": [], "upgrade": None}
+    result: dict = {"reran_batons": [], "upgrade": None, "failed_witnesses": []}
     if not _config.is_enabled(cfg):
-        return {"skipped": "disabled_or_opted_out"}
+        return {"skipped": "disabled_or_opted_out", "did_work": False, "summary": ""}
 
     state_dir = _coverage.retro_state_dir(repo)
 
@@ -138,6 +144,47 @@ def cmd_drain(args) -> dict:
                                      "range": data.get("range_label"), "age_hours": age_h}
         except (json.JSONDecodeError, OSError) as exc:
             result["upgrade"] = {"error": str(exc)}
+
+    # 3. DELIVER last-resort failure witnesses: the CLI that failed at write time
+    #    may be back up now. Re-file each; delete the marker only on success (no
+    #    new witness written on a repeat failure — write_witness_on_fail=False).
+    for marker in sorted((_fallback.failed_dir(repo)).glob("retro-failed-*.json")):
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        receipt = _fallback.write(
+            repo, data.get("ref_range") or "", data.get("tier", "unknown"),
+            f"re-filed from local witness: {data.get('reason', '')}",
+            write_witness_on_fail=False)
+        entry = {"marker": marker.name, "refiled": bool(receipt.get("filed"))}
+        if receipt.get("filed"):
+            try:
+                marker.unlink()
+            except OSError:
+                pass
+        result["failed_witnesses"].append(entry)
+
+    return _with_summary(result)
+
+
+def _with_summary(result: dict) -> dict:
+    """Attach ``did_work`` + a one-line ``summary`` the shell surfaces to the
+    session (SessionStart stdout is the injection surface)."""
+    parts = []
+    if result["reran_batons"]:
+        parts.append(f"re-ran {len(result['reran_batons'])} stale retro baton(s)")
+    up = result.get("upgrade")
+    if isinstance(up, dict) and up.get("escalated"):
+        parts.append("escalated a stale Fable upgrade to the backlog/Ops fallback")
+    elif isinstance(up, dict) and up.get("pending"):
+        parts.append(f"a {up.get('tier')} Fable retro upgrade is PENDING (range {up.get('range')}) "
+                     "— run it via `/build-loop:run` retrospective when ready")
+    if result["failed_witnesses"]:
+        refiled = sum(1 for w in result["failed_witnesses"] if w["refiled"])
+        parts.append(f"re-filed {refiled}/{len(result['failed_witnesses'])} deferred-retro witness(es)")
+    result["did_work"] = bool(parts)
+    result["summary"] = "post-push retro drain: " + "; ".join(parts) if parts else ""
     return result
 
 

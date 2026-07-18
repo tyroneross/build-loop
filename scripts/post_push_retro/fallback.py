@@ -150,12 +150,15 @@ def write(
     *,
     focus_actions: list[str] | None = None,
     dry_run: bool = False,
+    write_witness_on_fail: bool = True,
     backlog_fn: Callable[..., dict] | None = None,
     ops_fn: Callable[..., dict] | None = None,
 ) -> dict[str, Any]:
     """File the deferred retro so it is NEVER silently lost. Returns a receipt
     ``{filed, route, detail, witness}``. On CLI failure, ``filed=false`` and a
-    durable local failure marker is written (``witness`` = its path)."""
+    durable local failure marker is written (``witness`` = its path) — unless
+    ``write_witness_on_fail`` is False (the drain re-file path, where a witness
+    already exists and re-writing would just multiply markers)."""
     repo = Path(repo)
     focus = focus_actions or _focus_actions(tier)
     name = repo_name(repo)
@@ -183,7 +186,7 @@ def write(
         filed = False
 
     witness = None
-    if not filed:
+    if not filed and write_witness_on_fail:
         witness = write_local_failure_marker(repo, {
             "repo": name, "ref_range": ref_range, "tier": tier, "reason": reason,
             "focus_actions": focus, "route_attempted": route, "cli_receipt": receipt,
