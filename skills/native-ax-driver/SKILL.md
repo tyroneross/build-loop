@@ -47,6 +47,8 @@ Actions exposed by `python3 scripts/native_driver.py action`:
 
 Element targeting uses an integer index path from the main window root (e.g. `0,2,1` = first child → third child → second child). The path is returned by every `scan` element under the `path` key, so the typical loop is `scan` → match by `identifier` / `title` → use that element's `path` for `action`.
 
+`python3 scripts/native_driver.py launch` is the deterministic launch + pid-capture step: it starts an isolated instance of a `.app`/bundle id and returns the new pid to scope every subsequent `scan`/`action` call to. See "Single-instance PID-scoped verification mode" below.
+
 ## Files in this skill
 
 ```
@@ -54,7 +56,8 @@ skills/native-ax-driver/
 ├─ SKILL.md                                 (this file)
 ├─ scripts/
 │  ├─ layout_fill.py                        (layout-fill / gap analyzer; stdlib only)
-│  └─ native_driver.py                      (Python launcher; stdlib only)
+│  ├─ native_driver.py                      (Python launcher; stdlib only)
+│  └─ test_native_driver.py                 (pure-helper tests; run with pytest)
 └─ swift/bl-ax-driver/
    ├─ Package.swift                         (Swift 5.9, macOS 13+)
    └─ Sources/main.swift                    (~535 LOC, AX implementation)
@@ -84,6 +87,36 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/native-ax-driver/scripts/native_driver.py p
 Exit codes: `0` AX granted · `2` AX missing · `1` osascript missing.
 
 If `2`, surface to Iterate as a blocker rather than retrying — the user has to grant permission once in System Settings; build-loop cannot do that itself.
+
+### Single-instance PID-scoped verification mode
+
+**This is the documented standard for native UI verification whenever other instances of the target app may be running — including the user's own.** Do not skip verification in that situation, and do not target by `--app <name>` — `--app` matches by substring against every running process's name, so it can resolve to (and drive) the user's window instead of the isolated one being verified.
+
+The Swift driver already scopes every AX call to one process: it resolves the target via `AXUIElementCreateApplication(pid)` (`swift/bl-ax-driver/Sources/main.swift:264`) and only ever walks that process's AX tree. `scan --pid <pid>` and `action --pid <pid>` were always safe to run alongside ambient instances — the missing piece was a deterministic way to launch a fresh, isolated instance and know for certain which pid is it. `launch` closes that gap:
+
+1. **Launch** an isolated instance under a private state dir, forcing a brand-new process (`open -n`) and (optionally) ignoring any saved window/scene state (`-F` via `--fresh`) so it never resumes into the user's prior session:
+
+   ```bash
+   python3 .../native_driver.py launch --app-path /Applications/MyApp.app \
+       --state-env-var ET_STATE_DIR --state-dir /tmp/myapp-verify-$$  --fresh
+   ```
+
+2. **Read the captured pid** from the JSON result — `launch` snapshots the running GUI pid set before launch and diffs it against the pid set after, so the returned pid is provably the new instance, never a guess. If the diff is ambiguous (zero or more than one new pid appeared), `success` is `false` and no pid is reported — treat that as a hard stop, not a fallback to name-matching:
+
+   ```json
+   {"success": true, "pid": 55210, "bundle_id": "com.example.myapp", "state_dir": "/tmp/myapp-verify-1234", "fresh": true, "error": null, "next": "drive AX scoped to this pid: native_driver.py scan --pid 55210 / action --pid 55210 ..."}
+   ```
+
+3. **Scan and drive using ONLY `--pid <captured>`** for the remainder of the verification pass — never `--app`:
+
+   ```bash
+   python3 .../native_driver.py scan --pid 55210
+   python3 .../native_driver.py action --pid 55210 --element-path 0,2,1 --action press
+   ```
+
+Because AX targeting is pid-scoped end-to-end, every action in step 3 is confined to the launched instance's AX tree — the user's other windows, and any other ambient instances of the same app, are never touched. This is safe to run with ambient instances live.
+
+`launch` flags: `--app-path` (path to a `.app`) or `--bundle-id` (mutually exclusive, one required); `--state-dir` + `--state-env-var` (set an env var to a private state directory before launch, e.g. an app-specific `ET_STATE_DIR`); `--fresh` (pass `-F` to `open`); `--arg` (repeatable, extra argv passed to the launched app after `--args`); `--timeout` (seconds to wait for the new pid to appear, default `10.0`). Exit codes: `0` success · `1` launch or pid-capture failed · `2` bad arguments.
 
 ### Scan a running app
 
@@ -189,7 +222,7 @@ python3 .../native_driver.py apps
 - **Web targets** — use `ui-validator` and the host browser/screenshot tooling; this skill won't help.
 - **iOS simulator** — the simulator runs on macOS, but interaction goes through `idb ui tap`, not direct AX (the simulator's AX surface is too noisy for path stability). See `reference_idb_sim_tap.md`.
 - **Drag-and-drop, hover-only effects, NSTrackingArea-driven UI** — these need real `CGEvent` mouse events. Out of scope. If the feature is critical, fix the AX surface in the app under test (add `.accessibilityAction { … }`) rather than synthesizing mouse events.
-- **App not yet running** — the driver does not launch apps. The orchestrator's pre-step must `open -b <bundleId>` (or `open <path/to/.app>`) and verify with `resolve` before driving.
+- **App not yet running** — use `launch` (see "Single-instance PID-scoped verification mode" above) to start an isolated instance and capture its pid before driving, especially when other instances of the app may already be running. For a single-instance context where no ambient collision risk exists, a plain `open -b <bundleId>` (or `open <path/to/.app>`) followed by `resolve` also works.
 
 ## Failure modes & recovery
 

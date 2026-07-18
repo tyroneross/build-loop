@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "eac90af88b27455639e20650e50130237f49c74567add8711498154e991b6a80"
+    "content_sha256": "0d3b0893e4b5c05cb67153ea64d42656c61dd2b988c74ead6dcc835bceee04cc"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1152,7 +1152,7 @@
         "file": "agents/fact-checker.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "fix-critique": {
@@ -1161,7 +1161,7 @@
         "file": "agents/fix-critique.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "frontend-assessor": {
@@ -1224,7 +1224,7 @@
         "file": "agents/overfitting-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "performance-assessor": {
@@ -1251,7 +1251,7 @@
         "file": "agents/promotion-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "recurring-pattern-detector": {
@@ -1287,7 +1287,7 @@
         "file": "agents/scope-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "security-reviewer": {
@@ -2058,6 +2058,7 @@
       "scripts/validate_knowledge.py": "Validate the `.episodic/` + `.semantic/` + `.procedural/` tree.",
       "scripts/verify_deploy.py": "Post-deploy verification gate for the build-loop plugin (Vercel web deploys).",
       "scripts/verify_release_surface.py": "Verify the complete release surface for a build-loop / plugin version.",
+      "scripts/verify_worktree_target.py": "Verify a dispatched isolation worktree actually resolves to the INTENDED target repo.",
       "scripts/version_advisor.py": "Advise (never auto-bump) plugin versions for build-loop Review Sub-step D Gate 6.",
       "scripts/version_drift_warning.py": "Detect drift between source manifest version and installed plugin version.",
       "scripts/wake_scheduler.py": "Host-portable self-resume planner — `wake_when` decision engine.",

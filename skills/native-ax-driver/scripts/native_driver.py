@@ -34,6 +34,11 @@ Usage (from a build-loop run, project cwd):
     # List running regular GUI apps (no AX permission needed)
     python3 native_driver.py apps
 
+    # Launch an isolated instance under a private state dir and capture its pid
+    # (see SKILL.md "Single-instance PID-scoped verification mode")
+    python3 native_driver.py launch --app-path /Applications/MyApp.app \\
+        --state-env-var ET_STATE_DIR --state-dir /tmp/myapp-verify --fresh
+
     # Analyze a captured AX tree for centered-narrow layout gaps
     python3 native_driver.py analyze-layout --stdin < ax-tree.json
 
@@ -49,6 +54,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -180,28 +186,24 @@ def cmd_preflight(_args: argparse.Namespace) -> int:
         return 2
 
 
-def cmd_apps(_args: argparse.Namespace) -> int:
-    """List regular GUI apps with their pid and bundle identifier (no AX needed)."""
+def _query_gui_processes() -> list[dict]:
+    """Query System Events for every foreground GUI process: name, pid, bundle id.
+
+    Raises FileNotFoundError (no osascript) or subprocess.CalledProcessError
+    (AppleScript failed) — callers decide how to surface those.
+    """
     script = (
         'tell application "System Events" to '
         'get {name, unix id, bundle identifier} of every process '
         "whose background only is false"
     )
-    try:
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
-    except FileNotFoundError:
-        print(json.dumps({"error": "osascript missing"}), file=sys.stderr)
-        return 1
-    except subprocess.CalledProcessError as e:
-        print(json.dumps({"error": e.stderr.strip() or "osascript failed"}), file=sys.stderr)
-        return 1
-
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
     raw = result.stdout.strip()
     # AppleScript returns a flat list: name1, name2, ..., pid1, pid2, ..., bundle1, ...
     parts = [p.strip() for p in raw.split(",")]
@@ -215,6 +217,41 @@ def cmd_apps(_args: argparse.Namespace) -> int:
                 "bundleIdentifier": parts[2 * n + i] if parts[2 * n + i] != "missing value" else None,
             }
         )
+    return apps
+
+
+def _gui_pids(bundle_id: str | None = None) -> set[int]:
+    """Pid set of running GUI processes, optionally filtered to a bundle id.
+
+    Swallows osascript failures and returns an empty set — callers that need
+    to distinguish "no processes" from "query failed" should call
+    `_query_gui_processes()` directly instead.
+    """
+    try:
+        apps = _query_gui_processes()
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return set()
+    pids: set[int] = set()
+    for app in apps:
+        if app["pid"] is None:
+            continue
+        if bundle_id is not None and app.get("bundleIdentifier") != bundle_id:
+            continue
+        pids.add(app["pid"])
+    return pids
+
+
+def cmd_apps(_args: argparse.Namespace) -> int:
+    """List regular GUI apps with their pid and bundle identifier (no AX needed)."""
+    try:
+        apps = _query_gui_processes()
+    except FileNotFoundError:
+        print(json.dumps({"error": "osascript missing"}), file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(json.dumps({"error": e.stderr.strip() or "osascript failed"}), file=sys.stderr)
+        return 1
+
     print(json.dumps(apps, indent=2))
     return 0
 
@@ -231,6 +268,173 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         sys.stderr.write(proc.stderr)
         return proc.returncode
     sys.stdout.write(proc.stdout)
+    return 0
+
+
+def select_new_pid(before: set[int], after: set[int]) -> int | None:
+    """Return the single new pid in `after - before`, or None if 0 or >1.
+
+    Pure and deterministic — the caller must treat None as "ambiguous, do
+    not guess" rather than picking an arbitrary candidate.
+    """
+    new = after - before
+    if len(new) == 1:
+        return next(iter(new))
+    return None
+
+
+def build_launch_env(base_env: dict, state_env_var: str | None, state_dir: str | None) -> dict:
+    """Return a COPY of base_env with state_env_var=state_dir set, iff both given.
+
+    Never mutates base_env.
+    """
+    env = dict(base_env)
+    if state_env_var and state_dir:
+        env[state_env_var] = state_dir
+    return env
+
+
+def build_open_command(
+    target: str, *, by_bundle_id: bool, fresh: bool, args: list[str]
+) -> list[str]:
+    """Build the macOS `open` argv for an isolated-instance launch.
+
+    Always forces a new instance (`-n`). Adds `-F` (ignore saved window/scene
+    state) when `fresh` — never wedge into the app's saved state from a prior
+    run. Targets by bundle id (`-b`) or by `.app` path. `--args` is only
+    appended when there are extra argv to pass through.
+    """
+    cmd = ["open", "-n"]
+    if fresh:
+        cmd.append("-F")
+    if by_bundle_id:
+        cmd += ["-b", target]
+    else:
+        cmd.append(target)
+    if args:
+        cmd.append("--args")
+        cmd += list(args)
+    return cmd
+
+
+def _derive_bundle_id(app_path: str) -> str | None:
+    """Best-effort CFBundleIdentifier lookup from an .app's Info.plist.
+
+    Used only to filter candidate pids and for the launch report — never
+    raises; returns None on any failure (missing `defaults`, malformed
+    bundle, timeout).
+    """
+    info_plist_prefix = str(Path(app_path) / "Contents" / "Info")
+    try:
+        result = subprocess.run(
+            ["defaults", "read", info_plist_prefix, "CFBundleIdentifier"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    bundle_id = result.stdout.strip()
+    return bundle_id or None
+
+
+def cmd_launch(args: argparse.Namespace) -> int:
+    """Launch an isolated app instance under a private state dir and capture its pid.
+
+    This is the deterministic launch + pid-capture half of the "single-instance
+    PID-scoped verification mode" (see SKILL.md). It never assumes which pid
+    belongs to the new instance — it snapshots the running GUI pid set before
+    launch, launches with `open -n` (always a new instance), and diffs the
+    pid set after launch. Ambiguous results (zero or more than one new pid)
+    are reported as failure rather than guessed.
+    """
+    if bool(args.app_path) == bool(args.bundle_id):
+        # The argparse mutually-exclusive required group should prevent this;
+        # guard defensively so a programmatic caller gets a clean error too.
+        print(
+            json.dumps(
+                {
+                    "success": False,
+                    "pid": None,
+                    "error": "exactly one of --app-path/--bundle-id required",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.bundle_id:
+        target = args.bundle_id
+        by_bundle_id = True
+        bundle_id = args.bundle_id
+    else:
+        target = str(args.app_path)
+        by_bundle_id = False
+        bundle_id = _derive_bundle_id(target)
+
+    def _fail(error: str) -> int:
+        print(
+            json.dumps(
+                {
+                    "success": False,
+                    "pid": None,
+                    "bundle_id": bundle_id,
+                    "state_dir": args.state_dir,
+                    "fresh": args.fresh,
+                    "error": error,
+                    "next": None,
+                }
+            )
+        )
+        return 1
+
+    before = _gui_pids()
+    env = build_launch_env(dict(os.environ), args.state_env_var, args.state_dir)
+    open_argv = build_open_command(
+        target, by_bundle_id=by_bundle_id, fresh=args.fresh, args=args.args or []
+    )
+
+    try:
+        proc = subprocess.run(open_argv, env=env, capture_output=True, text=True, timeout=15)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return _fail(f"`open` failed to run: {e}")
+
+    if proc.returncode != 0:
+        return _fail(proc.stderr.strip() or f"open exited {proc.returncode}")
+
+    deadline = time.monotonic() + args.timeout
+    pid: int | None = None
+    while time.monotonic() < deadline:
+        after = _gui_pids(bundle_id=bundle_id)
+        pid = select_new_pid(before, after)
+        if pid is not None:
+            break
+        time.sleep(0.25)
+
+    if pid is None:
+        return _fail(
+            "could not capture a single new pid (zero or ambiguous candidates) "
+            "within timeout"
+        )
+
+    print(
+        json.dumps(
+            {
+                "success": True,
+                "pid": pid,
+                "bundle_id": bundle_id,
+                "state_dir": args.state_dir,
+                "fresh": args.fresh,
+                "error": None,
+                "next": (
+                    f"drive AX scoped to this pid: native_driver.py scan --pid {pid} "
+                    f"/ action --pid {pid} ..."
+                ),
+            }
+        )
+    )
     return 0
 
 
@@ -440,6 +644,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_resolve = sub.add_parser("resolve", help="Resolve an app name to its pid")
     p_resolve.add_argument("--app", required=True)
 
+    p_launch = sub.add_parser(
+        "launch",
+        help="Launch an isolated app instance under a private state dir and capture its pid",
+    )
+    launch_target = p_launch.add_mutually_exclusive_group(required=True)
+    launch_target.add_argument("--app-path", help="Path to a .app bundle")
+    launch_target.add_argument("--bundle-id", help="Bundle identifier, e.g. com.example.myapp")
+    p_launch.add_argument("--state-dir", help="Isolated state directory for this instance")
+    p_launch.add_argument(
+        "--state-env-var",
+        help="Env var name to point at --state-dir, e.g. ET_STATE_DIR",
+    )
+    p_launch.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Pass -F to `open` (ignore saved window/scene state)",
+    )
+    p_launch.add_argument(
+        "--arg",
+        action="append",
+        dest="args",
+        help="Extra argv passed through to the launched app (repeatable)",
+    )
+    p_launch.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="Seconds to wait for the new pid to appear (default 10.0)",
+    )
+
     p_scan = sub.add_parser("scan", help="Scan AX tree of running app")
     p_scan.add_argument("--pid", type=int)
     p_scan.add_argument("--app")
@@ -479,6 +713,7 @@ def main(argv: list[str] | None = None) -> int:
         "preflight": cmd_preflight,
         "apps": cmd_apps,
         "resolve": cmd_resolve,
+        "launch": cmd_launch,
         "scan": cmd_scan,
         "analyze-layout": cmd_analyze_layout,
         "action": cmd_action,
