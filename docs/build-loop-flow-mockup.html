@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "343ab6093e946a2f4ea7339e2cf7241845a654fb6b6d1b0e2cb7d72e63b4c54a"
+    "content_sha256": "88270cb27e370465469ed5ae440693b97f43b12641a4bb21c5a527013ecbbe1a"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1923,6 +1923,8 @@
       "scripts/post_push_retro/classifier.py": "Scope classifier: map a covered delta to a retro tier.",
       "scripts/post_push_retro/config.py": "Config for the post-push retrospective auto-trigger.",
       "scripts/post_push_retro/coverage.py": "Multi-branch / multi-worktree coverage against a per-repo checkpoint.",
+      "scripts/post_push_retro/fallback.py": "Never-silently-skip fallback.",
+      "scripts/post_push_retro/router.py": "Tier router — reuse the three existing retro tiers; never rebuild an engine.",
       "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",
       "scripts/prepush_judgment_gate.py": "prepush_judgment_gate.py — BLOCKING Frontier-judgment gate at the push boundary.",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
