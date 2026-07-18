@@ -148,6 +148,21 @@ Agent(
 
 The agent invokes `python3 -m retrospective --workdir <workdir> --run-id <id> --json` (located via Python on `sys.path`-modified scripts/), which writes `.build-loop/retrospectives/<YYYY-MM-DD>/<run-id>.md` + `<run-id>.summary.md` atomically. The summary file is surfaced inline in the end-of-run readback as a `## Retrospective summary` block (≤5 lines). Any enforce-candidate the synthesizer drafts lands at `.build-loop/proposals/enforce-from-retro/<run-id>-<NN>.md` for human review — never silently promoted. Stop-hook fallback is intentionally NOT used (commit `5c2a030` — subagent Stop hooks fire unreliably; in-flow dispatch is the durable mechanism). The synthesizer's `synthesize.run` is non-raising by contract; failures degrade to `status="degraded"` with a reason and the run still closes cleanly.
 
+**Scope-gated tier selection (Phase 4G is an LLM context — run the Fable tier inline).** Before dispatching the synthesizer, consult the scope classifier so the Fable pipeline is spent only where it pays (Fable ruled the full 3-stage pipeline "notably better" for substantial work but wasteful for trivial pushes; the load-bearing value is the independent Stage-3 judge). Run:
+
+```bash
+python3 -m post_push_retro run --workdir "$workdir" --llm-available --json
+```
+
+This computes multi-branch/worktree coverage against the per-repo checkpoint, runs the zero-LLM deterministic retro as the baseline, classifies the delta, and — because `--llm-available` is set — returns a `decision` naming the Fable agents to dispatch rather than arming them for later:
+
+- `action: deterministic_only` (tier **trivial**) — the deterministic retro is the whole job; the `retrospective-synthesizer` dispatch above already covers it. No Fable spend.
+- `action: dispatch, agents: ["judge"]` (tier **medium**) — ALSO dispatch the independent Stage-3 retro judge (`skills/recursive-retrospective/references/03-judge.md`) on the delta (~1 Fable agent). The judge MUST run in a context independent of the retro's author.
+- `action: dispatch, agents: ["stage1","stage2","judge"]` (tier **substantial**) — ALSO run the full 3-stage `Skill("build-loop:recursive-retrospective")` pipeline.
+- `action: fallback*` — the retro couldn't run (Fable unavailable / budget / crash); a backlog (build-loop repo) or Operations-Center (other repo) entry was already filed, plus a durable local witness on CLI failure. Surface `witness`/`filed` in the readback; never a silent skip.
+
+All non-gating and in-flow. Out-of-run (ad-hoc / Codex / launchd) pushes take the wired detached-job path (no LLM in a git hook), which captures the deterministic baseline and ARMS the Fable upgrade for the next LLM context; a stale unclaimed upgrade is escalated to the fallback by the session-start drain. Full contract: `skills/build-loop/references/post-push-retro.md`.
+
 ### `## Self-modifications (readback)` block (include only when self-modifications occurred this run)
 
 When `selfRecursive.enabled == true` and at least one self-modification was attempted, append a `## Self-modifications (readback)` section to the end-of-run report (after `## Judge decisions`). Format — one row per attempted self-modification:

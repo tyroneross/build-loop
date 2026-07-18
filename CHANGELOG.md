@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Scope-gated post-push recursive-retrospective auto-trigger (`scripts/post_push_retro/`). Git has no native post-push hook, so `hooks/git/pre-push` arms a unique baton + spawns a detached, non-blocking background job after a successful push; `hooks/session-start-closeout.sh` drains a stale baton and escalates a stale queued upgrade. Coverage unions multi-branch/worktree deltas against a per-repo checkpoint anchored at `--git-common-dir` (worktrees of one repo count as one). A classifier routes trivial → the zero-LLM sweep, medium → the independent Stage-3 judge, substantial → the full 3-stage pipeline (reuses the three existing retro tiers — no engine rebuilt). Any failure files a backlog (build-loop repo) or Operations-Center (other repo) entry plus a durable local witness — never a silent skip. Config `retrospective.autoAfterPush` (default enabled; per-repo opt-out, configurable thresholds, budget guard). Contract: `skills/build-loop/references/post-push-retro.md`.
+
 ### Changed
 - Verification-verdict agents (`fix-critique`, `fact-checker`, `overfitting-reviewer`, `promotion-reviewer`, `scope-auditor`) repinned `model: opus` → `model: fable`, closing the drift against the standing model org (2026-06-09: Fable owns verification verdicts). Orchestrators stay Opus; execution stays Sonnet; pattern scanners stay Haiku.
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.
