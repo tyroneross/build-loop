@@ -228,13 +228,31 @@ def _files_for_commits(repo: Path, commits: list[str]) -> list[str]:
     return list(files.keys())
 
 
+def _is_ancestor(repo: Path, candidate: str, existing: str) -> bool:
+    """True when ``candidate`` is an ancestor of (i.e. older than / already
+    contained in) ``existing`` — so advancing to ``candidate`` would REGRESS."""
+    if not candidate or not existing or candidate == existing:
+        return False
+    try:
+        return subprocess.call(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", candidate, existing],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15) == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
 def update_checkpoint_from_coverage(repo: Path, coverage: dict[str, Any]) -> dict[str, Any]:
     """Read-modify-write UNION: advance each ref's last-retro'd sha to the tip we
-    just covered. Never regresses an existing entry. Atomic. Call ONLY after a
-    successful retro so a failed run does not mark work as covered."""
+    just covered, but NEVER regress a tip a concurrent push already advanced past
+    (ancestry-guarded — a candidate that is an ancestor of the recorded sha is
+    skipped). Atomic. Call ONLY after a successful retro so a failed run does not
+    mark work as covered."""
     ckpt = read_checkpoint(repo)
     branches = dict(ckpt.get("branches", {}) or {})
     for ref in coverage.get("refs", []):
+        existing = branches.get(ref["name"])
+        if existing and _is_ancestor(repo, ref["tip"], existing):
+            continue  # a peer push already advanced this branch further — don't regress
         branches[ref["name"]] = ref["tip"]
     ckpt["branches"] = branches
     ckpt["last_retro_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

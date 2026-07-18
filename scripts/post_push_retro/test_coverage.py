@@ -117,6 +117,37 @@ def test_checkpoint_atomic_write_roundtrip(tmp_path):
     assert ckpt["last_retro_at"] is not None
 
 
+def test_update_checkpoint_ancestry_guard_no_regress(tmp_path):
+    # auditor f4: a concurrent push that advanced main to T2 must not be regressed
+    # to an older T1 by a slower peer's write (safe direction, but the doc claims
+    # "never regress" — make it true).
+    repo = tmp_path / "r"
+    _init(repo)
+    t1 = _commit(repo, "a.py")
+    t2 = _commit(repo, "b.py")  # t1 is an ancestor of t2
+    # checkpoint already at the newer tip t2 (a peer advanced it)
+    coverage._atomic_write(coverage.checkpoint_path(repo),
+                           {"branches": {"main": t2}, "last_retro_at": None, "last_range": None})
+    # a slower run tries to record the OLDER t1 => must be refused
+    coverage.update_checkpoint_from_coverage(
+        repo, {"refs": [{"name": "main", "tip": t1, "kind": "branch", "path": ""}],
+               "range_label": "x"})
+    assert coverage.read_checkpoint(repo)["branches"]["main"] == t2  # not regressed
+
+
+def test_update_checkpoint_advances_to_newer_tip(tmp_path):
+    repo = tmp_path / "r"
+    _init(repo)
+    t1 = _commit(repo, "a.py")
+    coverage._atomic_write(coverage.checkpoint_path(repo),
+                           {"branches": {"main": t1}, "last_retro_at": None, "last_range": None})
+    t2 = _commit(repo, "b.py")  # newer
+    coverage.update_checkpoint_from_coverage(
+        repo, {"refs": [{"name": "main", "tip": t2, "kind": "branch", "path": ""}],
+               "range_label": "x"})
+    assert coverage.read_checkpoint(repo)["branches"]["main"] == t2  # advances forward
+
+
 def test_update_checkpoint_never_regresses_other_branches(tmp_path):
     repo = tmp_path / "r"
     _init(repo)

@@ -88,19 +88,43 @@ def parse_retro_signals(retro_result: dict[str, Any]) -> dict[str, Any] | None:
 
 def arm_upgrade(repo: Path, tier: str, coverage: dict[str, Any]) -> Path | None:
     """Queue a Fable tier upgrade for the next LLM context (build-loop Phase 4G
-    or a session-start drain). Written to the per-repo shared state dir. Carries
-    its own ref-range so it is self-contained if the checkpoint has advanced."""
+    or a session-start drain). Written to the per-repo shared state dir.
+
+    MERGE-on-arm: a second medium/substantial push before the first upgrade is
+    drained must NOT overwrite (and silently drop) the first — the checkpoint has
+    already advanced past it, so the lost range would be unrecoverable (auditor
+    f1, high). We read any existing ``upgrade.json``, UNION its commits/ranges,
+    take max(tier), and preserve the EARLIEST ``armed_at`` so the 24h staleness
+    clock runs from the oldest unclaimed work."""
     try:
         d = _coverage.retro_state_dir(repo)
+        target = d / "upgrade.json"
+        commits = list(coverage.get("commits", []) or [])
+        ranges = [coverage.get("range_label")] if coverage.get("range_label") else []
+        armed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        if target.exists():
+            try:
+                prev = json.loads(target.read_text(encoding="utf-8"))
+                # union commits (prev first, dedup, insertion-ordered)
+                commits = list(dict.fromkeys((prev.get("commits") or []) + commits))
+                ranges = (prev.get("covered_ranges") or []) + ranges
+                if prev.get("tier") == "substantial":
+                    tier = "substantial"  # widen to the strongest owed tier
+                if prev.get("armed_at"):
+                    armed_at = prev["armed_at"]  # oldest wins => staleness escalates
+            except (json.JSONDecodeError, OSError):
+                pass
+
         payload = {
             "tier": tier,
             "range_label": coverage.get("range_label"),
-            "commit_count": coverage.get("commit_count"),
-            "commits": coverage.get("commits", [])[:50],
-            "armed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "covered_ranges": [r for r in dict.fromkeys(ranges) if r],
+            "commit_count": len(commits),
+            "commits": commits[:100],
+            "armed_at": armed_at,
             "agents": ["stage1", "stage2", "judge"] if tier == "substantial" else ["judge"],
         }
-        target = d / "upgrade.json"
         tmp = d / ".upgrade.tmp.json"
         tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp, target)

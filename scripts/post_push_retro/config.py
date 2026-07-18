@@ -23,9 +23,12 @@ from typing import Any, Callable
 # Risk-surface globs: any changed file matching one of these forces the
 # SUBSTANTIAL tier regardless of commit count (auth / privacy / egress /
 # security-hook / schema — the classes where a missed retro is most costly).
+# Kept deliberately TIGHT (auditor f6): broad substrings like *token* / *network*
+# escalated routine files (tokenizer.py, network_utils.py) to the expensive tier,
+# fighting the "scope-gating IS the cost control" north star. Widen via config.
 DEFAULT_RISK_SURFACE_GLOBS = [
-    "*auth*", "*login*", "*oauth*", "*secret*", "*credential*", "*token*",
-    "*privacy*", "*egress*", "*network*", "*security*",
+    "*auth*", "*login*", "*oauth*", "*secret*", "*credential*",
+    "*privacy*", "*egress*", "*security*",
     "*migration*", "*schema*", "*.sql", "hooks/**", "**/hooks/**",
 ]
 

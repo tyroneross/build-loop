@@ -114,6 +114,46 @@ def test_retro_failure_routes_to_fallback(tmp_path):
     assert "Fable unavailable" in fb_calls["reason"]
 
 
+def _init_repo(repo):
+    import subprocess
+    repo.mkdir(parents=True, exist_ok=True)
+    subprocess.check_call(["git", "-C", str(repo), "init", "-q", "-b", "main"])
+    subprocess.check_call(["git", "-C", str(repo), "config", "user.email", "t@e.com"])
+    subprocess.check_call(["git", "-C", str(repo), "config", "user.name", "T"])
+    (repo / "x").write_text("1")
+    subprocess.check_call(["git", "-C", str(repo), "add", "x"])
+    subprocess.check_call(["git", "-C", str(repo), "commit", "-q", "-m", "c"])
+
+
+def test_arm_upgrade_merges_not_overwrites(tmp_path):
+    # auditor f1 (high): a second queued upgrade must UNION with the first, never
+    # silently drop it (the checkpoint has already advanced past the first range).
+    import json
+    from post_push_retro import coverage as cov
+    repo = tmp_path / "r"
+    _init_repo(repo)
+    router.arm_upgrade(repo, "medium",
+                       {"commits": ["a", "b"], "range_label": "a..b"})
+    router.arm_upgrade(repo, "substantial",
+                       {"commits": ["b", "c", "d"], "range_label": "c..d"})
+    up = json.loads((cov.retro_state_dir(repo) / "upgrade.json").read_text())
+    assert set(up["commits"]) == {"a", "b", "c", "d"}     # union, nothing dropped
+    assert up["tier"] == "substantial"                     # widened to strongest
+    assert "a..b" in up["covered_ranges"] and "c..d" in up["covered_ranges"]
+
+
+def test_arm_upgrade_preserves_earliest_armed_at(tmp_path):
+    import json
+    from post_push_retro import coverage as cov
+    repo = tmp_path / "r"
+    _init_repo(repo)
+    router.arm_upgrade(repo, "medium", {"commits": ["a"], "range_label": "a..a"})
+    first = json.loads((cov.retro_state_dir(repo) / "upgrade.json").read_text())["armed_at"]
+    router.arm_upgrade(repo, "medium", {"commits": ["b"], "range_label": "b..b"})
+    second = json.loads((cov.retro_state_dir(repo) / "upgrade.json").read_text())["armed_at"]
+    assert first == second  # oldest wins => 24h staleness clock runs from oldest work
+
+
 def test_budget_exceeded_routes_to_fallback_but_keeps_capture(tmp_path):
     calls, ckpt = _ckpt_spy()
     fb = {}
