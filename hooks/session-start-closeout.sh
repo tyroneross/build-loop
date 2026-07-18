@@ -66,4 +66,22 @@ if [ ! -s "$SURFACED" ]; then
     rm -f "$SURFACED" 2>/dev/null || true
 fi
 
+# 3. Durable fallback for the scope-gated post-push RETRO trigger. Git has no
+#    native post-push hook, so the retro job is spawned detached at pre-push
+#    time; if the machine slept or crashed before it finished, a stale armed
+#    baton survives. This drains it, and escalates any stale queued Fable
+#    upgrade to the backlog/Ops-Center fallback so "medium -> run the judge"
+#    can never silently become "never". Zero-LLM, fail-open (PYTHONPATH set above).
+RETRO_DRAIN="${CLOSEOUT_LOG_DIR}/retro-drain-$(date -u +%Y%m%dT%H%M%SZ).json"
+"$_py" -m post_push_retro drain \
+    --workdir "$PROJECT_DIR" \
+    --json \
+    2>/dev/null \
+    >"$RETRO_DRAIN" \
+    || true
+# Drop the drain log unless it recorded real work (keep the dir clean).
+if [ ! -s "$RETRO_DRAIN" ] || ! grep -q '"reran_batons": \[{' "$RETRO_DRAIN" 2>/dev/null && ! grep -q '"escalated": true' "$RETRO_DRAIN" 2>/dev/null; then
+    rm -f "$RETRO_DRAIN" 2>/dev/null || true
+fi
+
 exit 0

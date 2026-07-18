@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "88270cb27e370465469ed5ae440693b97f43b12641a4bb21c5a527013ecbbe1a"
+    "content_sha256": "4f30dc26137531f9062f7a02b6892906699959f4c7a2b3c36ba77811cae5b78d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1691,6 +1691,8 @@
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
       "scripts/post_push_retro/__init__.py": "post_push_retro — scope-gated recursive-retrospective auto-trigger.",
+      "scripts/post_push_retro/__main__.py": "CLI: python3 -m post_push_retro {run|drain} --workdir <repo> [...]",
+      "scripts/post_push_retro/arm.py": "Pre-push arming + detached spawn — the wired, non-blocking trigger.",
       "scripts/post_push_retro/classifier.py": "Scope classifier: map a covered delta to a retro tier.",
       "scripts/post_push_retro/config.py": "Config for the post-push retrospective auto-trigger.",
       "scripts/post_push_retro/coverage.py": "Multi-branch / multi-worktree coverage against a per-repo checkpoint.",

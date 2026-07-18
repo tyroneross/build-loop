@@ -172,6 +172,28 @@ def _arm_post_push_closeout(repo: Path) -> None:
         return
 
 
+def _arm_post_push_retro(repo: Path, stdin_lines: list) -> None:
+    """Fire the scope-gated post-push retrospective trigger (fail-open).
+
+    Git has no native post-push hook, so — like the closeout baton above — we
+    arm here at pre-push time: ``post_push_retro.arm.arm_and_spawn`` writes a
+    unique baton recording the pushed ref-range and spawns a DETACHED background
+    job that runs the retro AFTER the push returns. It NEVER blocks or slows the
+    push (no retro work happens synchronously) and any error is swallowed — the
+    retrospective trigger must never break a push. See
+    ``scripts/post_push_retro/arm.py``.
+    """
+    try:
+        scripts_dir = repo / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from post_push_retro import arm  # type: ignore
+
+        arm.arm_and_spawn(repo, stdin_lines)
+    except Exception:  # noqa: BLE001 — the retro trigger must never break a push
+        return
+
+
 def main() -> int:
     repo: Path | None = None
     try:
@@ -258,6 +280,10 @@ def main() -> int:
         # no native client-side post-push hook, so the next session-start
         # drains the baton via ``python3 -m closeout --source post-push-armed``.
         _arm_post_push_closeout(repo)
+        # Also fire the scope-gated post-push retrospective trigger (detached,
+        # non-blocking, fail-open). Runs ONLY on the clean success path — a
+        # blocked push returned earlier and must not spawn a retro.
+        _arm_post_push_retro(repo, stdin_lines)
         return 0
     except Exception as exc:  # noqa: BLE001 — broad on purpose; we MUST fail-open
         return _fail_open(f"unhandled exception: {exc!r}", repo=repo)
