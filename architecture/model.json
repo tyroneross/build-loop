@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "eac90af88b27455639e20650e50130237f49c74567add8711498154e991b6a80"
+    "content_sha256": "343ab6093e946a2f4ea7339e2cf7241845a654fb6b6d1b0e2cb7d72e63b4c54a"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -923,7 +923,7 @@
         "file": "agents/fact-checker.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "fix-critique": {
@@ -932,7 +932,7 @@
         "file": "agents/fix-critique.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "frontend-assessor": {
@@ -995,7 +995,7 @@
         "file": "agents/overfitting-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "performance-assessor": {
@@ -1022,7 +1022,7 @@
         "file": "agents/promotion-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "recurring-pattern-detector": {
@@ -1058,7 +1058,7 @@
         "file": "agents/scope-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-12"
+          "date": "2026-07-17"
         }
       },
       "security-reviewer": {
@@ -1690,6 +1690,10 @@
       "scripts/parallelism.py": "",
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
+      "scripts/post_push_retro/__init__.py": "post_push_retro — scope-gated recursive-retrospective auto-trigger.",
+      "scripts/post_push_retro/classifier.py": "Scope classifier: map a covered delta to a retro tier.",
+      "scripts/post_push_retro/config.py": "Config for the post-push retrospective auto-trigger.",
+      "scripts/post_push_retro/coverage.py": "Multi-branch / multi-worktree coverage against a per-repo checkpoint.",
       "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",
       "scripts/prepush_judgment_gate.py": "prepush_judgment_gate.py — BLOCKING Frontier-judgment gate at the push boundary.",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
