@@ -556,5 +556,67 @@ class TestExcludeVisibility(_DiffScanBase):
         self.assertNotIn("exclude", data, "default output must not carry an exclude key")
 
 
+class TestDocExampleAndContentScope(unittest.TestCase):
+    """LO-6 part (b): a full-repo scan of a large non-code repo must not
+    hard-block on doc-embedded FALSE positives, without weakening real-secret
+    detection on actual code (or real provider keys in docs).
+
+    Two precise, content-based rules are proven here:
+      1. Documented public example credentials (AWS `AKIA…EXAMPLE`) are
+         recognized as non-secrets in EVERY file type — the observed blocker.
+      2. The low-confidence GENERIC keyword secret check (`api_key: "..."`) is
+         suppressed in content/prose files (markdown, docs/), where it fires on
+         tutorial text and memory-snapshot references. Provider-shape + PEM
+         checks STILL run in docs, so a real leaked key is caught; code files
+         are entirely unaffected.
+    """
+
+    def _run_at(self, path_str, line):
+        return security_scan.check_A_secrets(Path(path_str), [line], root_path=None)
+
+    def test_aws_example_key_not_flagged_in_code(self):
+        # The observed false positive: AWS's published example access-key ID in a
+        # non-test (code) file must NOT flag — it is a documented public example.
+        line = 'const key = "AKIAIOSFODNN7EXAMPLE";\n'
+        self.assertEqual(self._run_at("src/app.ts", line), [],
+                         "AWS documented example key must be recognized everywhere")
+
+    def test_aws_example_key_not_flagged_in_doc(self):
+        line = "See AKIAIOSFODNN7EXAMPLE in the AWS tutorial.\n"
+        self.assertEqual(self._run_at("docs/tutorial.md", line), [],
+                         "AWS example key in prose must not flag")
+
+    def test_real_aws_key_still_flagged(self):
+        # A real (non-EXAMPLE) AKIA key in CODE must still flag — the example
+        # suffix is the ONLY thing suppressed, never a random real key.
+        line = 'const key = "AKIA1234567890ABCDEF";\n'
+        self.assertTrue(self._run_at("src/app.ts", line),
+                        "a real AKIA key (no EXAMPLE suffix) must still flag")
+
+    def test_generic_keyword_suppressed_in_markdown(self):
+        # `api_key: "navgator-mapper"` in a memory-snapshot markdown is prose,
+        # not a hardcoded secret — the generic keyword check must be skipped in
+        # content files so it no longer hard-blocks a docs-repo push.
+        line = '- api_key: "navgator-mapper-string"\n'
+        self.assertEqual(self._run_at("MEMORY.md", line), [],
+                         "generic keyword secret must be suppressed in prose/markdown")
+
+    def test_generic_keyword_still_flagged_in_code(self):
+        # The SAME line in a code file MUST still flag — the suppression is
+        # content-scoped, never a blanket weakening of code detection.
+        line = 'db_password = "navgator-mapper-string"\n'
+        self.assertTrue(self._run_at("src/app.py", line),
+                        "generic keyword secret must still flag in code")
+
+    def test_real_provider_key_still_flagged_in_markdown(self):
+        # A real, high-confidence PROVIDER-shape key pasted into a doc is a
+        # genuine leak and MUST still flag — provider detection is unchanged in
+        # content files; only the low-confidence keyword heuristic is suppressed.
+        fake_ghp = "ghp_" + "B" * 36
+        line = f'Leaked token: {fake_ghp}\n'
+        self.assertTrue(self._run_at("README.md", line),
+                        "a real provider key in a doc must still flag")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

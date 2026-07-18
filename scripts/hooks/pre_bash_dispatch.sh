@@ -125,20 +125,24 @@ _run_gate() {
 # packet builder). The classifier reads the RAW command (newlines intact) from $INPUT, so
 # it sees heredoc structure the normalized $CMD has already flattened.
 #
-# Fail-open: a classifier error (or missing python3) yields "commit push" so BOTH
-# conservative gates still run — never scan less than intended. Emptiness (neither word)
-# is the correct no-op for a non-git command.
+# Bounded-failure contract. The classifier ALWAYS exits 0 (its own conservatism
+# contract already returns "commit push" on parse ambiguity — a positively-classified
+# verdict that still scans). So the `|| { … }` block fires ONLY when the subprocess
+# could not RUN AT ALL: python3 unresolvable in a minimal-PATH hook env, or a spawn
+# failure under load. A subprocess that never produced a verdict must NOT be upgraded
+# into one. The OLD fallback set "commit push" for ANY *git*-matching command, so a
+# transient classifier outage turned every `git commit` / `git status` / `grep git`
+# into a FULL-REPO security scan that HARD-BLOCKED on doc-embedded example keys
+# (observed 2026-07-14: a whole session's bash frozen in a large .build-loop docs repo
+# with false-positive findings). Bounded degrade: SKIP both gates with a warning. Only a
+# positively-classified `git push` (the classifier RAN and said push) ever triggers the
+# scan; a real `git push` secret is still caught on the normal classifier-runs path (the
+# security scan itself is unchanged). A transient outage trades that rare window for never
+# wedging the session — the correct bound, since a hard-block on a false positive is a
+# worse, more common failure than a missed scan during a spawn outage.
 _GITCLASS=$(printf '%s' "$INPUT" | python3 "$PLUGIN_ROOT/scripts/hooks/git_command_classifier.py" 2>/dev/null) || {
-    # Classifier subprocess could not RUN (e.g. python3 unresolvable in a minimal-PATH hook
-    # env, or spawn failure under load). Fail-open conservatively — but ONLY for commands that
-    # actually mention `git`. Otherwise a transient classifier failure turns every echo/python/
-    # grep into a full-repo scan that HARD-BLOCKS the command (observed 2026-07-14: a whole
-    # session's bash frozen in any .build-loop repo with findings). A command with no `git`
-    # substring cannot be a push/commit, so scanning it is pure false-positive.
-    case "$CMD" in
-        *git*) _GITCLASS="commit push" ;;
-        *)     _GITCLASS="" ;;
-    esac
+    _GITCLASS=""
+    printf '[build-loop] git command classifier could not run (transient) — commit/push gates skipped for this command.\n' >&2
 }
 
 # Collect envelopes only from the gates whose command class is present.

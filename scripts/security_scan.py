@@ -365,10 +365,27 @@ _TEST_MARKER_RE = re.compile(
     r"(?i)(test|example|dummy|fake|sample|mock|placeholder|redacted|changeme|"
     r"foobar|deadbeef|\bzzz|abc123|abcdef|0123456789|123456789|1234567890)")
 
+# Documented public example credentials that vendors PUBLISH as deliberately
+# non-functional — they appear verbatim in official docs, tutorials, READMEs, and
+# memory snapshots, NOT in deployed code. Recognized in EVERY file type (not just
+# test fixtures) because prose legitimately quotes them, and matched by CONTENT
+# (not filename): a real credential never carries these published markers, so this
+# does not weaken detection of an actual leaked key.
+#   - AWS canonical examples: the access-key ID `AKIAIOSFODNN7EXAMPLE` and any
+#     AKIA…-shaped value ending in the literal `EXAMPLE` — AWS's own docs
+#     convention reserves that suffix for examples (a real key is 16 random chars,
+#     odds of a random key ending in `EXAMPLE` are ~1 in 78 billion).
+_DOC_EXAMPLE_SECRET_RES: list[re.Pattern[str]] = [
+    re.compile(r"^AKIA[0-9A-Z]*EXAMPLE$"),
+]
+
 
 def _is_known_fake_secret(val: str, is_test: bool) -> bool:
-    """A value is a non-finding when it looks like a placeholder anywhere, or —
+    """A value is a non-finding when it is a documented public example credential
+    (recognized in every file type), looks like a placeholder anywhere, or —
     inside a test-fixture file — matches an obvious fake marker."""
+    if any(pat.search(val) for pat in _DOC_EXAMPLE_SECRET_RES):
+        return True
     if _PLACEHOLDER_RE.search(val):
         return True
     return bool(is_test and _TEST_MARKER_RE.search(val))
@@ -383,6 +400,7 @@ def check_A_secrets(path: Path, lines: list[str], root_path: Path | None) -> lis
         return findings
     is_env_example = bool(re.search(r"\.env\.(example|sample|template|test)$", path.name, re.IGNORECASE))
     is_test = _is_test_file(path)
+    is_content = _is_content_file(path)
 
     for lineno, raw in enumerate(lines, 1):
         if NOSEC_RE.search(raw):
@@ -426,8 +444,16 @@ def check_A_secrets(path: Path, lines: list[str], root_path: Path | None) -> lis
                 check_id="A",
             ))
 
-        # Generic KEY/SECRET/TOKEN/PASSWORD = "value" (skip env examples)
-        if not is_env_example:
+        # Generic KEY/SECRET/TOKEN/PASSWORD = "value". Skip env examples, and skip
+        # content/doc files (markdown, docs/): prose legitimately writes `api_key:
+        # "..."` as tutorial text, example config, or a memory-snapshot reference,
+        # so the low-confidence keyword heuristic hard-blocks those as false
+        # positives (observed: tool-name strings in build-loop-memory snapshots). The
+        # high-confidence provider-shape + PEM checks above STILL run in content
+        # files, so a real `sk-…`/`ghp_…`/AWS/PEM key pasted into a doc is caught —
+        # only the keyword pattern is suppressed, and ONLY in prose. Code files are
+        # unaffected: this is the same content/code split checks B–G already use.
+        if not is_env_example and not is_content:
             m = _GENERIC_SECRET_RE.search(raw)
             if m:
                 val = m.group(1)

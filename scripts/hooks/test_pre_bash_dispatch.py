@@ -70,6 +70,7 @@ def run_dispatch(
     *,
     path_env: str | None = None,
     minimal_env: bool = False,
+    plugin_root: Path | None = None,
 ) -> subprocess.CompletedProcess:
     """Drive the dispatcher exactly as Claude Code would: PreToolUse event JSON
     on stdin, process cwd == the repo (the commit auditor reads the repo via
@@ -81,7 +82,7 @@ def run_dispatch(
         env = dict(os.environ)
         if path_env is not None:
             env["PATH"] = path_env
-    env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+    env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root or PLUGIN_ROOT)
     return subprocess.run(
         ["bash", str(DISPATCH)],
         cwd=repo,
@@ -614,6 +615,102 @@ class GitClassifierGuardTests(unittest.TestCase):
         """`git push 2>&1 | tail -1` still routes to the push gate (clean repo → exit 0)."""
         r = run_dispatch(self.repo, "git push 2>&1 | tail -1")
         self.assertEqual(r.returncode, 0, f"stderr={r.stderr!r}")
+
+
+class ClassifierCannotRunBoundedFailureTests(unittest.TestCase):
+    """LO-6 part (a): when the git command classifier subprocess CANNOT RUN
+    (python3 unresolvable under load, spawn failure), the dispatcher must degrade
+    to a BOUNDED skip-with-warning — NOT fail-open to "commit push" and run a
+    full-repo security scan that hard-blocks on doc-embedded false positives
+    (observed 2026-07-14: a whole session's bash frozen in a large .build-loop
+    docs repo). Only a positively-classified `git push` (the classifier RAN and
+    said push) ever triggers the scan; a transient classifier outage never does.
+
+    The classifier's OWN conservatism contract (it exits 0 and returns
+    "commit push" on parse ambiguity) is unaffected — this covers only the
+    subprocess-cannot-run case, which is the shell `|| { … }` fallback.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.repo = make_buildloop_repo(self.tmp)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _broken_classifier_root(self) -> Path:
+        """A mirror of the real plugin root where every sub-gate + helper is
+        symlinked to the real file, EXCEPT git_command_classifier.py, which is a
+        stub that exits non-zero WITHOUT producing a verdict (simulating a
+        subprocess that could not run)."""
+        root = self.tmp / "plugin_root"
+        (root / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        real_scripts = PLUGIN_ROOT / "scripts"
+        for entry in real_scripts.iterdir():
+            if entry.name == "hooks":
+                continue
+            os.symlink(entry, root / "scripts" / entry.name)
+        for entry in (real_scripts / "hooks").iterdir():
+            if entry.name == "git_command_classifier.py":
+                continue
+            os.symlink(entry, root / "scripts" / "hooks" / entry.name)
+        (root / "scripts" / "hooks" / "git_command_classifier.py").write_text(
+            "import sys\nsys.exit(1)\n", encoding="utf-8"
+        )
+        return root
+
+    def _add_remote(self, name: str) -> Path:
+        bare = self.tmp / f"{name}.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=False)
+        _git(self.repo, "remote", "add", name, str(bare))
+        return bare
+
+    def test_classifier_failure_on_git_command_does_not_full_scan(self) -> None:
+        """RED on the pre-fix fallback: a real-shaped secret lives in a doc, so a
+        full-repo scan would hard-block. With the classifier broken, a NON-push
+        git command (`git status`) must degrade to skip-with-warning (exit 0), NOT
+        run the scan. The old fallback set "commit push" for any *git* command →
+        full scan → exit 2 on the doc finding."""
+        (self.repo / "docs").mkdir(exist_ok=True)
+        # A real-SHAPED AWS key (not the EXAMPLE suffix) → would flag HIGH on a full scan.
+        (self.repo / "docs" / "note.md").write_text(
+            'key = "AKIA1234567890ABCDEF"\n', encoding="utf-8"
+        )
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "doc with a key-shaped string")
+        r = run_dispatch(
+            self.repo, "git status", plugin_root=self._broken_classifier_root()
+        )
+        self.assertEqual(
+            r.returncode, 0,
+            f"classifier-failure on a non-push git command must not full-scan/"
+            f"block; stderr={r.stderr!r}",
+        )
+        self.assertNotIn("security scan", r.stderr,
+                         "no security scan may run when the classifier could not run")
+        self.assertIn("classifier could not run", r.stderr,
+                      "the bounded skip must announce itself")
+
+    def test_working_classifier_real_secret_push_still_blocks(self) -> None:
+        """Paired guarantee (never weakened): with the classifier WORKING (real
+        plugin root), a genuine `git push` carrying a real staged secret in the
+        pushed delta STILL hard-blocks (exit 2). The bounded-failure change touches
+        ONLY the subprocess-cannot-run path, never the normal scan."""
+        self._add_remote("origin")
+        branch = _git(self.repo, "branch", "--show-current").stdout.strip()
+        _git(self.repo, "push", "-u", "-q", "origin", branch)
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "auth.ts").write_text(_SECRET_LINE, encoding="utf-8")
+        _git(self.repo, "add", "src/auth.ts")
+        _git(self.repo, "commit", "-q", "-m", "add auth (real secret in delta)")
+        r = run_dispatch(self.repo, f"git push origin {branch}")  # working classifier
+        self.assertEqual(
+            r.returncode, 2,
+            f"a real staged secret on a genuine push must still block; "
+            f"stderr={r.stderr!r}",
+        )
+        self.assertIn("security scan found HIGH", r.stderr)
 
 
 if __name__ == "__main__":
