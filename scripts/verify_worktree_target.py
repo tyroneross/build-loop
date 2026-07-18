@@ -52,6 +52,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -100,11 +101,14 @@ def _git_origin_url(path: str) -> Optional[str]:
 
 
 def normalize_origin(url: str | None) -> Optional[str]:
-    """Normalize a git origin URL to lowercase 'owner/repo'.
+    """Normalize a git origin URL to a lowercase host-qualified identity.
 
     Handles both `git@github.com:owner/repo.git` (scp-like) and
-    `https://github.com/owner/repo.git` (URL) forms, and any host, not
-    only github.com.
+    `https://github.com/owner/repo.git` (URL) forms, and any host. The host
+    is included when it can be identified so that `github.com/acme/app` and
+    `gitlab.com/acme/app` — two genuinely different repos — do NOT false-match
+    on a bare `owner/repo`. Returns `host/owner/repo` when a host is present,
+    else `owner/repo`.
     """
     if not url:
         return None
@@ -116,7 +120,14 @@ def normalize_origin(url: str | None) -> Optional[str]:
     if len(segments) < 2:
         return None
     owner, repo = segments[-2], segments[-1]
-    return f"{owner}/{repo}".lower()
+    identity = f"{owner}/{repo}"
+    if len(segments) >= 3:
+        # segments[-3] is the host segment: 'github.com' (URL form) or
+        # 'git@github.com' (scp form) or a scheme remnant like 'https'.
+        host = segments[-3].split("@")[-1]
+        if "." in host:  # real host, not a scheme remnant ('https'/'ssh')
+            identity = f"{host}/{identity}"
+    return identity.lower()
 
 
 def resolve_git_identity(path: str) -> Optional[dict[str, Optional[str]]]:
@@ -164,7 +175,13 @@ def build_provision_cmd(intended_toplevel: str, slug: str) -> str:
     """
     wt_path = worktree_guard.canonical_worktree_path(Path(intended_toplevel), slug)
     branch = worktree_guard.canonical_branch_name(slug)
-    return f"git -C {intended_toplevel} worktree add {wt_path} -b {branch}"
+    # The orchestrator executes this command verbatim, so every interpolated
+    # path/branch must be shell-safe (a repo path with a space would otherwise
+    # break the command).
+    return (
+        f"git -C {shlex.quote(intended_toplevel)} "
+        f"worktree add {shlex.quote(str(wt_path))} -b {shlex.quote(branch)}"
+    )
 
 
 def verify(intended_workdir: str, actual_workdir: str, slug: str | None) -> dict[str, Any]:

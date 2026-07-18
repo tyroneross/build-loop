@@ -13,6 +13,7 @@ command targeting the intended repo.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -69,20 +70,35 @@ def _run_cli(*args: str) -> tuple[int, dict]:
 
 
 def test_normalize_origin_ssh_form() -> None:
-    assert vwt.normalize_origin("git@github.com:owner/repo.git") == "owner/repo"
+    assert vwt.normalize_origin("git@github.com:owner/repo.git") == "github.com/owner/repo"
 
 
 def test_normalize_origin_https_form() -> None:
-    assert vwt.normalize_origin("https://github.com/owner/repo.git") == "owner/repo"
+    assert vwt.normalize_origin("https://github.com/owner/repo.git") == "github.com/owner/repo"
 
 
 def test_normalize_origin_https_no_dotgit_suffix() -> None:
-    assert vwt.normalize_origin("https://github.com/Owner/Repo") == "owner/repo"
+    assert vwt.normalize_origin("https://github.com/Owner/Repo") == "github.com/owner/repo"
 
 
 def test_normalize_origin_none_when_absent() -> None:
     assert vwt.normalize_origin(None) is None
     assert vwt.normalize_origin("") is None
+
+
+def test_normalize_origin_host_distinguishes_same_owner_repo() -> None:
+    # github.com/acme/app and gitlab.com/acme/app are DIFFERENT repos and must
+    # not collide on a bare owner/repo (auditor finding f2).
+    gh = vwt.normalize_origin("git@github.com:acme/app.git")
+    gl = vwt.normalize_origin("https://gitlab.com/acme/app.git")
+    assert gh == "github.com/acme/app"
+    assert gl == "gitlab.com/acme/app"
+    assert gh != gl
+
+
+def test_normalize_origin_bare_owner_repo_has_no_host() -> None:
+    # No identifiable host segment → fall back to owner/repo unqualified.
+    assert vwt.normalize_origin("owner/repo") == "owner/repo"
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +178,8 @@ def test_different_repo_mismatches(tmp_path: Path) -> None:
 
     result = vwt.verify(str(intended), str(actual), "my-fix")
     assert result["match"] is False
-    assert result["intended_repo"] == "acme/intended"
-    assert result["actual_repo"] == "acme/session"
+    assert result["intended_repo"] == "github.com/acme/intended"
+    assert result["actual_repo"] == "github.com/acme/session"
     assert result["correct_provision_cmd"] is not None
     intended_toplevel = str(intended.resolve())
     assert intended_toplevel in result["correct_provision_cmd"]
@@ -287,3 +303,16 @@ def test_build_provision_cmd_uses_worktree_guard_canonicals(tmp_path: Path) -> N
     assert cmd.startswith(f"git -C {intended} worktree add ")
     assert ".build-loop/worktrees/my-fix" in cmd
     assert cmd.endswith("-b bl/my-fix")
+
+
+def test_build_provision_cmd_is_shell_safe_for_spaced_paths() -> None:
+    # The orchestrator executes this command verbatim; a path with a space must
+    # round-trip through shlex.split to the intended argv (auditor finding f3).
+    intended = "/tmp/my repo dir"
+    cmd = vwt.build_provision_cmd(intended, "fix")
+    argv = shlex.split(cmd)
+    assert argv[0] == "git"
+    assert argv[1] == "-C"
+    assert argv[2] == intended  # single argv element despite the spaces
+    assert argv[3] == "worktree"
+    assert argv[4] == "add"

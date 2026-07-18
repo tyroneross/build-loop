@@ -390,7 +390,19 @@ def cmd_launch(args: argparse.Namespace) -> int:
         )
         return 1
 
-    before = _gui_pids()
+    # A failed before-snapshot is a HARD launch failure, not an empty baseline.
+    # _gui_pids() swallows query errors into an empty set; if we used it here and
+    # the osascript query failed while the user had one ambient instance running,
+    # the after-poll would surface that ambient pid as "new" and we would drive
+    # the user's live window — the exact failure this mode exists to prevent.
+    try:
+        before = {
+            app["pid"]
+            for app in _query_gui_processes()
+            if app["pid"] is not None
+        }
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return _fail(f"could not snapshot GUI pids before launch: {e}")
     env = build_launch_env(dict(os.environ), args.state_env_var, args.state_dir)
     open_argv = build_open_command(
         target, by_bundle_id=by_bundle_id, fresh=args.fresh, args=args.args or []

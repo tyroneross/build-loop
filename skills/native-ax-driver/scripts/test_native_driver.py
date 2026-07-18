@@ -20,6 +20,8 @@ and have no side effects, so they run anywhere pytest runs.
 
 from __future__ import annotations
 
+import json
+
 import native_driver
 
 
@@ -157,3 +159,43 @@ def test_build_open_command_full_shape_fresh_bundle_with_args():
         args=["--seed", "123"],
     )
     assert cmd == ["open", "-n", "-F", "-b", "com.example.myapp", "--args", "--seed", "123"]
+
+
+# ─── cmd_launch before-snapshot safety (auditor finding f1) ─────────────────
+#
+# The one path where this mode could hand back the USER's pid: if the
+# before-snapshot query fails, an empty baseline makes a lone ambient pid look
+# "new". cmd_launch must treat a failed before-snapshot as a HARD launch
+# failure and NEVER invoke `open`.
+
+
+def test_cmd_launch_hard_fails_when_before_snapshot_query_errors(monkeypatch, capsys):
+    import argparse
+    import subprocess as _subprocess
+
+    def _raise(*_a, **_k):
+        raise _subprocess.CalledProcessError(1, ["osascript"], stderr="boom")
+
+    monkeypatch.setattr(native_driver, "_query_gui_processes", _raise)
+
+    # If `open` (or any subprocess) is invoked, the guard failed — fail loudly.
+    def _forbidden(*_a, **_k):
+        raise AssertionError("cmd_launch invoked a subprocess despite a failed before-snapshot")
+
+    monkeypatch.setattr(native_driver.subprocess, "run", _forbidden)
+
+    args = argparse.Namespace(
+        app_path=None,
+        bundle_id="com.example.myapp",
+        state_dir=None,
+        state_env_var=None,
+        fresh=False,
+        args=[],
+        timeout=1.0,
+    )
+    rc = native_driver.cmd_launch(args)
+    out = capsys.readouterr().out
+    assert rc == 1
+    payload = json.loads(out)
+    assert payload["success"] is False
+    assert "snapshot" in payload["error"].lower()
