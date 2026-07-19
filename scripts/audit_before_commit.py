@@ -49,6 +49,25 @@ RESEARCH_DIR = Path.home() / "dev" / "research"
 API_REGISTRY_DB = Path.home() / ".api-registry" / "registry.db"
 API_REGISTRY_STALENESS = Path.home() / ".api-registry" / "staleness.json"
 
+# Risk-gated escalation (learn/risk-gated-commit-audit). High-risk signal
+# thresholds — deliberately generous so "high" stays a meaningful minority of
+# commits, not the default classification.
+FILE_COUNT_RISK_THRESHOLD = 8
+MODULE_BOUNDARY_DIR_THRESHOLD = 3
+# Recency window for a recorded verdict to satisfy the opt-in hard block —
+# small enough that a stale/unrelated audit can't accidentally cover a new
+# diff, generous enough that recording the verdict a few minutes after the
+# packet was emitted doesn't require perfect timing.
+# TODO(risk-gate v2): this window lets a prior audit vouch for a later SUPERSET
+# diff (same risky_files, more added since) as long as it's within the window —
+# tighten via diff-hash binding instead of a time window + subset check.
+RISK_VERDICT_RECENCY_MIN = 60
+
+# Verdict taxonomy is yay/nay/suggest/look-again (see module docstring and
+# audit_record_verdict.py's --verdict choices). Only "yay" is an approval —
+# a recorded nay/suggest/look-again must not satisfy the risk-gate opt-in block.
+_APPROVE_VERDICTS = frozenset({"yay"})
+
 # Per arXiv:2604.16790 (Bias in the Loop) + 2410.21819 (Self-Preference Bias):
 # explicit prompt-side mitigation. Single source of truth — both the audit
 # packet and `agents/independent-auditor.md` reference this verbatim.
@@ -71,6 +90,62 @@ SECRET_CONTENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 CONFLICT_MARKER = re.compile(r"^[+ ](<<<<<<<|=======|>>>>>>>)( |$)", re.MULTILINE)
+
+# Persisted-data write signal (filename + added-content, deterministic).
+_PERSISTED_DATA_FILE_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"\.xcdatamodeld", re.IGNORECASE),
+    re.compile(r"\bmigrations?\b", re.IGNORECASE),
+    re.compile(r"\bschema\b", re.IGNORECASE),
+    re.compile(r"\.sql$", re.IGNORECASE),
+    re.compile(r"\bcoredata\b", re.IGNORECASE),
+    re.compile(r"\bswiftdata\b", re.IGNORECASE),
+    re.compile(r"(^|/)models?/", re.IGNORECASE),
+    re.compile(r"models?\.(py|ts|swift|kt|java)$", re.IGNORECASE),
+    re.compile(r"\bprisma\b", re.IGNORECASE),
+    re.compile(r"\.prisma$", re.IGNORECASE),
+    re.compile(r"(^|/)db/", re.IGNORECASE),           # common DB/ORM dir
+    re.compile(r"(^|/)entities?/", re.IGNORECASE),    # TypeORM/Room-style entity dirs
+    re.compile(r"(^|/)dao/", re.IGNORECASE),          # Room/JPA DAO dirs
+)
+_PERSISTED_DATA_CONTENT_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"@Model\b"),                          # SwiftData
+    re.compile(r"\bNSManagedObject\b"),                # CoreData
+    re.compile(r"\bCREATE\s+TABLE\b", re.IGNORECASE),
+    re.compile(r"\bALTER\s+TABLE\b", re.IGNORECASE),
+    re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE),
+    re.compile(r"\bINSERT\s+INTO\b", re.IGNORECASE),
+    re.compile(r"\bUPDATE\s+\w+\s+SET\b", re.IGNORECASE),
+    re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE),
+    re.compile(r"class\s+\w+\(models\.Model\)"),       # Django ORM
+    re.compile(r"@Entity\b"),                          # JPA / TypeORM / Room
+    re.compile(r"@Dao\b"),                              # Room DAO
+    re.compile(r"class\s+\w+\(Base\)"),                 # SQLAlchemy declarative model
+    re.compile(r"\bdeclarative_base\b"),                # SQLAlchemy
+    re.compile(r"\b(pgTable|sqliteTable|mysqlTable)\s*\("),  # Drizzle ORM
+    re.compile(r"\bnew\s+Schema\s*\("),                 # Mongoose
+    re.compile(r"\bmongoose\.model\s*\("),              # Mongoose
+    re.compile(r"\bUserDefaults\b"),                    # iOS on-device store
+    re.compile(r"\blocalStorage\b"),                    # web on-device store
+    re.compile(r"\bkeychain\b", re.IGNORECASE),         # on-device secret/credential store
+    re.compile(r"\bFileManager\.default\.(write|createFile)"),  # on-device file write
+)
+
+# New UI presentation surface signal (new file matching a presentation suffix,
+# a Next.js app-router filename, or added content that defines a new
+# sheet/screen/route construct).
+_UI_FILENAME_RE = re.compile(
+    r"(?:(Sheet|Screen|View|Route|Page)\.(swift|tsx|jsx|ts|vue|kt)$"
+    r"|(?:^|/)(page|layout|route|template|default)\.(tsx|jsx|ts|js)$)",
+    re.IGNORECASE,
+)
+_UI_CONTENT_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"\.sheet\("),
+    re.compile(r"\bNavigationLink\b"),
+    re.compile(r"<Route\b"),
+    re.compile(r"\bnew\s+Route\("),
+    re.compile(r"struct\s+\w+\s*:\s*View\b"),                         # new SwiftUI view
+    re.compile(r"export\s+default\s+function\s+\w+(Page|Screen)\b"),  # new page/screen component
+)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +257,208 @@ def _log_bypass(reason: str) -> None:
             fh.write(f"{ts}\t{cwd}\t{reason}\n")
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Risk classification (learn/risk-gated-commit-audit)
+#
+# NOTE — scope: this classifies the STAGED DIFF only. Scanning a subagent's
+# *returned claims* for unverified caveats ("should work", "likely fixes")
+# is a related but separate surface, deliberately deferred — future work.
+
+
+def _new_files_from_diff(diff_body: str) -> set[str]:
+    """Return post-image paths of newly-added files, derived from the diff body
+    itself (``new file mode`` header line) — no extra git shell-out, so this
+    stays consistent with the (files, diff_body) inputs the rest of this
+    module's classification helpers already work from."""
+    new_files: set[str] = set()
+    header_re = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+    current: str | None = None
+    for line in diff_body.splitlines():
+        m = header_re.match(line)
+        if m:
+            current = m.group(2)
+        elif line.startswith("new file mode") and current:
+            new_files.add(current)
+    return new_files
+
+
+def _diff_by_file(diff_body: str) -> dict[str, str]:
+    """Split a `git diff --cached` body into per-file (post-image path) chunks."""
+    sections: dict[str, str] = {}
+    current: str | None = None
+    lines: list[str] = []
+    header_re = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+    for line in diff_body.splitlines():
+        m = header_re.match(line)
+        if m:
+            if current is not None:
+                sections[current] = "\n".join(lines)
+            current = m.group(2)
+            lines = [line]
+        else:
+            lines.append(line)
+    if current is not None:
+        sections[current] = "\n".join(lines)
+    return sections
+
+
+def _added_lines(section: str) -> str:
+    return "\n".join(
+        ln for ln in section.splitlines() if ln.startswith("+") and not ln.startswith("+++")
+    )
+
+
+def _find_persisted_data_files(files: list[str], diff_sections: dict[str, str]) -> list[str]:
+    hits: list[str] = []
+    for f in files:
+        if any(pat.search(f) for pat in _PERSISTED_DATA_FILE_PATTERNS):
+            hits.append(f)
+            continue
+        added = _added_lines(diff_sections.get(f, ""))
+        if any(pat.search(added) for pat in _PERSISTED_DATA_CONTENT_PATTERNS):
+            hits.append(f)
+    return hits
+
+
+def _find_new_ui_surface_files(
+    files: list[str], new_files: set[str], diff_sections: dict[str, str]
+) -> list[str]:
+    hits: list[str] = []
+    for f in files:
+        if f in new_files and _UI_FILENAME_RE.search(f):
+            hits.append(f)
+            continue
+        added = _added_lines(diff_sections.get(f, ""))
+        if any(pat.search(added) for pat in _UI_CONTENT_PATTERNS):
+            hits.append(f)
+    return hits
+
+
+def _classify_risk(files: list[str], diff_body: str) -> dict:
+    """Classify the staged diff as high | medium | low risk.
+
+    High-risk signals (any one fires -> high): persisted-data writes
+    (SwiftData/CoreData/model/schema/DB/migration), a new UI presentation
+    surface (sheet/screen/route), a large changeset (>= FILE_COUNT_RISK_THRESHOLD
+    files), or a diff that crosses a module boundary (touches
+    >= MODULE_BOUNDARY_DIR_THRESHOLD distinct top-level directories).
+
+    Medium tier reuses infer_risk_surface.evaluate() (constitution-keyword +
+    generic risk-keyword matching) rather than re-deriving that signal.
+
+    Returns {"level": "high"|"medium"|"low", "reasons": [...], "risky_files": [...]}.
+    """
+    reasons: list[str] = []
+    risky: set[str] = set()
+
+    new_files = _new_files_from_diff(diff_body)
+    diff_sections = _diff_by_file(diff_body)
+
+    persisted = _find_persisted_data_files(files, diff_sections)
+    if persisted:
+        reasons.append(
+            f"writes to persisted-data surface ({len(persisted)} file(s)): " + ", ".join(persisted[:10])
+        )
+        risky.update(persisted)
+
+    ui_new = _find_new_ui_surface_files(files, new_files, diff_sections)
+    if ui_new:
+        reasons.append(
+            f"adds UI presentation surface ({len(ui_new)} file(s)): " + ", ".join(ui_new[:10])
+        )
+        risky.update(ui_new)
+
+    if len(files) >= FILE_COUNT_RISK_THRESHOLD:
+        reasons.append(
+            f"large changeset: {len(files)} files staged (threshold {FILE_COUNT_RISK_THRESHOLD})"
+        )
+
+    module_dirs = sorted({Path(f).parts[0] for f in files if len(Path(f).parts) > 1})
+    if len(module_dirs) >= MODULE_BOUNDARY_DIR_THRESHOLD:
+        reasons.append(
+            f"crosses module boundary: {len(module_dirs)} top-level dirs ({', '.join(module_dirs)})"
+        )
+
+    if reasons:
+        if not risky:
+            risky.update(files[:20])
+        return {"level": "high", "reasons": reasons, "risky_files": sorted(risky)[:20]}
+
+    # Medium tier — reuse the existing constitution/generic keyword detector
+    # instead of re-deriving keyword risk logic here.
+    medium_reasons: list[str] = []
+    try:
+        import infer_risk_surface as _irs
+
+        result = _irs.evaluate(diff_body, files, set())
+        if result.get("risk_surface_change"):
+            if result.get("matched_rules"):
+                medium_reasons.append("constitution rules matched: " + ", ".join(result["matched_rules"]))
+            for hit in result.get("generic_evidence") or []:
+                medium_reasons.append(f"risk keyword: {hit.get('label')}")
+    except Exception:
+        pass
+
+    if medium_reasons:
+        return {"level": "medium", "reasons": medium_reasons, "risky_files": []}
+
+    return {"level": "low", "reasons": [], "risky_files": []}
+
+
+def _enforce_risk_audit_enabled(root: Path) -> bool:
+    """Opt-in gate for the risk hard-block. DEFAULT OFF on both paths."""
+    if os.environ.get("BUILDLOOP_ENFORCE_RISK_AUDIT") == "1":
+        return True
+    config_path = root / ".build-loop" / "config.json"
+    if config_path.is_file():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            if (cfg.get("sessionPrefs") or {}).get("enforceRiskAudit") is True:
+                return True
+        except (ValueError, OSError):
+            pass
+    return False
+
+
+def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
+    """True when a recent recorded verdict (via audit_record_verdict.py) covers
+    every staged risky file. Reuses the same runs[].judge_decisions storage
+    audit_record_verdict.py writes to — no separate storage introduced."""
+    if not risky_files:
+        return False
+    state_path = root / ".build-loop" / "state.json"
+    if not state_path.is_file():
+        return False
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return False
+    runs = data.get("runs") or []
+    now = _dt.datetime.now(_dt.timezone.utc)
+    staged = set(risky_files)
+    for run in runs:
+        for entry in run.get("judge_decisions") or []:
+            if entry.get("judge_id") != "independent-auditor-hook":
+                continue
+            verdict = entry.get("verdict")
+            if verdict not in _APPROVE_VERDICTS:
+                continue
+            vts_raw = entry.get("verdict_ts")
+            if not vts_raw:
+                continue
+            try:
+                vts = _dt.datetime.fromisoformat(vts_raw.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                continue
+            age_min = (now - vts).total_seconds() / 60
+            if age_min > RISK_VERDICT_RECENCY_MIN:
+                continue
+            entry_risky = set(entry.get("risky_files") or [])
+            if staged <= entry_risky:
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -310,8 +587,15 @@ def _recent_trajectory(root: Path) -> str:
     return "\n".join(out) + "\n"
 
 
-def _record_runs_judge_entry(root: Path, commit_hash: str, status: str, brief: str) -> None:
-    """Append a synthetic judge_decisions entry to runs[-1]; idempotent on (target, status) within 60s."""
+def _record_runs_judge_entry(
+    root: Path, commit_hash: str, status: str, brief: str, risk: dict | None = None
+) -> None:
+    """Append a synthetic judge_decisions entry to runs[-1]; idempotent on (target, status) within 60s.
+
+    `risk` (optional) is the dict from `_classify_risk` — recording risk_level
+    and risky_files here makes a skipped/bypassed high-risk commit detectable
+    after the fact, and lets `_has_matching_risk_verdict` later confirm a
+    verdict recorded on this entry actually covers the risky files."""
     state_path = root / ".build-loop" / "state.json"
     if not state_path.is_file():
         return
@@ -363,6 +647,8 @@ def _record_runs_judge_entry(root: Path, commit_hash: str, status: str, brief: s
         "judge_id": "independent-auditor-hook", "target": commit_hash,
         "status": status, "verdict": "pending", "brief": brief,
         "ts": now_dt.isoformat(timespec="seconds"),
+        "risk_level": (risk or {}).get("level"),
+        "risky_files": (risk or {}).get("risky_files") or [],
     })
     tmp = state_path.with_suffix(".json.tmp")
     try:
@@ -388,6 +674,25 @@ def _emit_packet(root: Path) -> int:
     # Deterministic block first (zero-judgment hard fails)
     blocked, reason = _deterministic_block(files, diff_body)
 
+    # Risk classification (learn/risk-gated-commit-audit) — always computed so
+    # the packet, the recorded runs[] entry, and the opt-in hard block below
+    # all see the same verdict.
+    risk = _classify_risk(files, diff_body)
+    enforce_risk_audit = _enforce_risk_audit_enabled(root)
+    risk_blocked = False
+    risk_block_reason = ""
+    if (
+        not blocked
+        and risk["level"] == "high"
+        and enforce_risk_audit
+        and not _has_matching_risk_verdict(root, risk["risky_files"])
+    ):
+        risk_blocked = True
+        risk_block_reason = (
+            "high-risk commit without a matching independent audit — run the audit on this "
+            "diff, record the verdict, then commit"
+        )
+
     # Gather context (each optional, "(none found)" when missing)
     intent = _read_optional(root / ".build-loop" / "intent.md", MAX_TEXT_CHARS)
     goal = _read_optional(root / ".build-loop" / "goal.md", MAX_TEXT_CHARS)
@@ -409,6 +714,23 @@ def _emit_packet(root: Path) -> int:
 
     if blocked:
         out(f"### DETERMINISTIC BLOCK\n{reason}\n\n")
+
+    if risk_blocked:
+        out(f"### RISK GATE BLOCK\n{risk_block_reason}\n\n")
+        out("Risky files:\n")
+        for f in risk["risky_files"]:
+            out(f"- `{f}`\n")
+        out("\n")
+
+    out("### Risk classification\n")
+    out(f"- level: **{risk['level']}**\n")
+    if risk["reasons"]:
+        out("- reasons:\n")
+        for r in risk["reasons"]:
+            out(f"  - {r}\n")
+    else:
+        out("- reasons: _(none)_\n")
+    out(f"- enforceRiskAudit: {enforce_risk_audit}\n\n")
 
     out("### Staged diff\n")
     out("```\n")
@@ -466,10 +788,28 @@ def _emit_packet(root: Path) -> int:
 
     # Upgrade 4 — persist a synthetic hook-path entry to runs[].judge_decisions[]
     commit_hash = _run(["git", "rev-parse", "--short", "HEAD"]).strip() or "staged"
-    status = "deterministic_block" if blocked else "packet_emitted"
-    _record_runs_judge_entry(root, commit_hash, status, reason if blocked else f"{len(files)} files staged")
+    if blocked:
+        status = "deterministic_block"
+    elif risk_blocked:
+        status = "risk_block"
+    else:
+        status = "packet_emitted"
+    _record_runs_judge_entry(
+        root, commit_hash, status, reason if blocked else f"{len(files)} files staged", risk=risk
+    )
 
     out("### Verdict request\n")
+    if risk["level"] == "high":
+        out("**THIS DIFF IS HIGH-RISK.** Signals fired:\n")
+        for r in risk["reasons"]:
+            out(f"- {r}\n")
+        out(
+            "\nAn independent verdict is REQUIRED before this commit is considered reviewed. "
+            "The verdict MUST explicitly cite the specific risky files:\n"
+        )
+        for f in risk["risky_files"]:
+            out(f"- `{f}`\n")
+        out("\n")
     out("Render ONE of the four verdicts in your next assistant message, naming the verdict explicitly:\n\n")
     out("- **yay (approve)** — packet aligns with intent + constitution; the commit ships as-is.\n")
     out("- **nay (reject)** — packet contradicts intent or trips a constitution rule; the commit should not land.\n")
@@ -484,7 +824,7 @@ def _emit_packet(root: Path) -> int:
         "a green gate with a thin oracle is false confidence (arXiv:2606.09863); recording coverage makes it visible. The flag is optional and never blocks.\n\n")
     out("This audit packet is independent of any orchestrator dispatch. The hook fires at the git-commit boundary on every commit.\n\n")
 
-    return 2 if blocked else 0
+    return 2 if (blocked or risk_blocked) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +837,13 @@ def main() -> int:
         try:
             root = _repo_root()
             commit_hash = _run(["git", "rev-parse", "--short", "HEAD"]).strip() or "staged"
-            _record_runs_judge_entry(root, commit_hash, "bypass", "BUILDLOOP_AUDIT_BYPASS=1")
+            # Classify risk even on bypass so a skipped high-risk commit is
+            # detectable after the fact via runs[].judge_decisions[].risk_level.
+            try:
+                risk = _classify_risk(_staged_files(), _staged_diff())
+            except Exception:  # noqa: BLE001 — bypass must never fail on risk classification
+                risk = None
+            _record_runs_judge_entry(root, commit_hash, "bypass", "BUILDLOOP_AUDIT_BYPASS=1", risk=risk)
         except Exception:  # noqa: BLE001 — never crash a commit
             pass
         sys.stderr.write("[independent-commit-auditor] BYPASS active (BUILDLOOP_AUDIT_BYPASS=1) — logged.\n")
