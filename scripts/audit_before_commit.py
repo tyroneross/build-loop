@@ -29,6 +29,7 @@ Bypass: env var BUILDLOOP_AUDIT_BYPASS=1 skips all checks and logs to
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -58,10 +59,16 @@ MODULE_BOUNDARY_DIR_THRESHOLD = 3
 # small enough that a stale/unrelated audit can't accidentally cover a new
 # diff, generous enough that recording the verdict a few minutes after the
 # packet was emitted doesn't require perfect timing.
-# TODO(risk-gate v2): this window lets a prior audit vouch for a later SUPERSET
-# diff (same risky_files, more added since) as long as it's within the window —
-# tighten via diff-hash binding instead of a time window + subset check.
-RISK_VERDICT_RECENCY_MIN = 60
+#
+# DONE (risk-gate diff-hash tightening): the opt-in block used to match on
+# (recency + risky_files superset) alone, which let a prior approval of one
+# diff vouch for a LATER, DIFFERENT diff that happened to touch a subset of
+# the same risky files, and let content edited after the audit still pass.
+# `_has_matching_risk_verdict` now requires an exact `diff_hash` match
+# (see `staged_diff_hash()`) as the primary check; the recency window below
+# is now just a staleness backstop on top of an already-exact match, so it
+# was tightened from 60 to 30 minutes.
+RISK_VERDICT_RECENCY_MIN = 30
 
 # Verdict taxonomy is yay/nay/suggest/look-again (see module docstring and
 # audit_record_verdict.py's --verdict choices). Only "yay" is an approval —
@@ -228,6 +235,30 @@ def _staged_diff() -> str:
 
 def _staged_stat() -> str:
     return _run(["git", "diff", "--cached", "--stat"])
+
+
+def staged_diff_hash(cwd: Path | None = None) -> str | None:
+    """SHA-256 over the staged diff body + the sorted staged file list — the
+    exact content a recorded verdict is bound to (learn/risk-gated-commit-audit
+    diff-hash tightening). Single source of truth: `audit_record_verdict.py`
+    imports this function rather than re-deriving the hash, so the two
+    scripts can never drift on what "the same staged diff" means.
+
+    The file list is folded in alongside the diff body so a contrived diff
+    that renders identically but touches a different file set (e.g. a mode-
+    only change) can't collide.
+
+    Returns None when there is nothing staged, or when the underlying git
+    calls fail (no repo, timeout, etc.) — callers MUST treat None as "can
+    never match a real staged commit" (fail-safe), never as a wildcard.
+    """
+    diff = _run(["git", "diff", "--cached"], cwd=cwd)
+    names = _run(["git", "diff", "--cached", "--name-only"], cwd=cwd)
+    file_list = sorted(ln for ln in names.splitlines() if ln.strip())
+    if not diff.strip() and not file_list:
+        return None
+    payload = "\x00".join(file_list) + "\x00\x00" + diff
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
 
 
 def _deterministic_block(files: list[str], diff_body: str) -> tuple[bool, str]:
@@ -423,9 +454,29 @@ def _enforce_risk_audit_enabled(root: Path) -> bool:
 
 
 def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
-    """True when a recent recorded verdict (via audit_record_verdict.py) covers
-    every staged risky file. Reuses the same runs[].judge_decisions storage
-    audit_record_verdict.py writes to — no separate storage introduced."""
+    """True when a recent recorded verdict (via audit_record_verdict.py) is
+    bound, by exact staged-diff-hash, to the CURRENT staged diff. Reuses the
+    same runs[].judge_decisions storage audit_record_verdict.py writes to —
+    no separate storage introduced.
+
+    Diff-hash binding (learn/risk-gated-commit-audit tightening — see the
+    comment above RISK_VERDICT_RECENCY_MIN): the exact `diff_hash` match is
+    now the PRIMARY check. It closes two holes the old (recency + risky_files
+    superset) check left open: (1) a prior approval of one diff could vouch
+    for a LATER, DIFFERENT diff that happened to touch a subset of the same
+    risky files, and (2) content edited after the audit ran still passed.
+
+    The risky_files-superset check below is now redundant given an exact
+    hash match — the risky_files recorded alongside a verdict's diff_hash
+    were derived from that SAME staged diff, so if the hash matches, the
+    superset check can never fail. Kept anyway as a cheap AND-guard (free to
+    evaluate, no false-negative risk) for defense-in-depth in case the hash
+    and risky_files derivations ever diverge.
+
+    Fail-safe: if the current staged diff's hash can't be computed, or a
+    candidate entry has no diff_hash at all, that candidate can never match —
+    "unknown" is never treated as a wildcard.
+    """
     if not risky_files:
         return False
     state_path = root / ".build-loop" / "state.json"
@@ -435,6 +486,12 @@ def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return False
+
+    current_hash = staged_diff_hash()
+    if not current_hash:
+        # Can't verify what's actually staged — fail safe, never match.
+        return False
+
     runs = data.get("runs") or []
     now = _dt.datetime.now(_dt.timezone.utc)
     staged = set(risky_files)
@@ -444,6 +501,9 @@ def _has_matching_risk_verdict(root: Path, risky_files: list[str]) -> bool:
                 continue
             verdict = entry.get("verdict")
             if verdict not in _APPROVE_VERDICTS:
+                continue
+            entry_hash = entry.get("diff_hash")
+            if not entry_hash or entry_hash != current_hash:
                 continue
             vts_raw = entry.get("verdict_ts")
             if not vts_raw:

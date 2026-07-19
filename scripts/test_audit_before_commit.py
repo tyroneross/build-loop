@@ -420,6 +420,143 @@ class OptInBlockTests(_GitRepoCase):
         self.assertIn("app/models/Widget.py", result.stderr)
 
     def test_flag_on_high_risk_with_matching_verdict_passes(self) -> None:
+        """Hash-match passes: an approving verdict recorded with diff_hash equal to
+        the CURRENT staged diff's hash satisfies the opt-in block."""
+        self._stage_persisted_model()
+        current_hash = abc.staged_diff_hash(cwd=self.repo)
+        self.assertIsNotNone(current_hash)
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+        state_path = self.repo / ".build-loop" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps({
+                "runs": [{
+                    "run_id": "r1",
+                    "judge_decisions": [{
+                        "judge_id": "independent-auditor-hook",
+                        "verdict": "yay",
+                        "verdict_ts": now,
+                        "risky_files": ["app/models/Widget.py"],
+                        "diff_hash": current_hash,
+                    }],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        result = self._run_hook(extra_env={"BUILDLOOP_ENFORCE_RISK_AUDIT": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("RISK GATE BLOCK", result.stderr)
+
+    def test_flag_on_high_risk_hash_mismatch_stale_superset_blocks(self) -> None:
+        """Closes the exact TODO scenario: an approving verdict recorded over a
+        LARGER diff (files a, b, c) must NOT vouch for a later, different diff
+        that only touches a subset (file a) of the same risky files — even
+        though the old (recency + superset) check would have passed this."""
+        self._write_and_stage(
+            "app/models/A.py", "class A(models.Model):\n    name = models.CharField(max_length=10)\n"
+        )
+        self._write_and_stage(
+            "app/models/B.py", "class B(models.Model):\n    name = models.CharField(max_length=10)\n"
+        )
+        self._write_and_stage(
+            "app/models/C.py", "class C(models.Model):\n    name = models.CharField(max_length=10)\n"
+        )
+        stale_hash = abc.staged_diff_hash(cwd=self.repo)
+        self.assertIsNotNone(stale_hash)
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+        state_path = self.repo / ".build-loop" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps({
+                "runs": [{
+                    "run_id": "r1",
+                    "judge_decisions": [{
+                        "judge_id": "independent-auditor-hook",
+                        "verdict": "yay",
+                        "verdict_ts": now,
+                        "risky_files": ["app/models/A.py", "app/models/B.py", "app/models/C.py"],
+                        "diff_hash": stale_hash,
+                    }],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        # A LATER, DIFFERENT change: unstage B and C, leaving only A staged —
+        # a subset of the previously-approved risky_files, but a different diff.
+        self._git(["reset", "--", "app/models/B.py"])
+        self._git(["reset", "--", "app/models/C.py"])
+        (self.repo / "app/models/B.py").unlink()
+        (self.repo / "app/models/C.py").unlink()
+        result = self._run_hook(extra_env={"BUILDLOOP_ENFORCE_RISK_AUDIT": "1"})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("RISK GATE BLOCK", result.stderr)
+
+    def test_flag_on_high_risk_content_drift_after_audit_blocks(self) -> None:
+        """A verdict is recorded against the staged content, then the staged
+        content changes before commit — the hash no longer matches, so the
+        stale approval must not vouch for the new content."""
+        self._stage_persisted_model()
+        recorded_hash = abc.staged_diff_hash(cwd=self.repo)
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+        state_path = self.repo / ".build-loop" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps({
+                "runs": [{
+                    "run_id": "r1",
+                    "judge_decisions": [{
+                        "judge_id": "independent-auditor-hook",
+                        "verdict": "yay",
+                        "verdict_ts": now,
+                        "risky_files": ["app/models/Widget.py"],
+                        "diff_hash": recorded_hash,
+                    }],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        # Content drift: edit the staged file after the verdict was recorded.
+        self._write_and_stage(
+            "app/models/Widget.py",
+            "class Widget(models.Model):\n    name = models.CharField(max_length=999)\n    extra = models.IntegerField()\n",
+        )
+        result = self._run_hook(extra_env={"BUILDLOOP_ENFORCE_RISK_AUDIT": "1"})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("RISK GATE BLOCK", result.stderr)
+
+    def test_flag_on_high_risk_matching_hash_older_than_recency_window_blocks(self) -> None:
+        """A matching diff_hash older than RISK_VERDICT_RECENCY_MIN (30 min, tightened
+        from 60) still blocks — the exact-hash match doesn't waive staleness."""
+        self._stage_persisted_model()
+        current_hash = abc.staged_diff_hash(cwd=self.repo)
+        stale_ts = (
+            _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=35)
+        ).isoformat(timespec="seconds")
+        state_path = self.repo / ".build-loop" / "state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps({
+                "runs": [{
+                    "run_id": "r1",
+                    "judge_decisions": [{
+                        "judge_id": "independent-auditor-hook",
+                        "verdict": "yay",
+                        "verdict_ts": stale_ts,
+                        "risky_files": ["app/models/Widget.py"],
+                        "diff_hash": current_hash,
+                    }],
+                }],
+            }),
+            encoding="utf-8",
+        )
+        result = self._run_hook(extra_env={"BUILDLOOP_ENFORCE_RISK_AUDIT": "1"})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("RISK GATE BLOCK", result.stderr)
+
+    def test_flag_on_high_risk_verdict_without_diff_hash_never_passes(self) -> None:
+        """Fail-safe: a legacy/incomplete recorded entry with NO diff_hash at all
+        must never be treated as a match, even with matching risky_files and a
+        fresh timestamp — "unknown" is never a wildcard."""
         self._stage_persisted_model()
         now = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
         state_path = self.repo / ".build-loop" / "state.json"
@@ -433,14 +570,15 @@ class OptInBlockTests(_GitRepoCase):
                         "verdict": "yay",
                         "verdict_ts": now,
                         "risky_files": ["app/models/Widget.py"],
+                        # no diff_hash key at all
                     }],
                 }],
             }),
             encoding="utf-8",
         )
         result = self._run_hook(extra_env={"BUILDLOOP_ENFORCE_RISK_AUDIT": "1"})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("RISK GATE BLOCK", result.stderr)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("RISK GATE BLOCK", result.stderr)
 
     def test_flag_on_high_risk_recorded_nay_still_blocks(self) -> None:
         """FIX #3: a recorded REJECTION verdict must NOT satisfy the opt-in block —

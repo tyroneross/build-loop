@@ -19,6 +19,15 @@ import os
 import sys
 from pathlib import Path
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+# Single source of truth for the staged-diff hash — imported, never
+# re-derived, so this script and audit_before_commit.py can never drift on
+# what "the same staged diff" means (learn/risk-gated-commit-audit).
+from audit_before_commit import staged_diff_hash  # noqa: E402
+
 
 _VALID_ORACLE_COVERAGE = {"full", "partial", "thin"}
 
@@ -114,6 +123,18 @@ def main() -> int:
     target["verdict_ts"] = now
     if oracle_completeness is not None:
         target["oracle_completeness"] = oracle_completeness
+
+    # Diff-hash binding (learn/risk-gated-commit-audit tightening): bind this
+    # verdict to the EXACT staged content at record time, not just the risky
+    # file names already on `target` (left untouched above). Computed against
+    # --workdir so the CLI's --workdir contract stays honored. Fail-safe: when
+    # nothing is staged or the hash can't be computed, write no diff_hash at
+    # all — a missing key can never satisfy the equality check in
+    # audit_before_commit._has_matching_risk_verdict, so this never fails
+    # open into a false pass.
+    diff_hash = staged_diff_hash(cwd=Path(args.workdir))
+    if diff_hash:
+        target["diff_hash"] = diff_hash
 
     tmp = state_path.with_suffix(".json.tmp")
     try:
