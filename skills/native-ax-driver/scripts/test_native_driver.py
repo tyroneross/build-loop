@@ -21,6 +21,9 @@ and have no side effects, so they run anywhere pytest runs.
 from __future__ import annotations
 
 import json
+import shutil
+
+import pytest
 
 import native_driver
 
@@ -199,3 +202,26 @@ def test_cmd_launch_hard_fails_when_before_snapshot_query_errors(monkeypatch, ca
     payload = json.loads(out)
     assert payload["success"] is False
     assert "snapshot" in payload["error"].lower()
+
+
+@pytest.mark.skipif(
+    shutil.which("osascript") is None,
+    reason="live osascript smoke — requires a macOS GUI session; skipped headless",
+)
+def test_query_gui_processes_live_smoke():
+    """Invoke the REAL osascript query, not a mock.
+
+    The mocked unit tests above cannot validate the AppleScript STRING — which
+    is exactly how a malformed multi-property query (`{name, unix id, bundle
+    identifier} of every process whose ...`) shipped and raised -1728 at
+    runtime (2026-07-19), leaving `_gui_pids()` empty and the PID-scoped launch
+    non-functional while every unit test stayed green. This asserts the query
+    actually parses and returns a plausible process list on a real macOS
+    session; it skips cleanly in headless CI.
+    """
+    apps = native_driver._query_gui_processes()
+    assert isinstance(apps, list)
+    assert apps, "no GUI processes returned — the AppleScript query is likely malformed"
+    for a in apps:
+        assert {"name", "pid", "bundleIdentifier"} <= set(a)
+    assert any(a["pid"] for a in apps), "no real pids captured — launch pid-capture would fail"

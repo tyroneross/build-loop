@@ -192,10 +192,19 @@ def _query_gui_processes() -> list[dict]:
     Raises FileNotFoundError (no osascript) or subprocess.CalledProcessError
     (AppleScript failed) — callers decide how to surface those.
     """
+    # Fetch each property as its own list and concatenate — a record
+    # (`{name, unix id, ...} of ...`) or a bound variable holding the filtered
+    # collection both raise -1728 on current macOS; the direct per-property form
+    # is the reliable one. Restrict to `application processes` (not `every
+    # process`): background-only daemons lack a `background only` property and
+    # error the filter. Order (names, pids, bundles) matches the flat-thirds
+    # parser below.
+    proc_set = "(application processes whose background only is false)"
     script = (
-        'tell application "System Events" to '
-        'get {name, unix id, bundle identifier} of every process '
-        "whose background only is false"
+        'tell application "System Events" to return '
+        f"(name of {proc_set}) & "
+        f"(unix id of {proc_set}) & "
+        f"(bundle identifier of {proc_set})"
     )
     result = subprocess.run(
         ["osascript", "-e", script],
