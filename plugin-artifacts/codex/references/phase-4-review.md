@@ -58,6 +58,8 @@ Catch scope drift, patch-over-root-cause, missed edge cases, and rubric violatio
 
 Test every criterion from Assess with evidence.
 
+**Keep validation bounded.** Default graders, smokes, and functional checks to quick runs (seconds–minutes) — most are fast. Escalate to a long-running test only when a radical or unexpected result genuinely needs more time to characterize, and note that in the Review-G report rather than silently running long. A bounded live check that catches what a mocked/green suite hides (e.g. a real-osascript smoke over a mocked unit test) outranks a long run that adds no signal.
+
 **UI validation — build-loop-owned route** (`uiTarget != null`): dispatch `ui-validator` first, then run the static design-rule scanner and UI input/output contract check. Build-loop does not auto-route to IBR for validation. If the user explicitly requested IBR, treat that as a manual auxiliary validator and keep its findings out of the default gate order.
 
 **UI validation fallback**: paste `fallbacks.md#web-ui` into the validation subagent prompt when `ui-validator` cannot render the route. The fallback contains 10 specific grep checks (Gestalt violations, touch targets, missing handlers, missing aria-labels, status-pill anti-patterns, off-token colors, non-8pt spacing, console leftovers, mock data) plus a file-check matrix for landmarks, focus styles, and viewport tags. Findings get `⚠️ static-analysis only — browser/simulator evidence unavailable` in the Review-G report. This is the standalone UI validation path — degraded vs rendered validation, but not silent.
