@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Wiki client: federate Tyrone's Obsidian LLM Wiki as a 4th RRF leg.
 
-The wiki at `~/ObsidianVault/` ships its own graph-aware retrieval
+The wiki at `~/personal-llm-wiki/` ships its own graph-aware retrieval
 stack — vector + lexical + PageRank rerank, exposed via the read-only
-CLI at `~/ObsidianVault/tools/scripts/llmwiki search <query> -k N`.
+CLI at `~/personal-llm-wiki/tools/scripts/llmwiki search <query> -k N`.
 
 This client wraps the CLI as a subprocess, parses the human-readable
 output into dicts compatible with `scripts/rrf.py`'s rrf_fuse(), and
@@ -69,7 +69,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CLI = "~/ObsidianVault/tools/scripts/llmwiki"
+DEFAULT_CLI = "~/personal-llm-wiki/tools/scripts/llmwiki"
 ENV_CLI = "BUILD_LOOP_WIKI_CLI"
 DEFAULT_TIMEOUT_S = 5.0
 EXCERPT_MAX_CHARS = 400

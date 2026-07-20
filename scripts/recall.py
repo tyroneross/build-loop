@@ -509,7 +509,7 @@ def run_search(
         leg_stats["graph_count"] = 0
 
     # Wiki leg (Phase C). Federates Tyrone's Obsidian LLM Wiki via the
-    # subprocess CLI at ~/ObsidianVault/tools/scripts/llmwiki. The CLI
+    # subprocess CLI at ~/personal-llm-wiki/tools/scripts/llmwiki. The CLI
     # does its own vector + lexical + PageRank rerank inside the vault;
     # we treat each returned page as one ranked candidate and let RRF
     # arbitrate against the in-repo legs. Empty when CLI is missing,
@@ -602,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "In --mode hybrid, skip the Phase C wiki federation leg "
             "(subprocess to Tyrone's Obsidian LLM Wiki via "
-            "~/ObsidianVault/tools/scripts/llmwiki). Useful for A/B "
+            "~/personal-llm-wiki/tools/scripts/llmwiki). Useful for A/B "
             "safety, or when running on a machine without the vault."
         ),
     )

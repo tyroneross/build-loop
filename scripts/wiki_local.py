@@ -10,9 +10,9 @@ on every fresh process. The architectural fix is to do the search
 in-process inside recall.py and cache the loaded store.
 
 Scope:
-  - One-time read of `~/ObsidianVault/.vector/embeddings.json` (1962
+  - One-time read of `~/personal-llm-wiki/.vector/embeddings.json` (1962
     chunks, 768-dim, ~287ms cold; ~10ms warm via pickle cache) and
-    `~/ObsidianVault/.vector/wiki.db` (FTS5 + edges; only opened lazy
+    `~/personal-llm-wiki/.vector/wiki.db` (FTS5 + edges; only opened lazy
     if a query needs it — vector + lexical cover the gate criterion).
   - mtime-keyed invalidation: if either source file's mtime advances
     past the cached value, re-read.
@@ -49,7 +49,7 @@ Pickle cache contract:
     stale we re-read the JSON instead.
 
 References:
-  - `~/ObsidianVault/tools/scripts/vault_vector.py` for the canonical
+  - `~/personal-llm-wiki/tools/scripts/vault_vector.py` for the canonical
     cosine + lexical_score implementation (lifted here, not imported,
     to keep build-loop's interpreter free of vault deps).
   - `scripts/wiki_client.py` for the parse_search_output schema we
@@ -74,7 +74,7 @@ from typing import Any
 # Configuration
 # ---------------------------------------------------------------------------
 
-VAULT_ROOT_DEFAULT = "~/ObsidianVault"
+VAULT_ROOT_DEFAULT = "~/personal-llm-wiki"
 ENV_VAULT_ROOT = "BUILD_LOOP_VAULT_ROOT"
 
 # Vault-side embedder (768-dim, distinct vector space from build-loop's

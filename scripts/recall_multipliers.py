@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Quality, recency, and combined-score multipliers for hybrid recall.
 
-Phase A chunk 5. Lifted from `~/ObsidianVault/tools/scripts/vault_vector.py`
+Phase A chunk 5. Lifted from `~/personal-llm-wiki/tools/scripts/vault_vector.py`
 (lines 270, 482-545) with two build-loop-specific deviations documented
 inline.
 
