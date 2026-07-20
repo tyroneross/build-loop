@@ -90,7 +90,7 @@ def test_default_vault_root_uses_current_home(tmp_path: Path, monkeypatch: pytes
     monkeypatch.delenv("BUILD_LOOP_VAULT_ROOT", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     import wiki_local  # type: ignore  # noqa: PLC0415
-    assert wiki_local._vault_root() == tmp_path / "ObsidianVault"
+    assert wiki_local._vault_root() == tmp_path / "personal-llm-wiki"
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ def test_load_store_pickle_cache_round_trip(fake_vault: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def _vault_present() -> bool:
-    return Path("~/ObsidianVault/.vector/embeddings.json").expanduser().exists()
+    return Path("~/personal-llm-wiki/.vector/embeddings.json").expanduser().exists()
 
 
 def _ollama_up() -> bool:
