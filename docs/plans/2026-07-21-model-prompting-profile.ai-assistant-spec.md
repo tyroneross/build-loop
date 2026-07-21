@@ -31,16 +31,16 @@ manifest[f"model:{mid}"] = {
 
 **Two consequences.** The read is offline and on-demand — a sync, never a per-dispatch call — so the caution against building a live runtime cross-repo read still stands. And `meta` projects `{segment, tier}` only, so `prompting_profiles` will **not** flow through on its own; it needs an explicit addition.
 
-**Why this stays small:** the profile is keyed by **tier**, and the registry already mirrors tier for 44 models. The consumer needs one table plus a join on data it already has — no per-model records, no new sync mechanism.
+**Why this stays small:** the profile is keyed by **tier**, and the registry already mirrors tier for the 23 models it sources from this taxonomy (its wider 44-entry model catalog includes local Ollama records, which carry no tier). The consumer needs one table plus a join on data it already has — no per-model records, no new sync mechanism.
 
 ## What build-loop ships (the contract to mirror)
 
 As of build-loop taxonomy `schema_version 2.1.0`, `references/model-taxonomy.json` carries a top-level `prompting_profiles` block:
 
 - `fields`: `["examples", "constraint_posture", "edge_case_handling", "rationale", "prompt_budget"]`
-- `by_tier`: one record per capability rung `T0`–`T5` (`T-S`: null), each with the 5 fields + `confidence` + `summary` (a directly-injectable one-liner).
+- `by_tier`: one record per capability rung `T0`–`T5` (`T-S`: null), each with the 5 fields plus `confidence`, `summary`, and `evidence_note`. `summary` is the injection payload: actionable, self-contained, safe to paste outside build-loop, and free of cross-rung references. Epistemics live in `evidence_note` and `confidence` so they never leak into a prompt.
 - Key semantics: **tier-keyed** — a model's profile is looked up via its tier (which the registry already mirrors in `capability_fingerprints` as the `/<tier>` half).
-- Epistemic markers are part of the data: `confidence` is `verified-source` (T0–T2), `repo-measured(...)` (T3, partial), or `weak` (T4/T5 — the source explicitly declined to endorse the small-model half). Preserve them in the mirror; do not strip.
+- Epistemic markers are part of the data: `confidence` is `verified-source` (T0–T2), `repo-measured(...)` (T3, partial), or `weak` (T4/T5 — the source explicitly declined to endorse the small-model half), and T4/T5 additionally carry `status_quo: true`. Preserve them in the mirror; do not strip.
 
 ## Work items for the second run
 

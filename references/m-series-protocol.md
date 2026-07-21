@@ -86,6 +86,20 @@ RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resolve_agent_model.py \
 
 If `RESOLVED_MODEL` is `inherit` (the agent declares `segment: inherit` / `tier: inherit`, e.g. `root-cause-investigator`), pass NO `model` override to the `Agent(...)` call — the caller's model flows through. Otherwise pass `--model "$RESOLVED_MODEL"`. The `model:` frontmatter is the fresh-install / non-build-loop fallback only; the live override is authoritative.
 
+**Prompting profile — the same resolve answers *how* to prompt the model it selected.** Use `--json` instead of `--plain` when you are about to author a brief: the envelope carries `prompting_profile` beside `model`, read from the tier-keyed `prompting_profiles` block in `references/model-taxonomy.json`. There is no second lookup and no separate file to load.
+
+```bash
+ENVELOPE="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resolve_agent_model.py \
+  "<agent-name>" --workdir "$PWD" --json)"
+# .model              -> the Agent tool's model parameter
+# .prompting_profile  -> {examples, constraint_posture, edge_case_handling,
+#                         rationale, prompt_budget, confidence, summary}
+```
+
+Shape the brief per that profile — `references/implementer-brief-template.md` §"Tier-shaped brief" maps each field to what changes. `inherit` agents carry `prompting_profile: null`; author the brief at the template's default T3 shape rather than guessing a rung.
+
+**Brief capture (same step).** Write the assembled brief to `.build-loop/briefs/<run_id>/<chunk_id>.md` before dispatching. Brief text is retained nowhere else — `state.json.runs[]` has no brief field — so without this write there is no way to check afterward whether brief shape actually varied by tier, which is the only evidence that distinguishes this feature from a decorative one.
+
 **Underlying primitive (tier-only).** `resolve_agent_model.py` reuses `scripts/model_resolver.py` — the resolver that owns availability + host-reachability + the floor walk. The raw tier-only form is still available when no agent file is involved:
 
 ```bash

@@ -415,12 +415,16 @@ Use the **6-Part Stack** for any system prompt or agent prompt:
 5. **Output format** — exact structure: JSON schema, markdown template, or free text with labeled sections. Specify escape behavior for ambiguous inputs.
 6. **Acceptance criteria** — how success is judged. If deterministic, what makes it wrong. If LLM-judged, what the judge looks for.
 
-Calibrate to the target model's capability rung. **Generated from the `prompting_profiles` block in `references/model-taxonomy.json` — do not hand-edit; edit the taxonomy and regenerate.** Rungs are the taxonomy's ladder (T0 ultra/restricted-frontier · T1 ultra-frontier · T2 frontier · T3 balanced workhorse · T4 efficient near-frontier · T5 utility). Resolve a target's rung with `python3 scripts/resolve_agent_model.py <agent>` when running inside build-loop; the summaries below are self-contained when you are not.
+Calibrate to the target model's capability rung. **These lines are kept byte-equal to the `summary` strings in `references/model-taxonomy.json` (`prompting_profiles.by_tier`) by test `T-09` in `scripts/test_model_taxonomy.py`. Edit the taxonomy first, then mirror the change here — editing only one side fails the test.** Rungs are the taxonomy's ladder: T0 restricted-frontier · T1 ultra-frontier · T2 frontier · T3 balanced workhorse · T4 efficient near-frontier · T5 utility. Inside build-loop, resolve a target's rung with `python3 scripts/resolve_agent_model.py <agent>`; the lines below stand on their own when you are not.
 
-- **T0 / T1** — State the goal, the context, and the falsifier; omit worked examples; every constraint carries its rationale; trust the model with the edge cases.
-- **T2** — Context over directives; at most one compact example when the contract is novel; delegate edge cases but name the known falsifiers.
-- **T3** — Full brief: worked contract examples, explicit caps with the math shown, known edge cases enumerated (schema-field warnings). Round-3 evidence says this rigor pays at this rung — keep it.
-- **T4 / T5** — Full explicit brief with worked examples and direct instructions. WEAKLY EVIDENCED and STATUS-QUO: this row encodes what build-loop already does at this rung — it is a placeholder holding the rung open for the loader's completeness invariant, not a posture anyone chose on evidence. The source declined to endorse detailed-prompting-for-small-models without eval data ('We haven't been able to eval it'). Revisit at the eval trigger. Same as T4; bounded mechanical tasks only. WEAKLY EVIDENCED and STATUS-QUO — same caveat as T4.
+- **T0** — State the goal, the context, and the falsifier. Omit worked examples. Give every constraint its rationale. Trust the model with the edge cases.
+- **T1** — State the goal, the context, and the falsifier. Omit worked examples. Give every constraint its rationale. Trust the model with the edge cases.
+- **T2** — Lead with context rather than directives. Include at most one compact example, and only when the contract is novel. Delegate the edge cases, but name the falsifiers you already know.
+- **T3** — Write the full brief: worked contract examples, explicit caps with the arithmetic shown, and known edge cases enumerated (including schema-field warnings).
+- **T4** — Write the full explicit brief: worked examples and direct instructions.
+- **T5** — Write the full explicit brief: worked examples and direct instructions. Use this rung for bounded mechanical tasks only.
+
+T4 and T5 are weakly-evidenced placeholders encoding current behavior rather than a posture chosen on evidence; see each rung's `evidence_note` in the taxonomy.
 
 Review checklist — when auditing an existing prompt:
 

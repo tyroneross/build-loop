@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -268,9 +269,9 @@ class TaxonomyTests(unittest.TestCase):
                 )
 
         self.assertIn(
-            "do not hand-edit",
+            "Edit the taxonomy first",
             text,
-            "fallbacks.md#prompt is missing its generated-provenance marker",
+            "fallbacks.md#prompt is missing its provenance marker",
         )
 
         for retired in ("Opus 4.6", "gpt-4-mini", "T1 — Opus"):
@@ -279,6 +280,82 @@ class TaxonomyTests(unittest.TestCase):
                     retired, text,
                     f"retired stale-tier string {retired!r} still present in fallbacks.md",
                 )
+
+    # --- Markdown projection drift guard (T-10) ---------------------------
+    def test_markdown_tables_match_prompting_profiles(self) -> None:
+        # T-10: two markdown tables hand-mirror prompting_profiles.by_tier.
+        # Both drift silently the moment someone edits the taxonomy alone --
+        # the exact failure the retired fallbacks.md block demonstrated, so
+        # gate them the same way T-09 gates the fallback text.
+        fields = ("examples", "constraint_posture", "edge_case_handling",
+                  "rationale", "prompt_budget")
+
+        def cells(line: str) -> list[str]:
+            return [c.strip().strip("`*") for c in line.strip().strip("|").split("|")]
+
+        # (a) skills/model-tiering/SKILL.md -- rung-major: one row per rung,
+        #     columns in `fields` order.
+        skill = (HERE.parent / "skills" / "model-tiering" / "SKILL.md")
+        lines = skill.read_text(encoding="utf-8").splitlines()
+        seen_rungs = set()
+        for line in lines:
+            if not line.lstrip().startswith("|"):
+                continue
+            row = cells(line)
+            if not row or row[0] not in self.mt.tier_ladder() or row[0] == "T-S":
+                continue
+            profile = self.mt.prompting_profile(row[0])
+            self.assertIsNotNone(profile, f"{row[0]} has no profile")
+            assert profile is not None
+            seen_rungs.add(row[0])
+            for field, value in zip(fields, row[1:1 + len(fields)]):
+                with self.subTest(file="model-tiering/SKILL.md", rung=row[0], field=field):
+                    self.assertEqual(
+                        value, profile[field],
+                        f"SKILL.md row {row[0]} column {field} says {value!r}; "
+                        f"references/model-taxonomy.json says {profile[field]!r}",
+                    )
+        self.assertEqual(
+            seen_rungs,
+            {r for r in self.mt.tier_ladder() if r != "T-S"},
+            "SKILL.md profile table does not cover every ladder rung",
+        )
+
+        # (b) references/implementer-brief-template.md -- field-major, with
+        #     rungs grouped into columns. Map each column to a representative
+        #     rung and assert per cell.
+        template = (HERE.parent / "references" / "implementer-brief-template.md")
+        tlines = template.read_text(encoding="utf-8").splitlines()
+        header: list[str] | None = None
+        checked = 0
+        for line in tlines:
+            if not line.lstrip().startswith("|"):
+                continue
+            row = cells(line)
+            if row and row[0] in ("Profile field", "field"):
+                header = row
+                continue
+            if header is None or not row or row[0] not in fields:
+                continue
+            field = row[0]
+            for col, value in zip(header[1:], row[1:]):
+                rungs = re.findall(r"T\d", col)
+                for rung in rungs:
+                    profile = self.mt.prompting_profile(rung)
+                    if profile is None:
+                        continue
+                    with self.subTest(file="implementer-brief-template.md",
+                                      rung=rung, field=field):
+                        self.assertEqual(
+                            value, profile[field],
+                            f"brief template {field} column {col!r} says "
+                            f"{value!r}; taxonomy says {profile[field]!r} for {rung}",
+                        )
+                    checked += 1
+        self.assertGreater(
+            checked, 0,
+            "brief template profile table not found -- T-10 would pass vacuously",
+        )
 
     # --- Classification rubric -------------------------------------------
     def test_classification_rubric_has_segment_hints(self) -> None:

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -141,3 +142,53 @@ class BriefMeceValidatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CaptureTests(unittest.TestCase):
+    """Brief capture (Falsifier B's measurement substrate).
+
+    Capture rides the MECE lint because the lint is already mandatory at the
+    moment the assembled brief exists. Persisting there makes the measurement
+    mechanical instead of an instruction an orchestrator must remember.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_capture_writes_brief_to_run_scoped_path(self) -> None:
+        res = bmv.capture_brief(
+            "## owns\n- a.py\n", workdir=Path(self.tmp),
+            run_id="bl-20260721T000000Z-x-1", chunk_id="C2",
+        )
+        self.assertTrue(res["captured"])
+        dest = Path(self.tmp) / ".build-loop" / "briefs" / "bl-20260721T000000Z-x-1" / "C2.md"
+        self.assertTrue(dest.is_file())
+        self.assertEqual(dest.read_text(encoding="utf-8"), "## owns\n- a.py\n")
+
+    def test_capture_sanitizes_path_segments(self) -> None:
+        res = bmv.capture_brief(
+            "x", workdir=Path(self.tmp),
+            run_id="../../etc", chunk_id="a/b",
+        )
+        self.assertTrue(res["captured"])
+        # No traversal: the written path stays under the workdir.
+        self.assertTrue(Path(res["path"]).resolve().is_relative_to(Path(self.tmp).resolve()))
+
+    def test_capture_fails_open_and_never_raises(self) -> None:
+        # A file where the briefs directory should be makes mkdir fail.
+        blocker = Path(self.tmp) / ".build-loop" / "briefs"
+        blocker.parent.mkdir(parents=True, exist_ok=True)
+        blocker.write_text("not a directory", encoding="utf-8")
+        res = bmv.capture_brief(
+            "x", workdir=Path(self.tmp), run_id="r", chunk_id="c",
+        )
+        self.assertFalse(res["captured"])
+        self.assertIn("brief capture failed", res["warning"])
+
+    def test_cli_capture_is_opt_in(self) -> None:
+        brief = Path(self.tmp) / "brief.md"
+        brief.write_text("## owns\n", encoding="utf-8")
+        # Without the capture flags, nothing is written.
+        bmv.main(["--brief-file", str(brief), "--workdir", self.tmp])
+        self.assertFalse((Path(self.tmp) / ".build-loop" / "briefs").exists())
