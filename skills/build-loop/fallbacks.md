@@ -415,11 +415,12 @@ Use the **6-Part Stack** for any system prompt or agent prompt:
 5. **Output format** — exact structure: JSON schema, markdown template, or free text with labeled sections. Specify escape behavior for ambiguous inputs.
 6. **Acceptance criteria** — how success is judged. If deterministic, what makes it wrong. If LLM-judged, what the judge looks for.
 
-Calibrate to model tier:
+Calibrate to the target model's capability rung. **Generated from the `prompting_profiles` block in `references/model-taxonomy.json` — do not hand-edit; edit the taxonomy and regenerate.** Rungs are the taxonomy's ladder (T0 ultra/restricted-frontier · T1 ultra-frontier · T2 frontier · T3 balanced workhorse · T4 efficient near-frontier · T5 utility). Resolve a target's rung with `python3 scripts/resolve_agent_model.py <agent>` when running inside build-loop; the summaries below are self-contained when you are not.
 
-- **Frontier (T1 — Opus 4.6, GPT-5)**: can handle longer instructions, implicit reasoning, self-correction. Prefer clarity over verbosity.
-- **Mid (T2 — Sonnet 5, GPT-5 class)**: explicit instructions; show, don't tell; 1-2 few-shot examples help.
-- **Small/fast (T3 — Haiku 4.5, gpt-4-mini)**: keep prompts short; single task only; deterministic output format; more examples (3-5).
+- **T0 / T1** — State the goal, the context, and the falsifier; omit worked examples; every constraint carries its rationale; trust the model with the edge cases.
+- **T2** — Context over directives; at most one compact example when the contract is novel; delegate edge cases but name the known falsifiers.
+- **T3** — Full brief: worked contract examples, explicit caps with the math shown, known edge cases enumerated (schema-field warnings). Round-3 evidence says this rigor pays at this rung — keep it.
+- **T4 / T5** — Full explicit brief with worked examples and direct instructions. WEAKLY EVIDENCED and STATUS-QUO: this row encodes what build-loop already does at this rung — it is a placeholder holding the rung open for the loader's completeness invariant, not a posture anyone chose on evidence. The source declined to endorse detailed-prompting-for-small-models without eval data ('We haven't been able to eval it'). Revisit at the eval trigger. Same as T4; bounded mechanical tasks only. WEAKLY EVIDENCED and STATUS-QUO — same caveat as T4.
 
 Review checklist — when auditing an existing prompt:
 

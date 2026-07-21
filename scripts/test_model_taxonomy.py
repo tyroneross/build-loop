@@ -244,6 +244,42 @@ class TaxonomyTests(unittest.TestCase):
         # Default (no arg) reads the real, currently fully-profiled taxonomy.
         self.assertEqual(self.mt.unprofiled_tiers(), [])
 
+    # --- Fallback disposal drift guard (T-09) -----------------------------
+    def test_fallbacks_prompt_section_matches_generated_summaries(self) -> None:
+        # T-09: skills/build-loop/fallbacks.md#prompt is a generated
+        # projection of prompting_profiles.by_tier, not a hand-maintained
+        # copy. Every rung's summary string (except T-S, which carries no
+        # profile) must appear verbatim in the fallback text, and the
+        # retired stale-tier block must not have crept back in.
+        fallbacks_path = HERE.parent / "skills" / "build-loop" / "fallbacks.md"
+        text = fallbacks_path.read_text(encoding="utf-8")
+
+        for rung in self.mt.tier_ladder():
+            if rung == "T-S":
+                continue
+            with self.subTest(rung=rung):
+                profile = self.mt.prompting_profile(rung)
+                self.assertIsNotNone(profile, f"{rung} missing a prompting profile")
+                assert profile is not None  # narrow for type-checkers
+                summary = profile["summary"]
+                self.assertIn(
+                    summary, text,
+                    f"{rung} summary not found verbatim in fallbacks.md#prompt",
+                )
+
+        self.assertIn(
+            "do not hand-edit",
+            text,
+            "fallbacks.md#prompt is missing its generated-provenance marker",
+        )
+
+        for retired in ("Opus 4.6", "gpt-4-mini", "T1 — Opus"):
+            with self.subTest(retired=retired):
+                self.assertNotIn(
+                    retired, text,
+                    f"retired stale-tier string {retired!r} still present in fallbacks.md",
+                )
+
     # --- Classification rubric -------------------------------------------
     def test_classification_rubric_has_segment_hints(self) -> None:
         rubric = self.mt.classification_rubric()
