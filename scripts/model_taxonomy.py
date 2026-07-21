@@ -251,6 +251,45 @@ def classification_rubric() -> dict[str, str]:
     return dict(_load().get("classification_rubric", {}))
 
 
+# --------------------------------------------------------------------------
+# Prompting profiles (per-tier prompting posture)
+# --------------------------------------------------------------------------
+
+def prompting_profile(tier: str | None) -> dict[str, Any] | None:
+    """The ``prompting_profiles.by_tier`` entry for ``tier`` (either
+    vocabulary), or ``None``.
+
+    Fail-open by design — this is a dispatch-time convenience, never a
+    blocking check: returns ``None`` for ``T-S``, for unknown/unnormalizable
+    tokens, for ``None`` input, and when the block is absent entirely (an
+    older taxonomy file predating schema_version 2.1.0)."""
+    if not tier:
+        return None
+    try:
+        rung = normalize_tier(tier)
+    except ValueError:
+        return None
+    by_tier = _load().get("prompting_profiles", {}).get("by_tier", {})
+    entry = by_tier.get(rung)
+    return dict(entry) if isinstance(entry, dict) else None
+
+
+def unprofiled_tiers(taxonomy: dict[str, Any] | None = None) -> list[str]:
+    """Ladder rungs (excluding T-S) present in ``tiers.order`` but absent from
+    (or null in) ``prompting_profiles.by_tier``.
+
+    Detect-only — never raises, never blocks dispatch. Defaults to the
+    module-loaded taxonomy; accepts an injected ``taxonomy`` dict for tests so
+    the real data file never needs mutating to exercise the gap case."""
+    data = taxonomy if taxonomy is not None else _load()
+    order = data.get("tiers", {}).get("order", [])
+    by_tier = data.get("prompting_profiles", {}).get("by_tier", {})
+    return [
+        rung for rung in order
+        if rung != "T-S" and not isinstance(by_tier.get(rung), dict)
+    ]
+
+
 # Eagerly-materialized module constants (convenience for importers that want a
 # value rather than a call). These are snapshots of the cached load.
 TAXONOMY = _load()

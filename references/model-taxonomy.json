@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "_comment": "Single source of truth for build-loop's two-axis model taxonomy. SEGMENT axis = work role / primary output; CAPABILITY-TIER axis = a 7-rung ladder. Read by scripts/model_taxonomy.py (the loader every other script imports). Anthropic/OpenAI ids are EXAMPLE SEEDS held as data, NOT hard-codes — classification appends new models to the runtime cache, never to this file. Provider names are illustrative. KISS/DRY: nothing here is duplicated in code.",
 
   "tiers": {
@@ -72,6 +72,46 @@
       "label": "Governance/Evaluation",
       "subsegments": ["moderation", "LLM judges", "routing judges", "compliance classifiers", "quality evaluators"],
       "status": "active"
+    }
+  },
+
+  "prompting_profiles": {
+    "_comment": "Per-TIER prompting posture consulted automatically at dispatch: rides the resolve_agent_model.py envelope as `prompting_profile`. Keyed by capability rung (ADR-02, plan 2026-07-21-model-prompting-profile): a new model classified into a rung INHERITS its profile — freshness is structural, not calendar. `confidence` is part of the data by design: `verified-source` = Anthropic Claude Code team claims, Willison transcript 2026-07-21; `repo-measured` = build-loop round-3 implementer-brief evidence; `weak` = the source EXPLICITLY declined to endorse the small-model half ('We haven't been able to eval it — we don't have any hard data'). Fields trace to named observed failures (neg-constraint gradient F2, invariant brief template F3, rationale-free directives F8); the transcript is explanation, not authority.",
+    "fields": ["examples", "constraint_posture", "edge_case_handling", "rationale", "prompt_budget"],
+    "by_tier": {
+      "T0": {
+        "examples": "omit", "constraint_posture": "contextual", "edge_case_handling": "delegate",
+        "rationale": "required", "prompt_budget": "compressed", "confidence": "verified-source",
+        "summary": "State the goal, the context, and the falsifier; omit worked examples; every constraint carries its rationale; trust the model with the edge cases."
+      },
+      "T1": {
+        "examples": "omit", "constraint_posture": "contextual", "edge_case_handling": "delegate",
+        "rationale": "required", "prompt_budget": "compressed", "confidence": "verified-source",
+        "summary": "State the goal, the context, and the falsifier; omit worked examples; every constraint carries its rationale; trust the model with the edge cases."
+      },
+      "T2": {
+        "examples": "minimal", "constraint_posture": "contextual", "edge_case_handling": "delegate",
+        "rationale": "required", "prompt_budget": "standard", "confidence": "verified-source",
+        "summary": "Context over directives; at most one compact example when the contract is novel; delegate edge cases but name the known falsifiers."
+      },
+      "T3": {
+        "examples": "worked", "constraint_posture": "mixed", "edge_case_handling": "enumerate-known",
+        "rationale": "recommended", "prompt_budget": "full", "confidence": "repo-measured(examples,edge_case_handling); inferred(rest)",
+        "summary": "Full brief: worked contract examples, explicit caps with the math shown, known edge cases enumerated (schema-field warnings). Round-3 evidence says this rigor pays at this rung — keep it."
+      },
+      "T4": {
+        "examples": "worked", "constraint_posture": "directive-ok", "edge_case_handling": "enumerate-known",
+        "rationale": "optional", "prompt_budget": "full", "confidence": "weak",
+        "status_quo": true,
+        "summary": "Full explicit brief with worked examples and direct instructions. WEAKLY EVIDENCED and STATUS-QUO: this row encodes what build-loop already does at this rung — it is a placeholder holding the rung open for the loader's completeness invariant, not a posture anyone chose on evidence. The source declined to endorse detailed-prompting-for-small-models without eval data ('We haven't been able to eval it'). Revisit at the eval trigger."
+      },
+      "T5": {
+        "examples": "worked", "constraint_posture": "directive-ok", "edge_case_handling": "enumerate-known",
+        "rationale": "optional", "prompt_budget": "full", "confidence": "weak",
+        "status_quo": true,
+        "summary": "Same as T4; bounded mechanical tasks only. WEAKLY EVIDENCED and STATUS-QUO — same caveat as T4."
+      },
+      "T-S": null
     }
   },
 

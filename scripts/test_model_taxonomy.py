@@ -181,6 +181,69 @@ class TaxonomyTests(unittest.TestCase):
         ordered = self.mt.break_ties_by_recency(["no-date-model", "fable"])
         self.assertEqual(ordered[0], "fable")
 
+    # --- Prompting profiles (T-01, T-02) -----------------------------------
+    def test_prompting_profile_covers_ladder_and_folds_legacy_tokens(self) -> None:
+        # T-01: every generative rung (excluding T-S) carries a complete
+        # profile: the five posture fields plus confidence + summary.
+        required_fields = {
+            "examples", "constraint_posture", "edge_case_handling",
+            "rationale", "prompt_budget", "confidence", "summary",
+        }
+        for rung in self.mt.tier_ladder():
+            if rung == "T-S":
+                continue
+            with self.subTest(rung=rung):
+                profile = self.mt.prompting_profile(rung)
+                self.assertIsNotNone(profile, f"{rung} missing a prompting profile")
+                assert profile is not None  # narrow for type-checkers
+                self.assertTrue(
+                    required_fields.issubset(profile),
+                    f"{rung} profile missing fields: {required_fields - set(profile)}",
+                )
+        # T-S is specialist infrastructure, off the ladder: no profile.
+        self.assertIsNone(self.mt.prompting_profile("T-S"))
+        # Unknown/None tokens fail open, never raise.
+        self.assertIsNone(self.mt.prompting_profile("bogus"))
+        self.assertIsNone(self.mt.prompting_profile(None))
+        # Legacy tokens normalize to the same ladder rung's profile.
+        self.assertEqual(
+            self.mt.prompting_profile("code"),
+            self.mt.prompting_profile("T3"),
+        )
+
+    def test_unprofiled_tiers_detects_gap_in_synthetic_taxonomy(self) -> None:
+        # T-02: a synthetic taxonomy dict (never the real data file) with a
+        # rung present in tiers.order but missing from prompting_profiles.by_tier.
+        synthetic = {
+            "tiers": {"order": ["T0", "T1", "T2", "T-S"]},
+            "prompting_profiles": {
+                "by_tier": {
+                    "T0": {"examples": "omit"},
+                    "T1": None,
+                    # T2 absent entirely.
+                    "T-S": None,
+                }
+            },
+        }
+        self.assertEqual(
+            set(self.mt.unprofiled_tiers(synthetic)),
+            {"T1", "T2"},
+        )
+        # A fully-profiled synthetic taxonomy reports no gaps.
+        complete = {
+            "tiers": {"order": ["T0", "T1", "T-S"]},
+            "prompting_profiles": {
+                "by_tier": {
+                    "T0": {"examples": "omit"},
+                    "T1": {"examples": "worked"},
+                    "T-S": None,
+                }
+            },
+        }
+        self.assertEqual(self.mt.unprofiled_tiers(complete), [])
+        # Default (no arg) reads the real, currently fully-profiled taxonomy.
+        self.assertEqual(self.mt.unprofiled_tiers(), [])
+
     # --- Classification rubric -------------------------------------------
     def test_classification_rubric_has_segment_hints(self) -> None:
         rubric = self.mt.classification_rubric()
