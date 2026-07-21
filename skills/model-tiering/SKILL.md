@@ -206,6 +206,25 @@ If the ambiguity surfaces a **planning** problem (the original plan no longer fi
 - **Chain of Density**. Summarization-specific technique; not applicable to code work.
 - **Best-of-N by default**. Only on hard chunks. Blanket best-of-N wastes tokens on easy tasks where effort=high is sufficient and cheaper.
 
+## Prompting profiles — how to prompt the rung you resolved
+
+Model-tiering answers *which* model runs an agent. The `prompting_profiles` block in `references/model-taxonomy.json` answers *how to prompt it* — a separate axis, keyed by capability rung, carried on the same resolution path.
+
+**Lookup:** `python3 scripts/resolve_agent_model.py <agent> --json` returns `prompting_profile` alongside `model` — no second call. From code, `model_taxonomy.prompting_profile(tier)` reads the same block directly.
+
+| Rung | examples | constraint_posture | edge_case_handling | rationale | prompt_budget |
+|---|---|---|---|---|---|
+| T0 | omit | contextual | delegate | required | compressed |
+| T1 | omit | contextual | delegate | required | compressed |
+| T2 | minimal | contextual | delegate | required | standard |
+| T3 | worked | mixed | enumerate-known | recommended | full |
+| T4 | worked | directive-ok | enumerate-known | optional | full |
+| T5 | worked | directive-ok | enumerate-known | optional | full |
+
+Profile edits happen in `references/model-taxonomy.json`, not here — the same maintenance path as the model index itself; see §"Chat-triggered index maintenance" above.
+
+The T0–T2 rows are source-verified against the Anthropic Claude Code team's 2026-07-21 published guidance; T3's `examples`/`edge_case_handling` are repo-measured and the rest of T3 is inferred; T4/T5 are weakly-evidenced placeholders (`confidence: weak`, `status_quo: true`) encoding current behavior, not a chosen posture.
+
 ## Cost math quick reference
 
 > ⚠️ **Advisory only.** The numbers below are directional heuristics based on single-source token-profile estimates and public pricing as of the skill's last update. They are **not** verified against real usage telemetry and should not be used as hard routing logic. Treat them as "this tier costs roughly this much more than that tier," not as commitments. Pricing, token profiles, and model output lengths all drift over time. Before using these ratios in any cost-minimization decision, pull actual usage data from the last 30 days of builds and re-derive the numbers for your workload.

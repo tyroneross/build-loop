@@ -55,6 +55,8 @@ Each agent declares a `(segment, tier)` ROLE — the durable KEY into the index.
 
 Full provider substitution table + swap recipes + the selectable-model registry: `references/model-tier-mapping.md`.
 
+Selection and prompting are separate axes, and both are now data-driven. `references/model-taxonomy.json` also carries a `prompting_profiles` block keyed by capability rung (T0–T5; `T-S` is exempt) with five fields — `examples`, `constraint_posture`, `edge_case_handling`, `rationale`, `prompt_budget`. At dispatch the profile arrives on the `resolve_agent_model.py` envelope alongside `model`, so no separate lookup is needed. A newly-classified model inherits its rung's profile automatically; `unprofiled_tiers()` flags a rung added without one. The T4/T5 rows carry `confidence: weak` and `status_quo: true` — they encode today's behavior rather than an evidenced posture.
+
 ## Dual-mode dispatch (intentional A/B test architecture)
 
 Build-loop supports two dispatch modes, both first-class:
