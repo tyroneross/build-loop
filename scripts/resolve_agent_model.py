@@ -50,10 +50,12 @@ from typing import Any
 try:  # pragma: no cover - import shim for direct + packaged execution
     import model_overrides
     import model_resolver
+    import model_taxonomy
 except ImportError:  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import model_overrides  # type: ignore[no-redefine]
     import model_resolver  # type: ignore[no-redefine]
+    import model_taxonomy  # type: ignore[no-redefine]
 
 INHERIT = "inherit"
 # agents/ sits one level up from scripts/.
@@ -122,10 +124,14 @@ def resolve(
 ) -> dict[str, Any]:
     """Resolve ``agent``'s frontmatter role to a dispatch model.
 
-    Returns ``{agent, segment, tier, model, source, resolution_path}``. ``source``
-    is one of: ``inherit``, ``role-preferred`` / ``role-tier-fallback`` (passed
-    through from ``resolve_role``), ``frontmatter-fallback``, ``tier-default-fallback``,
-    ``unresolved``.
+    Returns ``{agent, segment, tier, model, source, resolution_path,
+    prompting_profile}``. ``source`` is one of: ``inherit``, ``role-preferred`` /
+    ``role-tier-fallback`` (passed through from ``resolve_role``),
+    ``frontmatter-fallback``, ``tier-default-fallback``, ``unresolved``.
+    ``prompting_profile`` is the tier-keyed posture from
+    ``model_taxonomy.prompting_profile(tier)`` (``None`` for ``inherit`` agents,
+    where the caller's model — and therefore tier — is unknown at resolve time;
+    also ``None`` when the declared tier is absent/unknown).
     """
     adir = agents_dir or default_agents_dir()
     fm = read_agent_frontmatter(agent, adir)
@@ -142,6 +148,7 @@ def resolve(
             "model": INHERIT,
             "source": "inherit",
             "resolution_path": [{"model": INHERIT, "selected": True, "via": "inherit"}],
+            "prompting_profile": None,
         }
 
     resolution_path: list[dict[str, Any]] = []
@@ -172,6 +179,7 @@ def resolve(
                     "model": env["model"],
                     "source": env.get("source", "role-preferred"),
                     "resolution_path": resolution_path,
+                    "prompting_profile": model_taxonomy.prompting_profile(tier),
                 }
     else:
         resolution_path.append({"role": f"{segment}/{tier}", "skipped": "missing segment or tier"})
@@ -186,6 +194,7 @@ def resolve(
             "model": fm_model,
             "source": "frontmatter-fallback",
             "resolution_path": resolution_path,
+            "prompting_profile": model_taxonomy.prompting_profile(tier),
         }
 
     # Fallback 2: the tier default (legacy token), if the tier is a known legacy token.
@@ -200,6 +209,7 @@ def resolve(
                 "model": default,
                 "source": "tier-default-fallback",
                 "resolution_path": resolution_path,
+                "prompting_profile": model_taxonomy.prompting_profile(tier),
             }
 
     # Nothing resolvable.
@@ -210,6 +220,7 @@ def resolve(
         "model": None,
         "source": "unresolved",
         "resolution_path": resolution_path,
+        "prompting_profile": model_taxonomy.prompting_profile(tier),
     }
 
 

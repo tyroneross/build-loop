@@ -17,6 +17,7 @@ SCRIPT = HERE / "resolve_agent_model.py"
 REPO_AGENTS = HERE.parent / "agents"
 
 sys.path.insert(0, str(HERE))
+import model_taxonomy  # noqa: E402
 import resolve_agent_model as ram  # noqa: E402
 
 
@@ -199,6 +200,99 @@ class FallbackChain(unittest.TestCase):
     def test_missing_agent_file(self):
         cp = run("does-not-exist", "--workdir", str(HERE.parent), "--plain")
         self.assertEqual(cp.returncode, 1)
+
+
+class PromptingProfileEnvelope(unittest.TestCase):
+    """T-03: prompting_profile rides the envelope for role-resolved + inherit agents."""
+
+    def test_role_resolved_agent_carries_its_tier_profile(self):
+        # advisor is tier: frontier (legacy) -> normalizes to T1.
+        env = ram.resolve(agent="advisor", workdir=HERE.parent, host_providers={"anthropic"})
+        self.assertEqual(env["source"], "role-preferred")
+        self.assertEqual(env["prompting_profile"], model_taxonomy.prompting_profile(env["tier"]))
+        self.assertIsNotNone(env["prompting_profile"])
+
+    def test_inherit_agent_carries_no_profile(self):
+        env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
+        self.assertEqual(env["source"], "inherit")
+        self.assertIsNone(env["prompting_profile"])
+
+
+class LegacyTierProfileParity(unittest.TestCase):
+    """T-04: a legacy tier token resolves to the same profile as its ladder rung."""
+
+    def test_legacy_and_ladder_tier_tokens_agree_via_envelope(self):
+        with tempfile.TemporaryDirectory() as td:
+            adir = Path(td) / "agents"
+            _write_agent(adir, "legacy-tier-agent", segment="agentic_execution", tier="code", model=None)
+            _write_agent(adir, "ladder-tier-agent", segment="agentic_execution", tier="T3", model=None)
+            legacy_env = ram.resolve(agent="legacy-tier-agent", workdir=Path(td), agents_dir=adir,
+                                      host_providers={"anthropic"})
+            ladder_env = ram.resolve(agent="ladder-tier-agent", workdir=Path(td), agents_dir=adir,
+                                      host_providers={"anthropic"})
+            self.assertEqual(legacy_env["prompting_profile"], ladder_env["prompting_profile"])
+            self.assertEqual(
+                legacy_env["prompting_profile"],
+                model_taxonomy.prompting_profile("T3"),
+            )
+            self.assertEqual(
+                model_taxonomy.prompting_profile("code"),
+                model_taxonomy.prompting_profile("T3"),
+            )
+
+
+class EnvelopeRegression(unittest.TestCase):
+    """T-05: pre-existing envelope keys/semantics unchanged; --plain untouched."""
+
+    OLD_KEYS = {"agent", "segment", "tier", "model", "source", "resolution_path"}
+
+    def test_old_keys_are_a_subset_of_new_envelope(self):
+        env = ram.resolve(agent="implementer", workdir=HERE.parent, host_providers={"anthropic"})
+        self.assertTrue(self.OLD_KEYS.issubset(env.keys()))
+        self.assertIn("prompting_profile", env)
+
+    def test_plain_output_is_still_only_the_model_id(self):
+        cp = run("implementer", "--workdir", str(HERE.parent), "--plain")
+        self.assertEqual(cp.returncode, 0, cp.stderr)
+        self.assertEqual(cp.stdout, "sonnet\n")
+
+    def test_prompting_profile_present_at_all_five_return_sites(self):
+        # role-preferred (real agent, role resolves normally).
+        role_env = ram.resolve(agent="implementer", workdir=HERE.parent, host_providers={"anthropic"})
+        self.assertEqual(role_env["source"], "role-preferred")
+        self.assertIn("prompting_profile", role_env)
+
+        # inherit.
+        inherit_env = ram.resolve(agent="root-cause-investigator", workdir=HERE.parent)
+        self.assertEqual(inherit_env["source"], "inherit")
+        self.assertIn("prompting_profile", inherit_env)
+        self.assertIsNone(inherit_env["prompting_profile"])
+
+        with tempfile.TemporaryDirectory() as td:
+            adir = Path(td) / "agents"
+
+            # frontmatter-fallback: missing segment, model: present.
+            _write_agent(adir, "noseg", segment=None, tier=None, model="sonnet")
+            fm_env = ram.resolve(agent="noseg", workdir=Path(td), agents_dir=adir,
+                                  host_providers={"anthropic"})
+            self.assertEqual(fm_env["source"], "frontmatter-fallback")
+            self.assertIn("prompting_profile", fm_env)
+
+            # tier-default-fallback: no segment, no model:, known legacy tier.
+            _write_agent(adir, "tieronly", segment=None, tier="code", model=None)
+            tier_env = ram.resolve(agent="tieronly", workdir=Path(td), agents_dir=adir,
+                                    host_providers={"anthropic"})
+            self.assertEqual(tier_env["source"], "tier-default-fallback")
+            self.assertIn("prompting_profile", tier_env)
+            self.assertEqual(tier_env["prompting_profile"], model_taxonomy.prompting_profile("code"))
+
+            # unresolved: no segment, no model:, unknown tier.
+            _write_agent(adir, "empty", segment="agentic_execution", tier="bogus", model=None)
+            unresolved_env = ram.resolve(agent="empty", workdir=Path(td), agents_dir=adir,
+                                          host_providers={"anthropic"})
+            self.assertEqual(unresolved_env["source"], "unresolved")
+            self.assertIn("prompting_profile", unresolved_env)
+            self.assertIsNone(unresolved_env["prompting_profile"])
 
 
 if __name__ == "__main__":
