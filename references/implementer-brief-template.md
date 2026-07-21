@@ -147,6 +147,33 @@ Per round-3 lessons, the orchestrator should:
 
 If the orchestrator can't populate any of these sections, the brief is too vague. Either the plan is missing detail (return to Phase 2) or the orchestrator needs to do more pre-grep work.
 
+## Tier-shaped brief
+
+This template's shape is T3 (Sonnet/Code-tier) — the rung it was measured against in round-3. The receiving model's capability rung (from `resolve_agent_model.py`'s `prompting_profile` envelope field, sourced from `references/model-taxonomy.json` `prompting_profiles.by_tier`) flexes five fields of the brief above T3. **T3 stays exactly as documented above — this section adds variance at other rungs, it deletes nothing.** The round-3 evidence for worked examples, explicit caps, and schema-field-uncertainty warnings is repo-measured at T3; do not read the profile as license to strip those sections when the receiving implementer IS T3 (the default, still the common case for `build-loop:implementer` dispatch).
+
+| Profile field | T0/T1 | T2 | T3 (this template, unchanged) | T4/T5 |
+|---|---|---|---|---|
+| `examples` | `omit` | `minimal` | `worked` | `worked` |
+| `constraint_posture` | `contextual` | `contextual` | `mixed` | `directive-ok` |
+| `edge_case_handling` | `delegate` | `delegate` | `enumerate-known` | `enumerate-known` |
+| `rationale` | `required` | `required` | `recommended` | `optional` |
+| `prompt_budget` | `compressed` | `standard` | `full` | `full` |
+
+What each field changes about the sections above:
+
+- **`examples`** — whether `### contract` ships worked code (as shown above) or only the signature. `omit`/`minimal` briefs drop the SDK-call-shape block and the `### Repo-verified reference files` code snippets in favor of naming the file + pattern in prose.
+- **`constraint_posture`** — whether a rule in `### v2 briefing patterns` or the Hard-rule callouts (e.g. Concurrency note) is stated as a bare directive or as context-plus-rationale. Worked illustration below.
+- **`edge_case_handling`** — whether `### Schema-field-uncertainty warnings` and enumerated edge cases ship at all. `delegate` briefs state the goal and the risk area and trust the model to find the drift point; `enumerate-known` briefs spell it out (as the template does today).
+- **`rationale`** — whether every constraint in the brief carries its why (`required`), is recommended but may be terser (`recommended`, T3 default), or may ship as a bare rule (`optional`).
+- **`prompt_budget`** — overall brief length. `compressed` briefs cut toward goal + context + falsifier and skip restating patterns the model can infer; `full` (T3 and below) keeps the 80-120 line round-3 shape from §"Note on brief size budget".
+
+**Worked illustration — `constraint_posture: contextual` vs `directive-ok` on the same rule** (the Concurrency note's git-write prohibition):
+
+- *`directive-ok` (bare directive — what this template ships today, T4/T5 shape):* "Do NOT call `git add`, `git commit`, `git push` (Hard rule 4 in implementer.md)."
+- *`contextual` (same rule, T0-T2 shape):* "The orchestrator is the sole writer to `.git/` in this run — parallel implementers sharing one checkout race on `HEAD` and the index if more than one calls `git add`/`git commit`. Leave the working tree modified; return `commit_subject`/`commit_body`/`files_changed` and let the orchestrator commit sequentially."
+
+Same constraint, same enforcement. The contextual form spends more tokens to carry the why; the directive form assumes the model doesn't need it. Use the row matching the dispatch's `prompting_profile`, defaulting to T3's shape (unchanged) when no profile is present.
+
 ## Anti-patterns (don't do these)
 
 - ❌ "Use the existing pattern" without naming the file. Round-2 evidence: implementers cited their own guesses, sometimes wrong.
