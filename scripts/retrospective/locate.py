@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
 from pathlib import Path
 
@@ -58,11 +59,24 @@ except ImportError:  # pragma: no cover - path fallback when scripts/ not on sys
 
 
 # Minimum share of a transcript's top-level ``cwd`` records that must name the
-# workdir before the transcript counts as attesting it. Calibrated against a
-# measured 2.8%-minority / 97.2%-majority split inside a single real transcript:
-# an order of magnitude above the false-positive, well below any legitimate
-# multi-repo split.
-MIN_ATTESTATION_SHARE = 0.25
+# workdir before the transcript counts as attesting it.
+#
+# This is a NOISE floor, not a selection rule — selection is done by ranking
+# candidates on share in :func:`find_cwd_attested_transcript_for_run`. The floor
+# only has to exclude incidental presence.
+#
+# Calibrated against the real store (15 largest transcripts, counting genuine
+# top-level `cwd` records per repo), NOT against a single file. That distinction
+# matters: an earlier 0.25 floor was set from one transcript's 97.2%/2.8% split
+# and would have REJECTED 25 of the 44 repos that hold >150 real records —
+# including TruePace at 0.240 (n=1515) and build-loop at 0.161 (n=453), i.e. the
+# multi-repo orchestrator sessions this whole module exists to serve. A floor
+# tuned on one sample reintroduced the original bug as a false NEGATIVE.
+#
+# 0.10 keeps a ~3.6x margin over the measured 0.028 false-positive while
+# admitting those legitimate splits. Attestation below it fails closed to the
+# absence marker.
+MIN_ATTESTATION_SHARE = 0.10
 # Upper bound on cross-slug candidates examined after the mtime prune. Measured
 # on a 251-transcript store: the prune alone cut a run window to 26 candidates.
 CROSS_SLUG_CANDIDATE_CAP = 40
@@ -132,12 +146,69 @@ def find_transcript_by_session_id(session_id: str | None) -> Path | None:
     return None
 
 
+_CWD_KEY = b'"cwd":"'
+# macOS symlinks /var -> /private/var (likewise /tmp, /etc), so the same directory
+# has two valid spellings and a recorded `cwd` may use either.
+_PRIVATE_PREFIX = "/private/"
+_PRIVATE_ALIASED = ("/var/", "/tmp/", "/etc/")
+# Chunk size for the streaming needle count. The store holds transcripts up to
+# ~300 MB, so a whole-file read_bytes() would spike peak RSS by the file size for
+# every candidate examined. Streaming keeps it O(chunk).
+_SCAN_CHUNK = 1 << 20  # 1 MiB
+
+
+def _count_needles(path: Path, needles: list[bytes]) -> list[int]:
+    """Count each needle's occurrences in ``path``, streaming, in ONE pass.
+
+    Carries an overlap of ``max(len(needle)) - 1`` bytes between chunks so a
+    needle straddling a chunk boundary is still counted exactly once. Returns a
+    list of zeros on any IO error — never raises.
+    """
+    counts = [0] * len(needles)
+    if not needles:
+        return counts
+    overlap = max(len(n) for n in needles) - 1
+    try:
+        with path.open("rb") as fh:
+            tail = b""
+            while True:
+                chunk = fh.read(_SCAN_CHUNK)
+                if not chunk:
+                    break
+                buf = tail + chunk
+                for i, needle in enumerate(needles):
+                    counts[i] += buf.count(needle)
+                # Re-counting the overlap region would double-count, so the tail
+                # we carry forward is excluded from this chunk's count by
+                # trimming it off the NEXT buffer's start instead: keep the tail
+                # short and subtract its own matches on the next pass.
+                tail = buf[-overlap:] if overlap > 0 else b""
+                if tail:
+                    for i, needle in enumerate(needles):
+                        counts[i] -= tail.count(needle)
+            # The final tail was never followed by another chunk, so its matches
+            # were subtracted without being re-added. Add them back once.
+            if tail:
+                for i, needle in enumerate(needles):
+                    counts[i] += tail.count(needle)
+    except OSError:
+        return [0] * len(needles)
+    return counts
+
+
 def _confirms_top_level_cwd(path: Path, want: str, *, max_checks: int = 5) -> bool:
     """True when ``want`` appears as a record's OWN top-level ``cwd`` field.
 
     The byte-count prescreen in :func:`transcript_cwd_share` cannot tell a real
-    ``cwd`` field from the same bytes embedded inside a tool-call payload, so a
-    handful of matching lines are actually parsed. Bounded and early-returning.
+    ``cwd`` field from the same bytes embedded inside a tool-call payload, so up
+    to ``max_checks`` matching lines are actually parsed, returning on the first
+    confirmation.
+
+    KNOWN BOUND: if the first ``max_checks`` matching lines are ALL embedded
+    payloads, a transcript that genuinely attests ``want`` later in the file
+    scores 0.0. That fails closed (to the absence marker), which is the safe
+    direction, and no observed transcript has produced it — the payload-embedded
+    form is rare and the genuine field appears on nearly every record.
     """
     needle = f'"cwd":"{want}"'
     checked = 0
@@ -169,27 +240,47 @@ def transcript_cwd_share(path: Path, cwd: Path | str) -> float:
     ``cwd`` values, so "does this file mention the repo" is far too weak a test.
     See the module docstring for the measured 2.8%/97.2% split that motivated it.
 
-    Cheap by construction — two raw byte counts (sub-millisecond on a 7.7 MB
-    file), then at most a few parsed lines to rule out an embedded payload match.
+    Cheap by construction — one read plus raw byte counts, then at most a few
+    parsed lines to rule out an embedded payload match. Measured ~5 ms on a 7.8 MB
+    transcript (``perf_counter`` around a full call, warm cache), against ~0.3 s to
+    scan a whole 26-candidate run window. A non-attesting transcript parses zero
+    lines.
     """
     candidates: list[str] = []
-    try:
-        candidates.append(str(Path(cwd).expanduser().resolve()))
-    except (OSError, ValueError):
-        pass
-    raw_str = str(cwd)
-    if raw_str not in candidates:
-        candidates.append(raw_str)
 
-    try:
-        blob = path.read_bytes()
-    except OSError:
+    def _add(value: str | None) -> None:
+        if value and value not in candidates:
+            candidates.append(value)
+
+    for form in (
+        lambda: str(Path(cwd).expanduser().resolve()),
+        lambda: os.path.realpath(os.path.expanduser(str(cwd))),
+        lambda: os.path.abspath(os.path.expanduser(str(cwd))),
+        lambda: str(cwd),
+    ):
+        try:
+            _add(form())
+        except (OSError, ValueError):
+            continue
+    # macOS aliases /var, /tmp and /etc under /private. `resolve()` returns the
+    # /private form while a shell (and therefore a recorded `cwd`) usually shows
+    # the short form, so a transcript can attest the same directory under a
+    # spelling none of the forms above produce. Cheap to cover: each variant is
+    # one more counted needle in the SAME single streaming pass.
+    for value in list(candidates):
+        if value.startswith(_PRIVATE_PREFIX):
+            _add(value[len(_PRIVATE_PREFIX) - 1:])
+        elif any(value.startswith(p) for p in _PRIVATE_ALIASED):
+            _add(_PRIVATE_PREFIX[:-1] + value)
+    if not candidates:
         return 0.0
-    total = blob.count(b'"cwd":"')
+
+    needles = [f'"cwd":"{w}"'.encode("utf-8", "ignore") for w in candidates]
+    counts = _count_needles(path, [_CWD_KEY] + needles)
+    total = counts[0]
     if total <= 0:
         return 0.0
-    for want in candidates:
-        hits = blob.count(f'"cwd":"{want}"'.encode("utf-8", "ignore"))
+    for want, hits in zip(candidates, counts[1:]):
         if hits > 0 and _confirms_top_level_cwd(path, want):
             return hits / total
     return 0.0
@@ -355,8 +446,13 @@ def _candidate_cross_slug_transcripts(
     cwd: Path | str,
     run_start,
     bound_hours: float,
-) -> list[Path]:
+) -> tuple[list[Path], str | None]:
     """Transcripts under OTHER slugs that could belong to this run window.
+
+    Returns ``(paths, io_failure_reason)``. The reason is non-None only when the
+    STORE ITSELF could not be read, so the caller can report "store unreadable"
+    instead of the generic absence marker. An empty list with a None reason is a
+    genuine "nothing here".
 
     Bounded three ways: the run's own slug is skipped (source 1 already covered
     it), anything last modified before the window opened is pruned (a transcript
@@ -373,8 +469,18 @@ def _candidate_cross_slug_transcripts(
     bound and change what "newest-first" ranks.
     """
     root = sessions_root()
-    if not root.is_dir():
-        return []
+    try:
+        if not root.is_dir():
+            return [], None  # no store at all — genuine absence, not a failure
+    except OSError as exc:
+        return [], f"transcript store unreadable: {root} ({exc.strerror or exc})"
+    # Check readability EXPLICITLY. `Path.glob` swallows permission errors and
+    # returns an empty list rather than raising (verified on CPython 3.14), so
+    # catching OSError around it is dead code — an unreadable store would be
+    # reported as "no transcript for this run", which is the silent failure this
+    # branch exists to prevent.
+    if not os.access(root, os.R_OK | os.X_OK):
+        return [], f"transcript store unreadable (permissions): {root}"
     try:
         own_slug = cwd_to_slug(cwd)
     except (OSError, ValueError):
@@ -384,10 +490,7 @@ def _candidate_cross_slug_transcripts(
         cutoff = run_start - _dt.timedelta(hours=max(0.0, bound_hours))
 
     scored: list[tuple[float, Path]] = []
-    try:
-        paths = list(root.glob("*/*.jsonl"))
-    except OSError:
-        return []
+    paths = list(root.glob("*/*.jsonl"))
     for p in paths:
         if own_slug and p.parent.name == own_slug:
             continue
@@ -400,7 +503,7 @@ def _candidate_cross_slug_transcripts(
                 continue
         scored.append((mtime, p))
     scored.sort(key=lambda t: t[0], reverse=True)
-    return [p for _m, p in scored[:CROSS_SLUG_CANDIDATE_CAP]]
+    return [p for _m, p in scored[:CROSS_SLUG_CANDIDATE_CAP]], None
 
 
 def find_cwd_attested_transcript_for_run(
@@ -430,26 +533,39 @@ def find_cwd_attested_transcript_for_run(
     kwargs = {} if bound_hours is None else {"bound_hours": bound_hours}
     bound = _tm.DEFAULT_BOUND_HOURS if bound_hours is None else bound_hours
     last_reason = None
-    scored: list[tuple[float, float, Path]] = []
-    for path in _candidate_cross_slug_transcripts(cwd, run_start, bound):
-        share = transcript_cwd_share(path, cwd)
-        if share < MIN_ATTESTATION_SHARE:
-            continue
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            continue
-        scored.append((share, mtime, path))
-    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
-    for _share, _mtime, path in scored:
-        first, last = transcript_time_span(path)
-        ok, reason = _tm.is_member(
-            first, last, run_start, run_end,
-            record_host="claude_code", run_host=run_host, **kwargs,
-        )
-        if ok:
-            return path, None
-        last_reason = reason
+    try:
+        scored: list[tuple[float, float, Path]] = []
+        candidates, io_reason = _candidate_cross_slug_transcripts(cwd, run_start, bound)
+        if io_reason:
+            # Distinguish "the store could not be read" from "no transcript
+            # belongs to this run". Reporting an IO failure as plain absence
+            # would contradict this module's whole point — honest absence.
+            return None, io_reason
+        for path in candidates:
+            share = transcript_cwd_share(path, cwd)
+            if share < MIN_ATTESTATION_SHARE:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            scored.append((share, mtime, path))
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        for _share, _mtime, path in scored:
+            first, last = transcript_time_span(path)
+            ok, reason = _tm.is_member(
+                first, last, run_start, run_end,
+                record_host="claude_code", run_host=run_host, **kwargs,
+            )
+            if ok:
+                return path, None
+            last_reason = reason
+    except Exception as exc:  # noqa: BLE001 — the "never raises" contract is load-bearing
+        # This runs inside a background, non-gating retrospective. A raise here
+        # would propagate through find_transcript_for_run into synthesize.run's
+        # degraded path and cost the run its transcript entirely, so ANY
+        # unexpected failure degrades to "no attested candidate" instead.
+        return None, f"attestation scan failed: {type(exc).__name__}: {exc}"
     return None, last_reason
 
 

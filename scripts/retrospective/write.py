@@ -88,9 +88,9 @@ def render_full_markdown(
         reason = str(meta.get("transcript_absence_reason") or "").strip()
         lines.extend([
             "",
-            "> **NO TRANSCRIPT — this retrospective was built from zero session evidence.**",
-            "> Every transcript-derived section below is empty because nothing was found "
-            "to read, not because nothing happened.",
+            "> **NO TRANSCRIPT — this retrospective was built from zero transcript evidence.**",
+            "> Sections that read the session transcript are empty for lack of a source. "
+            "Sections drawn from state.json and plan.md are still populated.",
             f"> Reason: {reason or 'no transcript located for this run'}",
         ])
     if intent_one_line:
@@ -150,7 +150,7 @@ def render_summary(
     lesson_n = _count_bullets(sections.get("lessons_learned", ""))
     issue_n = _count_bullets(sections.get("issues_with_causal_tree", ""))
     take_n = _count_bullets(sections.get("key_takeaways", ""))
-    flag = "" if meta.get("transcript_present") else " [NO TRANSCRIPT — zero session evidence]"
+    flag = "" if meta.get("transcript_present") else " [NO TRANSCRIPT — zero transcript evidence]"
     out = (
         f"Retrospective {run_id} written ({_today_iso()}).{flag}\n"
         f"  takeaways: {take_n} · lessons: {lesson_n} · "

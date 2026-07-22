@@ -201,8 +201,13 @@ class NoTranscriptBannerTests(unittest.TestCase):
                          transcript_note="no transcript for this run (host=claude_code)")
         body = render_full_markdown(sections, run_id="r", repo="demo")
         self.assertIn("NO TRANSCRIPT", body)
-        self.assertIn("zero session evidence", body)
+        self.assertIn("zero transcript evidence", body)
         self.assertIn("no transcript for this run", body)
+        # The banner must not overclaim: state.json/plan.md-derived sections are
+        # still populated in the same file, so "zero session evidence" would be
+        # false. Key Takeaways below is populated from state.json alone.
+        self.assertNotIn("zero session evidence", body)
+        self.assertIn("Run outcome: pass", body)
 
     def test_banner_absent_when_transcript_present(self) -> None:
         sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, "r")

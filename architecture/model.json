@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c6a724f183b6a9204026204e243b0712399bf14353b5ea1855c839cca7aa6466"
+    "content_sha256": "7ff08854106ef45be50c7ee6e13796030332c259a27a5debef00492760190050"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1040,7 +1040,7 @@
         "file": "agents/retrospective-synthesizer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-08"
+          "date": "2026-07-21"
         }
       },
       "root-cause-investigator": {

@@ -303,19 +303,141 @@ class CrossSlugResolutionTests(unittest.TestCase):
         self.assertIsNone(path)
         self.assertIn("stale by", reason)
 
+    def test_path_prefix_does_not_over_count(self) -> None:
+        """`/a/repo` must not match `/a/repo-2`.
+
+        Attestation counts the byte sequence `"cwd":"<path>"` — the CLOSING quote
+        is what makes it exact. Drop it and every repo would attest for every
+        sibling whose path it prefixes, which is a silent mis-attachment.
+        """
+        f = self.driver_dir / "sess-prefix.jsonl"
+        rows = [
+            json.dumps({"type": "user", "cwd": "/a/repo-2",
+                        "timestamp": "2026-07-10T09:00:00Z"}, separators=(",", ":"))
+            for _ in range(100)
+        ]
+        f.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        self.assertEqual(locate.transcript_cwd_share(f, "/a/repo"), 0.0)
+        self.assertEqual(locate.transcript_cwd_share(f, "/a/repo-2"), 1.0)
+
+    def test_legitimate_multi_repo_split_still_resolves(self) -> None:
+        """A 16%-share repo in a 3-repo session must still resolve.
+
+        Measured against the real store: an earlier 0.25 floor — set from a single
+        transcript's 97.2/2.8 split — would have REJECTED 25 of the 44 repos
+        holding >150 genuine records, including TruePace at 0.240 (n=1515) and
+        build-loop at 0.161 (n=453). Those are exactly the multi-repo orchestrator
+        sessions this module exists to serve, so the floor turned the original bug
+        into a false NEGATIVE. Selection is done by ranking; the floor only has to
+        exclude incidental presence.
+        """
+        cwds = ([str(self.target)] * 16
+                + ["/Users/test/dev/repo-b"] * 34
+                + ["/Users/test/dev/repo-c"] * 50)
+        self._write_tx(self.driver_dir, "sess-multi.jsonl", cwds,
+                       ["2026-07-10T09:00:00Z"])
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            self.target, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNotNone(path, f"16% legitimate split rejected: {reason}")
+
+    def test_incidental_presence_is_still_rejected(self) -> None:
+        """The floor must still exclude the measured 2.8% false-positive case."""
+        cwds = [str(self.target)] * 3 + ["/Users/test/dev/repo-b"] * 97
+        self._write_tx(self.driver_dir, "sess-incidental.jsonl", cwds,
+                       ["2026-07-10T09:00:00Z"])
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, _ = locate.find_transcript_for_run(
+            self.target, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNone(path, "3% incidental presence must not attest")
+
+    def test_private_var_alias_is_normalized(self) -> None:
+        """macOS aliases /var -> /private/var, so both spellings must match."""
+        f = self.driver_dir / "sess-private.jsonl"
+        rows = [
+            json.dumps({"type": "user", "cwd": "/var/folders/ab/realrepo",
+                        "timestamp": "2026-07-10T09:00:00Z"}, separators=(",", ":"))
+            for _ in range(10)
+        ]
+        f.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        self.assertEqual(locate.transcript_cwd_share(f, "/private/var/folders/ab/realrepo"), 1.0)
+        self.assertEqual(locate.transcript_cwd_share(f, "/var/folders/ab/realrepo"), 1.0)
+
+    def test_unreadable_store_reports_distinctly_from_absence(self) -> None:
+        """An unreadable store must NOT be reported as "no transcript".
+
+        `Path.glob` swallows permission errors and returns [], so a `try/except
+        OSError` around it is dead code — readability is checked explicitly.
+        """
+        projects = self.fake_home / ".claude" / "projects"
+        os.chmod(projects, 0o000)
+        self.addCleanup(os.chmod, projects, 0o755)
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_cwd_attested_transcript_for_run(
+            self.target, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNone(path)
+        self.assertIsNotNone(reason, "unreadable store degraded to silent absence")
+        self.assertIn("unreadable", reason)
+
+    def test_needle_count_matches_whole_file_count(self) -> None:
+        """The streaming counter must agree with a whole-file count, including a
+        needle that straddles a chunk boundary."""
+        f = self.driver_dir / "straddle.bin"
+        needle = b'"cwd":"/a/b"'
+        body = b"x" * (locate._SCAN_CHUNK - 5) + needle + b"y" * 32 + needle
+        f.write_bytes(body)
+        self.assertEqual(locate._count_needles(f, [needle])[0], body.count(needle))
+
+    def test_degenerate_transcripts_never_raise_and_never_attest(self) -> None:
+        """No cwd records, empty, missing, or malformed — all 0.0, no div-by-zero."""
+        no_cwd = self.driver_dir / "nocwd.jsonl"
+        no_cwd.write_text(json.dumps({"type": "user", "timestamp": "2026-07-10T09:00:00Z"}) + "\n")
+        empty = self.driver_dir / "empty.jsonl"
+        empty.write_text("")
+        malformed = self.driver_dir / "bad.jsonl"
+        malformed.write_text('{"cwd":"/a/repo" NOT JSON\n' * 5)
+        missing = self.driver_dir / "does-not-exist.jsonl"
+        for f in (no_cwd, empty, malformed, missing):
+            self.assertEqual(locate.transcript_cwd_share(f, "/a/repo"), 0.0, str(f))
+
     def test_embedded_cwd_in_payload_does_not_attest(self) -> None:
-        """A `"cwd":"<path>"` inside a tool payload is not the record's own cwd."""
+        """A nested `cwd` key inside a tool payload is not the record's own cwd.
+
+        The fixture must use a genuine NESTED OBJECT KEY, not the needle as a
+        string value. `json.dumps` escapes a string value's quotes to
+        `\\"cwd\\":\\"...\\"`, so the raw needle never appears in the file, the
+        numerator is 0 by byte count, and `_confirms_top_level_cwd` — the only
+        guard against payload spoofing — is never invoked. An earlier version of
+        this test did exactly that and passed even with the guard stubbed to
+        `return True`.
+
+        That is the SAME defect as BUG 2 one level down: a guard verified against
+        a fabricated fixture rather than against real serialized bytes. The
+        assertion below therefore checks the needle actually survives
+        serialization before asserting on the score.
+        """
         f = self.driver_dir / "sess-embedded.jsonl"
         rows = [
             json.dumps({
                 "type": "assistant", "cwd": "/Users/test/dev/unrelated",
                 "timestamp": "2026-07-10T09:00:00Z",
-                # The needle appears, but nested inside tool input — not top-level.
-                "toolUse": {"input": {"payload": f'"cwd":"{self.target}"'}},
+                # A real nested object key — serializes to the literal needle.
+                "toolUse": {"input": {"cwd": str(self.target)}},
             }, separators=(",", ":"))
             for _ in range(10)
         ]
         f.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        # Guard the guard: the needle MUST be present as raw bytes, or this test
+        # would pass without ever exercising _confirms_top_level_cwd.
+        raw = f.read_bytes()
+        self.assertGreater(
+            raw.count(f'"cwd":"{self.target}"'.encode()), 0,
+            "fixture does not contain the raw needle — the test would pass trivially",
+        )
         self.assertEqual(locate.transcript_cwd_share(f, self.target), 0.0)
 
 

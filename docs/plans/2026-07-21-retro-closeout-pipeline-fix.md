@@ -38,8 +38,8 @@ fails against the pre-fix code.
 
 **New evidence the brief did not have — a stronger, plumbing-free signal exists.**
 Claude Code stamps a per-record `cwd` field in compact JSON. Tonight's transcript
-contains `"cwd":"/Users/tyroneross/dev/git-folder/TruePace"` **2813 times**; a raw
-substring scan of the 7.7 MB file costs **0.8 ms**. `locate.py` ALREADY uses exactly
+contains `"cwd":"/Users/tyroneross/dev/git-folder/TruePace"` **2813 times**; a full
+attestation call over the 7.8 MB file costs **~5 ms** measured. `locate.py` ALREADY uses exactly
 this attestation pattern for codex rollouts (`codex_transcript_cwd`, L106-120), which
 are likewise not slug-scoped. So the Claude side can reuse the proven
 attest-cwd + verify-time design instead of inventing a new one.
@@ -82,7 +82,7 @@ Every deliverable is owned by exactly one chunk (an earlier draft left 5 and 6 u
 | Contract / data path read by the new code | Status |
 |---|---|
 | `~/.claude/projects/<slug>/<session-uuid>.jsonl` layout | **verified** — 72 slugs / 251 depth-2 jsonl measured this run |
-| Per-record top-level `cwd` field, compact JSON `"cwd":"<abs>"` | **verified** — 2813 hits in tonight's transcript, all 2813 top-level, 0 embedded |
+| Per-record top-level `cwd` field, compact JSON `"cwd":"<abs>"` | **verified** — 2813 hits in tonight's transcript, all 2813 top-level, 0 embedded; total `"cwd":"` = 2894, so 97.2% / 2.8% split |
 | Record `timestamp` field (read by `transcript_time_span`) | **verified** — existing, unchanged |
 | `temporal_membership.is_member` / `run_window` / `absence_marker` signatures | **verified** — read at `scripts/temporal_membership.py:90,120,160` |
 | `state.json.execution.current_session_id` / `started_by_session_id` | **verified present, UNRELIABLE by value** — currently holds the Rally label `bl-model-prompt-profile`, not a UUID. Treated as best-effort only |
@@ -183,12 +183,22 @@ carries **two** distinct top-level `cwd` values —
 retrospective for `/Users/tyroneross`, whose work it represents 2.8% of — the very
 defect class this source is supposed to avoid, reintroduced in a new form.
 
-So the gate is: `share = count("cwd":"<workdir>") / count("cwd":"")`, computed with
-two raw byte counts (no JSON parse), then ONE `json.loads` of a single matching line
-to confirm the value is genuinely top-level and not embedded in a tool payload.
-Require `share >= 0.25`, and rank surviving candidates by **share descending, then
-mtime descending**. Calibration: the threshold sits an order of magnitude above the
-measured 2.8% false-positive and well below any legitimate multi-repo split.
+So the gate is: `share = count("cwd":"<workdir>") / count("cwd":"")`, computed by
+streaming byte counts (no JSON parse, no whole-file read), then up to 5 `json.loads`
+calls on matching lines to confirm the value is genuinely top-level and not embedded
+in a tool payload. Candidates rank by **share descending, then mtime descending**.
+
+**Floor = 0.10, calibrated against the whole store — CORRECTED after the independent
+audit.** The first draft set `share >= 0.25` from ONE transcript's 97.2/2.8 split and
+claimed it sat "well below any legitimate multi-repo split". Measuring the 15 largest
+transcripts falsified that: **25 of the 44 repos holding >150 genuine records fall
+below 0.25**, including TruePace at 0.240 (n=1515) and build-loop at 0.161 (n=453) —
+precisely the multi-repo orchestrator sessions this source exists to serve. A floor
+tuned on one sample would have converted the original bug into a false NEGATIVE.
+
+The floor is a NOISE threshold, not a selection rule (ranking selects). 0.10 keeps a
+~3.6x margin over the measured 0.028 false-positive while admitting those legitimate
+splits.
 
 *Why the embedded-payload confirm is still needed:* measured 2813 needle hits and
 2813 top-level confirmations, 0 embedded — but that is one file, so the confirm stays
@@ -350,8 +360,13 @@ Full-suite gate: `python3 -m pytest scripts/ -q` plus the mandatory
 
 # Risks
 
-- **Cross-slug scan cost.** Mitigated by mtime prune + 40-cap + a 0.8 ms attestation
-  scan measured on the largest real transcript. Falls back silently on OSError.
+- **Cross-slug scan cost and memory.** Bounded by the mtime prune (251 -> 26 on a real
+  run window) + a 40-candidate cap. Per-file cost is measured, not asserted: ~5 ms on a
+  7.8 MB transcript and **151 ms on the 299 MB worst case in the store**. The count
+  streams in 1 MiB chunks, so peak RSS is O(chunk): measured **6.3 MB** on that 299 MB
+  file, down from a 299 MB spike when it used `read_bytes()`. An earlier draft of this
+  risk cited "0.8 ms", which measured `bytes.count` on already-resident bytes and
+  excluded the file read — corrected after the independent audit.
 - **False attachment via cross-slug search.** Mitigated by requiring literal cwd
   attestation AND temporal membership (the codex path's proven double gate).
 - **Summary-shape change breaks a consumer.** Grepped: `closeout/status.py` is the
