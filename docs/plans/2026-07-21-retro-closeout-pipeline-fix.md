@@ -38,7 +38,7 @@ fails against the pre-fix code.
 
 **New evidence the brief did not have — a stronger, plumbing-free signal exists.**
 Claude Code stamps a per-record `cwd` field in compact JSON. Tonight's transcript
-contains `"cwd":"/Users/tyroneross/dev/git-folder/TruePace"` **2813 times**; a full
+contains `"cwd":"/Users/<user>/dev/git-folder/TruePace"` **2813 times**; a full
 attestation call over the 7.8 MB file costs **~5 ms** measured. `locate.py` ALREADY uses exactly
 this attestation pattern for codex rollouts (`codex_transcript_cwd`, L106-120), which
 are likewise not slug-scoped. So the Claude side can reuse the proven
@@ -178,9 +178,9 @@ exists to prevent.
 that measurement confirmed.* The first design confirmed attestation on the FIRST
 matching record. Measured on tonight's transcript, that is unsafe: a single transcript
 carries **two** distinct top-level `cwd` values —
-`/Users/tyroneross/dev/git-folder/TruePace` **2813× (97.2%)** and `/Users/tyroneross`
+`/Users/<user>/dev/git-folder/TruePace` **2813× (97.2%)** and `/Users/<user>` (the home dir)
 **81× (2.8%)**. An existential gate would therefore attach this transcript to a
-retrospective for `/Users/tyroneross`, whose work it represents 2.8% of — the very
+retrospective for `/Users/<user>` (the home dir), whose work it represents 2.8% of — the very
 defect class this source is supposed to avoid, reintroduced in a new form.
 
 So the gate is: `share = count("cwd":"<workdir>") / count("cwd":"")`, computed by
@@ -414,7 +414,7 @@ Full-suite gate: `python3 -m pytest scripts/ -q` plus the mandatory
 
 # Falsifier
 
-If, after the change, `python3 -m retrospective --workdir /Users/tyroneross/dev/git-folder/TruePace --json`
+If, after the change, `python3 -m retrospective --workdir /Users/<user>/dev/git-folder/TruePace --json`
 still reports `transcript_present: false` for a run whose window covers tonight, the
 fix has failed regardless of unit-test color. That end-to-end check is the acceptance
 probe.
