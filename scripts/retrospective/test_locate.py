@@ -238,7 +238,7 @@ class CrossSlugResolutionTests(unittest.TestCase):
         """A transcript that is 2.8% this repo must NOT attach to it.
 
         Calibrated on a real measurement: one transcript carried
-        /…/TruePace 2813x (97.2%) and /Users/<user> 81x (2.8%). An existential
+        one repo 2813x (97.2%) and the home dir 81x (2.8%). An existential
         "first match wins" gate would hand that 97%-other-repo transcript to the
         2.8% repo's retrospective — the nearest-but-wrong defect class again.
         """
@@ -325,7 +325,7 @@ class CrossSlugResolutionTests(unittest.TestCase):
 
         Measured against the real store: an earlier 0.25 floor — set from a single
         transcript's 97.2/2.8 split — would have REJECTED 25 of the 44 repos
-        holding >150 genuine records, including TruePace at 0.240 (n=1515) and
+        holding >150 genuine records, including one at 0.240 (n=1515) and
         build-loop at 0.161 (n=453). Those are exactly the multi-repo orchestrator
         sessions this module exists to serve, so the floor turned the original bug
         into a false NEGATIVE. Selection is done by ranking; the floor only has to
@@ -455,7 +455,7 @@ class SessionIdResolutionTests(unittest.TestCase):
         self.driver = self.projects / "-Users-test"
         self.driver.mkdir(parents=True)
         (self.projects / "-Users-test-dev-target-repo").mkdir(parents=True)
-        self.sid = "82ab7452-e556-48ae-9dcb-31332b50e295"
+        self.sid = "7c4e91a2-3b0d-4f68-9a15-2de8c0f47b31"
         self.tx = self.driver / f"{self.sid}.jsonl"
         self.tx.write_text(json.dumps({"type": "user", "timestamp": "2026-07-10T09:00:00Z"}) + "\n")
 
@@ -463,17 +463,17 @@ class SessionIdResolutionTests(unittest.TestCase):
         self.assertEqual(locate.find_transcript_by_session_id(self.sid), self.tx)
 
     def test_rally_tool_id_resolves_via_hex_prefix(self) -> None:
-        """A Rally tool id (`fable-82ab7452`) carries the uuid prefix, not the uuid."""
-        self.assertEqual(locate.find_transcript_by_session_id("fable-82ab7452"), self.tx)
+        """A Rally tool id (`fable-7c4e91a2`) carries the uuid prefix, not the uuid."""
+        self.assertEqual(locate.find_transcript_by_session_id("fable-7c4e91a2"), self.tx)
 
     def test_short_prefix_is_refused(self) -> None:
         """Uniqueness is not correctness — a 3-char token must never match."""
-        self.assertIsNone(locate.find_transcript_by_session_id("82a"))
+        self.assertIsNone(locate.find_transcript_by_session_id("7c4"))
         self.assertIsNone(locate.find_transcript_by_session_id("bed"))
 
     def test_ambiguous_prefix_is_refused(self) -> None:
-        (self.driver / "82ab7452-0000-0000-0000-000000000000.jsonl").write_text("{}\n")
-        self.assertIsNone(locate.find_transcript_by_session_id("fable-82ab7452"))
+        (self.driver / "7c4e91a2-0000-0000-0000-000000000000.jsonl").write_text("{}\n")
+        self.assertIsNone(locate.find_transcript_by_session_id("fable-7c4e91a2"))
 
     def test_glob_metacharacters_are_refused(self) -> None:
         for bad in ("*", "?", "../etc", "a[b]c", "x/y"):

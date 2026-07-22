@@ -35,7 +35,7 @@ Three resolution sources, strongest evidence first:
 Attestation is SHARE-BASED, not existential. A single transcript legitimately
 carries several top-level ``cwd`` values, and accepting the first match would
 attach a transcript to a repo it barely touched. Measured on the transcript that
-motivated this module: ``/…/TruePace`` appeared 2813× (97.2%) and
+motivated this module: one repo appeared 2813× (97.2%) and the session's
 ``/Users/<username>`` 81× (2.8%) in the SAME file, so an existential gate would
 have handed a 97%-other-repo transcript to the 2.8% repo's retrospective — a new
 instance of the "nearest-but-wrong" defect ``temporal_membership`` exists to
@@ -69,7 +69,7 @@ except ImportError:  # pragma: no cover - path fallback when scripts/ not on sys
 # top-level `cwd` records per repo), NOT against a single file. That distinction
 # matters: an earlier 0.25 floor was set from one transcript's 97.2%/2.8% split
 # and would have REJECTED 25 of the 44 repos that hold >150 real records —
-# including TruePace at 0.240 (n=1515) and build-loop at 0.161 (n=453), i.e. the
+# including a repo at 0.240 (n=1515) and another at 0.161 (n=453), i.e. the
 # multi-repo orchestrator sessions this whole module exists to serve. A floor
 # tuned on one sample reintroduced the original bug as a false NEGATIVE.
 #
@@ -118,7 +118,7 @@ def find_transcript_by_session_id(session_id: str | None) -> Path | None:
     evidence available short of being handed the path outright.
 
     Falls back to a PREFIX match on the longest hex-ish token in ``session_id``,
-    so a Rally tool id (``fable-82ab7452``) resolves to ``82ab7452-….jsonl``. The
+    so a Rally tool id (``fable-7c4e91a2``) resolves to ``7c4e91a2-….jsonl``. The
     prefix must be at least :data:`MIN_SESSION_PREFIX_LEN` chars AND match exactly
     one file — ambiguity returns None rather than guessing, because uniqueness is
     not correctness for a short token.

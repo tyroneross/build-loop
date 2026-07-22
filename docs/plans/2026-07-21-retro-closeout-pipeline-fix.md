@@ -31,14 +31,14 @@ fails against the pre-fix code.
   the run path is `find_transcript_for_run`.**
 - Measured on this machine: `~/.claude/projects` holds **72 slug dirs / 251
   depth-2 `.jsonl`**; only **31** slugs hold any transcript.
-  `-Users-tyroneross-dev-git-folder-TruePace/` holds **0** `.jsonl` (only a
-  `memory/` subdir); `-Users-tyroneross/` holds **150**.
+  `-Users-<user>-dev-git-folder-<repo>/` holds **0** `.jsonl` (only a
+  `memory/` subdir); `-Users-<user>/` holds **150**.
 - Tonight's session resolves exactly once by filename across all slugs:
-  `~/.claude/projects/-Users-tyroneross/82ab7452-e556-48ae-9dcb-31332b50e295.jsonl`.
+  `~/.claude/projects/-Users-<user>/7c4e91a2-3b0d-4f68-9a15-2de8c0f47b31.jsonl`.
 
 **New evidence the brief did not have — a stronger, plumbing-free signal exists.**
 Claude Code stamps a per-record `cwd` field in compact JSON. Tonight's transcript
-contains `"cwd":"/Users/<user>/dev/git-folder/TruePace"` **2813 times**; a full
+contains `"cwd":"/Users/<user>/dev/git-folder/<repo>"` **2813 times**; a full
 attestation call over the 7.8 MB file costs **~5 ms** measured. `locate.py` ALREADY uses exactly
 this attestation pattern for codex rollouts (`codex_transcript_cwd`, L106-120), which
 are likewise not slug-scoped. So the Claude side can reuse the proven
@@ -141,7 +141,7 @@ Three ordered sources in `find_transcript_for_run`, highest evidence first.
 **Source 0 (new) — explicit session id.** `find_transcript_by_session_id(session_id)`
 globs `<projects>/*/<session_id>.jsonl` across all slugs (exact filename, 251-file
 scan, cheap). Falls back to a prefix match on the longest hex-ish token in the id, so
-a Rally tool id (`fable-82ab7452`) resolves to `82ab7452-….jsonl`. The prefix must be
+a Rally tool id (`fable-7c4e91a2`) resolves to `7c4e91a2-….jsonl`. The prefix must be
 **≥ 8 hex chars AND match exactly one file** — a short token like `bed` or `face`
 could uniquely prefix an unrelated session, and uniqueness is not correctness.
 Ambiguous or too-short → None, never a guess.
@@ -178,7 +178,7 @@ exists to prevent.
 that measurement confirmed.* The first design confirmed attestation on the FIRST
 matching record. Measured on tonight's transcript, that is unsafe: a single transcript
 carries **two** distinct top-level `cwd` values —
-`/Users/<user>/dev/git-folder/TruePace` **2813× (97.2%)** and `/Users/<user>` (the home dir)
+`/Users/<user>/dev/git-folder/<repo>` **2813× (97.2%)** and `/Users/<user>` (the home dir)
 **81× (2.8%)**. An existential gate would therefore attach this transcript to a
 retrospective for `/Users/<user>` (the home dir), whose work it represents 2.8% of — the very
 defect class this source is supposed to avoid, reintroduced in a new form.
@@ -192,7 +192,7 @@ in a tool payload. Candidates rank by **share descending, then mtime descending*
 audit.** The first draft set `share >= 0.25` from ONE transcript's 97.2/2.8 split and
 claimed it sat "well below any legitimate multi-repo split". Measuring the 15 largest
 transcripts falsified that: **25 of the 44 repos holding >150 genuine records fall
-below 0.25**, including TruePace at 0.240 (n=1515) and build-loop at 0.161 (n=453) —
+below 0.25**, including one repo at 0.240 (n=1515) and another at 0.161 (n=453) —
 precisely the multi-repo orchestrator sessions this source exists to serve. A floor
 tuned on one sample would have converted the original bug into a false NEGATIVE.
 
@@ -210,7 +210,7 @@ monkeypatching that function), glob exactly `*/*.jsonl` (depth-2, never `rglob` 
 `~/.claude/projects` also holds nested `subagents/agent-*.jsonl` trees that would break
 the measured bound), skip the cwd's own slug, mtime-prune, cap 40 candidates.
 Measured on the live store: 251 transcripts → **26** after mtime prune, 0.28 s to scan
-all of them, **4** attesting TruePace with tonight's session ranked first.
+all of them, **4** attesting <repo> with tonight's session ranked first.
 
 **Plumbing.** `find_transcript_for_run(..., session_id=None)` →
 `synthesize.run(..., session_id=None)` → `--session-id` CLI flag. When not supplied,
@@ -322,7 +322,7 @@ pre-fix", which its own rows contradicted — corrected here.
 
 | # | Test | Pre-fix result |
 |---|---|---|
-| b | transcript for a workdir whose slug dir is empty resolves via cwd attestation from another slug | **fails** — `find_transcript_for_run` returns `(None, marker)`; verified live for TruePace |
+| b | transcript for a workdir whose slug dir is empty resolves via cwd attestation from another slug | **fails** — `find_transcript_for_run` returns `(None, marker)`; verified live for <repo> |
 | g | end-to-end `write_active` → `closeout.run` yields `wrote_memory` on a genuine promotion | **fails** — measured live: returns `queued_pending_lesson`, `retro_durable_path=None` |
 | j | no-transcript banner appears in `render_full_markdown` | **fails** — no banner exists |
 | k | a transcript attesting the workdir in only 2.8% of records is REJECTED | **fails** — pre-fix there is no cross-slug path at all, and the naive existential design would accept it |
@@ -414,7 +414,7 @@ Full-suite gate: `python3 -m pytest scripts/ -q` plus the mandatory
 
 # Falsifier
 
-If, after the change, `python3 -m retrospective --workdir /Users/<user>/dev/git-folder/TruePace --json`
+If, after the change, `python3 -m retrospective --workdir /Users/<user>/dev/git-folder/<repo> --json`
 still reports `transcript_present: false` for a run whose window covers tonight, the
 fix has failed regardless of unit-test color. That end-to-end check is the acceptance
 probe.
