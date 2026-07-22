@@ -289,6 +289,46 @@ class CrossSlugResolutionTests(unittest.TestCase):
         self.assertIsNone(path)
         self.assertIn("no transcript for this run", reason)
 
+    def test_attesting_transcript_that_ended_before_the_run_is_rejected(self) -> None:
+        """A cross-slug candidate must have been OPEN when the run started.
+
+        Caught by dogfooding, not by review: a transcript spanning
+        07-16..07-21T07:23 attached to a run whose window opened 07-22T02:09 —
+        it had ENDED 19h before the run began. It passed only because
+        `is_member`'s 24h same-day grace (sized for the cwd-SLUG path) was also
+        applied to the 40-candidate cross-slug pool, and because candidates rank
+        by SHARE, so a stale-but-high-share file outranked everything.
+
+        Lowering MIN_ATTESTATION_SHARE to fix a false NEGATIVE is what opened
+        this false POSITIVE, so the two must be tested together.
+        """
+        self._write_tx(
+            self.driver_dir, "sess-ended-before.jsonl",
+            [str(self.target)] * 40,
+            ["2026-07-09T02:00:00Z", "2026-07-09T18:00:00Z"],
+        )
+        # Run opens 2026-07-10T08:37 — 14h after the transcript's last record,
+        # i.e. inside the old 24h grace but with no genuine overlap.
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            self.target, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertIsNone(path, "a transcript that closed before the run must not attach")
+        self.assertIn("stale by", reason)
+
+    def test_attesting_transcript_open_during_the_run_still_attaches(self) -> None:
+        """The paired positive: genuine overlap must still resolve."""
+        tx = self._write_tx(
+            self.driver_dir, "sess-overlapping.jsonl",
+            [str(self.target)] * 40,
+            ["2026-07-10T07:00:00Z", "2026-07-10T11:00:00Z"],
+        )
+        ws, we = tm.run_window({"date": "2026-07-10T08:37:46Z"})
+        path, reason = locate.find_transcript_for_run(
+            self.target, run_start=ws, run_end=we, run_host="claude_code",
+        )
+        self.assertEqual(path, tx, f"overlapping transcript rejected: {reason}")
+
     def test_attesting_but_out_of_window_is_rejected(self) -> None:
         """Attestation alone is not enough — the time gate still applies."""
         self._write_tx(

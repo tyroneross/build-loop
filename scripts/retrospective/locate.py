@@ -553,6 +553,26 @@ def find_cwd_attested_transcript_for_run(
         scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
         for _share, _mtime, path in scored:
             first, last = transcript_time_span(path)
+            # STALENESS IS CHECKED WITH NO GRACE on the cross-slug path.
+            #
+            # `is_member`'s 24h tolerance is sized for the cwd-SLUG path, where
+            # candidates are few and all plausibly belong to this session. On a
+            # 40-candidate cross-slug pool it is far too loose, and since
+            # candidates rank by SHARE a stale-but-high-share transcript
+            # outranks a fresh one. Observed while dogfooding this module: a
+            # transcript spanning 07-16..07-21T07:23 attached to a run whose
+            # window opened 07-22T02:09 — it had ENDED 19h before the run began.
+            #
+            # The tightening is ASYMMETRIC on purpose. A run window derived from
+            # a bare `date` is a single POINT, so a transcript legitimately runs
+            # PAST it; only the "ended before the run started" direction can be
+            # tightened without rejecting every genuine overlap.
+            if last is not None and run_start is not None and last < run_start:
+                last_reason = (
+                    f"stale by {_tm._days_between(run_start, last)}d "
+                    f"(record ends {last.date()}, run window opens {run_start.date()})"
+                )
+                continue
             ok, reason = _tm.is_member(
                 first, last, run_start, run_end,
                 record_host="claude_code", run_host=run_host, **kwargs,
