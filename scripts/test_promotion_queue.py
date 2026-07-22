@@ -164,6 +164,62 @@ def test_drain_free_applies_retro_durable(monkeypatch, tmp_path):
     assert len(durable) == 1
 
 
+def test_drain_stamps_durable_line_into_the_existing_summary(monkeypatch, tmp_path):
+    """A queued-then-drained promotion is just as genuine as an inline one, so it
+    must also become reportable as ``wrote_memory``. Without the stamp the queued
+    path stays permanently unreportable — the same silent gap one level down."""
+    monkeypatch.delenv(pq.BUSY_ENV, raising=False)
+    from retrospective import write as retro_write
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    sections = {"summary": "did the thing"}
+
+    # A summary already on disk from an EARLIER day — the cross-day case.
+    sdir = repo / ".build-loop" / "retrospectives" / "2026-01-02"
+    sdir.mkdir(parents=True)
+    (sdir / "run-s.summary.md").write_text(
+        "Retrospective run-s written (2026-01-02).\n"
+        "  full file: .build-loop/retrospectives/2026-01-02/run-s.md\n"
+    )
+
+    (mem / pq.PEER_HOLD_MARKER).write_text("")
+    retro_write.promote_durable(
+        workdir=repo, run_id="run-s", sections=sections, repo="demo", memory_root=mem,
+    )
+    (mem / pq.PEER_HOLD_MARKER).unlink()
+    out = pq.drain(repo, memory_root=str(mem))
+    assert out["drained"] == 1
+
+    text = (sdir / "run-s.summary.md").read_text()
+    assert any(ln.strip().startswith("durable:") for ln in text.splitlines()), text
+
+
+def test_drain_succeeds_when_no_summary_file_exists(monkeypatch, tmp_path):
+    """GAP-1 regression guard: the stamp must never turn a passing drain into a
+    failed record. ``drain`` wraps appliers in try/except and marks any raise as
+    failed, and a repo with no ``.build-loop/retrospectives/`` tree is normal."""
+    monkeypatch.delenv(pq.BUSY_ENV, raising=False)
+    from retrospective import write as retro_write
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    mem = tmp_path / "mem"
+    mem.mkdir()
+
+    (mem / pq.PEER_HOLD_MARKER).write_text("")
+    retro_write.promote_durable(
+        workdir=repo, run_id="run-nosum", sections={"summary": "x"}, repo="demo",
+        memory_root=mem,
+    )
+    (mem / pq.PEER_HOLD_MARKER).unlink()
+    out = pq.drain(repo, memory_root=str(mem))
+    assert out["drained"] == 1, f"stamp broke a clean drain: {out}"
+    assert out["remaining"] == 0
+
+
 def test_peer_hold_producer_sets_and_clears_marker(monkeypatch, tmp_path):
     """f2: peer_hold gives the busy signal a real producer."""
     monkeypatch.delenv(pq.BUSY_ENV, raising=False)

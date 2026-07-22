@@ -45,16 +45,22 @@ The orchestrator passes `--run-id <id>` and `--workdir <path>`. Run:
 python3 -m retrospective \
   --workdir "$WORKDIR" \
   --run-id "$RUN_ID" \
+  [--session-id "$SESSION_ID"] \
   --json
 ```
 
+Pass `--session-id` whenever you know the session's id (the `<session-uuid>` of
+`<session-uuid>.jsonl`). It resolves the transcript by exact filename across every
+project slug and is trusted without a time check, the same way `--transcript` is. Omit
+it when you don't — resolution then falls through to the cwd slug and cwd attestation.
+
 This one call does everything deterministic:
 
-1. Locates the most-recently-modified `~/.claude/projects/<cwd-slug>/*.jsonl` for `$WORKDIR` (`scripts/retrospective/locate.py`).
+1. Locates the transcript for `$WORKDIR` (`scripts/retrospective/locate.py`), trying in order: an explicit `--session-id`; the cwd slug `~/.claude/projects/<cwd-slug>/*.jsonl`; any OTHER slug whose transcript ATTESTS `$WORKDIR` as a dominant top-level `cwd`; then codex rollouts. Every source except an explicit session id is gated by temporal membership. The cross-slug attestation source exists because a run driven from an orchestrator cwd writes its transcript under the ORCHESTRATOR's slug, leaving the target repo's slug empty — measured 2026-07-21: 0 transcripts in the target repo's slug, 150 in the driver's.
 2. Reads `.build-loop/state.json`, `.build-loop/intent.md`, `.build-loop/plan.md`.
 3. Builds all 11 sections (`scripts/retrospective/sections.py`): prompted-≥2× clustering, deterministic tool/plugin usage (§10), recurring-sequence automation candidates (§11).
-4. Writes the active full file + summary file atomically (`scripts/retrospective/write.py`).
-5. Promotes a durable copy to `build-loop-memory/projects/<slug>/retrospectives/` when reachable.
+4. Promotes a durable copy to `build-loop-memory/projects/<slug>/retrospectives/` when reachable (runs BEFORE the write, so the summary can carry the real durable path).
+5. Writes the active full file + summary file atomically (`scripts/retrospective/write.py`). The summary carries a `durable: <path>` line ONLY when a promotion genuinely produced one — that line is what lets Step 3's closeout reach `wrote_memory`. When no transcript was found, both files carry a loud `NO TRANSCRIPT` marker so a zero-evidence retrospective is never mistaken for a thin one.
 6. Writes one enforce-candidate file per surfaced item.
 7. Emits the JSON envelope (`active_path`, `summary_path`, `durable_path`, `enforce_candidates`, `status`, `meta`).
 

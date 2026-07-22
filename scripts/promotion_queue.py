@@ -258,15 +258,25 @@ def _apply_retro(record: dict[str, Any], workdir: Path, memory_root: Path | None
     from retrospective import write as retro_write  # noqa: PLC0415
 
     p = record.get("payload") or {}
-    return retro_write.promote_durable(
+    run_id = str(record.get("run_id") or p.get("run_id") or "queued")
+    result = retro_write.promote_durable(
         workdir=workdir,
-        run_id=str(record.get("run_id") or p.get("run_id") or "queued"),
+        run_id=run_id,
         sections=p.get("sections") or {},
         intent_one_line=p.get("intent_one_line"),
         repo=p.get("repo") or "",
         memory_root=memory_root,
         bypass_busy=True,
     )
+    # The promotion just genuinely completed, so record it in the run's summary —
+    # otherwise a queued-then-drained promotion could never reach the closeout's
+    # `wrote_memory` status, which reads that line. Fail-soft by contract: the
+    # helper never raises, and drain() turns any raise into a failed record.
+    if result.get("durable_path"):
+        result["summary_stamp"] = retro_write.stamp_durable_in_summary(
+            workdir, run_id, result["durable_path"],
+        )
+    return result
 
 
 _APPLIERS: dict[str, Callable[[dict[str, Any], Path, Path | None], dict[str, Any]]] = {

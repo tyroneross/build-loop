@@ -204,6 +204,111 @@ def test_contract_durable_signal_never_emits_no_durable_lesson(tmp_path: Path) -
         assert env["closeout_status"] in CLOSEOUT_STATUSES
 
 
+# ---------------------------------------------------------------------------
+# End-to-end writer -> reader contract.
+#
+# Every test above builds its summary with ``_write_retro_summary``, which
+# FABRICATES a ``- durable: ...`` line. The real writer never emitted one, so the
+# reader was green against a hand-made fixture while ``wrote_memory`` was
+# structurally unreachable in production (observed 2026-07-21). These tests drive
+# the REAL writer so the two halves can never silently diverge again.
+# ---------------------------------------------------------------------------
+
+
+def _real_writer_summary(workdir: Path, run_id: str, durable_path: str | None) -> None:
+    """Write the summary using the production writer, not a fixture."""
+    sys.path.insert(0, str(HERE.parent))
+    from retrospective.sections import build  # noqa: PLC0415
+    from retrospective.write import write_active  # noqa: PLC0415
+
+    sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, run_id)
+    write_active(workdir, run_id, sections, repo="demo", durable_path=durable_path)
+
+
+def test_full_pipeline_reaches_wrote_memory_on_a_genuine_promotion(tmp_path: Path) -> None:
+    """TRUE mutation test — uses ONLY pre-existing signatures, so it runs against
+    pre-fix code and fails there on BEHAVIOR rather than on a missing parameter.
+
+    Pre-fix measurement: ``promote_durable`` returned ``status=ok`` with a real
+    durable path and an enforce-candidate was present, yet closeout still emitted
+    ``queued_pending_lesson`` because ``render_summary`` never wrote a ``durable:``
+    line for the reader to find.
+    """
+    sys.path.insert(0, str(HERE.parent))
+    from retrospective.synthesize import run as synth_run  # noqa: PLC0415
+
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "mem"
+    mem.mkdir()
+    _write_enforce_candidate(workdir)
+
+    result = synth_run(workdir, run_id="pipeline-run", memory_root=mem)
+    assert result["durable_path"], "fixture invalid: promotion did not actually happen"
+
+    env = run(workdir, run_id="pipeline-run", source="post-push", memory_root=str(mem))
+    assert env["closeout_status"] == "wrote_memory", (
+        f"a genuine durable promotion did not reach wrote_memory: "
+        f"{env['closeout_status']} — retro_durable_path="
+        f"{env['signal'].get('retro_durable_path')!r}"
+    )
+
+
+def test_full_pipeline_without_memory_root_stays_honest(tmp_path: Path) -> None:
+    """The paired negative, also on pre-existing signatures: when the durable
+    promotion is genuinely skipped, wrote_memory must stay unreachable."""
+    sys.path.insert(0, str(HERE.parent))
+    from retrospective.synthesize import run as synth_run  # noqa: PLC0415
+
+    workdir = _scratch(tmp_path)
+    mem = tmp_path / "absent-memory-root"  # deliberately not created
+    _write_enforce_candidate(workdir)
+
+    result = synth_run(workdir, run_id="pipeline-skip", memory_root=mem)
+    assert not result["durable_path"], "fixture invalid: promotion unexpectedly succeeded"
+
+    env = run(workdir, run_id="pipeline-skip", source="post-push", memory_root=str(mem))
+    assert env["closeout_status"] == "queued_pending_lesson"
+    assert env["signal"]["retro_durable_path"] is None
+
+
+def test_real_writer_output_reaches_wrote_memory(tmp_path: Path) -> None:
+    """The load-bearing contract test: a genuine promotion must reach wrote_memory.
+
+    Fails against pre-fix code — ``render_summary`` emitted no ``durable:`` line,
+    so ``retro_durable_path`` was always None and this returned
+    ``queued_pending_lesson``.
+    """
+    workdir = _scratch(tmp_path)
+    _write_enforce_candidate(workdir)
+    _real_writer_summary(
+        workdir, "e2e-run",
+        durable_path="/mem/projects/demo/retrospectives/2026-07-21/e2e-run.md",
+    )
+    env = run(workdir, run_id="e2e-run", source="post-push")
+    assert env["closeout_status"] == "wrote_memory", (
+        f"real writer output did not reach wrote_memory: {env['closeout_status']} / "
+        f"{env['reason']} — the writer/reader durable-line contract has diverged"
+    )
+
+
+def test_real_writer_without_promotion_never_claims_wrote_memory(tmp_path: Path) -> None:
+    """No-weakening guard: a skipped promotion must NOT be reported as wrote_memory."""
+    workdir = _scratch(tmp_path)
+    _write_enforce_candidate(workdir)
+    _real_writer_summary(workdir, "e2e-skip", durable_path=None)
+    env = run(workdir, run_id="e2e-skip", source="post-push")
+    assert env["closeout_status"] == "queued_pending_lesson"
+    assert env["signal"]["retro_durable_path"] is None
+
+
+def test_real_writer_with_no_signal_at_all_stays_no_durable_lesson(tmp_path: Path) -> None:
+    """`no_durable_lesson` remains the honest answer when there is no signal."""
+    workdir = _scratch(tmp_path)
+    _real_writer_summary(workdir, "e2e-none", durable_path=None)
+    env = run(workdir, run_id="e2e-none", source="post-push")
+    assert env["closeout_status"] == "no_durable_lesson"
+
+
 def test_run_emits_machine_readable_json_artifact(tmp_path: Path) -> None:
     workdir = _scratch(tmp_path)
     env = run(workdir, run_id="json-r", source="phase-6-learn")

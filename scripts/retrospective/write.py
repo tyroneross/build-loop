@@ -30,6 +30,13 @@ _SCRATCH_SLUG_RE = re.compile(
     r"^(tmp[._-]|tmp[a-z0-9]{6,}$|\.tmp|pytest-|scratchpad$|mktemp|run[-_][0-9]+$)"
 )
 
+# The exact token `closeout.status._latest_retro_summary` scans for when deciding
+# whether a run reached `wrote_memory`. Named here so the writer and the reader
+# share one literal instead of two copies that can drift apart — which is exactly
+# how `wrote_memory` became unreachable (the reader looked for a line the writer
+# never wrote, and the reader's test fabricated the line by hand).
+DURABLE_LINE_PREFIX = "durable:"
+
 from retrospective.sections import SECTION_KEYS, SECTION_TITLES
 
 # scripts/ is already on sys.path (the `retrospective` package import above
@@ -72,6 +79,20 @@ def render_full_markdown(
         "",
         f"_Date: {today} · Repo: {repo or '(unset)'}_",
     ]
+    # A retrospective built from no transcript must SAY SO, loudly and in the
+    # reader's first glance. Observed 2026-07-21: a retro ran with
+    # transcript_present=false / prompt_count=0 for a session with hundreds of
+    # tool calls, and still rendered eleven confident-looking sections. The
+    # metadata line below carries the same fact, but buried in a run of counts.
+    if not meta.get("transcript_present"):
+        reason = str(meta.get("transcript_absence_reason") or "").strip()
+        lines.extend([
+            "",
+            "> **NO TRANSCRIPT — this retrospective was built from zero session evidence.**",
+            "> Every transcript-derived section below is empty because nothing was found "
+            "to read, not because nothing happened.",
+            f"> Reason: {reason or 'no transcript located for this run'}",
+        ])
     if intent_one_line:
         lines.append(f"_Intent: {intent_one_line}_")
     lines.append("")
@@ -92,15 +113,32 @@ def render_full_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_summary(sections: dict[str, Any], *, run_id: str) -> str:
+def render_summary(
+    sections: dict[str, Any],
+    *,
+    run_id: str,
+    durable_path: str | None = None,
+) -> str:
     """Render a ≤5 non-blank-line inline summary.
 
     Lines:
-      1. one-line headline (run_id + outcome)
-      2. takeaways count + lesson count
-      3. issues count + enforce-candidate count
-      4. user-prompt count + repeated-cluster count
+      1. headline (run_id, plus a NO TRANSCRIPT flag when there was no evidence)
+      2. all four counts — takeaways, lessons, issues, enforce-candidates
+      3. user-prompt count + repeated-cluster count
+      4. ``durable: <path>`` — ONLY when a promotion genuinely produced one
       5. pointer to the full retrospective
+
+    ``durable_path`` is the writer half of the closeout contract.
+    ``closeout.status._latest_retro_summary`` classifies a run as ``wrote_memory``
+    only on finding a line that starts with ``durable:``, and this function never
+    emitted one — so ``wrote_memory`` was structurally unreachable no matter how
+    good the retrospective or whether ``promote_durable`` actually succeeded.
+    Emitting the line ONLY for a real path is what keeps ``no_durable_lesson``
+    the honest answer when nothing was promoted: a skipped, queued, or failed
+    promotion passes None and no line appears.
+
+    The two count lines were merged into one to hold the ≤5-line budget with the
+    durable line present. Without a durable path the summary is 4 lines.
     """
     meta = sections.get("meta") or {}
     enforce = sections.get("enforce_candidates") or []
@@ -112,14 +150,18 @@ def render_summary(sections: dict[str, Any], *, run_id: str) -> str:
     lesson_n = _count_bullets(sections.get("lessons_learned", ""))
     issue_n = _count_bullets(sections.get("issues_with_causal_tree", ""))
     take_n = _count_bullets(sections.get("key_takeaways", ""))
-    return (
-        f"Retrospective {run_id} written ({_today_iso()}).\n"
-        f"  takeaways: {take_n} · lessons: {lesson_n}\n"
-        f"  issues: {issue_n} · enforce-candidates: {len(enforce)}\n"
+    flag = "" if meta.get("transcript_present") else " [NO TRANSCRIPT — zero session evidence]"
+    out = (
+        f"Retrospective {run_id} written ({_today_iso()}).{flag}\n"
+        f"  takeaways: {take_n} · lessons: {lesson_n} · "
+        f"issues: {issue_n} · enforce-candidates: {len(enforce)}\n"
         f"  user-prompts: {meta.get('prompt_count', 0)} · "
         f"repeated-clusters: {meta.get('cluster_count', 0)}\n"
-        f"  full file: .build-loop/retrospectives/{_today_iso()}/{run_id}.md\n"
     )
+    if durable_path:
+        out += f"  {DURABLE_LINE_PREFIX} {durable_path}\n"
+    out += f"  full file: .build-loop/retrospectives/{_today_iso()}/{run_id}.md\n"
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -145,8 +187,13 @@ def write_active(
     *,
     intent_one_line: str | None = None,
     repo: str = "",
+    durable_path: str | None = None,
 ) -> dict[str, Any]:
     """Write the active retrospective + summary atomically.
+
+    ``durable_path`` is passed straight to :func:`render_summary`; supply it only
+    when a promotion actually returned one, so the closeout reader cannot report
+    ``wrote_memory`` for a promotion that was skipped, queued, or failed.
 
     Returns ``{"active_path": str, "summary_path": str, "status": "ok"}``.
     On IO error returns ``{"active_path": None, "summary_path": None,
@@ -160,7 +207,9 @@ def write_active(
         _atomic_write(active, render_full_markdown(
             sections, run_id=run_id, repo=repo, intent_one_line=intent_one_line,
         ))
-        _atomic_write(summary, render_summary(sections, run_id=run_id))
+        _atomic_write(summary, render_summary(
+            sections, run_id=run_id, durable_path=durable_path,
+        ))
         return {
             "active_path": str(active),
             "summary_path": str(summary),
@@ -250,6 +299,66 @@ def promote_durable(
     except OSError as e:
         return {"durable_path": None, "status": "degraded",
                 "reason": f"OSError: {e}"}
+
+
+def stamp_durable_in_summary(
+    workdir: Path,
+    run_id: str,
+    durable_path: str,
+) -> dict[str, Any]:
+    """Record a LATER durable promotion in an already-written summary file.
+
+    A promotion against a peer-held store is queued and applied later by
+    ``promotion_queue.drain``. That promotion is just as genuine as an inline one,
+    so without this the queued path could never reach ``wrote_memory`` — the same
+    silent gap this whole change exists to close, one level down.
+
+    Replaces an existing ``durable:`` line if present, else inserts one before the
+    ``full file:`` pointer so both pointers stay together. Targeted rather than a
+    full re-render: nothing else in the file can be disturbed.
+
+    Two deliberate constraints:
+
+    * The summary is located by GLOBBING ``retrospectives/*/<run-id>.summary.md``,
+      never by today's date. A queued promotion typically drains on a LATER day
+      than the write, and a today-only lookup would silently no-op on precisely
+      the cross-day case the queue exists to serve.
+      (``stop_closeout.py`` globs ``*/`` for this same reason.)
+    * It NEVER raises. ``promotion_queue.drain`` converts any exception into a
+      failed record, so a repo with no summary tree must be a clean no-op rather
+      than a drain failure.
+
+    Returns ``{"status": "ok"|"skipped"|"degraded", "summary_path": str|None, ...}``.
+    """
+    try:
+        if not durable_path:
+            return {"status": "skipped", "summary_path": None, "reason": "no durable_path"}
+        root = Path(workdir) / ".build-loop" / "retrospectives"
+        matches = sorted(root.glob(f"*/{run_id}.summary.md"), reverse=True)
+        if not matches:
+            return {"status": "skipped", "summary_path": None,
+                    "reason": f"no summary for run {run_id}"}
+        summary = matches[0]
+        lines = summary.read_text(encoding="utf-8").splitlines()
+        new_line = f"  {DURABLE_LINE_PREFIX} {durable_path}"
+
+        for i, ln in enumerate(lines):
+            s = ln.strip()
+            if s.startswith(DURABLE_LINE_PREFIX) or s.lower().startswith(f"- {DURABLE_LINE_PREFIX}"):
+                lines[i] = new_line
+                break
+        else:
+            insert_at = next(
+                (i for i, ln in enumerate(lines) if ln.strip().startswith("full file:")),
+                len(lines),
+            )
+            lines.insert(insert_at, new_line)
+
+        _atomic_write(summary, "\n".join(lines) + "\n")
+        return {"status": "ok", "summary_path": str(summary), "durable_path": durable_path}
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        return {"status": "degraded", "summary_path": None,
+                "reason": f"{type(e).__name__}: {e}"}
 
 
 def write_enforce_candidates(

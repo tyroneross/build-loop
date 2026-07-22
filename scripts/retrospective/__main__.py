@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
-"""CLI: python3 -m retrospective --workdir <repo> [--run-id <id>] [--transcript <path>] [--json]"""
+"""CLI: python3 -m retrospective --workdir <repo> [--run-id <id>] [--transcript <path>] [--session-id <id>] [--json]"""
 from __future__ import annotations
 
 import argparse
@@ -23,6 +23,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--workdir", required=True, help="build-loop project workdir")
     ap.add_argument("--run-id", default=None, help="override derived run id")
     ap.add_argument("--transcript", default=None, help="override located transcript path")
+    ap.add_argument(
+        "--session-id", default=None,
+        help=("session id (e.g. the <session-uuid> of <session-uuid>.jsonl). Matched by "
+              "exact filename across ALL project slugs, so it resolves a transcript even "
+              "when the run was driven from a different cwd than the target repo. Trusted "
+              "without a time check, like --transcript."),
+    )
     ap.add_argument("--memory-root", default=None, help="override build-loop-memory root")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     return ap.parse_args(argv)
@@ -37,6 +44,7 @@ def main(argv: list[str]) -> int:
         run_id=args.run_id,
         transcript=transcript,
         memory_root=memory_root,
+        session_id=args.session_id,
     )
     if args.json:
         print(json.dumps(result, indent=2))

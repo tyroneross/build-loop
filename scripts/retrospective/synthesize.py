@@ -193,6 +193,23 @@ def _intent_one_line(intent_md: str) -> str | None:
     return None
 
 
+def _derive_session_id(state: dict[str, Any]) -> str | None:
+    """Best-effort session id from ``state.json.execution``, or None.
+
+    Returned as a HINT only — the caller must NOT treat it as explicit, because
+    ``started_by_session_id`` is immutable post-generation (it survives resumes
+    and later runs in the same repo) and in practice often holds a Rally label
+    rather than a session UUID. A stale hint that fails the time gate simply
+    falls through to the other sources.
+    """
+    exe = state.get("execution") or {}
+    for key in ("current_session_id", "started_by_session_id"):
+        value = exe.get(key)
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
+
+
 def _derive_repo_slug(workdir: Path) -> str:
     """Resolve the canonical project slug, with a test-safe directory fallback.
 
@@ -233,6 +250,7 @@ def run(
     run_id: str | None = None,
     transcript: Path | None = None,
     memory_root: Path | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Synthesize the retrospective for ``workdir``.
 
@@ -241,6 +259,10 @@ def run(
         run_id:      override the derived run id.
         transcript:  override the located transcript JSONL.
         memory_root: override the build-loop-memory root for durable promotion.
+        session_id:  EXPLICIT session identifier. Resolved by exact filename
+            across every project slug and trusted without a time check, the same
+            way ``transcript`` is. When omitted, a hint is derived from
+            ``state.json.execution`` and gated by temporal membership instead.
 
     Returns:
         {
@@ -270,8 +292,10 @@ def run(
         if transcript is not None:
             tx = transcript
         else:
+            sid = session_id or _derive_session_id(state)
             tx, tx_reason = find_transcript_for_run(
                 workdir, run_start=run_start, run_end=run_end, run_host=run_host,
+                session_id=sid, session_id_is_explicit=bool(session_id),
             )
         repo = _derive_repo_slug(workdir)
         intent_one = _intent_one_line(intent_md)
@@ -279,11 +303,16 @@ def run(
         sections = build_sections(tx, state, intent_md, plan_md, rid,
                                   transcript_note=tx_reason)
 
-        active = write_active(workdir, rid, sections,
-                              intent_one_line=intent_one, repo=repo)
+        # Promote BEFORE writing the active/summary pair: the summary must carry
+        # the real durable path so closeout's `wrote_memory` status is reachable,
+        # and only a completed promotion can supply it. `promote_durable` renders
+        # from `sections` alone, so it has no dependency on `write_active`.
         durable = promote_durable(workdir, rid, sections,
                                   intent_one_line=intent_one, repo=repo,
                                   memory_root=memory_root)
+        active = write_active(workdir, rid, sections,
+                              intent_one_line=intent_one, repo=repo,
+                              durable_path=durable.get("durable_path"))
         enforce = write_enforce_candidates(workdir, rid,
                                             sections.get("enforce_candidates") or [])
 

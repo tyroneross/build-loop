@@ -18,6 +18,7 @@ from retrospective.write import (  # noqa: E402
     write_active,
     promote_durable,
     write_enforce_candidates,
+    stamp_durable_in_summary,
 )
 
 
@@ -139,6 +140,145 @@ class WriteEnforceCandidatesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class DurableSummaryLineTests(unittest.TestCase):
+    """BUG 2 (2026-07-21): `wrote_memory` was structurally unreachable.
+
+    `closeout.status._latest_retro_summary` classifies a run as `wrote_memory`
+    only on a summary line starting with `durable:`, and `render_summary` never
+    emitted one — so no retrospective, however good, and no successful
+    `promote_durable` could ever reach that status.
+    """
+
+    def test_durable_line_emitted_when_path_supplied(self) -> None:
+        s = render_summary(_make_sections(), run_id="r",
+                           durable_path="/mem/projects/demo/retrospectives/2026-07-21/r.md")
+        lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+        self.assertTrue(
+            any(ln.startswith("durable:") for ln in lines),
+            f"no line starts with 'durable:': {lines}",
+        )
+
+    def test_no_durable_line_when_promotion_skipped(self) -> None:
+        """The honest negative: a skipped/failed/queued promotion passes None,
+        so `no_durable_lesson` stays reachable and truthful."""
+        for missing in (None, ""):
+            s = render_summary(_make_sections(), run_id="r", durable_path=missing)
+            lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+            self.assertFalse(
+                any(ln.startswith("durable:") for ln in lines),
+                f"durable line leaked for {missing!r}: {lines}",
+            )
+
+    def test_summary_budget_holds_with_durable_line(self) -> None:
+        s = render_summary(_make_sections(), run_id="r", durable_path="/mem/x.md")
+        non_blank = [ln for ln in s.splitlines() if ln.strip()]
+        self.assertLessEqual(len(non_blank), 5, f"summary too long: {non_blank}")
+
+    def test_durable_line_matches_the_readers_grammar(self) -> None:
+        """Writer and reader must agree on the literal, not by coincidence."""
+        from closeout.status import _latest_retro_summary  # noqa: PLC0415
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        wd = Path(tmp.name)
+        want = "/mem/projects/demo/retrospectives/2026-07-21/run-9.md"
+        write_active(wd, "run-9", _make_sections(), durable_path=want)
+        got = _latest_retro_summary(wd)
+        self.assertEqual(got.get("durable_path"), want)
+
+
+class NoTranscriptBannerTests(unittest.TestCase):
+    """A retro built from no transcript must SAY SO in the reader's first glance.
+
+    Observed 2026-07-21: a retrospective ran with transcript_present=false and
+    prompt_count=0 for a session with hundreds of tool calls, and still rendered
+    eleven confident-looking sections.
+    """
+
+    def test_banner_present_when_transcript_absent(self) -> None:
+        sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, "r",
+                         transcript_note="no transcript for this run (host=claude_code)")
+        body = render_full_markdown(sections, run_id="r", repo="demo")
+        self.assertIn("NO TRANSCRIPT", body)
+        self.assertIn("zero session evidence", body)
+        self.assertIn("no transcript for this run", body)
+
+    def test_banner_absent_when_transcript_present(self) -> None:
+        sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, "r")
+        sections["meta"]["transcript_present"] = True
+        body = render_full_markdown(sections, run_id="r", repo="demo")
+        self.assertNotIn("NO TRANSCRIPT", body)
+
+    def test_banner_does_not_displace_the_title_line(self) -> None:
+        sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, "my-run")
+        body = render_full_markdown(sections, run_id="my-run", repo="demo")
+        self.assertIn("my-run", body.splitlines()[0])
+
+    def test_summary_headline_flags_missing_transcript(self) -> None:
+        sections = build(None, {"runs": [{"outcome": "pass"}]}, None, None, "r")
+        self.assertIn("NO TRANSCRIPT", render_summary(sections, run_id="r"))
+
+
+class StampDurableInSummaryTests(unittest.TestCase):
+    """A queued promotion drains LATER — often on a different day. Without the
+    stamp, a queued-then-drained promotion could never reach `wrote_memory`."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.wd = Path(self.tmp.name)
+
+    def _summary_dir(self, date: str) -> Path:
+        d = self.wd / ".build-loop" / "retrospectives" / date
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def test_stamps_a_summary_written_on_a_different_day(self) -> None:
+        """The cross-day case the queue exists to serve. A `_today_iso()` lookup
+        would silently no-op here."""
+        d = self._summary_dir("2026-01-02")
+        (d / "run-x.summary.md").write_text(
+            "Retrospective run-x written (2026-01-02).\n"
+            "  full file: .build-loop/retrospectives/2026-01-02/run-x.md\n"
+        )
+        r = stamp_durable_in_summary(self.wd, "run-x", "/mem/p/demo/r/run-x.md")
+        self.assertEqual(r["status"], "ok")
+        text = Path(r["summary_path"]).read_text()
+        self.assertIn("durable: /mem/p/demo/r/run-x.md", text)
+
+    def test_durable_line_lands_before_the_full_file_pointer(self) -> None:
+        d = self._summary_dir("2026-01-02")
+        (d / "run-x.summary.md").write_text(
+            "headline\n  full file: .build-loop/retrospectives/2026-01-02/run-x.md\n"
+        )
+        r = stamp_durable_in_summary(self.wd, "run-x", "/mem/x.md")
+        lines = [ln.strip() for ln in Path(r["summary_path"]).read_text().splitlines() if ln.strip()]
+        self.assertLess(
+            next(i for i, ln in enumerate(lines) if ln.startswith("durable:")),
+            next(i for i, ln in enumerate(lines) if ln.startswith("full file:")),
+        )
+
+    def test_replaces_an_existing_durable_line_rather_than_duplicating(self) -> None:
+        d = self._summary_dir("2026-01-02")
+        (d / "run-x.summary.md").write_text(
+            "headline\n  durable: /old/path.md\n  full file: x\n"
+        )
+        r = stamp_durable_in_summary(self.wd, "run-x", "/new/path.md")
+        text = Path(r["summary_path"]).read_text()
+        self.assertEqual(sum(1 for ln in text.splitlines() if ln.strip().startswith("durable:")), 1)
+        self.assertIn("/new/path.md", text)
+        self.assertNotIn("/old/path.md", text)
+
+    def test_missing_summary_is_a_clean_skip_never_a_raise(self) -> None:
+        """`promotion_queue.drain` turns any raise into a FAILED record, so a repo
+        with no summary tree must be a no-op, not a drain failure."""
+        r = stamp_durable_in_summary(self.wd, "never-written", "/mem/x.md")
+        self.assertEqual(r["status"], "skipped")
+        self.assertIsNone(r["summary_path"])
+
+    def test_empty_durable_path_is_a_skip(self) -> None:
+        self.assertEqual(stamp_durable_in_summary(self.wd, "r", "")["status"], "skipped")
 
 
 def test_promote_durable_refuses_scratch_slug(tmp_path):
