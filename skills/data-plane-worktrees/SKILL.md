@@ -96,6 +96,30 @@ The run data root lives at canonical `.build-loop/data/<run-id>/`, outside the
 linked source worktree. Putting ignored data inside a linked worktree makes
 normal non-force `git worktree remove` fail.
 
+## Migration rehearsal (isolated — production never touched)
+
+Run on **Fable** (DB actions pin Frontier tier — see `skills/model-tiering`). Rehearse migration-first deploys against a throwaway **local** DB before any production migration. Hard guard: assert the target URL contains `@127.0.0.1:` (or your local host) AND a `rehearsal` marker before every create/apply/drift/teardown; never read `DATABASE_URL`/`DIRECT_URL` when they point at prod.
+
+1. Create ephemeral DB (`atomize_rehearsal_<run>`), materialize the **base (origin/main) schema** so ALTER targets and FK parents exist.
+2. Apply each migration in order (`psql -v ON_ERROR_STOP=1 -f`); re-apply to prove **idempotency** (exit 0 both times).
+3. Drift-check the migrated DB vs the branch datamodel — exit 0 = no missing columns/tables (no runtime `P2022`).
+4. Functional-test the new CHECK/FK constraints (bad value rejected, good value accepted).
+5. Drop the ephemeral DB **and any cluster-global roles/extensions you created** (roles are not per-DB — verify 0 remain).
+
+**Prisma 7 CLI (verified 2026-07-22 — several v6 flags were removed):**
+
+```bash
+export PRISMA_MIGRATE_URL="postgresql://<user>@127.0.0.1:5432/atomize_rehearsal_<run>"  # highest precedence in prisma.config.ts
+# base schema DDL from a datamodel (--from-url REMOVED; --to-schema-datamodel REMOVED → use --to-schema):
+git show origin/main:prisma/schema.prisma > /tmp/base.prisma
+npx prisma migrate diff --from-empty --to-schema /tmp/base.prisma --script -o /tmp/base.sql
+psql -v ON_ERROR_STOP=1 -d atomize_rehearsal_<run> -f /tmp/base.sql
+# drift: migrated live DB vs branch datamodel (-o REQUIRED — env-injection notices pollute stdout):
+npx prisma migrate diff --from-config-datasource prisma.config.ts --to-schema prisma/schema.prisma --exit-code -o /tmp/drift.txt
+```
+
+Supabase-CLI migrations (`supabase/migrations/*.sql`) are plain SQL applied by `supabase migration up`/`db push` — apply them with `psql` in the rehearsal, NOT `prisma migrate deploy` (Prisma's `migrations.path` tracks `prisma/migrations` only). Additive `add column if not exists` (nullable) + `NOT VALID`→`VALIDATE CONSTRAINT` is the safe pattern; `VALIDATE` full-scans the table under SHARE UPDATE EXCLUSIVE (writes continue) — schedule off-peak when large.
+
 ## Verification
 
 Run:

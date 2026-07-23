@@ -157,6 +157,16 @@ Two high-frequency advisory agents stay on Sonnet. Five bounded verification age
 | `alignment-checker` | Sonnet | Called once per queue item during autonomous iterate (up to 25× per run). Advisory only — flags drift, doesn't gate. Cost dominates value at this fan-out frequency. |
 | `synthesis-critic` | Sonnet | Per-UI-commit WARN-only check. Advisory only — never gates. Frequency × non-gating shape means a cheaper tier is the right tradeoff. |
 
+### Database actions pin Frontier (Fable) — standing user rule (2026-07-22)
+
+**All database actions run at Frontier tier (Fable on the Anthropic mapping), overriding the Code-tier execution default.** DB mutations — migrations, schema changes, constraint/index DDL, data-plane rehearsals, repair/quarantine — are irreversible-leaning and high blast-radius, exactly the compounding-error class Frontier owns. Scope:
+
+- **Assessment/diagnosis:** `database-assessor` role is `(generative_reasoning, frontier)` → resolves to Fable. Do not re-tier it down.
+- **Execution:** any Phase 2 plan chunk whose owned files include migrations, `schema.prisma`/`schema.sql`, or DDL scripts is assigned Frontier in plan model-assignment, not the Sonnet implementer default. Label the assignment in the plan.
+- **DB skills:** `data-plane-worktrees` and any database skill dispatch their executing subagent with `model: fable` (Agent `model` override / workflow `opts.model`).
+
+This is a provider-portable *tier* pin (Frontier), not a hardcoded id; on hosts where a higher-ranked Frontier id is available the resolver may pick it, honoring Accuracy > Speed > Cost. Source: user standing rule, atomize-ai migration rehearsal (run-593729).
+
 ## Round 2 evidence (2026-05-07, example-app news-podcast iteration 2)
 
 n=2 dispatch-pattern A/B comparison on a 6-commit feature reversed the round-1 belief that Skill-path (Sonnet fan-out) is materially cheaper across the board:
