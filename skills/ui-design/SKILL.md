@@ -22,8 +22,9 @@ Use this skill when `uiTarget != null` and the work is not copy-only:
 4. Run a Calm Precision core-consideration pass before selecting style: name the principles most relevant to the surface, the perceptual foundation behind each one, and the concrete implication for this build.
 5. Load project-local visual evidence: current screens, screenshots, tokens, components, selected mockups, and existing `.build-loop/app-contract/ui.md`.
 6. Select only the guidance sources needed for the surface from `references/ui-guidance-sources.md`.
-7. Choose the design direction from product fit: user job, workflow frequency, data shape, information density, platform, accessibility risk, error cost, and the Calm Precision core-consideration pass.
-8. Have `design-contract-specialist` write the decision to `.build-loop/app-contract/ui.md`.
+7. Derive colour from the engine, never by hand — load `references/color-engine.md` before writing any hex, generating a palette, or accepting an inherited one (including a mode brief's). A palette is a relationship vector, not a list of colours: contrast is solved per role and verified in both the light and dark twin. One accent, status hues reserved, colour only where it encodes state.
+8. Choose the design direction from product fit: user job, workflow frequency, data shape, information density, platform, accessibility risk, error cost, and the Calm Precision core-consideration pass.
+9. Have `design-contract-specialist` write the decision to `.build-loop/app-contract/ui.md`.
 
 ## Design Layers
 

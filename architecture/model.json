@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "b6189229bbe7712c1220007c44f5d5dd2f7b3d5cf466116876065f9cb3d591ce"
+    "content_sha256": "356ebd5f1059e1adc9a0b24111814b21bbba0cec0e233a2df34d581cb083339e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1240,8 +1240,8 @@
         "description": "Generate accessible color systems and solve contrast, instead of guessing hex values. Use when picking or fixing colors for any UI, chart, diagram, doc, or artifact — \"what colors should this use\", \"is this readable\", \"this text fails contrast\", \"make a dark theme\", \"pick an accent\". Also use before shipping any palette, to PROVE contrast rather than assert it. NOT for choosing layout, typography, or component struc…",
         "file": "skills/color-engine/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-07-25"
         }
       },
       "cost-rca": {
