@@ -369,6 +369,37 @@ class TaxonomyTests(unittest.TestCase):
         self.assertIn("primary_role_rule", rubric)
         self.assertIn("multimodal-input", rubric["primary_role_rule"])
 
+    # --- Family inheritance for unregistered models ----------------------
+    # 2026-07-25: model_meta was exact-id/alias only, so a SHIPPING model the
+    # user was actively routing work to (claude-opus-5) resolved to None --
+    # indistinguishable from an invented one. These lock in the three arms.
+    def test_unregistered_model_inherits_from_its_family(self) -> None:
+        meta = self.mt.model_meta("claude-opus-5")
+        self.assertIsNotNone(meta, "a new version of a known family must resolve")
+        self.assertEqual(meta["inherited_from"], "opus")
+        self.assertEqual(meta["status"], "inherited")
+        # Tier/segment come from the family row, so routing stays sane.
+        self.assertEqual(meta["tier"], self.mt.model_meta("claude-opus-4-8")["tier"])
+        self.assertEqual(meta["segment"], self.mt.model_meta("claude-opus-4-8")["segment"])
+
+    def test_curated_rows_are_not_marked_inherited(self) -> None:
+        for mid in ("claude-opus-4-8", "claude-fable-5", "claude-sonnet-5"):
+            meta = self.mt.model_meta(mid)
+            self.assertIsNotNone(meta, mid)
+            self.assertNotEqual(meta.get("status"), "inherited", mid)
+            self.assertNotIn("inherited_from", meta, mid)
+
+    def test_inheritance_never_invents(self) -> None:
+        # Unknown family: no tier may be guessed.
+        self.assertIsNone(self.mt.model_meta("claude-zephyr-9"))
+        # Never across vendors -- "opus" is an Anthropic family.
+        self.assertIsNone(self.mt.model_meta("gpt-opus-9"))
+        # Unrecognized vendor token.
+        self.assertIsNone(self.mt.model_meta("llama-opus-9"))
+        # Degenerate input.
+        self.assertIsNone(self.mt.model_meta("x"))
+        self.assertIsNone(self.mt.model_meta(""))
+
 
 if __name__ == "__main__":
     unittest.main()

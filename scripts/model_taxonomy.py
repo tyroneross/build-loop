@@ -192,7 +192,59 @@ def model_meta(model_id: str | None) -> dict[str, Any] | None:
         for alias in meta.get("aliases", []) or []:
             if str(alias).lower() == low:
                 return dict(meta)
-    return None
+    return _inherit_family_meta(key, models)
+
+
+# Vendor token -> provider, so a family name can never be inherited across
+# vendors (a hypothetical "gpt-opus-9" must not inherit Anthropic's "opus" row).
+_VENDOR_PROVIDER = {
+    "claude": "anthropic",
+    "gpt": "openai",
+    "o1": "openai",
+    "o3": "openai",
+    "gemini": "google",
+}
+
+
+def _inherit_family_meta(model_id: str, models: dict[str, Any]) -> dict[str, Any] | None:
+    """Seed metadata for an UNREGISTERED model, inherited from its family row.
+
+    WHY. `model-taxonomy.json`'s own header calls the model ids "EXAMPLE SEEDS
+    held as data, NOT hard-codes ... classification appends new models to the
+    runtime cache". Lookup was exact-id/alias only, so that never happened: on
+    2026-07-25 `claude-opus-5` (shipping, in daily use) and `claude-zephyr-9`
+    (invented for the test) both resolved to None, indistinguishable. Callers
+    then silently fall back to defaults for a model the user is actively
+    routing real work to.
+
+    The registry is keyed by FAMILY (`opus`, `fable`, `sonnet`) with concrete
+    ids in `aliases`, so a new version of a known family is exactly the case
+    this should cover: `claude-opus-5` -> the `opus` row. Vendors keep a
+    family's positioning stable across versions, so inheriting tier/segment is
+    right far more often than defaulting.
+
+    Guards: the result is marked `status: inherited` + `inherited_from` so no
+    caller mistakes it for a curated row; an unknown family returns None rather
+    than inventing a tier; and inheritance never crosses vendors."""
+    parts = str(model_id or "").strip().lower().split("-")
+    if len(parts) < 2:
+        return None
+    vendor, expected_provider = parts[0], _VENDOR_PROVIDER.get(parts[0])
+    if not expected_provider:
+        return None
+    # Family token is whatever follows the vendor ("claude-opus-5" -> "opus").
+    family = parts[1]
+    meta = models.get(family)
+    if not isinstance(meta, dict):
+        return None
+    if meta.get("provider") != expected_provider:
+        return None
+    out = dict(meta)
+    out["inherited_from"] = family
+    out["status"] = "inherited"
+    out["aliases"] = [model_id]
+    out["label"] = f"{model_id} (inherited from {meta.get('label', family)})"
+    return out
 
 
 def released(model_id: str | None) -> str | None:

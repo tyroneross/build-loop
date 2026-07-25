@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c387c9b1c1834b5955702395a886b325ed3a2b4d08ee599df399260ce4c9871c"
+    "content_sha256": "f010debfbbd0e2ea51ae4b60945e2d0fc457d7185e990104d82d5fdb6926c0d9"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -923,7 +923,7 @@
         "file": "agents/fact-checker.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-17"
+          "date": "2026-07-22"
         }
       },
       "fix-critique": {
@@ -932,7 +932,7 @@
         "file": "agents/fix-critique.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-17"
+          "date": "2026-07-22"
         }
       },
       "frontend-assessor": {
@@ -995,7 +995,7 @@
         "file": "agents/overfitting-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-17"
+          "date": "2026-07-22"
         }
       },
       "performance-assessor": {
@@ -1022,7 +1022,7 @@
         "file": "agents/promotion-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-17"
+          "date": "2026-07-22"
         }
       },
       "recurring-pattern-detector": {
@@ -1058,7 +1058,7 @@
         "file": "agents/scope-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-17"
+          "date": "2026-07-22"
         }
       },
       "security-reviewer": {
