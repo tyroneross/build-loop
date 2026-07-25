@@ -113,13 +113,19 @@ class OpenAIAgentApprovals(unittest.TestCase):
         "promotion-reviewer": "gpt-5.6-sol",
         "scope-auditor": "gpt-5.6-sol",
         "security-reviewer": "gpt-5.6-sol",
+        # DB actions are pinned to Frontier by standing rule (3271e57,
+        # skills/model-tiering/SKILL.md §"All database actions run at Frontier
+        # tier"): migrations, schema/constraint DDL, data-plane rehearsals and
+        # repair are irreversible-leaning and high blast-radius, so they run a
+        # rung above the other bounded assessors. NOT a typo -- do not "restore"
+        # this to terra to match api/frontend/perf.
+        "database-assessor": "gpt-5.6-sol",
         # Coordination + bounded execution: capable lower-cost workhorse.
         "build-orchestrator": "gpt-5.6-terra",
         "assessment-orchestrator": "gpt-5.6-terra",
         "implementer": "gpt-5.6-terra",
         "api-assessor": "gpt-5.6-terra",
         "architecture-scout": "gpt-5.6-terra",
-        "database-assessor": "gpt-5.6-terra",
         "design-contract-specialist": "gpt-5.6-terra",
         "frontend-assessor": "gpt-5.6-terra",
         "optimize-runner": "gpt-5.6-terra",
