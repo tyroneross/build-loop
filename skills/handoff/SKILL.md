@@ -44,10 +44,66 @@ Two cross-cutting rules learned the same way:
   the frontmatter fields that decide whether an item is safe to pick up
   (`status`, `classify`, `judgment_verdict`, `owed_layers`, `blocked_by`).
 
-Measured effect: fixing classes 1–7 moved cold-read accuracy from partial to full across
-Opus, Sonnet and Haiku. Confidence tracks model tier — a weaker model reads disclosed
-provenance ("reconstructed", "override") as danger rather than as context, so state those
-plainly and say what they do and do not imply.
+## Recall and confidence are different failures with different fixes
+
+This is the finding that mattered most, and it is not obvious: **an agent can score full
+marks on recall and still refuse to act.**
+
+Measured on one document across four rounds. Haiku answered 10/10 factual questions
+correctly while rating its own confidence **2/5** — it had every fact and would not touch
+the repo. Adding more facts would not have helped, because facts were never the gap.
+
+| Failure | Caused by | Symptom | Fix |
+|---|---|---|---|
+| **Recall** | Omission — truncation, silent caps, missing orientation | "NOT IN DOC", wrong counts, guessing the tech stack | Put the content in (classes 1–5) |
+| **Confidence** | Unresolved implication — a flag with no interpretation | Correct answers, low self-rating, "I'd have to read the code first" | State what each flag *means for the reader* (classes 6–7) |
+
+Concretely, what moved Haiku from 2/5 to 5/5 was not new information. It was:
+
+- Queue items carrying `judgment_verdict` / `classify` / `owed_layers`, so "Judgment owed —
+  bl-…-codex-299759" became something a reader could triage instead of fear.
+- The open decision gaining an **owner** and a **criterion for deciding**, so it read as
+  assigned rather than abandoned.
+- The override gaining an explicit **cost** ("runs zero tests") and **bound** (what it does
+  and does not invalidate), so it read as disclosed rather than alarming.
+
+**Rule: every warning in a handoff must carry its own interpretation.** A flag without a
+"so what" transfers anxiety, not information — and a cautious reader responds by doing
+nothing, which is the exact outcome the handoff exists to prevent.
+
+## How to test a handoff (the cold-read protocol)
+
+Do not self-assess a handoff. Dispatch a fresh agent whose ONLY artifact is the document
+path, tell it to open nothing else, and score it. Brief it and the test is worthless.
+
+Run the same fixed question set at **two model tiers**, because they detect different
+defects:
+
+| Tier | Detects | Why |
+|---|---|---|
+| **Weakest available** (Haiku) | Unresolved implications | It will not infer past an ambiguity; low confidence with correct answers pinpoints class 6/7 gaps |
+| **Strongest available** (Opus) | Internal contradictions | It cross-references sections and finds claims that cannot both be true |
+
+Ask for `CONFIDENCE (1-5)`, `GAPS`, and `CONTRADICTIONS` explicitly, and instruct the
+agent to answer "NOT IN DOC" rather than guess — otherwise general knowledge silently
+fills holes and the doc scores better than it deserves. Tell it to be harsh; a comfortable
+review is a useless one.
+
+Question set that surfaced every defect found (adapt the nouns, keep the shapes): what is
+this product and for whom · what platforms and storage · what was just done and is it
+finished · what builds/tests it and what must you never run · what is <the largest open
+item> and is it done · name three forbidden things · how many queue items and which are
+audit debt · did this ship through a normal gate · what decision is owed, who owns it,
+what decides it · which field proves no new run started and which must you not read · why
+is this record untrustworthy · what is the trap when searching for callers · are you
+authorized to start · what must you run after adding a file · who wrote this record and
+when relative to the work.
+
+**Expect the strong tier to challenge your evidence, not just your prose.** On the final
+round Opus accepted every fact and still flagged that a "three platforms build clean"
+claim was overstated — the third platform's target excluded the directory the changed
+files lived in, so its green proved the change could not break it, not that it was
+verified. That correction came from the review, not from the author.
 
 ## What it composes
 
