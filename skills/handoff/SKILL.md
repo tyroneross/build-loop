@@ -18,14 +18,45 @@ then (optionally) launch a fresh session in the STABLE checkout with that docume
 - A worktree about to be GC'd — extract state before the folder disappears.
 - Handing off work to a peer agent or co-developer.
 
+## The seven content classes a handoff must carry
+
+Derived empirically (2026-07-26): a generated handoff was cold-read by fresh agents at
+three model tiers, scored, repaired, and re-tested. Every failure fell into one of seven
+classes. A handoff missing any one of them produces an agent that can *restate* the work
+but cannot *act* on it. Ranked by how much damage the omission causes.
+
+| # | Class | The question it answers | Failure when missing |
+|---|-------|------------------------|----------------------|
+| 1 | **Orientation** | What is this product, for whom, on what stack? | Reviewer inferred "Apple app" only from `xcodebuild` in a gotcha. Everything downstream is guesswork. |
+| 2 | **Constraints / non-goals** | What must I NOT do? | The single most-cited gap. This is the class truncation kills first, because non-goals sit at the END of an intent file. |
+| 3 | **Landmines** | What will bite me on my FIRST action? | Stale run-id markers, set push-holds, emptied state blocks. Each fires before any real work begins. |
+| 4 | **Authorization** | Am I allowed to just start? | Absent this, an agent picks the most visible queue item — which may be another run's unpaid audit debt. |
+| 5 | **Verification recipe** | How do I build/test, and what must I never run? | Without it an agent reaches for the obvious tool and gets a false green. |
+| 6 | **Open decisions** | What is genuinely undecided, who owns it, what decides it? | A dangling "may have been wrong" with no owner and no criterion is unresolvable by the next agent. |
+| 7 | **Provenance** | How trustworthy is this record itself? | A reconstructed or overridden record read as ground truth is worse than no record. |
+
+Two cross-cutting rules learned the same way:
+
+- **Never truncate a class-2 or class-6 section.** Both live at the end of their source
+  files, so any line cap removes exactly the text that carries the constraint.
+- **Counts are claims.** A queue count that silently caps (or counts a derived `INDEX.md`
+  instead of `items/`) understates open work. Titles alone are not enough either — carry
+  the frontmatter fields that decide whether an item is safe to pick up
+  (`status`, `classify`, `judgment_verdict`, `owed_layers`, `blocked_by`).
+
+Measured effect: fixing classes 1–7 moved cold-read accuracy from partial to full across
+Opus, Sonnet and Haiku. Confidence tracks model tier — a weaker model reads disclosed
+provenance ("reconstructed", "override") as danger rather than as context, so state those
+plainly and say what they do and do not imply.
+
 ## What it composes
 
-The handoff doc has eight fixed sections (always the same order; absent data renders as "n/a"):
+Nine fixed sections (always the same order; absent data renders as "n/a"):
 
 | # | Section | Source |
 |---|---------|--------|
-| 1 | North Star (intent) | `.build-loop/intent.md` |
-| 2 | Current Goal | `.build-loop/goal.md` |
+| 1 | North Star (intent) — incl. Orientation + glossary | `.build-loop/intent.md` (inlined WHOLE) |
+| 2 | Current Goal — incl. open decisions | `.build-loop/goal.md` (inlined WHOLE) |
 | 3 | Phase + Live Checklist | `.build-loop/state.json` (execution + runs[]) |
 | 4 | Git State | `git status` + `git log` |
 | 5 | Queues | `followup/`, `backlog/`, `ux-queue/`, `issues/` |

@@ -90,18 +90,29 @@ def _queue_items(directory: Path) -> list[str]:
         if any(part in _CLOSED_SUBDIRS for part in p.relative_to(root).parts[:-1]):
             continue
         title = p.stem
+        detail: list[str] = []
         try:
-            for line in p.read_text(encoding="utf-8").splitlines():
+            for line in p.read_text(encoding="utf-8").splitlines()[:40]:
                 stripped = line.strip()
-                if stripped.startswith("# "):
+                if title == p.stem and stripped.startswith("# "):
                     title = stripped[2:].strip()
-                    break
-                if stripped.startswith("title:"):
+                elif title == p.stem and stripped.startswith("title:"):
                     title = stripped.split(":", 1)[1].strip().strip('"\'')
-                    break
+                # Frontmatter fields that change whether an item is SAFE to
+                # pick up. Every cold-read reviewer (Opus/Sonnet/Haiku,
+                # 2026-07-26) named "I only get titles" as their top gap:
+                # a bare "Judgment owed — bl-…-codex-299759" says nothing
+                # about what is owed or whether it blocks.
+                for key in ("status", "classify", "priority", "effort",
+                            "judgment_verdict", "owed_layers", "blocked_by"):
+                    if stripped.startswith(f"{key}:"):
+                        val = stripped.split(":", 1)[1].strip().strip('"\'')
+                        if val:
+                            detail.append(f"{key}={val}")
         except OSError:
             pass
-        titles.append(title)
+        suffix = f"  _({'; '.join(detail)})_" if detail else ""
+        titles.append(f"{title}{suffix}")
     return titles
 
 

@@ -176,7 +176,24 @@ class TestQueueItems:
         (d / "items" / "a.md").write_text(
             'id: X\ntitle: "Pin the runtime flag"\nstatus: open\n', encoding="utf-8"
         )
-        assert _queue_items(d) == ["Pin the runtime flag"]
+        assert _queue_items(d) == ["Pin the runtime flag  _(status=open)_"]
+
+    def test_surfaces_pickup_safety_fields(self, tmp_path: Path) -> None:
+        """A bare title cannot tell a resumer whether an item is safe to take.
+        All three cold-read reviewers (2026-07-26) named this their top gap."""
+        d = tmp_path / "followup"
+        d.mkdir()
+        (d / "owed.md").write_text(
+            "# Judgment owed — bl-123\n"
+            "judgment_verdict: warn\n"
+            "owed_layers: [independent-auditor]\n"
+            "classify: DECISION\n",
+            encoding="utf-8",
+        )
+        [item] = _queue_items(d)
+        assert "judgment_verdict=warn" in item
+        assert "owed_layers=" in item
+        assert "classify=DECISION" in item
 
 
 class TestLandmines:
