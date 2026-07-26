@@ -241,3 +241,50 @@ The lint targets ONLY the final user-facing report markdown + phase status lines
 - Findings are WARN (advisory): the orchestrator self-heals by revising the draft once, then emits it
 - Never hard-blocks a run — worst case is one revision pass
 - The structural lint (`scripts/build_report_lint.py`) keeps running in parallel; it is orthogonal (parallel_batch / merge_plan / evidence triplet shape)
+
+## Evidence class on every claim (added 2026-07-25)
+
+A claim about **why** or **whether** something works must say how it was checked.
+Tag it, or name the observation on the same line.
+
+| Class | Means | Example |
+|---|---|---|
+| `[measured]` | You measured the thing itself | `select max(created_at) from entities` returned a timestamp |
+| `[correlated]` | You measured something related; state the gap | its metric stopped appearing, so the process *may* be stopped |
+| `[reasoned]` | Inferred from code, absence, or an aggregate | grep found no callers |
+
+**The gate: a delete, deploy, or restart may only be justified by `[measured]`.**
+`[correlated]` and `[reasoned]` are fine in a report; they are not sufficient to
+act irreversibly.
+
+`scripts/report_lint.py` enforces the labelling half at Phase 4G
+(`mechanism-claim-unobserved`, WARN). The action gate is a human/orchestrator
+discipline: check the class before acting, not after.
+
+### Why this exists
+
+On 2026-07-25 six claims were wrong the same way. Each measured something true
+one step from what it asserted, then reported the inference at the confidence of
+the measurement:
+
+| Claimed | Actually measured |
+|---|---|
+| "the worker died" | its metric stopped appearing (it was Online, wedged on 5 stuck jobs) |
+| "source maps never uploaded" | the auth token was empty |
+| "persistence works" | ONE article served from store (5.2% of 11,581 rows do) |
+| "Summary V2 is live" | the code was committed (6 of 11,603 rows carry it) |
+| "13 routes safe to delete" | a grep returned nothing (3 had live callers) |
+| "the KG kept growing" | row counts since April (13 days of zero were inside) |
+
+Two of those reached the user as status. One would have deleted a route that a
+passing 149-line test imports. The restart recommendation was correct by
+accident: it freed the slots, but without a per-job deadline the same wedge
+recurs on the next slow host.
+
+**The tell is grammatical.** "Died", "never uploaded", "works", "safe to delete"
+are mechanisms. "Stopped appearing", "returns zero rows", "is empty" are
+observations. A mechanism verb with no matching observation is the flag.
+
+Agreement between reviewers does not substitute. Where two agents disagreed the
+conflict surfaced and was settled; where several shared the same proxy, nothing
+caught it.

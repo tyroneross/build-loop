@@ -23,6 +23,7 @@ from report_lint import (  # noqa: E402
     run_lint,
     lint_headline,
     lint_validation_line,
+    lint_mechanism_claim,
     lint_jargon,
     lint_contrastive_pivot,
     lint_length,
@@ -416,6 +417,68 @@ class TestDirectLanguage(unittest.TestCase):
     def test_calibrated_uncertainty_is_exempt(self):
         # A status marker IS calibration. Flagging it would punish the honesty we require.
         self.assertNotIn("hedge", self._ids("❓ uncertain: I think the cache is slow.\n"))
+
+
+class TestMechanismClaim(unittest.TestCase):
+    """Fixtures are the six real wrong claims from 2026-07-25.
+
+    Each measured something true one step from what it asserted. The rule
+    exists so the inferential step must be stated instead of assumed.
+    """
+
+    def _lines(self, text):
+        return [(i + 1, ln) for i, ln in enumerate(text.split("\n"))]
+
+    def test_bare_mechanism_claim_flagged(self):
+        # "the worker died" -- inferred from a metric gap; it was Online.
+        out = lint_mechanism_claim(self._lines("The scraper-worker is dead."))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["rule_id"], "mechanism-claim-unobserved")
+
+    def test_never_uploaded_flagged(self):
+        # "source maps never uploaded" -- inferred from an empty auth token.
+        out = lint_mechanism_claim(self._lines("Source maps were never uploaded."))
+        self.assertEqual(len(out), 1)
+
+    def test_works_claim_flagged(self):
+        # "persistence works" -- one article stood in for 11,581 rows.
+        out = lint_mechanism_claim(self._lines("Persistence is working correctly."))
+        self.assertEqual(len(out), 1)
+
+    def test_safe_to_delete_flagged(self):
+        # "13 routes safe to delete" -- a grep returned nothing; 3 had callers.
+        out = lint_mechanism_claim(self._lines("These 13 routes are safe to delete."))
+        self.assertEqual(len(out), 1)
+
+    def test_named_observation_passes(self):
+        out = lint_mechanism_claim(self._lines(
+            "The worker is dead: select max(created_at) from entities returned 2026-07-12."
+        ))
+        self.assertEqual(out, [])
+
+    def test_explicit_evidence_class_passes(self):
+        out = lint_mechanism_claim(self._lines(
+            "The worker is dead [correlated]: its metric stopped appearing."
+        ))
+        self.assertEqual(out, [])
+
+    def test_observation_language_not_flagged(self):
+        out = lint_mechanism_claim(self._lines(
+            "The entities table has returned zero rows since 2026-07-12."
+        ))
+        self.assertEqual(out, [])
+
+    def test_wired_into_run_lint(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
+            fh.write("The queue is broken.\n")
+            path = Path(fh.name)
+        try:
+            result = run_lint(path)
+            self.assertIn("mechanism-claim-unobserved",
+                          {f["rule_id"] for f in result["findings"]})
+        finally:
+            path.unlink()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

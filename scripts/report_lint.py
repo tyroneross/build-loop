@@ -107,6 +107,39 @@ VALIDATION_METHOD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# --- Mechanism claims -------------------------------------------------------
+# Verbs that assert WHY or WHETHER something works, as opposed to reporting an
+# observation. "died" is a mechanism; "stopped appearing" is an observation.
+# The distinction is the whole rule: a mechanism is a conclusion ABOUT a system,
+# and stating one without naming what was measured is how a proxy's confidence
+# gets spent on a claim the proxy cannot support.
+MECHANISM_CLAIM_RE = re.compile(
+    r"\b("
+    r"(is|are|was|were|has been|have been)\s+(dead|broken|down|disabled|live|working|running|deployed|shipped)|"
+    r"(died|crashed|failed silently|stopped working|never ran|never fired|never uploaded|never deployed)|"
+    r"(is|are|was|were)\s+not\s+(running|working|live|deployed|enabled)|"
+    r"(works|working) (correctly|fine|as expected)|"
+    r"safe to (delete|remove|drop)|"
+    r"(no|zero) (callers|consumers|references)"
+    r")\b",
+    re.IGNORECASE,
+)
+# An explicit evidence-class tag satisfies the rule outright.
+EVIDENCE_CLASS_RE = re.compile(r"\[(measured|correlated|reasoned)\]", re.IGNORECASE)
+# Observation language: naming the thing actually looked at.
+OBSERVATION_RE = re.compile(
+    r"\b("
+    r"select\s|query|queried|psql|"
+    r"grep(ped)?|"
+    r"probe[ds]?|probed|"
+    r"http\s*\d{3}|status\s*\d{3}|"
+    r"logs? show|log shows|returned|"
+    r"row count|rows?\b.*\bcount|max\(|"
+    r"measured|observed"
+    r")",
+    re.IGNORECASE,
+)
+
 # Jargon blocklist — internal tokens that should be translated for the user.
 # Each entry is ``(compiled_pattern, message)``. Patterns compile case-insensitive
 # so "MECE"/"mece" and "Sub-step"/"sub-step" hit the same rule.
@@ -266,6 +299,52 @@ def lint_validation_line(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
             "(✅/⚠️/❓) naming the method/command/tool that verified the work."
         ),
     )]
+
+
+def lint_mechanism_claim(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+    """A claim about WHY/WHETHER something works must name how it was checked.
+
+    `validation-line-present` only inspects lines that already carry a status
+    marker, so a mechanism asserted in plain prose slips past it. That is the
+    exact hole six wrong claims went through on 2026-07-25: each measured
+    something true one step from what it asserted, and reported the inference
+    at the confidence of the measurement.
+
+      "the worker died"              <- metric stopped appearing (it was Online)
+      "source maps never uploaded"   <- the auth token was empty
+      "persistence works"            <- ONE article served from store (5.2% do)
+      "13 routes safe to delete"     <- a grep returned nothing (3 had callers)
+
+    A mechanism verb is fine; an unlabelled one is not. Satisfy this rule by
+    either naming the observation on the same line (a query, command, probe,
+    or `verified by ...`) or tagging the claim's evidence class explicitly:
+    `[measured]`, `[correlated]`, or `[reasoned]`.
+
+    WARN only — it never blocks a report. The blocking half of the contract is
+    the action gate (see references/output-style.md): deletes, deploys, and
+    restarts require `[measured]`.
+    """
+    findings: list[dict[str, Any]] = []
+    for lineno, line in lines:
+        if not MECHANISM_CLAIM_RE.search(line):
+            continue
+        if EVIDENCE_CLASS_RE.search(line):
+            continue
+        if VALIDATION_METHOD_RE.search(line) or OBSERVATION_RE.search(line):
+            continue
+        findings.append(_finding(
+            rule_id="mechanism-claim-unobserved",
+            severity="WARN",
+            line=lineno,
+            snippet=line.strip()[:120],
+            message=(
+                "Mechanism claim with no stated observation. Name what you "
+                "measured (query, command, probe) or tag the evidence class: "
+                "[measured] / [correlated] / [reasoned]. Only [measured] may "
+                "justify a delete, deploy, or restart."
+            ),
+        ))
+    return findings
 
 
 def lint_jargon(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
@@ -447,6 +526,7 @@ def run_lint(
     findings: list[dict[str, Any]] = []
     findings.extend(lint_headline(lines))
     findings.extend(lint_validation_line(lines))
+    findings.extend(lint_mechanism_claim(lines))
     findings.extend(lint_jargon(lines))
     findings.extend(lint_contrastive_pivot(lines))
     findings.extend(lint_direct_language(lines))
