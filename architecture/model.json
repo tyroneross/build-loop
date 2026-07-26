@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2c7c1be7b57c533d1f1e89cf70af5c32c3e86a1bbffd1b9d7e27994ef6025494"
+    "content_sha256": "43b4ae7a685beedd441256f50a9867b0178a3a0a0b7ba0cf678ff4109d18d309"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1297,7 +1297,7 @@
         "file": "skills/handoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-09"
+          "date": "2026-07-25"
         }
       },
       "ibr-bridge": {
