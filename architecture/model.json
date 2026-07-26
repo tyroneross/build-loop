@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "356ebd5f1059e1adc9a0b24111814b21bbba0cec0e233a2df34d581cb083339e"
+    "content_sha256": "2c7c1be7b57c533d1f1e89cf70af5c32c3e86a1bbffd1b9d7e27994ef6025494"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1497,7 +1497,7 @@
         "file": "skills/ui-design/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-02"
+          "date": "2026-07-25"
         }
       }
     },
