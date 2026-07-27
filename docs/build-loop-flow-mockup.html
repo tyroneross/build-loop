@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "e5ee1a68f5b797880f41919aedd2f6c33f56e233d045a4759f518907baaf9e6d"
+    "content_sha256": "a90bcdaa988db1035b10ee6b4fc5993c15a2905a9732814bb47185c0f597bd2d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1446,7 +1446,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-17"
+          "date": "2026-07-26"
         }
       },
       "building-with-deepagents": {
@@ -1494,7 +1494,7 @@
         "file": "skills/debug-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-26"
         }
       },
       "debugging-memory": {
@@ -1517,8 +1517,8 @@
         "description": "Walk the cross-repo proposal backlog interactively: scan every registered repo's .build-loop/proposals/ (incl. enforce-from-retro/ and self-review) plus ~/.assistant/proposals/, then decide each new item apply / reject / defer. Never auto-applies. Reached through /build-loop:run by intent (\"drain proposals\", \"review the proposal backlog\"), not by its own command. user-invocable: false argument-hint: \"[--all] [--scan…",
         "file": "skills/drain-proposals/SKILL.md",
         "last_updated": {
-          "author": "",
-          "date": ""
+          "author": "Tyrone Ross",
+          "date": "2026-07-26"
         }
       },
       "focused-loop-builder": {
@@ -1534,7 +1534,7 @@
         "file": "skills/handoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-25"
+          "date": "2026-07-26"
         }
       },
       "ibr-bridge": {
@@ -1550,7 +1550,7 @@
         "file": "skills/knowledge/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-26"
         }
       },
       "logging-tracer": {
@@ -1598,7 +1598,7 @@
         "file": "skills/optimize/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-02"
+          "date": "2026-07-26"
         }
       },
       "plan-verify": {
@@ -1646,7 +1646,7 @@
         "file": "skills/repo-closeout/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-13"
+          "date": "2026-07-26"
         }
       },
       "repo-maintenance": {
@@ -1654,7 +1654,7 @@
         "file": "skills/repo-maintenance/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-16"
+          "date": "2026-07-26"
         }
       },
       "research": {
@@ -1662,7 +1662,7 @@
         "file": "skills/research/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-09"
+          "date": "2026-07-26"
         }
       },
       "root-cause-analysis": {
@@ -1794,6 +1794,7 @@
       "scripts/build_capability_registry.py": "Capability registry builder.",
       "scripts/build_codex_plugin_artifact.py": "Build the slim Codex plugin artifact.",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
+      "scripts/bump_version.py": "Single source of truth for build-loop's version across all four manifests.",
       "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",
       "scripts/capability_classifier.py": "Deterministic capability classification for Phase 1 prior-art injection.",
       "scripts/capability_shortlist.py": "Capability shortlist matcher.",
