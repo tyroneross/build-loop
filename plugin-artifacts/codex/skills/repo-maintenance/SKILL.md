@@ -1,7 +1,7 @@
 ---
 name: repo-maintenance
 description: "Audit and evolve repository structure safely across the full maintenance lifecycle: repository topology and scope, application and build-system profiles, module and folder boundaries, canonical source-of-truth and monorepo decisions, sibling consolidation, generated/build artifact retention, worktree and branch hygiene, local-versus-remote state, verified closeout into local main, and preparing a repository for open-source or external distribution (personal-content and secret scrub, internal-artifact de-tracking, .git bloat and history-leak review, distribution signing/notarization). Use when asked how any kind of repo should be structured or maintained, what application/build profile it has, why it has duplicate source or many build directories, whether repositories or modules should split or merge, to clean generated artifacts or a polluted data store (a log, telemetry, cache, or dataset corrupted by test/non-production writes), to review open commits/worktrees/branches/stashes, to merge and close completed local work, or to get a repo ready to open-source / ship to external users. Never push, delete unique source, remove recovery refs, or rewrite history unless explicitly authorized."
-user-invocable: true
+user-invocable: false
 ---
 
 # Repository Maintenance

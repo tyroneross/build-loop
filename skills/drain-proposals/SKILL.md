@@ -1,5 +1,7 @@
 ---
-description: "Review the cross-repo proposal backlog interactively. Scans every registered repo's .build-loop/proposals/ (incl. enforce-from-retro/ + self-review) plus ~/.assistant/proposals/, then walks each new item to apply / reject / defer. Never auto-applies."
+name: drain-proposals
+description: Walk the cross-repo proposal backlog interactively: scan every registered repo's .build-loop/proposals/ (incl. enforce-from-retro/ and self-review) plus ~/.assistant/proposals/, then decide each new item apply / reject / defer. Never auto-applies. Reached through /build-loop:run by intent ("drain proposals", "review the proposal backlog"), not by its own command.
+user-invocable: false
 argument-hint: "[--all] [--scan-only]"
 ---
 

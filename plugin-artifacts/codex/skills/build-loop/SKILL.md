@@ -1,7 +1,7 @@
 ---
 name: build-loop
 description: "Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', 'rewrite', 'replace') OR symptom language ('fix', 'broken', 'doesn't work', 'isn't loading', 'not displaying', 'missing', 'should show', 'needs to', 'make it', 'show this differently') OR any task touching 2+ files, adding/removing an endpoint, crossing an architectural boundary, or attached screenshots of a bug. SKIP one-line edits, pure Q&A, conversational clarifications, status checks, and trivial typos/renames."
-user-invocable: true
+user-invocable: false
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -29,6 +29,7 @@ Intent → internal mode:
 - **Repository maintenance / closeout**: repository structure, duplicate source, sibling consolidation, build artifacts, branches, worktrees, stashes, or local-main closeout → `repo-maintenance` (`repo-closeout` remains a temporary compatibility alias).
 - **PRD**: "start a PRD", "spec out a new app" → prd-bridge / start-prd flow.
 - **Self-improve / promote / knowledge / handoff / memory setup**: "scan recent runs", "promote this experiment", "record a decision", "hand this off", "set up memory" → the matching internal skill (self-improve, promotion-reviewer, knowledge, handoff, setup-memory).
+- **Drain proposals**: "drain proposals", "review the proposal backlog", "what proposals are open" → the `drain-proposals` skill. Interactive and never auto-applies; every item needs an explicit apply / reject / defer.
 
 **Design intent:** one command for humans, plain-language routing, everything else agent-invoked within build-loop. If a request doesn't match a mode, run treats it as a Build task or asks one clarifying question — it never makes the user pick a command.
 

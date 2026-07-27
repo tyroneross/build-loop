@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "43b4ae7a685beedd441256f50a9867b0178a3a0a0b7ba0cf678ff4109d18d309"
+    "content_sha256": "e5ee1a68f5b797880f41919aedd2f6c33f56e233d045a4759f518907baaf9e6d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1284,6 +1284,14 @@
           "date": "2026-07-02"
         }
       },
+      "drain-proposals": {
+        "description": "Walk the cross-repo proposal backlog interactively: scan every registered repo's .build-loop/proposals/ (incl. enforce-from-retro/ and self-review) plus ~/.assistant/proposals/, then decide each new item apply / reject / defer. Never auto-applies. Reached through /build-loop:run by intent (\"drain proposals\", \"review the proposal backlog\"), not by its own command. user-invocable: false argument-hint: \"[--all] [--scan…",
+        "file": "skills/drain-proposals/SKILL.md",
+        "last_updated": {
+          "author": "",
+          "date": ""
+        }
+      },
       "focused-loop-builder": {
         "description": "Use when the user asks to \"create a custom build loop\", \"build a loop spec\", \"make a focused loop\", \"generate a workflow loop\", \"adapt a framework into a loop\", or asks whether a workflow should use skill chaining. Generates declarative focused-loop specs, presets, validators, and skill-chain plans.",
         "file": "skills/focused-loop-builder/SKILL.md",
@@ -1293,7 +1301,7 @@
         }
       },
       "handoff": {
-        "description": "\"Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'.\" user-invocable: true",
+        "description": "\"Compose a complete, durable build-loop handoff document from the current run state, and optionally launch a fresh session with it injected. Use when crossing a context boundary (context limit, planned restart, worktree GC). Triggers: 'hand off', 'handoff', 'new session', 'context limit', 'restart', 'fresh session', '/build-loop:compose-handoff'.\" user-invocable: false",
         "file": "skills/handoff/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1357,7 +1365,7 @@
         }
       },
       "optimize": {
-        "description": "Use when the user says \"optimize this\", \"optimization\", \"make X faster\", \"reduce <metric>\", or \"speed up my app\". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables. user-invocable: true",
+        "description": "Use when the user says \"optimize this\", \"optimization\", \"make X faster\", \"reduce <metric>\", or \"speed up my app\". Runs a Design of Experiments test matrix — up to 6 variables in one pass — to find which variable actually moves the number. Falls back to one-at-a-time loop for single variables. user-invocable: false",
         "file": "skills/optimize/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1405,7 +1413,7 @@
         }
       },
       "repo-closeout": {
-        "description": "\"Compatibility alias for Repository Maintenance. Use when an existing prompt or workflow invokes repo-closeout; route all repository structure, artifact, branch, worktree, sibling consolidation, and local-main maintenance work to repo-maintenance. Deprecated: prefer repo-maintenance for new work.\" user-invocable: true",
+        "description": "\"Compatibility alias for Repository Maintenance. Use when an existing prompt or workflow invokes repo-closeout; route all repository structure, artifact, branch, worktree, sibling consolidation, and local-main maintenance work to repo-maintenance. Deprecated: prefer repo-maintenance for new work.\" user-invocable: false",
         "file": "skills/repo-closeout/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1421,7 +1429,7 @@
         }
       },
       "research": {
-        "description": "Use when the user asks to \"research\", \"investigate\", \"evaluate options\", or \"find out about\" a topic. Generate a repo-grounded research packet before deciding whether/how to build — pre-decision analysis with risks, best path, confidence, next action. user-invocable: true",
+        "description": "Use when the user asks to \"research\", \"investigate\", \"evaluate options\", or \"find out about\" a topic. Generate a repo-grounded research packet before deciding whether/how to build — pre-decision analysis with risks, best path, confidence, next action. user-invocable: false",
         "file": "skills/research/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",

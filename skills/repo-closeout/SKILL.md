@@ -1,7 +1,7 @@
 ---
 name: repo-closeout
 description: "Compatibility alias for Repository Maintenance. Use when an existing prompt or workflow invokes repo-closeout; route all repository structure, artifact, branch, worktree, sibling consolidation, and local-main maintenance work to repo-maintenance. Deprecated: prefer repo-maintenance for new work."
-user-invocable: true
+user-invocable: false
 ---
 
 # Repository Closeout Compatibility Alias

@@ -1,7 +1,7 @@
 ---
 name: knowledge
 description: Canonical build-loop-memory framework. Use when the user asks to "record a decision", "log an ADR", "write an MADR", "capture this choice", "regenerate the decisions index", "validate knowledge", "migrate feedback to decisions", or "recall <topic>". ALSO the read-only review surface (review mode): "review my decisions", "show review queue", "check decision rot", "list open conflicts", "find stale procedures", or `/knowledge:review`. Active durable writes go to `~/dev/git-folder/build-loop-memory`; legacy `.episodic/` paths are migration/archive inputs only.
-user-invocable: true
+user-invocable: false
 when_to_use: |
   - User wants to record a substantive choice with rationale
   - User asks to regenerate canonical decision indexes or validate decision files
