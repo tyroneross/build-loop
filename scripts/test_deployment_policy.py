@@ -14,6 +14,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "deployment_policy.py"
 
+sys.path.insert(0, str(HERE))
+from deployment_policy import classify_command, is_deploy_like  # noqa: E402
+
 
 def run(workdir: Path, command: str, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -201,3 +204,63 @@ class DeploymentPolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeployLikeRecognizerTests(unittest.TestCase):
+    """is_deploy_like() gates the pre-deploy security scan.
+
+    Deliberately wider than classify_command: an unnecessary scan costs a
+    second, a missed one ships a credential. These tests pin that asymmetry so
+    a later "tidy-up" cannot quietly narrow it back to the confirm-policy set.
+    """
+
+    def test_recognizes_platforms_classify_command_does_not(self):
+        for cmd in (
+            "wrangler deploy",
+            "wrangler pages deploy ./dist",
+            "flyctl deploy",
+            "railway up",
+            "eas submit --platform ios",
+            "supabase functions deploy api",
+            "kubectl apply -f k8s/",
+            "terraform apply",
+            "pulumi up",
+            "gh workflow run deploy.yml",
+            "sam deploy --guided",
+            "npm publish",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(is_deploy_like(cmd), f"{cmd} must trigger the scan")
+
+    def test_still_recognizes_the_confirm_policy_set(self):
+        for cmd in ("vercel deploy --prod", "netlify deploy --prod", "git push origin main"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(is_deploy_like(cmd))
+
+    def test_ignores_ordinary_local_commands(self):
+        for cmd in (
+            "npm install",
+            "npm run test",
+            "pnpm add zod",
+            "docker build -t app .",
+            "cargo test",
+            "git status",
+            "ls -la",
+            "echo deploy",
+            "grep -r deploy .",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(is_deploy_like(cmd), f"{cmd} must not trigger the scan")
+
+    def test_compound_command_gates_on_the_deploy_segment(self):
+        self.assertTrue(is_deploy_like("npm run build && wrangler deploy"))
+        self.assertTrue(is_deploy_like("pytest -q; vercel deploy --prod"))
+
+    def test_empty_command_is_not_deploy_like(self):
+        self.assertFalse(is_deploy_like(""))
+        self.assertFalse(is_deploy_like("   "))
+
+    def test_does_not_change_confirm_policy_targets(self):
+        """Widening the scan trigger must NOT widen the confirmation prompt."""
+        self.assertEqual(classify_command("wrangler deploy")[0], "unknown")
+        self.assertEqual(classify_command("railway up")[0], "unknown")

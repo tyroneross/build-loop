@@ -210,11 +210,21 @@ esac
 # --diff → full scan, the correct conservative default (never scan less than
 # intended).
 SECURITY_HARD_BLOCK=0
+_SEC_SCAN_RAN=0
 case " $_GITCLASS " in
     *" push "*)
         _SCAN="$PLUGIN_ROOT/scripts/security_scan.py"
         if [ -f "$_SCAN" ] && command -v python3 >/dev/null 2>&1; then
-            _SCAN_ARGS=(--path "$CWD" --fail-on high)
+            _SEC_SCAN_RAN=1
+            # --spot-check widens a delta scan back to whole-tree coverage using
+            # the high-confidence check subset. The delta still gets every check;
+            # the rest of the tree is swept for the classes that are worth
+            # knowing about on any ship (secrets, injection, broken object authz,
+            # fail-open auth, client-exposed keys, token hygiene, CORS). Those
+            # findings are ADVISORY — only a CRITICAL among them blocks — so the
+            # gate covers the whole repo without a stranger's old MEDIUM wedging
+            # an unrelated push.
+            _SCAN_ARGS=(--path "$CWD" --fail-on high --spot-check)
             # Scope the scan to the push delta: only what's actually being pushed
             # (files changed vs the upstream tracking branch), not the whole tree.
             # No upstream (detached/new branch) → keep the whole-repo scan (safe
@@ -391,6 +401,77 @@ EOF
         fi
         ;;
 esac
+
+# Pre-DEPLOY security gate. `git push` is only one way code reaches users:
+# `vercel deploy`, `wrangler deploy`, `flyctl deploy`, `railway up`, `eas
+# submit`, an App Store upload, and `npm publish` all ship without ever touching
+# the push path, so a push-only gate leaves every one of them uncovered.
+#
+# Reuses scripts/deployment_policy.py as the single command classifier — the
+# same one the orchestrator consults for confirm/block policy — rather than
+# inventing a second deploy taxonomy that would drift from it.
+#
+# Scope: a deploy publishes the WHOLE tree, not a delta, so this path always
+# full-scans (no --diff) with the spot subset applied to nothing — every file
+# gets every check. Skipped when the push gate above already scanned, so a
+# `git push` is never scanned twice.
+#
+# Fail-open on any classifier or scanner error, matching the push gate: a broken
+# helper must never wedge a deploy.
+if [ "$_SEC_SCAN_RAN" = "0" ]; then
+    _DSCAN="$PLUGIN_ROOT/scripts/security_scan.py"
+    _DPOL="$PLUGIN_ROOT/scripts/deployment_policy.py"
+    if [ -f "$_DSCAN" ] && [ -f "$_DPOL" ] && command -v python3 >/dev/null 2>&1; then
+        # is_deploy_like() splits compound commands itself, so
+        # `npm run build && vercel deploy --prod` gates on the deploy segment
+        # rather than on whatever leads the line.
+        _DTARGET=$(CMD="$CMD" python3 - "$_DPOL" <<'PY' 2>/dev/null || true
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("deployment_policy", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+cmd = os.environ.get("CMD", "")
+if mod.is_deploy_like(cmd):
+    # Name the policy target when it has one, for the operator-facing message.
+    try:
+        target, _reason = mod.classify_command(cmd)
+    except Exception:
+        target = "unknown"
+    print(target if target != "unknown" else "deploy")
+PY
+)
+        case "$_DTARGET" in
+            production|testflight|preview|deploy)
+                _DSCAN_ARGS=(--path "$CWD" --fail-on high)
+                if [ -f "$CWD/.build-loop/config.json" ]; then
+                    _DEX_GLOBS=$(python3 -c 'import sys,json
+try:
+    d=json.load(open(sys.argv[1]))
+    g=d.get("securityScan",{}).get("excludeGlobs",[])
+    if isinstance(g,list):
+        for x in g:
+            if isinstance(x,str) and x: print(x)
+except Exception:
+    pass' "$CWD/.build-loop/config.json" 2>/dev/null || true)
+                    while IFS= read -r _dglob; do
+                        if [ -n "$_dglob" ]; then
+                            _DSCAN_ARGS+=(--exclude "$_dglob")
+                        fi
+                    done <<EOF
+$_DEX_GLOBS
+EOF
+                fi
+                _DSCAN_RC=0
+                _DSCAN_OUT=$(python3 "$_DSCAN" "${_DSCAN_ARGS[@]}" 2>&1) || _DSCAN_RC=$?
+                if [ "$_DSCAN_RC" = "1" ]; then
+                    SECURITY_HARD_BLOCK=1
+                    printf '%s\n' "$_DSCAN_OUT" >&2
+                    printf '\n[build-loop] Pre-deploy security scan found HIGH+ findings on a %s deploy — blocked.\nFix them, annotate a confirmed false positive with `// nosec: <reason>`, or set BUILD_LOOP_HOOKS=off to bypass.\n' "$_DTARGET" >&2
+                fi
+                ;;
+        esac
+    fi
+fi
 
 # Merge by precedence: deny > ask > allow. First matching decision wins.
 # Pass the envelopes via argv to a tiny python merge (no shell JSON parsing).

@@ -620,3 +620,160 @@ class TestDocExampleAndContentScope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSpotCheckCoverage(_DiffScanBase):
+    """--spot-check restores whole-tree coverage on a delta scan.
+
+    The coverage model: changed files get every check; unchanged files get the
+    high-confidence subset as ADVISORY findings that only block at CRITICAL.
+    Without this, a delta scan is blind to everything the current change did not
+    touch — which is most of the app on most deploys.
+    """
+
+    def _sev_files(self, data, check_id):
+        return [f for f in (data or {}).get("findings", []) if f.get("check_id") == check_id]
+
+    def test_delta_alone_misses_the_untouched_file(self):
+        """Baseline that makes the next test meaningful."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/legacy.ts", _SECRET_LINE)
+        self._commit(d, "baseline with pre-existing secret")
+        self._write(d, "src/new.ts", 'const name = "Alice";\n')
+        self._commit(d, "unrelated change")
+        rc, data = self._scan(d, "--diff", "HEAD~1")
+        self.assertEqual(rc, 0)
+        self.assertFalse(self._has_secret(data, "src/legacy.ts"),
+                         "plain delta mode must not look outside the change")
+
+    def test_spot_check_sees_the_untouched_file(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/legacy.ts", _SECRET_LINE)
+        self._commit(d, "baseline with pre-existing secret")
+        self._write(d, "src/new.ts", 'const name = "Alice";\n')
+        self._commit(d, "unrelated change")
+        rc, data = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        self.assertTrue(self._has_secret(data, "src/legacy.ts"),
+                        "spot sweep must surface the pre-existing secret")
+        spot = [f for f in data["findings"] if f.get("scope") == "spot"]
+        self.assertTrue(spot, "findings outside the delta must be tagged scope=spot")
+
+    def test_spot_high_is_advisory_not_blocking(self):
+        """A HIGH in an untouched file reports but does not block the ship."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/legacy.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        self._write(d, "src/new.ts", 'const name = "Alice";\n')
+        self._commit(d, "unrelated change")
+        rc, data = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        self.assertEqual(rc, 0, "a spot HIGH must not block an unrelated ship")
+        self.assertFalse(data["threshold_breached"])
+        self.assertGreater(data["summary"]["spot_total"], 0)
+        self.assertEqual(data["summary"]["blocking_total"], 0)
+
+    def test_deep_high_still_blocks(self):
+        """The changed file keeps full enforcement."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/clean.ts", 'const name = "Alice";\n')
+        self._commit(d, "baseline")
+        self._write(d, "src/new.ts", _SECRET_LINE)
+        self._commit(d, "introduce a secret")
+        rc, data = self._scan(d, "--diff", "HEAD~1", "--spot-check")
+        self.assertEqual(rc, 1, "a secret in the CHANGED file must still block")
+        deep = [f for f in data["findings"] if f.get("scope") == "deep"]
+        self.assertTrue(deep)
+
+    def test_spot_check_is_a_noop_without_diff(self):
+        """No delta means nothing to widen — every finding stays deep."""
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/legacy.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        rc, data = self._scan(d, "--spot-check")
+        self.assertEqual(rc, 1)
+        self.assertEqual([f for f in data["findings"] if f.get("scope") == "spot"], [])
+
+    def test_report_names_the_spot_sweep(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "src/legacy.ts", _SECRET_LINE)
+        self._commit(d, "baseline")
+        self._write(d, "src/new.ts", 'const name = "Alice";\n')
+        self._commit(d, "unrelated change")
+        proc = subprocess.run(
+            [sys.executable, str(_SCANNER), "--path", str(d), "--diff", "HEAD~1", "--spot-check"],
+            capture_output=True, text=True,
+        )
+        self.assertIn("spot sweep", proc.stdout, "header must disclose the widened scope")
+        self.assertIn("unchanged files", proc.stdout, "summary must separate advisory findings")
+
+
+class TestApiChecksWiredIntoScanner(_DiffScanBase):
+    """The H-N checks must actually run through the CLI, not just in unit tests."""
+
+    _VULN_ROUTE = (
+        "export async function DELETE(req, { params }) {\n"
+        "  await db.document.delete({ where: { id: params.id } });\n"
+        "}\n"
+    )
+
+    def test_object_authz_finding_reaches_the_cli(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/items/[id]/route.ts", self._VULN_ROUTE)
+        self._commit(d, "add unscoped delete route")
+        rc, data = self._scan(d)
+        self.assertEqual(rc, 1, "an unscoped mutating route must fail the gate")
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertIn("H", ids, "check H must be wired into the scanner")
+
+    def test_scoped_route_passes(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/items/[id]/route.ts",
+                    "import { z } from 'zod';\n"
+                    "const S = z.object({ name: z.string() });\n"
+                    "export async function DELETE(req, { params }) {\n"
+                    "  const session = await getServerSession();\n"
+                    "  await db.document.deleteMany({ where: { id: params.id, userId: session.user.id } });\n"
+                    "}\n")
+        self._commit(d, "add scoped delete route")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"] if f["severity"] in ("CRITICAL", "HIGH")}
+        self.assertNotIn("H", ids, "a principal-scoped query must not flag")
+
+
+class TestDocsRouteIsNotProse(_DiffScanBase):
+    """`docs` is a route name as well as a documentation directory.
+
+    Treating every `docs` path segment as prose exempted a real deployed handler
+    (app/api/docs/[id]/route.ts) from every code-execution check.
+    """
+
+    def test_api_route_under_docs_is_still_scanned(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/docs/[id]/route.ts",
+                    "export async function DELETE(req, { params }) {\n"
+                    "  await db.document.delete({ where: { id: params.id } });\n"
+                    "}\n")
+        self._commit(d, "add docs route")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertIn("H", ids, "an API route named /docs must not be treated as prose")
+
+    def test_real_docs_tree_still_skips_code_checks(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "docs/example.ts",
+                    "export async function DELETE(req, { params }) {\n"
+                    "  await db.document.delete({ where: { id: params.id } });\n"
+                    "}\n")
+        self._commit(d, "add doc snippet")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertNotIn("H", ids, "a snippet in the docs tree must stay exempt")

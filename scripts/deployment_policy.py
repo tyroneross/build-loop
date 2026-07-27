@@ -279,6 +279,82 @@ def _is_production_command(lower_text: str, lower_tokens: list[str]) -> bool:
     return False
 
 
+# Commands that ship code somewhere other people can reach it. Deliberately
+# WIDER than classify_command's production/preview sets, and kept separate from
+# them, because the two answer different questions with opposite cost profiles:
+#
+#   classify_command  → "should a human confirm this?"  A false positive here
+#                       interrupts the user, so it stays conservative.
+#   is_deploy_like    → "should the security scanner run first?"  A false
+#                       positive costs one cheap local scan; a false negative
+#                       ships a secret. So this one errs toward yes.
+#
+# Both live in this file so deploy-command vocabulary has a single home.
+_DEPLOY_VERBS = {"deploy", "publish", "release", "up", "submit", "push", "apply", "sync"}
+
+_DEPLOY_TOOLS = {
+    # edge / serverless platforms
+    "vercel", "netlify", "wrangler", "flyctl", "fly", "railway", "render",
+    "deno", "cloudflare", "firebase", "amplify", "serverless", "sls",
+    # cloud CLIs
+    "gcloud", "aws", "sam", "cdk", "az", "eb", "heroku",
+    # container / orchestration
+    "kubectl", "helm", "skaffold", "docker", "nerdctl",
+    # backend platforms
+    "supabase", "convex", "planetscale", "neonctl", "fauna",
+    # mobile
+    "eas", "fastlane", "expo",
+    # package registries
+    "npm", "pnpm", "yarn", "twine", "cargo", "gem", "poetry", "uv",
+}
+
+
+def is_deploy_like(raw_command: str) -> bool:
+    """True when the command plausibly publishes code or config to a live target.
+
+    Used by the pre-deploy security gate, not by the confirmation policy. Errs
+    toward True: the cost of an unnecessary scan is a second of CPU, the cost of
+    a missed one is a shipped credential.
+    """
+    command = extract_command(raw_command)
+    if not command.strip():
+        return False
+
+    for segment in re.split(r"&&|\|\||[;|&]", command):
+        tokens = [t.lower() for t in _split(segment)]
+        if not tokens:
+            continue
+        text = " ".join(tokens)
+
+        # Anything classify_command already recognizes is deploy-like by
+        # definition — no need to restate its rules here.
+        target, _reason = classify_command(segment)
+        if target in {"production", "preview", "testflight"}:
+            return True
+
+        # A known deploy tool paired with a shipping verb.
+        if any(t in _DEPLOY_TOOLS for t in tokens) and any(
+            v in _DEPLOY_VERBS for v in tokens
+        ):
+            # `npm run deploy` / `pnpm deploy` count; `npm install` does not,
+            # and neither does a local-only `docker build`.
+            if "install" in tokens or "add" in tokens or "build" in tokens:
+                if not any(v in _DEPLOY_VERBS for v in tokens if v != "build"):
+                    continue
+            return True
+
+        # Registry publishes and workflow triggers that carry no tool/verb pair.
+        if re.search(
+            r"\b(?:gh\s+workflow\s+run|gh\s+release\s+create|"
+            r"git\s+push\s+.*--tags|make\s+deploy|make\s+release|"
+            r"terraform\s+apply|pulumi\s+up|ansible-playbook)\b",
+            text,
+        ):
+            return True
+
+    return False
+
+
 def _is_git_push(lower_tokens: list[str]) -> bool:
     if "git" not in lower_tokens or "push" not in lower_tokens:
         return False

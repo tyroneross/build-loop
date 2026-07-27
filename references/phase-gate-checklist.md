@@ -51,6 +51,8 @@ Extracted from `agents/build-orchestrator.md` §Phase 1 Assess. The agent body k
 
 13. **Deployment policy**: load `.build-loop/config.json.deploymentPolicy` if present. Default to `preview: auto`, `testflight: auto`, `production: confirm`, `unknown: confirm`. Before any push/deploy, evaluate the exact command with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/deployment_policy.py" --workdir "$PWD" --command "$CANDIDATE_DEPLOY_COMMAND"`.
 
+    **Security scan is a separate, always-on gate on the same commands.** `scripts/hooks/pre_bash_dispatch.sh` runs `security_scan.py` before every push (delta + advisory spot sweep) and before every command `deployment_policy.is_deploy_like()` recognizes (full tree), hard-blocking on HIGH+. The two are independent by design: `deploymentPolicy` answers "should a human confirm this?" and stays conservative because a false positive interrupts the user; `is_deploy_like()` answers "should the scanner run first?" and errs toward yes because a false positive costs one cheap local scan while a false negative ships a credential. Do not collapse them. Detail: `skills/security-scan/SKILL.md`.
+
 14. **Intent capability pack**: read `skills/build-loop/references/intent-capability-pack.md`. Capture app/repo purpose, primary users, core jobs, update intent, user value, and non-goals. Write `.build-loop/intent.md` and mirror a compact version into `.build-loop/state.json.intent`.
 
 15. **UI input/output contract** (when `uiTarget != null`): read `skills/build-loop/references/ui-io-contract.md`, inventory affected user inputs and system outputs, and mirror a compact summary to `.build-loop/state.json.uiIOContract` when practical. The full contract is finalized in Phase 2.

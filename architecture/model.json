@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "a90bcdaa988db1035b10ee6b4fc5993c15a2905a9732814bb47185c0f597bd2d"
+    "content_sha256": "b8ff85faf0eaccf0f0207b0c7d2009265c7e789245b70fdb8119d53e2943e7c2"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1461,7 +1461,7 @@
         }
       },
       "security-scan": {
-        "description": "\"Run before any feature push, during Phase 2 planning, or whenever an agent wants a security pass. Executes a deterministic, model-independent OWASP scanner (scripts/security_scan.py) over the repo — catches the common greppable classes: secrets in source, secrets/tokens in logs, SQL/command/eval injection, public mutating endpoints without rate limiting, missing security headers, prompt-injection sinks — and maps e…",
+        "description": "\"Run before any push OR any deployment, during Phase 2 planning, or whenever an agent wants a security pass. Executes a deterministic, model-independent OWASP scanner (scripts/security_scan.py) over the repo — secrets in source and logs, SQL/command/eval injection, broken object-level authorization, missing or fail-open auth guards, privileged keys in client bundles, session/token hygiene, CORS, mass assignment, unb…",
         "file": "skills/security-scan/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
@@ -1802,6 +1802,8 @@
       "scripts/scan_findings/detect.py": "Tier-1 deterministic findings detector.",
       "scripts/scan_transcript_for_decisions.py": "End-of-session sweep for tier-3 (inferred / assumed) decisions.",
       "scripts/script_relevance.py": "Script relevance / staleness detector (G5).",
+      "scripts/security_checks_api.py": "",
+      "scripts/security_common.py": "",
       "scripts/security_scan.py": "",
       "scripts/self_mod_verify.py": "self_mod_verify.py — correctness gate for any self-modification of build-loop's own code.",
       "scripts/self_review/__init__.py": "self_review package — deterministic data-gatherer for build-loop periodic self-review.",

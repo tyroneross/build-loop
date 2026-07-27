@@ -31,6 +31,26 @@ You are a build-time security reviewer. You have no ability to fix files — onl
 - **Exclude**: code style, naming, performance, generic test coverage, business correctness — those belong to `independent-auditor` (build scope) and `fact-checker`. You only flag security-relevant findings.
 - **Build-time, not runtime**. You do not generate guardrail enforcement code, do not propose runtime fixes, and do not assert that any control "blocks" anything in production. That's the bridge skill's territory (`build-loop:defenseclaw-bridge`) plus whatever runtime layer the project actually deploys.
 
+## Run the deterministic scanner FIRST
+
+`scripts/security_scan.py` already grades the greppable structure — secrets, injection, missing owner predicates, fail-open auth guards, client-exposed keys, token hygiene, CORS, mass assignment, uncapped model calls, unfiltered retrieval, ungated tool dispatch. Run it and read its output before you start reading files:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_scan.py" --path . --json --diff HEAD~1 --spot-check
+```
+
+Then spend your budget on what it structurally cannot answer:
+
+- Whether the owner predicate it found is the **correct** one for this data model (scanner sees `userId` present; it cannot see that the resource is owned by an org, not a user).
+- **Property-level** authorization — which fields this caller may read or write, not merely whether the row is theirs.
+- Whether the **tenant boundary** is coherent across the request path, versus scoped in one query and lost in the next.
+- Whether a tool's granted **permission tier matches its actual task need**, and whether the approval policy fits the blast radius.
+- **Workflow authorization**: may this caller perform this business action, in this state, at this velocity.
+- Whether **RAG corpus partitioning** reflects real entitlements, versus a filter that exists but selects the wrong set.
+- Agent **goal-drift** and cascading trust across chained model calls.
+
+Do not re-report a finding the scanner already emitted with the same file and line unless you are **raising** its severity with reasoning the scanner could not have. Say so explicitly when you do.
+
 ## Inputs
 
 1. The diff for the current chunk (use `git diff HEAD~1 -- <files>` against the file list provided by the orchestrator).
@@ -62,6 +82,13 @@ Each finding maps to one or more risk IDs from the canonical matrix in `skills/s
 | Code execution | `eval`, `exec`, `Function(...)`, dynamic `import`, deserialization of untrusted data, shell composition | ASI05, A03 |
 | HTTP boundary | New endpoint without auth, authz check, rate limit, or input validation; SSRF-prone outbound fetch | A01, A03, A10 |
 | HTTP boundary | Outbound URL constructed from user input or LLM output without allowlist | A10, ASI05 |
+| Object authz | Query scoped to a principal, but the WRONG principal for this data model (user-scoped where the resource is org-owned, or vice versa) | A01 |
+| Property authz | Caller may access the row but not every field on it — no field-level read/write separation | A01, A04 |
+| Tenant boundary | Tenant scoping enforced in one query and dropped in a downstream call on the same request path | A01 |
+| Workflow authz | Business action permitted by role and ownership but not valid in the current state, or not rate-limited as a business flow (bulk account creation, repeated inventory holds) | A01, LLM10 |
+| Client boundary | Capability exposed to the browser or mobile binary that assumes a client-side check is a security boundary | A01, A07 |
+| Credential lifetime | Long-lived static credential where a short-lived workload identity is available; no rotation or revocation path | A07 |
+| Error surface | Client-facing error carrying a stack trace, SQL message, internal hostname, or framework version | A05 |
 | Cost / DoS | New external API or LLM call without budget cap, timeout, or retry ceiling | LLM04 |
 | Code execution | Dropping validation, type checks, or auth gates as a "simplification" | LLM07, LLM08, ASI03 |
 

@@ -15,15 +15,28 @@ Canon references (findings cite rows from these):
   skills/security-methodology/references/owasp-agentic-top-10.md
   skills/security-methodology/references/cross-source-matrix.md
 
-Checks
-  A. Secrets in source       HIGH   · A07/LLM06
-  B. Secret-in-logs          HIGH   · A09/LLM06
-  C. Injection               HIGH   · A03/LLM02/ASI05
-  D. SSRF                    MEDIUM · A10
+Checks (A-G here; H-N in security_checks_api.py)
+  A. Secrets in source        HIGH   · A07/LLM06
+  B. Secret-in-logs           HIGH   · A09/LLM06
+  C. Injection                HIGH   · A03/LLM02/ASI05
+  D. SSRF                     MEDIUM · A10
   E. Missing rate limit       MEDIUM · A01/LLM04
   F. Missing security headers LOW    · A05
-  G. Prompt injection /      MEDIUM · LLM01/LLM08/ASI02
+  G. Prompt injection /       MEDIUM · LLM01/LLM08/ASI02
      excessive agency
+  H. Object-level authz       CRIT   · A01
+  I. Missing/fail-open auth   CRIT   · A01/A07
+  J. Client-exposed secret    CRIT   · A07/LLM06
+  K. Session/token hygiene    CRIT   · A02/A07
+  L. CORS misconfiguration    HIGH   · A05/A01
+  M. Mass assignment          HIGH   · A03/A04
+  N. AI/agent boundary        HIGH   · LLM02/04/08/ASI02/ASI05
+
+Coverage model (--spot-check):
+  Changed files get every check. Unchanged files get the SPOT_CHECK_IDS subset
+  as ADVISORY findings — reported and counted, but only a CRITICAL among them
+  affects the exit code. That way a deploy gate sees the whole tree without a
+  years-old MEDIUM blocking an unrelated ship.
 
 Suppression: add `# nosec: <reason>` or `// nosec: <reason>` to a line.
 
@@ -55,6 +68,28 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+import security_checks_api as _api_checks  # noqa: E402
+from security_common import (  # noqa: E402
+    NOSEC_RE,
+    SEVERITY_ORDER,
+    finding as _finding,
+    is_api_path as _is_api_path,
+    strip_string_literals as _strip_string_literals,
+)
+
+# Re-exported so callers reach every check through one module.
+check_H_object_authorization = _api_checks.check_H_object_authorization
+check_I_auth_guard = _api_checks.check_I_auth_guard
+check_J_client_exposed_secret = _api_checks.check_J_client_exposed_secret
+check_K_token_hygiene = _api_checks.check_K_token_hygiene
+check_L_cors = _api_checks.check_L_cors
+check_M_mass_assignment = _api_checks.check_M_mass_assignment
+check_N_ai_boundary = _api_checks.check_N_ai_boundary
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -84,34 +119,11 @@ SKIP_FILE_RES: list[re.Pattern[str]] = [
     re.compile(r"\.(ico|png|jpg|jpeg|gif|svg|webp|woff2?|ttf|eot|pdf|zip|gz|tar|bin|pyc|class|so|dll|exe|wasm|map)$", re.IGNORECASE),
 ]
 
-SEVERITY_ORDER: dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-
-NOSEC_RE = re.compile(r"(#|//)\s*nosec\s*:", re.IGNORECASE)
-
-# ---------------------------------------------------------------------------
-# Finding helper
-# ---------------------------------------------------------------------------
-
-def _finding(
-    severity: str,
-    owasp_ids: str,
-    file_path: Path,
-    line_no: int,
-    message: str,
-    snippet: str,
-    fix: str,
-    check_id: str,
-) -> dict[str, Any]:
-    return {
-        "severity": severity,
-        "owasp_ids": owasp_ids,
-        "file": str(file_path),
-        "line": line_no,
-        "message": message,
-        "snippet": snippet.rstrip(),
-        "fix": fix,
-        "check_id": check_id,
-    }
+# The A-G checks precise enough to sweep across unchanged files. A/B/C match on
+# the presence of a bad literal or a bad call, so they stay quiet on clean
+# legacy code. D/E/F/G match on the ABSENCE of a control, which fires on almost
+# every older file and would bury the real signal.
+_DET_SPOT_CHECK_IDS: frozenset[str] = frozenset({"A", "B", "C"})
 
 # ---------------------------------------------------------------------------
 # File helpers
@@ -151,7 +163,11 @@ def _is_content_file(path: Path) -> bool:
     """
     if path.suffix.lower() in {".md", ".mdx", ".rst", ".txt"}:
         return True
-    return "docs" in path.parts
+    # A `docs` segment normally means the documentation tree. But `docs` is also
+    # an ordinary route name — `app/api/docs/[id]/route.ts` is a deployed
+    # handler, and exempting it from every code-execution check would leave a
+    # real endpoint unscanned. An API path wins over the docs heuristic.
+    return "docs" in path.parts and not _is_api_path(path)
 
 def _skip_file_name(name: str) -> bool:
     for pat in SKIP_FILE_RES:
@@ -294,19 +310,6 @@ def walk_source_files(
             if any(len(ln) > 2000 for ln in lines):
                 continue
             yield path, lines
-
-# ---------------------------------------------------------------------------
-# String stripping utility (for check B)
-# ---------------------------------------------------------------------------
-
-_DQUOTE_RE = re.compile(r'"[^"\n\\]*(?:\\.[^"\n\\]*)*"')
-_SQUOTE_RE = re.compile(r"'[^'\n\\]*(?:\\.[^'\n\\]*)*'")
-
-def _strip_string_literals(line: str) -> str:
-    """Replace string literal content with empty quotes. Preserves template ${} refs."""
-    line = _DQUOTE_RE.sub('""', line)
-    line = _SQUOTE_RE.sub("''", line)
-    return line
 
 # ---------------------------------------------------------------------------
 # Check A: Secrets in source
@@ -820,14 +823,6 @@ _RATE_LIMIT_RE = re.compile(
 
 _TURNSTILE_RE = re.compile(r"(?:turnstile|siteverify)", re.IGNORECASE)
 
-def _is_api_path(path: Path) -> bool:
-    parts_lower = [p.lower() for p in path.parts]
-    return (
-        "api" in parts_lower
-        or "functions" in parts_lower
-        or "routes" in parts_lower
-    )
-
 def check_E_rate_limiting(path: Path, lines: list[str]) -> list[dict[str, Any]]:
     if not _is_api_path(path):
         return []
@@ -1062,6 +1057,20 @@ def _color(severity: str, text: str) -> str:
         return text
     return f"{_SEV_COLOR.get(severity, '')}{text}{_RESET}"
 
+def _is_blocking(f: dict[str, Any], threshold: str) -> bool:
+    """True when this finding should drive a non-zero exit.
+
+    A ``spot`` finding comes from a file the caller did not touch. Blocking a
+    push or deploy on someone else's years-old MEDIUM makes the gate something
+    people route around, so spot findings block only at CRITICAL — the tier
+    where shipping at all is the wrong move regardless of who wrote it.
+    """
+    sev_idx = SEVERITY_ORDER.get(f.get("severity", ""), 9)
+    if f.get("scope") == "spot":
+        return sev_idx == SEVERITY_ORDER["CRITICAL"]
+    return sev_idx <= SEVERITY_ORDER.get(threshold, 1)
+
+
 def _summary_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     for f in findings:
@@ -1087,8 +1096,14 @@ def format_report(
     ]
     if diff_info is not None:
         if diff_info.get("mode") == "delta":
+            spot_note = ""
+            if diff_info.get("spot_check"):
+                spot_note = (
+                    f"  +  spot sweep over {diff_info.get('spot_files', 0)} unchanged file(s)"
+                )
             lines.append(
-                f"  scope: delta vs {diff_info['ref']}  |  changed files: {diff_info['changed_files']}"
+                f"  scope: delta vs {diff_info['ref']}  |  changed files: "
+                f"{diff_info['changed_files']}{spot_note}"
             )
         else:  # fallback-full-scan
             reason = diff_info.get("fallback_reason", "ref/repo unavailable")
@@ -1127,7 +1142,8 @@ def format_report(
             lines.append("")
             for f in sev_findings:
                 loc = f"(project-level)" if f["line"] == 0 else f"{f['file']}:{f['line']}"
-                lines.append(_color(sev, f"[{sev}]") + f" {f['owasp_ids']}  {loc}")
+                tag = "  ·  spot (unchanged file)" if f.get("scope") == "spot" else ""
+                lines.append(_color(sev, f"[{sev}]") + f" {f['owasp_ids']}  {loc}{tag}")
                 lines.append(f"  {f['message']}")
                 if f["snippet"] and f["snippet"] != "(project-level finding)":
                     lines.append(f"  │  {f['snippet'][:100]}")
@@ -1135,9 +1151,10 @@ def format_report(
                 lines.append("")
 
     # Summary table
-    threshold_idx = SEVERITY_ORDER.get(threshold, 1)
-    breached = any(SEVERITY_ORDER.get(f["severity"], 9) <= threshold_idx for f in findings)
+    breached = any(_is_blocking(f, threshold) for f in findings)
     exit_note = f"exit 1 (findings at/above {threshold})" if breached else f"exit 0 (no findings at/above {threshold})"
+
+    spot = [f for f in findings if f.get("scope") == "spot"]
 
     lines.append("══════════════════════════════════════════════════════════════════")
     lines.append(f"  SUMMARY  →  {exit_note}")
@@ -1145,6 +1162,12 @@ def format_report(
         n = counts.get(sev, 0)
         lines.append(f"    {sev:<10} {n}")
     lines.append(f"    {'Total':<10} {total}")
+    if spot:
+        blocking_spot = sum(1 for f in spot if _is_blocking(f, threshold))
+        lines.append(
+            f"    of which {len(spot)} from unchanged files (advisory; "
+            f"{blocking_spot} blocking)"
+        )
     lines.append("══════════════════════════════════════════════════════════════════")
 
     return "\n".join(lines)
@@ -1158,15 +1181,20 @@ def format_json_output(
     exclude_info: dict[str, Any] | None = None,
 ) -> str:
     counts = _summary_counts(findings)
-    threshold_idx = SEVERITY_ORDER.get(threshold, 1)
-    breached = any(SEVERITY_ORDER.get(f["severity"], 9) <= threshold_idx for f in findings)
+    breached = any(_is_blocking(f, threshold) for f in findings)
+    spot = [f for f in findings if f.get("scope") == "spot"]
     out: dict[str, Any] = {
         "scan_path": scan_path,
         "files_scanned": files_scanned,
         "threshold": threshold,
         "threshold_breached": breached,
         "findings": findings,
-        "summary": {**counts, "total": sum(counts.values())},
+        "summary": {
+            **counts,
+            "total": sum(counts.values()),
+            "spot_total": len(spot),
+            "blocking_total": sum(1 for f in findings if _is_blocking(f, threshold)),
+        },
     }
     # Only present when --diff was used, so default output stays byte-identical.
     if diff_info is not None:
@@ -1186,15 +1214,26 @@ def _perform_scan(
     diff_active: bool,
     exclude_globs: list[str],
     empty_diff: bool,
+    spot_check: bool = False,
 ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
     """Run all checks once. Returns (findings, files_scanned, walk_stats).
 
     Factored out of main() so the f1 belt-and-braces path can re-invoke it for
     a full scan when a delta scan matched zero of its own changed files.
+
+    ``spot_check`` widens a delta scan to the whole tree: files inside the delta
+    keep every check, files outside it get the SPOT_CHECK_IDS subset marked
+    ``scope: "spot"``. Without a delta there is nothing to widen, so the flag is
+    a no-op and every finding stays ``scope: "deep"``.
     """
-    walk_stats: dict[str, int] = {"excluded": 0}
+    walk_stats: dict[str, int] = {"excluded": 0, "spot_files": 0}
     all_findings: list[dict[str, Any]] = []
     files_scanned = 0
+
+    # Spot mode walks the full tree and decides depth per file, so the walk is
+    # not pruned to the delta. Any other mode keeps the existing pruning.
+    spot_active = spot_check and diff_active and diff_set is not None
+    walk_filter = None if spot_active else (diff_set if diff_active else None)
 
     # Project-level checks first. In delta mode, keep only findings whose file is
     # in the changed set; the exclude filter applies in every mode.
@@ -1204,21 +1243,40 @@ def _perform_scan(
             fp = f.get("file")
             if exclude_globs and fp and _matches_exclude(root, Path(str(fp)), exclude_globs):
                 continue
+            in_delta = True
             if diff_active and diff_set is not None:
                 try:
-                    if Path(str(fp)).resolve() not in diff_set:
-                        continue
+                    in_delta = Path(str(fp)).resolve() in diff_set
                 except OSError:
+                    in_delta = False
+                # Outside the delta: dropped in plain delta mode, kept as an
+                # advisory spot finding when the caller asked for the sweep.
+                if not in_delta and not spot_active:
                     continue
+            if not in_delta and f.get("check_id") not in _DET_SPOT_CHECK_IDS:
+                continue
+            f["scope"] = "deep" if in_delta else "spot"
             all_findings.append(f)
 
-    # Per-file checks (walk is pruned by diff_set + exclude_globs)
-    for path, lines in walk_source_files(
-        root, diff_set if diff_active else None, exclude_globs, walk_stats
-    ):
+    # Per-file checks (walk is pruned by diff_set + exclude_globs, except in
+    # spot mode where depth is decided per file below).
+    for path, lines in walk_source_files(root, walk_filter, exclude_globs, walk_stats):
         files_scanned += 1
         is_content = _is_content_file(path)
         is_test = _is_test_file(path)
+
+        # Depth: a file inside the delta (or any file when there is no delta)
+        # gets every check. Everything else gets the spot subset, advisory.
+        deep = True
+        if spot_active:
+            try:
+                deep = path.resolve() in diff_set  # type: ignore[operator]
+            except OSError:
+                deep = False
+            if not deep:
+                walk_stats["spot_files"] += 1
+
+        file_findings: list[dict[str, Any]] = []
 
         secret_findings = check_A_secrets(path, lines, root)
         if not is_content:
@@ -1229,14 +1287,32 @@ def _perform_scan(
             # the HIGH push-gate — a real leaked value still surfaces at LOW.
             for _f in secret_findings:
                 _f["severity"] = "LOW"
-        all_findings.extend(secret_findings)
+        file_findings.extend(secret_findings)
 
         if not is_content:
             if not is_test:
-                all_findings.extend(check_C_injection(path, lines))
-            all_findings.extend(check_D_ssrf(path, lines))
-            all_findings.extend(check_E_rate_limiting(path, lines))
-            all_findings.extend(check_G_prompt_injection(path, lines))
+                file_findings.extend(check_C_injection(path, lines))
+            file_findings.extend(check_D_ssrf(path, lines))
+            file_findings.extend(check_E_rate_limiting(path, lines))
+            file_findings.extend(check_G_prompt_injection(path, lines))
+            # H-N: API + AI-boundary authorization checks.
+            api_findings = _api_checks.run_file_checks(path, lines)
+            if is_test:
+                # Fixtures deliberately encode vulnerable shapes. Same policy as
+                # the secret checks: visible, never blocking.
+                for _f in api_findings:
+                    _f["severity"] = "LOW"
+            file_findings.extend(api_findings)
+
+        if not deep:
+            file_findings = [
+                f for f in file_findings
+                if f.get("check_id") in _api_checks.SPOT_CHECK_IDS
+                or f.get("check_id") in _DET_SPOT_CHECK_IDS
+            ]
+        for f in file_findings:
+            f["scope"] = "deep" if deep else "spot"
+        all_findings.extend(file_findings)
 
     return all_findings, files_scanned, walk_stats
 
@@ -1273,6 +1349,14 @@ def main() -> int:
         help="Skip any file whose repo-relative path matches this fnmatch glob "
              "(repeatable; applies in both full and --diff mode).",
     )
+    parser.add_argument(
+        "--spot-check",
+        action="store_true",
+        dest="spot_check",
+        help="With --diff: also sweep the UNCHANGED files with the high-confidence "
+             "check subset. Those findings are advisory — only a CRITICAL among "
+             "them affects the exit code. No-op without --diff.",
+    )
     args = parser.parse_args()
 
     root = Path(args.path).resolve()
@@ -1302,7 +1386,7 @@ def main() -> int:
     empty_diff = diff_active and not diff_set
 
     all_findings, files_scanned, walk_stats = _perform_scan(
-        root, diff_set, diff_active, exclude_globs, empty_diff
+        root, diff_set, diff_active, exclude_globs, empty_diff, args.spot_check
     )
 
     # f1 belt-and-braces: --diff named changed files, yet the walk scanned NONE
@@ -1326,8 +1410,14 @@ def main() -> int:
         diff_set = None
         diff_active = False
         all_findings, files_scanned, walk_stats = _perform_scan(
-            root, None, False, exclude_globs, False
+            root, None, False, exclude_globs, False, args.spot_check
         )
+
+    # Surface the spot sweep in the report header so "scanned the whole tree"
+    # is visible rather than implied.
+    if diff_info is not None and diff_info.get("mode") == "delta" and args.spot_check:
+        diff_info["spot_check"] = True
+        diff_info["spot_files"] = walk_stats.get("spot_files", 0)
 
     # f4: exclude visibility — carry the active globs + removed count into the
     # report so an over-broad glob (`*` matches every path) cannot silently
@@ -1360,9 +1450,8 @@ def main() -> int:
         print(format_report(all_findings, threshold, scan_path_str, files_scanned, diff_info, exclude_info))
 
     # Exit code
-    threshold_idx = SEVERITY_ORDER.get(threshold, 1)
     for f in all_findings:
-        if SEVERITY_ORDER.get(f["severity"], 9) <= threshold_idx:
+        if _is_blocking(f, threshold):
             return 1
     return 0
 
