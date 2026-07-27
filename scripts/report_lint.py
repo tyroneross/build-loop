@@ -124,6 +124,22 @@ MECHANISM_CLAIM_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+# Identity/configuration claims: which model, version, or tier ran the work.
+# Same defect shape as a mechanism claim, aimed inward instead of outward. On
+# 2026-07-26 a report asserted its own model as "Opus 4.8 / claude-opus-4-8"
+# while the session identity line said `claude-opus-5` — the ID table in context
+# listed no Opus 5 row, so the nearest Opus row was substituted. Reading an
+# adjacent row is the same one-step-off inference the mechanism rule catches.
+# Narrow by construction: requires an asserting lead-in, so "| opus | 7 |" in a
+# table and a bare model name in prose both stay clean.
+IDENTITY_CLAIM_RE = re.compile(
+    r"\b("
+    r"i am|i'm|we are|running on|powered by|dispatched to|"
+    r"(the )?model (id )?(is|was)|ran on|executed on"
+    r")\s+[`\"']?"
+    r"(claude[-\w.]*|opus|sonnet|haiku|fable|gpt-[\w.]+|gemini)",
+    re.IGNORECASE,
+)
 # An explicit evidence-class tag satisfies the rule outright.
 EVIDENCE_CLASS_RE = re.compile(r"\[(measured|correlated|reasoned)\]", re.IGNORECASE)
 # Observation language: naming the thing actually looked at.
@@ -135,7 +151,9 @@ OBSERVATION_RE = re.compile(
     r"http\s*\d{3}|status\s*\d{3}|"
     r"logs? show|log shows|returned|"
     r"row count|rows?\b.*\bcount|max\(|"
-    r"measured|observed"
+    r"measured|observed|"
+    # Satisfying observations for an identity claim: the place it was read from.
+    r"frontmatter|verbatim|identity line|resolve_agent_model"
     r")",
     re.IGNORECASE,
 )
@@ -326,23 +344,33 @@ def lint_mechanism_claim(lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
     """
     findings: list[dict[str, Any]] = []
     for lineno, line in lines:
-        if not MECHANISM_CLAIM_RE.search(line):
+        is_mechanism = bool(MECHANISM_CLAIM_RE.search(line))
+        is_identity = bool(IDENTITY_CLAIM_RE.search(line))
+        if not (is_mechanism or is_identity):
             continue
         if EVIDENCE_CLASS_RE.search(line):
             continue
         if VALIDATION_METHOD_RE.search(line) or OBSERVATION_RE.search(line):
             continue
+        if is_mechanism:
+            message = (
+                "Mechanism claim with no stated observation. Name what you "
+                "measured (query, command, probe) or tag the evidence class: "
+                "[measured] / [correlated] / [reasoned]. Only [measured] may "
+                "justify a delete, deploy, or restart."
+            )
+        else:
+            message = (
+                "Model/version claim with no stated source. Quote the identity "
+                "line or agent frontmatter verbatim, or name the resolver that "
+                "returned it — do not infer an ID from a nearby table row."
+            )
         findings.append(_finding(
             rule_id="mechanism-claim-unobserved",
             severity="WARN",
             line=lineno,
             snippet=line.strip()[:120],
-            message=(
-                "Mechanism claim with no stated observation. Name what you "
-                "measured (query, command, probe) or tag the evidence class: "
-                "[measured] / [correlated] / [reasoned]. Only [measured] may "
-                "justify a delete, deploy, or restart."
-            ),
+            message=message,
         ))
     return findings
 

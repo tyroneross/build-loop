@@ -450,6 +450,42 @@ class TestMechanismClaim(unittest.TestCase):
         out = lint_mechanism_claim(self._lines("These 13 routes are safe to delete."))
         self.assertEqual(len(out), 1)
 
+    def test_bare_identity_claim_flagged(self):
+        # 2026-07-26: asserted "Opus 4.8" while the identity line said
+        # claude-opus-5. No Opus 5 row existed in the context's ID table, so the
+        # nearest Opus row was substituted -- one step off, stated as fact.
+        out = lint_mechanism_claim(self._lines("I'm running on Opus 4.8."))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["rule_id"], "mechanism-claim-unobserved")
+        self.assertIn("verbatim", out[0]["message"])
+
+    def test_identity_claim_with_model_id_flagged(self):
+        out = lint_mechanism_claim(
+            self._lines("The exact model ID is claude-opus-4-8.")
+        )
+        self.assertEqual(len(out), 1)
+
+    def test_identity_claim_naming_its_source_passes(self):
+        # Quoting where it was read from is the satisfying observation.
+        out = lint_mechanism_claim(
+            self._lines("Running on claude-opus-5, quoted verbatim from the "
+                        "session identity line.")
+        )
+        self.assertEqual(out, [])
+
+    def test_identity_claim_from_resolver_passes(self):
+        out = lint_mechanism_claim(
+            self._lines("Dispatched to fable; resolve_agent_model returned it.")
+        )
+        self.assertEqual(out, [])
+
+    def test_model_name_in_table_row_not_flagged(self):
+        # Narrowness check: a tier table has no asserting lead-in verb.
+        out = lint_mechanism_claim(
+            self._lines("| `opus` | 7 | Opus 5 | build-orchestrator |")
+        )
+        self.assertEqual(out, [])
+
     def test_named_observation_passes(self):
         out = lint_mechanism_claim(self._lines(
             "The worker is dead: select max(created_at) from entities returned 2026-07-12."
