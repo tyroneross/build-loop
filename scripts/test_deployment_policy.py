@@ -93,6 +93,30 @@ class DeploymentPolicyTests(unittest.TestCase):
         self.assertEqual(data["target"], "preview")
         self.assertEqual(data["action"], "auto")
 
+    def test_git_stash_push_is_not_a_deploy(self) -> None:
+        # Regression (2026-07-27, atomize-ai): `push` was matched anywhere after
+        # `git`, so `git stash push` — a local working-tree save — classified as
+        # a deploy and wedged an authorized local merge behind the pre-deploy
+        # security gate. `push` counts only as git's SUBCOMMAND.
+        for command in (
+            "git stash push -m 'pre-merge artifacts'",
+            "git stash push --keep-index",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(is_deploy_like(command))
+
+    def test_git_push_behind_global_options_still_deploys(self) -> None:
+        # The subcommand walk must skip git's global options, including the
+        # forms that consume the next token as a value.
+        for command in (
+            "git -C /repo push origin main",
+            "git --git-dir /repo/.git push origin main",
+            "git -c user.name=ci push origin main",
+            "git --no-pager push origin main",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(is_deploy_like(command))
+
     def test_unknown_defaults_to_auto(self) -> None:
         # Policy change (do-unless-clearly-risky): unknown deployment commands
         # default to auto. Operators who need stricter routing override via

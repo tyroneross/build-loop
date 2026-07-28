@@ -355,17 +355,53 @@ def is_deploy_like(raw_command: str) -> bool:
     return False
 
 
+# Git global options that consume the NEXT token as their value. Anything
+# else starting with `-` is a flag we can skip on its own.
+_GIT_GLOBAL_OPTS_WITH_VALUE = {
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+    "--config-env",
+}
+
+
+def _git_subcommand_index(tokens: list[str]) -> int | None:
+    """Index of git's SUBCOMMAND token, or None if this isn't a `git ...` call.
+
+    `push` is only a push when it is the subcommand. Matching "git appears
+    before push" anywhere in the token list misreads local-only commands —
+    `git stash push -m msg` is a working-tree save, not a remote publish, and
+    classifying it as a deploy wedged an authorized local merge behind the
+    pre-deploy security gate (observed 2026-07-27, atomize-ai).
+    """
+    lower = [t.lower() for t in tokens]
+    try:
+        i = lower.index("git") + 1
+    except ValueError:
+        return None
+    while i < len(tokens):
+        token = tokens[i]
+        if not token.startswith("-"):
+            return i
+        # `--git-dir=/path` carries its value inline; `--git-dir /path` does not.
+        if token in _GIT_GLOBAL_OPTS_WITH_VALUE:
+            i += 2
+        else:
+            i += 1
+    return None
+
+
 def _is_git_push(lower_tokens: list[str]) -> bool:
-    if "git" not in lower_tokens or "push" not in lower_tokens:
-        return False
-    return lower_tokens.index("git") < lower_tokens.index("push")
+    index = _git_subcommand_index(lower_tokens)
+    return index is not None and lower_tokens[index] == "push"
 
 
 def _git_push_target_branch(tokens: list[str]) -> str | None:
-    lower_tokens = [token.lower() for token in tokens]
-    try:
-        push_index = lower_tokens.index("push")
-    except ValueError:
+    push_index = _git_subcommand_index(tokens)
+    if push_index is None or tokens[push_index].lower() != "push":
         return None
     refs = _git_push_positionals(tokens[push_index + 1 :])
     if not refs:
