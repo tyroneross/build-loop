@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "8d1b8a4b8751b1bd155dac64a8319b7f25945da5c703651744f10a5cbba0cf47"
+    "content_sha256": "11ad2b8eb603d65ad4ce2888b1e169496de44443a010a726edb5c53392f07aaf"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1858,6 +1858,7 @@
       "scripts/hooks/git_command_classifier.py": "git_command_classifier.py — does a Bash command GENUINELY invoke `git commit` / `git push`?",
       "scripts/hooks/plugin_dir_heal.py": "plugin_dir_heal.py — plugin-relative SessionStart healer.",
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
+      "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
       "scripts/import_manifest_lint.py": "import_manifest_lint.py — catch undeclared third-party imports before CI.",

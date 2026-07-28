@@ -87,6 +87,25 @@ if [ -z "$PLUGIN_ROOT" ]; then
     PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 fi
 
+# ── Unbounded-wait gate ──────────────────────────────────────────────────────
+# Runs FIRST and cheap: a wait with no exit condition is wrong regardless of what
+# else the command does, and blocking it here costs one short subprocess.
+#
+# Named failure it exists for (2026-07-27, atomize-ai): a dispatched orchestrator
+# wrote `while true; do sleep 30; done` as a placeholder wait on its reviewer
+# subagents. Nothing could end it; it burned ~100 min of wall clock, was killed on
+# timeout, and emitted a SECOND spurious completion for an already-finished run.
+#
+# Fails open on any error — see the gate's own contract. It speaks through stderr
+# and exit 2, so there is no JSON to merge.
+_WAIT_GATE="$PLUGIN_ROOT/scripts/hooks/unbounded_wait_gate.py"
+if [ -f "$_WAIT_GATE" ]; then
+    if ! printf '%s' "$INPUT" | python3 "$_WAIT_GATE" >/dev/null; then
+        printf '{}'
+        exit 2
+    fi
+fi
+
 # Run a sub-gate, feeding it the original event on stdin; echo its stdout.
 # Any failure yields '{}' (fail-open). Never aborts the dispatcher.
 #
