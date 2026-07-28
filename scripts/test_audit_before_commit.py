@@ -378,6 +378,34 @@ class _GitRepoCase(unittest.TestCase):
         )
 
 
+class EnvTemplateCarveOutTests(_GitRepoCase):
+    """`.env.example` is meant to be committed; `.env.local` is not.
+
+    Regression, 2026-07-28 (atomize-ai): the secret-filename pattern matched
+    `.env.example`, and its placeholder values (`your-service-role-key`,
+    `sk-...`) satisfy SECRET_CONTENT_PATTERN, so the auditor hard-blocked every
+    commit touching the one env file a repo is SUPPOSED to track. The blocked
+    commit's diff actually REMOVED a published default secret.
+    """
+
+    # A placeholder body that trips SECRET_CONTENT_PATTERN.
+    BODY = 'OPENAI_API_KEY="sk-your-key-here"\nADMIN_SECRET="your-admin-secret"\n'
+
+    def _blocked(self, rel_path: str) -> bool:
+        self._write_and_stage(rel_path, self.BODY)
+        return self._run_hook().returncode == 2
+
+    def test_templates_are_committable(self) -> None:
+        for name in (".env.example", ".env.sample", ".env.template", ".env.dist"):
+            with self.subTest(name=name):
+                self.assertFalse(self._blocked(name), f"{name} must not hard-block")
+
+    def test_real_env_files_still_block(self) -> None:
+        for name in (".env", ".env.local", ".env.production"):
+            with self.subTest(name=name):
+                self.assertTrue(self._blocked(name), f"{name} must still hard-block")
+
+
 class EscalatedPacketTests(_GitRepoCase):
     def test_high_risk_packet_is_mandatory_and_cites_files(self) -> None:
         self._write_and_stage(

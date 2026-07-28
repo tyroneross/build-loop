@@ -85,7 +85,15 @@ ANTI_BIAS_BLOCK = (
     "Cite the specific intent or research-context entry your verdict turns on."
 )
 SECRET_FILENAME_PATTERNS = (
-    re.compile(r"(^|/)\.env(\..*)?$"),
+    # `.env` and its real variants (.env.local, .env.production, …) — but NOT
+    # the committed TEMPLATES. `.env.example` / `.sample` / `.template` /
+    # `.dist` exist to be checked in, and they carry placeholder values
+    # (`your-service-role-key`, `sk-...`) that satisfy SECRET_CONTENT_PATTERN.
+    # Without this carve-out the auditor hard-blocks every commit that touches
+    # the one env file a repo is SUPPOSED to track — observed 2026-07-28 on
+    # atomize-ai, where it blocked a merge whose `.env.example` diff REMOVED a
+    # published default secret.
+    re.compile(r"(^|/)\.env(?!\.(?:example|sample|template|dist)$)(\..*)?$"),
     re.compile(r"(^|/)id_rsa(\..*)?$"),
     re.compile(r"(^|/)id_ed25519(\..*)?$"),
     re.compile(r"\.pem$"),
