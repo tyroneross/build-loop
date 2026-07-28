@@ -66,3 +66,54 @@ in-flight/queued chunks, UX queue, issues, followups, repo backlog, memory
 backlog. Do not scan sibling project backlogs. Include proposals only when the
 current task is specifically self-review, improvement triage, or proposal
 cleanup.
+
+## Cross-Agent Durable Lane: Operations Center
+
+Everything above is repo-scoped and derived. Work that must outlive a session,
+or be visible to a *different agent runtime*, belongs in Operations Center — the
+single durable cross-agent ledger. OC reaches every runtime over MCP
+(`oc mcp`, stdio), so Claude Code, Codex, and any other MCP-speaking host read
+and write the same queue.
+
+| Surface | Scope | Durability | Source of truth? |
+|---|---|---|---|
+| Operations Center | cross-repo, cross-agent, cross-session | durable (SQLite) | **yes** |
+| `task_surface.py` view | one repo/branch | derived, recomputed | no — a view |
+| Host `TaskCreate`/`TaskUpdate` | one session | dies with the session | **no — a mirror** |
+
+The host task list is a *display* of what is already in OC or in the run's own
+execution state. It is never the place work is recorded first. If an item exists
+only in the host task list at the end of a session, it has been lost — that is
+the "second source of truth" failure this policy exists to prevent.
+
+MCP tools on the OC lane: `create_task`, `list_tasks`, `get_task`, `claim_task`,
+`update_status`, `add_receipt`, `plan_tasks`, `update_ledger`, `agent_stats`.
+
+## Priority: approve the list once, then delegate
+
+Priority ordering belongs to the human. Agent autonomy operates *inside* an
+ordering the human already accepted, not over it.
+
+**The gate.** A proposed task list — new tasks, or a re-ranking of existing ones
+— is presented to the user for approval before it becomes the working order.
+This gate fires once per list, not once per task.
+
+**After approval, agents operate independently.** Within the approved list an
+agent sets working priority, claims, sequences, and executes without returning
+for permission. Do not re-ask what the approved list already answers.
+
+**Agents MAY re-prioritize** when one of these grounds holds, and only these:
+
+| Ground | Meaning |
+|---|---|
+| `blocked` | The item cannot progress — missing credential, external dependency, upstream failure. |
+| `contention` | Another agent is working it, or ownership is unclear and proceeding risks duplicate or conflicting work. |
+| `dependency` | A lower-priority item is a prerequisite for, or materially improves, a higher-priority one. Raise the prerequisite. |
+
+Every re-prioritization records the ground and the reasoning as a receipt via
+`add_receipt`, so the ordering stays auditable and the human can see why their
+approved order changed underneath them. A silent re-rank is a policy violation.
+
+**Tasks discovered mid-flight** enter the queue at or below the default priority
+and are flagged for the next approval pass. New work does not outrank approved
+work until the human has seen it. Discovery is not authorization.
