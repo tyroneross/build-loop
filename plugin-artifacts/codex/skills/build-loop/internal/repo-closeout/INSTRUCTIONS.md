@@ -11,7 +11,7 @@ This identifier is retained for one release so existing prompts keep working.
 Load and follow the canonical skill and its bundled resources:
 
 ```text
-../repo-maintenance/SKILL.md
+../repo-maintenance/INSTRUCTIONS.md
 ```
 
 Use `repo-maintenance` in new prompts, automation, documentation, and handoffs.

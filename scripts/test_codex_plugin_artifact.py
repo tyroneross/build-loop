@@ -69,16 +69,17 @@ class CodexPluginArtifactTests(unittest.TestCase):
                 skill_paths,
                 [
                     "skills/build-loop/SKILL.md",
-                    "skills/repo-closeout/SKILL.md",
-                    "skills/repo-maintenance/SKILL.md",
                 ],
             )
             manifest = target / ".codex-plugin" / "plugin.json"
             self.assertIn('"skills": "./skills"', manifest.read_text(encoding="utf-8"))
             self.assertTrue((target / ICON_REL).is_file())
-            self.assertTrue((target / "skills" / "repo-maintenance" / "scripts" / "audit_repo_maintenance.py").is_file())
-            self.assertFalse((target / "skills" / "repo-maintenance" / "scripts" / "test_audit_repo_maintenance.py").exists())
-            self.assertFalse((target / "skills" / "repo-closeout" / "scripts").exists())
+            internal = target / "skills" / "build-loop" / "internal"
+            self.assertTrue((internal / "repo-maintenance" / "INSTRUCTIONS.md").is_file())
+            self.assertTrue((internal / "repo-maintenance" / "scripts" / "audit_repo_maintenance.py").is_file())
+            self.assertFalse((internal / "repo-maintenance" / "scripts" / "test_audit_repo_maintenance.py").exists())
+            self.assertTrue((internal / "repo-closeout" / "INSTRUCTIONS.md").is_file())
+            self.assertFalse((internal / "repo-closeout" / "scripts").exists())
 
     def test_checked_in_artifact_includes_plugin_icon(self) -> None:
         icon = ARTIFACT / ICON_REL

@@ -383,3 +383,7 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:telemetry` — OpenTelemetry-first observability guidance (LLM/agent → Phoenix/Langfuse + OpenInference/OpenLLMetry; web/server → OTel SDK + Sentry; mobile/iOS → Embrace/OTel-swift over Firebase). Loaded in Phase 1 when a build touches a server/LLM/mobile app with no telemetry, or Phase 2 when adding a service/LLM path; encodes the user's decided OTel + GenAI-semconv stack.
 
 <!-- build-loop@tyroneross — canonical source: github.com/tyroneross/build-loop -->
+
+## Packaged Internal Routes
+
+Route repository maintenance and closeout intent internally. Read `internal/repo-maintenance/INSTRUCTIONS.md`; use `internal/repo-closeout/INSTRUCTIONS.md` only for compatibility. Do not ask the user to select either helper.

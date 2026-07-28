@@ -9,6 +9,7 @@ through `/build-loop:run` + plain language, and invoked internally as a skill â€
 never as a separate slash-command. This test locks that surface so a stray
 command file can't silently re-clutter the human palette.
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -31,6 +32,17 @@ class CommandSurfaceTests(unittest.TestCase):
             f"route via /build-loop:run + plain language (skills/build-loop/SKILL.md Â§Routing). "
             f"Found: {sorted(found)}. Retire the extra command file(s) or route the intent through run.",
         )
+
+    def test_run_accepts_only_a_plain_language_goal(self):
+        text = (COMMANDS_DIR / "run.md").read_text(encoding="utf-8")
+        match = re.search(r'^argument-hint:\s*"([^"]+)"\s*$', text, re.MULTILINE)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "[goal description]")
+        self.assertNotIn("--", match.group(1))
+
+    def test_run_delegates_directly_to_the_build_loop_skill(self):
+        text = (COMMANDS_DIR / "run.md").read_text(encoding="utf-8")
+        self.assertIn("Load the `build-loop:build-loop` skill.", text)
 
 
 if __name__ == "__main__":

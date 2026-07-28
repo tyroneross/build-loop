@@ -16,27 +16,7 @@ CODEX_SKILLS_DIR = REPO_ROOT / "codex-skills"
 CODEX_ARTIFACT_DIR = REPO_ROOT / "plugin-artifacts" / "codex"
 SKILLS_DIR = REPO_ROOT / "skills"
 
-CODEX_PUBLIC_ENTRYPOINTS = {
-    "build-loop",
-    "repo-closeout",
-    "repo-maintenance",
-}
-
-CLAUDE_PUBLIC_ENTRYPOINTS = {
-    "build-loop",
-    "debug-loop",
-    "optimize",
-    "research",
-    "knowledge",
-    "handoff",
-    "repo-closeout",
-    "repo-maintenance",
-    # root-cause-analysis is agent-invoked ("no dedicated command"; reachable via
-    # natural language only) per its SKILL description + build-loop's
-    # "only /build-loop:run is human-facing" design. The fix/rca-user-invocable
-    # merge left this list and the SKILL frontmatter inconsistent (SKILL stayed
-    # user-invocable:false); resolved 2026-07-08 toward agent-invoked.
-}
+CODEX_PUBLIC_ENTRYPOINTS = {"build-loop"}
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.MULTILINE)
@@ -96,19 +76,12 @@ class CodexSurfaceTests(unittest.TestCase):
             skill_paths,
             [
                 "skills/build-loop/SKILL.md",
-                "skills/repo-closeout/SKILL.md",
-                "skills/repo-maintenance/SKILL.md",
             ],
         )
         self.assertEqual(read_name(CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "SKILL.md"), "build-loop")
-        self.assertEqual(
-            read_name(CODEX_ARTIFACT_DIR / "skills" / "repo-closeout" / "SKILL.md"),
-            "repo-closeout",
-        )
-        self.assertEqual(
-            read_name(CODEX_ARTIFACT_DIR / "skills" / "repo-maintenance" / "SKILL.md"),
-            "repo-maintenance",
-        )
+        internal = CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "internal"
+        self.assertTrue((internal / "repo-maintenance" / "INSTRUCTIONS.md").is_file())
+        self.assertTrue((internal / "repo-closeout" / "INSTRUCTIONS.md").is_file())
 
     def test_codex_artifact_is_included_in_npm_package_files(self) -> None:
         data = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
@@ -131,17 +104,16 @@ class CodexSurfaceTests(unittest.TestCase):
 
 
 class ClaudeSurfaceTests(unittest.TestCase):
-    def test_claude_skill_invocability_matches_public_policy(self) -> None:
+    def test_claude_skills_are_internal_to_the_single_run_command(self) -> None:
         actual: dict[str, str | None] = {}
         for path in sorted(SKILLS_DIR.rglob("SKILL.md")):
             actual[str(path.relative_to(REPO_ROOT))] = read_user_invocable(path)
 
-        violations: list[str] = []
-        for rel_path, flag in actual.items():
-            name = read_name(REPO_ROOT / rel_path)
-            expected = "true" if name in CLAUDE_PUBLIC_ENTRYPOINTS else "false"
-            if flag != expected:
-                violations.append(f"{rel_path}: user-invocable={flag!r}, expected {expected!r}")
+        violations = [
+            f"{rel_path}: user-invocable={flag!r}, expected 'false'"
+            for rel_path, flag in actual.items()
+            if flag != "false"
+        ]
 
         self.assertEqual(violations, [], "\n".join(violations))
 
