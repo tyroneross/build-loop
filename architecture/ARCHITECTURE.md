@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 50 skills · 372 scripts · 21 hooks** (auto-discovered 11ad2b8e)
+**29 agents · 50 skills · 373 scripts · 21 hooks** (auto-discovered 9bfeb24c)
 
 <details><summary>agents</summary>
 
@@ -293,6 +293,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/model_availability_store.py`
 - `scripts/model_overrides.py`
 - `scripts/model_resolver.py`
+- `scripts/model_run_history.py`
 - `scripts/model_taxonomy.py`
 - `scripts/optimize_doe.py`
 - `scripts/optimize_loop.py`
