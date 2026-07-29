@@ -17,18 +17,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMANDS_DIR = REPO_ROOT / "commands"
 PUBLIC_ROUTING_DOCS = (
     REPO_ROOT / "AGENTS.md",
+    REPO_ROOT / "references" / "halt-and-ask-protocol.md",
+    REPO_ROOT / "references" / "implementer-envelope-schema.md",
+    REPO_ROOT / "references" / "iterate-protocol.md",
+    REPO_ROOT / "references" / "keep-going-policy.md",
+    REPO_ROOT / "references" / "m-series-protocol.md",
+    REPO_ROOT / "references" / "phase-gate-checklist.md",
+    REPO_ROOT / "references" / "resume-protocol.md",
+    REPO_ROOT / "references" / "trigger-rules.md",
     REPO_ROOT / "skills" / "build-loop" / "SKILL.md",
     REPO_ROOT / "skills" / "build-loop" / "references" / "autonomous-and-per-commit-modes.md",
     REPO_ROOT / "skills" / "build-loop" / "references" / "codex-subagents.md",
+    REPO_ROOT / "skills" / "build-loop" / "references" / "phase-1-assess.md",
 )
-LEGACY_INVOCATION_FLAGS = (
-    "--long",
-    "--budget",
-    "--autonomous=false",
-    "--resume ",
-    "--per-commit",
-    "--no-per-commit",
-    "--parallel",
+LEGACY_INVOCATION_FLAG_PATTERNS = (
+    re.compile(r"--long(?![-\w])"),
+    re.compile(r"--budget(?![-\w])"),
+    re.compile(r"--autonomous(?:=false)?(?![-\w])"),
+    re.compile(r"--resume(?![-\w])"),
+    re.compile(r"--per-commit(?![-\w])"),
+    re.compile(r"--no-per-commit(?![-\w])"),
+    re.compile(r"--parallel(?![-\w])"),
 )
 
 # The single human-facing command. If build-loop ever needs a second genuinely
@@ -62,8 +71,11 @@ class CommandSurfaceTests(unittest.TestCase):
     def test_public_routing_uses_plain_language_instead_of_mode_flags(self):
         for path in PUBLIC_ROUTING_DOCS:
             text = path.read_text(encoding="utf-8")
-            for flag in LEGACY_INVOCATION_FLAGS:
-                self.assertNotIn(flag, text, f"{path}: advertises retired invocation flag {flag}")
+            for pattern in LEGACY_INVOCATION_FLAG_PATTERNS:
+                self.assertIsNone(
+                    pattern.search(text),
+                    f"{path}: advertises retired invocation flag matching {pattern.pattern}",
+                )
 
 
 if __name__ == "__main__":

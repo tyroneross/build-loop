@@ -26,7 +26,7 @@ Intent → internal mode:
 - **Root-cause analysis**: blameless RCA producing durable system levers — "root cause", "why did this fail", "post-mortem" (delegates to the `root-cause-analysis` skill).
 - **Retrospective**: recursive learning retrospective on a build/project — "retrospective", "retro", "what did we learn", "review this project's trajectory" (delegates to `recursive-retrospective`). *Example: "I need a root cause and a retrospective" → run does both.*
 - **Plan / spec**: "write a plan", "spec this" → spec-writing + plan-verify.
-- **Repository maintenance / closeout**: repository structure, duplicate source, sibling consolidation, build artifacts, branches, worktrees, stashes, or local-main closeout → `repo-maintenance` (`repo-closeout` remains a temporary compatibility alias).
+- **Repository maintenance / closeout**: repository structure, duplicate source, artifacts, branches, worktrees, stashes, or local-main closeout → read `internal/repo-maintenance/INSTRUCTIONS.md`; `internal/repo-closeout/INSTRUCTIONS.md` is the compatibility path.
 - **PRD**: "start a PRD", "spec out a new app" → prd-bridge / start-prd flow.
 - **Self-improve / promote / knowledge / handoff / memory setup**: "scan recent runs", "promote this experiment", "record a decision", "hand this off", "set up memory" → the matching internal skill (self-improve, promotion-reviewer, knowledge, handoff, setup-memory).
 - **Drain proposals**: "drain proposals", "review the proposal backlog", "what proposals are open" → the `drain-proposals` skill. Interactive and never auto-applies; every item needs an explicit apply / reject / defer.

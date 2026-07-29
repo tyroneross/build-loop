@@ -16,7 +16,7 @@ Before processing the decision, the orchestrator resolves the current run's mode
 
 | Mode | Trigger | Effect |
 |---|---|---|
-| **long** | `--long` flag, `--budget >= 4h`, or `overnight` keyword in goal | Auto-pick `recommended_default`; log to `autonomousDefaults[]`; continue |
+| **long** | explicit duration of at least 4h, or a long-running keyword such as `overnight` in the goal | Auto-pick `recommended_default`; log to `autonomousDefaults[]`; continue |
 | **normal** | Default (2h budget, no long-mode trigger) | Surface trade-off table to operator; wait |
 | **forced-escalate** | `novel_decisions[i].confidence == "low"` | Surface trade-off table even in long-mode |
 

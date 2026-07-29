@@ -87,6 +87,8 @@ class CodexPluginArtifactTests(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("user-invocable: true", public_text)
+            self.assertIn("read `internal/repo-maintenance/INSTRUCTIONS.md`", public_text)
+            self.assertNotIn("→ `repo-maintenance`", public_text)
             self.assertNotRegex(
                 "\n".join(
                     path.read_text(encoding="utf-8", errors="ignore")

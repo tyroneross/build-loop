@@ -29,6 +29,7 @@ ASSET_FILES = (Path("assets") / "build-loop-plugin-icon.png",)
 PUBLIC_SKILLS = ("build-loop",)
 INTERNAL_SKILLS = ("repo-maintenance", "repo-closeout")
 INTERNAL_SKILL_TOKEN_RE = re.compile(r"\$?build-loop:repo-(?:maintenance|closeout)")
+TEXT_ARTIFACT_SUFFIXES = {".json", ".md", ".py", ".sh", ".toml", ".yaml", ".yml"}
 
 # Bundle markdown points readers at ``references/<file>.md`` (root-relative).
 # The Claude source resolves that logical namespace across the repo's top-level
@@ -250,6 +251,20 @@ def adapt_public_skill_for_codex(target_skill: Path) -> None:
     if "user-invocable: false" not in text:
         raise ArtifactError(f"public skill missing internal source marker: {target_skill}")
     text = text.replace("user-invocable: false", "user-invocable: true", 1)
+    text, route_replacements = re.subn(
+        r"^- \*\*Repository maintenance / closeout\*\*:.*?$",
+        (
+            "- **Repository maintenance / closeout**: repository structure, duplicate "
+            "source, artifacts, branches, worktrees, stashes, or local-main closeout → "
+            "read `internal/repo-maintenance/INSTRUCTIONS.md`; "
+            "`internal/repo-closeout/INSTRUCTIONS.md` is the compatibility path."
+        ),
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if route_replacements != 1:
+        raise ArtifactError("public skill did not contain the expected top-level helper route")
     text, replacements = re.subn(
         r"^- `build-loop:repo-maintenance` — .*?$",
         (
@@ -303,7 +318,8 @@ def validate_skill_surface(target: Path, skills_root: Path) -> None:
     dangling = next(
         (
             path
-            for path in iter_files(skills_root / "build-loop")
+            for path in iter_files(target)
+            if path.suffix.lower() in TEXT_ARTIFACT_SUFFIXES
             if INTERNAL_SKILL_TOKEN_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
         ),
         None,

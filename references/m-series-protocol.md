@@ -19,7 +19,7 @@ The orchestrator owns six trigger points that update `state.json.execution` via 
 3. **After receiving each implementer return** (Phase 3 Execute, immediately AFTER the M1 envelope write above): `update_execution_state(state_path, 'return_chunk', chunk_id=<id>, status=<one-of-9-statuses>)` — moves chunk_id from `in_flight_chunks` → `completed_chunks` with status; refreshes `last_heartbeat_at`.
 4. **On phase transition** (Execute→Review, Review→Iterate, Iterate→Review, Review→Report): `update_execution_state(state_path, 'phase_transition', phase=<one-of-execute|review|iterate|report>)`.
 5. **On Iterate attempt start** (Phase 5 Iterate, BEFORE the cascade fires): `update_execution_state(state_path, 'iterate_attempt')` — increments the counter; this preserves the 5x iteration cap across resume.
-6. **On clean completion** (Phase 4 Review-G success): `update_execution_state(state_path, 'complete')` — sets `phase: "report"`. This is the "no resume needed" sentinel; `--resume` refuses to run against a state where `phase == "report"`.
+6. **On clean completion** (Phase 4 Review-G success): `update_execution_state(state_path, 'complete')` — sets `phase: "report"`. This is the "no resume needed" sentinel; resume intent is rejected when `phase == "report"`.
 
 Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
 

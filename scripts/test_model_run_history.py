@@ -238,7 +238,7 @@ class ModelRunHistoryTests(unittest.TestCase):
                 turn_id="sol",
                 model="gpt-5.6-sol",
                 effort="high",
-                prompt="Audit the parser before changing it.",
+                prompt="Audit the model history parser carefully before changing its behavior.",
                 cwd="/private/repo",
                 duration_ms=1000,
                 total_tokens=1000,
@@ -250,7 +250,7 @@ class ModelRunHistoryTests(unittest.TestCase):
                 turn_id="terra",
                 model="gpt-5.6-terra",
                 effort="xhigh",
-                prompt="Implement the approved parser change.",
+                prompt="Implement the approved model history parser change and verify it.",
                 cwd="/private/repo",
                 duration_ms=1000,
                 total_tokens=1000,
@@ -272,6 +272,75 @@ class ModelRunHistoryTests(unittest.TestCase):
             {turn.turn_id: turn.task_class for turn in turns},
             {"sol": "code_review", "terra": "code_change"},
         )
+
+    def test_degenerate_prompts_cannot_seed_a_benchmark_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            root = Path(tmp_raw)
+            log = root / "rollout.jsonl"
+            for turn_id, model, effort in (
+                ("sol", "gpt-5.6-sol", "high"),
+                ("terra", "gpt-5.6-terra", "xhigh"),
+            ):
+                write_turn(
+                    log,
+                    turn_id=turn_id,
+                    model=model,
+                    effort=effort,
+                    prompt="continue",
+                    cwd="/private/repo",
+                    duration_ms=1000,
+                    total_tokens=1000,
+                )
+            report = build_report(
+                parse_jsonl(log, root),
+                [
+                    ("sol-hi", ("gpt-5.6-sol", "high")),
+                    ("tera-xhi", ("gpt-5.6-terra", "xhigh")),
+                ],
+                max_candidates=10,
+            )
+
+        self.assertEqual(report["exact_repeat_candidate_count"], 0)
+
+    def test_skill_link_is_removed_before_human_task_fingerprinting(self) -> None:
+        link = (
+            "[$build-loop:build-loop]"
+            "(/Users/example/.codex/plugins/cache/build-loop/SKILL.md)"
+        )
+        human_task = "Review the parser behavior and report the verified root cause."
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            root = Path(tmp_raw)
+            log = root / "rollout.jsonl"
+            write_turn(
+                log,
+                turn_id="linked",
+                model="gpt-5.6-sol",
+                effort="high",
+                prompt=f"Use {link} to {human_task}",
+                cwd="/private/repo",
+                duration_ms=1000,
+                total_tokens=1000,
+            )
+            write_turn(
+                log,
+                turn_id="plain",
+                model="gpt-5.6-terra",
+                effort="xhigh",
+                prompt=f"Use  to {human_task}",
+                cwd="/private/repo",
+                duration_ms=1000,
+                total_tokens=1000,
+            )
+            report = build_report(
+                parse_jsonl(log, root),
+                [
+                    ("sol-hi", ("gpt-5.6-sol", "high")),
+                    ("tera-xhi", ("gpt-5.6-terra", "xhigh")),
+                ],
+                max_candidates=10,
+            )
+
+        self.assertEqual(report["exact_repeat_candidate_count"], 1)
 
     def test_session_cumulative_tokens_are_not_reported_as_turn_usage(self) -> None:
         turn = Turn(turn_id="legacy", session="legacy.jsonl")

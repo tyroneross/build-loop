@@ -100,8 +100,8 @@ When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-d
 
 **Pre-entry — autonomous mode detection.** Read these in order; first hit wins:
 
-1. `state.json.autonomous.enabled` (set by the skill body when `--autonomous=true` or default).
-2. `--autonomous=false` on the original invocation forces `false`; loop is skipped entirely.
+1. `state.json.autonomous.enabled` (set by the skill body from the goal; enabled by default).
+2. A plain-language request for one pass sets it to `false`; the loop is skipped entirely.
 3. `state.json.execution.budget` MUST exist (the skill body writes it at start). Missing → log a warning and treat autonomous as disabled for this run.
 
 **On every loop iteration entry — three short calls in order:**

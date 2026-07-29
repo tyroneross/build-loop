@@ -4,7 +4,7 @@
 
 Build-loop's crash-recovery surface. Loaded on demand by the build-orchestrator agent when its incoming prompt opens with `RESUME_MODE:` or when Phase 1 needs to act on a stale-heartbeat detection. Detail intentionally lives here, not in the orchestrator skeleton, to keep the skeleton ≤200 lines.
 
-Authoring context: written after a 529 Overloaded crashed a Phase H+I dispatch mid-Execute. Partial work survived on disk; agent reasoning state was lost. Recovery was manual. This protocol closes the gap so a future crash can be resumed by re-dispatching the orchestrator with `--resume`.
+Authoring context: written after a 529 Overloaded crashed a Phase H+I dispatch mid-Execute. Partial work survived on disk; agent reasoning state was lost. Recovery was manual. This protocol closes the gap so a future crash can be resumed from a plain-language request.
 
 ## §0 Resume Mode flow (agent-side)
 
@@ -43,7 +43,7 @@ The fault-injection helper lives in `tests/test_resume_orchestration.py:_maybe_i
 > `references/multi-session-coordination.md` and `KNOWN-ISSUES.md` §M4). The
 > label is disambiguated below; the behavior is unchanged.
 
-When `/build-loop:run` is invoked WITHOUT `--resume`, the Skill body runs the resume resolver with `--resume-arg ""`:
+For a normal Build Loop goal with no resume intent, the Skill body runs the resume resolver with `--resume-arg ""`:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py \
@@ -54,7 +54,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py \
 
 If the resolver returns `decision: "prompt_user"`, the Skill body surfaces to the user verbatim (using the `reason` field from the resolver):
 
-> "Incomplete build detected (run_id=X, last heartbeat N min ago). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+> "Incomplete build detected (run_id=X, last heartbeat N min ago). Resume this build or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
 
 This fires every fresh dispatch, regardless of whether the Stop hook ran. It is the **crash-resume staleness signal** (the primary crash-recovery signal). The Stop hook annotation (crash-resume secondary annotation) is best-effort; when it fires, `state.json.execution.crash_signal` is set to `"stop_hook"` for forensic visibility, but the prompt path does not depend on it.
 
@@ -76,7 +76,7 @@ This fires every fresh dispatch, regardless of whether the Stop hook ran. It is 
 ## Cleanup behavior
 
 - **Successful build**: at Phase 4 Review-F, the orchestrator archives `.build-loop/subagent-results/<run-id>/` into `.build-loop/runs/<run-id>/` and removes the original directory. (Implementation pending — referenced in plan §Risks; subagent-results pile-up not a blocker for v0.11.)
-- **Crashed build envelopes**: NOT cleaned by Review-F (it never ran). They get cleaned at the start of the next `/build-loop:run` invocation when the user chooses "start fresh" instead of `--resume`. The prior run_id's directory is then archived as `.build-loop/runs/<run-id>.abandoned/`.
+- **Crashed build envelopes**: NOT cleaned by Review-F (it never ran). They get cleaned at the start of the next Build Loop invocation when the user chooses "start fresh" instead of resuming. The prior run_id's directory is then archived as `.build-loop/runs/<run-id>.abandoned/`.
 - **Manual gc**: a `/build-loop:gc` command (future) clears anything older than 30 days as a last resort.
 
 ## Out-of-scope

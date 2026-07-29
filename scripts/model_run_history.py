@@ -46,8 +46,14 @@ INJECTED_USER_PREFIXES = (
     "<recommended_plugins>",
     "<skill>",
     "<turn_aborted>",
-    "# AGENTS.md instructions for ",
+    "# AGENTS.md instructions",
 )
+SKILL_INVOCATION_LINK_RE = re.compile(
+    r"\[\$[^\]]+\]\([^)\n]*SKILL\.md\)",
+    re.IGNORECASE,
+)
+MIN_BENCHMARK_PROMPT_CHARS = 40
+MIN_BENCHMARK_PROMPT_WORDS = 6
 
 
 @dataclass
@@ -106,6 +112,17 @@ def is_human_prompt(text: str) -> bool:
     """
     stripped = text.lstrip()
     return bool(stripped) and not stripped.startswith(INJECTED_USER_PREFIXES)
+
+
+def benchmark_prompt_text(text: str) -> str | None:
+    """Return a stable, substantive human task or exclude it from matching."""
+    if not is_human_prompt(text):
+        return None
+    cleaned = normalize_prompt(SKILL_INVOCATION_LINK_RE.sub("", text))
+    words = re.findall(r"\b[\w'-]+\b", cleaned)
+    if len(cleaned) < MIN_BENCHMARK_PROMPT_CHARS or len(words) < MIN_BENCHMARK_PROMPT_WORDS:
+        return None
+    return cleaned
 
 
 def message_text(payload: dict[str, Any]) -> str:
@@ -204,12 +221,13 @@ def apply_response_item(
     item_type = payload.get("type")
     if item_type == "message" and payload.get("role") == "user":
         text = message_text(payload)
+        benchmark_text = benchmark_prompt_text(text)
         # The first non-injected user-role message is the human request. Later
         # user-role messages are commonly loaded skill bodies; never let them
         # overwrite the task fingerprint.
-        if turn.prompt_hash is None and is_human_prompt(text):
-            turn.prompt_hash = prompt_hash(text)
-            turn.task_class = classify_task(text)
+        if turn.prompt_hash is None and benchmark_text is not None:
+            turn.prompt_hash = prompt_hash(benchmark_text)
+            turn.task_class = classify_task(benchmark_text)
         return
     if item_type not in {"custom_tool_call", "function_call"}:
         return

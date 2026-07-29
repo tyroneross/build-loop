@@ -35,7 +35,7 @@ Set `uiTarget`, `platform`, `migrationSource` per `skills/build-loop/SKILL.md` �
 
 ## Autonomous mode default (plan §14.2 — Phase A)
 
-The autonomous queue-drain loop is **on by default** when `--autonomous=false` is NOT passed. The skill body sets `state.json.autonomous.enabled` at start; the orchestrator's Phase 5 entry checks this flag and generalizes Iterate into queue-drain mode (plan §14.3). See `skills/build-loop/SKILL.md` §Autonomous Mode (Queue-Drain Loop) for the flag surface and budget semantics, and `agents/build-orchestrator.md` §"Phase 5 autonomous iterate loop" for the loop body.
+The autonomous queue-drain loop is **on by default**. A plain-language request for one pass disables it. The skill body sets `state.json.autonomous.enabled` at start; the orchestrator's Phase 5 entry checks this value and generalizes Iterate into queue-drain mode (plan §14.3). See `skills/build-loop/SKILL.md` §Autonomous Mode + Per-Commit Mode for intent and budget semantics, and `agents/build-orchestrator.md` §"Phase 5 autonomous iterate loop" for the loop body.
 
 ## Judgment: prompt-builder vs inline prompt
 

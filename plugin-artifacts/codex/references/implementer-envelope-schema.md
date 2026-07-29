@@ -160,7 +160,7 @@ novel_decisions:
 
 **Routing summary** (see `references/halt-and-ask-protocol.md` for full protocol):
 
-| Confidence | Long-mode (budget ≥4h or `--long` or `overnight` keyword) | Normal-mode |
+| Confidence | Long-mode (budget ≥4h or a keyword such as `overnight`) | Normal-mode |
 |---|---|---|
 | `high` | Auto-pick `recommended_default`, log to `autonomousDefaults[]` | Surface trade-off table, wait for operator |
 | `med` | Auto-pick, log, flag `confidence: "med"` for judge review | Surface trade-off table, wait |
