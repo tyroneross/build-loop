@@ -18,7 +18,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 SCHEMA = "build-loop/model-run-history/v1"
@@ -107,6 +107,99 @@ def payload_turn_id(payload: dict[str, Any], active_turn_id: str | None) -> str 
     return active_turn_id
 
 
+TurnLookup = Callable[[str], Turn]
+
+
+def apply_event(
+    payload: dict[str, Any],
+    active_turn_id: str | None,
+    get_turn: TurnLookup,
+) -> str | None:
+    event_type = payload.get("type")
+    turn_id = payload.get("turn_id")
+    if event_type == "task_started" and isinstance(turn_id, str):
+        get_turn(turn_id).started_at = _as_int(payload.get("started_at"))
+        return turn_id
+    if event_type == "token_count" and active_turn_id:
+        apply_token_usage(get_turn(active_turn_id), payload.get("info"))
+        return active_turn_id
+    if event_type != "task_complete" or not isinstance(turn_id, str):
+        return active_turn_id
+
+    turn = get_turn(turn_id)
+    turn.completed = True
+    turn.started_at = _as_int(payload.get("started_at")) or turn.started_at
+    turn.completed_at = _as_int(payload.get("completed_at"))
+    turn.duration_ms = _as_int(payload.get("duration_ms"))
+    turn.time_to_first_token_ms = _as_int(payload.get("time_to_first_token_ms"))
+    return None if active_turn_id == turn_id else active_turn_id
+
+
+def apply_token_usage(turn: Turn, raw_info: Any) -> None:
+    if not isinstance(raw_info, dict):
+        return
+    usage = raw_info.get("last_token_usage")
+    if not isinstance(usage, dict):
+        # Legacy records may lack the per-call delta. Use the cumulative value
+        # once rather than dropping the turn.
+        usage = raw_info.get("total_token_usage")
+    if not isinstance(usage, dict):
+        return
+    for key, raw in usage.items():
+        value = _as_int(raw)
+        if value is not None:
+            turn.tokens[key] = turn.tokens.get(key, 0) + value
+
+
+def apply_turn_context(
+    payload: dict[str, Any],
+    active_turn_id: str | None,
+    get_turn: TurnLookup,
+) -> None:
+    turn_id = payload_turn_id(payload, active_turn_id)
+    if not turn_id:
+        return
+    turn = get_turn(turn_id)
+    model = payload.get("model")
+    if isinstance(model, str):
+        turn.model = model
+    effort = payload.get("effort")
+    if not isinstance(effort, str):
+        collaboration = payload.get("collaboration_mode")
+        settings = collaboration.get("settings") if isinstance(collaboration, dict) else None
+        effort = settings.get("reasoning_effort") if isinstance(settings, dict) else None
+    if isinstance(effort, str):
+        turn.effort = effort
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str):
+        turn.workspace_hash = opaque_hash("workspace", cwd, length=12)
+
+
+def apply_response_item(
+    payload: dict[str, Any],
+    active_turn_id: str | None,
+    get_turn: TurnLookup,
+) -> None:
+    turn_id = payload_turn_id(payload, active_turn_id)
+    if not turn_id:
+        return
+    turn = get_turn(turn_id)
+    item_type = payload.get("type")
+    if item_type == "message" and payload.get("role") == "user":
+        text = message_text(payload)
+        turn.prompt_hash = prompt_hash(text)
+        turn.task_class = classify_task(text)
+        return
+    if item_type not in {"custom_tool_call", "function_call"}:
+        return
+    turn.tool_calls += 1
+    tool_input = payload.get("input", "")
+    if not isinstance(tool_input, str):
+        tool_input = json.dumps(tool_input, sort_keys=True)
+    if VERIFY_RE.search(tool_input):
+        turn.verification_signals += 1
+
+
 def parse_jsonl(path: Path, sessions_root: Path) -> list[Turn]:
     session = str(path.relative_to(sessions_root))
     turns: dict[str, Turn] = {}
@@ -127,74 +220,15 @@ def parse_jsonl(path: Path, sessions_root: Path) -> list[Turn]:
                 continue
 
             if record_type == "event_msg":
-                event_type = payload.get("type")
-                if event_type == "task_started" and isinstance(payload.get("turn_id"), str):
-                    active_turn_id = payload["turn_id"]
-                    turn = get_turn(active_turn_id)
-                    turn.started_at = _as_int(payload.get("started_at"))
-                elif event_type == "token_count" and active_turn_id:
-                    info = payload.get("info")
-                    usage = info.get("last_token_usage") if isinstance(info, dict) else None
-                    if not isinstance(usage, dict) and isinstance(info, dict):
-                        # Legacy records may lack the per-call delta. Use the
-                        # cumulative value once rather than dropping the turn.
-                        usage = info.get("total_token_usage")
-                    if isinstance(usage, dict):
-                        turn = get_turn(active_turn_id)
-                        for key, raw in usage.items():
-                            value = _as_int(raw)
-                            if value is not None:
-                                turn.tokens[key] = turn.tokens.get(key, 0) + value
-                elif event_type == "task_complete" and isinstance(payload.get("turn_id"), str):
-                    turn_id = payload["turn_id"]
-                    turn = get_turn(turn_id)
-                    turn.completed = True
-                    turn.started_at = _as_int(payload.get("started_at")) or turn.started_at
-                    turn.completed_at = _as_int(payload.get("completed_at"))
-                    turn.duration_ms = _as_int(payload.get("duration_ms"))
-                    turn.time_to_first_token_ms = _as_int(payload.get("time_to_first_token_ms"))
-                    if active_turn_id == turn_id:
-                        active_turn_id = None
+                active_turn_id = apply_event(payload, active_turn_id, get_turn)
                 continue
 
             if record_type == "turn_context":
-                turn_id = payload_turn_id(payload, active_turn_id)
-                if not turn_id:
-                    continue
-                turn = get_turn(turn_id)
-                model = payload.get("model")
-                if isinstance(model, str):
-                    turn.model = model
-                effort = payload.get("effort")
-                if not isinstance(effort, str):
-                    collaboration = payload.get("collaboration_mode")
-                    settings = collaboration.get("settings") if isinstance(collaboration, dict) else None
-                    effort = settings.get("reasoning_effort") if isinstance(settings, dict) else None
-                if isinstance(effort, str):
-                    turn.effort = effort
-                cwd = payload.get("cwd")
-                if isinstance(cwd, str):
-                    turn.workspace_hash = opaque_hash("workspace", cwd, length=12)
+                apply_turn_context(payload, active_turn_id, get_turn)
                 continue
 
-            if record_type != "response_item":
-                continue
-            turn_id = payload_turn_id(payload, active_turn_id)
-            if not turn_id:
-                continue
-            turn = get_turn(turn_id)
-            item_type = payload.get("type")
-            if item_type == "message" and payload.get("role") == "user":
-                text = message_text(payload)
-                turn.prompt_hash = prompt_hash(text)
-                turn.task_class = classify_task(text)
-            elif item_type in {"custom_tool_call", "function_call"}:
-                turn.tool_calls += 1
-                tool_input = payload.get("input", "")
-                if not isinstance(tool_input, str):
-                    tool_input = json.dumps(tool_input, sort_keys=True)
-                if VERIFY_RE.search(tool_input):
-                    turn.verification_signals += 1
+            if record_type == "response_item":
+                apply_response_item(payload, active_turn_id, get_turn)
 
     return list(turns.values())
 
@@ -420,8 +454,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Comparison arm as LABEL=MODEL:EFFORT; repeat for each arm.",
     )
-    parser.add_argument("--since", help="Include turns starting on/after this ISO date.")
-    parser.add_argument("--until", help="Include turns starting before this ISO date.")
+    parser.add_argument("--since", type=parse_date, help="Include turns starting on/after this ISO date.")
+    parser.add_argument("--until", type=parse_date, help="Include turns starting before this ISO date.")
     parser.add_argument("--max-candidates", type=int, default=20)
     parser.add_argument("--output", help="Write JSON to this file instead of stdout.")
     return parser.parse_args(argv)
@@ -441,8 +475,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": "arm labels must be unique"}))
         return 2
 
-    since = parse_date(args.since)
-    until = parse_date(args.until)
+    since = args.since
+    until = args.until
     turns: list[Turn] = []
     for path in iter_session_files(root):
         turns.extend(parse_jsonl(path, root))
