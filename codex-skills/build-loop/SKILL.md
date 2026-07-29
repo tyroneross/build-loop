@@ -1,6 +1,6 @@
 ---
 name: build-loop
-description: "The single Build Loop plugin entrypoint. Use when the user asks to run Build Loop or requests multi-step features, fixes, refactors, migrations, schema/API changes, debugging, optimization, research, repository maintenance, or closeout. Routes plain-language intent automatically without mode selection."
+description: "The single Build Loop plugin entrypoint. Use when the user asks to run Build Loop or requests multi-step features, fixes, refactors, migrations, schema/API changes, debugging, optimization, research, repository maintenance, or closeout. Routes plain-language intent automatically without mode selection, including non-Git state isolation through the internal data-plane-worktrees workflow."
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
