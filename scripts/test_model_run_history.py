@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from model_run_history import build_report, parse_jsonl
+from model_run_history import Turn, apply_token_usage, build_report, parse_jsonl
 
 
 PROMPT = "Fix the parser and run pytest before reporting completion."
@@ -209,6 +209,14 @@ class ModelRunHistoryTests(unittest.TestCase):
             self.report["arms"]["sol-hi"]["metrics"]["turns_with_verification_signal"],
             1,
         )
+
+    def test_session_cumulative_tokens_are_not_reported_as_turn_usage(self) -> None:
+        turn = Turn(turn_id="legacy", session="legacy.jsonl")
+        apply_token_usage(
+            turn,
+            {"total_token_usage": {"input_tokens": 9000, "total_tokens": 9999}},
+        )
+        self.assertEqual(turn.tokens, {})
 
 
 if __name__ == "__main__":

@@ -140,10 +140,8 @@ def apply_token_usage(turn: Turn, raw_info: Any) -> None:
         return
     usage = raw_info.get("last_token_usage")
     if not isinstance(usage, dict):
-        # Legacy records may lack the per-call delta. Use the cumulative value
-        # once rather than dropping the turn.
-        usage = raw_info.get("total_token_usage")
-    if not isinstance(usage, dict):
+        # ``total_token_usage`` is session-cumulative and cannot be assigned to
+        # one turn. Omit the metric instead of emitting a false per-turn value.
         return
     for key, raw in usage.items():
         value = _as_int(raw)
@@ -270,6 +268,7 @@ def summarize_turns(turns: list[Turn]) -> dict[str, Any]:
         "completed_turns": completed,
         "completion_rate": round(completed / len(turns), 4) if turns else None,
         "turns_with_verification_signal": sum(turn.verification_signals > 0 for turn in turns),
+        "turns_with_token_usage": sum(bool(turn.tokens) for turn in turns),
         "median_duration_ms": median(turn.duration_ms for turn in turns),
         "median_time_to_first_token_ms": median(turn.time_to_first_token_ms for turn in turns),
         "median_tool_calls": median(turn.tool_calls for turn in turns),

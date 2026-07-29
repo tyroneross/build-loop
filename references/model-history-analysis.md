@@ -17,6 +17,9 @@ The report contains per-arm completion, latency, token, tool-call, and
 verification-signal proxies. It also groups exact normalized prompt repeats and
 directional workspace/task cohorts. Copied turns from forked or compacted
 rollouts are deduplicated by turn ID plus model and effort before aggregation.
+Token medians include only turns with per-call `last_token_usage`; legacy
+session-cumulative totals are omitted because they cannot be assigned to one
+turn.
 
 ## Interpretation Boundary
 
