@@ -1,7 +1,7 @@
 ---
 name: database-assessor
 description: Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - "slow query", "migration failed", "constraint error", "Prisma error", "connection timeout", "vector search is stale".
-model: fable
+model: opus
 tier: frontier
 segment: generative_reasoning
 color: cyan

@@ -24,11 +24,13 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 ## Canonical tier definitions (legacy 4-tier view — the Generative Reasoning T1–T4 cells)
 
 ### Frontier tier
-- **Role:** Planning synthesis and the highest-consequence verification verdicts. **Phase 2 Plan synthesis reaches Fable via the stakes-gated Advisor dispatch ladder** (`advisor` agent / peer host / already-Fable session; honestly-labeled inline-Opus fallback otherwise — `skills/build-loop/references/advisor-dispatch-ladder.md`); the Advisor v1 ladder is Phase 2 only, so Phase 1 Assess synthesis runs inline as today until v2. The Frontier verification agents are `plan-critic`, `independent-auditor`, and `security-reviewer`.
+- **Role:** Planning synthesis and the highest-consequence verification verdicts. **Phase 2 Plan synthesis reaches the Frontier tier via the stakes-gated Advisor dispatch ladder** (`advisor` agent / peer host / already-Frontier session; honestly-labeled inline fallback otherwise — `skills/build-loop/references/advisor-dispatch-ladder.md`); the Advisor v1 ladder is Phase 2 only, so Phase 1 Assess synthesis runs inline as today until v2. The Frontier verification agents are `plan-critic`, `independent-auditor`, and `security-reviewer`.
 - **Why this tier exists (above Thinking):** wrong plans dispatch N implementers into the wrong work, and wrong verdicts ship regressions. The user's standing priority is Accuracy > Speed > Cost; the compounding-risk surfaces pay the Frontier premium.
 - **Benchmark contract:** clears the Thinking-tier contract AND benchmarks above the prior-generation Thinking-tier ceiling on at least one of SWE-bench Verified / ARC-AGI / GPQA Diamond.
 - **Cost expectation:** highest. Use only on the planning + verification surface; never default for execution or coordination.
-- **Anthropic default:** Fable 5 (`claude-fable-5`)
+- **Anthropic default:** Claude Opus 5 (`opus`; aliases `claude-opus-5`, `claude-opus-5[1m]` — the 4.8 aliases stay valid for back-compat). Promoted T2→T1 on 2026-07-28.
+- **Second Anthropic Frontier entry:** Fable 5 (`fable`) — kept in the T1 preferred list, and the in-tier successor `scripts/dispatch_fallback.py` returns when `opus` is unavailable. It is also the **deliberate override for high-coupling PLANNING work**, routed by `scripts/frontier_gate.py`; see the evidence scope below.
+- **Evidence + its limits (do not overstate):** `prompt-model-benchmark-lab/observations/2026-07-28-audit-bakeoff-fable-vs-opus5-vs-sonnet5.json` records Opus 5 as a strict superset of Fable in 3/3 adversarial-audit rounds, including round 2 where Opus reversed a defect Fable had explicitly cleared. Carry the file's own caveats: n=3 rounds, one repo, one task family; not a clean single-blind design (Fable ran live under time pressure, the others re-audited frozen pre-fix commits); reasoning effort was not pinned per arm; grading was orchestrator-adjudicated; and Opus ran ~10.5 min vs Fable's ~3.5 min in round 3, so longer runs plausibly explain part of the coverage gap. **That evidence is verification-shaped — it says nothing about plan/spec authoring.** The only spec-authoring bake-off on record (Fable vs Codex, 2026-07-09) went to Fable, which is why high-coupling planning still routes to Fable.
 - **Verified equivalents (2026 Q3, advisory):** GPT-5.6 Sol (`gpt-5.6-sol`) for open, complex, hard-to-verify, or high-consequence planning and verdicts; GPT-5.5 and GPT-5.4 remain fallback seeds
 - **Local equivalents:** none — Frontier-class capability is not yet matched locally
 
@@ -36,7 +38,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 - **Role:** Coordination + escalation, plus medium-risk verification with strong external or deterministic checks. Routes work between subagents, ladders severity, runs causal-tree on stuck iterations, and powers `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer`.
 - **Benchmark contract:** SWE-bench Verified ≥78% AND competitive on ARC-AGI / GPQA Diamond / MMLU-Pro.
 - **Cost expectation:** middle-high tier. Use for orchestration and the escalation target when execution hits ambiguity. Never default to Thinking for bounded execution.
-- **Anthropic default:** Opus 4.8 (`claude-opus-4-8`; alias `opus` auto-tracks the latest Opus generation)
+- **Anthropic default:** Claude Opus 5 (`opus`; the alias auto-tracks the latest Opus generation). Since the 2026-07-28 promotion the same id serves Frontier and Thinking on the Anthropic side — the tiers still differ by ROLE and by what may substitute into each cell, not by model.
 - **Verified equivalents (2026 Q3, advisory):** GPT-5.6 Sol for genuinely ambiguous escalation; GPT-5.6 Terra for ordinary orchestration with bounded contracts and deterministic verification; GPT-5.4 and Gemini 2.5 Pro remain fallback seeds
 - **Local equivalents:** none yet — Thinking-tier work needs frontier-class context length and judgment; local models lag
 
@@ -60,7 +62,7 @@ Model selection runs on **two orthogonal axes**, encoded as structured data in *
 
 | Provider | Frontier | Thinking | Code | Pattern |
 |---|---|---|---|---|
-| Anthropic (default) | Fable 5 (`fable`) | Opus 4.8 (`opus`) | Sonnet 5 (`sonnet`) | Haiku 4.5 (`haiku`) |
+| Anthropic (default) | Claude Opus 5 (`opus`); Fable 5 (`fable`) as the deliberate override for high-coupling planning (`scripts/frontier_gate.py`) and the in-tier fallback | Claude Opus 5 (`opus`) | Sonnet 5 (`sonnet`) | Haiku 4.5 (`haiku`) |
 | OpenAI | `gpt-5.6-sol` | `gpt-5.6-sol` for hard escalation; `gpt-5.6-terra` for routine orchestration | `gpt-5.6-terra` | `gpt-5.6-luna` |
 | Google | next-gen Gemini Ultra (when it clears the contract) | `gemini-2.5-pro` | `gemini-2.5-flash` | `gemini-flash-lite` |
 | Local (Ollama / MLX) | n/a — none meets contract yet | n/a — none meets contract yet | `qwen2.5-coder-32b` | `llama3.2-3b` |
@@ -79,7 +81,7 @@ Codex resolves these assignments live from each agent's `(segment, tier)` role. 
 
 Use the lowest thinking level that passes the real verifier. Deterministic scripts remain preferred over Luna when they fully express the rule. All three GPT-5.6 models retain the same least-privilege, confirmation, sandboxing, and independent-verification controls; the system card classifies the family as High capability in cybersecurity and biological/chemical risk.
 
-**Claude verification split:** `plan-critic`, `independent-auditor`, and `security-reviewer` remain on Fable. `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` default to Opus. On Codex, all eight still resolve to Sol through the segment-specific Governance/Evaluation cells.
+**Claude verification split:** the split is by TIER, not by model id. `plan-critic`, `independent-auditor`, and `security-reviewer` sit in Governance/Evaluation **T1**; `scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, and `promotion-reviewer` sit in **T2**. Since 2026-07-28 both cells resolve to `opus` on Anthropic, so the split shows up in what may substitute (T1 also lists `fable`) and in escalation behavior, not in today's resolved id. On Codex, all eight still resolve to Sol through the segment-specific Governance/Evaluation cells.
 
 ### Selectable model registry (the machine-readable source of truth)
 
@@ -110,9 +112,11 @@ An **explicit per-call fallback wins** over the standing policy — passing `--f
 ```bash
 # Drive the standing policy explicitly (frontier default unavailable):
 python3 scripts/model_overrides.py --workdir "$PWD" --tier frontier \
-  --unavailable fable --json
+  --unavailable opus --json
 # -> { "model": "<thinking default>", "source": "tier-fallback", "fallback_tier": "thinking" }
 ```
+
+The flat legacy walk above crosses tiers. The dispatch path prefers the **in-tier** successor first: `python3 scripts/dispatch_fallback.py --tier frontier --unavailable-model opus --json` returns `fable` with `source: in-tier-chain`, so a Frontier outage stays at Frontier before the tier-to-tier edge is ever taken.
 
 ## Three ways to swap
 
@@ -135,7 +139,7 @@ Change the ordered preferred list for the relevant `(segment, tier)` cell in `re
 
 The flat legacy override cannot express the segment-specific routine-orchestration exception; live agent-role resolution selects Terra for `agentic_execution/thinking`. Use the override only when you intentionally want one model for the entire legacy tier.
 
-Configs that predate the `frontier` tier resolve `frontier` → `fable` automatically (built-in tier default in `scripts/model_overrides.py`), so older repos keep working without edits.
+Configs that predate the `frontier` tier resolve `frontier` → the tier's first registry entry automatically (`opus` since 2026-07-28; built-in tier default in `scripts/model_overrides.py`), so older repos keep working without edits.
 
 The orchestrator resolves this before dispatching each subagent with
 `scripts/model_overrides.py`. Frontmatter `model:` becomes the fallback when an
@@ -160,7 +164,7 @@ When dispatching a subagent for a one-off task that needs a different tier:
 ```
 Agent({
   subagent_type: "build-loop:implementer",
-  model: "claude-opus-4-7",   // override Sonnet → Opus for this dispatch
+  model: "opus",   // override Sonnet → Opus for this dispatch
   prompt: "..."
 })
 ```
@@ -232,7 +236,7 @@ The orchestrator **judges each subtask's complexity at dispatch time** and assig
 | Pure recognition, extraction, classification, mechanical sweep — "find X", "list/grep Y", "scan for Z", "extract these fields", "run detector + summarize its JSON", "does this match the pattern". No rule-application, no cross-file reasoning. | **Pattern / Haiku** |
 | Apply a known rule or spec to bounded input. Scoped implementation per owned-files. The "how" when the "what" is settled. | **Code / Sonnet** — default workhorse; prefer Sonnet over Haiku when in doubt |
 | Coordination, routing, ambiguous-spec interpretation, novel architecture decision mid-execution, causal-tree on stuck iterations, user-trust prose where no verification verdict is being rendered. | **Thinking / Opus** — orchestrator default, AND available to accelerate genuinely complex execution subtasks |
-| Planning synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) **when stakes-gated via the Advisor dispatch ladder** (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`) OR highest-consequence verification verdicts (`plan-critic`, `independent-auditor`, `security-reviewer`). | **Frontier / Fable** — wrong plans and high-consequence verdicts compound; pays the premium. Plan synthesis reaches Fable through the `advisor` agent / peer host / already-Fable session; when no trigger fires or no dispatch path is reachable it runs inline on the orchestrator's model (Opus), labeled honestly. |
+| Planning synthesis (frame goal, draft spec/ADRs, F-criteria, MECE partition) **when stakes-gated via the Advisor dispatch ladder** (`synthesisDensity > 5`, `riskSurfaceChange`, `stakes >= medium`, or `dispatch_tier: frontier`) OR highest-consequence verification verdicts (`plan-critic`, `independent-auditor`, `security-reviewer`). | **Frontier / Opus 5** — wrong plans and high-consequence verdicts compound; pays the premium. Plan synthesis reaches Frontier through the `advisor` agent / peer host / already-Frontier session; when no trigger fires or no dispatch path is reachable it runs inline on the orchestrator's model, labeled honestly. **High-coupling planning is the carve-out:** `scripts/frontier_gate.py` routes it to Fable, because the Opus-5 evidence is verification-shaped and does not cover spec authoring. |
 | Medium-risk verification with strong checks (`scope-auditor`, `fact-checker`, `fix-critique`, `overfitting-reviewer`, `promotion-reviewer`). | **Thinking role** — Opus on Claude; the Governance/Evaluation T2 cell resolves Sol on Codex. |
 
 **Prefer Sonnet.** Sonnet is the workhorse for the bulk of build-loop's work. Down-tier to Haiku only for tasks that are genuinely trivial/mechanical — pure pattern-match, no judgment, no gradient. When in doubt, use Sonnet.

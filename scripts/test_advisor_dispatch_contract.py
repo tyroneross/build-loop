@@ -139,12 +139,27 @@ class AdvisorAgentConsistencyTest(unittest.TestCase):
                 msg=f"advisor.md body references {required} but it's missing from tools: {sorted(tools)}",
             )
 
-    def test_advisor_is_fable_tier(self) -> None:
+    def test_advisor_is_frontier_tier(self) -> None:
+        """advisor must be pinned to the FRONTIER tier's current default model.
+
+        The tier is the durable contract; the model behind it is data. Frontier
+        resolved to `fable` until 2026-07-28, when Opus 5 took the T1 default
+        (observations/2026-07-28-audit-bakeoff-fable-vs-opus5-vs-sonnet5.json).
+        Asserted against the resolver rather than a hardcoded token so the next
+        swap updates one place — the taxonomy — not this file.
+        """
         import re
+        import subprocess
+        expected = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "model_resolver.py"),
+             "--workdir", str(REPO), "--tier", "frontier", "--plain"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertTrue(expected, "resolver returned no frontier model")
         text = _read("agents/advisor.md")
         self.assertTrue(
-            re.search(r"^model:\s*fable\s*$", text, re.MULTILINE),
-            "advisor must be model: fable (Frontier tier)",
+            re.search(rf"^model:\s*{re.escape(expected)}\s*$", text, re.MULTILINE),
+            f"advisor must be model: {expected} (the Frontier tier default)",
         )
 
 

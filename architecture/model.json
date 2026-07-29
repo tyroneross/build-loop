@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "11ad2b8eb603d65ad4ce2888b1e169496de44443a010a726edb5c53392f07aaf"
+    "content_sha256": "619adbf39bd9ad2e6bde27b8908b2de030f80bb7f39bd9f4aeb4a29abaa1c6a4"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -186,12 +186,12 @@
       "agents": [
         [
           "advisor",
-          "fable",
+          "opus",
           "Orchestrator"
         ],
         [
           "plan-critic",
-          "fable",
+          "opus",
           "Orchestrator"
         ],
         [
@@ -201,7 +201,7 @@
         ],
         [
           "independent-auditor",
-          "fable",
+          "opus",
           "Auditor (independent)"
         ]
       ],
@@ -223,7 +223,7 @@
           "agents": [
             [
               "advisor",
-              "fable",
+              "opus",
               "Orchestrator"
             ]
           ]
@@ -237,7 +237,7 @@
           "agents": [
             [
               "security-reviewer",
-              "fable",
+              "opus",
               "Orchestrator"
             ]
           ]
@@ -251,7 +251,7 @@
           "agents": [
             [
               "plan-critic",
-              "fable",
+              "opus",
               "Orchestrator"
             ],
             [
@@ -271,7 +271,7 @@
           "agents": [
             [
               "independent-auditor",
-              "fable",
+              "opus",
               "Auditor (independent)"
             ]
           ],
@@ -306,7 +306,7 @@
         ],
         [
           "independent-auditor",
-          "fable",
+          "opus",
           "Auditor (independent)"
         ]
       ],
@@ -372,7 +372,7 @@
           "agents": [
             [
               "independent-auditor",
-              "fable",
+              "opus",
               "Auditor (independent)"
             ]
           ],
@@ -397,12 +397,12 @@
       "agents": [
         [
           "independent-auditor",
-          "fable",
+          "opus",
           "Auditor (independent)"
         ],
         [
           "security-reviewer",
-          "fable",
+          "opus",
           "Orchestrator"
         ],
         [
@@ -431,12 +431,12 @@
           "agents": [
             [
               "independent-auditor",
-              "fable",
+              "opus",
               "Auditor (independent)"
             ],
             [
               "security-reviewer",
-              "fable",
+              "opus",
               "Orchestrator"
             ]
           ]
@@ -846,7 +846,7 @@
   "registries": {
     "agents": {
       "advisor": {
-        "model": "fable",
+        "model": "opus",
         "description": "The Frontier (Fable) standing role that AUTHORS and RE-PLANS the Phase 2 plan synthesis. Generating a plan is harder than evaluating one, so the deepest reasoning pays here. The Advisor frames the goal, decomposes the work, builds the dependency graph, MECE-partitions file ownership, and — on a diagnosed *planning miss* — re-plans and issues CORRECTED INSTRUCTIONS (a diff vs the prior plan + the failure evidence), n…",
         "file": "agents/advisor.md",
         "last_updated": {
@@ -900,7 +900,7 @@
         }
       },
       "database-assessor": {
-        "model": "fable",
+        "model": "opus",
         "description": "Use this agent when the debugging symptom involves database issues, queries, migrations, schema problems, Prisma errors, PostgreSQL, connection pooling, vector/retrieval indexes, or data integrity. Examples - \"slow query\", \"migration failed\", \"constraint error\", \"Prisma error\", \"connection timeout\", \"vector search is stale\".",
         "file": "agents/database-assessor.md",
         "last_updated": {
@@ -954,7 +954,7 @@
         }
       },
       "independent-auditor": {
-        "model": "fable",
+        "model": "opus",
         "description": "LLM-grade escalation path for the boundary-gated commit auditor. The primary mechanism is the deterministic PreToolUse hook script (`scripts/audit_before_commit.py`); this agent fires only when the orchestrator wants a deeper read on a specific commit (e.g., before squash-merge of a multi-chunk build, or when a chunk's diff is unusually large or crosses an architectural boundary). Gathers the same on-disk context th…",
         "file": "agents/independent-auditor.md",
         "last_updated": {
@@ -1008,7 +1008,7 @@
         }
       },
       "plan-critic": {
-        "model": "fable",
+        "model": "opus",
         "description": "Adversarial read-only critique of a Phase 2 plan markdown file for non-deterministic issues that grep cannot catch — alternatives considered, MECE scope quality, marker adequacy, and headline drift across sections. Pair with `scripts/plan_verify.py` (deterministic verifier) — run plan-verify first, feed its JSON output to this agent so it doesn't re-derive what's already been checked.",
         "file": "agents/plan-critic.md",
         "last_updated": {
@@ -1062,7 +1062,7 @@
         }
       },
       "security-reviewer": {
-        "model": "fable",
+        "model": "opus",
         "description": "Adversarial read-only security review of implementer output against OWASP LLM Top 10, OWASP Agentic Top 10, OWASP Web Top 10 (HTTP boundary only), and starter MITRE ATLAS techniques. Runs in Phase 4 Review sub-step A in parallel with `independent-auditor` at `scope: \"build\"`, but only when Assess flagged `triggers.riskSurfaceChange: true`.",
         "file": "agents/security-reviewer.md",
         "last_updated": {
@@ -1622,6 +1622,7 @@
       "scripts/extensions_pending_count.py": "extensions_pending_count.py — count pending drafts (for the session-start nudge). Fail-open to 0.\"\"\"",
       "scripts/extensions_route.py": "extensions_route.py — consumer default: place a drafted skill into pending/ (never loads until approved).\"\"\"",
       "scripts/file_to_operations_center.py": "file_to_operations_center.py — mechanically file a CROSS-REPO issue as a task",
+      "scripts/frontier_gate.py": "frontier_gate.py — should THIS role on THIS repo route back to `fable` instead of the T1 default `opus`?",
       "scripts/gate_builder.py": "gate_builder.py — scaffold a DRAFT enforced check from a Prevention-Pattern spec.",
       "scripts/handoff/__main__.py": "Compose a build-loop handoff document from .build-loop/ run state.",
       "scripts/hook_budget_lint.py": "hook_budget_lint.py — deterministic hook timeout-budget lint for build-loop.",

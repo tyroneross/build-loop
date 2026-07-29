@@ -47,25 +47,43 @@ def _anthropic_host(workdir: str) -> None:
     bl = Path(workdir) / ".build-loop"
     bl.mkdir(parents=True, exist_ok=True)
     # Anthropic-only host so cross-vendor frontier alternates aren't offered —
-    # this is the real Fable-down scenario where the fallback target is Opus.
+    # this is the real outage scenario, where the fallback target is the next
+    # Anthropic frontier model (opus down -> fable).
     (bl / "model-availability.json").write_text(
         json.dumps({"hostProviders": ["anthropic"]}), encoding="utf-8"
     )
 
 
+def _resolve_plain(workdir: str) -> str:
+    """Resolve frontier through the NON-recording resolver, so the read itself
+    persists nothing. Anthropic host so only Anthropic frontier models qualify."""
+    r = subprocess.run(
+        [sys.executable, str(HERE / "model_resolver.py"),
+         "--workdir", workdir, "--tier", "frontier",
+         "--host-providers", "anthropic", "--plain"],
+        check=True, capture_output=True, text=True,
+    )
+    return r.stdout.strip()
+
+
 class FallbackResolutionTests(unittest.TestCase):
-    def test_fable_down_records_and_reresolves_to_opus(self) -> None:
-        # The exact production flow: Agent tool errored "Fable unavailable" ->
-        # orchestrator calls this helper -> records fable, re-resolves to opus.
+    def test_opus_down_records_and_reresolves_to_fable(self) -> None:
+        # The exact production flow: Agent tool errored "<model> unavailable" ->
+        # orchestrator calls this helper -> records it, re-resolves to the next
+        # available frontier model. Taking OPUS down is what proves the machinery
+        # since 2026-07-28: opus is now the frontier default, so the pre-outage
+        # answer is opus and only a real fallback can produce fable. (Recording
+        # fable instead would leave the answer at opus either way — tautological.)
         with tempfile.TemporaryDirectory() as td:
             _anthropic_host(td)
+            self.assertEqual(_resolve_plain(td), "opus")  # pre-outage baseline
             out = jrun(
                 "--workdir", td, "--tier", "frontier",
-                "--unavailable-model", "fable", "--json",
+                "--unavailable-model", "opus", "--json",
             )
-            self.assertEqual(out["recorded"], "fable")
+            self.assertEqual(out["recorded"], "opus")
             self.assertTrue(out["newly_recorded"])
-            self.assertEqual(out["model"], "opus")
+            self.assertEqual(out["model"], "fable")
             self.assertNotIn(out["model"], {"sonnet", "haiku"})
 
     def test_outage_persists_so_next_resolve_also_falls_back(self) -> None:
@@ -74,8 +92,11 @@ class FallbackResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             _anthropic_host(td)
             jrun("--workdir", td, "--tier", "frontier",
-                 "--unavailable-model", "fable", "--json")
-            self.assertIn("fable", _unavailable_ids(td))
+                 "--unavailable-model", "opus", "--json")
+            self.assertIn("opus", _unavailable_ids(td))
+            # Persistence is the point: a fresh, non-recording resolve still
+            # returns the fallback rather than the recorded-down default.
+            self.assertEqual(_resolve_plain(td), "fable")
 
     def test_record_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -102,38 +123,35 @@ class FallbackResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             _anthropic_host(td)
             jrun("--workdir", td, "--tier", "frontier",
-                 "--unavailable-model", "fable", "--json")
-            cleared = jrun("--workdir", td, "--clear", "fable", "--json")
+                 "--unavailable-model", "opus", "--json")
+            cleared = jrun("--workdir", td, "--clear", "opus", "--json")
             self.assertTrue(cleared["removed"])
-            self.assertNotIn("fable", _availability(td).get("unavailable", []))
+            self.assertNotIn("opus", _unavailable_ids(td))
+            # "Restores availability" means resolution goes back to opus, not
+            # just that a row vanished from the file.
+            self.assertEqual(_resolve_plain(td), "opus")
 
 
 class TtlExpiryTests(unittest.TestCase):
     """Outages self-clear after their TTL — no manual --clear needed."""
 
     def _resolver(self, workdir: str) -> str:
-        # Use the NON-recording resolver for the "is it still down?" read so the
-        # read itself doesn't persist anything. Anthropic host so fable->opus.
-        r = subprocess.run(
-            [sys.executable, str(HERE / "model_resolver.py"),
-             "--workdir", workdir, "--tier", "frontier",
-             "--host-providers", "anthropic", "--plain"],
-            check=True, capture_output=True, text=True,
-        )
-        return r.stdout.strip()
+        return _resolve_plain(workdir)
 
     def test_self_expiry_after_ttl(self) -> None:
-        # Record fable down with a 2s TTL -> opus now; after 3s a fresh resolve
-        # auto-expires the record and returns fable (no manual clear).
+        # Record opus down with a 2s TTL -> fable now; after 3s a fresh resolve
+        # auto-expires the record and returns opus again (no manual clear).
+        # Recording the DEFAULT (opus) is what makes expiry observable: the
+        # answer differs before, during, and after the outage window.
         import time
 
         with tempfile.TemporaryDirectory() as td:
             _anthropic_host(td)
             out = jrun("--workdir", td, "--tier", "frontier",
-                       "--unavailable-model", "fable", "--ttl", "2", "--json")
-            self.assertEqual(out["model"], "opus")
+                       "--unavailable-model", "opus", "--ttl", "2", "--json")
+            self.assertEqual(out["model"], "fable")
             time.sleep(3)
-            self.assertEqual(self._resolver(td), "fable")
+            self.assertEqual(self._resolver(td), "opus")
             # The expired record was lazily pruned from the store on read.
             self.assertEqual(_availability(td).get("unavailable"), [])
 
@@ -141,11 +159,11 @@ class TtlExpiryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             _anthropic_host(td)
             jrun("--workdir", td, "--tier", "frontier",
-                 "--unavailable-model", "fable", "--ttl", "3600", "--json")
-            # Well within TTL -> outage still in effect -> opus.
-            self.assertEqual(self._resolver(td), "opus")
+                 "--unavailable-model", "opus", "--ttl", "3600", "--json")
+            # Well within TTL -> outage still in effect -> fable, not opus.
+            self.assertEqual(self._resolver(td), "fable")
             ids = {r.get("id") for r in _availability(td)["unavailable"]}
-            self.assertIn("fable", ids)
+            self.assertIn("opus", ids)
 
     def test_per_record_ttl_override_stored(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -200,11 +218,14 @@ class FailOpenTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out = jrun(
                 "--workdir", td, "--tier", "frontier",
-                "--unavailable-model", "fable", "--json",
+                "--unavailable-model", "opus", "--json",
             )
-            # Without a host filter, the next frontier alternate is gpt-5.5.
-            self.assertEqual(out["recorded"], "fable")
+            # Which alternate wins depends on the host's detected providers, so
+            # assert only what fail-open owes: a model resolved, and it is not
+            # the one just recorded down.
+            self.assertEqual(out["recorded"], "opus")
             self.assertIsNotNone(out["model"])
+            self.assertNotEqual(out["model"], "opus")
 
     def test_clear_nonexistent_is_noop(self) -> None:
         with tempfile.TemporaryDirectory() as td:

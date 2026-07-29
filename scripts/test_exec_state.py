@@ -5,8 +5,10 @@
 
 Focus: the row records BOTH tier and the resolved model, so a tiered surface is
 auditable after the fact. The headline case is `--tier frontier` resolving to
-`fable` with no config (the build-loop default) — i.e. the instrument actually
-captures "Fable was the tier" rather than leaving it null capacity.
+the tier's default with no config — i.e. the instrument actually captures which
+model served the tier rather than leaving it null capacity. That default was
+`fable` until 2026-07-28, when Opus 5 took T1; the test reads it from the
+resolver so a future swap touches the taxonomy only.
 """
 from __future__ import annotations
 
@@ -23,6 +25,15 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "rally_point"))
 
 from write_run_entry import update_execution_state  # type: ignore  # noqa: E402
+
+
+def _frontier_default() -> str:
+    """The model the frontier/T1 tier currently resolves to, per the taxonomy."""
+    return subprocess.run(
+        [sys.executable, str(HERE / "model_resolver.py"),
+         "--workdir", str(HERE.parent), "--tier", "frontier", "--plain"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
@@ -56,8 +67,13 @@ class ExecStateItemIterationTests(unittest.TestCase):
         state = json.loads(self.state_path.read_text())
         return state["execution"]["item_iterations"][item_id][-1]
 
-    def test_tier_frontier_resolves_to_fable_default(self) -> None:
-        """--tier frontier with no config records tier=frontier, model=fable."""
+    def test_tier_frontier_resolves_to_tier_default(self) -> None:
+        """--tier frontier with no config records tier=frontier + the T1 default.
+
+        That default was `fable` until 2026-07-28, when Opus 5 took T1. The
+        durable assertion is that the recorded model is whatever the frontier
+        tier resolves to — not a hardcoded token.
+        """
         r = run_cli(
             "item-iteration", "--workdir", str(self.root),
             "--item-id", "q-7", "--status", "passed",
@@ -66,7 +82,7 @@ class ExecStateItemIterationTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         row = self._last_attempt("q-7")
         self.assertEqual(row["tier"], "frontier")
-        self.assertEqual(row["model"], "fable")
+        self.assertEqual(row["model"], _frontier_default())
         self.assertEqual(row["validator"], "independent-auditor")
         self.assertEqual(row["status"], "passed")
 

@@ -22,7 +22,7 @@ description: |
   user: "The plan no longer fits — re-plan chunk 4 with the failure evidence"
   assistant: "Dispatching the advisor agent in re-plan mode. It reads the failure evidence + the diff vs the current plan, diagnoses planning-miss vs execution-miss, and (on planning-miss) emits corrected instructions: a diff against the prior plan plus the evidence that justifies the change."
   </example>
-model: fable
+model: opus
 tier: frontier
 segment: generative_reasoning
 color: gold

@@ -70,7 +70,11 @@ class RealAgentsBackCompat(unittest.TestCase):
     """On an anthropic host every agent resolves to its current model: token."""
 
     EXPECT = {
-        "advisor": "fable",
+        # advisor + plan-critic moved fable -> opus on 2026-07-28 when Opus 5
+        # took the T1/frontier default. High-coupling PLANNING can still route
+        # back to fable, but that override is frontier_gate.py's job at dispatch
+        # time — the static frontmatter default is opus.
+        "advisor": "opus",
         "build-orchestrator": "opus",
         "fact-checker": "opus",
         "fix-critique": "opus",
@@ -80,7 +84,7 @@ class RealAgentsBackCompat(unittest.TestCase):
         "promotion-reviewer": "opus",
         "scope-auditor": "opus",
         "self-improvement-architect": "sonnet",
-        "plan-critic": "fable",
+        "plan-critic": "opus",
     }
 
     def test_resolved_equals_frontmatter_model(self):

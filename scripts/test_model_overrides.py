@@ -87,10 +87,15 @@ class ModelOverrideTests(unittest.TestCase):
 
     def test_tier_default_used_when_no_override_or_fallback(self) -> None:
         # Without an explicit fallback, the tier's built-in default resolves.
-        # frontier -> fable, thinking -> opus, code -> sonnet, pattern -> haiku.
+        # frontier -> opus, thinking -> opus, code -> sonnet, pattern -> haiku.
+        # opus deliberately occupies BOTH the frontier (T1) and thinking (T2)
+        # rungs since 2026-07-28 — the Anthropic lineup collapsed and opus heads
+        # the T1 preferred list, with fable retained as the second T1 choice.
+        # Each default is DERIVED from references/model-taxonomy.json, so this
+        # asserts the derivation, not a hard-coded table.
         with tempfile.TemporaryDirectory() as td:
             for tier, expected in (
-                ("frontier", "fable"),
+                ("frontier", "opus"),
                 ("thinking", "opus"),
                 ("code", "sonnet"),
                 ("pattern", "haiku"),
@@ -188,19 +193,41 @@ class TierFallbackTests(unittest.TestCase):
             self.assertEqual(payload["fallback_tier"], "pattern")
 
     def test_frontier_falls_back_to_thinking(self) -> None:
+        # The frontier->thinking POLICY EDGE. Since 2026-07-28 opus is BOTH the
+        # frontier and the thinking default, so "--unavailable fable" no longer
+        # reaches this code path at all (fable is not what frontier resolves to)
+        # and "--unavailable opus" kills the walk's destination too. To exercise
+        # the edge with a LIVE destination the frontier base must be a non-opus
+        # frontier model: pin frontier to fable via config, then take fable down.
+        # The walk must then land on the THINKING tier's default and say so.
         with tempfile.TemporaryDirectory() as td:
+            bl = Path(td) / ".build-loop"
+            bl.mkdir()
+            (bl / "config.json").write_text(
+                json.dumps({"modelOverrides": {"frontier": "fable"}}),
+                encoding="utf-8",
+            )
             payload = self._resolve(td, "frontier", "fable")
-            self.assertEqual(payload["model"], "opus")  # thinking default
             self.assertEqual(payload["source"], "tier-fallback")
             self.assertEqual(payload["fallback_tier"], "thinking")
+            self.assertEqual(payload["fallback_path"], ["frontier", "thinking"])
+            self.assertEqual(payload["model"], "opus")  # thinking default
+            # Exactly one edge — the walk never reached code/pattern.
+            self.assertNotIn(payload["model"], {"sonnet", "haiku"})
 
     def test_invariant_frontier_never_resolves_below_thinking(self) -> None:
-        # HARD INVARIANT: even when BOTH the frontier default (fable) AND the
-        # thinking default (opus) are unavailable, a frontier (judgment) role
+        # HARD INVARIANT: even when BOTH the frontier default (opus) AND the
+        # frontier alternate (fable) are unavailable, a frontier (judgment) role
         # must NOT silently resolve to the code (sonnet) or pattern (haiku) tier.
+        # Post-2026-07-28 this is also the DEGENERATE case: opus is the thinking
+        # default too, so the walk stops at thinking holding a model that is
+        # itself declared down — by design ("never below thinking" outranks
+        # "always live"). The live dispatch path recovers in-tier instead; that
+        # is covered by test_dispatch_fallback.py (opus down -> fable).
         with tempfile.TemporaryDirectory() as td:
             payload = self._resolve(td, "frontier", "fable,opus")
             self.assertEqual(payload["fallback_tier"], "thinking")
+            self.assertEqual(payload["model"], "opus")  # thinking default, down
             self.assertNotEqual(payload["model"], "sonnet")  # never code tier
             self.assertNotEqual(payload["model"], "haiku")  # never pattern tier
             self.assertNotIn(payload.get("fallback_tier"), {"code", "pattern"})
@@ -422,7 +449,13 @@ class TierRankHelperTests(unittest.TestCase):
 
     def test_tier_of_model_resolves_registry_ids(self) -> None:
         self.assertEqual(self.mo.tier_of_model("fable"), "frontier")
-        self.assertEqual(self.mo.tier_of_model("opus"), "thinking")
+        # opus is registered in BOTH the frontier and thinking registries, and
+        # tier_of_model returns the FIRST (highest-capability) match. "frontier"
+        # is the correct and safe answer: this helper exists to feed
+        # is_below_floor, so ranking opus as frontier means a frontier/judgment
+        # role pinned to opus is never clamped as below its own floor. The
+        # inverse error (calling it "thinking") would be the dangerous one.
+        self.assertEqual(self.mo.tier_of_model("opus"), "frontier")
         self.assertEqual(self.mo.tier_of_model("sonnet"), "code")
         self.assertEqual(self.mo.tier_of_model("haiku"), "pattern")
 
@@ -492,9 +525,13 @@ class TwoAxisRoleTests(unittest.TestCase):
         self.mo = importlib.import_module("model_overrides")
 
     # --- Alias back-compat: legacy tokens resolve the SAME models ----------
-    def test_tier_defaults_derived_from_taxonomy_unchanged(self) -> None:
+    def test_tier_defaults_derived_from_taxonomy(self) -> None:
+        # Each legacy token's default is the FIRST preferred model for
+        # (generative_reasoning, its ladder rung). opus heads both T1 and T2
+        # since 2026-07-28, so frontier and thinking share a default; fable
+        # stays the second T1 choice and is still reachable via config/registry.
         self.assertEqual(self.mo.TIER_DEFAULTS, {
-            "frontier": "fable", "thinking": "opus",
+            "frontier": "opus", "thinking": "opus",
             "code": "sonnet", "pattern": "haiku",
         })
 
@@ -517,10 +554,14 @@ class TwoAxisRoleTests(unittest.TestCase):
                 segment="generative_reasoning", tier="frontier",
                 workdir=Path(td),
             )
-            # Host-neutral resolution uses the newer equal-rung seed.
-            self.assertEqual(r["model"], "gpt-5.6-sol")
+            # GR/T1 = [opus, fable, gpt-5.6-sol]. opus heads the cell by list
+            # order AND is the newest release (2026-07-25), so it wins under
+            # either key; the recency tiebreak is proved separately below on a
+            # cell where recency actually reorders.
+            self.assertEqual(r["model"], "opus")
             self.assertEqual(r["tier"], "T1")
             self.assertEqual(r["source"], "role-preferred")
+            self.assertEqual(r["released"], "2026-07-25")
 
     def test_resolve_role_accepts_ladder_tier_directly(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -539,17 +580,24 @@ class TwoAxisRoleTests(unittest.TestCase):
             self.assertEqual(r["model"], "gpt-5.5")
 
     def test_resolve_role_floor_inherited_for_generative(self) -> None:
-        # GR/T1 = [fable, Sol]; both down + the whole T1 cell exhausted -> the
-        # legacy ladder floor walk takes over and stops at thinking (opus),
-        # never below. Floor invariant preserved under the new ladder.
+        # GR/T1 = [opus, fable, Sol]. ALL THREE must be down for the cell to be
+        # exhausted — taking only fable+Sol down now leaves opus available and
+        # would resolve in-cell, never reaching the floor walk at all. With the
+        # cell exhausted the legacy ladder walk takes over, stops at thinking,
+        # and never descends to code/pattern.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
                 segment="generative_reasoning", tier="frontier",
-                workdir=Path(td), unavailable={"fable", "gpt-5.6-sol"},
+                workdir=Path(td),
+                unavailable={"opus", "fable", "gpt-5.6-sol"},
             )
-            self.assertEqual(r["model"], "opus")
+            self.assertEqual(r["source"], "tier-fallback")
+            self.assertEqual(r["fallback_tier"], "thinking")
             self.assertNotEqual(r["model"], "sonnet")
             self.assertNotEqual(r["model"], "haiku")
+            # Every T1 candidate was tried and skipped before the walk ran.
+            skipped = [s["model"] for s in r["resolution_path"] if s.get("skipped")]
+            self.assertEqual(set(skipped), {"opus", "fable", "gpt-5.6-sol"})
 
     def test_resolve_role_specialist_segment_unresolved_when_unavailable(self) -> None:
         # representation_retrieval is off-ladder (T-S only); if its sole model
@@ -574,23 +622,27 @@ class TwoAxisRoleTests(unittest.TestCase):
     # --- Recency tiebreak --------------------------------------------------
     def test_recency_breaks_tie_among_equal_rank(self) -> None:
         # Within a single (segment,tier) cell every entry shares the rung, so
-        # recency is a pure in-cell tiebreak. GR/T2 = [opus(2025-11),
-        # gpt-5.5(2026-02)]; with recency_tiebreak the newer gpt-5.5 is tried
-        # FIRST. With opus available, recency still prefers the newer model.
+        # recency is a pure in-cell tiebreak. Use GR/T3 = [sonnet(2026-06-01),
+        # gpt-5.6-terra(2026-07-09), gpt-5.4, gemini-2.5-pro]: recency must
+        # REORDER the cell (terra jumps ahead of the list-order head sonnet).
+        # T2 is no longer usable for this: opus now leads that cell by list
+        # order AND by date, so the flag would change nothing there.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
-                segment="generative_reasoning", tier="thinking",
+                segment="generative_reasoning", tier="code",
                 workdir=Path(td), recency_tiebreak=True,
             )
-            self.assertEqual(r["model"], "gpt-5.5")  # newer than opus
+            self.assertEqual(r["model"], "gpt-5.6-terra")  # newer than sonnet
 
     def test_no_recency_keeps_capability_order(self) -> None:
+        # Same cell as above with the flag off — the differential proves the
+        # flag is what moved the answer, not the cell's contents.
         with tempfile.TemporaryDirectory() as td:
             r = self.mo.resolve_role(
-                segment="generative_reasoning", tier="thinking",
+                segment="generative_reasoning", tier="code",
                 workdir=Path(td), recency_tiebreak=False,
             )
-            self.assertEqual(r["model"], "opus")  # list order preserved
+            self.assertEqual(r["model"], "sonnet")  # list order preserved
 
 
 if __name__ == "__main__":

@@ -122,9 +122,11 @@ class TaxonomyTests(unittest.TestCase):
             self.mt.preferred("generative_reasoning", "frontier"),
             self.mt.preferred("generative_reasoning", "T1"),
         )
+        # T1 roster order is capability rank: opus heads it since 2026-07-28,
+        # fable is retained as the second frontier choice.
         self.assertEqual(
             self.mt.preferred("generative_reasoning", "T1"),
-            ["fable", "gpt-5.6-sol"],
+            ["opus", "fable", "gpt-5.6-sol"],
         )
 
     def test_preferred_empty_cell_returns_list(self) -> None:
@@ -147,6 +149,9 @@ class TaxonomyTests(unittest.TestCase):
         self.assertIsNone(self.mt.model_meta(None))
 
     def test_released_dates_present_for_seeds(self) -> None:
+        # opus's date drives the recency tiebreak in every T1/T2 cell it sits
+        # in, so pin it explicitly rather than leaving it implicit.
+        self.assertEqual(self.mt.released("opus"), "2026-07-25")
         self.assertEqual(self.mt.released("fable"), "2025-11-01")
         self.assertEqual(self.mt.released("gpt-5.5"), "2026-02-01")
         self.assertEqual(self.mt.released("gpt-5.6-sol"), "2026-07-09")
@@ -173,10 +178,10 @@ class TaxonomyTests(unittest.TestCase):
         self.assertIn("gpt-5.6-luna", self.mt.preferred("governance_evaluation", "pattern"))
 
     def test_break_ties_by_recency_newer_first(self) -> None:
-        # gpt-5.5 (2026-02) is newer than opus (2025-11): recency puts it first
-        # when comparing the two as equal-rank candidates.
-        ordered = self.mt.break_ties_by_recency(["opus", "gpt-5.5"])
-        self.assertEqual(ordered[0], "gpt-5.5")
+        # Input order is deliberately oldest-first so a no-op sort would fail:
+        # fable (2025-11-01) < gpt-5.5 (2026-02-01) < opus (2026-07-25).
+        ordered = self.mt.break_ties_by_recency(["fable", "gpt-5.5", "opus"])
+        self.assertEqual(ordered, ["opus", "gpt-5.5", "fable"])
 
     def test_break_ties_unknown_date_sorts_last(self) -> None:
         ordered = self.mt.break_ties_by_recency(["no-date-model", "fable"])
@@ -374,7 +379,12 @@ class TaxonomyTests(unittest.TestCase):
     # user was actively routing work to (claude-opus-5) resolved to None --
     # indistinguishable from an invented one. These lock in the three arms.
     def test_unregistered_model_inherits_from_its_family(self) -> None:
-        meta = self.mt.model_meta("claude-opus-5")
+        # claude-opus-5 was the original repro but became a CURATED alias on
+        # 2026-07-28, so it no longer exercises inheritance (it now covers the
+        # curated arm below). Use the next unshipped version of the same family
+        # — the mechanism under test is "a new version of a known family must
+        # resolve", not any one id.
+        meta = self.mt.model_meta("claude-opus-6")
         self.assertIsNotNone(meta, "a new version of a known family must resolve")
         self.assertEqual(meta["inherited_from"], "opus")
         self.assertEqual(meta["status"], "inherited")
@@ -383,7 +393,10 @@ class TaxonomyTests(unittest.TestCase):
         self.assertEqual(meta["segment"], self.mt.model_meta("claude-opus-4-8")["segment"])
 
     def test_curated_rows_are_not_marked_inherited(self) -> None:
-        for mid in ("claude-opus-4-8", "claude-fable-5", "claude-sonnet-5"):
+        # claude-opus-5 is curated as of 2026-07-28 — an inherited row here
+        # would mean the alias silently dropped out of the registry.
+        for mid in ("claude-opus-5", "claude-opus-4-8",
+                    "claude-fable-5", "claude-sonnet-5"):
             meta = self.mt.model_meta(mid)
             self.assertIsNotNone(meta, mid)
             self.assertNotEqual(meta.get("status"), "inherited", mid)

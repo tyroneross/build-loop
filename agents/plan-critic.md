@@ -18,7 +18,7 @@ description: |
   user: "Run plan-critic on the proposed plan"
   assistant: "I'll dispatch plan-critic to surface scope-split overlaps, missing alternatives, and headline drift."
   </example>
-model: fable
+model: opus
 tier: frontier
 segment: governance_evaluation
 color: purple

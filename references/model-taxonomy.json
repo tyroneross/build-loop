@@ -224,6 +224,7 @@
         "mythos"
       ],
       "T1": [
+        "opus",
         "fable",
         "gpt-5.6-sol"
       ],
@@ -262,6 +263,7 @@
     },
     "governance_evaluation": {
       "T1": [
+        "opus",
         "fable",
         "gpt-5.6-sol"
       ],
@@ -344,17 +346,27 @@
     },
     "opus": {
       "provider": "anthropic",
-      "label": "Claude Opus 4.8",
+      "label": "Claude Opus 5",
       "segment": "agentic_execution",
-      "tier": "T2",
+      "tier": "T1",
       "tags": [
         "long-horizon-coding",
         "high-autonomy",
-        "long-context"
+        "long-context",
+        "adversarial-audit"
       ],
-      "released": "2025-11-01",
+      "released": "2026-07-25",
       "status": "default",
+      "supersedes": "claude-opus-4-8",
+      "context_window": 1000000,
+      "max_output": 128000,
+      "price_in_per_mtok": 5,
+      "price_out_per_mtok": 25,
+      "spec_source": "platform.claude.com/docs/en/about-claude/models/whats-new-opus-5 + /pricing (verified 2026-07-25); dispatch token confirmed by activation probe 2026-07-28 (model: opus -> claude-opus-5[1m])",
+      "_tier_note": "Promoted T2->T1 on 2026-07-28. Evidence: observations/2026-07-28-audit-bakeoff-fable-vs-opus5-vs-sonnet5.json — strict superset of the sitting T1 occupant (fable) in 3/3 adversarial-audit rounds, including reversing a defect fable had explicitly cleared. Scope limit: the evidence is verification-shaped (n=3, one repo, one task family, effort unpinned, not single-blind). It does NOT cover plan/spec authoring — see frontier_gate.py, which routes high-coupling planning back to fable until a spec-authoring bakeoff exists.",
       "aliases": [
+        "claude-opus-5",
+        "claude-opus-5[1m]",
         "claude-opus-4-8",
         "claude-opus-4-8-20251101",
         "claude-opus-4-8[1m]"
@@ -653,6 +665,7 @@
   "legacy_registry": {
     "_comment": "Back-compat VIEW for model_overrides.MODEL_REGISTRY. The legacy 4-token tier surface advertised a curated selectable-model list per tier (broader than a single capability rung — e.g. frontier accepted cross-vendor frontier-equivalents). These ordered id lists preserve that exact contract (--list-models, is_registered) while keeping ALL model ids in this one file. The precise per-(segment,tier) capability assignment lives in `models` + `preferred`; this is only the legacy advisory registry. First id per tier is the default.",
     "frontier": [
+      "opus",
       "fable",
       "gpt-5.6-sol",
       "gpt-5.5",
