@@ -129,6 +129,9 @@ def score_entry(
             score += 5
             reasons.append(f"intent:{tok}")
     cat = entry.get("category", "")
+    if cat in intent_tokens:
+        score += 2
+        reasons.append(f"intent-category:{cat}")
     if cat in primary:
         score += 3
         reasons.append(f"primary:{cat}")

@@ -170,6 +170,12 @@ CATEGORY_KEYWORDS = [
                       "acceptance_probe", "acceptance-probe", "acceptance probe",
                       "reference activation", "activation audit",
                       "reference_activation",
+                      # Review-closure and worktree-target gates plus shared
+                      # deterministic security scanners:
+                      "owed_verification", "owed verification",
+                      "security_checks_api", "security checks api",
+                      "security_common", "security common",
+                      "verify_worktree_target", "verify worktree target",
                       # Skill-routing guard (PreToolUse Skill + UserPromptSubmit
                       # hooks that route build tasks to build-loop rather than
                       # superpowers:brainstorming) — routing infrastructure:
@@ -182,7 +188,7 @@ CATEGORY_KEYWORDS = [
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
                       "deploy")),
     ("observability", ("observ", "tracing", "telemetry", "logging", "log",
-                       "cost-ledger", "cost ledger")),
+                       "cost-ledger", "cost ledger", "cost_rca", "cost rca")),
     ("memory",       ("memory", "decision", "recall", "knowledge", "episodic",
                       "semantic", "embedding", "embed_backend", "retrieval",
                       "backend health", "backend_health",
@@ -198,7 +204,8 @@ CATEGORY_KEYWORDS = [
                       "version_advisor")),
     ("ux-ui",        ("ux", "ui", "ibr", "design", "accessibility", "a11y",
                       "calm-precision", "mockup")),
-    ("optimization", ("optimize", "metric", "benchmark", "doe")),
+    ("optimization", ("optimize", "metric", "benchmark", "doe",
+                      "model_run_history", "model run history")),
 ]
 
 TRIGGER_VERBS = (
