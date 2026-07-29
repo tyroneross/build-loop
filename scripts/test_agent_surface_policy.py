@@ -79,6 +79,10 @@ class CodexSurfaceTests(unittest.TestCase):
             ],
         )
         self.assertEqual(read_name(CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "SKILL.md"), "build-loop")
+        self.assertEqual(
+            read_user_invocable(CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "SKILL.md"),
+            "true",
+        )
         internal = CODEX_ARTIFACT_DIR / "skills" / "build-loop" / "internal"
         self.assertTrue((internal / "repo-maintenance" / "INSTRUCTIONS.md").is_file())
         self.assertTrue((internal / "repo-closeout" / "INSTRUCTIONS.md").is_file())

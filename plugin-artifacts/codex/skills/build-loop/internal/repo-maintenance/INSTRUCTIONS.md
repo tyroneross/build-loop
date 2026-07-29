@@ -8,7 +8,7 @@ user-invocable: false
 
 Optimize the repository for the product's real boundaries, then keep it recoverable as worktrees, builds, generated state, and branches evolve. Treat closeout as one phase of maintenance, not the whole workflow.
 
-Resolve `REPO_MAINTENANCE_ROOT` to the directory containing this `SKILL.md` before running bundled scripts. Under Claude Code this is normally `${CLAUDE_PLUGIN_ROOT}/skills/repo-maintenance`; under Codex or another host, derive it from the loaded skill path.
+Resolve `REPO_MAINTENANCE_ROOT` to the directory containing this `INSTRUCTIONS.md` before running bundled scripts. In the packaged Codex artifact, derive it from this instruction file's path.
 
 ## Establish the product and repository contract
 

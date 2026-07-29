@@ -66,21 +66,21 @@ Direct language — clear verb, clear outcome (the leverage stack): fix clarity 
 | 5 | **Iterate** | Fix Review failures, loop back to Review (max 5x) | Updated scorecard |
 | 6 | **Learn** (mandatory) | Always runs after Review-G; emits a `## Learn` outcome line (accruing / deferred / full). Detects recurring patterns across runs (incl. retro enforce-candidates as a second signal source), auto-drafts experimental skills/agents with A/B tracking; promotion to `active/` still requires explicit `/build-loop:promote-experiment` | Experimental artifacts + synthesis |
 
-## Run Modes
+## Run Behavior
 
-These run parameters apply on any host — pass them on the invocation (`--flag`) or honor the equivalent intent when the user states it in prose. Default is autonomous, 2h budget.
+Build Loop has one invocation: a plain-language goal. The runtime derives execution behavior from that goal and repo state. Default is autonomous with a 2h budget.
 
-| Mode / flag | Effect |
+| Plain-language signal | Effect |
 |---|---|
-| default | Autonomous queue-drain loop: Phase 5 Iterate self-replenishes from `.build-loop/{ux-queue,issues,followup}/`, alignment-checks each item against intent, executes the aligned subset, batches commits. 2h wall-clock budget. |
-| `--long` (or goal keywords `overnight`, `long-running`, `large-scale`, `multi-day`) | Same loop, 8h budget. |
-| `--budget 30m \| 4h \| 30s` | Custom wall-clock budget; overrides `--long`. `budget_check.py` routes `continue \| checkin \| finalize_and_stop` at each iterate entry, commit, and phase boundary. |
-| `--autonomous=false` | Classic single pass — run Phases 1–6 once; queue items become `followup/` instead of being drained. |
-| `--resume <run-id \| latest>` | Re-enter a crashed/killed build mid-flight. Reuses the original `deadline_at` (a 2h budget that died at 1h59m does NOT get a fresh 2h — `resume_resolver.py` owns this). Reads existing `intent.md`/`plan.md`; jumps to remaining chunks. On a normal dispatch with an incomplete prior run detected, offer resume vs fresh before Phase 1. |
+| ordinary goal | Autonomous queue-drain loop: Phase 5 Iterate self-replenishes from `.build-loop/{ux-queue,issues,followup}/`, alignment-checks each item against intent, executes the aligned subset, batches commits. 2h wall-clock budget. |
+| asks for `overnight`, `long-running`, `large-scale`, or `multi-day` work | Same loop, 8h budget. |
+| names a duration such as `30 minutes` or `4 hours` | Custom wall-clock budget. `budget_check.py` routes `continue \| checkin \| finalize_and_stop` at each iterate entry, commit, and phase boundary. |
+| asks for one pass | Classic single pass — run Phases 1–6 once; queue items become `followup/` instead of being drained. |
+| asks to resume a named or latest run | Re-enter a crashed/killed build mid-flight. Reuse the original `deadline_at`; read existing `intent.md`/`plan.md`; jump to remaining chunks. On a normal dispatch with an incomplete prior run, offer resume versus fresh before Phase 1. |
 
 **Iteration caps:** classic = 5 per build; autonomous = 25 per build (3 same-verdict per item). Stop conditions: cap reached, budget exhausted, a drained item classifying `confirm`/`block`, 5 consecutive same-criterion failures, or an item whose intent anchor no longer resolves.
 
-**Per-commit mode** (self-recursive builds — when the working dir IS the runtime, e.g. editing build-loop itself): plan once, then run one orchestrator pass per commit so each commit reviews and lands cleanly before the next starts. Auto-on for self-recursive; force with `--per-commit` / `--no-per-commit`.
+**Per-commit mode** (self-recursive builds — when the working dir IS the runtime, e.g. editing build-loop itself): plan once, then run one orchestrator pass per commit so each commit reviews and lands cleanly before the next starts. It activates automatically for self-recursive work; an explicit plain-language request can select per-commit or single-orchestrator execution.
 
 **Budget-aware behavior is host-neutral** — without programmatic budget tracking, treat the budget as a soft wall-clock target: check in at ~50%, finalize before the deadline rather than starting new chunks.
 
@@ -90,7 +90,7 @@ The phase logic in this file is host-neutral, but several primitives it names ar
 
 | Claude primitive | Codex equivalent | How |
 |---|---|---|
-| `Agent(subagent_type="<name>", …)` | Codex worker, peer process, inline read, or unavailable-fallback | **Preferred:** spawn a Codex worker per `references/codex-subagents.md` (role mapping + permission gate) using `templates/codex-worker-prompt.md` as the prompt skeleton — only under explicit `--parallel` / delegation authorization. **No authorization:** keep the work in the lead session (inline), still writing the same MECE plan + ownership packet. **Cross-vendor verifier:** a reachable peer host via `codex exec <prompt>` or a rally-channel handoff. **None reachable:** record the role as not-run and have the dispatching parent owe it (see the verifier matrix below). |
+| `Agent(subagent_type="<name>", …)` | Codex worker, peer process, inline read, or unavailable-fallback | **Preferred:** spawn a Codex worker per `references/codex-subagents.md` (role mapping + permission gate) using `templates/codex-worker-prompt.md` as the prompt skeleton — only when the user explicitly authorizes delegation in plain language. **No authorization:** keep the work in the lead session (inline), still writing the same MECE plan + ownership packet. **Cross-vendor verifier:** a reachable peer host via `codex exec <prompt>` or a rally-channel handoff. **None reachable:** record the role as not-run and have the dispatching parent owe it (see the verifier matrix below). |
 | `Skill("<name>")` | Inline-read the skill | Read that skill's `SKILL.md` and follow it inline. Codex auto-discovers root `skills/*/SKILL.md`; for nested build-loop skills, read the file at its path. There is no Codex "invoke skill" call — the SKILL.md body is the instruction set. |
 | `AskUserQuestion` | Surface to user | Codex has no structured-choice tool. Print the question + 2–4 labeled options inline and wait for the reply; persist the answer as a DECISION record (see Post-Build steering-decision capture). For non-blocking/reversible choices, pick the default, label it `[ASSUMED: <reason>]`, and continue. |
 | `TaskCreate` / `TaskUpdate` / `TaskList` | Backlog files or inline list | Use the host-neutral backlog system (`scripts/backlog.py`, `.build-loop/backlog/`) for durable work items, or a plain inline checklist in the lead session for within-run tracking. Do not block on a task tool that does not exist. |
@@ -277,7 +277,7 @@ The `> 5` threshold matches the empirical inflection point measured in the synth
 
 **Prefer the Code tier** (the workhorse: Sonnet on Claude, GPT-5 Codex on Codex, Gemini 2.5 Flash on Gemini) for the bulk of work. Down-tier to **Pattern** (Haiku / GPT-5 Mini / Flash Lite) only for genuinely trivial mechanical/recognition tasks — pure pattern-match, no judgment, no gradient. When in doubt, use Code tier.
 
-**Thinking-tier subagents are allowed to accelerate complex subtasks** — cross-file reasoning, novel design, ambiguous spec, hard refactor. Thinking tier is not reserved for the top-level orchestrator. On Codex this maps to GPT-5 Thinking workers; spawn them only under the existing Codex permission gate (explicit `--parallel` / delegation authorization).
+**Thinking-tier subagents are allowed to accelerate complex subtasks** — cross-file reasoning, novel design, ambiguous spec, hard refactor. Thinking tier is not reserved for the top-level orchestrator. On Codex this maps to GPT-5 Thinking workers; spawn them only under the existing Codex permission gate (explicit plain-language delegation authorization).
 
 **Verify every subagent's output before accepting it.** The cheaper the tier, the stronger the check. This per-subagent verification is the safety net that makes dynamic (and occasionally cheaper) assignment safe. Verification ties to build-loop's existing surfaces: verify-scope / verify-landed (Phase 3 commit step), independent-auditor (Phase 4 Review-A), and the implementer return envelope (`status: blocked | partial` routes to Iterate before output is accepted). No subagent output is trusted unchecked.
 
@@ -342,9 +342,9 @@ Wire all three surfaces (`skills/build-loop/SKILL.md`, `agents/build-orchestrato
 
 - Dispatch parallel work for independent file groups
 - Each worker gets minimal context + integration contract (what interfaces to implement) + an intent packet explaining how the subtask fits the north star + a MECE ownership packet defining all seven fields: owned files, non-owned files, interface contracts, integration checkpoints, allowed tools, denied tools, and acceptance criteria (the testable conditions the returning envelope must satisfy — the verifier's per-chunk oracle)
-- If the host supports typed subagents, map read-only codebase questions to explorer-style agents and disjoint implementation slices to worker-style agents. If the host requires explicit user authorization for subagents, identify parallel-safe groups but execute locally unless the user asked for delegation, parallelization, workers, or a `--parallel` mode.
+- If the host supports typed subagents, map read-only codebase questions to explorer-style agents and disjoint implementation slices to worker-style agents. If the host requires explicit user authorization for subagents, identify parallel-safe groups but execute locally unless the user asked for delegation, parallelization, or workers.
 - **Single-entry routing (host-neutral):** every coding task enters through one build-loop invocation; the runtime auto-classifies intent (build / optimize / research / debug / test) and routes accordingly. The host does not pick a mode — classification is internal. This applies equally across coding hosts (Claude Code, Codex, Cursor, Gemini CLI, others).
-- **Subagent scaling (host-neutral):** when the host supports parallel delegation (e.g. Codex with `--parallel` authorization), dispatch up to `scripts/parallelism.py effective_max_implementers()` workers — machine-aware cap, default 8, ceiling 12 — decomposing work into the maximum number of independent MECE chunks. The permission gate still applies: workers only on explicit `--parallel` / delegation authorization. When parallel delegation is unavailable, execute sequentially without asking.
+- **Subagent scaling (host-neutral):** when the host supports parallel delegation and the user explicitly authorizes it in plain language, dispatch up to `scripts/parallelism.py effective_max_implementers()` workers — machine-aware cap, default 8, ceiling 12 — decomposing work into the maximum number of independent MECE chunks. When parallel delegation is unavailable or unauthorized, execute sequentially without asking.
 - Do not delegate ambiguous product decisions, final integration, destructive git operations, push/deploy confirmation, or tasks whose result blocks the immediate next lead-session step.
 - For UI work: follow established design system or sensible defaults (44px touch targets, 4.5:1 contrast). Every visible element must have meaning, working behavior, a clear user purpose, and a matching entry in the UI input/output contract.
 - Surface pre-existing issues separately from new work. If an issue impacts users and is local to the current build, plan and fix it automatically; if too large/risky, log user impact and defer.

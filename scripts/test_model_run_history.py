@@ -25,7 +25,20 @@ def write_turn(
     duration_ms: int,
     total_tokens: int,
     completed: bool = True,
+    before_prompt: tuple[str, ...] = (),
+    after_prompt: tuple[str, ...] = (),
 ) -> None:
+    def user_message(text: str) -> dict:
+        return {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+            },
+        }
+
     records = [
         {
             "type": "event_msg",
@@ -40,15 +53,9 @@ def write_turn(
                 "cwd": cwd,
             },
         },
-        {
-            "type": "response_item",
-            "payload": {
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": prompt}],
-                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
-            },
-        },
+        *(user_message(text) for text in before_prompt),
+        user_message(prompt),
+        *(user_message(text) for text in after_prompt),
         {
             "type": "response_item",
             "payload": {
@@ -206,8 +213,64 @@ class ModelRunHistoryTests(unittest.TestCase):
         self.assertEqual(cohort["evidence_level"], "directional_observational")
         self.assertEqual(self.report["evidence"]["quality_verdict"], "unsupported")
         self.assertEqual(
-            self.report["arms"]["sol-hi"]["metrics"]["turns_with_verification_signal"],
+            self.report["arms"]["sol-hi"]["metrics"]["verification_signal_turns"],
             1,
+        )
+        self.assertEqual(
+            self.report["arms"]["sol-hi"]["metrics"]["verification_signal_rate"],
+            1.0,
+        )
+
+    def test_injected_user_envelopes_do_not_replace_human_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            root = Path(tmp_raw)
+            log = root / "rollout.jsonl"
+            injected_context = (
+                "<recommended_plugins>\nplugin metadata\n</recommended_plugins>\n"
+                "<environment_context>host metadata</environment_context>"
+            )
+            injected_skill = (
+                "<skill>\n<name>build-loop:build-loop</name>\n"
+                "<path>/private/cache/SKILL.md</path>\nshared skill body\n</skill>"
+            )
+            write_turn(
+                log,
+                turn_id="sol",
+                model="gpt-5.6-sol",
+                effort="high",
+                prompt="Audit the parser before changing it.",
+                cwd="/private/repo",
+                duration_ms=1000,
+                total_tokens=1000,
+                before_prompt=(injected_context,),
+                after_prompt=(injected_skill,),
+            )
+            write_turn(
+                log,
+                turn_id="terra",
+                model="gpt-5.6-terra",
+                effort="xhigh",
+                prompt="Implement the approved parser change.",
+                cwd="/private/repo",
+                duration_ms=1000,
+                total_tokens=1000,
+                before_prompt=(injected_context,),
+                after_prompt=(injected_skill,),
+            )
+            turns = parse_jsonl(log, root)
+            report = build_report(
+                turns,
+                [
+                    ("sol-hi", ("gpt-5.6-sol", "high")),
+                    ("tera-xhi", ("gpt-5.6-terra", "xhigh")),
+                ],
+                max_candidates=10,
+            )
+
+        self.assertEqual(report["exact_repeat_candidate_count"], 0)
+        self.assertEqual(
+            {turn.turn_id: turn.task_class for turn in turns},
+            {"sol": "code_review", "terra": "code_change"},
         )
 
     def test_session_cumulative_tokens_are_not_reported_as_turn_usage(self) -> None:

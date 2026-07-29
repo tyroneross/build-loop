@@ -6,7 +6,7 @@ Use this adapter when Build Loop runs inside Codex. It translates Build Loop's h
 
 ## Core Rule
 
-Codex may use subagents only when the user explicitly authorizes delegation or parallel agent work. Examples: "use subagents", "parallelize this", "delegate", "spin up workers", or `/build-loop --parallel ...`.
+Codex may use subagents only when the user explicitly authorizes delegation or parallel agent work in plain language. Examples: "use subagents", "parallelize this", "delegate", or "spin up workers".
 
 If authorization is absent, keep the work local in the lead Codex session. Still write the same MECE plan and ownership packets, but do not spawn workers.
 

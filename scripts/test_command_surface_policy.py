@@ -15,6 +15,21 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMANDS_DIR = REPO_ROOT / "commands"
+PUBLIC_ROUTING_DOCS = (
+    REPO_ROOT / "AGENTS.md",
+    REPO_ROOT / "skills" / "build-loop" / "SKILL.md",
+    REPO_ROOT / "skills" / "build-loop" / "references" / "autonomous-and-per-commit-modes.md",
+    REPO_ROOT / "skills" / "build-loop" / "references" / "codex-subagents.md",
+)
+LEGACY_INVOCATION_FLAGS = (
+    "--long",
+    "--budget",
+    "--autonomous=false",
+    "--resume ",
+    "--per-commit",
+    "--no-per-commit",
+    "--parallel",
+)
 
 # The single human-facing command. If build-loop ever needs a second genuinely
 # human-only command, add it here WITH a comment justifying why plain-language
@@ -43,6 +58,12 @@ class CommandSurfaceTests(unittest.TestCase):
     def test_run_delegates_directly_to_the_build_loop_skill(self):
         text = (COMMANDS_DIR / "run.md").read_text(encoding="utf-8")
         self.assertIn("Load the `build-loop:build-loop` skill.", text)
+
+    def test_public_routing_uses_plain_language_instead_of_mode_flags(self):
+        for path in PUBLIC_ROUTING_DOCS:
+            text = path.read_text(encoding="utf-8")
+            for flag in LEGACY_INVOCATION_FLAGS:
+                self.assertNotIn(flag, text, f"{path}: advertises retired invocation flag {flag}")
 
 
 if __name__ == "__main__":

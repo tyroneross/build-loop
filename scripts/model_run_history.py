@@ -40,6 +40,14 @@ TASK_RULES = (
     ("scheduling", re.compile(r"\b(calendar|schedule|meeting|availability)\b", re.IGNORECASE)),
     ("document", re.compile(r"\b(document|report|spreadsheet|slides|pdf)\b", re.IGNORECASE)),
 )
+INJECTED_USER_PREFIXES = (
+    "<app-context>",
+    "<environment_context>",
+    "<recommended_plugins>",
+    "<skill>",
+    "<turn_aborted>",
+    "# AGENTS.md instructions for ",
+)
 
 
 @dataclass
@@ -87,6 +95,17 @@ def classify_task(text: str) -> str:
         if pattern.search(normalized):
             return name
     return "other" if normalized else "unknown"
+
+
+def is_human_prompt(text: str) -> bool:
+    """Reject known host-injected user-role envelopes.
+
+    Codex rollout JSONL records plugin suggestions, environment context, and
+    loaded skill bodies as ``role: user`` messages in the same turn as the
+    human request. They are execution context, not benchmark prompts.
+    """
+    stripped = text.lstrip()
+    return bool(stripped) and not stripped.startswith(INJECTED_USER_PREFIXES)
 
 
 def message_text(payload: dict[str, Any]) -> str:
@@ -185,8 +204,12 @@ def apply_response_item(
     item_type = payload.get("type")
     if item_type == "message" and payload.get("role") == "user":
         text = message_text(payload)
-        turn.prompt_hash = prompt_hash(text)
-        turn.task_class = classify_task(text)
+        # The first non-injected user-role message is the human request. Later
+        # user-role messages are commonly loaded skill bodies; never let them
+        # overwrite the task fingerprint.
+        if turn.prompt_hash is None and is_human_prompt(text):
+            turn.prompt_hash = prompt_hash(text)
+            turn.task_class = classify_task(text)
         return
     if item_type not in {"custom_tool_call", "function_call"}:
         return
@@ -256,6 +279,7 @@ def median(values: Iterable[int | None]) -> int | float | None:
 
 def summarize_turns(turns: list[Turn]) -> dict[str, Any]:
     completed = sum(turn.completed for turn in turns)
+    verification_signal_turns = sum(turn.verification_signals > 0 for turn in turns)
     token_keys = (
         "total_tokens",
         "input_tokens",
@@ -267,7 +291,10 @@ def summarize_turns(turns: list[Turn]) -> dict[str, Any]:
         "turns": len(turns),
         "completed_turns": completed,
         "completion_rate": round(completed / len(turns), 4) if turns else None,
-        "turns_with_verification_signal": sum(turn.verification_signals > 0 for turn in turns),
+        "verification_signal_turns": verification_signal_turns,
+        "verification_signal_rate": (
+            round(verification_signal_turns / len(turns), 4) if turns else None
+        ),
         "turns_with_token_usage": sum(bool(turn.tokens) for turn in turns),
         "median_duration_ms": median(turn.duration_ms for turn in turns),
         "median_time_to_first_token_ms": median(turn.time_to_first_token_ms for turn in turns),

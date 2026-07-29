@@ -11,6 +11,10 @@ Codex exposes one public skill:
 - `build-loop` — main workflow and router for build, fix, debug, optimize,
   research, knowledge capture, handoff, and plugin-test work
 
+The generated marketplace artifact sets this one skill to
+`user-invocable: true`. Every packaged helper remains a non-discoverable
+`INSTRUCTIONS.md` resource below it.
+
 Claude Code exposes one human-facing command: `/build-loop:run`. Every
 `skills/*/SKILL.md` entry sets `user-invocable: false`; the command and the
 automatic router load the Build Loop skill and select helpers from intent.

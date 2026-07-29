@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,25 @@ class CodexPluginArtifactTests(unittest.TestCase):
             self.assertFalse((internal / "repo-maintenance" / "scripts" / "test_audit_repo_maintenance.py").exists())
             self.assertTrue((internal / "repo-closeout" / "INSTRUCTIONS.md").is_file())
             self.assertFalse((internal / "repo-closeout" / "scripts").exists())
+            self.assertFalse((internal / "repo-maintenance" / "agents").exists())
+            self.assertFalse((internal / "repo-closeout" / "agents").exists())
+            public_text = (target / "skills" / "build-loop" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("user-invocable: true", public_text)
+            self.assertNotRegex(
+                "\n".join(
+                    path.read_text(encoding="utf-8", errors="ignore")
+                    for path in (target / "skills" / "build-loop").rglob("*")
+                    if path.is_file()
+                ),
+                re.compile(r"\$?build-loop:repo-(?:maintenance|closeout)"),
+            )
+            maintenance_text = (
+                internal / "repo-maintenance" / "INSTRUCTIONS.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("containing this `INSTRUCTIONS.md`", maintenance_text)
+            self.assertNotIn("${CLAUDE_PLUGIN_ROOT}/skills/repo-maintenance", maintenance_text)
 
     def test_checked_in_artifact_includes_plugin_icon(self) -> None:
         icon = ARTIFACT / ICON_REL

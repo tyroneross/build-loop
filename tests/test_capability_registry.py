@@ -136,6 +136,21 @@ def test_no_unknown_category(registry: dict) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("name", "category"),
+    [
+        ("cost_rca", "observability"),
+        ("model_run_history", "optimization"),
+        ("owed_verification", "validation"),
+        ("security_checks_api", "validation"),
+        ("security_common", "validation"),
+        ("verify_worktree_target", "validation"),
+    ],
+)
+def test_system_scripts_keep_explicit_routing_categories(name: str, category: str) -> None:
+    assert bcr._classify_category(name, "", f"scripts/{name}.py") == category
+
+
 def test_registry_cli_writes_to_default_path(tmp_path: Path) -> None:
     """Smoke-test the CLI on a synthetic minimal repo."""
     # Synthesize a tiny repo with one of each kind.
@@ -242,6 +257,24 @@ def test_shortlist_stop_words_dont_pollute(real_registry: dict) -> None:
         assert all(not reason.startswith("intent:") for reason in r["reasons"]), (
             f"stop word leaked through to {r['name']}: {r['reasons']}"
         )
+
+
+def test_shortlist_scores_an_exact_intent_category_match() -> None:
+    entry = {
+        "name": "opaque-surface",
+        "description": "",
+        "triggers": [],
+        "category": "memory",
+        "tier": "n/a",
+    }
+    score, reasons = cs.score_entry(
+        entry,
+        intent_tokens=["memory"],
+        primary=[],
+        secondary=[],
+    )
+    assert score == 2
+    assert reasons == ["intent-category:memory"]
 
 
 def test_shortlist_cli_smoke() -> None:

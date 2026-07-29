@@ -8,6 +8,10 @@ user-invocable: false
 
 Run a fair, evidence-based competition where several models each solve the *same* change end-to-end, then merge the best result. One orchestrator (this session) coordinates; contestants are single agents (measure the model, not a multi-agent loop). Repeat per change, accumulating merges on one experiment branch.
 
+For candidate discovery from prior Codex runs, read
+`../../references/model-history-analysis.md`. History only selects candidates;
+the controlled protocol below supplies the quality evidence.
+
 ## Validation contract (define BEFORE any dispatch)
 
 Fix the grading before running — a metric invented after seeing outputs bends to them.

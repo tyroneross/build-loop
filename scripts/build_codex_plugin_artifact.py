@@ -28,6 +28,7 @@ TOP_LEVEL_FILES = ("AGENTS.md", "README.md", "LICENSE")
 ASSET_FILES = (Path("assets") / "build-loop-plugin-icon.png",)
 PUBLIC_SKILLS = ("build-loop",)
 INTERNAL_SKILLS = ("repo-maintenance", "repo-closeout")
+INTERNAL_SKILL_TOKEN_RE = re.compile(r"\$?build-loop:repo-(?:maintenance|closeout)")
 
 # Bundle markdown points readers at ``references/<file>.md`` (root-relative).
 # The Claude source resolves that logical namespace across the repo's top-level
@@ -225,12 +226,44 @@ def copy_internal_skill(source: Path, target: Path) -> None:
     if not skill_path.is_file():
         raise ArtifactError(f"internal helper missing SKILL.md: {source}")
     skill_path.replace(instruction_path)
+    # Agent picker metadata is inert for a non-discoverable instruction
+    # resource and its default prompts retain dead qualified-skill tokens.
+    shutil.rmtree(target / "agents", ignore_errors=True)
+    text = instruction_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "the directory containing this `SKILL.md`",
+        "the directory containing this `INSTRUCTIONS.md`",
+    )
+    text = text.replace(
+        "Under Claude Code this is normally `${CLAUDE_PLUGIN_ROOT}/skills/repo-maintenance`; "
+        "under Codex or another host, derive it from the loaded skill path.",
+        "In the packaged Codex artifact, derive it from this instruction file's path.",
+    )
     if target.name == "repo-closeout":
-        text = instruction_path.read_text(encoding="utf-8")
-        instruction_path.write_text(
-            text.replace("../repo-maintenance/SKILL.md", "../repo-maintenance/INSTRUCTIONS.md"),
-            encoding="utf-8",
-        )
+        text = text.replace("../repo-maintenance/SKILL.md", "../repo-maintenance/INSTRUCTIONS.md")
+    instruction_path.write_text(text, encoding="utf-8")
+
+
+def adapt_public_skill_for_codex(target_skill: Path) -> None:
+    """Make the one shipped skill invocable and route removed helpers by path."""
+    text = target_skill.read_text(encoding="utf-8")
+    if "user-invocable: false" not in text:
+        raise ArtifactError(f"public skill missing internal source marker: {target_skill}")
+    text = text.replace("user-invocable: false", "user-invocable: true", 1)
+    text, replacements = re.subn(
+        r"^- `build-loop:repo-maintenance` — .*?$",
+        (
+            "- **Repository maintenance / closeout** — read "
+            "`internal/repo-maintenance/INSTRUCTIONS.md`; the compatibility path is "
+            "`internal/repo-closeout/INSTRUCTIONS.md`."
+        ),
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if replacements != 1:
+        raise ArtifactError("public skill did not contain the expected repository-helper route")
+    target_skill.write_text(text, encoding="utf-8")
 
 
 def append_internal_routes(target_skill: Path) -> None:
@@ -249,6 +282,36 @@ def skill_files(root: Path) -> list[Path]:
     return sorted(root.rglob("SKILL.md"))
 
 
+def validate_skill_surface(target: Path, skills_root: Path) -> None:
+    rel_files = [str(path.relative_to(target)) for path in skill_files(skills_root)]
+    expected = [f"skills/{name}/SKILL.md" for name in PUBLIC_SKILLS]
+    if rel_files != expected:
+        raise ArtifactError(f"artifact public skill set differs; expected={expected}, got={rel_files}")
+
+    internal_root = skills_root / "build-loop" / "internal"
+    missing = [
+        internal_root / name / "INSTRUCTIONS.md"
+        for name in INTERNAL_SKILLS
+        if not (internal_root / name / "INSTRUCTIONS.md").is_file()
+    ]
+    if missing:
+        raise ArtifactError(f"artifact missing internal helper instructions: {missing[0]}")
+
+    public_text = (skills_root / "build-loop" / "SKILL.md").read_text(encoding="utf-8")
+    if "user-invocable: true" not in public_text:
+        raise ArtifactError("artifact's single public skill must be user-invocable")
+    dangling = next(
+        (
+            path
+            for path in iter_files(skills_root / "build-loop")
+            if INTERNAL_SKILL_TOKEN_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
+        ),
+        None,
+    )
+    if dangling:
+        raise ArtifactError(f"artifact contains dangling internal skill token: {dangling}")
+
+
 def validate_artifact(target: Path) -> None:
     manifest_path = target / ".codex-plugin" / "plugin.json"
     skills_root = target / "skills"
@@ -258,20 +321,11 @@ def validate_artifact(target: Path) -> None:
     if manifest.get("skills") != "./skills":
         raise ArtifactError("artifact Codex manifest must use skills=./skills")
 
-    files = skill_files(skills_root)
-    rel_files = [str(path.relative_to(target)) for path in files]
-    expected = [f"skills/{name}/SKILL.md" for name in PUBLIC_SKILLS]
-    if rel_files != expected:
-        raise ArtifactError(f"artifact public skill set differs; expected={expected}, got={rel_files}")
+    validate_skill_surface(target, skills_root)
 
-    for name in INTERNAL_SKILLS:
-        instructions = skills_root / "build-loop" / "internal" / name / "INSTRUCTIONS.md"
-        if not instructions.is_file():
-            raise ArtifactError(f"artifact missing internal helper instructions: {instructions}")
-
-    for rel_path in ASSET_FILES:
-        if not (target / rel_path).is_file():
-            raise ArtifactError(f"artifact missing asset: {rel_path}")
+    missing_asset = next((path for path in ASSET_FILES if not (target / path).is_file()), None)
+    if missing_asset:
+        raise ArtifactError(f"artifact missing asset: {missing_asset}")
 
     check_reference_pointers(target)
 
@@ -293,6 +347,7 @@ def build_artifact(source: Path, target: Path) -> None:
             copy_file(source / rel_path, tmp / rel_path)
         for name in PUBLIC_SKILLS:
             copy_tree(source / "skills" / name, tmp / "skills" / name)
+        adapt_public_skill_for_codex(tmp / "skills" / "build-loop" / "SKILL.md")
         internal_root = tmp / "skills" / "build-loop" / "internal"
         for name in INTERNAL_SKILLS:
             copy_internal_skill(source / "skills" / name, internal_root / name)

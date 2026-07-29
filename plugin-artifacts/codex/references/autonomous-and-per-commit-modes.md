@@ -9,7 +9,7 @@ each; the full detail lives here and loads on demand.
 
 ## Autonomous Mode (Queue-Drain Loop)
 
-Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains its own `ux-queue/` + `issues/` + `proposals/`, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. Default since this mode shipped (`--autonomous=false` opts back to classic one-pass).
+Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains its own `ux-queue/` + `issues/` + `proposals/`, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. It is the default; a plain-language request for one pass selects classic execution.
 
 **End-of-run backlog/issues drain — SHIPPED DEFAULT 2026-06-04**: every run now auto-drains `.build-loop/issues/` then `.build-loop/backlog/` at end-of-thread without asking. Reversible per-repo via `.build-loop/config.json`:
 
@@ -19,29 +19,27 @@ Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that
 
 `PRODUCTION`/`DECISION`-classified items still surface (not auto-executed). The continuation runs the same alignment-checker + scope-auditor + independent-auditor wiring as the in-run iterate loop. Stop conditions: iterate-cap (25 autonomous / 5 classic), budget exhausted, PRODUCTION encountered, 5 consecutive iterate failures, explicit user pause. Surfaced in the run report's `## Queue continuation` section.
 
-### Flag surface
+### Plain-language behavior
 
-| Invocation | Effect |
+| Goal wording | Effect |
 |---|---|
-| `/build-loop:run "goal text"` | default mode, 2h budget, autonomous=true |
-| `/build-loop:run --long "goal text"` | long mode, 8h budget |
-| `/build-loop:run --budget 4h "goal text"` | custom budget (overrides `--long`) |
-| `/build-loop:run --budget 30m "goal text"` | accepts `30s`, `30m`, `4h`, or bare integer seconds |
-| `/build-loop:run --autonomous=false "goal text"` | classic single-pass; queue items become `followup/` |
-| `/build-loop:run "overnight refactor of auth ..."` | keyword `overnight` → long mode, 8h |
+| ordinary goal | default mode, 2h budget, autonomous=true |
+| asks for an overnight or long-running build | long mode, 8h budget |
+| names a duration such as 30 minutes or 4 hours | custom budget |
+| asks for one pass | classic single-pass; queue items become `followup/` |
 
-**Flag precedence (strict, top wins):**
+**Intent precedence (strict, top wins):**
 
-1. `--budget <duration>` — explicit duration always wins; mode tagged `custom`.
-2. `--long` — sets mode `long`, budget 8h.
-3. Keyword detection in goal text — only when `--long` not explicitly set.
+1. An explicit duration wins; mode is tagged `custom`.
+2. A request for one pass disables queue drain while retaining the requested duration.
+3. Long-running keyword detection sets mode `long`, budget 8h.
 4. Default — mode `default`, budget 2h, autonomous=true.
 
-`--autonomous=false` is orthogonal: it can combine with any budget flag but disables the queue-drain loop entirely. With autonomous off, `--budget` still tracks wall-clock but the orchestrator runs classic Phase 1–6 once and reports.
+A one-pass request is orthogonal to duration: budget tracking remains active, but the orchestrator runs classic Phase 1–6 once and reports.
 
 ### Keyword fallback
 
-Case-insensitive whole-word match against the goal text (or `intent.update_intent`). Detection runs ONLY when `--long` is not explicit on the command line. The flag always wins over keyword inference.
+Use a case-insensitive whole-word match against the goal text (or `intent.update_intent`). An explicit duration takes precedence over keyword inference.
 
 | Keyword | Example phrasings |
 |---|---|
@@ -70,7 +68,7 @@ The orchestrator writes `state.execution.budget` at autonomous-mode start:
 
 `scripts/budget_check.py` reads this block at every iterate-loop entry, every commit, and every phase boundary, returning a routing envelope (`continue | checkin | finalize_and_stop`). The script is informational — exit 0 always; sub-5ms compute.
 
-**Resume contract**: when a budget block exists and the run resumes via `--resume <run_id>`, the orchestrator MUST reuse the original `deadline_at`. A 2h budget that crashed at 1h59m does NOT get a fresh 2h. `scripts/resume_resolver.py._resolve_budget_on_resume()` is the single source of truth for this rule and surfaces the preserved budget under `budget_resume.preserve_deadline: true`.
+**Resume contract**: when a budget block exists and the user asks to resume a run, the orchestrator MUST reuse the original `deadline_at`. A 2h budget that crashed at 1h59m does NOT get a fresh 2h. `scripts/resume_resolver.py._resolve_budget_on_resume()` is the single source of truth for this rule and surfaces the preserved budget under `budget_resume.preserve_deadline: true`.
 
 ### Iteration caps
 
@@ -84,7 +82,7 @@ The orchestrator writes `state.execution.budget` at autonomous-mode start:
 
 ### Question timeout (autonomous auto-decide)
 
-In autonomous / `--long` mode a question that would otherwise block on the human auto-resolves if unanswered within a window, so an unattended run never stalls. When the orchestrator surfaces such a question it states a **recommended default** + a deadline; `scripts/question_timeout.py` is consulted (e.g. on a `ScheduleWakeup` resume) and returns `answered | take_default | wait`. On `take_default` the orchestrator takes the recommended option, records it to `state.execution.autonomousDefaults[]` + `auto-decision-capture`, continues, and lists every auto-decided question in the end-of-run readback for override (prefer the reversible option when deciding).
+In autonomous long-running mode a question that would otherwise block on the human auto-resolves if unanswered within a window, so an unattended run never stalls. When the orchestrator surfaces such a question it states a **recommended default** + a deadline; `scripts/question_timeout.py` is consulted (e.g. on a `ScheduleWakeup` resume) and returns `answered | take_default | wait`. On `take_default` the orchestrator takes the recommended option, records it to `state.execution.autonomousDefaults[]` + `auto-decision-capture`, continues, and lists every auto-decided question in the end-of-run readback for override (prefer the reversible option when deciding).
 
 **Never auto-resolves — waits indefinitely:** production push, destructive/irreversible delete, and anything the autonomy gate verdicts `confirm`/`block` (gates #1–#2 in `agents/build-orchestrator.md`). Only reversible / `user_impact: major` decisions (gate #3) and steering clarifications time out — the single production gate is preserved.
 
@@ -96,7 +94,7 @@ Phase A (current ship) wires queue drain + alignment-check + time budget. **Push
 
 ## Per-Commit Mode (Self-Recursive Builds)
 
-Per-commit mode splits a multi-commit build into one independent orchestrator dispatch per commit, so each commit reviews and lands cleanly before the next one starts. It activates automatically when the working directory IS the runtime — that is, when the user is editing the build-loop plugin itself (or any plugin whose runtime symlink points back to the working tree). It can also be explicitly opted into or out of via skill arguments.
+Per-commit mode splits a multi-commit build into one independent orchestrator dispatch per commit, so each commit reviews and lands cleanly before the next one starts. It activates automatically when the working directory IS the runtime — that is, when the user is editing the build-loop plugin itself (or any plugin whose runtime symlink points back to the working tree). The user can also select per-commit or single-orchestrator execution in plain language.
 
 ### Detection
 
@@ -104,14 +102,14 @@ Phase 1 Assess writes `selfRecursive.enabled: true|false` to `.build-loop/state.
 
 ### Mode Resolution
 
-| Skill arg | `selfRecursive` | Resulting mode |
+| Goal or repo signal | `selfRecursive` | Resulting mode |
 |---|---|---|
-| `--per-commit` (explicit) | either | per-commit |
-| `--no-per-commit` (explicit) | either | single-orchestrator |
-| (none) | true | per-commit (default for self-recursive) |
-| (none) | false | single-orchestrator (today's behavior) |
+| asks to process each commit separately | either | per-commit |
+| asks for one orchestrator | either | single-orchestrator |
+| no explicit preference | true | per-commit (default for self-recursive) |
+| no explicit preference | false | single-orchestrator |
 
-Passing both `--per-commit` and `--no-per-commit` is a user error — fail loud with a one-line message naming the conflict and stop before any dispatch.
+Conflicting plain-language requests are a user error — fail loud with a one-line message naming the conflict and stop before any dispatch.
 
 ### Dispatch Contract (Per-Commit Mode)
 
@@ -137,7 +135,7 @@ Passing both `--per-commit` and `--no-per-commit` is a user error — fail loud 
 
 2. **Per-commit orchestrator dispatch.** For each commit in the plan (respecting `depends_on`), the skill body dispatches a fresh `Agent(subagent_type="build-loop:build-orchestrator", ...)` carrying ONLY that commit's packet plus a `PER_COMMIT_DISPATCH: { commit_id, run_id, prior_commit_hashes }` prompt prefix. Each dispatched orchestrator runs Phase 3 Execute + Phase 4 Review for ITS commit only, then commits and returns. The dispatched orchestrator's behavior on the prefix is documented in `agents/build-orchestrator.md` §0a.
 
-3. **Aggregate.** The skill body collects each orchestrator's return envelope and writes a final report combining all commits' results. On partial failure (commit N fails), do NOT dispatch downstream commits; retain `.build-loop/per-commit-plan.json` so a subsequent `/build-loop:run --resume` invocation can pick up where it stopped. **Parent-dispatch contract (GAP-1 — now machine-checkable, not prose):** the dispatcher (this skill body) HAS the Agent tool, so it is the parent that owes the audit. A nested per-commit orchestrator that could not run the auditor writes an **owed-verification manifest** (`.build-loop/owed-verification.json`, via `scripts/owed_verification.py write`) at its Review Sub-step A and flips `state.json.review_incomplete = true`. The dispatcher MUST — before declaring the run review-complete — resolve every owed manifest:
+3. **Aggregate.** The skill body collects each orchestrator's return envelope and writes a final report combining all commits' results. On partial failure (commit N fails), do NOT dispatch downstream commits; retain `.build-loop/per-commit-plan.json` so a subsequent plain-language resume request can pick up where it stopped. **Parent-dispatch contract (GAP-1 — now machine-checkable, not prose):** the dispatcher (this skill body) HAS the Agent tool, so it is the parent that owes the audit. A nested per-commit orchestrator that could not run the auditor writes an **owed-verification manifest** (`.build-loop/owed-verification.json`, via `scripts/owed_verification.py write`) at its Review Sub-step A and flips `state.json.review_incomplete = true`. The dispatcher MUST — before declaring the run review-complete — resolve every owed manifest:
 
 1. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/owed_verification.py check --workdir "$PWD" --json`. Exit 1 (`status: incomplete`) means verifiers are still owed; exit 0 (`complete`/`absent`) means nothing outstanding.
 2. For each verifier in the manifest's `owed[]`, dispatch it using the manifest's `dispatch_commands[verifier]` (e.g. `Agent(subagent_type="build-loop:independent-auditor")` on that commit's diff range), append the verdict to `.build-loop/judge-decisions.json`, then `owed_verification.py clear --verifier <name> --workdir "$PWD"`.
@@ -155,7 +153,7 @@ The per-commit dispatcher tracks its own progress under a `perCommit` block alon
 {
   "perCommit": {
     "enabled": true,
-    "mode_source": "self_recursive_default|explicit_flag|opt_out",
+    "mode_source": "self_recursive_default|explicit_intent|opt_out",
     "plan_path": ".build-loop/per-commit-plan.json",
     "completed": [{"commit_id": "c1", "hash": "abc123", "completed_at": "..."}],
     "in_flight": "c2",

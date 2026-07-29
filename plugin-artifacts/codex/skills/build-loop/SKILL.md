@@ -1,7 +1,7 @@
 ---
 name: build-loop
 description: "Orchestrated build loop for multi-step code work. TRIGGER on verb language ('build', 'implement', 'create', 'add', 'ship', 'wire up', 'integrate', 'refactor', 'migrate', 'rewrite', 'replace') OR symptom language ('fix', 'broken', 'doesn't work', 'isn't loading', 'not displaying', 'missing', 'should show', 'needs to', 'make it', 'show this differently') OR any task touching 2+ files, adding/removing an endpoint, crossing an architectural boundary, or attached screenshots of a bug. SKIP one-line edits, pure Q&A, conversational clarifications, status checks, and trivial typos/renames."
-user-invocable: false
+user-invocable: true
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -47,10 +47,10 @@ Values above 12 are clamped. Values above `cpu_count−2` are clamped to `cpu_co
 
 ## Autonomous Mode + Per-Commit Mode
 
-Both are conditional modes — their flag tables, budget/iteration caps, question-timeout rules, self-recursive detection, and the per-commit dispatch contract (incl. the GAP-1 parent-dispatch audit + E3 Learn/retro contract) load on demand from `references/autonomous-and-per-commit-modes.md`. Read it when:
+Both are conditional modes — their budget/iteration caps, question-timeout rules, self-recursive detection, and the per-commit dispatch contract (incl. the GAP-1 parent-dispatch audit + E3 Learn/retro contract) load on demand from `references/autonomous-and-per-commit-modes.md`. Read it when:
 
-- the invocation carries `--long` / `--budget` / `--autonomous=false`, or the goal text matches a long-running keyword (`overnight`, `large-scale`, `multi-day`, …) → **Autonomous Mode** detail;
-- `state.json.selfRecursive.enabled` is true, or the invocation carries `--per-commit` / `--no-per-commit` → **Per-Commit Mode** detail.
+- the goal asks for a long-running or time-bounded run (`overnight`, `large-scale`, `for 30 minutes`, …), or explicitly asks for one pass → **Autonomous Mode** detail;
+- `state.json.selfRecursive.enabled` is true, or the goal explicitly asks to process each commit separately or use one orchestrator → **Per-Commit Mode** detail.
 
 Default behavior with none of those signals: classic single-pass Phase 1–6, 2h budget, autonomous queue-drain on. The end-of-run `issues/` then `backlog/` drain is a SHIPPED DEFAULT (2026-06-04), reversible per-repo via `.build-loop/config.json` `sessionPrefs.continueFromQueues: "never"`.
 
@@ -139,7 +139,7 @@ their brief explicitly hands them a bounded implementation task.
 | Codex | `skills/*/SKILL.md`, `AGENTS.md`, templates | Use `references/codex-subagents.md` and `templates/codex-worker-prompt.md` when the user explicitly authorizes subagents or parallel delegation. |
 | Other coding tools | `AGENTS.md` | Follow the same phases and ownership packets with the host's available delegation primitives. |
 
-**Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation/parallel agent work or uses a command flag such as `--parallel`. Without that signal, keep execution local while preserving the MECE plan.
+**Codex permission gate**: generic Build Loop wording such as "parallel-safe groups" is not by itself authorization to spawn Codex subagents. In Codex, spawn workers only when the user explicitly asks for delegation or parallel agent work in plain language. Without that signal, keep execution local while preserving the MECE plan.
 
 **Native agent-rally capabilities**: build-loop vendors `skills/agent-rally-point/SKILL.md` and `skills/agent-rally-watcher/SKILL.md` as embedded mini-plugin skills. Use those skill entrypoints for Rally Point substrate or watcher work before reaching for the standalone repos. The grouped extraction contract is `scripts/rally_point/plugin_boundary.json`; validate it with `python3 scripts/agent_rally.py boundary --repo "$PWD" --check --json`.
 
@@ -256,20 +256,20 @@ Append-only memory contract: (1) steering answers from `AskUserQuestion` append 
 
 **Load `skills/build-loop/references/memory.md`** for the full routing rule, write timing, read timing, and memory type taxonomy.
 
-## Resume Protocol (`--resume` argument)
+## Resume Protocol
 
-`/build-loop:run` accepts an optional `--resume <run-id-or-latest>` argument that re-enters a previous build mid-flight (after a 529, OOM, or kill -9 left state.json with `phase != "report"`). The skill body parses the argument; the build-orchestrator agent receives a `RESUME_MODE:` prompt prefix that branches into §0 Resume mode. **Frontmatter is not the parsing layer** — the skill body is.
+Plain-language requests such as "resume the latest Build Loop run" or "resume run X" re-enter a previous build mid-flight after a 529, OOM, or kill -9 left `state.json` with `phase != "report"`. The skill body resolves the requested run; the build-orchestrator agent receives a `RESUME_MODE:` prompt prefix that branches into §0 Resume mode.
 
-**Parsing rule**: scan the argument string for the literal token `--resume`. The next whitespace-delimited token is the run-id (or `latest`). Anything else is part of the goal text.
+**Parsing rule**: detect explicit resume intent in the plain-language goal. Extract a run id when the user names one; otherwise use `latest`.
 
-**On `--resume <run-id>` or `--resume latest`** — BEFORE Phase 1 Assess, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh"`. On `resume`:
+**On explicit resume intent** — BEFORE Phase 1 Assess, run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resume_resolver.py --workdir "$PWD" --resume-arg "<run-id-or-latest>" --staleness-minutes 5`. Returns `decision: "resume" | "abort" | "fresh"`. On `resume`:
 
 1. Read `.build-loop/intent.md` and `.build-loop/plan.md` (already on disk — DO NOT re-derive).
 2. Dispatch build-orchestrator with prefix: `RESUME_MODE: run_id=<id>; remaining_chunks=<json>; iterate_attempt=<n>; concurrent_modifications=<json>`
 3. Agent §0 handles the rest — skips Phase 1+2, jumps to Phase 3 on `remaining_chunks` only.
 
-**On NO `--resume` (normal dispatch)** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
-> "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume with `/build-loop:run --resume X` or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
+**On a normal goal** — BEFORE Phase 1 step 1, run the same resolver with `--resume-arg ""`. If it returns `decision: "prompt_user"`, surface to the user verbatim:
+> "Incomplete build detected (run_id=X, last heartbeat N min ago, M of K chunks complete). Resume this build or start fresh? Starting fresh will not delete the incomplete state — it persists until manually cleared."
 
 This is the crash-resume staleness signal — heartbeat staleness on `state.json.execution`, no hook dependency, fires every fresh dispatch. (A crash-recovery concern, distinct from concurrent-presence collision, which is owned solely by Rally Point presence — see `KNOWN-ISSUES.md` §M4.)
 
@@ -356,6 +356,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
 - `references/research-trigger-policy.md` — Research plugin trigger/depth gate, t-shirt depth lower bounds, and final-claim citation/unavailable rule
 - `references/task-capture-policy.md` — Read-only active task surface over existing plan/state/queue/backlog surfaces; no new task ledger by default
+- `references/model-history-analysis.md` — Privacy-preserving observational history used only to preselect exact human-prompt repeats for the controlled `model-bakeoff` harness
 - `references/backlog-system.md` — Host-agnostic, multi-repo backlog system: MD+YAML items (canonical truth) + regenerable INDEX, pure-stdlib `scripts/backlog.py` (new/sync/list), one-way mirror to personal memory. Read via `BACKLOG.md`→`INDEX.md`→grep; write via the CLI
 - `references/agent-role-taxonomy.md` — Lead/peer/coder-assessor/reviewer/skill responsibility map; use before adding or renaming agents.
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
@@ -375,7 +376,7 @@ Companion skills (each has its own SKILL.md; load via `Skill("build-loop:<name>"
 - `build-loop:architecture-{scan,impact,trace,rules,dead,review}` — native architecture skills sourced from NavGator (provenance + drift-detection via `build-loop:sync-skills`)
 - `build-loop:debugging-memory` · `build-loop:debug-loop` · `build-loop:logging-tracer` — bundled debugger primitives (orchestrator owns when-to-fire, these own the procedural detail)
 - `build-loop:plugin-builder` · `build-loop:mcp-builder` — plugin authoring (use together for plugins that expose MCP tools)
-- `build-loop:repo-maintenance` — repository structure, source-of-truth, artifact retention, sibling consolidation, and safe local-main closeout (`build-loop:repo-closeout` is the temporary compatibility alias)
+- **Repository maintenance / closeout** — read `internal/repo-maintenance/INSTRUCTIONS.md`; the compatibility path is `internal/repo-closeout/INSTRUCTIONS.md`.
 - `build-loop:authentication` — multi-provider auth reference library (Better Auth, Supabase, Google OAuth, Resend; routed by provider × topic)
 - `build-loop:data-plane-worktrees` — isolates mutable non-Git state across run worktrees; loads for SQLite/PostgreSQL migrations, generated indexes, Docker volumes/projects, mutable file stores, or external namespaces and drives the run manifest through terminal closeout.
 - `build-loop:building-with-deepagents` — OSS deepagents framework (activates on `from deepagents import`)
