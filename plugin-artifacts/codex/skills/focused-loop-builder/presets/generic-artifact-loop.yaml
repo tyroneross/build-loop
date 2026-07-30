@@ -1,0 +1,95 @@
+{
+  "id": "generic-artifact-loop",
+  "title": "Generic Artifact Lifecycle Loop",
+  "summary": "Turn source material into a validated artifact, then preserve reusable lessons and retrieval handles.",
+  "inputs": [
+    "source material",
+    "artifact goal",
+    "audience",
+    "constraints",
+    "definition of done"
+  ],
+  "outputs": [
+    "artifact contract",
+    "working artifact",
+    "review report",
+    "fix list",
+    "learn payload"
+  ],
+  "phases": {
+    "assess": {
+      "goal": "Define artifact type, source materials, audience, constraints, and done condition.",
+      "required": ["artifact_type", "source_material", "audience", "constraints", "done_condition"]
+    },
+    "plan": {
+      "goal": "Sequence production, validation, confirmation gates, and learn outputs.",
+      "required": ["work_sequence", "validator_order", "gate_check"]
+    },
+    "produce": {
+      "goal": "Create or transform the artifact.",
+      "required": ["working_artifact", "source_trace"]
+    },
+    "review": {
+      "goal": "Run deterministic checks first, then judgment checks.",
+      "required": ["validator_results", "fix_list"]
+    },
+    "learn": {
+      "goal": "Store reusable patterns, templates, failure modes, and retrieval handles.",
+      "required": ["learn_payload", "retrieval_handles"]
+    }
+  },
+  "validators": [
+    {
+      "id": "artifact_contract",
+      "pass_condition": "Inputs, outputs, audience, and done condition are named before production.",
+      "method": "review"
+    },
+    {
+      "id": "source_trace",
+      "pass_condition": "Material claims or transformations trace to source material or marked assumptions.",
+      "method": "review"
+    },
+    {
+      "id": "gate_check",
+      "pass_condition": "External send, sensitive data, money, legal, production, people, and irreversible-change gates are checked.",
+      "method": "review"
+    },
+    {
+      "id": "learn_payload",
+      "pass_condition": "At least one reusable pattern, template, failure mode, or retrieval handle is captured or explicitly marked none.",
+      "method": "review"
+    }
+  ],
+  "gates": {
+    "confirm": ["external_send", "sensitive_data_exposure", "money_movement", "legal_or_compliance_assertion", "production_or_customer_operation", "people_impacting_decision", "irreversible_source_change"]
+  },
+  "skill_chain": {
+    "intake": {
+      "primary": [],
+      "optional": ["research", "doc"],
+      "fallback": "Manual artifact contract and source inventory.",
+      "handoff_artifact": "artifact_contract.md"
+    },
+    "produce": {
+      "primary": [],
+      "optional": ["pyramid-principle:pyramid-short-form", "pyramid-principle:pyramid-presentation"],
+      "fallback": "Produce the artifact directly from the contract.",
+      "handoff_artifact": "working_artifact"
+    },
+    "review": {
+      "primary": [],
+      "optional": ["pyramid-principle:pyramid-audit", "research"],
+      "fallback": "Run rubric.md validators manually.",
+      "handoff_artifact": "review_report.md"
+    },
+    "learn": {
+      "primary": ["build-loop:knowledge"],
+      "optional": [],
+      "fallback": "Write learn payload in report.",
+      "handoff_artifact": "learn_payload.md"
+    }
+  },
+  "learn": {
+    "store": ["templates", "failure_modes", "retrieval_handles", "source_quirks"]
+  }
+}

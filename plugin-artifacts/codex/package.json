@@ -1,0 +1,119 @@
+{
+  "name": "@tyroneross/build-loop",
+  "version": "0.36.7",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "description": "Multi-phase build orchestration with integrated debugging: assess, plan, execute, review, iterate.",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "build-loop-install": "bin/build-loop-install.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "require": "./dist/src/index.js",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "codex-skills",
+    "plugin-artifacts/codex",
+    "assets",
+    "commands",
+    "skills",
+    "scripts/_paths.py",
+    "scripts/_db_url.py",
+    "scripts/blm.py",
+    "scripts/blm_api.py",
+    "scripts/build_codex_plugin_artifact.py",
+    "scripts/check_cache_sync.py",
+    "scripts/embed_backend.py",
+    "scripts/install_memory.py",
+    "scripts/lessons_index",
+    "scripts/memory_context",
+    "scripts/memory_graph",
+    "scripts/project_resolver.py",
+    "scripts/semantic_index",
+    "scripts/sync_navgator_lessons.py",
+    "scripts/sync_plugin_cache.py",
+    "scripts/prune_plugin_cache.py",
+    "scripts/prune_codex_plugin_cache.py",
+    "hooks",
+    "agents",
+    "docs/agent-surface-policy.md",
+    "docs/memory-setup.md",
+    "templates/memory",
+    ".cursor",
+    ".claude-plugin",
+    ".codex-plugin",
+    ".agents/plugins",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE",
+    "!**/__pycache__",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "prepublishOnly": "npm run build",
+    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py scripts/test_build_loop_install_cli.py && bash scripts/hooks/test_hooks.sh",
+    "benchmark": "node benchmark-scoring.js",
+    "clean": "rm -rf dist",
+    "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",
+    "plugin:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --apply",
+    "plugin:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host claude && npm run codex:sync-cache",
+    "plugin:sync-cache:hooks": "python3 scripts/sync_plugin_cache.py --source . --host all --install-git-hooks",
+    "codex:prune-cache": "python3 scripts/prune_codex_plugin_cache.py --source .",
+    "codex:build-artifact": "python3 scripts/build_codex_plugin_artifact.py --source . --target plugin-artifacts/codex",
+    "codex:sync-cache": "npm run codex:build-artifact && python3 scripts/sync_plugin_cache.py --source plugin-artifacts/codex --host codex",
+    "codex:prune-cache:apply": "python3 scripts/prune_codex_plugin_cache.py --source . --apply",
+    "claude:prune-cache": "python3 scripts/prune_plugin_cache.py --source . --host claude",
+    "claude:sync-cache": "python3 scripts/sync_plugin_cache.py --source . --host claude",
+    "claude:prune-cache:apply": "python3 scripts/prune_plugin_cache.py --source . --host claude --apply"
+  },
+  "keywords": [
+    "build-loop",
+    "orchestration",
+    "codex",
+    "claude-code",
+    "plugin",
+    "agentic-development",
+    "spec-writing",
+    "evaluation"
+  ],
+  "author": "Tyrone Ross",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tyroneross/build-loop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tyroneross/build-loop/issues"
+  },
+  "homepage": "https://github.com/tyroneross/build-loop#readme",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/prompts": "^2.4.9",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "npm@10.x",
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}

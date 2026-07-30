@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+"""build-loop pre-push hook — path-agnostic push-HOLD gate.
+
+INSTALLED VIA: ``scripts/install_git_hooks.py --install`` writes this file
+verbatim to ``.git/hooks/pre-push`` (chmod +x).  The committed source lives at
+``hooks/git/pre-push`` so it's distributable / reviewable.
+
+WHY THIS LIVES AT THE GIT LAYER
+-------------------------------
+``scripts/deployment_policy.py`` is an *app-layer* policy — anything that
+doesn't consult it (a launchd job, a Codex shell, a stray ``git push`` from a
+crashed automation) bypasses it.  The git pre-push hook is the only place that
+fires for EVERY push regardless of who initiated it.
+
+CONTRACT
+--------
+Per ``man githooks``: pre-push receives ``<remote> <url>`` as argv, and four
+fields per ref on stdin: ``<local_ref> <local_sha> <remote_ref> <remote_sha>``.
+Exit non-zero → push is blocked.
+
+This hook runs TWO stages; either blocking stops the push:
+
+1. Locates the repo (git rev-parse) and adds ``<repo>/scripts`` to sys.path.
+2. STAGE 1 — deploy-HOLD: ``push_hold.evaluate_push``. On ``block`` print the
+   reason + release instructions to stderr and exit 1.
+3. STAGE 2 — deterministic TEST gate: ``prepush_test_gate.evaluate`` (added per
+   the 2026-06-29 L2 RCA — red commits kept reaching origin/main because the
+   deterministic suite ran only post-push in CI). On ``block`` print the failing
+   gate to stderr and exit 1. Stage 2 COMPOSES with — never replaces — stage 1.
+4. On ``allow``/``bypass`` from both stages: arm closeout, exit 0 (push proceeds).
+5. On ANY internal exception (broken import, syntax error, OSError) in EITHER
+   stage: log to stderr and exit 0.  A broken hook MUST NOT permanently wedge the
+   user's ability to push — fail OPEN on internal errors, fail CLOSED on a real
+   hold / a real deterministic test failure.
+
+The block-vs-fail-open distinction is the whole reason for the try/except
+wrappers below.  Do NOT collapse them into a bare ``raise``.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _repo_root() -> Path:
+    """Resolve the repo root via ``git rev-parse --show-toplevel``."""
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if out:
+            return Path(out)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    # Fallback: walk up from the hook's location.  In a normal install the
+    # hook lives at ``<repo>/.git/hooks/pre-push``; the hook's __file__ is
+    # often a real path but may be a symlink target.  Walk up looking for
+    # ``.git``.
+    here = Path(__file__).resolve()
+    for parent in [here] + list(here.parents):
+        if (parent / ".git").exists():
+            return parent
+    return Path.cwd()
+
+
+def _fail_open(reason: str, *, repo: Path | None = None) -> int:
+    """Internal-error path: print to stderr, return 0 (allow push).
+
+    Even on the internal-error fail-open path we still ARM the post-push
+    closeout baton: a missing ``push_hold`` import shouldn't silently drop
+    the durable-memory contract for ad-hoc pushes.
+    """
+    sys.stderr.write(
+        f"[build-loop pre-push] internal error — allowing push: {reason}\n"
+    )
+    if repo is not None:
+        _arm_post_push_closeout(repo)
+    return 0
+
+
+def _format_block_message(verdict: dict) -> str:
+    targets = ",".join(verdict.get("protected_targets") or []) or "(unknown)"
+    reason = verdict.get("reason") or "hold active"
+    source = verdict.get("source") or "unknown"
+
+    # Corrupt-marker note: help the operator self-rescue without digging into docs.
+    corrupt_note = ""
+    if source == "marker" and ("unparseable" in reason or "malformed" in reason or "not a JSON" in reason):
+        corrupt_note = (
+            "  NOTE: the hold marker is corrupt (not valid JSON).\n"
+            "        Run `push_hold.py --release` to clear it (works even\n"
+            "        on a corrupt marker, no prior --set needed).\n"
+            "  ---------------------------------------------------------------\n"
+        )
+
+    return (
+        "\n"
+        "===============================================================\n"
+        "  BUILD-LOOP PUSH HOLD — push BLOCKED\n"
+        "===============================================================\n"
+        f"  protected target(s): {targets}\n"
+        f"  hold source        : {source}\n"
+        f"  reason             : {reason}\n"
+        "  ---------------------------------------------------------------\n"
+        + corrupt_note
+        + "  To release this hold:\n"
+        "    1. Resolve the underlying issue (auditor findings / brief).\n"
+        "    2. Run:   python3 scripts/push_hold.py --release \\\n"
+        '                       --reason "<one-line why>"\n'
+        "    3. Re-push.\n"
+        "\n"
+        "  EMERGENCY override (logged):\n"
+        "    BUILDLOOP_PUSH_HOLD_BYPASS=1 git push <remote> <branch>\n"
+        "===============================================================\n"
+    )
+
+
+def _arm_post_push_closeout(repo: Path) -> None:
+    """Drop a tiny JSON baton at ``.build-loop/closeout/armed.json``.
+
+    Git has no native client-side post-push hook. We arm a baton here so the
+    next session-start handler (``hooks/session-start-closeout.sh``) drains it
+    by invoking ``python3 -m closeout --source post-push-armed``.
+
+    Fail-open by design — any error is silently swallowed; an armed baton is a
+    nice-to-have, never a push blocker.
+    """
+    try:
+        from datetime import datetime, timezone
+        import json as _json
+        import subprocess as _sp
+        import tempfile as _tf
+
+        bl_dir = repo / ".build-loop" / "closeout"
+        bl_dir.mkdir(parents=True, exist_ok=True)
+        head = ""
+        try:
+            head = _sp.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo),
+                stderr=_sp.DEVNULL,
+                text=True,
+            ).strip()
+        except (_sp.CalledProcessError, FileNotFoundError, OSError):
+            pass
+
+        payload = {
+            "armed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": "post-push-armed",
+            "head_sha": head or None,
+        }
+        target = bl_dir / "armed.json"
+        fd, tmp = _tf.mkstemp(dir=str(bl_dir), prefix=".armed-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                _json.dump(payload, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+            os.replace(tmp, target)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+    except Exception:  # noqa: BLE001 — never break a push for the baton
+        return
+
+
+def main() -> int:
+    repo: Path | None = None
+    try:
+        repo = _repo_root()
+        scripts_dir = repo / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        try:
+            import push_hold  # type: ignore
+        except Exception as exc:  # pragma: no cover — exercised by installer test
+            return _fail_open(f"could not import push_hold: {exc!r}", repo=repo)
+
+        try:
+            stdin_lines = sys.stdin.readlines()
+        except OSError as exc:
+            return _fail_open(f"could not read stdin: {exc!r}", repo=repo)
+
+        # --- STAGE 1: deploy-HOLD gate ---
+        verdict = push_hold.evaluate_push(repo, stdin_lines, env=os.environ)
+        action = verdict.get("action", "allow")
+        if action == "block":
+            sys.stderr.write(_format_block_message(verdict))
+            return int(verdict.get("exit_code") or 1)
+
+        # --- STAGE 1.5: dist auto-rebuild gate (composes with stage 1) ---
+        # Keeps the committed ``dist/`` (tsc output of ``src/*.ts``) in sync so the
+        # recurring manual ``build: rebuild dist`` commit is automatic. On a stale
+        # dist it rebuilds + auto-commits, then BLOCKS so the operator re-pushes WITH
+        # the fresh output. Fails OPEN on any tooling error (a broken build tool must
+        # never wedge a push — correctness is stage 2's job, not this artifact gate).
+        try:
+            import prepush_dist_gate  # type: ignore
+
+            dist_verdict = prepush_dist_gate.evaluate(repo, stdin_lines, env=os.environ)
+            if dist_verdict.get("action") == "block":
+                sys.stderr.write(prepush_dist_gate.format_block_message(dist_verdict))
+                return int(dist_verdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — dist-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] dist gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
+        # --- STAGE 1.6: BLOCKING judgment gate for self-modifying pushes ---
+        # Closes learn-gates-01: the Stop-hook judgment check can only WARN, so a
+        # stakes-gated self-mod run with a skipped Frontier layer could still reach
+        # origin. This blocks such a push. Scoped to build-loop's own enforcement
+        # surface + attributed to THIS run (temporal_membership) so it never wedges
+        # an ordinary push. Fails OPEN on any internal error.
+        try:
+            import prepush_judgment_gate  # type: ignore
+
+            jverdict = prepush_judgment_gate.evaluate(repo, stdin_lines, env=os.environ)
+            if jverdict.get("action") == "block":
+                sys.stderr.write(prepush_judgment_gate.format_block_message(jverdict))
+                return int(jverdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — judgment-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] judgment gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
+        # --- STAGE 2: deterministic TEST gate (composes with stage 1) ---
+        # Runs the fast deterministic gate subset (the integration-gate class CI
+        # also runs) and BLOCKS the push on a real failure.  Import + evaluate are
+        # wrapped so a missing/broken gate fails OPEN — a broken gate must never
+        # permanently wedge pushing (same contract as stage 1).  evaluate() itself
+        # never raises; this try/except backstops an import/attr error.
+        try:
+            import prepush_test_gate  # type: ignore
+
+            test_verdict = prepush_test_gate.evaluate(repo, stdin_lines, env=os.environ)
+            if test_verdict.get("action") == "block":
+                sys.stderr.write(prepush_test_gate.format_block_message(test_verdict))
+                return int(test_verdict.get("exit_code") or 1)
+        except Exception as exc:  # noqa: BLE001 — test-gate errors fail OPEN
+            sys.stderr.write(
+                "[build-loop pre-push] test gate internal error — "
+                f"allowing push: {exc!r}\n"
+            )
+
+        # Both stages passed (or the test gate failed open) → exit 0.
+        # Arm the post-push closeout baton BEFORE the push completes — git has
+        # no native client-side post-push hook, so the next session-start
+        # drains the baton via ``python3 -m closeout --source post-push-armed``.
+        _arm_post_push_closeout(repo)
+        return 0
+    except Exception as exc:  # noqa: BLE001 — broad on purpose; we MUST fail-open
+        return _fail_open(f"unhandled exception: {exc!r}", repo=repo)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

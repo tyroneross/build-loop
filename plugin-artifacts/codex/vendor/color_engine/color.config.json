@@ -1,0 +1,10 @@
+{
+  "install": "build-loop",
+  "vector": {
+    "energy": "balanced",
+    "contrast_feel": "standard",
+    "accent_intensity": "clear",
+    "harmony": "analogous"
+  },
+  "registry_dir": "~/dev/designs/.groundwork-color"
+}

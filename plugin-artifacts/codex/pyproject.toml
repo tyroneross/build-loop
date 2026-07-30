@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "build-loop"
+version = "0.12.16"
+description = "Build-loop — orchestrated 5-phase development loop with Rally Point cross-session coordination and independent commit auditor."
+requires-python = ">=3.11"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Tyrone Ross" }]
+dependencies = [
+    "tree-sitter>=0.21",
+    "tree-sitter-typescript",
+    "networkx>=3.1",
+    "pathspec>=0.12",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-timeout>=2.4.0",
+    "pyyaml",
+]
+# Optional Postgres dual-write deps. Required by:
+#   scripts/db.py            — episodic memory writes
+#   scripts/sync_navgator_lessons.py (Chunk 7) — NavGator lessons sync, SQLite-first with optional Postgres mirror
+# Sync scripts degrade gracefully when absent (db.py imports psycopg lazily;
+# PG-requiring tests are marked @pytest.mark.db and auto-skipped by conftest).
+# Install with `uv pip install -e .[db]`.
+db = [
+    "psycopg[binary]>=3.1",
+]
+
+# Optional hybrid-retrieval rerank deps (Phase A chunk 4).
+# When installed, recall.py's --mode hybrid pipeline runs a
+# BAAI/bge-reranker-v2-m3 cross-encoder (sentence-transformers, MPS on
+# Apple Silicon, CPU fallback) over the top-50 RRF-fused candidates.
+# When absent, the pipeline degrades silently to RRF-only ordering.
+# Install with `uv pip install -e .[retrieval]`.
+retrieval = [
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+]
+
+# Real Python package lives at src/build_loop/ so `python -m build_loop.architecture`
+# resolves cleanly. The parent plan referenced `src/architecture/` as shorthand;
+# this nested layout honours the dotted import path requirement.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["build_loop*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# `not integration` keeps the default suite deterministic: integration tests
+# spawn real daemons / hit live services / download models and carry timing
+# gates (embed <100ms, rerank <200ms) that flake under machine load. They run
+# on demand with `pytest -m integration`. This is correct integration-test
+# gating, not a silent skip — the marker's own description names the cause.
+# CI (.github/workflows/pytest.yml) passes both `-q` and `-m "not integration"`
+# explicitly so the gate is visible at the point it applies; this addopts line
+# covers local default runs.
+addopts = "-m 'not integration'"
+markers = [
+    "integration: end-to-end test that hits live services (Postgres, Ollama, model downloads)",
+    "live: test that requires a live external service (Ollama/qwen on :11434, embed/rerank daemon, Postgres); auto-skipped when the service is unreachable",
+    "db: test that requires psycopg (.[db] extra) and/or a live Postgres instance; auto-skipped when psycopg is not installed",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-timeout>=2.4.0",
+]

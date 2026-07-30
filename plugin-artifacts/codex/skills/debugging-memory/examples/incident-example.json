@@ -1,0 +1,67 @@
+{
+  "incident_id": "INC_20241225_143052_abc1",
+  "timestamp": 1735135852000,
+  "session_id": "SESSION_1735135800000_xyz",
+
+  "symptom": "Search results not displaying after typing in the search box. The input field accepts keystrokes but the results list remains empty.",
+  "symptom_type": "ui",
+
+  "root_cause": {
+    "description": "The debounce hook was resetting the search query on every keystroke because the dependency array included a reference-unstable callback. Each render created a new callback reference, triggering the debounce reset. This caused the debounced value to never settle, so the API call was never made.",
+    "file": "src/hooks/useDebounce.ts",
+    "line_range": [15, 28],
+    "code_snippet": "const debouncedValue = useMemo(() => {\n  const handler = setTimeout(() => setValue(value), delay);\n  return () => clearTimeout(handler);\n}, [value, callback]); // callback was unstable",
+    "category": "react-hooks",
+    "confidence": 0.95
+  },
+
+  "fix": {
+    "approach": "Wrapped the search callback in useCallback with appropriate dependencies to stabilize the reference. Updated the debounce hook to only depend on the memoized callback. This allowed the debounce timer to complete and trigger the API call.",
+    "changes": [
+      {
+        "file": "src/hooks/useDebounce.ts",
+        "lines_changed": 8,
+        "change_type": "modify",
+        "summary": "Removed callback from dependency array, added internal memoization"
+      },
+      {
+        "file": "src/components/SearchBar.tsx",
+        "lines_changed": 5,
+        "change_type": "modify",
+        "summary": "Wrapped onSearch handler in useCallback with stable dependencies"
+      }
+    ],
+    "pattern_used": null,
+    "time_to_fix": 25
+  },
+
+  "verification": {
+    "status": "verified",
+    "regression_tests_passed": true,
+    "user_journey_tested": true,
+    "tests_run": ["search.test.ts", "useDebounce.test.ts"],
+    "success_criteria_met": true
+  },
+
+  "tags": ["react", "hooks", "useMemo", "useCallback", "debounce", "search", "ui"],
+  "files_changed": ["src/hooks/useDebounce.ts", "src/components/SearchBar.tsx"],
+  "agent_used": "coder",
+
+  "quality_gates": {
+    "guardian_validated": true,
+    "tested_e2e": false,
+    "tested_from_ui": true,
+    "security_reviewed": false,
+    "architect_reviewed": false
+  },
+
+  "completeness": {
+    "symptom": true,
+    "root_cause": true,
+    "fix": true,
+    "verification": true,
+    "quality_score": 0.85
+  },
+
+  "quality_score": 0.85
+}

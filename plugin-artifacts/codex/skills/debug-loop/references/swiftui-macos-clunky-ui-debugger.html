@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="slides-format" content="viewport">
+    <title>SwiftUI macOS: Clunky UI Debugging Explorer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style type="text/tailwindcss">
+        @theme {
+            --color-bg: #0d1117;
+            --color-bg-deep: #010409;
+            --color-surface: #161b22;
+            --color-text: #e6edf3;
+            --color-text-secondary: #8b949e;
+            --color-text-muted: #484f58;
+            --color-accent-1: #58a6ff;
+            --color-accent-2: #3fb950;
+            --color-accent-3: #ff7b72;
+            --color-accent-4: #d2a8ff;
+            --color-glass-bg: rgba(22,27,34,0.85);
+            --color-glass-border: rgba(48,54,61,0.8);
+            --color-vignette: rgba(0,0,0,0.5);
+            --font-display: 'JetBrains Mono', monospace;
+            --font-body: 'Inter', sans-serif;
+        }
+    </style>
+    <style>
+        :root {
+            --color-bg: #0d1117;
+            --color-text: #e6edf3;
+            --glow-color-rgb: 88,166,255;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body { background: var(--color-bg); margin: 0; }
+        body { font-family: 'Inter', sans-serif; color: var(--color-text); overflow: hidden; height: 100vh; width: 100vw; }
+        .deck { width: 100vw; height: 100vh; position: relative; }
+        .slide { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--color-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; transform: scale(0.95); transition: opacity 0.7s ease, transform 0.7s ease; pointer-events: none; overflow: hidden; }
+        .slide.active { opacity: 1; transform: scale(1); pointer-events: all; }
+        .slide > .content { position: relative; z-index: 2; width: 100%; max-width: 1100px; padding: clamp(1.5rem, 4vw, 4rem); }
+        .nav-controls { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 16px; z-index: 100; background: rgba(22,27,34,0.9); backdrop-filter: blur(10px); padding: 10px 24px; border-radius: 40px; border: 1px solid rgba(48,54,61,0.8); }
+        .nav-btn { width: 38px; height: 38px; border: none; background: rgba(48,54,61,0.5); color: #58a6ff; border-radius: 50%; font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.3s; }
+        .nav-btn:hover { background: rgba(88,166,255,0.15); }
+        .slide-dots { display: flex; gap: 7px; }
+        .slide-dots .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(48,54,61,0.8); cursor: pointer; transition: background 0.3s, transform 0.3s; }
+        .slide-dots .dot.active { background: #58a6ff; transform: scale(1.3); }
+        .slide-counter { font-size: 0.75rem; color: #484f58; min-width: 40px; text-align: center; font-family: 'JetBrains Mono', monospace; }
+        .reveal { opacity: 0; transform: translateY(18px); }
+        .gradient-mesh { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+        .blob { position: absolute; border-radius: 50%; filter: blur(80px); animation: float-slow 12s ease-in-out infinite; }
+        .blob:nth-child(2) { animation: float-drift 16s ease-in-out infinite; }
+        .blob:nth-child(3) { animation: float-slow 20s ease-in-out infinite reverse; }
+        @keyframes float-slow { 0%{transform:translate(0,0) scale(1)} 25%{transform:translate(50px,-40px) scale(1.1)} 50%{transform:translate(-30px,35px) scale(0.92)} 75%{transform:translate(40px,15px) scale(1.07)} 100%{transform:translate(0,0) scale(1)} }
+        @keyframes float-drift { 0%{transform:translate(0,0) scale(1) rotate(0deg)} 33%{transform:translate(-45px,-55px) scale(1.13) rotate(3deg)} 66%{transform:translate(38px,28px) scale(0.88) rotate(-2deg)} 100%{transform:translate(0,0) scale(1) rotate(0deg)} }
+        @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+        .slide::before { content:''; position:absolute; inset:0; z-index:1; pointer-events:none; background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"); background-repeat:repeat; background-size:256px 256px; opacity:0.025; mix-blend-mode:overlay; }
+        .slide::after { content:''; position:absolute; inset:0; z-index:1; pointer-events:none; background:radial-gradient(ellipse at center, transparent 50%, var(--color-vignette) 100%); }
+        .text-glow { text-shadow: 0 0 20px rgba(88,166,255,0.5), 0 0 40px rgba(88,166,255,0.2); }
+        .stat-glow { text-shadow: 0 0 25px rgba(63,185,80,0.6), 0 0 50px rgba(63,185,80,0.25); }
+        @keyframes glow-pulse { 0%,100%{text-shadow:0 0 20px rgba(88,166,255,0.5),0 0 40px rgba(88,166,255,0.2)} 50%{text-shadow:0 0 30px rgba(88,166,255,0.8),0 0 60px rgba(88,166,255,0.35)} }
+        .glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+        @keyframes scanline { 0%{transform:translateY(-100%)} 100%{transform:translateY(100vh)} }
+        .code-block { background: #010409; border: 1px solid rgba(48,54,61,0.8); border-radius: 8px; padding: 1rem 1.25rem; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; line-height: 1.6; color: #e6edf3; overflow-x: auto; }
+        .code-block .kw { color: #ff7b72; }
+        .code-block .fn { color: #d2a8ff; }
+        .code-block .str { color: #a5d6ff; }
+        .code-block .cm { color: #484f58; font-style: italic; }
+        .code-block .ok { color: #3fb950; }
+        .code-block .warn { color: #f2cc60; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; text-transform: uppercase; }
+        .badge-blue { background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.3); color: #58a6ff; }
+        .badge-green { background: rgba(63,185,80,0.12); border: 1px solid rgba(63,185,80,0.3); color: #3fb950; }
+        .badge-red { background: rgba(255,123,114,0.12); border: 1px solid rgba(255,123,114,0.3); color: #ff7b72; }
+        .badge-purple { background: rgba(210,168,255,0.12); border: 1px solid rgba(210,168,255,0.3); color: #d2a8ff; }
+        .badge-yellow { background: rgba(242,204,96,0.12); border: 1px solid rgba(242,204,96,0.3); color: #f2cc60; }
+        .diag-card { background: rgba(22,27,34,0.85); border: 1px solid rgba(48,54,61,0.8); border-radius: 10px; padding: 1.1rem 1.25rem; transition: transform 0.2s, box-shadow 0.2s; }
+        .diag-card:hover { transform: translateY(-3px); box-shadow: 0 8px 32px rgba(88,166,255,0.1); }
+        .diag-card.warn-card { border-left: 3px solid #ff7b72; }
+        .diag-card.ok-card { border-left: 3px solid #3fb950; }
+        .diag-card.info-card { border-left: 3px solid #58a6ff; }
+        .diag-card.purple-card { border-left: 3px solid #d2a8ff; }
+        .flow-step { display: flex; align-items: flex-start; gap: 14px; }
+        .flow-num { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; font-family: 'JetBrains Mono', monospace; background: rgba(88,166,255,0.15); border: 1px solid rgba(88,166,255,0.3); color: #58a6ff; }
+        .component-row { display: flex; align-items: center; gap: 12px; padding: 0.65rem 0.9rem; background: rgba(22,27,34,0.85); border: 1px solid rgba(48,54,61,0.8); border-radius: 8px; }
+        .arrow-right { color: #484f58; font-size: 1rem; flex-shrink: 0; }
+        .bar-h { height: 10px; border-radius: 5px; background: linear-gradient(90deg, #58a6ff, #3fb950); margin-top: 4px; }
+        .terminal-header { display: flex; gap: 6px; align-items: center; padding: 0.5rem 0.75rem; background: #161b22; border-bottom: 1px solid rgba(48,54,61,0.8); border-radius: 8px 8px 0 0; }
+        .dot-red { width:10px; height:10px; border-radius:50%; background:#ff5f57; }
+        .dot-yellow { width:10px; height:10px; border-radius:50%; background:#febc2e; }
+        .dot-green { width:10px; height:10px; border-radius:50%; background:#28c840; }
+    </style>
+</head>
+<body>
+<div class="mouse-spotlight" style="position:fixed;inset:0;z-index:99;pointer-events:none;"></div>
+<div class="deck">
+
+<!-- SLIDE 1: TITLE -->
+<div class="slide slide-1 active" data-slide="1">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:500px;height:500px;top:-120px;right:-100px;background:#58a6ff;opacity:0.1;"></div>
+        <div class="blob" style="width:350px;height:350px;bottom:-80px;left:-60px;background:#3fb950;opacity:0.08;"></div>
+        <div class="blob" style="width:220px;height:220px;top:45%;left:20%;background:#d2a8ff;opacity:0.07;"></div>
+    </div>
+    <canvas class="particle-canvas" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content text-center">
+        <div style="font-size:80px;margin-bottom:1rem;animation:float 3s ease-in-out infinite;">🔬</div>
+        <h1 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(2rem,5vw,3.8rem);font-weight:700;background:linear-gradient(135deg,#58a6ff,#3fb950,#d2a8ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-0.02em;margin-bottom:0.75rem;">SwiftUI macOS<br>Clunky UI Debugger</div>
+        <p class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:0.85rem;color:#484f58;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:1.5rem;">Diagnosis · Root Causes · Fix Patterns</p>
+        <div class="reveal" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <span class="badge badge-blue">Panel Jank</span>
+            <span class="badge badge-green">Wrong Components</span>
+            <span class="badge badge-red">Re-render Storms</span>
+            <span class="badge badge-purple">AppKit Bridging</span>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 2: DIAGNOSIS FRAMEWORK -->
+<div class="slide slide-2" data-slide="2">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:350px;height:350px;top:-80px;right:-80px;background:#58a6ff;opacity:0.07;"></div>
+        <div class="blob" style="width:250px;height:250px;bottom:-60px;left:-40px;background:#3fb950;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-blue">// Step 0 — Before touching code</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.5rem,3.5vw,2.5rem);font-weight:700;margin-bottom:1.5rem;">Clunky UI: Diagnostic Framework</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="diag-card warn-card reveal">
+                <div style="font-size:1.2rem;margin-bottom:0.4rem;">👁️ <span style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:#ff7b72;">SYMPTOM CHECK</span></div>
+                <ul style="font-size:0.82rem;color:#8b949e;line-height:1.8;list-style:none;padding:0;">
+                    <li>→ Panel expands in steps, not fluidly?</li>
+                    <li>→ Cursor lags behind drag handle?</li>
+                    <li>→ Buttons feel delayed or unresponsive?</li>
+                    <li>→ UI freezes 1–2s during interaction?</li>
+                    <li>→ Resize feels "sticky" near edges?</li>
+                </ul>
+            </div>
+            <div class="diag-card ok-card reveal">
+                <div style="font-size:1.2rem;margin-bottom:0.4rem;">🔍 <span style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:#3fb950;">FIRST QUESTIONS</span></div>
+                <ul style="font-size:0.82rem;color:#8b949e;line-height:1.8;list-style:none;padding:0;">
+                    <li>→ Using SwiftUI, AppKit, or mixed?</li>
+                    <li>→ Is the panel in an HSplitView or HStack?</li>
+                    <li>→ Using onHover or DragGesture for tracking?</li>
+                    <li>→ Any @State in a ToolbarItem?</li>
+                    <li>→ How many views re-render on drag?</li>
+                </ul>
+            </div>
+            <div class="diag-card info-card reveal">
+                <div style="font-size:1.2rem;margin-bottom:0.4rem;">⚡ <span style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:#58a6ff;">FAST TRIAGE</span></div>
+                <ul style="font-size:0.82rem;color:#8b949e;line-height:1.8;list-style:none;padding:0;">
+                    <li>→ Run Instruments → SwiftUI template</li>
+                    <li>→ Look at View Body avg duration</li>
+                    <li>→ Check if parent views re-render on drag</li>
+                    <li>→ Profile on real hardware (not simulator)</li>
+                </ul>
+            </div>
+            <div class="diag-card purple-card reveal">
+                <div style="font-size:1.2rem;margin-bottom:0.4rem;">🧠 <span style="font-family:'JetBrains Mono',monospace;font-size:0.8rem;color:#d2a8ff;">ROOT CAUSE BUCKETS</span></div>
+                <ul style="font-size:0.82rem;color:#8b949e;line-height:1.8;list-style:none;padding:0;">
+                    <li>→ Wrong event source (onHover vs continuous)</li>
+                    <li>→ Wrong layout primitive (HStack vs HSplitView)</li>
+                    <li>→ Re-render storm during drag</li>
+                    <li>→ Wrong SwiftUI component (should be AppKit)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 3: EVENT SOURCE PROBLEM -->
+<div class="slide slide-3" data-slide="3">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#ff7b72;opacity:0.07;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-50px;left:-30px;background:#58a6ff;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-red">// Root Cause #1</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.25rem;">Wrong Event Source: Cursor Tracking</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+            <div>
+                <div style="color:#ff7b72;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">❌ ENTER/EXIT ONLY — causes jumps</div>
+                <div class="code-block reveal">
+<span class="cm">// Fires ONCE on enter, ONCE on exit</span>
+<span class="cm">// Cursor position: UNKNOWN between events</span>
+.<span class="fn">onHover</span> { isHovering <span class="kw">in</span>
+  <span class="kw">if</span> isHovering {
+    NSCursor.resizeLeftRight.push()
+  } <span class="kw">else</span> {
+    NSCursor.pop()
+  }
+}
+<span class="cm">// ⚠ Panel has NO idea where cursor is</span>
+<span class="cm">// ⚠ Resize only triggers at boundary</span>
+                </div>
+            </div>
+            <div>
+                <div style="color:#3fb950;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">✅ CONTINUOUS — smooth tracking (macOS 13+)</div>
+                <div class="code-block reveal">
+.<span class="fn">onContinuousHover</span> { phase <span class="kw">in</span>
+  <span class="kw">switch</span> phase {
+  <span class="kw">case</span> .active(<span class="kw">let</span> location):
+    <span class="cm">// Called on EVERY pointer move</span>
+    cursorX = location.x
+    isHovering = <span class="kw">true</span>
+    NSCursor.resizeLeftRight.push()
+  <span class="kw">case</span> .ended:
+    isHovering = <span class="kw">false</span>
+    NSCursor.pop()
+  }
+}
+<span class="cm">// ✅ Full position delta available</span>
+                </div>
+            </div>
+        </div>
+        <div class="diag-card info-card reveal" style="padding:0.75rem 1rem;">
+            <span style="font-size:0.8rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">⚡ AppKit alternative for even lower latency: </span>
+            <span style="font-size:0.8rem;color:#58a6ff;font-family:'JetBrains Mono',monospace;">NSTrackingArea + mouseDragged(_:) + mouseMoved(_:)</span>
+            <span style="font-size:0.8rem;color:#484f58;"> — zero SwiftUI overhead during drag</span>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 4: DRAG BINDING PROBLEM -->
+<div class="slide slide-4" data-slide="4">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:280px;height:280px;top:-60px;right:-60px;background:#d2a8ff;opacity:0.08;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-40px;left:-30px;background:#58a6ff;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-purple">// Root Cause #2</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.25rem;">DragGesture: Binding Size to Cursor Delta</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div>
+                <div style="color:#ff7b72;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">❌ Wrong: size snaps on gesture end only</div>
+                <div class="code-block reveal" style="font-size:0.74rem;">
+<span class="cm">// Width only updates AFTER drag ends</span>
+<span class="cm">// ⚠ Panel doesn't track cursor in real-time</span>
+.<span class="fn">gesture</span>(
+  DragGesture()
+    .<span class="fn">onEnded</span> { val <span class="kw">in</span>
+      panelWidth -= val.translation.width
+    }
+)
+.frame(width: panelWidth)
+                </div>
+            </div>
+            <div>
+                <div style="color:#3fb950;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">✅ Correct: width updates on EVERY delta</div>
+                <div class="code-block reveal" style="font-size:0.74rem;">
+@<span class="fn">State</span> <span class="kw">private var</span> panelWidth: CGFloat = 280
+@<span class="fn">State</span> <span class="kw">private var</span> dragOffset: CGFloat = 0
+
+.<span class="fn">gesture</span>(
+  DragGesture(<span class="fn">minimumDistance</span>: 0)
+    .<span class="fn">onChanged</span> { val <span class="kw">in</span>
+      <span class="cm">// Live update: subtract translation</span>
+      dragOffset = val.translation.width
+    }
+    .<span class="fn">onEnded</span> { val <span class="kw">in</span>
+      panelWidth -= val.translation.width
+      dragOffset = 0
+    }
+)
+<span class="cm">// Frame uses BOTH for smooth tracking</span>
+.frame(width: panelWidth - dragOffset)
+                </div>
+            </div>
+        </div>
+        <div class="diag-card warn-card reveal" style="padding:0.6rem 1rem;margin-top:12px;">
+            <span style="font-size:0.78rem;color:#f2cc60;font-family:'JetBrains Mono',monospace;">⚠ Known SwiftUI bug: </span>
+            <span style="font-size:0.78rem;color:#8b949e;">Any @State in a ToolbarItem causes drag degradation — even if unrelated. Move toolbar @State to a separate observable or remove it.</span>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 5: LAYOUT PRIMITIVE MISMATCH -->
+<div class="slide slide-5" data-slide="5">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#3fb950;opacity:0.07;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-40px;left:-30px;background:#d2a8ff;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-green">// Root Cause #3</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.25rem;">Layout Primitive Mismatch</h2>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;">
+            <div class="diag-card warn-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#ff7b72;margin-bottom:6px;">HStack + frame()</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">Custom drag on Rectangle divider. Works but you reinvent resize logic, cursor tracking, min/max clamping, and animation. Prone to jank.</div>
+                <div style="margin-top:8px;"><span class="badge badge-red">Manual work</span></div>
+            </div>
+            <div class="diag-card ok-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#3fb950;margin-bottom:6px;">HSplitView</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">AppKit-backed native divider. System handles resize cursor, drag tracking, and frame updates. Fluid by default. Use for persistent split layouts.</div>
+                <div style="margin-top:8px;"><span class="badge badge-green">Native feel</span></div>
+            </div>
+            <div class="diag-card info-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#58a6ff;margin-bottom:6px;">NavigationSplitView</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">Best for sidebar + detail pattern. Gets hide/show sidebar button, proper selection states, and macOS window chrome for free. Preferred since macOS 13.</div>
+                <div style="margin-top:8px;"><span class="badge badge-blue">Most native</span></div>
+            </div>
+        </div>
+        <div class="code-block reveal" style="font-size:0.78rem;">
+<span class="cm">// If you need custom widths — use HSplitView + constraints, not HStack + DragGesture</span>
+HSplitView {
+  SidebarView()
+    .frame(minWidth: 200, idealWidth: 280, maxWidth: 400)
+  ContentView()
+    .frame(maxWidth: .infinity)
+}
+<span class="cm">// NavigationSplitView for full Mac sidebar UX (macOS 13+)</span>
+NavigationSplitView { SidebarView() } detail: { DetailView() }
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 6: RE-RENDER STORMS -->
+<div class="slide slide-6" data-slide="6">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#ff7b72;opacity:0.08;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-50px;left:-30px;background:#58a6ff;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-red">// Root Cause #4</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.2rem;">Re-render Storms During Drag</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div>
+                <div style="color:#ff7b72;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">❌ State too high — every drag re-renders all children</div>
+                <div class="code-block reveal" style="font-size:0.76rem;">
+<span class="cm">// ⚠ panelWidth at ContentView level</span>
+<span class="cm">// ⚠ All children re-render on EVERY drag delta</span>
+<span class="kw">struct</span> ContentView: View {
+  @<span class="fn">State</span> <span class="kw">var</span> panelWidth: CGFloat = 280
+  <span class="kw">var</span> body: some View {
+    HStack {
+      ExpensiveListView()    <span class="cm">// re-renders!</span>
+      ExpensiveDetailView()  <span class="cm">// re-renders!</span>
+      ResizeHandle($panelWidth)
+    }
+  }
+}
+                </div>
+            </div>
+            <div>
+                <div style="color:#3fb950;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">✅ Push state down — only resize handle re-renders</div>
+                <div class="code-block reveal" style="font-size:0.76rem;">
+<span class="cm">// panelWidth owned by ResizablePanel</span>
+<span class="kw">struct</span> ResizablePanel: View {
+  @<span class="fn">State</span> <span class="kw">private var</span> width: CGFloat = 280
+  <span class="kw">var</span> body: some View {
+    ZStack(alignment: .trailing) {
+      PanelContent()       <span class="cm">// stable identity</span>
+        .frame(width: width)
+      ResizeHandle($width) <span class="cm">// only this re-renders</span>
+    }
+  }
+}
+<span class="cm">// PanelContent: conforming to Equatable</span>
+<span class="cm">// skips re-render when width changes</span>
+                </div>
+            </div>
+        </div>
+        <div class="diag-card info-card reveal" style="padding:0.65rem 1rem;margin-top:12px;">
+            <span style="font-size:0.78rem;color:#58a6ff;font-family:'JetBrains Mono',monospace;">Equatable short-circuit: </span>
+            <span style="font-size:0.78rem;color:#8b949e;">struct PanelContent: View, Equatable — SwiftUI skips body recomputation entirely when props are equal. Critical for complex content inside resizable panels.</span>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 7: ANIMATION MISSING -->
+<div class="slide slide-7" data-slide="7">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:280px;height:280px;top:-60px;right:-60px;background:#d2a8ff;opacity:0.08;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-40px;left:-30px;background:#3fb950;opacity:0.05;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-purple">// Root Cause #5</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.2rem;">Missing / Misplaced Animation</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;">
+            <div class="diag-card warn-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:#ff7b72;margin-bottom:6px;">During drag: NO animation</div>
+                <div style="font-size:0.8rem;color:#8b949e;line-height:1.7;">While the user is actively dragging, <strong style="color:#e6edf3;">remove</strong> any animation from frame changes. Animation during live drag fights the cursor and makes it feel laggy.</div>
+            </div>
+            <div class="diag-card ok-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:#3fb950;margin-bottom:6px;">On snap/settle: YES animation</div>
+                <div style="font-size:0.8rem;color:#8b949e;line-height:1.7;">When drag ends, animate the panel snapping to its final clamped size. <code style="color:#d2a8ff;">.animation(.spring(response:0.3), value: panelWidth)</code> on the settled state feels native.</div>
+            </div>
+        </div>
+        <div class="code-block reveal" style="font-size:0.76rem;">
+<span class="cm">// Pattern: animate ONLY on drag end, not during drag</span>
+.<span class="fn">gesture</span>(
+  DragGesture(<span class="fn">minimumDistance</span>: 0)
+    .<span class="fn">onChanged</span> { val <span class="kw">in</span>
+      isDragging = <span class="ok">true</span>
+      dragOffset = val.translation.width  <span class="cm">// no animation — direct</span>
+    }
+    .<span class="fn">onEnded</span> { val <span class="kw">in</span>
+      isDragging = <span class="ok">false</span>
+      <span class="cm">// withAnimation only fires here</span>
+      withAnimation(.<span class="fn">spring</span>(response: 0.3, dampingFraction: 0.7)) {
+        panelWidth = max(minW, min(maxW, panelWidth - val.translation.width))
+        dragOffset = 0
+      }
+    }
+)
+<span class="cm">// Frame during drag: no animation modifier</span>
+.frame(width: isDragging ? panelWidth - dragOffset : panelWidth)
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 8: WRONG COMPONENTS -->
+<div class="slide slide-8" data-slide="8">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#58a6ff;opacity:0.07;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-50px;left:-30px;background:#ff7b72;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-blue">// Root Cause #6 — Component Selection</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.3rem,2.8vw,2rem);font-weight:700;margin-bottom:1.1rem;">SwiftUI vs AppKit: Component Decision Map</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+            <div class="component-row reveal" style="flex-direction:column;align-items:flex-start;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#f2cc60;margin-bottom:6px;">Picker with 100+ items</div>
+                <div style="font-size:0.76rem;color:#ff7b72;margin-bottom:4px;">SwiftUI Picker → 4-5s delay, beachball</div>
+                <div class="arrow-right">↓ fix</div>
+                <div style="font-size:0.76rem;color:#3fb950;">NSViewRepresentable(NSPopUpButton)</div>
+            </div>
+            <div class="component-row reveal" style="flex-direction:column;align-items:flex-start;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#f2cc60;margin-bottom:6px;">Scrollable list (1000+ rows)</div>
+                <div style="font-size:0.76rem;color:#ff7b72;margin-bottom:4px;">VStack in ScrollView → memory + jank</div>
+                <div class="arrow-right">↓ fix</div>
+                <div style="font-size:0.76rem;color:#3fb950;">List{} or NSViewRepresentable(NSTableView)</div>
+            </div>
+            <div class="component-row reveal" style="flex-direction:column;align-items:flex-start;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#f2cc60;margin-bottom:6px;">Text input with autocomplete</div>
+                <div style="font-size:0.76rem;color:#ff7b72;margin-bottom:4px;">SwiftUI TextField → limited delegate control</div>
+                <div class="arrow-right">↓ fix</div>
+                <div style="font-size:0.76rem;color:#3fb950;">NSViewRepresentable(NSTextField)</div>
+            </div>
+            <div class="component-row reveal" style="flex-direction:column;align-items:flex-start;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#f2cc60;margin-bottom:6px;">Outline / tree view</div>
+                <div style="font-size:0.76rem;color:#ff7b72;margin-bottom:4px;">SwiftUI List → broken disclosure arrows</div>
+                <div class="arrow-right">↓ fix</div>
+                <div style="font-size:0.76rem;color:#3fb950;">NSViewRepresentable(NSOutlineView)</div>
+            </div>
+            <div class="component-row reveal" style="flex-direction:column;align-items:flex-start;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#f2cc60;margin-bottom:6px;">Inspector panel resize</div>
+                <div style="font-size:0.76rem;color:#ff7b72;margin-bottom:4px;">.inspector modifier → crashes on resize (macOS 26 bug)</div>
+                <div class="arrow-right">↓ fix</div>
+                <div style="font-size:0.76rem;color:#3fb950;">HSplitView or manual panel until fixed</div>
+            </div>
+            <div class="component-row reveal" style="flex-direction:column;align-items:flex-start;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#f2cc60;margin-bottom:6px;">Toolbar with @State</div>
+                <div style="font-size:0.76rem;color:#ff7b72;margin-bottom:4px;">ToolbarItem + @State → drag degradation bug</div>
+                <div class="arrow-right">↓ fix</div>
+                <div style="font-size:0.76rem;color:#3fb950;">Move state to @Observable or NSToolbar</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 9: INSTRUMENTS WORKFLOW -->
+<div class="slide slide-9" data-slide="9">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#3fb950;opacity:0.07;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-50px;left:-30px;background:#d2a8ff;opacity:0.06;"></div>
+    </div>
+    <canvas class="particle-canvas-ambient" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-green">// Instruments — Profiling Protocol</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.25rem;">Profiling the Jank: Instruments Workflow</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <div class="flow-step reveal">
+                        <div class="flow-num">1</div>
+                        <div><div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#58a6ff;">⌘+I → SwiftUI + Time Profiler</div><div style="font-size:0.76rem;color:#8b949e;margin-top:2px;">Select both templates. Profile on real hardware only. Simulator hides real bottlenecks.</div></div>
+                    </div>
+                    <div class="flow-step reveal">
+                        <div class="flow-num">2</div>
+                        <div><div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#58a6ff;">Reproduce the drag jank</div><div style="font-size:0.76rem;color:#8b949e;margin-top:2px;">Record while dragging the panel handle 5-10 times. Include fast and slow drags.</div></div>
+                    </div>
+                    <div class="flow-step reveal">
+                        <div class="flow-num">3</div>
+                        <div><div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#58a6ff;">View Body → Average Duration</div><div style="font-size:0.76rem;color:#8b949e;margin-top:2px;">Target: &lt;8ms per body call. Anything over 16ms = visible dropped frame. Find the outlier views.</div></div>
+                    </div>
+                    <div class="flow-step reveal">
+                        <div class="flow-num">4</div>
+                        <div><div style="font-family:'JetBrains Mono',monospace;font-size:0.78rem;color:#58a6ff;">Check parent re-render cascade</div><div style="font-size:0.76rem;color:#8b949e;margin-top:2px;">If ContentView body fires on every drag delta → state is too high. Push down.</div></div>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:#484f58;margin-bottom:6px;">// Red flags in SwiftUI instrument</div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div class="diag-card warn-card reveal" style="padding:0.6rem 0.9rem;">
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;color:#ff7b72;">Large subtrees invalidating on drag</div>
+                        <div style="font-size:0.74rem;color:#8b949e;margin-top:3px;">Root: @State too high or environment misuse</div>
+                    </div>
+                    <div class="diag-card warn-card reveal" style="padding:0.6rem 0.9rem;">
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;color:#ff7b72;">View identity resets repeatedly</div>
+                        <div style="font-size:0.74rem;color:#8b949e;margin-top:3px;">Root: unstable IDs in ForEach, or .id() with UUID()</div>
+                    </div>
+                    <div class="diag-card warn-card reveal" style="padding:0.6rem 0.9rem;">
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;color:#ff7b72;">GeometryReader called repeatedly</div>
+                        <div style="font-size:0.74rem;color:#8b949e;margin-top:3px;">Root: GeometryReader inside list rows or panel body</div>
+                    </div>
+                    <div class="diag-card ok-card reveal" style="padding:0.6rem 0.9rem;">
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:0.74rem;color:#3fb950;">Only ResizeHandle body fires during drag</div>
+                        <div style="font-size:0.74rem;color:#8b949e;margin-top:3px;">✅ State is properly localized — expected behavior</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 10: APPKIT BRIDGE PATTERN -->
+<div class="slide slide-10" data-slide="10">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#d2a8ff;opacity:0.08;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-50px;left:-30px;background:#3fb950;opacity:0.05;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-purple">// AppKit Bridge Pattern</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.1rem;">NSViewRepresentable: Minimal Correct Pattern</h2>
+        <div class="code-block reveal" style="font-size:0.77rem;margin-bottom:12px;">
+<span class="cm">// Template: drop-in AppKit component with SwiftUI binding</span>
+<span class="kw">struct</span> NativeTextField: <span class="fn">NSViewRepresentable</span> {
+  @<span class="fn">Binding</span> <span class="kw">var</span> text: String
+
+  <span class="kw">func</span> <span class="fn">makeNSView</span>(context: Context) -> NSTextField {
+    <span class="kw">let</span> tf = NSTextField(string: text)
+    tf.delegate = context.coordinator  <span class="cm">// required for delegate callbacks</span>
+    <span class="kw">return</span> tf
+  }
+  <span class="kw">func</span> <span class="fn">updateNSView</span>(_ nsView: NSTextField, context: Context) {
+    <span class="cm">// Only update if changed — prevent feedback loops</span>
+    <span class="kw">if</span> nsView.stringValue != text { nsView.stringValue = text }
+  }
+  <span class="kw">func</span> <span class="fn">makeCoordinator</span>() -> Coordinator { Coordinator(<span class="fn">parent</span>: <span class="kw">self</span>) }
+
+  <span class="kw">class</span> Coordinator: NSObject, <span class="fn">NSTextFieldDelegate</span> {
+    <span class="kw">var</span> parent: NativeTextField
+    <span class="kw">init</span>(parent: NativeTextField) { <span class="kw">self</span>.parent = parent }
+    <span class="kw">func</span> controlTextDidChange(_ obj: Notification) {
+      <span class="kw">guard let</span> tf = obj.object <span class="kw">as</span>? NSTextField <span class="kw">else</span> { <span class="kw">return</span> }
+      parent.text = tf.stringValue  <span class="cm">// write back to SwiftUI</span>
+    }
+  }
+}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+            <div class="diag-card warn-card reveal" style="padding:0.6rem 0.9rem;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#ff7b72;">NSView action button</div>
+                <div style="font-size:0.73rem;color:#8b949e;margin-top:3px;">Use NSViewControllerRepresentable, not NSViewRepresentable — action targets need a VC</div>
+            </div>
+            <div class="diag-card ok-card reveal" style="padding:0.6rem 0.9rem;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#3fb950;">updateNSView guard</div>
+                <div style="font-size:0.73rem;color:#8b949e;margin-top:3px;">Always guard-check before setting values — prevents binding feedback loops on every render</div>
+            </div>
+            <div class="diag-card info-card reveal" style="padding:0.6rem 0.9rem;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#58a6ff;">Coordinator lifetime</div>
+                <div style="font-size:0.73rem;color:#8b949e;margin-top:3px;">SwiftUI owns the Coordinator — do not create it manually or store outside representable</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 11: VIEW IDENTITY & EQUATABLE -->
+<div class="slide slide-11" data-slide="11">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#58a6ff;opacity:0.07;"></div>
+        <div class="blob" style="width:200px;height:200px;bottom:-50px;left:-30px;background:#d2a8ff;opacity:0.06;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-blue">// Root Cause #7 — Identity</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.1rem;">View Identity: The #1 Diffing Killer</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px;">
+            <div>
+                <div style="color:#ff7b72;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">❌ Identity anti-patterns</div>
+                <div class="code-block reveal" style="font-size:0.76rem;">
+<span class="cm">// UUID() → new identity every render</span>
+Text(title).<span class="fn">id</span>(UUID())
+
+<span class="cm">// Unstable ForEach IDs</span>
+ForEach(items) { item <span class="kw">in</span>  <span class="cm">// no id: \.id</span>
+  RowView(item: item)
+}
+
+<span class="cm">// ViewModel recreated on each render</span>
+MyView(viewModel: ViewModel()) <span class="cm">// ❌</span>
+
+<span class="cm">// Conditional structure changes identity</span>
+<span class="kw">if</span> loading { ProgressView() }
+<span class="kw">else</span> { ContentView() }     <span class="cm">// ❌ different trees</span>
+                </div>
+            </div>
+            <div>
+                <div style="color:#3fb950;font-size:0.75rem;font-family:'JetBrains Mono',monospace;margin-bottom:6px;">✅ Stable identity patterns</div>
+                <div class="code-block reveal" style="font-size:0.76rem;">
+<span class="cm">// Stable, meaningful IDs</span>
+ForEach(items, id: \.id) { item <span class="kw">in</span>
+  RowView(item: item)
+}
+
+<span class="cm">// ViewModel owned by SwiftUI lifecycle</span>
+@StateObject <span class="kw">var</span> vm = ViewModel() <span class="cm">// ✅</span>
+
+<span class="cm">// Preserve identity with ZStack</span>
+ZStack {
+  ContentView()           <span class="cm">// always in tree</span>
+  <span class="kw">if</span> loading { ProgressView() }
+}
+
+<span class="cm">// Equatable to skip diffing</span>
+<span class="kw">struct</span> PanelContent: View, <span class="fn">Equatable</span> { ... }
+                </div>
+            </div>
+        </div>
+        <div class="diag-card info-card reveal" style="padding:0.65rem 1rem;">
+            <span style="font-size:0.78rem;color:#58a6ff;font-family:'JetBrains Mono',monospace;">Rule: </span>
+            <span style="font-size:0.78rem;color:#8b949e;">Stable identity = stable performance. Every identity reset causes state loss, animation restart, and full layout recalculation. Profile identity in Instruments under "View Properties."</span>
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 12: MAIN THREAD & OS CAVEATS -->
+<div class="slide slide-12" data-slide="12">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:300px;height:300px;top:-60px;right:-60px;background:#f2cc60;opacity:0.06;"></div>
+        <div class="blob" style="width:220px;height:220px;bottom:-50px;left:-30px;background:#3fb950;opacity:0.05;"></div>
+    </div>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-yellow">// Platform Caveats</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.1rem;">Main Thread, Layout, and OS Caveats</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="diag-card warn-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:#ff7b72;margin-bottom:5px;">Main thread blocking</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">Any I/O, decoding, or heavy computation in a body or drag handler blocks the main thread. Drag events queue up → burst on release = jumpy motion. Fix: <code style="color:#d2a8ff;">Task { await ... }</code> for all async work.</div>
+            </div>
+            <div class="diag-card warn-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:#ff7b72;margin-bottom:5px;">GeometryReader abuse</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">GeometryReader triggers layout measurement on every size change. Inside a resizable panel = layout thrash on every drag event. Prefer <code style="color:#d2a8ff;">.containerRelativeFrame</code> or intrinsic sizing.</div>
+            </div>
+            <div class="diag-card warn-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:#ff7b72;margin-bottom:5px;">SwiftUI Inspector API bug (macOS 26)</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">The <code style="color:#d2a8ff;">.inspector</code> modifier causes crashes and freezes when the user resizes with inspector open. Active bug as of macOS 26. Workaround: use HSplitView instead.</div>
+            </div>
+            <div class="diag-card warn-card reveal">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:0.76rem;color:#ff7b72;margin-bottom:5px;">Environment global invalidation</div>
+                <div style="font-size:0.78rem;color:#8b949e;line-height:1.7;">Putting fast-changing values (cursor position, drag offset) into @EnvironmentObject invalidates the entire subtree on every change. Treat environment as configuration, not live state.</div>
+            </div>
+        </div>
+        <div class="code-block reveal" style="font-size:0.76rem;margin-top:12px;">
+<span class="cm">// ✅ Correct async pattern — never block drag events</span>
+.<span class="fn">onChanged</span> { val <span class="kw">in</span>
+  dragOffset = val.translation.width  <span class="cm">// sync, cheap — fine</span>
+  <span class="kw">if</span> shouldLoadPreview {
+    Task { <span class="kw">await</span> loadPreviewAsync() }  <span class="cm">// off main thread</span>
+  }
+}
+        </div>
+    </div>
+</div>
+
+<!-- SLIDE 13: DECISION TREE / FIX CHECKLIST -->
+<div class="slide slide-13" data-slide="13">
+    <div class="gradient-mesh">
+        <div class="blob" style="width:350px;height:350px;top:-80px;right:-80px;background:#3fb950;opacity:0.08;"></div>
+        <div class="blob" style="width:250px;height:250px;bottom:-60px;left:-40px;background:#58a6ff;opacity:0.06;"></div>
+        <div class="blob" style="width:180px;height:180px;top:40%;left:10%;background:#d2a8ff;opacity:0.05;"></div>
+    </div>
+    <canvas class="particle-canvas" style="position:absolute;inset:0;z-index:1;"></canvas>
+    <div class="content">
+        <div class="reveal" style="margin-bottom:0.5rem;"><span class="badge badge-green">// Fix Checklist</span></div>
+        <h2 class="reveal" style="font-family:'JetBrains Mono',monospace;font-size:clamp(1.4rem,3vw,2.2rem);font-weight:700;margin-bottom:1.2rem;">Panel Jank Fix Checklist</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Use onContinuousHover, not onHover</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Bind frame to live dragOffset, not onEnded</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Use HSplitView or NavigationSplitView</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Push @State down to ResizeHandle only</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">No animation during drag — only on snap</span>
+                </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Conform heavy panel content to Equatable</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Use NSViewRepresentable for Picker 100+ items</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Stable IDs in ForEach (id: \.id, not UUID())</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">Remove GeometryReader from resizable panels</span>
+                </div>
+                <div class="diag-card ok-card reveal" style="padding:0.55rem 0.9rem;display:flex;align-items:center;gap:10px;">
+                    <span style="color:#3fb950;font-size:1rem;">✓</span>
+                    <span style="font-size:0.78rem;color:#8b949e;font-family:'JetBrains Mono',monospace;">All async work off main thread (Task { await })</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div>
+
+<!-- NAVIGATION -->
+<div class="nav-controls">
+    <button class="nav-btn" onclick="changeSlide(-1)">&#8249;</button>
+    <div class="slide-dots" id="dots"></div>
+    <button class="nav-btn" onclick="changeSlide(1)">&#8250;</button>
+    <span class="slide-counter" id="counter">1 / 13</span>
+</div>
+
+<script>
+    let current = 1;
+    const total = document.querySelectorAll('.slide').length;
+    const dotsContainer = document.getElementById('dots');
+    const counter = document.getElementById('counter');
+    for (let i = 1; i <= total; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'dot' + (i === 1 ? ' active' : '');
+        dot.onclick = () => goToSlide(i);
+        dotsContainer.appendChild(dot);
+    }
+    function goToSlide(n) {
+        const prev = document.querySelector('.slide.active');
+        const next = document.querySelector('.slide[data-slide="' + n + '"]');
+        if (prev) prev.classList.remove('active');
+        if (next) { next.classList.add('active'); animateSlide(next); }
+        current = n; updateNav();
+    }
+    function changeSlide(dir) { let n = current + dir; if (n < 1) n = total; if (n > total) n = 1; goToSlide(n); }
+    function updateNav() {
+        document.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i + 1 === current));
+        counter.textContent = current + ' / ' + total;
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); changeSlide(1); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); changeSlide(-1); }
+    });
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+    document.addEventListener('touchend', (e) => { if (Math.abs(touchStartX - e.changedTouches[0].clientX) > 50) changeSlide(touchStartX > e.changedTouches[0].clientX ? 1 : -1); });
+
+    function animateSlide(slide) {
+        slide.querySelectorAll('.reveal').forEach((el, i) => {
+            el.style.transition = 'none';
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(18px)';
+            el.offsetHeight;
+            const delay = i * 0.07;
+            el.style.transition = 'opacity 0.35s ease ' + delay + 's, transform 0.35s ease ' + delay + 's';
+            el.style.opacity = '1';
+            el.style.transform = 'translateY(0px)';
+        });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        const s = document.querySelector('.mouse-spotlight');
+        if (s) s.style.background = 'radial-gradient(600px circle at ' + e.clientX + 'px ' + e.clientY + 'px, rgba(88,166,255,0.05), transparent 40%)';
+    });
+
+    window.initParticles = function(canvas, opts) {
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+        const interactive = opts.interactive !== false;
+        const count = opts.count || (interactive ? 40 : 15);
+        let mx = -1000, my = -1000;
+        const particles = Array.from({length: count}, () => ({
+            x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+            vx: (Math.random() - 0.5) * 0.25, vy: (Math.random() - 0.5) * 0.25,
+            size: Math.random() * 2 + 0.6, alpha: Math.random() * 0.3 + 0.08
+        }));
+        if (interactive) {
+            canvas.addEventListener('mousemove', (e) => { const r = canvas.getBoundingClientRect(); mx = e.clientX - r.left; my = e.clientY - r.top; });
+            canvas.addEventListener('mouseleave', () => { mx = -1000; my = -1000; });
+        }
+        (function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            particles.forEach(p => {
+                if (interactive) { const dx = p.x - mx, dy = p.y - my, d = Math.sqrt(dx*dx+dy*dy); if (d < 100) { const f = (100-d)/100*1.5; p.vx += (dx/d)*f*0.08; p.vy += (dy/d)*f*0.08; } }
+                p.vx *= 0.98; p.vy *= 0.98; p.x += p.vx; p.y += p.vy;
+                if (p.x < 0) p.x = canvas.width; if (p.x > canvas.width) p.x = 0;
+                if (p.y < 0) p.y = canvas.height; if (p.y > canvas.height) p.y = 0;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(88,166,255,' + p.alpha + ')'; ctx.fill();
+            });
+            requestAnimationFrame(animate);
+        })();
+    };
+    document.querySelectorAll('.particle-canvas').forEach(c => window.initParticles(c, {interactive: true, count: 40}));
+    document.querySelectorAll('.particle-canvas-ambient').forEach(c => window.initParticles(c, {interactive: false, count: 15}));
+
+    animateSlide(document.querySelector('.slide.active'));
+</script>
+</body>
+</html>

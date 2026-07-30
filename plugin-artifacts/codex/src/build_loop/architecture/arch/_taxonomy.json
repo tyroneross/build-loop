@@ -1,0 +1,5 @@
+{
+  "node_types": {},
+  "edge_types": [],
+  "_note": "Runtime delta over the seeded vocabulary in _taxonomy.py. register_type() appends here; the seed always loads. Adding a type is additive and does NOT bump SCHEMA_VERSION (D7)."
+}

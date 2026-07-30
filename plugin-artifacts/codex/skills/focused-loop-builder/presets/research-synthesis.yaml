@@ -1,0 +1,96 @@
+{
+  "id": "research-synthesis",
+  "title": "Research Synthesis Loop",
+  "summary": "Answer a question with explicit source strategy, evidence extraction, confidence, and durable citations.",
+  "inputs": [
+    "research question",
+    "decision use",
+    "freshness requirement",
+    "candidate sources",
+    "source quality rubric"
+  ],
+  "outputs": [
+    "source strategy",
+    "evidence table",
+    "synthesis memo",
+    "claim verification log",
+    "reusable search strategy"
+  ],
+  "phases": {
+    "assess": {
+      "goal": "Frame the question, scope, decision use, freshness need, and inclusion/exclusion rules.",
+      "required": ["question", "decision_use", "freshness_requirement", "inclusion_exclusion"]
+    },
+    "plan": {
+      "goal": "Plan source collection, extraction fields, and confidence markers.",
+      "required": ["source_strategy", "extraction_schema", "confidence_scheme"]
+    },
+    "produce": {
+      "goal": "Collect sources, extract evidence, and synthesize the answer.",
+      "required": ["source_list", "evidence_table", "synthesis"]
+    },
+    "review": {
+      "goal": "Verify claims, dates, statistics, and contested points.",
+      "required": ["claim_inventory", "verification_log", "weak_claims"]
+    },
+    "learn": {
+      "goal": "Persist the report, source quirks, and reusable search strategy.",
+      "required": ["saved_report", "search_strategy", "source_quirks"]
+    }
+  },
+  "validators": [
+    {
+      "id": "claim_citation",
+      "pass_condition": "Every material claim has a citation or is marked inferred/unsupported.",
+      "method": "review"
+    },
+    {
+      "id": "freshness_trace",
+      "pass_condition": "Time-sensitive claims include source publication or capture date.",
+      "method": "review"
+    },
+    {
+      "id": "source_quality",
+      "pass_condition": "Each source has a quality tier and role in the answer.",
+      "method": "review"
+    },
+    {
+      "id": "weak_claim_handling",
+      "pass_condition": "Unsupported claims are removed, downgraded, or labeled explicitly.",
+      "method": "review"
+    }
+  ],
+  "gates": {
+    "confirm": ["external_send", "legal_or_compliance_assertion", "sensitive_data_exposure"],
+    "surface": ["people_impacting_decision", "money_movement"]
+  },
+  "skill_chain": {
+    "intake": {
+      "primary": ["research"],
+      "optional": [],
+      "fallback": "Use local repo/wiki scan and explicit source list.",
+      "handoff_artifact": "research_packet.md"
+    },
+    "produce": {
+      "primary": ["research"],
+      "optional": ["pyramid-principle:pyramid-short-form"],
+      "fallback": "Draft synthesis from evidence table with confidence markers.",
+      "handoff_artifact": "synthesis_memo.md"
+    },
+    "review": {
+      "primary": ["research"],
+      "optional": [],
+      "fallback": "Run claim inventory and citation checks manually.",
+      "handoff_artifact": "claim_verification_log.md"
+    },
+    "learn": {
+      "primary": ["build-loop:knowledge"],
+      "optional": [],
+      "fallback": "Persist source quirks and search strategy in the report.",
+      "handoff_artifact": "research_lessons.md"
+    }
+  },
+  "learn": {
+    "store": ["search_strategy", "source_quirks", "claim_failures", "useful_sources"]
+  }
+}

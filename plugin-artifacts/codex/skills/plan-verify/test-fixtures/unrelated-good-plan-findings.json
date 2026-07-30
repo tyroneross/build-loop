@@ -1,0 +1,15 @@
+{
+  "fixture": "unrelated-good-plan.md",
+  "expected_exit_code": 0,
+  "description": "False-positive control. Clean plan from a different project. Should produce zero BLOCKERs.",
+  "expectations_by_rule_id": {
+    "delete-with-callers": { "max_blocker_count": 0 },
+    "numeric-drift": { "max_blocker_count": 0 },
+    "route-change-evidence": { "max_blocker_count": 0 },
+    "package-state": { "max_blocker_count": 0 },
+    "missing-evidence": {
+      "max_warn_count": 5,
+      "rationale": "Clean plan, but warn budget allows for a few unmarked stylistic claims."
+    }
+  }
+}

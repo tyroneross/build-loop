@@ -1,0 +1,280 @@
+---
+name: debug-loop
+description: Use when a fix didn't hold, `/build-loop:debug` is invoked, the user asks for root cause analysis, memory lookup returns LIKELY_MATCH/WEAK_SIGNAL/NO_MATCH, or Review-B Validate fails. Deep iterative debugging loop — not for known fixes or trivial issues. NOT for blameless postmortem system-lever analysis (use `root-cause-analysis`) or memory search/store (use `debugging-memory`).
+version: 1.1.0
+user-invocable: false
+---
+
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
+# Debug Loop — Iterative Root Cause Debugging
+
+A 7-phase debugging loop: investigate with structured root-cause methods, hypothesize root cause, implement targeted fix, verify with evidence, score against criteria, pressure-test via critique agent, and report with transparency markers. Iterates up to 5x on failures.
+
+## Scope Check
+
+Before entering the loop, assess whether it's warranted. The trigger is the **verdict category**, not a numeric score — research shows LLM-assigned confidence scores are poorly calibrated for open-ended tasks (Tian et al., EMNLP 2023; 49-84% calibration error on open-ended generation).
+
+- **Skip the loop** if debugging-memory returned `KNOWN_FIX` — apply the fix directly and verify
+- **Skip the loop** for trivial issues: typos, missing imports, obvious config errors where the cause is immediately clear
+- **Enter the loop** when: verdict is `LIKELY_MATCH`, `WEAK_SIGNAL`, or `NO_MATCH`, the user asks for deep investigation, the initial diagnosis feels superficial, or a previous fix attempt didn't hold
+
+## Efficiency
+
+- Terminal output: current phase, key findings (one line each), status changes, failures. No verbose reasoning
+- Agent context: minimum needed per job. Pass symptom + relevant findings, not full conversation history
+- Load convergence rules reference on demand only when entering iteration
+
+## Phase 1: INVESTIGATE — Gather Evidence and Trace Root Cause
+
+**Goal**: Understand what's actually failing and why, not just what it looks like.
+
+1. **Search debugging memory** — invoke `build-loop:debugging-memory` with the symptom. Note related incidents from local build-loop memory and optional standalone Coding Debugger memory when available.
+2. **Reproduce the issue** — identify exact steps, commands, or conditions that trigger the bug
+3. **Deploy root-cause-investigator agent** — pass the symptom and reproduction steps for causal tree analysis. The agent explores multiple branches (not a single chain), prioritizes by evidence strength, and prunes with evidence
+4. **Research gate** — if the investigator flags unfamiliar error codes, library behavior, or version-specific issues:
+   - Search externally (WebSearch, Context7, or documentation)
+   - Document what was searched and what was found
+   - If search is unavailable, document what SHOULD be searched
+5. **Assess completeness** — does the investigation explain ALL reported symptoms? Check for multi-causal bugs (2+ independent root causes)
+
+**Output**: Causal tree (with confirmed and pruned branches), reproduction steps, evidence gathered, research performed
+
+### Root-Cause Frameworks
+
+Use the lightest framework that fits the failure. Stack frameworks only when the current one stalls.
+
+| Framework | Use when | Output |
+|---|---|---|
+| 5 Whys | A symptom has a plausible linear chain and needs a controllable system cause | Five-level why-chain ending in a code, test, config, protocol, or process control |
+| Causal tree / fault tree | Multiple causes could explain the same symptom | Branches with confirming and pruning evidence |
+| Ishikawa / fishbone | The failure may span people/process/code/tooling/data/environment | Category map, then the top 2-3 branches to test |
+| Kepner-Tregoe problem analysis | The issue is intermittent, version-specific, or boundary-sensitive | Is/is-not table: affected/unaffected versions, inputs, users, routes, environments |
+| Differential diagnosis | Several hypotheses look similar from symptoms alone | Ranked hypotheses plus the discriminating test for each |
+| Falsification test | A hypothesis is attractive but under-proven | Smallest test that would disprove it |
+
+For hard fixes, record which framework was used and the decisive evidence. The framework is a thinking scaffold, not a report section unless it clarifies the outcome.
+
+**Domain root-cause catalogs (read directly + point sub-agents at the PATH):** for SwiftUI/macOS "clunky UI" symptoms — choppy/janky panel resize, drag not tracking the cursor, collapse-snap-back, re-render storms, scrunched panes, Picker/list lag — use `references/swiftui-macos-clunky-ui-debugger.html` (13 discrete Root-Cause→Fix slides with real Swift code: onContinuousHover, two-state DragGesture, HSplitView vs NSViewRepresentable, updateNSView feedback-loop guard, re-render storms, animation placement, view-identity resets, NSViewRepresentable minimal pattern, Instruments workflow). It maps symptom→cause→fix directly (e.g. collapse-snap-back → Slide 9 NSViewRepresentable feedback loop → updateNSView guard). When dispatching an implementer, reference the file by PATH so it reads the full methodology — a structured reference FILE read directly beats pasting prose (a sub-agent then carries only your lossy summary). This catalog fixed an NSSplitView resize regression in one pass after two prior failed attempts (easy-terminal 2026-06-08).
+
+## Phase 2: HYPOTHESIZE — State the Root Cause
+
+**Goal**: Commit to a specific, testable hypothesis before writing any fix.
+
+Start with plain language before implementation detail. State what failed in normal words, then trace visible symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure. Do not use "agent forgot", "agent missed context", or similar actor-blame language as the terminal cause unless you also name the missing system control that allowed it.
+
+1. **State the root cause hypothesis** with evidence level:
+   - **Strong**: Multiple evidence types (code, logs, reproduction) all point to this cause
+   - **Moderate**: Some direct evidence plus reasonable inference
+   - **Weak**: Mostly inference, limited direct evidence — consider investigating other branches first
+2. **Predict verification test**: If this hypothesis is correct, what specific test would prove it?
+3. **Predict related symptoms**: What else should be affected if this root cause is real?
+4. **If multiple hypotheses exist**, rank by evidence strength. Pursue the strongest first
+
+**Output**: Hypothesis statement, evidence level, prediction test, related symptom predictions
+
+## Phase 3: FIX — Implement Targeted Change
+
+**Goal**: Make the minimal change that addresses the hypothesized root cause.
+
+1. **Fix the root cause, not the symptom** — if you're adding a null check instead of fixing why something is null, you're fixing the symptom
+2. **Minimal changes** — touch only what's needed. Don't refactor, don't improve, don't clean up
+3. **Note exactly what was changed and why** — this becomes the evidence trail
+
+**Output**: List of changes with rationale
+
+## Phase 4: VERIFY — Test the Fix with Evidence
+
+**Goal**: Collect concrete evidence that the fix works.
+
+1. **Run the prediction test** from Phase 2 — does it confirm the hypothesis?
+2. **Run the original reproduction steps** — is the symptom gone?
+3. **Run related test suite** — do existing tests still pass?
+4. **Check for regressions** — run broader test suite if available
+5. **Verify related symptom predictions** — are the predicted effects present?
+
+Every verification step must produce evidence: command output, test results, or observable behavior. "It should work" is not evidence.
+
+**Output**: Evidence for each verification step
+
+## Phase 5: SCORE — Evaluate Against Criteria
+
+**Goal**: Objective pass/fail assessment with evidence.
+
+Score against these criteria:
+
+| # | Criterion | Method | Pass Condition | Evidence Required |
+|---|-----------|--------|----------------|-------------------|
+| 1 | Symptom resolved | Reproduction steps | Symptom no longer occurs | Command output or test result |
+| 2 | Tests pass | Test suite | All relevant tests pass | Test runner output |
+| 3 | No regressions | Broader test suite | No new failures introduced | Test runner output |
+| 4 | Root cause addressed | Code review | Fix targets root cause, not symptom | Diff + reasoning |
+| 5 | Hypothesis confirmed | Prediction test | Prediction test passes | Test output |
+
+**All criteria must have evidence.** No criterion marked PASS without proof.
+
+**If any criterion fails** → enter iteration (Phase 6 rules apply)
+**If all criteria pass** → proceed to critique (Phase 6)
+
+**Output**: Scorecard with pass/fail per criterion and evidence
+
+## Phase 6: CRITIQUE — Pressure-Test Before Declaring Done
+
+**Goal**: Challenge the fix before the user relies on it.
+
+1. **Deploy fix-critique agent** with:
+   - The symptom
+   - The causal tree from investigation (confirmed branch path + pruned branches)
+   - The fix (what was changed)
+   - The verification evidence
+2. **Evaluate verdict**:
+   - **APPROVED** → proceed to REPORT
+   - **CHALLENGED** → the concerns become input for the next iteration. Route back to INVESTIGATE with the specific challenges as new investigation targets
+
+The critique agent checks 5 things:
+- Root cause vs symptom fix
+- Symptom coverage (similar bugs elsewhere)
+- Regression risk
+- Evidence verification
+- Causal tree consistency
+
+## Phase 7: REPORT — Transparent Status
+
+**Goal**: Clear, honest summary. No overclaiming.
+
+### Transparency Markers
+
+Every item in the report gets one marker:
+
+- **✅ Verified**: Checked with evidence (test output, reproduction, command results)
+- **⚠️ Assumed**: Believed to be true based on reasoning, but not verified with a test
+- **❓ Unknown**: Not checked at all — explicitly acknowledged gaps
+
+### Report Contents
+
+1. **Verdict**: Fixed (all criteria pass + critique approved) or Unresolved (iteration limit hit)
+2. **Plain-language failure**: What went wrong in normal words
+3. **Why it happened**: Symptom -> technical failure -> upstream dependency/interface/process failure -> first controllable system failure
+4. **Technical details**: Minimum proof needed to understand the cause
+5. **Tradeoffs and impact**: What improves, what risks remain, and who is affected
+6. **Prevention control**: Durable test, verifier, trace, gate, protocol, or routing rule
+7. **Root cause**: The identified system cause with evidence level
+8. **Causal Tree**: The investigation path — confirmed branches, pruned branches with rejection evidence, any multi-causal findings
+9. **Fix Applied**: What was changed, with rationale
+10. **Scorecard**: Final pass/fail per criterion with evidence
+11. **Research Used**: What was searched externally, what was found, what sources
+12. **Iteration History** (if >1 iteration): What was tried, what failed, what changed between iterations
+13. **Remaining Gaps**: Anything marked ⚠️ or ❓
+
+### After Reporting
+
+> **Durable post-failure RCA:** for the blameless durable-lever pass (creation+escape paths, action-strength hierarchy, lever+actuator, regression artifact, spread check), delegate to the shared `references/root-cause-analysis/` suite. This skill/agent finds and fixes the live issue; that suite is the post-failure prevention layer.
+
+- **Store the incident** as a native `.build-loop/issues/*.md` note for future retrieval
+- **Record the outcome** through standalone Coding Debugger only if that optional plugin supplied the prior incident
+- **Write state** to `.build-loop/debug-loop/scorecard.md`
+
+## Iteration Rules
+
+When any criterion fails or the critique is CHALLENGED, iterate:
+
+1. **Diagnose why the criterion failed** — don't blind retry
+2. **Revise the hypothesis** if verification disproved it
+3. **Create targeted fix plan** for failed criteria only
+4. **Execute fix**
+5. **Re-verify ONLY failed criteria** — don't re-run passing checks
+6. **Re-score and re-critique**
+
+### Convergence Detection
+
+Load `references/convergence-rules.md` for detailed rules and escalation templates.
+
+Summary:
+- **Same hypothesis fails 2x** → escalate to user ("I've tried this approach twice — the hypothesis may be wrong or there's a constraint I'm not seeing")
+- **Fix A breaks criterion B (oscillation)** → flag as coupled issue, present both sides, ask user
+- **3+ criteria fail after a fix** → systemic issue, stop loop and reassess the approach entirely
+- **New regression detected** → fix is causing side effects, reconsider the approach
+- **Hard stop at 5 iterations** → report what's known and what isn't. Never silently loop beyond 5
+
+### If stuck — parallel multi-domain assessment
+
+When the failure symptom touches multiple layers (e.g. search queries are slow AND results look wrong → database + frontend + API), the linear causal-tree loop can stall. Branch into parallel assessment instead of pursuing one hypothesis serially:
+
+1. Invoke `Skill("build-loop:assess")` with the symptom and the current attempt diff. The bundled `assessment-orchestrator` fans out to relevant domain assessors (`api-assessor` / `database-assessor` / `frontend-assessor` / `performance-assessor`) in parallel.
+
+2. **Model override**: when invoking from the build-loop orchestrator (Opus 4.7), explicitly pass `model: sonnet` to each domain assessor via the subagent dispatch. Without this override, the assessor agents inherit the orchestrator's tier and you get 4 parallel Opus invocations — wasteful for pattern-matching work that Sonnet handles well. Only escalate individual assessors back to Opus if their initial output flags `confidence: low` or `needs_judgment: true`.
+
+3. Aggregate the assessors' ranked findings. The top action becomes the next `HYPOTHESIZE → FIX` plan — feed it back into the loop.
+
+When to use parallel assessment vs continuing the linear loop:
+- Symptom is vague or unclear ("app broken", "something is wrong") → parallel
+- Multiple domains may be involved ("search is slow and returns wrong results") → parallel
+- Post-deploy regression with unknown scope → parallel
+- Symptom is sharp and localized to one layer → continue the linear loop
+
+### Extended capability — cross-domain assessor escalation
+
+If the bundled assessor coverage isn't enough (e.g., the failure crosses a domain build-loop's bundled assessors don't cover well, or you need cross-build coordination), escalate via the native debugging skills:
+
+```
+Skill("build-loop:debugging-memory") with input { op: "assess", symptom, scope: "global", calledBy: "debug-loop", reason: "stuck-iteration" }
+```
+
+The native skill includes domain-specific assessors (api / database / frontend / performance). It uses build-loop local memory by default and may use standalone Coding Debugger for cross-build memory when available; otherwise it falls back to grep across `.build-loop/issues/` and `.build-loop/feedback.md` with narrower coverage.
+
+### State Tracking
+
+Write iteration state to `.build-loop/debug-loop/state.json`:
+
+```json
+{
+  "symptom": "original symptom",
+  "iteration": 1,
+  "phase": "VERIFY",
+  "hypotheses": [
+    {
+      "iteration": 1,
+      "hypothesis": "description",
+      "evidence_level": "strong | moderate | weak",
+      "result": "confirmed | disproved | partial",
+      "evidence": "what was found"
+    }
+  ],
+  "scorecard": [
+    {
+      "criterion": "symptom_resolved",
+      "result": "PASS | FAIL",
+      "evidence": "summary"
+    }
+  ],
+  "critique_verdict": "APPROVED | CHALLENGED | pending",
+  "changes_made": ["file:change summary"]
+}
+```
+
+Create the directory with `mkdir -p .build-loop/debug-loop/` before writing.
+
+## Process Flow
+
+```
+MEMORY SEARCH → INVESTIGATE → HYPOTHESIZE → FIX → VERIFY → SCORE
+                                                       ↓
+                                                  All pass? ──yes──→ CRITIQUE ──approved──→ REPORT
+                                                       ↓                  ↓
+                                                      no            challenged
+                                                       ↓                  ↓
+                                                  ITERATE ←──────────────┘
+                                                 (up to 5x)
+```
+
+## Anti-Patterns to Avoid
+
+| Anti-Pattern | What to Do Instead |
+|-------------|-------------------|
+| Accepting the first explanation | Branch first — identify 2+ plausible causes before pursuing any |
+| Fixing the symptom | Trace to root cause, fix there |
+| "This should fix it" | Run the tests, show the output |
+| Retrying the same approach | If it failed once with the same evidence, it'll fail again. Change the hypothesis |
+| Declaring victory without evidence | Every claim needs a ✅/⚠️/❓ marker |
+| Skipping research when stuck | If you don't know why something behaves this way, search for it |
+| Hiding uncertainty | ⚠️ and ❓ are not failures — they're honest. Hiding them is the failure |

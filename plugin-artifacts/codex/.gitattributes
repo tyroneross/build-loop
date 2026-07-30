@@ -1,0 +1,5 @@
+archive/ export-ignore
+
+# The generated artifact preserves canonical source text verbatim.
+* -whitespace
+* conflict-marker-size=64

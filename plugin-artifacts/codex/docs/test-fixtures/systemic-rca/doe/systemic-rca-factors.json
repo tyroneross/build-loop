@@ -1,0 +1,44 @@
+[
+  {
+    "name": "explanation_format",
+    "levels": [
+      "technical_first",
+      "plain_language_then_system_cause"
+    ]
+  },
+  {
+    "name": "framework_core",
+    "levels": [
+      "causal_tree_only",
+      "cast_stpa_control_gap"
+    ]
+  },
+  {
+    "name": "failure_map_shape",
+    "levels": [
+      "linear_why_chain",
+      "fault_tree_plus_dependency_chain"
+    ]
+  },
+  {
+    "name": "forward_scan",
+    "levels": [
+      "none",
+      "fmea_interface_failure_modes"
+    ]
+  },
+  {
+    "name": "classification",
+    "levels": [
+      "freeform",
+      "odc_taxonomy"
+    ]
+  },
+  {
+    "name": "evidence_method",
+    "levels": [
+      "manual_evidence",
+      "trace_or_delta_debug_required"
+    ]
+  }
+]

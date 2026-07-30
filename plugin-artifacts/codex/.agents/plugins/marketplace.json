@@ -1,0 +1,10 @@
+{
+  "name": "build-loop",
+  "version": "0.36.8",
+  "plugins": [
+    {
+      "name": "build-loop",
+      "source": "./plugin-artifacts/codex"
+    }
+  ]
+}

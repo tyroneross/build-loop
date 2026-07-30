@@ -1,0 +1,162 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
+# Multi-Session Coordination (Rally Point presence, M5 memory index)
+
+_Linked from `agents/build-orchestrator.md` §Multi-session concurrency._
+
+Multiple build-loop sessions can run concurrently in different terminals and across coding hosts (Claude Code, Codex, Gemini CLI). They MUST coordinate so they don't clobber each other's working trees or commit races. The mechanisms that own this concern:
+
+- **Rally Point presence** — `scripts/rally_point/presence.py` + `scripts/rally_point/discovery_bridge.py`: the single concurrent-presence source of truth. One file per live session at `<resolved-channel>/sessions/<session-id>.json`; native `agent-rally-point` installs resolve under `~/.agent-rally-point/apps/<repo-id>/`, and the embedded build-loop fallback uses the same root with a local `<slug>`. (The legacy `scripts/session_registry.py` / `~/.build-loop/sessions/<run_id>.json` mechanism was documented-dead and was **removed 2026-05-18** — see `KNOWN-ISSUES.md` §M4.)
+- **Rally Point task heartbeat** — `scripts/rally_point/task_heartbeat.py`: append-only long-running task check-ins at `<resolved-channel>/task-heartbeats/<tool>.jsonl`. This is not process liveness; it records whether a session is still on the expected task, what changed since the prior check-in, and when the next check-in is due.
+- `scripts/memory_writer.py` — canonical writer for memory files (provenance frontmatter + atomic INDEX append in one operation)
+- `scripts/memory_index.py` — append-only discovery log at `<memory-root>/INDEX.jsonl`
+
+## Required orchestrator integration points
+
+This section defines the Rally Point presence integration plus the M5 trigger family. They complement M1 (envelope persist) + M2 (heartbeat) + M3 (cost-ledger row):
+
+- **Rally Point presence — concurrent-session awareness.** Fires at the Phase 1 preamble (write presence) and each phase-start (read active peers + checkpoint). Awareness only (D4): peer file-overlap is a WARNING, never a block. Checkpoint-poll, no daemon (D3). New change records use `scripts/rally_point/post.py`, not raw `append_change`.
+- **Rally Point task heartbeat — long-running work adherence.** Fires at task start, then at least every 10 minutes while a host is doing long-running work. `coordination_status.py --task-ref <id>` reports `current`, `stale_check_in`, `wrong_task`, `drift_risk`, `blocked`, or `needs_attention` without requiring an inbox message.
+- **Script-first status checks — token conservation.** `scripts/coordination_status.py` and `scripts/coordination_watch.py` compress Rally Point, coordination verdicts, peer overlap, and dirty-file state into compact JSON so agents do not repeatedly reread the full coordination note.
+- **M5 — Memory index append + canonical writer.** Fires on every memory write to canonical `<memory-root>/` lanes (via `memory_writer.py write`) and every read between phases (via `memory_index.py tail --since`). Telemetry + cross-session discovery; never blocks.
+
+### Rally Point presence — channel resolution (D1, worktree-aware)
+
+Use `scripts/rally_point/discovery_bridge.resolve(workdir=<repo>)` for the channel directory before every direct Rally Point write or read. It delegates to native `agent-rally-point` discovery when available, then falls back to `channel_paths.app_slug(cwd=<repo>)` + `channel_paths.app_channel_dir(...)`. The fallback slug comes from `git rev-parse --git-common-dir` → canonical-repo basename, so the **main checkout and every `git worktree` of the same repo share one channel** — precisely the concurrent scenario this targets (agent dispatches run under `isolation: "worktree"`). Outside a git repo, fallback slug derivation delegates to memory's `derive_slug_from_cwd`. Use this resolver; never reimplement channel or slug derivation.
+
+### Rally Point presence — On Phase 1 Assess preamble (before any Rally Point write, BEFORE any planning):
+
+1. `build_loop_id.generate_or_resume(workdir=Path.cwd(), tool="<tool-id>", session_id=<this session_id>)`. This seeds `state.execution.build_loop_id` and `state.execution.run_label`, or preserves them and updates `current_session_id` on resume.
+2. `envelope = discovery_bridge.resolve(Path.cwd())`, then `presence.write_presence(Path(envelope.channel_dir), session_id=..., tool="claude_code", model=..., run_id="$RUN_ID", app_slug=envelope.app_slug, phase="assess", files_in_flight=[])`. Codex / Gemini / other hosts substitute their `tool` value. Fire-and-forget: never raises, never blocks. The writer attaches top-level `build_loop_id` and `build_loop_run_label` when state has them.
+3. `peers = presence.read_active_presence(channel_dir, exclude_session=<this session_id>)` (this also reaps stale presence whose `heartbeat_ts` is older than the channel's `heartbeat_minutes`, default 15).
+4. **Peer handling** (awareness, never a hard block — D4):
+   - No peers — continue silently.
+   - Peers, no file overlap — log one line per peer: tool, run_id, phase.
+   - Peers WITH `files_in_flight` overlapping this session's planned files — surface a `soft-claim` **WARNING** naming the peer + overlapping files + the peer's phase, then proceed with awareness. Interactive hosts MAY additionally `AskUserQuestion` to coordinate; headless hosts log + proceed (per `feedback_no_permission_asks.md`). There is no SAFE-STOP sentinel and no non-zero exit — Rally Point is awareness, not a lock.
+
+### Rally Point presence — On each phase-start and when files-owned changes:
+
+Refresh presence so concurrent peers see the current phase and the files this session will touch:
+
+```
+presence.write_presence(channel_dir, session_id=..., tool="claude_code", model=...,
+                         run_id="$RUN_ID", app_slug=<slug>, phase="<current>",
+                         files_in_flight=<MECE files for this phase>)
+```
+
+Then `checkpoint.checkpoint_read(channel_dir, session_id=..., my_files=[...])`; when its envelope reports peers / `dep-change` (→ reinstall) / `arch-scan-complete` (→ re-baseline scout cache) / file-overlap (→ `soft-claim` WARNING), surface the compact reaction block. The `presence.write_presence` call preserves the per-session read cursor across refreshes. All writes are fire-and-forget; the only locked write is the `revision` bump (short-timeout, skip-on-timeout). None can block or fail a host action.
+
+For active coding, run the cheap status script before asking an LLM to inspect
+coordination details:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/coordination_status.py \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --owned-files <owned-files-list> \
+  --json
+```
+
+If it returns `clear`, proceed without spending tokens on the coordination
+note. If it returns `warn` or `blocked`, read the reported coordination file or
+verdicts and resolve before the next shared-file edit, commit, version bump, or
+archive/delete. During high-overlap work, run `coordination_watch.py --interval
+3 --tool "$TOOL_NAME" --task-ref "$TASK_REF" --jsonl --baseline-current`; it
+prints only state transitions plus inbox unread count and task-heartbeat
+health.
+
+For long-running tasks, write the task heartbeat separately from presence:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py heartbeat \
+  --workdir "$PWD" \
+  --session-id "$SESSION_ID" \
+  --tool "$TOOL_NAME" \
+  --run-id "$RUN_ID" \
+  --task-ref "$TASK_REF" \
+  --status running \
+  --progress "<short update>" \
+  --evidence "<csv refs>" \
+  --json
+```
+
+Use the same rule for every coding host. Claude Code uses `claude_code`, Codex
+uses `codex`, Cursor can use `cursor`, and future agents should pick a stable
+tool id before writing presence or inbox messages.
+
+Inbox routing has two wake paths. Targeted messages append to
+`inbox/<tool>.jsonl`; broadcast messages append to `inbox/all.jsonl`. Agents
+read both their direct inbox and `all`, while still mirroring important
+messages to `changes.jsonl` for durable channel polling.
+### Rally Point presence — On clean completion:
+
+No explicit unregister is needed. The last presence write stands; `presence.reap_stale` (run opportunistically at every peer read) removes it once `heartbeat_ts` exceeds the stale window. A forgotten session is therefore self-healing — no `dead/` directory, no cleanup step.
+
+### M5 — Between phases, scan for new sibling learnings:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py tail --since "$LAST_INDEX_CHECK_TS" --exclude-run-id "$RUN_ID" --json
+```
+
+Read any new rows. If a row's `file` matches a memory category relevant to the current build (e.g. `feedback_buildloop_*` during a build-loop work session), Read the underlying memory file and surface its `description` field in the next phase brief. Tag based on the file's provenance frontmatter:
+
+- `[CROSS-REPO — requires scrutiny]` when `source_workdir` ≠ this workdir AND `source_repo` ≠ this repo's git remote.
+- `[VALIDATED — applied in N repos]` when `cross_repo_validated: true` AND `len(applied_in_repos) >= 2`.
+- Otherwise — surface as a normal peer signal.
+
+When a cross-repo memory is successfully applied in the current build, record it so the trust gradient updates:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py mark-applied \
+  --file "<rel-path>" \
+  --applying-repo "$THIS_REPO_REMOTE" \
+  --applying-workdir "$PWD" \
+  --applying-run-id "$RUN_ID"
+```
+
+### M5 — On every memory write under canonical `<memory-root>/` lanes (Phase 4 Review-F, Phase 6 Learn, or any save-memory action): ALWAYS use `memory_writer.py write`. Never write memory files directly.
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/memory_writer.py write \
+  --file "<rel-path>" \
+  --name "<slug>" \
+  --description "<one-line>" \
+  --type feedback \
+  --run-id "$RUN_ID" \
+  --workdir "$PWD" \
+  --host claude_code \
+  --body-file <tmp-body-path>
+```
+
+The writer adds provenance frontmatter (source_repo auto-detected, source_workdir, source_run_id, source_host, cross_repo_validated=false, applied_in_repos=[], created_at, last_updated_at) and atomically appends the INDEX row. On update, preserves `created_at` + `applied_in_repos` so cross-repo validation history survives edits. Sibling sessions see the write on their next tail.
+
+**One-time migration**: on the first build after this version is installed, run `memory_writer.py migrate --dry-run` to preview, then re-run without `--dry-run` to backfill provenance frontmatter onto existing memory files. Idempotent; safe to re-run.
+
+## Headless host (Codex, cron) deterministic defaults
+
+Rally Point presence is awareness-only (D4), so headless hosts never block on it. Per the `feedback_no_permission_asks.md` posture:
+
+- No peers / peers without file overlap: log + proceed at normal cadence.
+- Peers WITH overlapping `files_in_flight`: log the `soft-claim` WARNING (peer, files, phase) and proceed. There is no hard-stop, sentinel, or non-zero exit — coordination is the human's call after the fact, not a gate.
+
+The interactive→headless distinction lives in this prompt, not in the scripts: `read_active_presence` returns the same peer list regardless of host; only the surfacing differs (interactive MAY additionally `AskUserQuestion`).
+
+`coordination_status.py` can report `blocked` when the durable coordination
+record contains unresolved `VARIANCE` or `BLOCKED` verdicts. That is a
+coordination gate, not a Rally Point lock: the plan owner must resolve,
+acknowledge, or explicitly override the verdict before advancing the step.
+
+## R5 — Pre/post canonical snapshot around isolated dispatch
+
+**Isolation applies to any long-running FILE-EDITING dispatch, not just committing ones (widened 2026-07-11).** A commit-less editing subagent that outlives its turn can re-apply stale edits onto the live shared checkout after a branch switch (3 files contaminated, 2026-07-11). Pass `isolation: "worktree"` to any dispatch expected to run beyond one turn or that edits files while another session works the same workdir — commit authority is not the trigger; long-running file mutation is.
+
+Every `Agent(subagent_type=..., isolation: "worktree", ...)` dispatch MUST be wrapped in a `git status --porcelain` snapshot of the canonical working tree. After the dispatch returns, re-snapshot. Non-empty diff with no canonical edits in between = isolation contract broken; surface as an error in the run report.
+
+```bash
+PRE=$(git -C "$CANONICAL_WORKDIR" status --porcelain)
+# ... Agent(isolation: "worktree", ...) dispatch here ...
+POST=$(git -C "$CANONICAL_WORKDIR" status --porcelain)
+[ "$PRE" = "$POST" ] || { echo "❌ ISOLATION_BREACH: canonical changed during dispatch"; echo "PRE:"; echo "$PRE"; echo "POST:"; echo "$POST"; }
+```
+
+Detects, does not fix. **Automated end-to-end — never pauses to ask.** When PRE != POST, the breach line is written to `state.json.runs[N].artifacts.isolationBreach[]` and surfaced in `## Notes from judges`; the build continues. Operator inspects the diff post-hoc and reverts unexpected canonical edits if needed. The breach class (unproven mechanism — possible causes: interrupted earlier dispatch leaking edits, Codex sub-subagent running outside the worktree, IDE auto-fix, background hooks) is case-by-case; case-by-case recovery happens post-build, not via runtime prompt. Cost is two `git status` calls per dispatch — small enough to make automatic.

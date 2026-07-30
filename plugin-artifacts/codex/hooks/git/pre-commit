@@ -1,0 +1,40 @@
+#!/bin/sh
+# build-loop:artifact-guard-pre-commit
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Drift-prevention pre-commit. Two scoped guards (systems-not-discipline):
+#   1. artifact_guard --staged: when a checked-in generated artifact's watched
+#      source paths are staged, regenerate + re-stage it so drift cannot be
+#      committed (architecture diagram, Codex plugin artifact; registry-driven).
+#   2. import_manifest_lint: block a commit that adds an undeclared third-party
+#      import (the pyyaml-outage class), only when a .py file is staged.
+# The artifact guard is scoped to staged watched paths; the import lint
+# runs only when a .py is staged. Set BL_ARTIFACT_ADVISORY=1 to warn instead
+# of regenerate/block (covers BOTH guards). Unrelated commits run nothing.
+#
+# Installed (chained, coexisting with other pre-commit segments — e.g. the
+# rally-point private-slug guard) by:
+#   python3 scripts/artifact_guard.py --install-hook
+# Auto-installed on session start via hooks/session-start-git-hooks.sh.
+# --- BEGIN build-loop artifact-guard pre-commit ---
+BL_AG_TOP="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -n "$BL_AG_TOP" ] && [ -f "$BL_AG_TOP/scripts/artifact_guard.py" ]; then
+  python3 "$BL_AG_TOP/scripts/artifact_guard.py" --staged || exit 1
+  if [ -f "$BL_AG_TOP/scripts/import_manifest_lint.py" ] && \
+     git diff --cached --name-only | grep -q '\.py$'; then
+    if [ "${BL_ARTIFACT_ADVISORY:-0}" = "1" ]; then
+      python3 "$BL_AG_TOP/scripts/import_manifest_lint.py" || true
+    else
+      python3 "$BL_AG_TOP/scripts/import_manifest_lint.py" --quiet
+      bl_imp_rc=$?
+      # Block only on a real finding (exit 1). Exit 2 means the lint itself
+      # could not run (e.g. interpreter < 3.11, no tomllib) — fail open with
+      # the message already on stderr rather than block an unrelated commit;
+      # the non-bypassable pytest.yml step remains the hard backstop.
+      [ "$bl_imp_rc" -eq 1 ] && exit 1
+    fi
+  fi
+fi
+# --- END build-loop artifact-guard pre-commit ---
+exit 0

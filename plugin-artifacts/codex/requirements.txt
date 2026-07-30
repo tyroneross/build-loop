@@ -1,0 +1,22 @@
+# Build-loop runtime Python dependencies.
+#
+# Most build-loop scripts target Python 3.11+ stdlib only. The repo-local
+# episodic memory framework (Phase 2+3, scripts/write_decision.py et al.)
+# pulls in psycopg for low-latency persistent connections to the local
+# Postgres + pgvector sidecar.
+#
+# Install (recommended via uv):
+#   uv pip install --system -r requirements.txt
+#
+# Or with pip + PEP 668 override on Homebrew Python:
+#   pip3 install --break-system-packages -r requirements.txt
+#
+# psycopg[binary] bundles the libpq C bindings so no Postgres client lib
+# install is required at the system level.
+psycopg[binary]>=3.2,<4
+
+# Apple-Silicon-only embedding backend (default for `scripts/embed_backend.py`).
+# Marker scopes the install to macOS so Linux CI does not break. Falls back to
+# Ollama (`mxbai-embed-large`, same base weights, 1024-dim) on any platform when
+# MLX is unavailable.
+mlx-embeddings>=0.1.0; sys_platform == 'darwin'

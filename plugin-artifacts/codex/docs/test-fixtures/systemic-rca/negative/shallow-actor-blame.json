@@ -1,0 +1,23 @@
+{
+  "plain_language_failure": "The API failed because the agent missed context.",
+  "why_it_happened": "The agent forgot the route.",
+  "failure_map": [
+    "Request failed.",
+    "Agent missed the route."
+  ],
+  "system_control_failure": "Agent forgot to update the API route.",
+  "root_cause": {
+    "description": "Agent forgot to update the API route."
+  },
+  "technical_details": {
+    "evidence": [
+      {
+        "type": "code",
+        "detail": "One file changed."
+      }
+    ]
+  },
+  "tradeoffs": "",
+  "impact": "",
+  "prevention_control": ""
+}

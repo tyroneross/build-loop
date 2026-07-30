@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+<!-- Weekly cross-repo proposal-drain scan. Writes the digest + posts a notification.
+     Never auto-applies. Install: cp to ~/Library/LaunchAgents then
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.rosslabs.proposal-drain.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.rosslabs.proposal-drain</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/build-loop-drain"; exec python3 "$HOME/dev/git-folder/build-loop/scripts/drain_proposals.py" scan --notify</string>
+  </array>
+
+  <!-- Weekly: Monday 09:00. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- Catch up on next login if the machine was asleep at the scheduled time. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/tyroneross/.local/state/build-loop-drain/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tyroneross/.local/state/build-loop-drain/launchd.log</string>
+</dict>
+</plist>

@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# REUSE 3.3 annotations for files that cannot carry an in-file SPDX header
+# (JSON has no comment syntax; binary/generated assets must be covered by
+# REUSE.toml or by sidecar .license files).
+#
+# Spec: https://reuse.software/spec-3.3/
+# Validate: `uvx reuse lint`
+
+version = 1
+
+# Shipped JSON sources and top-level docs/metadata.
+[[annotations]]
+path = [
+    "**/*.json",
+    "assets/*.png",
+    "plugin-artifacts/codex/assets/*.png",
+    "README.md",
+    "CONTRIBUTING.md",
+    "NOTICE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Artifact templates whose BODY is copied/instantiated into OTHER people's
+# repos (e.g. .build-loop/retrospectives/, .build-loop/backlog/, Review-G
+# comprehension artifacts). Their bodies must NOT carry an inline SPDX header
+# — that would stamp the plugin author's name into a user's generated output.
+# Attribution lives here in the sidecar instead, keeping the repo's own source
+# REUSE-compliant while the instantiated artifact stays clean.
+[[annotations]]
+path = [
+    "templates/backlog-item.md",
+    "templates/retrospective.md",
+    "templates/comprehension-artifact.md",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>"
+SPDX-License-Identifier = "Apache-2.0"

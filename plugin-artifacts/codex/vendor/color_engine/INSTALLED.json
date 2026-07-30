@@ -1,0 +1,7 @@
+{
+  "module": "groundwork-color-engine",
+  "install": "build-loop",
+  "source": "/Users/tyroneross/dev/git-folder/groundwork",
+  "installed_from_commit": "718f9b6",
+  "note": "Vendored copy. Canonical source is Groundwork designer/color. Re-run install-color-engine.sh to refresh; do not edit here."
+}

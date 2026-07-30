@@ -1,0 +1,36 @@
+{
+  "plain_language_failure": "The app looked like it saved the setting, but the next screen could not use it.",
+  "why_it_happened": "The screen sent the value, the handler accepted it, but the update path did not include the downstream reader. The plan had no caller-scope check.",
+  "failure_map": [
+    "User sees a saved setting that does not apply.",
+    "The downstream reader keeps the old value.",
+    "The update only changed the writer path.",
+    "The build plan lacked a caller-scope verifier for the changed interface."
+  ],
+  "system_control_failure": "Missing caller-scope verifier in the planning protocol for interface changes.",
+  "failure_classification": "scope-audit-gap",
+  "root_cause": {
+    "description": "The changed interface had no mandatory caller-scope check, so a downstream reader was outside the owned files."
+  },
+  "technical_details": {
+    "evidence": [
+      {
+        "type": "code",
+        "detail": "The writer file changed without updating the reader call site."
+      },
+      {
+        "type": "test",
+        "detail": "The focused regression assertion proves the reader kept the old value."
+      }
+    ]
+  },
+  "pruned_causes": [
+    {
+      "hypothesis": "The persisted write failed.",
+      "evidence": "State inspection shows the new value was written."
+    }
+  ],
+  "tradeoffs": "The verifier adds planning cost but reduces under-scoped patches.",
+  "impact": "Users see inconsistent settings; engineers risk repeated caller misses.",
+  "prevention_control": "Add a plan verifier gate for modified interface caller scope."
+}

@@ -1,0 +1,145 @@
+<!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
+
+# M-Series Protocol (M1 envelope persist, M2 heartbeat, M3 cost-ledger)
+
+_Linked from `agents/build-orchestrator.md` §Phase 3 Execute._
+
+M1 and M2 protect resume correctness after orchestrator stream termination. M3 produces an external measurement record for dispatch-pattern analysis. All three writes happen at the same orchestrator step on each subagent dispatch; one helper call each, ≤20ms.
+
+## M1 — Persist subagent envelopes immediately on receipt (crash-recovery)
+
+After each implementer subagent returns, BEFORE making any further routing decision, atomic-write its envelope to `.build-loop/subagent-results/<run-id>/<chunk-id>.attempt-<n>.json` via `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/write_subagent_result.py --workdir "$PWD" --run-id "<run-id>" --envelope -` (envelope JSON via stdin). The `<run-id>` is `state.json.execution.run_id`. The `<n>` is the implementer's attempt count for this chunk in this build (1 for first try, 2 for retries). Failure of this write is a hard error — re-attempt once, then surface to the user; never silently drop the envelope. This step exists so that if the orchestrator's Claude subagent stream terminates mid-Execute (529, OOM, kill -9), the resumed orchestrator can read these files and skip work that already shipped. See `docs/plans/crash-recovery-state-json.md` §M1 for rationale.
+
+## M2 — Heartbeat the chunk pointer to state.json on every dispatch + return (crash-recovery)
+
+The orchestrator owns six trigger points that update `state.json.execution` via `python3 -c "from sys import path; path.insert(0, '${CLAUDE_PLUGIN_ROOT}/scripts'); from write_run_entry import update_execution_state; from pathlib import Path; update_execution_state(Path('.build-loop/state.json'), '<action>', ...)"` or by importing the helper from a thin orchestrator-side wrapper. The trigger points and their actions:
+
+1. **`run_id` provenance + run start** — at the END of Phase 1 Assess: generate `run_id` as `run_<UTC-timestamp>_<8-char-hash>` where the hash is `sha256(timestamp + intent_md_sha + working_branch)[:8]`; persist it as the FIRST execution-block write via `update_execution_state(state_path, 'start', run_id=..., queued_chunks=[...], file_ownership={...})` populated from the Phase 2 plan output. This must happen BEFORE any chunk dispatch.
+2. **Before dispatching each implementer** (Phase 3 Execute): `update_execution_state(state_path, 'dispatch_chunk', chunk_id=<id>)` — moves chunk_id from `queued_chunks` → `in_flight_chunks`.
+3. **After receiving each implementer return** (Phase 3 Execute, immediately AFTER the M1 envelope write above): `update_execution_state(state_path, 'return_chunk', chunk_id=<id>, status=<one-of-9-statuses>)` — moves chunk_id from `in_flight_chunks` → `completed_chunks` with status; refreshes `last_heartbeat_at`.
+4. **On phase transition** (Execute→Review, Review→Iterate, Iterate→Review, Review→Report): `update_execution_state(state_path, 'phase_transition', phase=<one-of-execute|review|iterate|report>)`.
+5. **On Iterate attempt start** (Phase 5 Iterate, BEFORE the cascade fires): `update_execution_state(state_path, 'iterate_attempt')` — increments the counter; this preserves the 5x iteration cap across resume.
+6. **On clean completion** (Phase 4 Review-G success): `update_execution_state(state_path, 'complete')` — sets `phase: "report"`. This is the "no resume needed" sentinel; `--resume` refuses to run against a state where `phase == "report"`.
+
+Failure of any heartbeat write is logged but never blocks the build — the in-memory state remains authoritative for the live build, and the worst case is that resume picks up at the last-good heartbeat. See `docs/plans/crash-recovery-state-json.md` §M2 for rationale.
+
+### M2 liveness beat — phase/commit boundary heartbeat + rally presence (bl-orchestrator-heartbeat-rally-presence)
+
+The six trigger points above are chunk-centric (dispatch/return). A long run that sits between chunks, or an inline/background run that never fans out, can go a long time with `last_heartbeat_at` stale and NO rally presence — so a watcher can only reconstruct status from git + CI (the user-flagged defect). On **long or autonomous runs**, the orchestrator additionally beats at **every phase boundary AND every commit** via one fail-open call:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator_heartbeat.py \
+  --workdir "$PWD" --phase "<assess|plan|execute|review|iterate|report>" \
+  --label "<boundary one-liner>" [--files a.py,b.py] --json
+```
+
+This is a THIN wrapper over two existing fail-open mechanisms — it refreshes `state.execution.last_heartbeat_at` (via the `heartbeat` action) AND writes a `presence.write_presence` beat to the resolved rally channel — so any watcher (`coordination_status.py`, `rally room`) reads live status. NO new coordination surface. It never wedges the run (exit 0 always); a missing execution block or unresolvable channel is a clean skip. Call it right after each `phase_transition` write and right after each commit lands.
+
+### M2 sidecar — working-state writes (NEW 2026-05-13, plan §15.2)
+
+At the same M2 trigger points 2 + 3 + 4 + 6, also write `.build-loop/working-state/current.json` + append `.build-loop/working-state/log.jsonl` via:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/working_state_writer.py \
+  --workdir "$PWD" --agent "orchestrator" \
+  --run-id "$RUN_ID" --chunk-id "<chunk_id_or_empty>" \
+  --status "<dispatching | awaiting_return | phase_transition | completed>" \
+  --current-task-summary "<phase/chunk one-liner>"
+```
+
+Implementers write their own per-step working-state during the chunk per `agents/implementer.md` §"Working-state writes" — orchestrator writes are bookend events around them. Failure here is fire-and-forget; never blocks. Files are gitignored; do not commit working-state to the repo.
+
+### M2 context snapshot sidecar - resume handoff (NEW 2026-05-28)
+
+At the same M2 trigger points 2 + 3 + 4 + 6, also write a non-blocking context snapshot:
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/context_snapshot.py \
+  --workdir "$PWD" \
+  --trigger "<agent_dispatch | agent_return | phase_transition>" \
+  --phase "<execute | review | iterate | report>" \
+  --agent "orchestrator" \
+  --run-id "$RUN_ID" \
+  --chunk-id "<chunk_id_or_empty>" \
+  --status "<dispatching | awaiting_return | phase_transition | completed>" \
+  --message "<phase/chunk one-liner>" \
+  --file "<owned-or-returned-file>" \
+  --json
+```
+
+The helper writes `.build-loop/context/current.md`, a JSON snapshot under
+`.build-loop/context/snapshots/`, and appends dispatch/return rows to
+`agent-briefs.jsonl` or `agent-returns.jsonl`. Use `--if-changed` for interval
+or heartbeat calls. Failure is fire-and-forget like working-state; never block
+the build because the snapshot is a resume/handoff aid, not the source of truth.
+
+## M2.5 — Tier resolution + dispatch-fallback contract (MANDATORY, not a placeholder)
+
+Every `<resolved-tier-model>` referenced in M3 below is the OUTPUT of this step — it is NOT a value the orchestrator picks by reasoning over prose. The agent's `(segment, tier)` frontmatter ROLE is the durable KEY into the model index (`references/model-taxonomy.json`); the agent's `model:` line is the index-DERIVED recommended fallback (regenerated by `scripts/sync_agent_model_defaults.py`, never hand-edited). At dispatch the orchestrator resolves the role LIVE and OVERRIDES the `model:` frontmatter.
+
+**Front door — resolve the agent by name (the canonical call).** It reads BOTH axes (`segment` + `tier`) from `agents/<name>.md` in one call and applies the role → frontmatter → tier-default → unresolved fallback chain:
+
+```bash
+RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resolve_agent_model.py \
+  "<agent-name>" --workdir "$PWD" --plain)"
+```
+
+If `RESOLVED_MODEL` is `inherit` (the agent declares `segment: inherit` / `tier: inherit`, e.g. `root-cause-investigator`), pass NO `model` override to the `Agent(...)` call — the caller's model flows through. Otherwise pass `--model "$RESOLVED_MODEL"`. The `model:` frontmatter is the fresh-install / non-build-loop fallback only; the live override is authoritative.
+
+**Prompting profile — the same resolve answers *how* to prompt the model it selected.** Use `--json` instead of `--plain` when you are about to author a brief: the envelope carries `prompting_profile` beside `model`, read from the tier-keyed `prompting_profiles` block in `references/model-taxonomy.json`. There is no second lookup and no separate file to load.
+
+```bash
+ENVELOPE="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/resolve_agent_model.py \
+  "<agent-name>" --workdir "$PWD" --json)"
+# .model              -> the Agent tool's model parameter
+# .prompting_profile  -> {examples, constraint_posture, edge_case_handling,
+#                         rationale, prompt_budget, confidence, summary}
+```
+
+Shape the brief per that profile — `references/implementer-brief-template.md` §"Tier-shaped brief" maps each field to what changes. `inherit` agents carry `prompting_profile: null`; author the brief at the template's default T3 shape rather than guessing a rung.
+
+**Brief capture (same step).** Write the assembled brief to `.build-loop/briefs/<run_id>/<chunk_id>.md` before dispatching. Brief text is retained nowhere else — `state.json.runs[]` has no brief field — so without this write there is no way to check afterward whether brief shape actually varied by tier, which is the only evidence that distinguishes this feature from a decorative one.
+
+**Underlying primitive (tier-only).** `resolve_agent_model.py` reuses `scripts/model_resolver.py` — the resolver that owns availability + host-reachability + the floor walk. The raw tier-only form is still available when no agent file is involved:
+
+```bash
+RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_resolver.py \
+  --workdir "$PWD" --tier "<tier>" --plain)"
+```
+
+`model_resolver.py` consults the PERSISTENT `.build-loop/model-availability.json` (the unavailable-model set + the optional `hostProviders` reachability allowlist) and the `.build-loop/model-tier-cache.json`, walks the in-tier priority chain, and on exhaustion delegates to the floor-respecting cross-tier walk (frontier never resolves below thinking). This is why the resolution is deterministic and auditable (`--json` returns the full `resolution_path`) rather than a per-dispatch judgment call.
+
+**Two-axis role resolution (optional, available now).** Agents also carry a `segment:` descriptor beside `tier:` (the work-role axis of the model taxonomy — `references/model-taxonomy.json`). When the orchestrator wants the role resolved on BOTH axes (the segment's ordered preferred list + release-recency tiebreak + host-reachability), pass `--segment "<agent-frontmatter-segment>"`:
+
+```bash
+RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/model_resolver.py \
+  --workdir "$PWD" --tier "<agent-frontmatter-tier>" \
+  --segment "<agent-frontmatter-segment>" --plain)"
+```
+
+The single-axis `--tier`-only form (above) stays the default and is unchanged. For the active segments (generative_reasoning, agentic_execution, governance_evaluation) the two forms resolve to the same Anthropic default on a Claude host; `--segment` becomes load-bearing when a cross-provider or newly-classified model populates a `(segment, tier)` cell. The dormant segments (realtime/perception/media) have no live consumer yet — data + reference only.
+
+**Dispatch-fallback contract (handles the outage that shows up as a dispatch ERROR).** The Claude Code Agent tool selects ONE model and ERRORS if it is down ("Claude Fable 5 is currently unavailable"). Build-loop cannot wrap that harness primitive, so the orchestrator catches it:
+
+1. Dispatch the agent with `RESOLVED_MODEL`.
+2. If the Agent call returns an unavailability error (the error string names a model as unavailable / down / not currently available), call:
+   ```bash
+   RESOLVED_MODEL="$(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dispatch_fallback.py \
+     --workdir "$PWD" --tier "<tier>" --unavailable-model "<the-down-model>" --plain)"
+   ```
+   This RECORDS the outage into `model-availability.json` (idempotent, persistent) and returns the next available model. Re-dispatch with the new `RESOLVED_MODEL`.
+3. Because the outage now persists, the NEXT resolve of that tier (this run or a later one) already returns the fallback — the orchestrator does not catch the same outage twice. A human clears it with `dispatch_fallback.py --clear <model>` when the model is back.
+
+**Why this closes the bug, not just documents it.** The fallback rides the resolver's call site (step M2.5) + the persistent availability registry — not a one-shot reaction. The single hop build-loop cannot mechanize in code is the Agent tool itself selecting the model; everything that DECIDES which model to hand it is deterministic, tested (`scripts/test_model_resolver.py`, `scripts/test_dispatch_fallback.py`), and persisted. On an Anthropic-only host with Fable down, `frontier` resolves to `opus` with no manual re-dispatch and never to `sonnet`/`haiku`.
+
+## M3 — Cost-ledger row per subagent dispatch (telemetry, not crash-recovery)
+
+**Emission is automatic.** `scripts/cost_ledger_hook.py` runs on the `Stop` hook (registered in `hooks/hooks.json`), reconciles the session transcript against the ledger, and appends one row per `Agent` dispatch — foreground AND background — with a deterministic, regex-valid `task_id` (`t-<sha256(session_id|tool_use_id)[:8]}`), scoped to build-loop contexts (writes only when `.build-loop/state.json` exists) and fail-open. **The orchestrator does NOT hand-write per-dispatch rows** — that prose mandate was the dead activation path (2026-07: 1 row ever written) and is retired. See `scripts/cost_ledger_hook.py` + `scripts/test_cost_ledger_hook.py`.
+
+**Optional enrichment (only when the data is cheap and on-hand):** the hook cannot see `chunk_id` or precise per-subagent token counts (not in the main transcript). When the orchestrator already holds those from an implementer envelope, it MAY append an enrichment row via `scripts/write_cost_ledger_row.py` sharing the same `task_id`. This is opt-in, never a gate — do not add per-dispatch bookkeeping calls back into the hot path.
+
+**Recurrence detector**: `write_run_entry --scope build` records `ledger_rows_for_run: N` on the `runs[]` entry and WARNs (never blocks) when a build with dispatches shows 0 rows — so a future silent regression of the hook is visible instead of hiding.
+
+**Release caveat**: the `hooks/hooks.json` registration is inert in an INSTALLED plugin copy until a plugin release ships. A local `--plugin-dir` checkout picks it up on next session start.
+
+**Failure mode**: the hook exits 0 unconditionally; a ledger-write failure never halts a turn. Telemetry is best-effort. **Why independent of M1/M2**: M1/M2 protect resume correctness; M3 produces the external measurement record so dispatch-pattern claims can be evidenced rather than estimated.

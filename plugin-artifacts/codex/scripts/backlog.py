@@ -1,0 +1,1597 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+"""backlog.py — host-agnostic, multi-repo BACKLOG SYSTEM for build-loop.
+
+A backlog item is plain Markdown + YAML frontmatter (host-neutral: Claude,
+Codex, or any other coding agent reads it). The store is filesystem-first —
+``grep`` + frontmatter, NO vector / graph / DB (validated by the Letta
+filesystem-memory benchmark and the "don't over-engineer" principle).
+
+Two layers:
+  * ITEMS are canonical truth        — ``.build-loop/backlog/items/<ID>.md``
+  * INDEX is a derived, regenerable view — ``.build-loop/backlog/INDEX.md``
+``sync`` regenerates INDEX deterministically from the items, consolidates
+done/dropped items into ``archive/`` (never deletes), flags items past their
+TTL (``review_by``), and mirrors a per-item copy into the per-user long-term
+memory (``build-loop-memory/projects/<slug>/backlog/``) so the cross-repo view
+stays current. The per-repo backlog travels with the repo (committed,
+team-shareable); the personal-memory mirror aggregates across all the user's
+repos.
+
+Pure Python stdlib. No third-party imports (asserted by test_backlog.py). A
+tiny hand-rolled YAML reader/writer handles the flat-plus-list-plus-one-nested
+frontmatter this schema uses — we do NOT pull in PyYAML.
+
+Subcommands::
+
+    backlog.py new   --repo <path> --area <a> --type <t> --title "..."
+                     [--priority P2] [--status open] [--gated none]
+                     [--entities a,b] [--provenance-source ...] [--provenance-ref ...]
+                     [--evidence p1,p2] [--owner ...] [--review-days 30] [--today YYYY-MM-DD]
+    backlog.py sync  --repo <path> [--today YYYY-MM-DD] [--no-mirror] [--prune]
+    backlog.py list  --repo <path> [--status ...] [--area ...] [--priority ...]
+
+All commands print a JSON summary on stdout (``list`` prints a text table
+unless ``--json``).
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import re
+import secrets
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+# ----------------------------------------------------------------------------
+# Schema constants
+# ----------------------------------------------------------------------------
+
+# Item schema version. Bump when the frontmatter contract changes in a way a
+# reader must know about. The reader is deliberately TOLERANT (forward/back
+# compatible): it DEFAULTS missing fields and IGNORES unknown fields, so an item
+# written by a newer OR older build-loop still reads cleanly. This is the
+# download/upgrade-safety contract — a downloaded item never crashes a reader
+# just because the two sides are a version apart.
+SCHEMA_VERSION = 1
+
+STATUS_VALUES = ("open", "in-progress", "blocked", "deferred", "done", "dropped")
+PRIORITY_VALUES = ("P0", "P1", "P2", "P3")
+TYPE_VALUES = ("feature", "fix", "debt", "infra", "decision", "cleanup", "research")
+GATED_VALUES = ("none", "prod-deploy", "db-migration", "infra", "product-decision")
+
+# Items in these statuses are consolidated to archive/ by `sync`.
+ARCHIVE_STATUSES = ("done", "dropped")
+
+# Frontmatter field order — deterministic INDEX + item rendering depend on a
+# stable key order.
+FIELD_ORDER = (
+    "id", "schema_version", "title", "status", "priority", "type", "area",
+    "entities", "gated", "provenance", "evidence", "supersedes", "superseded_by",
+    "created", "updated", "review_by", "owner",
+)
+
+# Default values for every schema field. The tolerant reader fills these in for
+# any field a (possibly older) item omits, so downstream code can rely on the
+# keys existing. Mutable defaults are produced fresh per call via item_defaults().
+def item_defaults() -> dict[str, Any]:
+    """Return a fresh dict of default values for every known schema field.
+
+    Used by ``read_item`` to fill in fields an older/foreign item may omit.
+    Unknown fields present on the item are preserved as-is (forward compat);
+    missing known fields are defaulted here (backward compat).
+    """
+    return {
+        "id": None,
+        "schema_version": SCHEMA_VERSION,
+        "title": "",
+        "status": "open",
+        "priority": "P2",
+        "type": "debt",
+        "area": "general",
+        "entities": [],
+        "gated": "none",
+        "provenance": {},
+        "evidence": [],
+        "supersedes": None,
+        "superseded_by": None,
+        "created": None,
+        "updated": None,
+        "review_by": None,
+        "owner": "unassigned",
+    }
+
+DEFAULT_REVIEW_DAYS = 30
+
+# Item-ID shape: <PREFIX>-<AREA>-<SUFFIX>. The suffix is EITHER a collision-free
+# token (new IDs — lowercase Crockford base32, see mint_id_token) OR a legacy
+# zero-padded counter (`\d{3,}` — items minted before the distributed-ID fix).
+# Both forms are accepted so the regex stays a valid membership test for every
+# item this system has ever written. Used to scope the memory-mirror prune so it
+# only ever deletes files this system wrote, never a hand-dropped note.
+#
+# NOTE: parsing must NOT assume a numeric suffix anywhere — a token suffix has
+# letters. This regex is the single source of truth for "is this stem an item
+# ID"; it must match both shapes.
+_ITEM_ID_RE = re.compile(r"^[A-Z0-9]+-[A-Z0-9]+-(?:[0-9a-z]{6,}|\d{3,})$")
+
+# Body section scaffold for a fresh item.
+_BODY_TEMPLATE = """## Context
+{context}
+
+## Acceptance
+- <verifiable condition 1>
+
+## Notes
+{notes}
+"""
+
+# Static scaffold for a fresh backlog (created by `adopt`). README explains the
+# store; BACKLOG.md is the repo-root pointer to the derived INDEX.
+_README_TEXT = """# Backlog — .build-loop/backlog/
+
+Host-neutral, filesystem-first deferred-work tracker. Any coding agent (Claude,
+Codex, or other) reads and writes it the same way — plain Markdown + YAML
+frontmatter, no DB/vector/graph.
+
+- `items/<ID>.md`   — CANONICAL truth, one file per work item.
+- `INDEX.md`        — DERIVED view; regenerated by `backlog.py sync`. Do not edit.
+- `archive/<ID>.md` — done/dropped items (never deleted).
+
+Item IDs are `<PREFIX>-<AREA>-<token>` (e.g. `ATOM-SEARCH-mt3k9p7q...`). The
+token is minted with zero coordination (time-ordered + random), so independent
+agents/worktrees/clones never collide — `ls items/` still roughly sorts by
+creation time, and `INDEX.md` is the human-ordered navigation view.
+
+**On an `INDEX.md` merge conflict:** `INDEX.md` is fully derived, so just run
+`python3 scripts/backlog.py sync --repo .` — `items/` is the truth and the INDEX
+regenerates deterministically. (The committed `.gitattributes` here marks
+`INDEX.md` so git resolves it by keeping one side; `sync` then makes it correct.)
+Item files in `items/` don't conflict once IDs are unique (separate paths).
+
+Create: `python3 scripts/backlog.py new --repo . --area <a> --type <t> --title "..."`
+Refresh INDEX + mirror: `python3 scripts/backlog.py sync --repo .`
+Migrate existing followup/issues/proposals into items: `python3 scripts/backlog.py adopt --repo . --apply`
+"""
+
+# .gitattributes for the backlog dir. INDEX.md is fully derived, so a concurrent
+# regeneration by two agents WILL conflict on `git merge` if left as a normal
+# text file (both sides rewrote the whole file). `merge=ours` tells git to keep
+# the current branch's version on conflict instead of inserting `<<<<<<<`
+# markers; the user then runs `backlog.py sync` to regenerate it correctly from
+# `items/` (the truth). Items themselves don't conflict — unique token IDs mean
+# separate paths. We scope the rule to INDEX.md ONLY (items/ must merge normally
+# so two branches' new items both survive).
+_GITATTRIBUTES_TEXT = """# Managed by build-loop backlog (scripts/backlog.py).
+# INDEX.md is a DERIVED view — on a merge conflict, keep one side and run
+# `python3 scripts/backlog.py sync --repo .` to regenerate it from items/.
+# `merge=ours` avoids conflict markers in a fully-regenerable file.
+# (Enable the driver once per clone if desired:
+#   git config merge.ours.driver true
+#  git treats `merge=ours` as keep-current even without it on most versions.)
+INDEX.md merge=ours
+"""
+
+_BACKLOG_POINTER_TEXT = """# Backlog
+
+The backlog of record for this repo lives in `.build-loop/backlog/`.
+See the generated index: [.build-loop/backlog/INDEX.md](.build-loop/backlog/INDEX.md).
+
+Do not hand-edit INDEX.md — it is regenerated by `scripts/backlog.py sync`.
+"""
+
+# Map a source queue dir to the item `type` it most likely represents.
+_SOURCE_TYPE = {"followup": "debt", "issues": "fix", "proposals": "feature"}
+
+
+# ----------------------------------------------------------------------------
+# Date helper — harness-safe (accepts an injected --today; never assumes the
+# clock is callable in a sandbox).
+# ----------------------------------------------------------------------------
+
+def resolve_today(today_arg: str | None) -> str:
+    """Resolve the working date as YYYY-MM-DD.
+
+    Precedence: explicit --today arg > BACKLOG_TODAY env var > system date.
+    Validates the format so a malformed value fails loudly instead of
+    poisoning frontmatter.
+    """
+    raw = today_arg or os.environ.get("BACKLOG_TODAY")
+    if raw:
+        raw = raw.strip()
+        try:
+            _dt.date.fromisoformat(raw)
+        except ValueError as exc:
+            raise ValueError(f"--today/BACKLOG_TODAY must be YYYY-MM-DD, got {raw!r}") from exc
+        return raw
+    return _dt.date.today().isoformat()
+
+
+def add_days(date_str: str, days: int) -> str:
+    """Return date_str + days as YYYY-MM-DD."""
+    base = _dt.date.fromisoformat(date_str)
+    return (base + _dt.timedelta(days=days)).isoformat()
+
+
+# ----------------------------------------------------------------------------
+# Repo / slug helpers
+# ----------------------------------------------------------------------------
+
+def project_slug(repo: Path) -> str:
+    """Derive a stable project slug from the repo path.
+
+    Precedence: ``BACKLOG_SLUG`` env var (set by ``--slug``) > the repo
+    directory's basename, lowercased with non-alphanumerics collapsed to single
+    hyphens. The override exists because the working-dir basename is the wrong
+    identity inside a git worktree or CI checkout (e.g. a worktree at
+    ``/tmp/sample-backlog`` still belongs to project ``sample-app``). The slug
+    drives the ID prefix, the INDEX header, and the personal-memory mirror path,
+    so pinning it keeps those stable across checkouts. No git calls required.
+    """
+    override = os.environ.get("BACKLOG_SLUG")
+    raw = override if override else repo.resolve().name
+    slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+    return slug or "repo"
+
+
+def area_slug(area: str) -> str:
+    """Uppercased, hyphen-collapsed area token used in the item ID."""
+    token = re.sub(r"[^a-z0-9]+", "-", (area or "").lower()).strip("-")
+    return (token or "general").upper()
+
+
+def proj_id_prefix(repo: Path) -> str:
+    """ID prefix from the slug: alnum uppercased (e.g. sample-app -> ATOM... )."""
+    slug = project_slug(repo)
+    # Use the leading alphanumeric run, uppercased, capped at 6 chars for
+    # readable IDs (SAMPLE-APP -> ATOM). Falls back to the full cleaned slug.
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", slug).upper()
+    return (cleaned[:4] or "REPO")
+
+
+def normalize_repo(repo_arg: str) -> Path:
+    """Resolve a ``--repo`` argument to the intended store root, avoiding the
+    doubly-nested ``<name>/.build-loop/`` defect.
+
+    ``--repo`` is overloaded: it accepts a path (``.``, ``../foo``, an absolute
+    path) but agents also pass a repo IDENTITY by NAME (``--repo build-loop``).
+    Run from INSIDE the named repo, the literal-path reading of that name
+    (relative to cwd) points at a non-existent ``./build-loop/`` child, so the
+    store lands at ``./build-loop/.build-loop/backlog/`` — one level too deep
+    (the BUIL-TOOLING-syncsafety-001 nesting bug).
+
+    Rule (KISS, one special-case): an existing directory (``.``, an absolute
+    path, or a real relative subdir) is honoured literally. Otherwise a
+    RELATIVE arg whose basename matches the current directory's basename is the
+    "named from inside itself" case and resolves to the current directory. Any
+    other non-existent relative arg is left literal (the caller meant a new
+    sibling path, e.g. ``--repo new-thing`` from a parent dir).
+    """
+    p = Path(repo_arg)
+    if p.is_dir():
+        return p
+    cwd = Path.cwd()
+    if not p.is_absolute() and p.name == cwd.name:
+        return cwd
+    return p
+
+
+# ----------------------------------------------------------------------------
+# Minimal YAML frontmatter reader/writer (stdlib only)
+# ----------------------------------------------------------------------------
+#
+# The schema is intentionally shallow: scalars, one-level inline lists
+# (`[a, b]`), and a single one-level nested mapping (`provenance: {source, ref}`).
+# We parse exactly that — not arbitrary YAML — which keeps us off PyYAML.
+
+def _parse_scalar(raw: str) -> Any:
+    """Parse a YAML scalar: null, bool, quoted string, or bare string."""
+    s = raw.strip()
+    if s == "" or s in ("null", "~"):
+        return None
+    if s == "true":
+        return True
+    if s == "false":
+        return False
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        inner = s[1:-1]
+        # Reverse the escaping applied by _dump_scalar on write. Double-quoted
+        # values escape `\` then `"`; un-escape in the opposite order so a value
+        # round-trips byte-for-byte and a backslash does not accumulate across
+        # parse->render cycles.
+        if s[0] == '"':
+            inner = inner.replace('\\"', '"').replace("\\\\", "\\")
+        return inner
+    return s
+
+
+def _split_top_level(inner: str) -> list[str]:
+    """Split on commas that are NOT inside a quoted span.
+
+    Tracks single/double quote state so a quoted element containing a comma
+    stays one field. Backslash-escaped quote chars inside a double-quoted span
+    do not toggle the quote state.
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(inner):
+                buf.append(ch)
+                buf.append(inner[i + 1])
+                i += 2
+                continue
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _parse_inline_list(raw: str) -> list[Any]:
+    """Parse `[a, b, c]` into a list of scalars. `[]` -> [].
+
+    Splits on top-level commas only, so a quoted element containing a comma
+    (e.g. `"a,b"`) round-trips as one element.
+    """
+    inner = raw.strip()
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+    inner = inner.strip()
+    if not inner:
+        return []
+    return [_parse_scalar(part) for part in _split_top_level(inner) if part.strip() != ""]
+
+
+def _parse_inline_map(raw: str) -> dict[str, Any]:
+    """Parse `{ source: x, ref: y }` into a dict of scalars. `{}` -> {}."""
+    inner = raw.strip()
+    if inner.startswith("{") and inner.endswith("}"):
+        inner = inner[1:-1]
+    inner = inner.strip()
+    if not inner:
+        return {}
+    out: dict[str, Any] = {}
+    for part in inner.split(","):
+        if ":" not in part:
+            continue
+        k, v = part.split(":", 1)
+        out[k.strip()] = _parse_scalar(v)
+    return out
+
+
+def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Split a markdown doc into (frontmatter_dict, body_str).
+
+    Supports flat scalars, inline lists, inline maps, and a block-style nested
+    map (``provenance:`` followed by indented ``  source: ...`` lines). Returns
+    ({}, full_text) when no frontmatter fence is present. Never raises on a
+    well-formed-enough file; unknown lines are skipped.
+    """
+    if not text.startswith("---"):
+        return {}, text
+    lines = text.splitlines()
+    # First line is the opening '---'. Find the closing fence.
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return {}, text
+    fm_lines = lines[1:end]
+    body = "\n".join(lines[end + 1:])
+    if body and not body.endswith("\n"):
+        body += "\n"
+
+    data: dict[str, Any] = {}
+    i = 0
+    while i < len(fm_lines):
+        line = fm_lines[i]
+        if not line.strip() or line.lstrip().startswith("#"):
+            i += 1
+            continue
+        # Indented line with no parent handled inside block-map branch below.
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if not m:
+            i += 1
+            continue
+        key, rest = m.group(1), m.group(2)
+        rest_stripped = rest.strip()
+        if rest_stripped.startswith("[") :
+            data[key] = _parse_inline_list(rest_stripped)
+        elif rest_stripped.startswith("{"):
+            data[key] = _parse_inline_map(rest_stripped)
+        elif rest_stripped == "":
+            # Could be a block-style nested map: peek at indented children.
+            children: dict[str, Any] = {}
+            j = i + 1
+            while j < len(fm_lines) and re.match(r"^\s+\S", fm_lines[j]):
+                cm = re.match(r"^\s+([A-Za-z_][\w-]*):\s*(.*)$", fm_lines[j])
+                if cm:
+                    children[cm.group(1)] = _parse_scalar(cm.group(2))
+                j += 1
+            if children:
+                data[key] = children
+                i = j
+                continue
+            data[key] = None
+        else:
+            data[key] = _parse_scalar(rest_stripped)
+        i += 1
+    return data, body
+
+
+def read_item(text: str) -> tuple[dict[str, Any], str]:
+    """Tolerant item read: parse frontmatter, then DEFAULT missing known fields
+    and PRESERVE unknown fields.
+
+    This is the download/upgrade-safety contract in one place. An item written
+    by an older build-loop (missing newer fields like ``schema_version``) reads
+    back with those fields defaulted; an item written by a NEWER build-loop
+    (carrying fields this version doesn't know) reads back with those extra
+    fields intact and untouched. Either way the read never raises on a
+    well-formed file. Returns ``(item_dict, body)``.
+    """
+    fm, body = parse_frontmatter(text)
+    merged = item_defaults()
+    merged.update(fm)  # explicit values (incl. unknown future fields) win
+    return merged, body
+
+
+def _dump_scalar(value: Any) -> str:
+    """Render a scalar for frontmatter output (deterministic)."""
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    s = str(value)
+    # Quote only when the value could be misread (leading special char, colon+space,
+    # a delimiter that would corrupt inline-list/map parsing, an embedded quote or
+    # backslash, or a YAML-significant bare word). Keep plain when safe for
+    # readable diffs.
+    if s == "":
+        return '""'
+    needs_quote = (
+        s[0] in "[]{}#&*!|>'\"%@`,?:-" or
+        ": " in s or
+        any(c in s for c in (",", "[", "]", "{", "}", '"', "\\")) or
+        s.strip() != s or
+        s in ("null", "true", "false", "~")
+    )
+    if needs_quote:
+        # Escape backslash first, then the quote char, so _parse_scalar can
+        # reverse it in the opposite order without accumulating backslashes.
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return s
+
+
+def _dump_inline_list(value: list[Any]) -> str:
+    if not value:
+        return "[]"
+    return "[" + ", ".join(_dump_scalar(v) for v in value) + "]"
+
+
+def render_frontmatter(data: dict[str, Any]) -> str:
+    """Render the item dict to a deterministic YAML frontmatter block.
+
+    Keys are emitted in FIELD_ORDER; any extra keys follow in sorted order.
+    `provenance` renders as a block map (readable). Lists render inline.
+    """
+    out: list[str] = ["---"]
+    ordered_keys = [k for k in FIELD_ORDER if k in data]
+    extra_keys = sorted(k for k in data if k not in FIELD_ORDER)
+    for key in ordered_keys + extra_keys:
+        value = data[key]
+        if key == "provenance" and isinstance(value, dict):
+            out.append("provenance:")
+            for sub in ("source", "ref"):
+                if sub in value:
+                    out.append(f"  {sub}: {_dump_scalar(value[sub])}")
+            for sub in sorted(k for k in value if k not in ("source", "ref")):
+                out.append(f"  {sub}: {_dump_scalar(value[sub])}")
+        elif isinstance(value, list):
+            out.append(f"{key}: {_dump_inline_list(value)}")
+        elif isinstance(value, dict):
+            out.append(f"{key}: {{{', '.join(f'{k}: {_dump_scalar(v)}' for k, v in value.items())}}}")
+        else:
+            out.append(f"{key}: {_dump_scalar(value)}")
+    out.append("---")
+    return "\n".join(out)
+
+
+# ----------------------------------------------------------------------------
+# Item filesystem operations
+# ----------------------------------------------------------------------------
+
+def backlog_root(repo: Path) -> Path:
+    return repo / ".build-loop" / "backlog"
+
+
+def items_dir(repo: Path) -> Path:
+    return backlog_root(repo) / "items"
+
+
+def archive_dir(repo: Path) -> Path:
+    return backlog_root(repo) / "archive"
+
+
+def ensure_dirs(repo: Path) -> None:
+    items_dir(repo).mkdir(parents=True, exist_ok=True)
+    archive_dir(repo).mkdir(parents=True, exist_ok=True)
+    # Drop the INDEX.md merge rule whenever the backlog materialises (new/sync/
+    # adopt all route through here), not only on adopt's full scaffold — so a
+    # backlog first created by `new` still gets conflict-by-regeneration. Written
+    # once; never overwritten if the user customised it.
+    ga = backlog_root(repo) / ".gitattributes"
+    if not ga.exists():
+        try:
+            ga.write_text(_GITATTRIBUTES_TEXT, encoding="utf-8")
+        except OSError:
+            pass
+
+
+def _item_files(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob("*.md"))
+
+
+def load_items(repo: Path, include_archive: bool = False) -> list[dict[str, Any]]:
+    """Load all item frontmatter dicts (+ _path, _body) from items/ (and archive/)."""
+    items: list[dict[str, Any]] = []
+    dirs = [items_dir(repo)]
+    if include_archive:
+        dirs.append(archive_dir(repo))
+    for d in dirs:
+        for path in _item_files(d):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            # Route through the tolerant reader so EVERY consumer (sync, list,
+            # mirror, adopt's idempotency anchor) gets missing known fields
+            # defaulted and unknown future fields preserved — the download/
+            # upgrade-safety contract applied on the real production read path,
+            # not just in read_item's unit tests.
+            fm, body = read_item(text)
+            fm["_path"] = str(path)
+            fm["_body"] = body
+            fm["_archived"] = (d == archive_dir(repo))
+            items.append(fm)
+    return items
+
+
+# Crockford base32 alphabet (lowercased). Excludes i, l, o, u to stay
+# unambiguous and URL/filename-safe. We render lowercase so IDs read calmly and
+# `ls` sorting is stable (single case class).
+_CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+
+
+def _b32_crockford(n: int, width: int) -> str:
+    """Encode a non-negative int as a fixed-width Crockford base32 string.
+
+    Zero-padded on the left to ``width`` chars so the time component keeps a
+    fixed length (and therefore a stable lexical-vs-chronological ordering for
+    the ~century the width covers). Higher digits are most-significant first.
+    """
+    if n < 0:
+        n = 0
+    chars: list[str] = []
+    for _ in range(width):
+        n, rem = divmod(n, 32)
+        chars.append(_CROCKFORD[rem])
+    return "".join(reversed(chars))
+
+
+# Time component width: 8 Crockford base32 digits encode 32**8 = 2**40 ms ≈ 34.8
+# years from epoch zero. `_b32_crockford` keeps only the low 40 bits of the ms
+# clock, so the time prefix is lexical==chronological WITHIN one such window;
+# the window boundary (a single ordering discontinuity, NOT a degradation) falls
+# at 2039-09-07. After it, the prefix wraps the high digit once and ordering
+# resumes — and uniqueness is never affected, since the random tail carries that
+# regardless. The time prefix is navigational-only (`ls` sort), not a uniqueness
+# guarantee. Random component: 3 bytes of os.urandom -> ~4.8 Crockford digits; we
+# render 5 digits (25 bits) for headroom.
+_TOKEN_TIME_WIDTH = 8
+_TOKEN_RAND_BYTES = 3
+_TOKEN_RAND_WIDTH = 5
+
+
+def mint_id_token(now_ms: int | None = None) -> str:
+    """Mint a collision-resistant, time-ordered item-ID suffix with ZERO
+    coordination.
+
+    Shape: ``<8 base32 time digits><5 base32 random digits>`` (13 lowercase
+    Crockford base32 chars). The leading time component makes IDs roughly sort
+    by creation in ``ls`` (readability / navigation); the trailing
+    ``os.urandom``-seeded random component makes them unique across agents,
+    machines, branches, and clones with no shared counter — the distributed
+    multi-agent contract. ``os.urandom`` (via ``secrets``) is the entropy source,
+    never a clock-only or ``Math.random``-style value.
+
+    The astronomically-rare same-millisecond + same-25-random-bits clash is
+    still caught and re-minted by ``atomic_create_item``'s O_EXCL retry, so the
+    on-disk guarantee is absolute, not merely probabilistic.
+    """
+    ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    rand = int.from_bytes(secrets.token_bytes(_TOKEN_RAND_BYTES), "big")
+    return _b32_crockford(ms, _TOKEN_TIME_WIDTH) + _b32_crockford(rand, _TOKEN_RAND_WIDTH)
+
+
+def make_item_id(repo: Path, area: str) -> str:
+    """Compose a full collision-free item ID for this repo + area.
+
+    The ``<PREFIX>-<AREA>-`` part stays readable; the suffix is a freshly-minted
+    coordination-free token. No filesystem read, no counter — that is exactly
+    what makes it safe across independent worktrees/clones that share no state.
+    """
+    return f"{proj_id_prefix(repo)}-{area_slug(area)}-{mint_id_token()}"
+
+
+# Bounded retry cap for the atomic-create race loop. 50 is far above any
+# realistic concurrent-`new` fan-out, and the per-attempt collision probability
+# is astronomically small (re-mint draws a fresh time+random token), yet the cap
+# still terminates instead of spinning forever under something pathological.
+_CREATE_MAX_ATTEMPTS = 50
+
+
+def atomic_create_item(repo: Path, area: str, render: "Any") -> tuple[str, Path]:
+    """Mint a collision-free ID and create its file ATOMICALLY.
+
+    TWO independent collision classes are handled here:
+
+    1. **Distributed (cross-worktree/clone/machine) collisions** — the real bug
+       this design fixes. The retired sequential ``-NNN`` counter was a
+       single-writer assumption: two agents in separate checkouts each read
+       their OWN highest-NNN and both minted the SAME ``...-001/002/003`` for
+       DIFFERENT items, so a later ``git merge`` collided or silently lost an
+       item. The token suffix (``mint_id_token``) removes the shared-counter
+       dependency entirely: every mint is time-ordered + ``os.urandom`` random,
+       unique with no coordination across agents/machines/branches.
+
+    2. **Same-filesystem concurrent-process collisions** — N ``new`` processes
+       on ONE filesystem. Still handled by making the filesystem the lock:
+       ``os.open`` with ``O_CREAT | O_EXCL`` fails loudly (``FileExistsError``)
+       if any peer already holds that path. On the (astronomically rare) token
+       clash we re-mint a fresh token and retry, bounded to
+       ``_CREATE_MAX_ATTEMPTS``. This is the prior O_EXCL fix — KEPT, because it
+       is what guarantees the on-disk result is collision-free rather than just
+       probabilistically so.
+
+    ``render`` is a callable ``(item_id: str) -> str`` returning the full file
+    text — deferred so the ID (and any ID-derived body) is only materialised
+    once we know which ID we actually won.
+
+    Returns ``(item_id, path)``. Raises ``RuntimeError`` if every attempt within
+    the cap lost the race (pathological contention).
+    """
+    items = items_dir(repo)
+    items.mkdir(parents=True, exist_ok=True)
+    last_exc: OSError | None = None
+    for _ in range(_CREATE_MAX_ATTEMPTS):
+        item_id = make_item_id(repo, area)
+        path = items / f"{item_id}.md"
+        try:
+            # O_EXCL makes this the atomic test-and-set: exactly one concurrent
+            # caller can create a given path; the rest raise FileExistsError and
+            # loop to RE-MINT a fresh token (not recompute a counter).
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError as exc:
+            last_exc = exc
+            continue
+        try:
+            os.write(fd, render(item_id).encode("utf-8"))
+        finally:
+            os.close(fd)
+        return item_id, path
+    raise RuntimeError(
+        f"atomic_create_item exhausted {_CREATE_MAX_ATTEMPTS} attempts for "
+        f"area {area!r} under contention"
+    ) from last_exc
+
+
+# ----------------------------------------------------------------------------
+# `new`
+# ----------------------------------------------------------------------------
+
+def _csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
+    repo = normalize_repo(args.repo)
+    ensure_dirs(repo)
+    today = resolve_today(args.today)
+    review_days = args.review_days if args.review_days is not None else DEFAULT_REVIEW_DAYS
+
+    if args.status not in STATUS_VALUES:
+        raise ValueError(f"--status must be one of {STATUS_VALUES}, got {args.status!r}")
+    if args.priority not in PRIORITY_VALUES:
+        raise ValueError(f"--priority must be one of {PRIORITY_VALUES}, got {args.priority!r}")
+    if args.type not in TYPE_VALUES:
+        raise ValueError(f"--type must be one of {TYPE_VALUES}, got {args.type!r}")
+    if args.gated not in GATED_VALUES:
+        raise ValueError(f"--gated must be one of {GATED_VALUES}, got {args.gated!r}")
+
+    provenance: dict[str, Any] = {}
+    if args.provenance_source or args.provenance_ref:
+        provenance = {
+            "source": args.provenance_source or None,
+            "ref": args.provenance_ref or None,
+        }
+
+    body = _BODY_TEMPLATE.format(
+        context=(args.context or "<why this matters / what's the situation>"),
+        notes=(args.notes or "<additional detail>"),
+    )
+
+    def _render(item_id: str) -> str:
+        data: dict[str, Any] = {
+            "id": item_id,
+            "schema_version": SCHEMA_VERSION,
+            "title": args.title,
+            "status": args.status,
+            "priority": args.priority,
+            "type": args.type,
+            "area": args.area,
+            "entities": _csv(args.entities),
+            "gated": args.gated,
+            "provenance": provenance,
+            "evidence": _csv(args.evidence),
+            "supersedes": None,
+            "superseded_by": None,
+            "created": today,
+            "updated": today,
+            "review_by": add_days(today, review_days),
+            "owner": args.owner or "unassigned",
+        }
+        doc = render_frontmatter(data) + "\n\n" + body
+        if not doc.endswith("\n"):
+            doc += "\n"
+        return doc
+
+    # Atomic, race-safe allocation: the next sequential ID is claimed via an
+    # O_EXCL create so N concurrent `new` calls in the same area never clobber
+    # each other (the read-max-then-write TOCTOU defect). The ID is only known
+    # once we win the create, so the body is rendered lazily inside the helper.
+    item_id, path = atomic_create_item(repo, args.area, _render)
+    return {
+        "command": "new",
+        "id": item_id,
+        "path": str(path),
+        "slug": project_slug(repo),
+    }
+
+
+# ----------------------------------------------------------------------------
+# INDEX rendering (deterministic)
+# ----------------------------------------------------------------------------
+
+_STATUS_RANK = {s: i for i, s in enumerate(STATUS_VALUES)}
+_PRIORITY_RANK = {p: i for i, p in enumerate(PRIORITY_VALUES)}
+
+
+def _sort_key(item: dict[str, Any]) -> tuple:
+    return (
+        _STATUS_RANK.get(str(item.get("status")), 99),
+        str(item.get("area", "")),
+        _PRIORITY_RANK.get(str(item.get("priority")), 99),
+        str(item.get("id", "")),
+    )
+
+
+def _esc_cell(value: Any) -> str:
+    s = "" if value is None else str(value)
+    return s.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
+    """Render INDEX.md deterministically from open (non-archived) items.
+
+    Grouped status -> area -> priority. Stale (past review_by) and gated items
+    are flagged in dedicated columns so any agent sees them at a glance.
+    Identical item sets always produce a byte-identical INDEX (no timestamps in
+    the body — the date column is per-item `updated`, not "now").
+    """
+    slug = project_slug(repo)
+    active = [it for it in items if not it.get("_archived")]
+    active_sorted = sorted(active, key=_sort_key)
+
+    open_p01 = sum(
+        1 for it in active_sorted
+        if it.get("status") in ("open", "in-progress", "blocked")
+        and it.get("priority") in ("P0", "P1")
+    )
+    stale = [it for it in active_sorted if _is_stale(it, today)]
+    gated = [it for it in active_sorted if str(it.get("gated", "none")) != "none"]
+    # Defense in depth: surface any id shared by 2+ items LOUDLY. With token IDs
+    # a duplicate is astronomically unlikely on the mint path, but a bad merge of
+    # two branches that both (legacy) minted `...-001`, OR a hand-authored item
+    # reusing an ID, would otherwise render only one row and silently hide the
+    # other. Grouped over BOTH active and archived items so a merge collision is
+    # visible even after one side was archived.
+    dup_groups = _duplicate_id_groups(items)
+
+    lines: list[str] = []
+    lines.append(f"# Backlog — {slug}")
+    lines.append("")
+    lines.append(
+        "Generated by `scripts/backlog.py sync`. **Do not hand-edit** — this "
+        "file is a derived view; the canonical truth is the items in `items/`. "
+        "Run `backlog.py sync` to regenerate."
+    )
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(f"- Active items: {len(active_sorted)}")
+    lines.append(f"- Open P0/P1: {open_p01}")
+    lines.append(f"- Past review_by (stale): {len(stale)}")
+    lines.append(f"- Gated: {len(gated)}")
+    if dup_groups:
+        lines.append(f"- ⚠ Duplicate IDs: {len(dup_groups)}")
+    lines.append("")
+
+    if dup_groups:
+        lines.append("## ⚠ Duplicate IDs")
+        lines.append("")
+        lines.append(
+            "Two or more items share an `id`. This usually means a branch merge "
+            "collided (each side minted the same legacy `-NNN`), or an item was "
+            "hand-edited to reuse an ID. **Resolve before trusting the tables "
+            "below** — give one item a fresh `id` (or re-`new` it) so nothing is "
+            "silently hidden."
+        )
+        lines.append("")
+        lines.append("| id | count | titles | paths |")
+        lines.append("|----|-------|--------|-------|")
+        for dup_id in sorted(dup_groups):
+            group = dup_groups[dup_id]
+            titles = "; ".join(_esc_cell(it.get("title")) for it in group)
+            paths = "; ".join(
+                _esc_cell(Path(str(it.get("_path", ""))).name) for it in group
+            )
+            lines.append(f"| {_esc_cell(dup_id)} | {len(group)} | {titles} | {paths} |")
+        lines.append("")
+
+    if stale:
+        lines.append("## ⚠ Stale (past review_by)")
+        lines.append("")
+        lines.append("| id | title | review_by |")
+        lines.append("|----|-------|-----------|")
+        for it in stale:
+            lines.append(
+                f"| {_esc_cell(it.get('id'))} | {_esc_cell(it.get('title'))} "
+                f"| {_esc_cell(it.get('review_by'))} |"
+            )
+        lines.append("")
+
+    # Main table, grouped by status then area.
+    lines.append("## Items")
+    lines.append("")
+    if not active_sorted:
+        lines.append("_No active items._")
+        lines.append("")
+    else:
+        last_status = None
+        last_area = None
+        for it in active_sorted:
+            status = str(it.get("status", ""))
+            area = str(it.get("area", ""))
+            if status != last_status:
+                lines.append(f"### {status}")
+                lines.append("")
+                last_status = status
+                last_area = None
+            if area != last_area:
+                lines.append(f"#### {area or '(no area)'}")
+                lines.append("")
+                lines.append("| id | priority | type | title | gated | review_by |")
+                lines.append("|----|----------|------|-------|-------|-----------|")
+                last_area = area
+            lines.append(
+                f"| {_esc_cell(it.get('id'))} | {_esc_cell(it.get('priority'))} "
+                f"| {_esc_cell(it.get('type'))} | {_esc_cell(it.get('title'))} "
+                f"| {_esc_cell(it.get('gated'))} | {_esc_cell(it.get('review_by'))} |"
+            )
+        lines.append("")
+
+    text = "\n".join(lines)
+    if not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def _duplicate_id_groups(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Return {id: [items...]} for every id shared by 2+ items.
+
+    Groups across active AND archived items (the full set passed in), so a merge
+    collision is detectable even after one colliding side has been archived. An
+    item with a missing/empty id is ignored (it cannot collide on a real ID).
+    Order within each group is preserved (input order) for a stable INDEX.
+    """
+    by_id: dict[str, list[dict[str, Any]]] = {}
+    for it in items:
+        iid = it.get("id")
+        if not iid:
+            continue
+        by_id.setdefault(str(iid), []).append(it)
+    return {iid: group for iid, group in by_id.items() if len(group) > 1}
+
+
+def _is_stale(item: dict[str, Any], today: str) -> bool:
+    rb = item.get("review_by")
+    if not rb or item.get("status") in ARCHIVE_STATUSES:
+        return False
+    try:
+        return _dt.date.fromisoformat(str(rb)) < _dt.date.fromisoformat(today)
+    except ValueError:
+        return False
+
+
+# ----------------------------------------------------------------------------
+# Consolidation + mirror
+# ----------------------------------------------------------------------------
+
+def consolidate(repo: Path, today: str) -> dict[str, Any]:
+    """Move done/dropped items to archive/; report stale + unlinked queue files.
+
+    Never deletes. Returns {archived: [ids], stale: [ids], unlinked: [paths]}.
+    """
+    ensure_dirs(repo)
+    archived: list[str] = []
+    for path in _item_files(items_dir(repo)):
+        try:
+            fm, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if str(fm.get("status")) in ARCHIVE_STATUSES:
+            dest = archive_dir(repo) / path.name
+            # Never clobber: if a same-name archive exists, suffix it.
+            if dest.exists():
+                stem = dest.stem
+                dest = archive_dir(repo) / f"{stem}-{fm.get('updated', today)}.md"
+            path.replace(dest)
+            archived.append(str(fm.get("id", path.stem)))
+
+    remaining = load_items(repo, include_archive=False)
+    stale = [str(it.get("id")) for it in remaining if _is_stale(it, today)]
+    unlinked = _unlinked_queue_files(repo, remaining)
+    return {"archived": archived, "stale": stale, "unlinked": unlinked}
+
+
+def _unlinked_queue_files(repo: Path, items: list[dict[str, Any]]) -> list[str]:
+    """Files under .build-loop/{followup,issues,proposals} not referenced by any
+    item's evidence or provenance.ref. Advisory — surfaces scattered work that
+    hasn't been triaged into the backlog yet."""
+    referenced: set[str] = set()
+    for it in items:
+        for ev in (it.get("evidence") or []):
+            referenced.add(Path(str(ev)).name)
+        prov = it.get("provenance") or {}
+        if isinstance(prov, dict) and prov.get("ref"):
+            referenced.add(Path(str(prov["ref"])).name)
+    unlinked: list[str] = []
+    for qname in ("followup", "issues", "proposals"):
+        qdir = repo / ".build-loop" / qname
+        if not qdir.is_dir():
+            continue
+        for path in sorted(qdir.glob("*.md")):
+            if path.name not in referenced:
+                unlinked.append(str(path.relative_to(repo)))
+    return unlinked
+
+
+def _atomic_write_text(dest: Path, text: str) -> None:
+    """Write ``text`` to ``dest`` atomically (temp file in the same dir + replace).
+
+    A parallel session may write the same mirror file at the same time; a naive
+    ``write_text`` truncates-then-writes, so a concurrent READER can observe a
+    half-written (empty/partial) file. We write to a unique temp sibling and
+    ``os.replace`` it into place — ``os.replace`` is atomic on the same
+    filesystem, so a reader always sees either the old bytes or the complete new
+    bytes, never a torn write. Last-writer-wins is fine (the per-repo backlog is
+    the truth; the mirror is a derived read view).
+
+    Best-effort: cleans up the temp file on failure and re-raises so the caller's
+    per-file ``except OSError`` can skip just that file.
+    """
+    tmp = dest.parent / f".{dest.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, dest)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def memory_root() -> Path:
+    """Resolve the per-user build-loop-memory root.
+
+    Env override (BUILD_LOOP_MEMORY_DIR) wins for tests/sandboxes; otherwise the
+    canonical sibling path.
+    """
+    override = os.environ.get("BUILD_LOOP_MEMORY_DIR")
+    if override:
+        return Path(override)
+    return Path.home() / "dev" / "git-folder" / "build-loop-memory"
+
+
+def _load_mirror_items(dest_dir: Path) -> list[dict[str, Any]]:
+    """Load item dicts from a FLAT mirror dir (``<ID>.md`` files, no items/ subdir).
+
+    The personal-memory mirror stores item files directly under
+    ``projects/<slug>/backlog/`` (not under an ``items/`` subdir like the
+    per-repo store), so it needs its own loader. INDEX.md and any file whose
+    stem is not item-ID-shaped are skipped. Routes every file through the
+    tolerant ``read_item`` reader. Used to render the mirror INDEX from the
+    MERGED union of all mirror items — not just the local source items — so an
+    item that lives only in the mirror still appears in the mirror's INDEX.
+    """
+    out: list[dict[str, Any]] = []
+    if not dest_dir.is_dir():
+        return out
+    for path in sorted(dest_dir.glob("*.md")):
+        if path.name == "INDEX.md" or not _ITEM_ID_RE.match(path.stem):
+            continue
+        try:
+            fm, body = read_item(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        fm["_path"] = str(path)
+        fm["_body"] = body
+        fm["_archived"] = False
+        out.append(fm)
+    return out
+
+
+def mirror_to_memory(repo: Path, today: str, prune: bool = False) -> dict[str, Any]:
+    """Mirror active item files into the per-user memory backlog lane (MERGE).
+
+    One-way: per-repo backlog -> personal memory. Writes/updates a per-item copy
+    of every active local item under ``build-loop-memory/projects/<slug>/backlog/``
+    and regenerates the ``INDEX.md`` there from the MERGED UNION of all mirror
+    items.
+
+    MERGE, not destructive overwrite (the syncsafety contract,
+    BUIL-TOOLING-syncsafety-001): a mirror item that is ABSENT from the local
+    source store is NEVER deleted by default. The local store can be incomplete
+    (e.g. a partial or mis-rooted store), and reconciling a durable mirror
+    toward an incomplete source silently drops real open work — the exact defect
+    that deleted a pre-existing open item. Pass ``prune=True`` (the ``--prune``
+    flag, OFF by default) ONLY when the local store is known authoritative; then
+    item-ID-shaped mirror files with no local source are removed. A non-item
+    file (USER-NOTES.md, etc.) is never touched even under ``--prune``.
+
+    Best-effort: if the memory root is absent/unwritable, returns
+    {written: 0, skipped: <reason>} without failing sync.
+    """
+    slug = project_slug(repo)
+    dest_dir = memory_root() / "projects" / slug / "backlog"
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {"written": 0, "skipped": f"memory_dir_unwritable: {exc}", "dir": str(dest_dir)}
+
+    items = load_items(repo, include_archive=False)
+    written = 0
+    written_names: set[str] = set()
+    for it in items:
+        src = Path(it["_path"])
+        try:
+            # Atomic: a concurrent reader/writer never sees a half-written mirror.
+            _atomic_write_text(dest_dir / src.name, src.read_text(encoding="utf-8"))
+            written += 1
+            written_names.add(src.name)
+        except OSError:
+            continue
+    # PRUNE IS OPT-IN. By default the mirror is additive/merge-by-id: a mirror
+    # item with no local source SURVIVES (it may be real open work the local
+    # store — possibly partial or mis-rooted — simply doesn't have). Only
+    # `--prune`, used when the local store is known complete, removes
+    # item-ID-shaped mirror files whose source is gone. A non-item file is never
+    # touched even then.
+    pruned: list[str] = []
+    if prune:
+        for path in sorted(dest_dir.glob("*.md")):
+            if path.name == "INDEX.md" or not _ITEM_ID_RE.match(path.stem):
+                continue
+            if path.name not in written_names:
+                try:
+                    path.unlink()
+                    pruned.append(path.name)
+                except OSError:
+                    pass
+    # Regenerate the mirror INDEX from the MERGED UNION of mirror items (every
+    # `<ID>.md` now on disk), NOT just the local source items — so an item
+    # present only in the mirror still shows up in the mirror's INDEX. Atomic
+    # write keeps the same torn-read protection as the item copies.
+    union = _load_mirror_items(dest_dir)
+    try:
+        _atomic_write_text(dest_dir / "INDEX.md", render_index(repo, union, today))
+    except OSError:
+        pass
+    return {"written": written, "pruned": pruned, "merged": len(union), "dir": str(dest_dir)}
+
+
+# ----------------------------------------------------------------------------
+# `sync`
+# ----------------------------------------------------------------------------
+
+def write_index(repo: Path, today: str) -> dict[str, Any]:
+    items = load_items(repo, include_archive=False)
+    index_text = render_index(repo, items, today)
+    index_path = backlog_root(repo) / "INDEX.md"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic so a concurrent `sync` (two agents) can't leave a torn INDEX for a
+    # reader. The INDEX is fully derived, so last-writer-wins is correct.
+    _atomic_write_text(index_path, index_text)
+    return {"path": str(index_path), "active_count": len(items)}
+
+
+def cmd_sync(args: argparse.Namespace) -> dict[str, Any]:
+    repo = normalize_repo(args.repo)
+    ensure_dirs(repo)
+    today = resolve_today(args.today)
+
+    # 1. Consolidate first (done/dropped -> archive) so INDEX reflects the move.
+    consolidation = consolidate(repo, today)
+    # 2. Regenerate INDEX deterministically from the remaining items.
+    index = write_index(repo, today)
+    # 3. Mirror to personal memory (unless suppressed).
+    mirror: dict[str, Any] = {"written": 0, "skipped": "disabled"}
+    if not args.no_mirror:
+        mirror = mirror_to_memory(repo, today, prune=bool(getattr(args, "prune", False)))
+
+    return {
+        "command": "sync",
+        "slug": project_slug(repo),
+        "index": index,
+        "consolidation": consolidation,
+        "mirror": mirror,
+        "today": today,
+    }
+
+
+# ----------------------------------------------------------------------------
+# `adopt` — safe migration / movement of existing data
+# ----------------------------------------------------------------------------
+#
+# `adopt` makes an existing repo's scattered work backlog-aware WITHOUT ever
+# destroying anything. It is additive and idempotent, dry-run by default. Three
+# jobs: (1) fix .gitignore so the backlog travels (commits with the repo);
+# (2) scaffold the backlog dirs + pointer files if absent; (3) import existing
+# `.build-loop/{followup,issues,proposals}/*.md` as backlog items that LINK to
+# (never move/delete) their source. A trailing `sync` regenerates the INDEX.
+
+# Anchor the rules at the repo root. Unanchored ``!.build-loop/**`` patterns
+# also expose nested runtime stores (for example a checked-out sibling under
+# ``agent-rally-point/.build-loop``) and make unrelated data appear untracked.
+_UNIGNORE_RULES = (
+    "!/.build-loop/",
+    "/.build-loop/*",
+    "!/.build-loop/backlog/",
+    "!/.build-loop/backlog/**",
+    "!/BACKLOG.md",
+)
+_LEGACY_UNIGNORE_RULES = {
+    "!.build-loop/",
+    "!.build-loop/backlog/",
+    "!.build-loop/backlog/**",
+    "!BACKLOG.md",
+}
+
+_ADOPT_MARKER = "# build-loop backlog (added by `backlog.py adopt` — keep so the backlog travels)"
+
+
+def _backlog_is_gitignored(repo: Path) -> tuple[bool, list[str]]:
+    """Best-effort: is `.build-loop/backlog/` ignored AND not already un-ignored?
+
+    Pure text inspection of `.gitignore` (no git invocation — host-agnostic and
+    works on a non-repo tmp dir). Returns (ignored_and_unfixed, gitignore_lines).
+    Considered unfixed when the rooted rules are missing or any legacy
+    unanchored rule remains. Legacy rules expose nested runtime stores and must
+    be migrated even though they make the repo-root backlog visible.
+    """
+    gi = repo / ".gitignore"
+    if not gi.is_file():
+        return False, []
+    try:
+        lines = gi.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False, []
+    stripped = [ln.strip() for ln in lines]
+    ignores_buildloop = any(
+        s in (".build-loop/", ".build-loop", "/.build-loop/", "/.build-loop")
+        for s in stripped
+    )
+    rooted = "!/.build-loop/backlog/" in stripped
+    legacy = bool(set(stripped) & _LEGACY_UNIGNORE_RULES)
+    return (legacy or (ignores_buildloop and not rooted)), lines
+
+
+def _append_unignore_rules(repo: Path, existing_lines: list[str], apply: bool) -> dict[str, Any]:
+    """Normalize the managed un-ignore block so only rooted rules remain.
+
+    Legacy unanchored rules are removed as one managed migration and replaced
+    by the complete rooted block. Idempotent; writes only when ``apply`` is True.
+    """
+    present = {ln.strip() for ln in existing_lines}
+    legacy_present = sorted(present & _LEGACY_UNIGNORE_RULES)
+    rooted_complete = all(rule in present for rule in _UNIGNORE_RULES)
+    if rooted_complete and not legacy_present:
+        return {"action": "gitignore_already_fixed", "added": []}
+    managed = set(_UNIGNORE_RULES) | _LEGACY_UNIGNORE_RULES | {_ADOPT_MARKER}
+    base_lines = [line for line in existing_lines if line.strip() not in managed]
+    to_add = list(_UNIGNORE_RULES)
+    if apply:
+        gi = repo / ".gitignore"
+        block = ["", _ADOPT_MARKER, *to_add, ""]
+        text = "\n".join(base_lines).rstrip()
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += "\n".join(block).lstrip("\n") + "\n"
+        gi.write_text(text, encoding="utf-8")
+    return {
+        "action": (
+            "gitignore_unignore_migrated"
+            if legacy_present
+            else "gitignore_unignore_appended"
+        ),
+        "added": to_add,
+        "removed": legacy_present,
+        "applied": apply,
+    }
+
+
+def _scaffold_actions(repo: Path, apply: bool) -> list[dict[str, Any]]:
+    """Create backlog dirs + README/BACKLOG.md pointer if absent (idempotent)."""
+    actions: list[dict[str, Any]] = []
+    root = backlog_root(repo)
+    targets = [
+        ("dir", items_dir(repo), None),
+        ("dir", archive_dir(repo), None),
+        ("file", root / "README.md", _README_TEXT),
+        ("file", root / ".gitattributes", _GITATTRIBUTES_TEXT),
+        ("file", repo / "BACKLOG.md", _BACKLOG_POINTER_TEXT),
+    ]
+    for kind, path, content in targets:
+        exists = path.exists()
+        if exists:
+            actions.append({"action": "scaffold_exists", "path": str(path)})
+            continue
+        actions.append({"action": f"scaffold_create_{kind}", "path": str(path),
+                        "applied": apply})
+        if apply:
+            if kind == "dir":
+                path.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content or "", encoding="utf-8")
+    return actions
+
+
+def _already_imported_sources(repo: Path) -> set[str]:
+    """Set of source paths (repo-relative POSIX) already imported as items.
+
+    Reads every item's `imported_from` frontmatter field (across items/ AND
+    archive/) so a re-run never re-imports a source — the idempotency anchor.
+    """
+    seen: set[str] = set()
+    for it in load_items(repo, include_archive=True):
+        src = it.get("imported_from")
+        if src:
+            seen.add(str(src))
+    return seen
+
+
+def _import_one(repo: Path, src_path: Path, source_kind: str, today: str,
+                review_days: int, apply: bool) -> dict[str, Any]:
+    """Create a backlog item that LINKS to (never moves) one queue file."""
+    rel = src_path.relative_to(repo).as_posix()
+    area = source_kind  # group imported items by their origin queue
+    # Title: first markdown heading or first non-empty line, else the filename.
+    title = src_path.stem
+    try:
+        for line in src_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip().lstrip("#").strip()
+            if s:
+                title = s[:120]
+                break
+    except OSError:
+        pass
+
+    if not apply:
+        return {"action": "import_item", "source": rel, "source_kind": source_kind,
+                "title": title, "applied": False}
+
+    def _render(item_id: str) -> str:
+        data: dict[str, Any] = {
+            "id": item_id,
+            "schema_version": SCHEMA_VERSION,
+            "title": title,
+            "status": "open",
+            "priority": "P2",
+            "type": _SOURCE_TYPE.get(source_kind, "debt"),
+            "area": area,
+            "entities": [],
+            "gated": "none",
+            "provenance": {"source": source_kind, "ref": rel},
+            "evidence": [rel],
+            "supersedes": None,
+            "superseded_by": None,
+            "created": today,
+            "updated": today,
+            "review_by": add_days(today, review_days),
+            "owner": "unassigned",
+            # Idempotency anchor: a re-run skips any source already recorded here.
+            "imported_from": rel,
+        }
+        body = _BODY_TEMPLATE.format(
+            context=f"Imported from `{rel}` (build-loop {source_kind} queue). "
+                    f"Source file is the inbox/provenance and stays in place.",
+            notes=f"Adopted by `backlog.py adopt`. See {rel} for the original detail.",
+        )
+        doc = render_frontmatter(data) + "\n\n" + body
+        if not doc.endswith("\n"):
+            doc += "\n"
+        return doc
+
+    item_id, path = atomic_create_item(repo, area, _render)
+    return {"action": "import_item", "source": rel, "source_kind": source_kind,
+            "title": title, "id": item_id, "path": str(path), "applied": True}
+
+
+def cmd_adopt(args: argparse.Namespace) -> dict[str, Any]:
+    """Safe, idempotent migration: gitignore-fix + scaffold + import + sync.
+
+    Dry-run by DEFAULT (reports actions, writes nothing); ``--apply`` executes.
+    Never deletes or moves a source file — imported items LINK to their source.
+    """
+    repo = normalize_repo(args.repo)
+    today = resolve_today(args.today)
+    review_days = args.review_days if args.review_days is not None else DEFAULT_REVIEW_DAYS
+    apply = bool(args.apply)
+
+    actions: list[dict[str, Any]] = []
+
+    # 1. GITIGNORE GUARD — make the backlog travel/commit.
+    ignored, gi_lines = _backlog_is_gitignored(repo)
+    gitignore_report: dict[str, Any]
+    if ignored:
+        gitignore_report = _append_unignore_rules(repo, gi_lines, apply)
+        gitignore_report["was_ignored"] = True
+    else:
+        gitignore_report = {"action": "gitignore_ok", "was_ignored": False, "added": []}
+
+    # 2. SCAFFOLD backlog dirs + pointer files.
+    actions.extend(_scaffold_actions(repo, apply))
+
+    # 3. IMPORT existing followup/issues/proposals as items (idempotent).
+    already = _already_imported_sources(repo)
+    imported: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for source_kind in ("followup", "issues", "proposals"):
+        qdir = repo / ".build-loop" / source_kind
+        if not qdir.is_dir():
+            continue
+        for src in sorted(qdir.glob("*.md")):
+            rel = src.relative_to(repo).as_posix()
+            if rel in already:
+                skipped.append(rel)
+                continue
+            rec = _import_one(repo, src, source_kind, today, review_days, apply)
+            imported.append(rec)
+
+    # 4. SYNC at the end (only on --apply; dry-run never writes the INDEX).
+    sync_report: dict[str, Any] = {"skipped": "dry-run"}
+    if apply:
+        sync_ns = _NS_sync(repo=str(repo), today=today,
+                           no_mirror=bool(getattr(args, "no_mirror", False)))
+        sync_report = cmd_sync(sync_ns)
+
+    return {
+        "command": "adopt",
+        "mode": "apply" if apply else "dry-run",
+        "slug": project_slug(repo),
+        "gitignore": gitignore_report,
+        "scaffold": actions,
+        "imported": imported,
+        "imported_count": len([r for r in imported]),
+        "skipped_already_imported": skipped,
+        "sync": sync_report,
+        "today": today,
+    }
+
+
+class _NS_sync:
+    """Minimal namespace to drive cmd_sync from adopt without re-parsing argv."""
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+# ----------------------------------------------------------------------------
+# `list`
+# ----------------------------------------------------------------------------
+
+def cmd_list(args: argparse.Namespace) -> dict[str, Any]:
+    repo = normalize_repo(args.repo)
+    items = load_items(repo, include_archive=bool(args.include_archive))
+
+    def keep(it: dict[str, Any]) -> bool:
+        if args.status and str(it.get("status")) != args.status:
+            return False
+        if args.area and str(it.get("area")) != args.area:
+            return False
+        if args.priority and str(it.get("priority")) != args.priority:
+            return False
+        return True
+
+    filtered = sorted([it for it in items if keep(it)], key=_sort_key)
+    rows = [
+        {
+            "id": it.get("id"),
+            "status": it.get("status"),
+            "priority": it.get("priority"),
+            "type": it.get("type"),
+            "area": it.get("area"),
+            "gated": it.get("gated"),
+            "title": it.get("title"),
+        }
+        for it in filtered
+    ]
+    return {"command": "list", "count": len(rows), "items": rows}
+
+
+def _print_list_text(result: dict[str, Any]) -> None:
+    rows = result["items"]
+    if not rows:
+        print("(no matching backlog items)")
+        return
+    for r in rows:
+        gated = f" [gated:{r['gated']}]" if r.get("gated") and r["gated"] != "none" else ""
+        print(f"{r['id']:<20} {r['priority']:<3} {str(r['status']):<12} "
+              f"{str(r['area']):<14} {r['title']}{gated}")
+    print(f"\n{result['count']} item(s)")
+
+
+# ----------------------------------------------------------------------------
+# CLI
+# ----------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="backlog.py",
+        description="Host-agnostic, multi-repo build-loop backlog system (pure stdlib).",
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    pn = sub.add_parser("new", help="Create a new backlog item.")
+    pn.add_argument("--repo", required=True)
+    pn.add_argument("--slug", default="",
+                    help="Override project slug (use inside a worktree/CI checkout "
+                         "where the dir basename isn't the repo name).")
+    pn.add_argument("--area", required=True)
+    pn.add_argument("--type", required=True, choices=TYPE_VALUES)
+    pn.add_argument("--title", required=True)
+    pn.add_argument("--priority", default="P2", choices=PRIORITY_VALUES)
+    pn.add_argument("--status", default="open", choices=STATUS_VALUES)
+    pn.add_argument("--gated", default="none", choices=GATED_VALUES)
+    pn.add_argument("--entities", default="", help="comma-separated")
+    pn.add_argument("--evidence", default="", help="comma-separated paths/refs")
+    pn.add_argument("--provenance-source", default="", dest="provenance_source")
+    pn.add_argument("--provenance-ref", default="", dest="provenance_ref")
+    pn.add_argument("--owner", default="")
+    pn.add_argument("--context", default="")
+    pn.add_argument("--notes", default="")
+    pn.add_argument("--review-days", type=int, default=None, dest="review_days")
+    pn.add_argument("--today", default=None)
+    pn.add_argument("--json", action="store_true")
+
+    ps = sub.add_parser("sync", help="Regenerate INDEX, consolidate, mirror to memory.")
+    ps.add_argument("--repo", required=True)
+    ps.add_argument("--slug", default="",
+                    help="Override project slug (worktree/CI checkout).")
+    ps.add_argument("--today", default=None)
+    ps.add_argument("--no-mirror", action="store_true",
+                    help="Skip the personal-memory mirror (per-repo only).")
+    ps.add_argument("--prune", action="store_true",
+                    help="Delete personal-memory mirror items that have no local "
+                         "source (OFF by default — the mirror is merge-by-id and "
+                         "never drops items the local store lacks). Use ONLY when "
+                         "the local store is known complete/authoritative.")
+    ps.add_argument("--json", action="store_true")
+
+    pa = sub.add_parser(
+        "adopt",
+        help="Safely migrate existing data into the backlog (dry-run by default).",
+    )
+    pa.add_argument("--repo", required=True)
+    pa.add_argument("--slug", default="",
+                    help="Override project slug (worktree/CI checkout).")
+    pa.add_argument("--apply", action="store_true",
+                    help="Execute the migration. WITHOUT this flag, adopt is a "
+                         "read-only dry-run that only reports planned actions.")
+    pa.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="Explicit no-op form (this is already the default). "
+                         "Provided so `adopt --dry-run` reads naturally; ignored "
+                         "if --apply is also given.")
+    pa.add_argument("--review-days", type=int, default=None, dest="review_days")
+    pa.add_argument("--today", default=None)
+    pa.add_argument("--no-mirror", action="store_true",
+                    help="Skip the personal-memory mirror in the trailing sync.")
+    pa.add_argument("--json", action="store_true")
+
+    pl = sub.add_parser("list", help="Filtered text/JSON view of items.")
+    pl.add_argument("--repo", required=True)
+    pl.add_argument("--slug", default="",
+                    help="Override project slug (worktree/CI checkout).")
+    pl.add_argument("--status", default="")
+    pl.add_argument("--area", default="")
+    pl.add_argument("--priority", default="")
+    pl.add_argument("--include-archive", action="store_true", dest="include_archive")
+    pl.add_argument("--json", action="store_true")
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    # A --slug override pins the project identity (worktree/CI checkout) for the
+    # rest of the process; project_slug() reads BACKLOG_SLUG.
+    if getattr(args, "slug", ""):
+        os.environ["BACKLOG_SLUG"] = args.slug
+    try:
+        if args.command == "new":
+            result = cmd_new(args)
+            print(json.dumps(result, indent=2))
+        elif args.command == "sync":
+            result = cmd_sync(args)
+            print(json.dumps(result, indent=2))
+        elif args.command == "adopt":
+            result = cmd_adopt(args)
+            print(json.dumps(result, indent=2))
+        elif args.command == "list":
+            result = cmd_list(args)
+            if getattr(args, "json", False):
+                print(json.dumps(result, indent=2))
+            else:
+                _print_list_text(result)
+        else:  # pragma: no cover - argparse enforces
+            parser.error(f"unknown command {args.command!r}")
+            return 2
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
