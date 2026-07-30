@@ -22,64 +22,22 @@
     "EVERY entry REQUIRES all four fields: test, reason, owner, expires.",
     "'test' is a pytest node id (path::Class::test) or, for coarse short-lived",
     "suppression, a bare test-file path. File-scoped entries suppress the whole",
-    "file — use them only when the specific id is unstable, and keep the expiry",
+    "file \u2014 use them only when the specific id is unstable, and keep the expiry",
     "days away, not weeks.",
     "'expires' is YYYY-MM-DD (UTC date). Past that date the gate blocks."
   ],
   "entries": [
     {
-      "test": "scripts/test_self_mod_verify.py::TestVerdictPass::test_json_shape_complete",
-      "reason": "self_mod_verify shells out to pytest with --timeout; the resolved interpreter has no pytest-timeout, so the child exits 4 (usage error) and every verdict assertion sees verdict=error/'Timeout'. Env/dependency defect, not a logic defect.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_self_mod_verify.py::TestVerdictPass::test_passing_suite_verdict_pass",
-      "reason": "Same root cause: child pytest exits 4 on the unrecognized --timeout flag, so verdict=error instead of pass.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_self_mod_verify.py::TestVerdictFail::test_failing_suite_populates_failed_tests",
-      "reason": "Same root cause: no summary line is produced, so failed_tests comes back empty.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_self_mod_verify.py::TestVerdictFail::test_failing_suite_verdict_fail",
-      "reason": "Same root cause: exit 2 (error) instead of the expected exit 1 (fail).",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_self_mod_verify.py::TestAutoRevert::test_auto_revert_no_changed_files_is_noop",
-      "reason": "Same root cause: exit 2 (error) instead of the expected exit 1.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_self_mod_verify.py::TestGitDerivedChangeSet::test_full_scope_ignores_git_derivation",
-      "reason": "Same root cause: full-scope run reports verdict=error/'Timeout' instead of pass.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
       "test": "scripts/test_prepush_test_gate.py::test_all_default_gates_run_and_pass_on_green_repo",
-      "reason": "Self-referential: this test runs the REAL default gate set against this checkout, so it is red whenever ANY other deterministic gate is red. It goes green on its own once the other baseline entries are fixed.",
+      "reason": "Self-referential: runs the real default gate set against this checkout, so it stays red until the tree itself is green. Blocked only by test_embed_backend and by an uncommitted context_bootstrap.py change owned by another session.",
       "owner": "tyroneross",
       "expires": "2026-08-13"
     },
     {
       "test": "scripts/test_prepush_test_gate.py::test_shallow_clone_skips_artifact_freshness",
-      "reason": "Same self-referential cause: it asserts on the real gate result set, which currently short-circuits on the first failing gate.",
+      "reason": "Self-referential: runs the real default gate set against this checkout, so it stays red until the tree itself is green. Blocked only by test_embed_backend and by an uncommitted context_bootstrap.py change owned by another session.",
       "owner": "tyroneross",
       "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_agent_surface_policy.py",
-      "reason": "One assertion in this file is red at HEAD and is being fixed concurrently by the surface-policy chunk (C5) of the same build. File-scoped because the failing node id moves as C5 rewrites the invariant. NEAR-TERM expiry on purpose: if C5 has not landed by then, this must block rather than linger.",
-      "owner": "tyroneross",
-      "expires": "2026-08-01"
     },
     {
       "test": "scripts/test_embed_backend.py",

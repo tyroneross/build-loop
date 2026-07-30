@@ -26,19 +26,26 @@ CONTRACT (one file, one verdict — the script judges a FILE, never a policy sco
            expose this skill, and silently reversing a deliberate decision is a
            worse failure than stopping. A human resolves it, either by adding
            `public-justification:` or by setting the field to false.
-    any other value (`yes`, `1`, `False`, empty, ...)
+    any other value (`yes`, `1`, `maybe`, empty, ...)
         -> status `violation` (unrecognized value), untouched, exit 1.
-           Matching is CASE-SENSITIVE on purpose. `test_agent_surface_policy.py`
-           compares the literal string `false`, so a YAML-valid `False` would pass
-           the harness and fail the repo gate. Surfacing it beats accepting it,
-           and rewriting it would edit a field someone deliberately typed.
-           An EMPTY value (`user-invocable:` = YAML null) also lands here: the
-           harness reads null as PUBLIC, and inserting a second field would create
-           a duplicate key, so this is reported rather than stamped.
+           An EMPTY value (`user-invocable:` = YAML null) lands here rather than
+           being stamped, because inserting a second field would create a
+           duplicate key. Reported, never rewritten.
+
     missing / malformed frontmatter, undecodable bytes, BOM before the opening
     `---`
         -> status `malformed` + a reason, NEVER a write, exit 1. Fail soft: the
            file is left exactly as found and the run continues to the next path.
+
+CASE
+    Matching is CASE-INSENSITIVE: `False` and `FALSE` are `compliant`, `True` and
+    `TRUE` follow the `true` rows above. Until 2026-07-30 this script compared the
+    raw string, so `user-invocable: False` was a `violation` here while
+    `surface_policy.py` and `skill_index.py` lowercased it and read the same file
+    as hidden — one file, two answers, which is the drift this repo removed by
+    moving the determination into `exposure_policy.py`. That module records the
+    harness evidence (decoded from the shipped Claude Code binary) showing `False`
+    is hidden by the harness under either YAML version.
 
 BYTE PRESERVATION
     Files are read with `read_bytes()` and decoded manually — `read_text()` would
@@ -54,8 +61,21 @@ BYTE PRESERVATION
 
 COMPATIBILITY
     Frontmatter detection and field lookup mirror `scripts/test_agent_surface_policy.py`
-    (FRONTMATTER_RE / USER_INVOCABLE_RE) — the same files are read by both, so a
-    file this script reports as `compliant` is a file that test reads as `'false'`.
+    (FRONTMATTER_RE / USER_INVOCABLE_RE) — the same files are read by both. The
+    EXPOSURE DETERMINATION is not mirrored, it is IMPORTED: `exposure_policy.classify`
+    is the single call every consumer makes. Only the verdict VOCABULARY below is
+    local, because this script judges an authoring action (`stamped` /
+    `would_stamp` / `malformed`) that the reporting tools have no concept of.
+    The mapping is one-way and total:
+
+        exposure_policy.HIDDEN              -> compliant
+        exposure_policy.PUBLIC_JUSTIFIED    -> approved_exception
+        exposure_policy.PUBLIC_UNJUSTIFIED  -> violation
+        exposure_policy.DEFAULT_PUBLIC      -> stamped / would_stamp
+
+    so a file this script calls `compliant` is a file every other consumer calls
+    hidden, and a file it calls `violation` is one they reject. Asserted for a
+    full value matrix by `test_exposure_policy.py`.
 
 CLI usage
     python3 scripts/stamp_skill_frontmatter.py --check PATH [PATH ...]
@@ -93,13 +113,28 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+if __package__ in (None, ""):  # direct `python3 scripts/stamp_skill_frontmatter.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from exposure_policy import (  # noqa: E402
+    EXPOSED_VALUE,
+    HIDDEN,
+    HIDDEN_VALUE,
+    JUSTIFICATION_FIELD,
+    PUBLIC_JUSTIFIED,
+    USER_INVOCABLE_FIELD,
+    classify,
+    normalize_flag,
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-FIELD_NAME = "user-invocable"
-DEFAULT_VALUE = "false"
-JUSTIFICATION_FIELD = "public-justification"
+#: Field names come from `exposure_policy` so a rename lands everywhere at once.
+FIELD_NAME = USER_INVOCABLE_FIELD
+#: The value `--apply` writes: the shared literal that means hidden.
+DEFAULT_VALUE = HIDDEN_VALUE
 
 #: A frontmatter delimiter line: ``---`` plus optional trailing blanks, then EOL.
 DELIMITER_RE = re.compile(r"---[ \t]*\r?\n\Z")
@@ -196,19 +231,13 @@ def find_frontmatter(text: str) -> tuple[list[str], int] | None:
     return None
 
 
-def _classify_value(raw: str | None) -> str | None:
-    """Normalize a frontmatter scalar to ``'false'`` / ``'true'`` / ``None``.
-
-    Unquoting mirrors ``test_agent_surface_policy.read_user_invocable``. The
-    comparison is case-SENSITIVE for the same reason: that test asserts the
-    literal string ``false``, so ``False`` is not interchangeable here.
-    """
-    if raw is None:
-        return None
-    cleaned = raw.strip().strip('"').strip("'").strip()
-    if cleaned in {"false", "true"}:
-        return cleaned
-    return None
+#: Shared exposure class -> this script's richer authoring verdict. The classes
+#: are exhaustive, so this map is total; `DEFAULT_PUBLIC` is absent because an
+#: absent field is handled before classification (it is the stampable case).
+_CLASS_TO_STATUS = {
+    HIDDEN: STATUS_COMPLIANT,
+    PUBLIC_JUSTIFIED: STATUS_APPROVED_EXCEPTION,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -232,32 +261,42 @@ def evaluate(text: str) -> tuple[str, str, str | None, bool, str | None]:
     lines, closing = parsed
     block = "".join(lines[1:closing])
     match = USER_INVOCABLE_RE.search(block)
-    justified = JUSTIFICATION_RE.search(block) is not None
+    justification_match = JUSTIFICATION_RE.search(block)
+    justified = justification_match is not None
 
     if match is None:
+        # DEFAULT_PUBLIC in shared terms: no field, so the harness exposes it.
+        # This script's whole job is to close that gap, so it stamps instead of
+        # reporting — the one class that becomes an ACTION rather than a verdict.
         eol = _eol_of(lines[closing - 1] if closing > 1 else lines[0])
         stamped = lines[:closing] + [f"{FIELD_NAME}: {DEFAULT_VALUE}{eol}"] + lines[closing:]
         return (STATUS_STAMPED, f"inserted `{FIELD_NAME}: {DEFAULT_VALUE}`",
                 None, justified, "".join(stamped))
 
     raw = match.group(1)
-    value = _classify_value(raw)
+    # THE determination — one shared call, so this script cannot disagree with
+    # `surface_policy.py` / `skill_index.py` / `test_agent_surface_policy.py`
+    # about what the file exposes. Only the verdict naming below is local.
+    exposure = classify(raw, justification_match.group(1) if justification_match else None)
+    value = normalize_flag(raw)
 
-    if value == "false":
-        return (STATUS_COMPLIANT, "already hidden", "false", justified, None)
+    status = _CLASS_TO_STATUS.get(exposure)
+    if status == STATUS_COMPLIANT:
+        return (status, "already hidden", value, justified, None)
+    if status == STATUS_APPROVED_EXCEPTION:
+        return (status, f"public by explicit `{JUSTIFICATION_FIELD}:`", value, True, None)
 
-    if value == "true":
-        if justified:
-            return (STATUS_APPROVED_EXCEPTION,
-                    f"public by explicit `{JUSTIFICATION_FIELD}:`", "true", True, None)
+    # PUBLIC_UNJUSTIFIED — two shapes, same verdict, different remedy.
+    if value == EXPOSED_VALUE:
         return (STATUS_VIOLATION,
-                f"`{FIELD_NAME}: true` without a `{JUSTIFICATION_FIELD}:` field — "
-                "add the justification or set the field to false",
-                "true", False, None)
+                f"`{FIELD_NAME}: {EXPOSED_VALUE}` without a `{JUSTIFICATION_FIELD}:` "
+                "field — add the justification or set the field to false",
+                value, False, None)
 
     return (STATUS_VIOLATION,
-            f"unrecognized `{FIELD_NAME}` value {raw.strip()!r}; expected the literal "
-            f"lowercase `false`, or `true` plus a `{JUSTIFICATION_FIELD}:` field",
+            f"unrecognized `{FIELD_NAME}` value {raw.strip()!r}; expected "
+            f"`{HIDDEN_VALUE}` (any case), or `{EXPOSED_VALUE}` plus a "
+            f"`{JUSTIFICATION_FIELD}:` field",
             raw.strip() or None, justified, None)
 
 

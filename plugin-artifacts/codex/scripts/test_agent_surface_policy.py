@@ -6,11 +6,21 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
+
+sys.path.insert(0, str(HERE))  # importable when run directly via pytest <file>
+
+from exposure_policy import (  # noqa: E402
+    JUSTIFICATION_FIELD,
+    USER_INVOCABLE_FIELD,
+    classify,
+    is_undeclared,
+)
 CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 CODEX_SKILLS_DIR = REPO_ROOT / "codex-skills"
 CODEX_ARTIFACT_DIR = REPO_ROOT / "plugin-artifacts" / "codex"
@@ -46,8 +56,8 @@ RETIRED_PUBLIC_ENTRYPOINT_NAMES = (
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.MULTILINE)
-USER_INVOCABLE_RE = re.compile(r"^user-invocable:\s*(.+?)\s*$", re.MULTILINE)
-PUBLIC_JUSTIFICATION_RE = re.compile(r"^public-justification:\s*(.+?)\s*$", re.MULTILINE)
+USER_INVOCABLE_RE = re.compile(rf"^{USER_INVOCABLE_FIELD}:\s*(.+?)\s*$", re.MULTILINE)
+PUBLIC_JUSTIFICATION_RE = re.compile(rf"^{JUSTIFICATION_FIELD}:\s*(.+?)\s*$", re.MULTILINE)
 
 
 def read_frontmatter(path: Path) -> str:
@@ -79,7 +89,7 @@ def read_user_invocable(path: Path) -> str | None:
 
 
 def surface_violation(label: str, frontmatter: str) -> str | None:
-    """The whole Claude-side surface policy, as one flat rule.
+    """The whole Claude-side surface policy, applied to one frontmatter block.
 
     Every plugin-owned skill is hidden (`user-invocable: false`) UNLESS its own
     frontmatter carries a non-empty `public-justification:`. The declaration and
@@ -88,21 +98,27 @@ def surface_violation(label: str, frontmatter: str) -> str | None:
     `CLAUDE_PUBLIC_ENTRYPOINTS` set ended up demanding the opposite of the
     shipped policy for days after commit 7c4cf57.
 
+    The DETERMINATION is `exposure_policy.classify` — the same call
+    `surface_policy.py`, `skill_index.py`, and `stamp_skill_frontmatter.py` make.
+    This function only extracts the two fields and renders the message; it used
+    to restate the rule inline, comparing the literal `'false'` case-sensitively
+    while its peers lowercased, so `user-invocable: False` got a different answer
+    depending on which tool read the file.
+
     Returns a violation string, or None when the file is compliant.
     """
     flag = _field(frontmatter, USER_INVOCABLE_RE)
-    if flag == "false":
-        return None
-    if flag == "true" and _field(frontmatter, PUBLIC_JUSTIFICATION_RE):
+    exposure = classify(flag, _field(frontmatter, PUBLIC_JUSTIFICATION_RE))
+    if not is_undeclared(exposure):
         return None
     reason = (
-        "no `user-invocable` field (the harness default is PUBLIC)"
+        f"no `{USER_INVOCABLE_FIELD}` field (the harness default is PUBLIC)"
         if flag is None
-        else f"user-invocable={flag!r}"
+        else f"{USER_INVOCABLE_FIELD}={flag!r} ({exposure})"
     )
     return (
-        f"{label}: {reason} — expected `user-invocable: false`, or `true` plus a "
-        "non-empty `public-justification:` line in this same frontmatter"
+        f"{label}: {reason} — expected `{USER_INVOCABLE_FIELD}: false`, or `true` "
+        f"plus a non-empty `{JUSTIFICATION_FIELD}:` line in this same frontmatter"
     )
 
 

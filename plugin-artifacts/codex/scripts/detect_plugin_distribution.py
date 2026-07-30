@@ -183,7 +183,11 @@ def main() -> int:
     if r["shape"] == "not-a-plugin":
         print(f"  shape           not-a-plugin — {r['rationale']}")
         return 0
-    print(f"  shape           {r['shape']}  (source: {r["install_sources"] or "undetermined"})")
+    # Inner quotes must differ from the f-string's own delimiter: nesting the
+    # same quote type is PEP 701 (Python 3.12+), but pyproject declares
+    # requires-python >=3.11. On 3.11 this is a SyntaxError at import, which
+    # made pytest fail at COLLECTION and took CI red from 2026-07-25.
+    print(f"  shape           {r['shape']}  (source: {r['install_sources'] or 'undetermined'})")
     print(f"  version policy  {r['recommended_version_policy']}")
     print(f"  consistent      {'yes' if r['consistent'] else 'NO — surfaces disagree'}")
     print(f"  why             {r['rationale']}")

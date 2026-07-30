@@ -134,6 +134,86 @@ class CodexPluginArtifactTests(unittest.TestCase):
                 else:
                     self.assertEqual(source_files, target_files, directory)
 
+    @staticmethod
+    def _make_swift_build_output_fixture(root: Path) -> Path:
+        """A source tree shaped like ``skills/native-ax-driver/swift/``.
+
+        Reproduces the real layout without needing anything compiled on this
+        machine: a package with one real source file plus a SwiftPM ``.build/``
+        tree whose ``release`` entry is a SYMLINK to the arch-specific release
+        dir. Following that symlink is what let the builder copy paths the
+        source scan never saw.
+        """
+        source = root / "source"
+        package = source / "swift" / "bl-ax-driver"
+        (package / "Sources" / "bl-ax-driver").mkdir(parents=True)
+        (package / "Sources" / "bl-ax-driver" / "main.swift").write_text(
+            "// real source\n", encoding="utf-8"
+        )
+        (package / "Package.swift").write_text("// manifest\n", encoding="utf-8")
+        module_cache = package / ".build" / "arm64-apple-macosx" / "release" / "ModuleCache"
+        module_cache.mkdir(parents=True)
+        (module_cache / "Darwin-1FXX23EKWOBA9.pcm").write_bytes(b"\x00" * 64)
+        (package / ".build" / "release").symlink_to(
+            Path("arm64-apple-macosx") / "release", target_is_directory=True
+        )
+        return source
+
+    def test_builder_excludes_swift_build_output_behind_a_symlink(self) -> None:
+        """Regression: ``.build/`` output must never reach the artifact.
+
+        Fails on the pre-fix builder two ways — ``.build`` was absent from the
+        ignore set, and ``copy_tree`` followed the ``release`` symlink, copying
+        paths the ignore-filtered source scan never enumerated.
+        """
+        builder = _load_builder()
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            tmp = Path(tmp_raw)
+            source = self._make_swift_build_output_fixture(tmp)
+            target = tmp / "artifact"
+            builder.copy_tree(source, target)
+
+            copied = sorted(str(path.relative_to(target)) for path in builder.iter_files(target))
+            self.assertEqual(
+                copied,
+                [
+                    "swift/bl-ax-driver/Package.swift",
+                    "swift/bl-ax-driver/Sources/bl-ax-driver/main.swift",
+                ],
+            )
+
+            # The invariant the shipped suite asserts per runtime dir: the
+            # ignore-filtered source set and the copied set must agree.
+            scanned = {
+                path.relative_to(source)
+                for path in builder.iter_files(source)
+                if not builder.is_ignored_source_path(path, source)
+            }
+            self.assertEqual(scanned, {path.relative_to(target) for path in builder.iter_files(target)})
+
+    def test_builder_does_not_absorb_symlink_targets_outside_the_source_tree(self) -> None:
+        """A symlink must not pull unreviewed, un-ignore-filtered content into the bundle."""
+        builder = _load_builder()
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            tmp = Path(tmp_raw)
+            outside = tmp / "outside"
+            outside.mkdir()
+            (outside / "not-shippable.txt").write_text("outside the source tree\n", encoding="utf-8")
+
+            source = tmp / "source"
+            (source / "docs").mkdir(parents=True)
+            (source / "docs" / "real.md").write_text("# real\n", encoding="utf-8")
+            (source / "linked-dir").symlink_to(outside, target_is_directory=True)
+            (source / "linked-file.txt").symlink_to(outside / "not-shippable.txt")
+
+            target = tmp / "artifact"
+            builder.copy_tree(source, target)
+
+            copied = sorted(str(path.relative_to(target)) for path in builder.iter_files(target))
+            self.assertEqual(copied, ["docs/real.md"])
+            self.assertFalse((target / "linked-dir").exists())
+            self.assertFalse((target / "linked-file.txt").exists())
+
     def test_packaged_hook_plugin_root_paths_resolve(self) -> None:
         hooks_text = (ARTIFACT / "hooks" / "hooks.json").read_text(encoding="utf-8")
         refs = sorted(set(PLUGIN_ROOT_RE.findall(hooks_text)))

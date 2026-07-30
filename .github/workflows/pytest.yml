@@ -64,7 +64,33 @@ jobs:
         # auto-skip.
         run: uv sync --extra test
 
-      - name: Run deterministic test suite
+      - name: Run deterministic test suite (known-red baseline enforced)
+        # WRAPPED by scripts/ci_known_red_gate.py, which applies the SAME
+        # classification the local pre-push gate applies (it IMPORTS
+        # prepush_test_gate's load_baseline / expired_entries /
+        # classify_failures / stale_entries — no forked copy of the rules):
+        #   newly-red (failing test not in scripts/known_red_baseline.json)
+        #                                        -> job FAILS
+        #   baselined + unexpired failures only  -> job PASSES, each one reported
+        #                                           as a ::warning:: + step summary
+        #                                           row naming owner + days left
+        #   ANY baseline entry past its expiry   -> job FAILS (checked BEFORE the
+        #                                           suite runs, so it fires on a
+        #                                           green tree too)
+        #   baseline missing/malformed           -> job FAILS (fail-SAFE: a
+        #                                           suppression list you cannot
+        #                                           read is not a suppression list)
+        # Until this wrapper existed the baseline was enforced ONLY by the local
+        # pre-push hook, which `--no-verify` / BL_SKIP_PREPUSH_TESTS=1 / a fresh
+        # clone all bypass — so a red test could still reach main through CI,
+        # which is exactly how the 2026-07-26 "pre-existing failures untouched"
+        # drift shipped. CI is the unbypassable backstop; now it classifies too.
+        # Deliberate divergence: the pre-push gate fails OPEN on pytest exit
+        # 3/4/5 (a broken developer env must never wedge a push); CI fails
+        # CLOSED on them, because `uv sync --extra test` just provisioned this
+        # env, so "pytest couldn't run" is a defect here, not a local hiccup.
+        # Everything below this line is the unchanged pytest invocation.
+        #
         # --timeout caps any single test (thread method) so a hung test fails
         # loudly instead of stalling the job. `live`/`db` auto-skip in
         # conftest.py. The deselect list = pre-existing failures on the rally /
@@ -88,7 +114,9 @@ jobs:
         # test_contextual_prepend, test_rerank, test_rerank_daemon. They run on
         # demand with `pytest -m integration`.
         run: |
-          uv run pytest scripts/ tests/ \
+          uv run python scripts/ci_known_red_gate.py \
+            --target scripts/ --target tests/ -- \
+            scripts/ tests/ \
             -p no:cacheprovider -q --no-header -rfE \
             -m "not integration" \
             --timeout=60 --timeout-method=thread \

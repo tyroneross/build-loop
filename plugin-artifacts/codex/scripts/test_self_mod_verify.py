@@ -375,6 +375,52 @@ class TestScopeAuto(unittest.TestCase):
 # Regression: gate/test files are NOT special-cased (no needs_human)
 # ---------------------------------------------------------------------------
 
+class TestPytestTimeoutProbe(unittest.TestCase):
+    """`--timeout` is a PLUGIN flag; passing it without the plugin exits pytest 4.
+
+    That exit was classified as verdict=error/"Timeout", so on a venv provisioned
+    without the `test` extra the self-modification gate hard-errored on a healthy
+    tree — 6 failing tests here, and a gate that verified nothing. The probe asks
+    the RESOLVED runner (which may be a different venv than this process) whether
+    pytest-timeout is loaded, and the caller drops the flag when it is not.
+    """
+
+    def setUp(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import self_mod_verify  # noqa: PLC0415 - late import keeps module-path setup local
+
+        self.mod = self_mod_verify
+
+    def test_probe_reports_plugin_presence_for_the_real_runner(self) -> None:
+        runner = self.mod._find_runner(Path(__file__).resolve().parent.parent)
+        if runner is None:
+            self.skipTest("no pytest runner available")
+        answer = self.mod._runner_has_pytest_timeout(runner)
+        self.assertIsInstance(answer, bool)
+        # Cross-check against the runner itself so the probe cannot silently
+        # invert: `pytest --version` lists loaded plugins.
+        r = subprocess.run(
+            [*runner, "--version", "-p", "no:cacheprovider"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        expected = "timeout" in (r.stdout + r.stderr).lower()
+        self.assertEqual(answer, expected)
+
+    def test_probe_fails_closed_on_a_broken_runner(self) -> None:
+        # A probe that cannot answer must say False: dropping the flag degrades
+        # cleanly, while passing it on a plugin-less runner exits pytest 4.
+        self.assertFalse(
+            self.mod._runner_has_pytest_timeout(
+                [sys.executable, "-c", "import sys; sys.exit(3)"]
+            )
+        )
+        self.assertFalse(
+            self.mod._runner_has_pytest_timeout(["definitely-not-a-real-binary-xyz"])
+        )
+
+
 class TestNoMetaHalt(unittest.TestCase):
     """Passing scripts/self_mod_verify.py or test_*.py in --changed-files must
     never yield needs_human.  The gate runs mapped tests and returns pass/fail

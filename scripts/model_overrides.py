@@ -341,6 +341,27 @@ def resolve_model(
     }
 
 
+def first_available_in_tier(
+    tier: str, unavailable: set[str] | frozenset[str] | None = None
+) -> str | None:
+    """The tier's highest-priority AVAILABLE registered model, or None.
+
+    Registry order IS priority order and the tier default heads each tier's list,
+    so with nothing declared down this returns exactly ``TIER_DEFAULTS[tier]``.
+    Returns None only when EVERY registered model for the tier is unavailable.
+
+    This is what stops the standing walk from resolving to an id it was just told
+    is down. It stays registry-only on purpose: the tier-cache + host-provider
+    layers belong to ``model_resolver``, which owns the dispatch path.
+    """
+    down = unavailable or set()
+    for entry in MODEL_REGISTRY.get(tier, []):
+        mid = entry.get("id")
+        if mid and mid not in down:
+            return mid
+    return None
+
+
 def resolve_with_tier_fallback(
     *,
     tier: str,
@@ -419,6 +440,14 @@ def resolve_with_tier_fallback(
         return base
 
     # Walk the standing tier-fallback graph. `frontier` walks at most one edge.
+    # At each tier the walk visits, the candidate is that tier's highest-priority
+    # AVAILABLE registered model — NOT its default unconditionally. Taking the
+    # default blind went degenerate once opus became BOTH the frontier and the
+    # thinking default: a single opus outage walked frontier->thinking, found the
+    # same opus it had just rejected, and returned it labelled `tier-fallback` —
+    # a resolved-looking envelope naming a model already known to be down. With
+    # nothing declared down the candidate IS the tier default (it heads the
+    # registry), so the standing policy is unchanged in the common case.
     visited = [tier]
     current = tier
     max_steps = 1 if tier == "frontier" else len(TIERS)
@@ -426,9 +455,9 @@ def resolve_with_tier_fallback(
         nxt = TIER_FALLBACK.get(current)
         if nxt is None:
             break
-        candidate = TIER_DEFAULTS.get(nxt)
+        candidate = first_available_in_tier(nxt, unavailable)
         visited.append(nxt)
-        if candidate and candidate not in unavailable:
+        if candidate:
             return {
                 "tier": tier,
                 "model": candidate,
@@ -439,18 +468,21 @@ def resolve_with_tier_fallback(
                 "configured": False,
                 "registered": is_registered(nxt, candidate),
             }
-        # frontier stops at thinking even if thinking's default is unavailable
-        # (invariant: never resolve a judgment role below thinking).
+        # frontier stops at thinking even when the ENTIRE thinking tier is down
+        # (invariant: never resolve a judgment role below thinking). There is no
+        # live floor-safe id left, so the tier default is returned as the honest
+        # floor marker — "never below thinking" outranks "always live".
         if tier == "frontier":
+            floor_default = TIER_DEFAULTS.get(nxt)
             return {
                 "tier": tier,
-                "model": candidate,  # thinking default (may itself be unavailable)
+                "model": floor_default,  # thinking default (itself unavailable)
                 "source": "tier-fallback",
                 "fallback_tier": nxt,
                 "fallback_path": visited,
                 "path": None,
                 "configured": False,
-                "registered": is_registered(nxt, candidate),
+                "registered": is_registered(nxt, floor_default),
             }
         current = nxt
 

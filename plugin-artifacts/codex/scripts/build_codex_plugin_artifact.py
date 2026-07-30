@@ -21,7 +21,15 @@ from typing import Iterable
 
 
 DEFAULT_TARGET = Path("plugin-artifacts/codex")
-IGNORED_NAMES = {".DS_Store", "__pycache__", ".pytest_cache"}
+# Name-based, matched against EVERY path component (see
+# ``is_ignored_source_path``) and against every entry name during the copy (see
+# ``ignore_generated``). ``.build`` is the SwiftPM output directory under
+# ``skills/native-ax-driver/swift/bl-ax-driver/`` — ~64MB of local compiler
+# output on any machine that has built the native AX driver. It belongs here,
+# not in ``IGNORED_DIR_SUFFIXES``: that set is ``endswith``-matched, so it would
+# also swallow a legitimately-named ``foo.build`` directory, and exact-name
+# membership is what both the scan and the copy already agree on.
+IGNORED_NAMES = {".DS_Store", "__pycache__", ".pytest_cache", ".build"}
 IGNORED_SUFFIXES = {".pyc"}
 IGNORED_DIR_SUFFIXES = {".egg-info"}
 TOP_LEVEL_FILES = (
@@ -225,9 +233,25 @@ class ArtifactError(RuntimeError):
     pass
 
 
-def ignore_generated(_dir: str, names: list[str]) -> set[str]:
+def ignore_generated(directory: str, names: list[str]) -> set[str]:
+    """``shutil.copytree`` ignore callback — generated names AND every symlink.
+
+    Symlinks are dropped rather than followed or preserved. Following one lets
+    the artifact silently absorb whatever the link points at, including paths
+    outside the source tree that no ignore rule ever inspected — a
+    supply-chain-shaped hazard, not merely a size problem (the ~64MB
+    ``.build/release -> arm64-apple-macosx/release`` self-link is the mild
+    case). Preserving them instead would ship links that dangle or escape the
+    bundle on extraction. Dropping keeps the artifact a closed set of regular
+    files that were each individually ignore-filtered, and it is what makes
+    ``iter_files`` and the copy path agree by construction.
+    """
+    base = Path(directory)
     ignored = set()
     for name in names:
+        if (base / name).is_symlink():
+            ignored.add(name)
+            continue
         if name in IGNORED_NAMES:
             ignored.add(name)
             continue
@@ -366,9 +390,24 @@ def build_artifact(source: Path, target: Path) -> None:
 
 
 def iter_files(root: Path) -> Iterable[Path]:
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            yield path
+    """Every regular file under ``root`` in sorted order; symlinks never followed.
+
+    Walks explicitly instead of leaning on ``Path.rglob``: rglob's
+    symlink-recursion default is version-dependent, and it yields a
+    symlink-to-file as a file. Stating the contract here keeps the source scan
+    identical to what ``ignore_generated`` lets through on the copy side —
+    their disagreement was the ~64MB ``.build`` leak.
+    """
+    files: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        dirnames[:] = [name for name in dirnames if not (base / name).is_symlink()]
+        for name in filenames:
+            path = base / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            files.append(path)
+    yield from sorted(files)
 
 
 def assert_same_tree(expected: Path, actual: Path) -> None:

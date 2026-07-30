@@ -185,12 +185,29 @@ class TierFallbackTests(unittest.TestCase):
             self.assertEqual(payload["fallback_tier"], "pattern")
 
     def test_thinking_keeps_walking_to_pattern_when_code_also_unavailable(self) -> None:
-        # Non-frontier tiers may walk multiple edges down the graph.
+        # Non-frontier tiers may walk multiple edges down the graph. The walk only
+        # leaves a tier once that tier is EXHAUSTED, so reaching pattern means
+        # downing the whole code registry, not just its default (sonnet). Downing
+        # sonnet alone now stops at code's next registered model — asserted below.
         with tempfile.TemporaryDirectory() as td:
-            payload = self._resolve(td, "thinking", "opus,sonnet")
+            whole_code_tier = (
+                "sonnet,gpt-5.6-terra,gpt-5.4-mini,gemini-2.5-flash,qwen2.5-coder-32b"
+            )
+            payload = self._resolve(td, "thinking", f"opus,{whole_code_tier}")
             self.assertEqual(payload["model"], "haiku")  # pattern default
             self.assertEqual(payload["source"], "tier-fallback")
             self.assertEqual(payload["fallback_tier"], "pattern")
+
+    def test_walk_exhausts_a_tier_before_descending_past_it(self) -> None:
+        # The corollary of "skip an id already known unavailable": a tier is left
+        # only when every registered model in it is down. thinking -> code with
+        # ONLY the code default down must land on code's next entry, never skip
+        # the whole code tier down to pattern.
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "thinking", "opus,sonnet")
+            self.assertEqual(payload["fallback_tier"], "code")
+            self.assertEqual(payload["model"], "gpt-5.6-terra")
+            self.assertNotEqual(payload["model"], "haiku")
 
     def test_frontier_falls_back_to_thinking(self) -> None:
         # The frontier->thinking POLICY EDGE. Since 2026-07-28 opus is BOTH the
@@ -215,25 +232,63 @@ class TierFallbackTests(unittest.TestCase):
             # Exactly one edge — the walk never reached code/pattern.
             self.assertNotIn(payload["model"], {"sonnet", "haiku"})
 
+    # The whole thinking tier, for the "nothing left at the floor" probe below.
+    WHOLE_THINKING_TIER = "opus,gpt-5.6-terra,gpt-5.4,gemini-2.5-pro"
+
     def test_invariant_frontier_never_resolves_below_thinking(self) -> None:
         # HARD INVARIANT: even when BOTH the frontier default (opus) AND the
         # frontier alternate (fable) are unavailable, a frontier (judgment) role
         # must NOT silently resolve to the code (sonnet) or pattern (haiku) tier.
-        # Post-2026-07-28 this is also the DEGENERATE case: opus is the thinking
-        # default too, so the walk stops at thinking holding a model that is
-        # itself declared down — by design ("never below thinking" outranks
-        # "always live"). The live dispatch path recovers in-tier instead; that
-        # is covered by test_dispatch_fallback.py (opus down -> fable).
+        # Post-2026-07-28 opus is the thinking default too, so the walk's first
+        # thinking candidate is the same opus already declared down; it must be
+        # SKIPPED for the tier's next registered model rather than returned as a
+        # resolved-looking dead id (BUIL-MODEL-RESOLUTION-kynyt41me8wtn). The
+        # result stays at the thinking floor either way — that is the invariant.
         with tempfile.TemporaryDirectory() as td:
             payload = self._resolve(td, "frontier", "fable,opus")
             self.assertEqual(payload["fallback_tier"], "thinking")
-            self.assertEqual(payload["model"], "opus")  # thinking default, down
+            self.assertNotIn(payload["model"], {"fable", "opus"})  # not a down id
+            self.assertEqual(payload["model"], "gpt-5.6-terra")  # thinking tier
             self.assertNotEqual(payload["model"], "sonnet")  # never code tier
             self.assertNotEqual(payload["model"], "haiku")  # never pattern tier
             self.assertNotIn(payload.get("fallback_tier"), {"code", "pattern"})
             # The walk stopped at thinking — code/pattern were never visited.
             self.assertNotIn("code", payload.get("fallback_path", []))
             self.assertNotIn("pattern", payload.get("fallback_path", []))
+
+    def test_invariant_holds_when_the_whole_thinking_tier_is_down(self) -> None:
+        # The terminal case the previous test used to stand in for. With EVERY
+        # floor-tier model down there is no live floor-safe id left, so the walk
+        # stops at thinking holding its (down) default — by design, "never below
+        # thinking" outranks "always live". This is the ONE place the envelope
+        # may name an unavailable model, and it is the honest floor marker rather
+        # than a silent degrade to sonnet/haiku.
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(
+                td, "frontier", f"fable,{self.WHOLE_THINKING_TIER}"
+            )
+            self.assertEqual(payload["fallback_tier"], "thinking")
+            self.assertEqual(payload["model"], "opus")  # thinking default, down
+            self.assertNotEqual(payload["model"], "sonnet")
+            self.assertNotEqual(payload["model"], "haiku")
+            self.assertNotIn("code", payload.get("fallback_path", []))
+            self.assertNotIn("pattern", payload.get("fallback_path", []))
+
+    def test_floor_walk_never_returns_a_known_unavailable_id(self) -> None:
+        # BUIL-MODEL-RESOLUTION-kynyt41me8wtn: the frontier->thinking edge went
+        # degenerate when opus became BOTH tiers' default. A single opus outage
+        # walked frontier->thinking, found the thinking DEFAULT was the same opus
+        # just declared down, and returned it anyway labelled `tier-fallback` —
+        # a resolved-looking envelope naming a dead model. The walk must skip an
+        # id already known unavailable and consider the destination tier's other
+        # registered models before it gives up.
+        with tempfile.TemporaryDirectory() as td:
+            payload = self._resolve(td, "frontier", "opus")
+            self.assertNotEqual(payload["model"], "opus", payload)
+            self.assertNotIn(payload["model"], {"sonnet", "haiku"})
+            # Still the thinking tier — the floor is unchanged.
+            self.assertEqual(payload["fallback_tier"], "thinking")
+            self.assertEqual(payload["source"], "tier-fallback")
 
     def test_explicit_fallback_overrides_standing_policy(self) -> None:
         # An explicit caller --fallback wins; the standing walk is skipped even

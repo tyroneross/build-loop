@@ -17,10 +17,10 @@ input, so a newly authored skill lands in the index the moment the file exists.
 on-disk file differs, the same generate-and-assert-in-sync contract that
 `scripts/build_codex_plugin_artifact.py` uses for the Codex bundle.
 
-Exposure is read straight off the same frontmatter that the surface policy
-enforces (`scripts/test_agent_surface_policy.py`): a skill is `public` only when
-it declares `user-invocable: true` AND a non-empty `public-justification:` in
-its own frontmatter; everything else is `hidden`.
+Exposure is not decided here. `scripts/exposure_policy.py` owns the rule — the
+same module `scripts/surface_policy.py` imports — so the index cannot disagree
+with the gate about what a file exposes. This script only collapses that rule's
+four classes onto the three columns the table shows (see `_exposure`).
 
 CLI usage:
     python3 scripts/skill_index.py --workdir . --apply       # write the index
@@ -49,6 +49,17 @@ import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+if __package__ in (None, ""):  # direct `python3 scripts/skill_index.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import exposure_policy  # noqa: E402
+from exposure_policy import (  # noqa: E402
+    EXCLUDED_PATH_SEGMENTS,
+    JUSTIFICATION_FIELD,
+    USER_INVOCABLE_FIELD,
+    is_excluded_path,
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -56,27 +67,27 @@ from pathlib import Path
 DEFAULT_OUTPUT = Path("docs") / "SKILL-INDEX.md"
 SKILLS_DIRNAME = "skills"
 
-#: Worktree copies of the plugin tree carry a full duplicate `skills/` dir.
-#: Counting them doubles the index, so any path crossing one of these segments
-#: is dropped. Matched on path segments, not substrings, so a legitimately named
-#: skill like `data-plane-worktrees` is never swept up.
-EXCLUDED_PATH_SEGMENTS: tuple[tuple[str, ...], ...] = (
-    (".build-loop", "worktrees"),
-    (".claude", "worktrees"),
-    ("node_modules",),
-    ("plugin-artifacts",),
-)
-
 #: Frontmatter description truncated to this many characters in the table.
 #: The full text always remains one click away in the linked SKILL.md.
 DESCRIPTION_MAX = 160
 
-#: Exposure classes. `public-undeclared` is the harness fail-open default:
-#: a SKILL.md with no `user-invocable` field is PUBLIC, not hidden.
+#: The table's OWN column vocabulary — three values, not the policy's four. The
+#: index is a routing aid, so it only needs "can a user load this, and was that
+#: on purpose"; the two undeclared policy classes answer that identically and
+#: collapse into one column. `_exposure` owns the mapping; the DETERMINATION
+#: stays in `exposure_policy.classify`.
 HIDDEN = "hidden"
 PUBLIC = "public"
 PUBLIC_UNDECLARED = "public-undeclared"
 EXPOSURE_CLASSES = (PUBLIC, PUBLIC_UNDECLARED, HIDDEN)
+
+#: policy class -> table column.
+_POLICY_TO_COLUMN = {
+    exposure_policy.HIDDEN: HIDDEN,
+    exposure_policy.PUBLIC_JUSTIFIED: PUBLIC,
+    exposure_policy.PUBLIC_UNJUSTIFIED: PUBLIC_UNDECLARED,
+    exposure_policy.DEFAULT_PUBLIC: PUBLIC_UNDECLARED,
+}
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 SCALAR_KEY_RE = re.compile(r"^([A-Za-z0-9_.-]+)\s*:\s*(.*)$")
@@ -192,13 +203,10 @@ def plugin_name(workdir: Path) -> str:
     return workdir.resolve().name
 
 
-def _is_excluded(rel_parts: tuple[str, ...]) -> bool:
-    for segments in EXCLUDED_PATH_SEGMENTS:
-        window = len(segments)
-        for start in range(len(rel_parts) - window + 1):
-            if rel_parts[start : start + window] == segments:
-                return True
-    return False
+#: Kept as a module-level name because callers and tests import it from here;
+#: the walk list and the matching are `exposure_policy`'s, shared with
+#: `surface_policy.py` so both scripts see the same set of files.
+_is_excluded = is_excluded_path
 
 
 def iter_skill_files(workdir: Path) -> list[Path]:
@@ -215,26 +223,24 @@ def iter_skill_files(workdir: Path) -> list[Path]:
 
 
 def _exposure(fields: dict[str, str]) -> str:
-    """Classify what the harness actually exposes to a user.
+    """Render the shared exposure class as one of this table's three columns.
 
-    The harness resolves visibility as ``userInvocable ?? true``, so a SKILL.md
-    with NO ``user-invocable`` field is PUBLIC, not hidden — skills are born
-    exposed. Reporting an unfielded skill as hidden would tell every agent the
-    opposite of what the harness does, so the absent case is public here too.
+    The determination — including the fail-open ``userInvocable ?? true`` default
+    that makes a MISSING field PUBLIC — belongs to ``exposure_policy.classify``.
+    An absent field must arrive there as ``None``, never as ``""``: absent and
+    empty are different cases and only the former is the harness default.
 
-    Three values, matching the surface-policy taxonomy:
-        hidden              ``user-invocable: false``
-        public              ``user-invocable: true`` + ``public-justification:``
-        public-undeclared   exposed without a stated reason — either
-                            ``user-invocable: true`` with no justification, or
-                            no ``user-invocable`` field at all
+    The table collapses the policy's two undeclared classes (no field at all /
+    a field that states no reason) into one ``public-undeclared`` column, because
+    an agent routing a request cares that the skill is reachable-but-unintended,
+    not which of the two ways it got there.
     """
-    flag = fields.get("user-invocable", "").strip().lower()
-    if flag == "false":
-        return HIDDEN
-    if flag == "true" and fields.get("public-justification", "").strip():
-        return PUBLIC
-    return PUBLIC_UNDECLARED
+    return _POLICY_TO_COLUMN[
+        exposure_policy.classify(
+            fields.get(USER_INVOCABLE_FIELD),
+            fields.get(JUSTIFICATION_FIELD),
+        )
+    ]
 
 
 def build_row(workdir: Path, path: Path, plugin: str) -> SkillRow:

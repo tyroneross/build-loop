@@ -53,28 +53,37 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Reuse the existing resolver — do not reimplement the tier taxonomy or floor.
-try:  # pragma: no cover - import shim for direct + packaged execution
-    import model_availability_store as availability_store
-    from model_overrides import (
-        MODEL_REGISTRY,
-        TIERS,
-        expand_unavailable,
-        is_registered,
-        normalize_model_id,
-        resolve_with_tier_fallback,
-        tier_of_model,
-    )
-except ImportError:  # pragma: no cover
+# Sibling-module bootstrap — ONE import list, every load context.
+#
+# This module is loaded three ways: (a) run directly (`python3
+# scripts/model_resolver.py`, so sys.path[0] IS scripts/), (b) imported by
+# another scripts/ module that already put scripts/ on sys.path, and (c) loaded
+# BY FILE PATH (`importlib.util.spec_from_file_location`) by a host that never
+# added scripts/ to sys.path. Only (c) needs the path insert, so the probe below
+# stays conditional and (a)/(b) keep their current zero-mutation behavior.
+#
+# The probe carries NO symbol list. The previous shape duplicated the
+# `from model_overrides import (...)` list across a try/except pair and the
+# except copy omitted `expand_unavailable` — which `resolve()` and
+# `resolve_role()` call unconditionally — so context (c) raised NameError on
+# EVERY resolve instead of degrading. One import list makes that drift
+# unrepresentable rather than merely fixed. Regression: `ImportShimTests`.
+try:
+    import model_overrides
+except ImportError:  # pragma: no cover - covered out-of-process by ImportShimTests
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import model_availability_store as availability_store  # type: ignore[no-redefine]
-    from model_overrides import (  # type: ignore[no-redefine]
-        MODEL_REGISTRY,
-        TIERS,
-        is_registered,
-        resolve_with_tier_fallback,
-        tier_of_model,
-    )
+    import model_overrides  # type: ignore[no-redefine]
+
+# Reuse the existing resolver — do not reimplement the tier taxonomy or floor.
+import model_availability_store as availability_store
+from model_overrides import (
+    MODEL_REGISTRY,
+    TIERS,
+    expand_unavailable,
+    is_registered,
+    resolve_with_tier_fallback,
+    tier_of_model,
+)
 
 AVAILABILITY_FILENAME = "model-availability.json"
 TIER_CACHE_FILENAME = "model-tier-cache.json"
@@ -249,8 +258,10 @@ def resolve(
        expanding canonical ids ↔ aliases so an outage by either form fires.
     2. Apply the host-provider filter (explicit arg → config → detected host) so a
        model the current host cannot dispatch is never offered.
-    3. Walk the in-tier candidate chain; return the first available one.
-    4. If every same-tier candidate is unavailable, delegate to
+    3. Honor an explicit ``modelOverrides[tier]`` from config/state — the user's
+       stated choice outranks the priority chain.
+    4. Walk the in-tier candidate chain; return the first available one.
+    5. If every same-tier candidate is unavailable, delegate to
        ``resolve_with_tier_fallback`` for the floor-respecting cross-tier descent.
 
     Always returns an envelope with a ``resolution_path`` listing every candidate
@@ -286,6 +297,43 @@ def resolve(
                     unavailable.add(mid)
 
     resolution_path: list[dict[str, Any]] = []
+
+    # An explicit `.build-loop/config.json` (or state.json) modelOverrides[tier]
+    # is the user's STATED choice and outranks the priority chain. It is read
+    # HERE rather than only inside the floor walk, which is reached solely when
+    # every in-tier candidate is down — with the tier default reachable, that
+    # walk never runs and the override was silently discarded. An override that
+    # silently does nothing is worse than one that errors.
+    #
+    # Two guards keep the override honest, and both fall THROUGH to the chain
+    # rather than erroring (graceful degradation):
+    #   - provably below the tier's floor -> refused. The HARD INVARIANT outranks
+    #     per-repo config; same rule `resolve_with_tier_fallback` applies at the
+    #     source. An UNKNOWN id cannot be proven below floor, so it is honored.
+    #   - declared unavailable (including host-unreachable, folded in above) ->
+    #     skipped, so the dispatcher is never handed a dead id.
+    configured = model_overrides.resolve_model(
+        tier=tier, workdir=wd, config_path=config_path, state_path=state_path
+    )
+    if configured.get("source") in {"config", "state"}:
+        override = model_overrides.normalize_model_id(configured.get("model"))
+        floor_tier = model_overrides.TIER_FALLBACK.get(tier) or tier
+        if model_overrides.is_below_floor(override, floor_tier):
+            resolution_path.append(
+                {"model": override, "tier": tier, "skipped": "below-floor"}
+            )
+        elif override in unavailable:
+            resolution_path.append(
+                {"model": override, "tier": tier, "skipped": "unavailable"}
+            )
+        else:
+            resolution_path.append({"model": override, "tier": tier, "selected": True})
+            configured["model"] = override
+            configured["registered"] = is_registered(tier, override)
+            configured["resolution_path"] = resolution_path
+            configured["unavailable_considered"] = sorted(unavailable)
+            return configured
+
     candidates = in_tier_candidates(tier, tier_cache, host_providers)
 
     for mid in candidates:
@@ -350,8 +398,6 @@ def resolve_role(
     generative_reasoning/thinking role resolves to opus (reachable) rather than
     the recency-newer but unreachable gpt-5.5.
     """
-    import model_overrides  # local import: model_resolver already imports its symbols
-
     wd = workdir.expanduser().resolve()
     unavailable = expand_unavailable(
         load_unavailable(wd) | set(extra_unavailable or ())

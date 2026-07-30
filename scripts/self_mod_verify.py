@@ -121,6 +121,30 @@ def _is_core_path(rel_posix: str) -> bool:
 # Test-runner discovery
 # ---------------------------------------------------------------------------
 
+def _runner_has_pytest_timeout(runner_base: list[str]) -> bool:
+    """True when the RESOLVED runner interpreter has the pytest-timeout plugin.
+
+    Asks the same interpreter that will run the suite, rather than importing
+    ``pytest_timeout`` here: ``_find_runner`` may select ``uv run pytest`` (a
+    different venv from this process), so a local import would answer for the
+    wrong environment. Fails CLOSED to False — a probe that cannot answer drops
+    the flag, which degrades cleanly, instead of passing a flag that would make
+    pytest exit 4 on an unrecognized option.
+    """
+    try:
+        r = subprocess.run(
+            [*runner_base, "--version", "-p", "no:cacheprovider"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if r.returncode != 0:
+        return False
+    return "timeout" in (r.stdout + r.stderr).lower()
+
+
 def _find_runner(workdir: Path) -> list[str] | None:
     """Return the command list for pytest, or None if unavailable.
 
@@ -681,11 +705,26 @@ def verify(
     # `-q` printed the count ("N failed") but failed_tests came back empty.
     cmd = runner_base + ["-q", "-rf", "--color=no", "-p", "no:cacheprovider", "--tb=short"]
     if scope == "full":
-        cmd += [
-            "--timeout=120",
-            "--timeout-method=thread",
-            "-m", "not live",
-        ]
+        # `--timeout` comes from the pytest-timeout PLUGIN, not pytest itself.
+        # It is declared in pyproject's `test` extra, so CI always has it — but a
+        # dev venv provisioned without the extra does not, and pytest then exits
+        # 4 (usage error) on the unrecognized flag. That exit was classified as
+        # verdict=error/"Timeout", so the self-modification safety gate reported
+        # a hard error on a healthy tree and blocked its own dogfooding.
+        # Degrade instead of hard-failing: keep the hang protection when the
+        # plugin is present, drop it (with a warning) when it is not. A gate that
+        # cannot run because an OPTIONAL plugin is missing has verified nothing,
+        # which is strictly worse than running without the hang guard.
+        if _runner_has_pytest_timeout(runner_base):
+            cmd += ["--timeout=120", "--timeout-method=thread"]
+        else:
+            print(
+                "self_mod_verify: pytest-timeout not installed in the runner "
+                "interpreter; proceeding WITHOUT per-test hang protection. "
+                "Install it with `uv sync --extra test` to restore the guard.",
+                file=sys.stderr,
+            )
+        cmd += ["-m", "not live"]
     cmd += test_files
 
     # --- Run pytest ---

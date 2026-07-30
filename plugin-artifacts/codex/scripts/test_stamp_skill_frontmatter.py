@@ -115,6 +115,37 @@ class AlreadyFalseTests(TempFileCase):
         self.assertEqual(stamper.stamp_file(path, apply=True).status,
                          stamper.STATUS_COMPLIANT)
 
+    def test_case_variants_are_compliant_and_never_rewritten(self) -> None:
+        """`False` is hidden by the harness, so this script must not call it a
+        violation — the case-SENSITIVE reading here used to disagree with
+        `surface_policy.py` / `skill_index.py` about the very same file.
+
+        Compliant means untouched: `--apply` normalizes nothing, because the
+        value is already a valid opt-out and rewriting it would edit a field
+        someone deliberately typed.
+        """
+        for value in ("False", "FALSE", '"False"', "'FALSE'"):
+            with self.subTest(value=value):
+                path = self.write(
+                    f"---\nname: cased\nuser-invocable: {value}\n---\nbody\n",
+                    name=f"cased-{value.strip(chr(34)).strip(chr(39))}-{len(value)}/SKILL.md")
+                before = path.read_bytes()
+                result = stamper.stamp_file(path, apply=True)
+                self.assertEqual(result.status, stamper.STATUS_COMPLIANT)
+                self.assertEqual(result.value, "false", "value is reported normalized")
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_uppercase_true_follows_the_true_rules(self) -> None:
+        justified = self.write(
+            "---\nname: t\nuser-invocable: TRUE\npublic-justification: entrypoint\n---\nb\n",
+            name="cased-true-just/SKILL.md")
+        self.assertEqual(stamper.stamp_file(justified, apply=True).status,
+                         stamper.STATUS_APPROVED_EXCEPTION)
+        bare = self.write("---\nname: t\nuser-invocable: True\n---\nb\n",
+                          name="cased-true-bare/SKILL.md")
+        self.assertEqual(stamper.stamp_file(bare, apply=True).status,
+                         stamper.STATUS_VIOLATION)
+
 
 class ApprovedExceptionTests(TempFileCase):
     SOURCE = (
@@ -164,9 +195,12 @@ class ViolationTests(TempFileCase):
         self.assertEqual(self.run_cli(["--check", str(path)])[0], 1)
 
     def test_unrecognized_value_is_a_violation_not_a_silent_pass(self) -> None:
-        # `False` is YAML-valid but `test_agent_surface_policy` compares the
-        # literal string `false`, so a case variant is surfaced, not accepted.
-        for value in ("yes", "1", "False", "TRUE", "TRUE-ish", ""):
+        # Values the harness coerces (`yes`/`1` truthy, `no`/`0` falsy) and ones
+        # it rejects outright (`maybe`) are all reported here: this repo demands
+        # the canonical literal so a reader never replays the coercion table.
+        # Case variants of `false`/`true` are NOT in this list — see
+        # `AlreadyFalseTests.test_case_variants_are_compliant_and_never_rewritten`.
+        for value in ("yes", "1", "no", "0", "maybe", "TRUE-ish", ""):
             with self.subTest(value=value):
                 path = self.write(f"---\nname: odd\nuser-invocable: {value}\n---\nbody\n",
                                   name=f"odd-{value or 'empty'}/SKILL.md")
@@ -176,8 +210,10 @@ class ViolationTests(TempFileCase):
                 self.assertEqual(path.read_bytes(), before)
 
     def test_empty_value_is_never_double_stamped(self) -> None:
-        # `user-invocable:` with no value is YAML null -> harness reads it as
-        # PUBLIC. Inserting a second field would produce a duplicate key.
+        # `user-invocable:` with no value is YAML null. The field is PRESENT, so
+        # inserting a second one would produce a duplicate key — reported, never
+        # stamped. (The harness coerces null to hidden; this repo still demands
+        # the literal, so the verdict is `violation`, not `compliant`.)
         path = self.write("---\nname: odd\nuser-invocable:\n---\nbody\n")
         stamper.stamp_file(path, apply=True)
         self.assertEqual(path.read_bytes().decode("utf-8").count("user-invocable"), 1)

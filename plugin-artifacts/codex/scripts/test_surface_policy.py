@@ -15,11 +15,13 @@ from tempfile import TemporaryDirectory
 # Ensure scripts/ is importable when run directly via pytest <file>
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import exposure_policy  # noqa: E402
 from surface_policy import (  # noqa: E402
     DEFAULT_PUBLIC,
     HIDDEN,
     PUBLIC_JUSTIFIED,
     PUBLIC_UNJUSTIFIED,
+    SKILL_CLASSES,
     build_report,
     classify_skill,
     discover_commands,
@@ -68,6 +70,16 @@ description: Declares nothing about visibility.
 ---
 
 # Ghost
+"""
+
+UNRECOGNIZED_FLAG_SKILL = """---
+name: odd
+description: A flag this repo does not recognize, plus a reason.
+user-invocable: yes
+public-justification: nonsense flag
+---
+
+# Odd
 """
 
 MALFORMED_SKILL = """name: broken
@@ -134,6 +146,27 @@ class TestSkillClassification(TmpPluginTest):
         self.assertEqual(rec["class"], DEFAULT_PUBLIC)
         self.assertTrue(rec["public"], "an absent user-invocable field must classify as PUBLIC")
         self.assertIsNone(rec["user_invocable"])
+
+    def test_unrecognized_flag_is_never_justified(self) -> None:
+        """An unparseable flag is exposed, but it is not a deliberate opt-in.
+
+        `test_agent_surface_policy.surface_violation` has always rejected
+        `user-invocable: maybe` + a justification; this script used to accept the
+        same file. Both now read the one rule in `exposure_policy`.
+        """
+        path = write_skill(self.root, "odd", UNRECOGNIZED_FLAG_SKILL)
+        rec = classify_skill(path, self.root)
+        self.assertEqual(rec["class"], PUBLIC_UNJUSTIFIED)
+        self.assertTrue(rec["public"])
+        self.assertEqual(rec["user_invocable"], "yes")
+
+    def test_classes_come_from_the_shared_policy_module(self) -> None:
+        """One definition of the four classes, imported — never re-declared."""
+        self.assertIs(SKILL_CLASSES, exposure_policy.EXPOSURE_CLASSES)
+        self.assertIs(HIDDEN, exposure_policy.HIDDEN)
+        self.assertIs(DEFAULT_PUBLIC, exposure_policy.DEFAULT_PUBLIC)
+        self.assertIs(PUBLIC_JUSTIFIED, exposure_policy.PUBLIC_JUSTIFIED)
+        self.assertIs(PUBLIC_UNJUSTIFIED, exposure_policy.PUBLIC_UNJUSTIFIED)
 
     def test_name_falls_back_to_directory(self) -> None:
         path = write_skill(self.root, "nameless", "---\nuser-invocable: false\n---\n")
@@ -209,6 +242,30 @@ class TestDiscovery(TmpPluginTest):
         write_skill(self.root, "worker", HIDDEN_SKILL)
         skills = discover_skills(self.root)
         self.assertEqual([s["name"] for s in skills], ["worker"])
+
+    def test_worktree_copies_nested_under_skills_are_excluded(self) -> None:
+        """A worktree copy is another agent's checkout, not this plugin's surface.
+
+        Directory scoping alone missed a worktree NESTED under `skills/`, so the
+        gate could fail on a file the harness never loads. Same exclusion list
+        `skill_index.py` walks with, so both scripts see one set of files.
+        """
+        for rel in (
+            ".build-loop/worktrees/run-1/skills/copy",
+            ".claude/worktrees/run-2/skills/copy",
+            "node_modules/pkg",
+            "plugin-artifacts/codex",
+        ):
+            stray = self.root / "skills" / rel / "SKILL.md"
+            stray.parent.mkdir(parents=True, exist_ok=True)
+            stray.write_text(NO_FIELD_SKILL, encoding="utf-8")
+        write_skill(self.root, "worker", HIDDEN_SKILL)
+        self.assertEqual([s["name"] for s in discover_skills(self.root)], ["worker"])
+        self.assertTrue(build_report(self.root)["ok"])
+
+    def test_a_skill_named_after_worktrees_is_kept(self) -> None:
+        write_skill(self.root, "data-plane-worktrees", HIDDEN_SKILL)
+        self.assertEqual(len(discover_skills(self.root)), 1)
 
     def test_commands_are_discovered_with_namespaced_names(self) -> None:
         write_command(self.root, "run.md")

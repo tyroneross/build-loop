@@ -23,6 +23,10 @@ Skill classification (four classes, mutually exclusive):
     public_unjustified  user-invocable: true  , no justification — undeclared why
     default_public      no user-invocable field at all          — PUBLIC BY DEFAULT
 
+The rule itself lives in `scripts/exposure_policy.py` and is imported, not
+restated — `skill_index.py` classifies the same frontmatter and must not be able
+to disagree with this script about what a file exposes.
+
 Commands are unconditionally public; being reachable by the user is what a
 command IS. They are listed for completeness, never flagged.
 
@@ -46,6 +50,26 @@ import re
 import sys
 from pathlib import Path
 
+if __package__ in (None, ""):  # direct `python3 scripts/surface_policy.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from exposure_policy import (  # noqa: E402
+    DEFAULT_PUBLIC,
+    EXPOSURE_CLASSES,
+    HARNESS_DEFAULT_NOTE,
+    HIDDEN,
+    JUSTIFICATION_FIELD,
+    PUBLIC_JUSTIFIED,
+    PUBLIC_UNJUSTIFIED,
+    UNDECLARED_CLASSES,
+    USER_INVOCABLE_FIELD,
+    classify,
+    is_excluded_path,
+    is_public,
+    normalize_flag,
+    unquote as _unquote,
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -53,35 +77,25 @@ from pathlib import Path
 SKILLS_DIRNAME = "skills"
 COMMANDS_DIRNAME = "commands"
 
-# Skill classes
-HIDDEN = "hidden"
-PUBLIC_JUSTIFIED = "public_justified"
-PUBLIC_UNJUSTIFIED = "public_unjustified"
-DEFAULT_PUBLIC = "default_public"
-
-SKILL_CLASSES = (DEFAULT_PUBLIC, PUBLIC_UNJUSTIFIED, PUBLIC_JUSTIFIED, HIDDEN)
+#: Class names, class order, and the exposure rule all come from
+#: `exposure_policy` — re-exported here because the tests and callers of this
+#: module import them from it.
+SKILL_CLASSES = EXPOSURE_CLASSES
 
 # The two classes `check` rejects.
-VIOLATION_CLASSES = (DEFAULT_PUBLIC, PUBLIC_UNJUSTIFIED)
+VIOLATION_CLASSES = UNDECLARED_CLASSES
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(.+?)\s*$", re.MULTILINE)
-USER_INVOCABLE_RE = re.compile(r"^user-invocable:\s*(.+?)\s*$", re.MULTILINE)
-JUSTIFICATION_RE = re.compile(r"^public-justification:\s*(.+?)\s*$", re.MULTILINE)
+USER_INVOCABLE_RE = re.compile(rf"^{USER_INVOCABLE_FIELD}:\s*(.+?)\s*$", re.MULTILINE)
+JUSTIFICATION_RE = re.compile(rf"^{JUSTIFICATION_FIELD}:\s*(.+?)\s*$", re.MULTILINE)
 
-_HARNESS_DEFAULT_NOTE = (
-    "no `user-invocable` field; the harness reads `userInvocable ?? true`, "
-    "so an ABSENT field means PUBLIC"
-)
+_HARNESS_DEFAULT_NOTE = HARNESS_DEFAULT_NOTE
 
 
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
-
-def _unquote(value: str) -> str:
-    return value.strip().strip('"').strip("'").strip()
-
 
 def parse_frontmatter(text: str) -> str | None:
     """Return the YAML frontmatter block, or None when the file has none.
@@ -115,18 +129,10 @@ def classify_skill(path: Path, root: Path) -> dict:
     inv_match = USER_INVOCABLE_RE.search(block)
     just_match = JUSTIFICATION_RE.search(block)
     justification = _unquote(just_match.group(1)) if just_match else None
+    declared = normalize_flag(inv_match.group(1) if inv_match else None)
 
-    if inv_match is None:
-        klass = DEFAULT_PUBLIC
-        declared = None
-    else:
-        declared = _unquote(inv_match.group(1)).lower()
-        if declared == "false":
-            klass = HIDDEN
-        else:
-            # `true`, or any value that is not literally false: the harness
-            # treats it as truthy, so report it as public rather than guess.
-            klass = PUBLIC_JUSTIFIED if justification else PUBLIC_UNJUSTIFIED
+    # One rule, defined once, in exposure_policy.classify.
+    klass = classify(declared, justification)
 
     return {
         "name": name,
@@ -135,7 +141,7 @@ def classify_skill(path: Path, root: Path) -> dict:
         "user_invocable": declared,
         "public_justification": justification,
         "malformed_frontmatter": malformed,
-        "public": klass != HIDDEN,
+        "public": is_public(klass),
     }
 
 
@@ -145,6 +151,9 @@ def discover_skills(workdir: Path) -> list[dict]:
     Scoped to the plugin's own ``skills/`` tree on purpose. Recursing from the
     workdir root would sweep in build worktrees and runtime-authored drafts
     (e.g. ``.build-loop/worktrees/*/skills/``) that the harness never loads.
+    ``exposure_policy.is_excluded_path`` catches the same trees NESTED under
+    ``skills/`` — same list `skill_index.py` walks with, so the two scripts
+    cannot disagree about which files are part of the surface.
     """
     skills_dir = workdir / SKILLS_DIRNAME
     if not skills_dir.is_dir():
@@ -152,7 +161,7 @@ def discover_skills(workdir: Path) -> list[dict]:
     return [
         classify_skill(path, workdir)
         for path in sorted(skills_dir.rglob("SKILL.md"))
-        if path.is_file()
+        if path.is_file() and not is_excluded_path(path.relative_to(workdir).parts)
     ]
 
 

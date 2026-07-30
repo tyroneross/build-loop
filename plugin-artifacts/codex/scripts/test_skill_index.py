@@ -14,9 +14,13 @@ import pytest
 # Ensure scripts/ is importable when run directly via pytest <file>
 sys.path.insert(0, str(Path(__file__).parent))
 
+import exposure_policy  # noqa: E402
+import skill_index  # noqa: E402
+import surface_policy  # noqa: E402
 from skill_index import (  # noqa: E402
     DEFAULT_OUTPUT,
     DESCRIPTION_MAX,
+    EXPOSURE_CLASSES,
     GENERATED_BANNER,
     SkillIndexError,
     apply_index,
@@ -193,6 +197,32 @@ def test_missing_user_invocable_field_is_public_not_hidden(plugin_dir: Path) -> 
     assert exposure["unfielded"] == "public-undeclared"
     content = generate(plugin_dir, DEFAULT_OUTPUT)
     assert "**3 skills** · 0 public · 1 public-undeclared · 2 hidden" in content
+
+
+def test_unrecognized_flag_is_public_undeclared(plugin_dir: Path) -> None:
+    """A flag the repo cannot parse is exposed, and a reason does not fix it."""
+    write_skill(
+        plugin_dir,
+        "skills/odd",
+        name="odd",
+        user_invocable="yes",
+        public_justification="nonsense flag",
+    )
+    exposure = {row.name: row.exposure for row in discover(plugin_dir)}
+    assert exposure["odd"] == "public-undeclared"
+
+
+def test_exposure_is_decided_by_the_shared_policy_module(plugin_dir: Path) -> None:
+    """The rule lives in `exposure_policy`; this file only picks a column.
+
+    Every policy class must map to a column, and the walk-exclusion list must be
+    the same object `surface_policy.py` uses — two copies is the drift this
+    module was extracted to end.
+    """
+    assert set(skill_index._POLICY_TO_COLUMN) == set(exposure_policy.EXPOSURE_CLASSES)
+    assert set(skill_index._POLICY_TO_COLUMN.values()) == set(EXPOSURE_CLASSES)
+    assert skill_index.EXCLUDED_PATH_SEGMENTS is exposure_policy.EXCLUDED_PATH_SEGMENTS
+    assert surface_policy.SKILL_CLASSES is exposure_policy.EXPOSURE_CLASSES
 
 
 # ---------------------------------------------------------------------------

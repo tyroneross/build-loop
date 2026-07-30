@@ -147,17 +147,23 @@ class FloorClampTests(unittest.TestCase):
     # model_resolver.resolve() is exhausted, so the clamp tests must down them all.
     ALL_FRONTIER = ["opus", "fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
 
+    # The floor tier's live model once opus (its default) is in the down set.
+    # These tests run host-neutral (`resolve` defaults to --host-providers any),
+    # so the cross-vendor thinking entry is reachable.
+    LIVE_FLOOR_MODEL = "gpt-5.6-terra"
+
     def test_frontier_override_to_haiku_is_clamped(self) -> None:
         # modelOverrides.frontier=haiku (PATTERN tier, two below floor) + all
         # frontier registry models down. Must NOT resolve to haiku. The floor is
-        # enforced at the source (resolve_with_tier_fallback), so the resolver
-        # returns the floor-safe model directly.
+        # enforced both here (the override is refused before the chain) and at
+        # the source (resolve_with_tier_fallback), so the resolver returns a
+        # floor-safe model directly.
         with tempfile.TemporaryDirectory() as td:
             self._write_config(Path(td), {"frontier": "haiku"}, self.ALL_FRONTIER)
             payload = resolve(td, "frontier")
             self.assertNotEqual(payload["model"], "haiku", payload)
             self.assertNotEqual(payload["model"], "sonnet")
-            self.assertEqual(payload["model"], "opus")  # thinking floor
+            self.assertEqual(payload["model"], self.LIVE_FLOOR_MODEL)  # thinking
 
     def test_frontier_override_to_sonnet_is_clamped(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -165,7 +171,7 @@ class FloorClampTests(unittest.TestCase):
             payload = resolve(td, "frontier")
             self.assertNotEqual(payload["model"], "sonnet", payload)
             self.assertNotEqual(payload["model"], "haiku")
-            self.assertEqual(payload["model"], "opus")
+            self.assertEqual(payload["model"], self.LIVE_FLOOR_MODEL)
 
     def test_frontier_override_to_thinking_model_is_allowed(self) -> None:
         # A frontier override to a THINKING-tier model is permitted (frontier's
@@ -209,6 +215,69 @@ class FloorClampTests(unittest.TestCase):
             self.assertEqual(final["model"], "sonnet")
             # sonnet must be recorded as its TRUE (code) tier, not "thinking".
             self.assertEqual(final["tier"], "code")
+
+
+class ConfigOverrideHonoredTests(unittest.TestCase):
+    """BUIL-MODEL-RESOLUTION-kynysz4f4852m: a config override must beat the chain.
+
+    `.build-loop/config.json` modelOverrides[tier] is read ONLY by
+    `model_overrides.resolve_model`, which `resolve()` reaches through the
+    cross-tier floor walk — i.e. only AFTER the in-tier availability chain is
+    exhausted. With opus always available at frontier the chain never exhausts,
+    so the user's explicit override was silently discarded in the NORMAL case.
+    An override that silently does nothing is worse than one that errors.
+    """
+
+    def _write_override(self, workdir: Path, tier: str, model: str) -> None:
+        bl = workdir / ".build-loop"
+        bl.mkdir(parents=True, exist_ok=True)
+        (bl / "config.json").write_text(
+            json.dumps({"modelOverrides": {tier: model}}), encoding="utf-8"
+        )
+
+    def test_config_override_honored_when_tier_default_available(self) -> None:
+        # The repro: a non-default REGISTERED frontier id, nothing declared down.
+        # fable is the deliberate second frontier entry, so "opus" here is proof
+        # the in-tier chain ran and the override was thrown away.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_override(Path(td), "frontier", "fable")
+            payload = resolve(td, "frontier", host_providers="anthropic")
+            self.assertEqual(payload["model"], "fable", payload)
+            self.assertEqual(payload["source"], "config")
+            self.assertTrue(payload["configured"])
+
+    def test_state_override_honored_when_tier_default_available(self) -> None:
+        # state.json is the older snapshot source and carries the same contract.
+        with tempfile.TemporaryDirectory() as td:
+            bl = Path(td) / ".build-loop"
+            bl.mkdir(parents=True, exist_ok=True)
+            (bl / "state.json").write_text(
+                json.dumps({"config": {"modelOverrides": {"code": "gpt-5.4-mini"}}}),
+                encoding="utf-8",
+            )
+            payload = resolve(td, "code", host_providers="any")
+            self.assertEqual(payload["model"], "gpt-5.4-mini", payload)
+            self.assertEqual(payload["source"], "state")
+
+    def test_override_still_clamped_below_floor(self) -> None:
+        # Honoring the override must NOT reopen the floor breach: a frontier
+        # override to a pattern-tier model is still refused, chain runs instead.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_override(Path(td), "frontier", "haiku")
+            payload = resolve(td, "frontier", host_providers="anthropic")
+            self.assertNotEqual(payload["model"], "haiku", payload)
+            self.assertNotEqual(payload["model"], "sonnet")
+            self.assertEqual(payload["model"], "opus")
+
+    def test_unavailable_override_falls_through_to_chain(self) -> None:
+        # An override naming a model that is DOWN degrades gracefully into the
+        # normal chain rather than handing the dispatcher a dead id.
+        with tempfile.TemporaryDirectory() as td:
+            self._write_override(Path(td), "frontier", "fable")
+            _write_availability(Path(td), ["fable"])
+            payload = resolve(td, "frontier", host_providers="anthropic")
+            self.assertEqual(payload["model"], "opus", payload)
+            self.assertEqual(payload["source"], "in-tier-chain")
 
 
 class HostProvidersFilterTests(unittest.TestCase):
@@ -299,9 +368,10 @@ class AvailabilityPersistenceTests(unittest.TestCase):
         # Every same-tier candidate down -> the in-tier walk is exhausted and
         # resolution hands off to the cross-tier floor walk. `source` is the
         # proof of the hand-off: an in-tier selection would report
-        # "in-tier-chain". The walk stops AT thinking (never code/pattern) —
-        # and since opus is now BOTH the frontier and the thinking default, the
-        # floor-stop returns opus even though it is itself in the down set.
+        # "in-tier-chain". The walk stops AT thinking (never code/pattern), and
+        # since opus is BOTH the frontier and the thinking default it is already
+        # in the down set — the floor-stop must skip it for the thinking tier's
+        # next registered model, not hand back a dead id.
         with tempfile.TemporaryDirectory() as td:
             _write_availability(
                 Path(td), ["opus", "fable", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
@@ -309,8 +379,8 @@ class AvailabilityPersistenceTests(unittest.TestCase):
             payload = resolve(td, "frontier")
             self.assertEqual(payload["source"], "tier-fallback")
             self.assertEqual(payload["fallback_tier"], "thinking")
-            self.assertEqual(payload["model"], "opus")
-            self.assertNotIn(payload["model"], {"sonnet", "haiku"})
+            self.assertEqual(payload["model"], "gpt-5.6-terra")
+            self.assertNotIn(payload["model"], {"opus", "sonnet", "haiku"})
 
 
 class TtlExpiryTests(unittest.TestCase):
@@ -391,7 +461,9 @@ class TierIntegrityGuardTests(unittest.TestCase):
             # floor walk instead (source proves the in-tier chain found nothing).
             self.assertNotEqual(payload["model"], "mystery-model-x")
             self.assertEqual(payload["source"], "tier-fallback")
-            self.assertEqual(payload["model"], "opus")
+            # opus heads the thinking tier but is in the down set, so the floor
+            # lands on the tier's next live entry.
+            self.assertEqual(payload["model"], "gpt-5.6-terra")
 
     def test_verified_cached_frontier_id_is_eligible(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -427,7 +499,7 @@ class TierIntegrityGuardTests(unittest.TestCase):
             payload = resolve(td, "frontier")
             self.assertNotEqual(payload["model"], "code-tier-model")
             self.assertEqual(payload["source"], "tier-fallback")
-            self.assertEqual(payload["model"], "opus")
+            self.assertEqual(payload["model"], "gpt-5.6-terra")
 
 
 class CanonicalIdResolverTests(unittest.TestCase):
@@ -596,6 +668,76 @@ class ResolveRoleTests(unittest.TestCase):
             )
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(r.stdout.strip(), "sonnet")
+
+
+"""Program run out-of-process to exercise the sibling-module bootstrap.
+
+Loads model_resolver.py BY FILE PATH with scripts/ scrubbed from sys.path, which
+is the ONLY context that makes the module-level `import model_overrides` fail and
+the path-insert branch fire. It then drives resolve() + resolve_role() end to end
+so an incomplete import surfaces as the NameError it would cause in production
+rather than as a silent import-time pass.
+"""
+_IMPORT_SHIM_PROGRAM = '''
+import importlib.util, sys, tempfile
+from pathlib import Path
+
+RESOLVER = Path(sys.argv[1]).resolve()
+SCRIPTS = RESOLVER.parent
+# Scrub scripts/ so the module-level sibling import cannot resolve on entry.
+sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != SCRIPTS]
+assert "model_overrides" not in sys.modules
+
+spec = importlib.util.spec_from_file_location("model_resolver_shim", RESOLVER)
+mod = importlib.util.module_from_spec(spec)
+sys.modules["model_resolver_shim"] = mod
+spec.loader.exec_module(mod)          # runs the bootstrap
+assert str(SCRIPTS) in sys.path, "path-insert branch did not fire"
+
+# Every name resolve()/resolve_role() reference unqualified must be bound.
+for name in (
+    "MODEL_REGISTRY", "TIERS", "expand_unavailable", "is_registered",
+    "resolve_with_tier_fallback", "tier_of_model", "availability_store",
+    "model_overrides",
+):
+    assert hasattr(mod, name), "missing symbol: " + name
+
+with tempfile.TemporaryDirectory() as td:
+    r = mod.resolve(tier="frontier", workdir=Path(td))
+    rr = mod.resolve_role(
+        segment="generative_reasoning", tier="thinking", workdir=Path(td)
+    )
+print(r["model"], rr["model"])
+'''
+
+
+class ImportShimTests(unittest.TestCase):
+    """Regression: the sibling-module bootstrap must bind the FULL symbol set.
+
+    The bootstrap used to be a try/except pair that duplicated the
+    `from model_overrides import (...)` list, and the except copy omitted
+    `expand_unavailable` — called unconditionally by both resolve() and
+    resolve_role(). Loading the module by file path (a host that never puts
+    scripts/ on sys.path) therefore raised NameError on EVERY resolve instead of
+    degrading. Import-time success is NOT enough to catch that, so this test
+    drives both entry points after forcing the path-insert branch.
+    """
+
+    def test_file_path_load_without_scripts_on_syspath_resolves(self) -> None:
+        import os
+
+        env = dict(os.environ)
+        env.pop("PYTHONPATH", None)          # keep scripts/ off the child's path
+        env["BUILD_LOOP_HOST_PROVIDERS"] = "anthropic"
+        with tempfile.TemporaryDirectory() as cwd:
+            proc = subprocess.run(
+                [sys.executable, "-c", _IMPORT_SHIM_PROGRAM, str(RESOLVER)],
+                capture_output=True, text=True, cwd=cwd, env=env, timeout=60,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("NameError", proc.stderr)
+        # Anthropic host, nothing recorded unavailable -> both resolve to opus.
+        self.assertEqual(proc.stdout.split(), ["opus", "opus"])
 
 
 if __name__ == "__main__":
