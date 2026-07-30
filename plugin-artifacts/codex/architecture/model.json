@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "553ce5e9b5de8f07084d4f1d666adb869b2a7a648e9aa6b44ba6ec6ea7c0f451"
+    "content_sha256": "0fa9372b359474d9ab1dfbbeb8936ed726c94c01769518ca2511ffa02439f20e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1563,7 +1563,7 @@
       "scripts/build_acp.py": "Build the Architecture Context Pack (ACP) from `.build-loop/architecture/`.",
       "scripts/build_capability_index.py": "Capability index builder (WP-B item 1) — scripts as tools + consumer ring-2.",
       "scripts/build_capability_registry.py": "Capability registry builder.",
-      "scripts/build_codex_plugin_artifact.py": "Build the slim Codex plugin artifact.",
+      "scripts/build_codex_plugin_artifact.py": "Build the full Codex plugin artifact behind one public entrypoint.",
       "scripts/build_report_lint.py": "Deterministic final-report lint for build-loop.",
       "scripts/bump_version.py": "Single source of truth for build-loop's version across all four manifests.",
       "scripts/candidate_aging.py": "candidate_aging.py — flag aged, undisposed enforce-from-retro candidates.",
