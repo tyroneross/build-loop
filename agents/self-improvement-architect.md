@@ -18,7 +18,7 @@ model: sonnet
 tier: code
 segment: generative_reasoning
 color: cyan
-tools: ["Read", "Write", "Edit", "Glob", "Grep", "Skill"]
+tools: ["Read", "Write", "Edit", "Glob", "Grep", "Skill", "Bash"]
 ---
 
 <!-- SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com> | SPDX-License-Identifier: Apache-2.0 -->
@@ -58,7 +58,8 @@ Plus the target artifact type (`skill` or `agent`) decided by the caller.
 
 3. **Draft the artifact**
    For a skill, the SKILL.md must have:
-   - Frontmatter: `name` (kebab-case, scoped `build-loop:experimental-<name>`), `description` with specific triggers extracted from evidence, `experimental: true` flag, `created: <ISO date>`, `promoted: false`
+   - Frontmatter: `name` (kebab-case, scoped `build-loop:experimental-<name>`), `description` with specific triggers extracted from evidence, `user-invocable: false`, `experimental: true` flag, `created: <ISO date>`, `promoted: false`
+   - `user-invocable: false` is the DEFAULT for every skill you draft. The Claude Code harness computes `userInvocable ?? true`, so a SKILL.md with no field is PUBLIC — a machine-drafted, unreviewed skill would land in the user's slash menu. You never write `user-invocable: true`; if a pattern genuinely warrants a direct human entrypoint, say so in your synthesis output and let promotion decide.
    - Body: ONE short paragraph on when to use, ONE section with the concrete steps (copy-paste-able), ONE section with "how to know it worked" (measurable signal)
    - Length: 40-120 lines. No more. Experimental skills must be cheap to read.
 
@@ -69,7 +70,19 @@ Plus the target artifact type (`skill` or `agent`) decided by the caller.
    - Do NOT write to the plugin repo. Never modify `~/.claude/plugins/build-loop/`.
    - Create the directory if missing.
 
-5. **Produce a concise user synthesis**
+5. **Stamp the surface default (deterministic — run it, do not eyeball the frontmatter)**
+
+   Immediately after the Write tool returns, on the path you just wrote:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply .build-loop/skills/experimental/<name>/SKILL.md
+   ```
+
+   Expected output: `compliant` (you wrote the field yourself) or `stamped` (the script inserted it). Exit 0 either way.
+
+   If the script prints `violation` or `malformed`, you emitted a bad frontmatter block — fix the file and re-run until it exits 0. Do not report the artifact as created while the stamper is non-zero; a red stamper means the skill you just drafted is publicly invocable or unparseable.
+
+6. **Produce a concise user synthesis**
    Output to stdout (not the file) a 3-4 line summary:
 
    ```
@@ -77,6 +90,7 @@ Plus the target artifact type (`skill` or `agent`) decided by the caller.
    Type: skill
    Name: build-loop:experimental-middleware-typegen
    Path: .build-loop/skills/experimental/middleware-typegen/SKILL.md
+   Surface: user-invocable: false (stamper: <compliant|stamped>)
    Triggers on: <extracted trigger>
    A/B baseline: <metric to compare, see §A/B Experiment>
    Remove with: rm -rf .build-loop/skills/experimental/<name>/

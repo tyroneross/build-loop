@@ -303,16 +303,21 @@ Build-loop can author new skills mid-flow when a repeated task pattern emerges a
 
 **Procedure:**
 
-1. Draft the skill during Phase 4 if the need arises. Use the `plugin-dev:skill-development` skill if available, else `fallbacks.md#agent-authoring` format (but for skills — name, description, body ≤200 lines, progressive disclosure).
-2. Use it immediately in the current build.
-3. At Review-F, score its usefulness: did it reduce friction? Would you use it next build?
-4. Decide: **keep**, **promote** (project → global), or **drop**.
+1. Draft the skill during Phase 4 if the need arises. Use the `plugin-dev:skill-development` skill if available, else `fallbacks.md#agent-authoring` format (but for skills — name, description, body ≤200 lines, progressive disclosure). Write `user-invocable: false` into the frontmatter: a new skill is hidden by default and is reached by build-loop routing, not by the user's slash menu.
+2. Stamp it in the same turn as the write, on the path you just wrote:
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply <path-just-written>
+   ```
+   The harness computes `userInvocable ?? true`, so a SKILL.md carrying no field is PUBLIC. Step 1's frontmatter line is the fast path; this command is the control. Expected status `compliant` or `stamped`, exit 0. A `violation` or `malformed` exit means the skill you just authored is publicly invocable or unparseable — fix it and re-run before using the skill.
+3. Use it immediately in the current build.
+4. At Review-F, score its usefulness: did it reduce friction? Would you use it next build?
+5. Decide: **keep**, **promote** (project → global), or **drop**.
    - Keep (project) — leave in `.build-loop/skills/`.
-   - Promote — move to `~/.claude/skills/`, confirm with user.
+   - Promote — copy to `~/.claude/skills/<name>/SKILL.md`, run the stamper again **on the destination path** (`python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply ~/.claude/skills/<name>/SKILL.md`), then confirm with the user using the exposure block in `skills/self-improve/SKILL.md` §"Promotion exposure statement". `~/.claude/skills/` loads in every session on every project, so this move — not the drafting step — is where exposure is decided.
    - Drop — delete and note in `.build-loop/feedback.md` why it didn't earn its keep.
-5. Record the decision through `scripts/memory_writer.py` into `build-loop-memory/lessons/` or `build-loop-memory/projects/<slug>/lessons/` as a `pattern` entry.
+6. Record the decision through `scripts/memory_writer.py` into `build-loop-memory/lessons/` or `build-loop-memory/projects/<slug>/lessons/` as a `pattern` entry.
 
-**Self-review/self-heal loop extension:** the self-review/self-heal loop (proactive arm of C-HEAL) MAY author new skills AND new scripts when doing so prevents a class of issue or streamlines repeated work. New skills start project-local and follow this same keep/promote/drop lifecycle. Promotion to the build-loop plugin repo or `~/.claude/skills/` still requires user confirmation (global scope is consequential). New scripts MUST have a colocated `test_<name>.py` — no untested script lands. When the authoring happens inside a self-recursive build (editing build-loop itself), every new or modified file passes through the SELF-MODIFICATION SAFETY GATE in `references/self-review.md` §"Self-modification of the restricted repo" before commit.
+**Self-review/self-heal loop extension:** the self-review/self-heal loop (proactive arm of C-HEAL) MAY author new skills AND new scripts when doing so prevents a class of issue or streamlines repeated work. New skills start project-local and follow this same keep/promote/drop lifecycle. Promotion to the build-loop plugin repo or `~/.claude/skills/` still requires user confirmation (global scope is consequential) and runs the destination-path stamper from step 5 before that confirmation is asked. New scripts MUST have a colocated `test_<name>.py` — no untested script lands. When the authoring happens inside a self-recursive build (editing build-loop itself), every new or modified file passes through the SELF-MODIFICATION SAFETY GATE in `references/self-review.md` §"Self-modification of the restricted repo" before commit.
 
 **Never proliferate skills**. A skill that isn't used twice across builds should be dropped. Prefer extending an existing skill over creating a new one.
 

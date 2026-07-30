@@ -56,10 +56,17 @@ __pycache__/
 # Safe to delete this block if you want the files tracked — NavGator will
 # not re-add it while the markers below are missing.
 .navgator/architecture/components/COMP_config_*.json
+.navgator/architecture/components.full.jsonl
+.navgator/architecture/connections.full.jsonl
 .navgator/architecture/NAVSUMMARY.md
 .navgator/architecture/NAVSUMMARY_FULL.md
 .navgator/architecture/SUMMARY.md
 .navgator/architecture/SUMMARY_FULL.md
+.navgator/dirty.json
+.navgator/dirty.d/
+.navgator/dirty.lock*
+.navgator/scan.lock*
+.navgator/architecture/freshness.json.tmp*
 # <<< NavGator safety guard
 
 # Build-loop runtime artifacts
@@ -88,3 +95,15 @@ archive/**/*.bundle
 
 # Superseded git bundles — moved to build-loop-memory/archive/build-loop-bundles (GitHub-backed, segmented from package)
 archive/
+
+# build-loop experimental artifacts (added by `experimental_ignore.py` — promotion to active/ makes them tracked)
+!/.build-loop/skills/
+/.build-loop/skills/*
+/.build-loop/skills/experimental/
+!/.build-loop/skills/active/
+!/.build-loop/skills/active/**
+!/.build-loop/agents/
+/.build-loop/agents/*
+/.build-loop/agents/experimental/
+!/.build-loop/agents/active/
+!/.build-loop/agents/active/**

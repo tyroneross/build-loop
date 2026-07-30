@@ -1,6 +1,7 @@
 ---
 name: "source-command-promote-experiment"
 description: "Promote an auto-promoted experimental skill or agent from project-local `.build-loop/skills/active/` into the build-loop plugin repo, making it available across every project. Requires user confirmation and opens a PR on the plugin repo for review."
+user-invocable: false
 ---
 
 # source-command-promote-experiment
@@ -14,6 +15,8 @@ Use this skill when the user asks to run the migrated source command `promote-ex
 # /build-loop:promote-experiment <name>
 
 Promote a proven experimental artifact into the build-loop plugin itself. This is the manual, user-approved counterpart to Phase 6 Learn's auto-promote — which stays local to the project. Cross-project promotion modifies the plugin repo and affects every user, so it is never automatic.
+
+**Promotion is the choke point where a machine-drafted artifact becomes both tracked and loadable.** `.build-loop/skills/experimental/**` is gitignored and `.build-loop/skills/active/**` is not (`scripts/experimental_ignore.py`), so the move out of `experimental/` is the moment the artifact first appears in `git status`. The plugin-repo copy then makes it loadable in every project. Both effects are decided here, by this skill, and both must be stated to the user before the copy happens.
 
 ## Prerequisites
 
@@ -73,7 +76,25 @@ Build a markdown summary for the user:
 
 ### 3. Ask the user
 
-Use `AskUserQuestion`:
+First read the artifact's `user-invocable:` field (and `public-justification:` if `true`), then put this block in the question body — verbatim, above the options. It is the canonical exposure block from `skills/self-improve/SKILL.md` §"Promotion exposure statement":
+
+```
+Exposure after promotion
+  Destination:      <BUILD_LOOP_REPO>/skills/<final-name>/SKILL.md
+  user-invocable:   <false | true>
+  Directly invocable by you:
+      <no — reached only through /build-loop:run routing>
+      <YES, as /build-loop:<final-name> — because <the file's public-justification: line>>
+  Loaded in:        every session, every project, once the PR merges and the plugin updates
+  Git:              the artifact leaves the gitignored
+                    `.build-loop/skills/experimental/**` tier and becomes a
+                    tracked file in the plugin repo on branch
+                    feat/promote-<name>-from-<project-slug>
+```
+
+Answer "YES, directly invocable" only when the file carries a `public-justification:` — the stamper in step 4 refuses the promotion otherwise. Default for a promoted build-loop skill is `user-invocable: false`: `/build-loop:run` is the only human-facing command, and every other capability is reached by intent.
+
+Then use `AskUserQuestion`:
 
 ```
 Question: "Promote '<name>' into the build-loop plugin repo?"
@@ -94,8 +115,13 @@ If user approved promotion:
    - Abort and ask user to choose a new name, OR confirm overwrite.
 3. Create a feature branch on the plugin repo: `feat/promote-<name>-from-<project-slug>`.
 4. Copy files. Edit frontmatter: remove `experimental: true`, `promoted_at`, `promoted_from_project`; add `promoted_at: <ISO>`, `promoted_from_project: <project-name>`, `original_baseline: <N>`, `aggregate_delta: <percent>`.
-5. Update the plugin's `skills/build-loop/SKILL.md` capability routing table to reference the new skill if it fits an existing row, OR add a new row (ask the user which).
-6. Commit:
+5. **Stamp the destination** — the copy is now a plugin-repo skill, and the harness computes `userInvocable ?? true`:
+   ```bash
+   python3 "$BUILD_LOOP_REPO/scripts/stamp_skill_frontmatter.py" --apply "$BUILD_LOOP_REPO/skills/<final-name>/SKILL.md"
+   ```
+   `compliant` or `stamped` → continue. `violation` (`user-invocable: true` with no `public-justification:`) or `malformed` → **abort the promotion**, delete the copied files, delete the feature branch, and report the stamper's reason. Do not commit a skill whose surface the stamper refused; the exposure you told the user in step 3 would be wrong.
+6. Update the plugin's `skills/build-loop/SKILL.md` capability routing table to reference the new skill if it fits an existing row, OR add a new row (ask the user which).
+7. Commit:
    ```
    feat(skills): promote <name> from Phase 6 Learn
 
@@ -107,7 +133,7 @@ If user approved promotion:
    Evidence log: .build-loop/experiments/<name>.jsonl (N entries)
    Signed off by Opus 4.7 on <auto-promote date>.
    ```
-7. Push the branch and open a PR with the promotion dossier as the body.
+8. Push the branch and open a PR with the promotion dossier as the body.
 
 ### 5. Record in project
 
@@ -126,9 +152,12 @@ Do not delete the local artifact — it stays in `.build-loop/skills/active/<nam
 - **Always open a PR**, never commit to main directly. Plugin maintainers review before merge.
 - **Preserve provenance**. Frontmatter records the source project, baseline, and delta. If the promoted skill regresses in a cross-project context, the track record makes rollback decisions clear.
 - **Never overwrite without confirmation**. If a skill with the same name exists, abort and let the user rename or approve overwrite.
+- **Never promote past the stamper**. Step 4.5 is a gate, not a lint: a `violation` or `malformed` verdict aborts and unwinds. Fixing it means adding a `public-justification:` line to the artifact (and re-asking the user with the corrected exposure block) or setting `user-invocable: false` — never removing the stamper call.
+- **State the exposure before the copy, not after.** The user is approving two irreversible-leaning effects at once: a file entering the repo and a skill becoming loadable in every project. The step 3 exposure block is what makes that approval informed.
 
 ## Related
 
 - Phase 6 Learn auto-promote (project-local): `skills/self-improve/SKILL.md`
+- Canonical exposure wording: `skills/self-improve/SKILL.md` §"Promotion exposure statement"
 - User removal override: `.build-loop/skills/.demoted` file or `rm -rf .build-loop/skills/active/<name>/`
 - Global cross-project evidence index: `~/.build-loop/experiments/<name>.jsonl` (appended on every applied run across projects)

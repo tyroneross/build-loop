@@ -1,0 +1,33 @@
+---
+description: Route requests to the right Build Loop skill using the generated skill index at docs/SKILL-INDEX.md.
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Skill Index
+
+`docs/SKILL-INDEX.md` is the routing table for every skill in this repo. Each row
+names a skill, says when to use it, how it is reached, and whether it is
+user-facing. Read that file to pick the skill that owns a request; read the
+linked `SKILL.md` for the procedure.
+
+That file is the only skill list. This rule deliberately does not repeat it —
+three copies of the same list in `CLAUDE.md`, `AGENTS.md`, and `.cursor/rules/`
+would be three places to drift.
+
+The index is generated from `skills/**/SKILL.md` frontmatter, so a newly
+authored skill is indexed by regenerating, not by editing the table:
+
+```bash
+python3 scripts/skill_index.py --workdir . --apply   # regenerate
+python3 scripts/skill_index.py --workdir . --check   # exit 1 when stale
+```
+
+Never hand-edit `docs/SKILL-INDEX.md`. To change a row, edit that skill's
+`SKILL.md` `description:` and regenerate. `--check` is the drift guard; a
+non-zero exit means run `--apply`.
+
+Companion rule: `.cursor/rules/build-loop-surface.mdc` covers which skills are
+reachable by a human (today: only `/build-loop:run`). This rule covers where to
+look them up.

@@ -63,6 +63,33 @@ failure leaks out as fail-open nor an env hiccup wedges the push):
   pytest-collection (reuses pytest_collect_gate.py): 0 pass/skip, 1 BLOCK, 2 SKIP.
   lints / diagram (after the required-module probe): 0 pass, any non-zero BLOCK.
 
+KNOWN-RED BASELINE (the "pre-existing failures" accountability layer)
+---------------------------------------------------------------------
+On 2026-07-26 a red deterministic gate shipped anyway, waved through as
+"pre-existing failures untouched". The gate fired correctly and a human judgment
+call overrode it. "Pre-existing" was an unbounded, unowned, unrecorded free pass —
+and every other check in this repo was bypassable the same way.
+
+``scripts/known_red_baseline.json`` turns that state into a bounded, accountable
+one. Every entry REQUIRES a test id, a reason, an owner, and an expiry date; no
+entry may be open-ended. A pytest gate marked ``classify: True`` routes its
+failures through it:
+
+  newly-red (a failing test NOT in the baseline)   -> BLOCK   (the behavior change)
+  baseline-red, not yet expired                    -> WARN    (names owner + days left)
+  ANY baseline entry past its expiry               -> BLOCK   (checked even on a green
+                                                     tree — an expiry you can ignore is
+                                                     not an expiry)
+  baseline entry whose test now PASSES             -> reported as a stale suppression
+  baseline missing / malformed / schema-violating  -> BLOCK   (fail-SAFE)
+
+Note the deliberate asymmetry against the rest of this module: env problems
+fail-OPEN, but an unreadable suppression list fails-CLOSED. A suppression list you
+cannot read is not a suppression list, and treating it as an empty one would hand
+back exactly the free pass this layer removes. The requirement only attaches to
+gates that opt in via ``classify: True``, so the ``gates=`` test seam and any
+caller supplying its own specs keep their pre-existing behavior unchanged.
+
 OVERRIDE (escapable but visible)
 --------------------------------
 - ``BL_SKIP_PREPUSH_TESTS=1`` -> bypass the test gate, append one logged line to
@@ -83,9 +110,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -108,6 +136,17 @@ except Exception:  # noqa: BLE001 — degrade gracefully; evaluate() handles Non
 SKIP_ENV = "BL_SKIP_PREPUSH_TESTS"
 FULL_ENV = "BL_PREPUSH_FULL"
 LOG_RELPATH = Path(".build-loop") / "audit-log.md"
+
+# The known-red baseline. TRACKED on purpose: `.build-loop/` is gitignored in this
+# repo (`/.build-loop/*`, only `backlog/` negated), so a baseline there would be
+# invisible in review, absent in CI, and absent on a fresh clone — where the
+# fail-safe would then block every push. Under `scripts/` it sits next to the gate
+# that reads it and every added or extended suppression shows up as a reviewable
+# diff line. That reviewability IS the accountability property.
+BASELINE_RELPATH = Path("scripts") / "known_red_baseline.json"
+
+# Every entry needs all four. No entry may be open-ended.
+_BASELINE_REQUIRED_FIELDS = ("test", "reason", "owner", "expires")
 
 # Fallback protected set (only used if push_hold is unavailable).
 _FALLBACK_PROTECTED = {
@@ -190,6 +229,203 @@ def _module_available(interp: str, module: str, *, workdir: Path) -> bool:
         return proc.returncode == 0
     except (FileNotFoundError, OSError, subprocess.SubprocessError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Known-red baseline — load / validate / classify
+# ---------------------------------------------------------------------------
+
+def _today(workdir: Path | None = None) -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def load_baseline(workdir: Path, *, relpath: Path = BASELINE_RELPATH) -> dict[str, Any]:
+    """Load + validate the known-red baseline. NEVER raises.
+
+    Returns ``{"ok": bool, "path": str, "entries": [...], "error": str|None}``.
+
+    FAIL-SAFE: missing, unreadable, non-JSON, or schema-violating -> ``ok=False``,
+    and the caller BLOCKS. Degrading to "treat as empty" would silently restore the
+    unbounded free pass this file exists to remove, so there is no such degradation.
+
+    A valid entry is a dict carrying non-empty ``test``, ``reason``, ``owner`` and an
+    ``expires`` date in ``YYYY-MM-DD``. Duplicate ``test`` values are rejected (a
+    duplicate hides whichever entry lost).
+    """
+    path = workdir / relpath
+
+    def _bad(msg: str) -> dict[str, Any]:
+        return {"ok": False, "path": str(path), "entries": [], "error": msg}
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _bad(f"baseline file missing: {relpath}")
+    except (OSError, UnicodeDecodeError) as exc:
+        return _bad(f"baseline file unreadable ({relpath}): {exc}")
+
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:  # JSONDecodeError subclasses ValueError
+        return _bad(f"baseline file is not valid JSON ({relpath}): {exc}")
+
+    if not isinstance(data, dict):
+        return _bad(f"baseline root must be a JSON object ({relpath})")
+    entries_raw = data.get("entries")
+    if not isinstance(entries_raw, list):
+        return _bad(f"baseline is missing an 'entries' list ({relpath})")
+
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for idx, item in enumerate(entries_raw):
+        where = f"{relpath} entries[{idx}]"
+        if not isinstance(item, dict):
+            return _bad(f"{where} is not an object")
+        for field in _BASELINE_REQUIRED_FIELDS:
+            val = item.get(field)
+            if not isinstance(val, str) or not val.strip():
+                return _bad(f"{where} is missing a non-empty '{field}' (all of "
+                            f"{', '.join(_BASELINE_REQUIRED_FIELDS)} are required)")
+        try:
+            expires = datetime.strptime(item["expires"].strip(), "%Y-%m-%d").date()
+        except ValueError:
+            return _bad(f"{where} has an unparseable 'expires' "
+                        f"({item['expires']!r}); use YYYY-MM-DD")
+        test = item["test"].strip()
+        if test in seen:
+            return _bad(f"{where} duplicates an earlier entry for {test!r}")
+        seen.add(test)
+        entries.append({
+            "test": test,
+            "reason": item["reason"].strip(),
+            "owner": item["owner"].strip(),
+            "expires": item["expires"].strip(),
+            "expires_date": expires,
+        })
+
+    return {"ok": True, "path": str(path), "entries": entries, "error": None}
+
+
+def expired_entries(entries: Iterable[dict[str, Any]], today: date) -> list[dict[str, Any]]:
+    """Baseline entries whose expiry has passed. Checked on EVERY run, green or not."""
+    return [e for e in entries if e["expires_date"] < today]
+
+
+# pytest short-summary lines: "FAILED path::Class::test - AssertionError: ..." and
+# "ERROR path::test". `-r` defaults to `fE`, and the gate passes `-rfE` explicitly.
+_SUMMARY_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S.*)$")
+
+
+def _strip_summary_message(rest: str) -> str:
+    """Cut a short-summary line at the ' - ' that separates node id from message.
+
+    A parametrized id can itself contain ' - ' (``test_p[a - b] - ValueError``), so
+    the cut must be the first separator at bracket depth 0. Getting this wrong
+    truncates the id, which mis-reads a baselined test as newly-red — noisy, but in
+    the safe direction; correct it anyway.
+    """
+    depth = 0
+    i = 0
+    while i < len(rest):
+        ch = rest[i]
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth = max(0, depth - 1)
+        elif depth == 0 and rest.startswith(" - ", i):
+            return rest[:i]
+        i += 1
+    return rest
+
+
+def parse_failed_ids(output: str) -> list[str]:
+    """Extract failing pytest node ids from a run's combined stdout+stderr.
+
+    Order-preserving, de-duplicated. Returns [] when nothing parses — which the
+    caller treats as UNCLASSIFIABLE and therefore blocking, never as "no failures".
+    """
+    found: list[str] = []
+    for line in (output or "").splitlines():
+        m = _SUMMARY_RE.match(line.strip())
+        if not m:
+            continue
+        node = _strip_summary_message(m.group(1)).strip()
+        if not node or (".py" not in node):
+            continue
+        if node not in found:
+            found.append(node)
+    return found
+
+
+def _node_file(node_id: str) -> str:
+    return node_id.split("::", 1)[0]
+
+
+def _entry_matches(entry: dict[str, Any], node_id: str) -> bool:
+    """Exact node-id match, or file-scoped match when the entry names a bare file."""
+    test = entry["test"]
+    if "::" in test:
+        return test == node_id
+    return _node_file(node_id) == test
+
+
+def _entry_covered_by(entry: dict[str, Any], targets: Iterable[str]) -> bool:
+    """True if this run actually executed the entry's test file.
+
+    Only covered entries can be judged stale — a test that did not run this time is
+    not evidence of anything.
+    """
+    node_file = _node_file(entry["test"])
+    for target in targets:
+        if target.endswith("/"):
+            if node_file.startswith(target):
+                return True
+        elif node_file == target:
+            return True
+    return False
+
+
+def classify_failures(
+    output: str,
+    entries: list[dict[str, Any]],
+    today: date,
+) -> dict[str, Any]:
+    """Split a failing pytest run into newly-red vs baseline-suppressed.
+
+    Returns ``{"failed": [...], "newly_red": [...], "baseline_red": [ {node, entry,
+    days_left}, ... ]}``. ``failed == []`` means the output could not be parsed.
+    """
+    failed = parse_failed_ids(output)
+    newly_red: list[str] = []
+    baseline_red: list[dict[str, Any]] = []
+    for node in failed:
+        match = next((e for e in entries if _entry_matches(e, node)), None)
+        if match is None:
+            newly_red.append(node)
+        else:
+            baseline_red.append({
+                "node": node,
+                "entry": match,
+                "days_left": (match["expires_date"] - today).days,
+            })
+    return {"failed": failed, "newly_red": newly_red, "baseline_red": baseline_red}
+
+
+def stale_entries(
+    entries: list[dict[str, Any]],
+    failed: Iterable[str],
+    targets: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Baseline entries whose test ran and did NOT fail — stale suppression."""
+    failed = list(failed)
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not _entry_covered_by(entry, targets):
+            continue
+        if any(_entry_matches(entry, node) for node in failed):
+            continue
+        out.append(entry)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -295,12 +531,16 @@ def _run_gate(
             "exit_code": rc,
             "detail": f"exit {rc} treated as env/no-collect — fail-open skip",
         }
-    tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()[-12:]
+    combined = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    tail = combined.splitlines()[-12:]
     return {
         "name": name,
         "status": "fail",
         "exit_code": rc,
         "detail": "\n".join(tail) or f"exit {rc}",
+        # Full output for the known-red classifier. `evaluate` strips this key
+        # before returning so `--json` never dumps a whole pytest run.
+        "_raw": combined,
     }
 
 
@@ -330,6 +570,9 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
             # Block on 1 (failed) + 2 (collection error). 3/4/5 = env/no-collect.
             "open_codes": (3, 4, 5),
             "timeout": 600,
+            # Route failures through the known-red baseline (see module docstring).
+            "classify": True,
+            "targets": ["scripts/", "tests/"],
         })
     else:
         # Fast subset (default). Named pytest gates RUN (not collect-only).
@@ -337,13 +580,19 @@ def _build_gates(workdir: Path, interp: str, *, full: bool) -> list[dict[str, An
             "name": "named-pytest-gates",
             "argv": [
                 interp, "-m", "pytest", *_NAMED_PYTEST_TARGETS,
-                "-p", "no:cacheprovider", "-q", "--no-header",
+                # -rfE is pytest's default -r value, but the classifier parses the
+                # short-summary FAILED/ERROR lines, so make it explicit rather than
+                # inherited: a future ini change to -r must not silently blind it.
+                "-p", "no:cacheprovider", "-q", "--no-header", "-rfE",
             ],
             "requires": ["pytest"],
             # Block on 1 (failed) + 2 (collection error in a named file). 3/4/5 =
             # env/no-collect -> fail-open (see the exit-code table in the docstring).
             "open_codes": (3, 4, 5),
             "timeout": 120,
+            # Route failures through the known-red baseline (see module docstring).
+            "classify": True,
+            "targets": list(_NAMED_PYTEST_TARGETS),
         })
         # Whole-suite collection (import safety) — reuse the existing gate script.
         # Its exit codes: 0 pass/skip, 1 collection failure (block), 2 runner error.
@@ -458,17 +707,24 @@ def evaluate(
     gates: list[dict[str, Any]] | None = None,
     protected_branches: Iterable[str] | None = None,
     force_run: bool = False,
+    baseline: dict[str, Any] | None = None,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Decide whether the pre-push test gate blocks this push. NEVER raises.
 
     Returns ``{"action": "allow"|"block"|"bypass", "exit_code": int, "reason": str,
     "failing_gate": str|None, "mode": "fast"|"full", "protected_targets": [...],
-    "gate_results": [...]}``.
+    "gate_results": [...], "warnings": [...]}``.
 
-    ``gates`` (a pre-built spec list) and ``force_run`` are test seams.
+    ``warnings`` carries the non-blocking known-red signal: suppressed failures
+    (owner + days remaining) and stale suppressions (baseline entries whose test now
+    passes). It is additive — no existing key changed meaning.
+
+    ``gates`` (a pre-built spec list), ``baseline`` and ``today`` are test seams.
     """
     env_map = env if env is not None else os.environ
     stdin_lines = list(stdin_lines)
+    warnings: list[str] = []
 
     try:
         targets = _protected_targets(workdir, stdin_lines, protected_branches)
@@ -481,6 +737,7 @@ def evaluate(
                 "mode": "fast",
                 "protected_targets": [],
                 "gate_results": [],
+                "warnings": [],
             }
 
         if str(env_map.get(SKIP_ENV, "")).strip() == "1":
@@ -496,6 +753,7 @@ def evaluate(
                 "mode": "fast",
                 "protected_targets": targets,
                 "gate_results": [],
+                "warnings": [],
             }
 
         full = str(env_map.get(FULL_ENV, "")).strip() == "1"
@@ -503,7 +761,80 @@ def evaluate(
         interp = _resolve_interpreter(workdir)
         specs = gates if gates is not None else _build_gates(workdir, interp, full=full)
 
+        def _block(reason: str, failing_gate: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+            _log(
+                workdir,
+                f"prepush_test_gate BLOCK gate={failing_gate} "
+                f"targets={','.join(targets)} reason={reason}",
+            )
+            return {
+                "action": "block",
+                "exit_code": 1,
+                "reason": reason,
+                "failing_gate": failing_gate,
+                "mode": mode,
+                "protected_targets": targets,
+                "gate_results": results,
+                "warnings": warnings,
+            }
+
+        # --- known-red baseline: required only by gates that opt in -----------
+        # Callers supplying their own specs (the `gates=` test seam, bespoke
+        # embedders) keep pre-existing behavior; the real pytest gates set
+        # classify=True and therefore hard-require a readable, unexpired baseline.
+        entries: list[dict[str, Any]] = []
+        classify_on = any(s.get("classify") for s in specs)
+        if classify_on:
+            bl = baseline if baseline is not None else load_baseline(workdir)
+            if not bl.get("ok"):
+                return _block(
+                    f"known-red baseline unusable — fail-safe block: {bl.get('error')}",
+                    "known-red-baseline",
+                    [{
+                        "name": "known-red-baseline",
+                        "status": "fail",
+                        "exit_code": None,
+                        "detail": (
+                            f"{bl.get('error')}\n"
+                            f"expected at: {bl.get('path') or (workdir / BASELINE_RELPATH)}\n"
+                            "A suppression list that cannot be read is not a suppression\n"
+                            "list — this blocks rather than silently allowing everything.\n"
+                            "Every entry needs: "
+                            + ", ".join(_BASELINE_REQUIRED_FIELDS)
+                        ),
+                    }],
+                )
+            entries = bl["entries"]
+            now = today or _today(workdir)
+            expired = expired_entries(entries, now)
+            if expired:
+                lines = [
+                    f"{e['test']}  owner={e['owner']}  expired={e['expires']} "
+                    f"({(now - e['expires_date']).days}d ago)"
+                    for e in expired
+                ]
+                return _block(
+                    f"{len(expired)} known-red baseline entry(ies) past expiry",
+                    "known-red-baseline-expired",
+                    [{
+                        "name": "known-red-baseline-expired",
+                        "status": "fail",
+                        "exit_code": None,
+                        "detail": (
+                            "\n".join(lines)
+                            + f"\n\nEdit {BASELINE_RELPATH}: fix the test and DELETE the entry,\n"
+                            "or re-date it with a fresh reason and owner. An expiry that can\n"
+                            "be ignored is not an expiry, so this blocks on a green tree too."
+                        ),
+                    }],
+                )
+        else:
+            now = today or _today(workdir)
+
         results: list[dict[str, Any]] = []
+        classified_targets: list[str] = []
+        all_failed: list[str] = []
+
         for spec in specs:
             res = _run_gate(
                 spec["name"],
@@ -516,31 +847,80 @@ def evaluate(
                 timeout=spec.get("timeout", 600),
                 skip_if_shallow=spec.get("skip_if_shallow", False),
             )
+            raw = res.pop("_raw", "")
             results.append(res)
-            if res["status"] == "fail":
-                _log(
-                    workdir,
-                    f"prepush_test_gate BLOCK gate={res['name']} "
-                    f"exit={res['exit_code']} targets={','.join(targets)}",
+
+            if spec.get("classify") and res["status"] != "skip":
+                classified_targets.extend(spec.get("targets", ()))
+
+            if res["status"] != "fail":
+                continue
+
+            # --- route the failure through the baseline (opt-in gates only) ---
+            if spec.get("classify") and res["exit_code"] == 1:
+                cls = classify_failures(raw, entries, now)
+                all_failed.extend(cls["failed"])
+                if not cls["failed"]:
+                    # rc=1 means pytest reported failures; if none parsed we cannot
+                    # prove they are baselined -> block (fail-safe, not fail-open).
+                    return _block(
+                        f"deterministic gate failed: {res['name']} — failures could not "
+                        "be classified against the known-red baseline",
+                        res["name"], results,
+                    )
+                if not cls["newly_red"]:
+                    res["status"] = "warn"
+                    for hit in cls["baseline_red"]:
+                        e = hit["entry"]
+                        warnings.append(
+                            f"KNOWN-RED (suppressed): {hit['node']} — owner={e['owner']} "
+                            f"expires={e['expires']} ({hit['days_left']}d left) — {e['reason']}"
+                        )
+                    res["detail"] = (
+                        f"{len(cls['baseline_red'])} failure(s), all covered by "
+                        f"{BASELINE_RELPATH} and not yet expired:\n"
+                        + "\n".join(f"  {h['node']} (owner={h['entry']['owner']}, "
+                                    f"{h['days_left']}d left)" for h in cls["baseline_red"])
+                    )
+                    _log(
+                        workdir,
+                        f"prepush_test_gate WARN gate={res['name']} "
+                        f"known_red={len(cls['baseline_red'])} targets={','.join(targets)}",
+                    )
+                    continue
+                res["detail"] = (
+                    f"{len(cls['newly_red'])} NEWLY-RED test(s) — not in "
+                    f"{BASELINE_RELPATH}:\n"
+                    + "\n".join(f"  {n}" for n in cls["newly_red"])
+                    + f"\n\n(+{len(cls['baseline_red'])} known-red, already suppressed)\n"
+                    + "\n".join(res["detail"].splitlines()[-6:])
                 )
-                return {
-                    "action": "block",
-                    "exit_code": 1,
-                    "reason": f"deterministic gate failed: {res['name']}",
-                    "failing_gate": res["name"],
-                    "mode": mode,
-                    "protected_targets": targets,
-                    "gate_results": results,
-                }
+                return _block(
+                    f"deterministic gate failed: {res['name']} — "
+                    f"{len(cls['newly_red'])} newly-red test(s) not in the known-red baseline",
+                    res["name"], results,
+                )
+
+            return _block(f"deterministic gate failed: {res['name']}", res["name"], results)
+
+        # --- stale suppressions: listed, ran, and now green --------------------
+        if classify_on and classified_targets:
+            for e in stale_entries(entries, all_failed, classified_targets):
+                warnings.append(
+                    f"STALE SUPPRESSION: {e['test']} now PASSES — delete this entry from "
+                    f"{BASELINE_RELPATH} (owner={e['owner']}, expires={e['expires']})"
+                )
 
         return {
             "action": "allow",
             "exit_code": 0,
-            "reason": f"all {mode} gates passed or skipped (fail-open)",
+            "reason": f"all {mode} gates passed or skipped (fail-open)"
+                      + (f"; {len(warnings)} known-red warning(s)" if warnings else ""),
             "failing_gate": None,
             "mode": mode,
             "protected_targets": targets,
             "gate_results": results,
+            "warnings": warnings,
         }
     except Exception as exc:  # noqa: BLE001 — NEVER raise; fail-open on internal error
         return {
@@ -551,6 +931,7 @@ def evaluate(
             "mode": "fast",
             "protected_targets": [],
             "gate_results": [],
+            "warnings": warnings,
         }
 
 
@@ -565,11 +946,30 @@ def format_block_message(verdict: dict[str, Any]) -> str:
             break
     detail_block = ""
     if detail:
-        indented = "\n".join("    " + ln for ln in detail.splitlines()[-12:])
+        indented = "\n".join("    " + ln for ln in detail.splitlines()[-16:])
         detail_block = (
             "  failing output (tail):\n"
             + indented
             + "\n  ---------------------------------------------------------------\n"
+        )
+    if str(gate).startswith("known-red-baseline"):
+        return (
+            "\n"
+            "===============================================================\n"
+            "  BUILD-LOOP PRE-PUSH TEST GATE — push BLOCKED (known-red baseline)\n"
+            "===============================================================\n"
+            f"  protected target(s): {targets}\n"
+            f"  failing gate       : {gate}\n"
+            "  ---------------------------------------------------------------\n"
+            + detail_block
+            + f"  Baseline file: {BASELINE_RELPATH}\n"
+            "  Every entry requires: " + ", ".join(_BASELINE_REQUIRED_FIELDS) + "\n"
+            "  'Pre-existing' is a bounded, owned, expiring state here — not a\n"
+            "  permanent free pass. Fix the entry; do not bypass the gate.\n"
+            "\n"
+            "  EMERGENCY override (logged to .build-loop/audit-log.md):\n"
+            f"    {SKIP_ENV}=1 git push <remote> <branch>\n"
+            "===============================================================\n"
         )
     return (
         "\n"
@@ -638,6 +1038,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"action={verdict['action']} mode={verdict['mode']} reason={verdict['reason']}")
         for r in verdict.get("gate_results", []):
             print(f"  [{r['status']:4s}] {r['name']}")
+        for w in verdict.get("warnings", []):
+            print(f"  ! {w}")
         if verdict["action"] == "block":
             sys.stderr.write(format_block_message(verdict))
 

@@ -21,14 +21,20 @@ Coverage map (one assertion class per critic finding):
     circuits it; the test gate blocks at stage 2; both-pass arms closeout.
   - override: BL_SKIP_PREPUSH_TESTS=1 bypasses and logs.
   - scope: a non-protected branch push skips the gate entirely.
+  - KNOWN-RED BASELINE (2026-07-30): newly-red blocks; baseline-red warns with owner
+    + days left; an expired entry blocks even on a green tree; a now-passing entry is
+    reported stale; and — the property that decides whether any of this is worth
+    anything — a missing/malformed/unparseable baseline BLOCKS, never passes.
 """
 from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import sys
 import textwrap
 import types
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -315,3 +321,285 @@ def test_hook_both_pass_allows(tmp_path, monkeypatch):
     assert rc == 0
     assert calls["push_hold"] and calls["test_gate"]
     assert armed["v"] is True           # closeout armed only on final allow
+
+
+# ===========================================================================
+# KNOWN-RED BASELINE — "pre-existing" as a bounded, accountable state
+# ===========================================================================
+#
+# ROOT CAUSE this closes (2026-07-26): scripts/test_agent_surface_policy.py went
+# red, the gate fired correctly, and the commit shipped anyway under "pre-existing
+# failures untouched". "Pre-existing" was unbounded, unowned, and unrecorded — so
+# EVERY check in this repo was bypassable by the same sentence.
+#
+# The behavior change that matters: a failing test NOT in the recorded baseline
+# BLOCKS. Everything else here is the accountability scaffolding around that.
+
+TODAY = date(2026, 7, 30)
+
+
+def _write_baseline(workdir: Path, entries, *, raw: str | None = None) -> Path:
+    """Write a baseline at the REAL relpath so the REAL loader is exercised."""
+    path = workdir / gate.BASELINE_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(raw if raw is not None else json.dumps({"version": 1, "entries": entries}))
+    return path
+
+
+def _entry(test, *, owner="tyroneross", reason="pre-existing", expires="2026-08-13"):
+    return {"test": test, "reason": reason, "owner": owner, "expires": expires}
+
+
+def _classify_gate(workdir: Path, relname: str, body: str):
+    """A classify-enabled gate running REAL pytest on a file inside workdir.
+
+    pytest's cwd is workdir, so node ids come back repo-relative (``t.py::test_x``)
+    exactly as they do for the real named-pytest-gates spec.
+    """
+    (workdir / relname).write_text(body)
+    return {
+        "name": "tmp-pytest",
+        "argv": [sys.executable, "-m", "pytest", relname,
+                 "-p", "no:cacheprovider", "-q", "--no-header", "-rfE"],
+        "requires": ["pytest"],
+        "open_codes": (3, 4, 5),
+        "timeout": 60,
+        "classify": True,
+        "targets": [relname],
+    }
+
+
+RED_BODY = "def test_alpha():\n    assert False\n"
+GREEN_BODY = "def test_alpha():\n    assert True\n"
+
+
+# --- 1. newly-red BLOCKS (the behavior change) -----------------------------
+
+def test_newly_red_test_blocks(tmp_path):
+    """A failing test that is NOT in the baseline blocks the push. This is the
+    exact case that shipped on 2026-07-26 and must not ship again."""
+    _write_baseline(tmp_path, [_entry("some/other_test.py::test_unrelated")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", RED_BODY)])
+    assert v["action"] == "block"
+    assert v["exit_code"] == 1
+    assert "newly-red" in v["reason"]
+    assert "t.py::test_alpha" in v["gate_results"][0]["detail"]
+
+
+def test_mixed_newly_and_baseline_red_still_blocks(tmp_path):
+    """One suppressed failure does not launder an unsuppressed one."""
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha")])
+    body = "def test_alpha():\n    assert False\n\ndef test_beta():\n    assert False\n"
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", body)])
+    assert v["action"] == "block"
+    assert "t.py::test_beta" in v["gate_results"][0]["detail"]
+
+
+# --- 2. baseline-red WARNS, naming owner + days remaining ------------------
+
+def test_baseline_red_warns_with_owner_and_days_remaining(tmp_path):
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha", owner="ada", expires="2026-08-13")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", RED_BODY)])
+    assert v["action"] == "allow"
+    assert v["gate_results"][0]["status"] == "warn"
+    warn = "\n".join(v["warnings"])
+    assert "t.py::test_alpha" in warn
+    assert "owner=ada" in warn
+    assert "14d left" in warn          # 2026-07-30 -> 2026-08-13
+
+
+def test_file_scoped_entry_suppresses_that_file_only(tmp_path):
+    """A bare file path is a legitimate coarse suppression (unstable node ids), but
+    it must not leak into a different file."""
+    _write_baseline(tmp_path, [_entry("t.py")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", RED_BODY)])
+    assert v["action"] == "allow" and v["gate_results"][0]["status"] == "warn"
+
+    v2 = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                       gates=[_classify_gate(tmp_path, "u.py", RED_BODY)])
+    assert v2["action"] == "block"
+
+
+# --- 3. expired entry BLOCKS (an expiry you can ignore is not an expiry) ---
+
+def test_expired_baseline_entry_blocks_even_on_a_green_tree(tmp_path):
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha", expires="2026-07-29")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "block"
+    assert v["failing_gate"] == "known-red-baseline-expired"
+    assert "t.py::test_alpha" in v["gate_results"][0]["detail"]
+
+
+def test_entry_expiring_today_is_not_yet_expired(tmp_path):
+    """Boundary: expiry is inclusive of its own date."""
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha", expires="2026-07-30")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", RED_BODY)])
+    assert v["action"] == "allow"
+    assert "0d left" in "\n".join(v["warnings"])
+
+
+# --- 4. now-passing entry is REPORTED (stale suppression is its own rot) ---
+
+def test_baseline_entry_whose_test_now_passes_is_reported_stale(tmp_path):
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha", owner="ada")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "allow"
+    warn = "\n".join(v["warnings"])
+    assert "STALE SUPPRESSION" in warn and "t.py::test_alpha" in warn and "owner=ada" in warn
+
+
+def test_entry_for_a_test_that_did_not_run_is_not_called_stale(tmp_path):
+    """A test that was never executed is not evidence of anything — no false 'stale'."""
+    _write_baseline(tmp_path, [_entry("elsewhere/t.py::test_alpha")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "allow"
+    assert v["warnings"] == []
+
+
+# --- 5. FAIL-SAFE: an unusable baseline BLOCKS -----------------------------
+# This is the property that decides whether the whole mechanism is worth
+# anything. If an unreadable suppression list degraded to "empty" the gate would
+# still work; if it degraded to "allow everything" the mechanism would be theatre.
+
+def test_missing_baseline_blocks(tmp_path):
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "block"
+    assert v["exit_code"] == 1
+    assert v["failing_gate"] == "known-red-baseline"
+    assert "missing" in v["reason"]
+
+
+@pytest.mark.parametrize("raw,needle", [
+    ("{ not json at all", "not valid JSON"),
+    ("[]", "must be a JSON object"),
+    ('{"version": 1}', "missing an 'entries' list"),
+    ('{"entries": {"a": 1}}', "missing an 'entries' list"),
+    ('{"entries": ["a string"]}', "is not an object"),
+    ('{"entries": [{"test": "t.py::x", "reason": "r", "owner": "o"}]}', "'expires'"),
+    ('{"entries": [{"test": "t.py::x", "reason": "r", "expires": "2026-08-13"}]}', "'owner'"),
+    ('{"entries": [{"test": "t.py::x", "owner": "o", "expires": "2026-08-13"}]}', "'reason'"),
+    ('{"entries": [{"reason": "r", "owner": "o", "expires": "2026-08-13"}]}', "'test'"),
+    ('{"entries": [{"test": "t.py::x", "reason": "r", "owner": "", "expires": "2026-08-13"}]}', "'owner'"),
+    ('{"entries": [{"test": "t.py::x", "reason": "r", "owner": "o", "expires": "soon"}]}', "unparseable 'expires'"),
+    ('{"entries": [{"test": "t.py::x", "reason": "r", "owner": "o", "expires": "2026-13-40"}]}', "unparseable 'expires'"),
+], ids=["not-json", "root-is-list", "no-entries-key", "entries-not-list",
+        "entry-not-object", "no-expires", "no-owner", "no-reason", "no-test",
+        "empty-owner", "expires-not-a-date", "expires-impossible-date"])
+def test_malformed_baseline_blocks(tmp_path, raw, needle):
+    _write_baseline(tmp_path, None, raw=raw)
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "block", v
+    assert v["failing_gate"] == "known-red-baseline"
+    assert needle in v["reason"], v["reason"]
+
+
+def test_duplicate_baseline_entries_block(tmp_path):
+    """A duplicate hides whichever entry lost — reject rather than silently pick one."""
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha"),
+                               _entry("t.py::test_alpha", owner="someone-else")])
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "block"
+    assert "duplicates" in v["reason"]
+
+
+def test_unparseable_pytest_failure_blocks(tmp_path):
+    """rc=1 with no parseable FAILED line means we cannot PROVE the failures are
+    baselined — so it blocks. The fail-safe is about proof, not about output shape."""
+    _write_baseline(tmp_path, [_entry("t.py::test_alpha")])
+    spec = {"name": "tmp-pytest", "requires": [], "open_codes": (3, 4, 5), "timeout": 30,
+            "classify": True, "targets": ["t.py"],
+            "argv": [sys.executable, "-c", "import sys; print('mystery'); sys.exit(1)"]}
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY, gates=[spec])
+    assert v["action"] == "block"
+    assert "could not be classified" in v["reason"]
+
+
+def test_baseline_file_unreadable_blocks(tmp_path):
+    """A directory where the file should be: unreadable, therefore blocking."""
+    (tmp_path / gate.BASELINE_RELPATH).mkdir(parents=True)
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      gates=[_classify_gate(tmp_path, "t.py", GREEN_BODY)])
+    assert v["action"] == "block"
+    assert v["failing_gate"] == "known-red-baseline"
+
+
+# --- 6. blast radius: the layer only attaches to gates that opt in ---------
+
+def test_baseline_is_not_required_when_no_gate_classifies(tmp_path):
+    """Every pre-existing caller (and every test above this section) passes specs
+    with no `classify` key and must keep its old behavior — no baseline needed."""
+    assert not (tmp_path / gate.BASELINE_RELPATH).exists()
+    green = tmp_path / "test_green.py"
+    green.write_text(GREEN_BODY)
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], gates=[_pytest_gate_on(green)])
+    assert v["action"] == "allow"
+
+    v2 = gate.evaluate(tmp_path, [MAIN_PUSH_LINE],
+                       gates=[_py_gate("g", "import sys; sys.exit(1)")])
+    assert v2["action"] == "block"
+    assert v2["failing_gate"] == "g"          # not the baseline
+
+
+def test_bypass_env_still_wins_over_an_unusable_baseline(tmp_path):
+    """The documented emergency override stays reachable and stays logged; the
+    baseline layer must not create a state with no escape hatch."""
+    v = gate.evaluate(tmp_path, [MAIN_PUSH_LINE], today=TODAY,
+                      env={"BL_SKIP_PREPUSH_TESTS": "1"},
+                      gates=[_classify_gate(tmp_path, "t.py", RED_BODY)])
+    assert v["action"] == "bypass"
+    assert "BYPASS" in (tmp_path / ".build-loop" / "audit-log.md").read_text()
+
+
+# --- 7. wiring + the shipped baseline itself -------------------------------
+
+def test_real_pytest_gates_opt_into_classification():
+    """Structural: if someone drops `classify` from the real pytest gates, the
+    known-red layer silently disarms. Caught here."""
+    interp = gate._resolve_interpreter(REPO)
+    for full in (False, True):
+        specs = gate._build_gates(REPO, interp, full=full)
+        classified = [s for s in specs if s.get("classify")]
+        assert classified, f"no classify-enabled gate in {'full' if full else 'fast'} mode"
+        for s in classified:
+            assert s.get("targets"), f"{s['name']} classifies but declares no targets"
+
+
+def test_shipped_baseline_is_valid_and_every_entry_is_bounded():
+    """The repo's own baseline must load, and no entry may be open-ended."""
+    bl = gate.load_baseline(REPO)
+    assert bl["ok"], bl["error"]
+    assert bl["entries"], "baseline is empty — seed it or delete the mechanism"
+    for e in bl["entries"]:
+        for field in gate._BASELINE_REQUIRED_FIELDS:
+            assert e[field].strip(), f"{e['test']} has an empty {field}"
+        assert e["expires_date"] is not None
+
+
+def test_parse_failed_ids_reads_pytest_short_summary():
+    out = textwrap.dedent("""\
+        =========================== short test summary info ============================
+        FAILED scripts/test_a.py::TestX::test_one - AssertionError: 2 != 1
+        FAILED scripts/test_a.py::test_two
+        ERROR scripts/test_b.py
+        FAILED scripts/test_c.py::test_p[a - b] - ValueError
+        2 failed, 33 passed in 0.80s
+    """)
+    assert gate.parse_failed_ids(out) == [
+        "scripts/test_a.py::TestX::test_one",
+        "scripts/test_a.py::test_two",
+        "scripts/test_b.py",
+        "scripts/test_c.py::test_p[a - b]",
+    ]
+    assert gate.parse_failed_ids("") == []
+    assert gate.parse_failed_ids("everything passed") == []

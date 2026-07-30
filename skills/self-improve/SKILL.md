@@ -72,7 +72,7 @@ Output:
   - returns concise 3-4 line synthesis
 ```
 
-The architect agent includes an A/B Experiment section in every artifact it writes.
+The architect agent includes an A/B Experiment section in every artifact it writes, and runs `python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply <written-path>` immediately after the write. A drafted skill is `user-invocable: false`; the harness computes `userInvocable ?? true`, so an unstamped draft would be publicly invocable the moment it lands somewhere loadable. If the architect returns without a `compliant`/`stamped` stamper status, re-run the command yourself before step 4.
 
 ### 4. Opus 4.7 signoff
 
@@ -210,13 +210,42 @@ To opt in, create `.build-loop/config.json` with:
 
 Even with the flag on, auto-promotion requires **`sample_size_target >= 8`** and passing the promotion rules below. Below the floor, Phase 6 Learn always writes a proposal to `.build-loop/proposals/<name>.md` and blocks promotion until the user reviews. The architect agent initializes new experiments with `sample_size_target: 8` by default; only raise it when noise demands more power.
 
+### Promotion exposure statement (required in every promotion confirmation)
+
+Promotion is the moment an experimental artifact stops being a scratch file: it becomes tracked in git AND loadable. Neither effect shows up in the artifact's own diff, so the confirmation has to say them out loud.
+
+**Run the stamper on the DESTINATION path before asking the user** — every promotion target, no exceptions:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply <destination>/SKILL.md
+```
+
+Destinations that require it: `.build-loop/skills/active/<name>/`, `~/.claude/skills/<name>/`, and `<plugin-repo>/skills/<name>/`. A non-zero exit blocks the promotion — never ask the user to confirm a move whose resulting surface is unknown.
+
+**Then include this block verbatim in the `AskUserQuestion` body, the PushNotification body, and the `.build-loop/proposals/<name>.pending.md` marker:**
+
+```
+Exposure after promotion
+  Destination:      <destination path>
+  user-invocable:   <false | true>
+  Directly invocable by you:
+      <no — reached only through build-loop routing>
+      <YES, as /<namespace>:<name> — because <the file's public-justification: line>>
+  Loaded in:        <this project only | every session, every project>
+  Git:              promotion moves the artifact out of the gitignored
+                    `.build-loop/skills/experimental/**` tier, so it appears in
+                    `git status` for the first time and becomes committable.
+```
+
+`user-invocable: true` is only answerable when the file carries a `public-justification:` field — without one the stamper has already refused the promotion, so the question never reaches the user.
+
 ### Promotion rules
 
 When `autoPromote` is true AND `sample_size_target >= 8` AND the experiment's applied entries are all `confounded: false` (see §Confound tracking below):
 
 | Delta vs baseline | Action | Location |
 |---|---|---|
-| Metric improves ≥ target (non-confounded) | **Auto-promote**: `git mv .build-loop/skills/experimental/<name> .build-loop/skills/active/<name>`, update SKILL.md frontmatter `experimental: false` + `promoted_at: <ISO>`, append `{event: "promoted", ...}` to the experiment's jsonl | `.build-loop/skills/active/<name>/` |
+| Metric improves ≥ target (non-confounded) | **Auto-promote**: `git mv .build-loop/skills/experimental/<name> .build-loop/skills/active/<name>`, update SKILL.md frontmatter `experimental: false` + `promoted_at: <ISO>`, run `python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/stamp_skill_frontmatter.py" --apply .build-loop/skills/active/<name>/SKILL.md` (non-zero exit aborts the promotion and leaves the artifact in `experimental/`), emit the §Promotion exposure statement block for the user confirmation, then append `{event: "promoted", ...}` to the experiment's jsonl. The `git mv` is what makes the artifact tracked — `experimental/**` is gitignored, `active/**` is not. | `.build-loop/skills/active/<name>/` |
 | Metric improves < target (partial win) | **Extend sample** to 2N; re-evaluate after additional runs | unchanged |
 | Metric flat (±10% of baseline) | **Extend sample** to 2N; re-evaluate | unchanged |
 | Metric regresses | **Write proposal** to `.build-loop/proposals/<name>-remove.md` with evidence. Removal requires user confirmation via `AskUserQuestion` in the next Phase 6 Learn run (not immediate `rm -rf`). Avoids single-build regressions deleting useful skills. | experimental (intact) |
@@ -265,7 +294,7 @@ Auto-promote stays inside the project. Moving an experimental or active artifact
 /build-loop:promote-experiment <name>
 ```
 
-The command reads the experiment's track record across this and other projects (if global `~/.build-loop/experiments/` index exists), checks the artifact quality, asks the user for confirmation, and commits to the plugin repo on a feature branch for user review. See `commands/promote-experiment.md` for the full protocol.
+The command reads the experiment's track record across this and other projects (if global `~/.build-loop/experiments/` index exists), checks the artifact quality, stamps the destination SKILL.md, asks the user for confirmation carrying the §Promotion exposure statement block, and commits to the plugin repo on a feature branch for user review. Full protocol: `.agents/skills/source-command-promote-experiment/SKILL.md`.
 
 ## Removal
 

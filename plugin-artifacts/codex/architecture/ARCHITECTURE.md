@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 50 skills · 373 scripts · 21 hooks** (auto-discovered 0fa9372b)
+**29 agents · 50 skills · 377 scripts · 21 hooks** (auto-discovered 02858968)
 
 <details><summary>agents</summary>
 
@@ -210,6 +210,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/enforce_canonical_memory.py`
 - `scripts/enforce_retro_signals.py`
 - `scripts/exec_state.py`
+- `scripts/experimental_ignore.py`
 - `scripts/extensions_approve.py`
 - `scripts/extensions_check.py`
 - `scripts/extensions_init.py`
@@ -413,13 +414,16 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/semantic_index/_bench_hybrid.py`
 - `scripts/semantic_index/backfill.py`
 - `scripts/semantic_index/hybrid.py`
+- `scripts/skill_index.py`
 - `scripts/slice_acp.py`
 - `scripts/stale_context_check.py`
+- `scripts/stamp_skill_frontmatter.py`
 - `scripts/state_finalize.py`
 - `scripts/status_refresh.py`
 - `scripts/stop_closeout.py`
 - `scripts/supersede_decision.py`
 - `scripts/surface_pending_lessons.py`
+- `scripts/surface_policy.py`
 - `scripts/sync_agent_model_defaults.py`
 - `scripts/sync_db_from_files.py`
 - `scripts/sync_navgator_lessons.py`

@@ -1,5 +1,5 @@
 ---
-description: Keep Build Loop routing focused on public entrypoints and treat helper skills as internal implementation details.
+description: Build Loop exposes one human-facing entry; every skill under skills/ is internal implementation.
 globs:
   - "**/*"
 alwaysApply: true
@@ -7,16 +7,17 @@ alwaysApply: true
 
 # Build Loop Surface
 
-Use these public Build Loop entrypoints first:
+Build Loop has exactly one human-facing entry: `/build-loop:run`. Describe the
+work in plain language — build, fix, debug, optimize, research, test, plan — and
+the orchestrator routes it internally. There are no mode flags and no second
+command to choose between.
 
-- `build-loop` for multi-step code work
-- `debug-loop` for root-cause debugging
-- `optimize` for measurable optimization
-- `research` for pre-build investigation
-- `knowledge` for durable decisions and lessons
+Every skill under `skills/` sets `user-invocable: false`. A skill becomes public
+only by declaring `public-justification:` in its own frontmatter; today none do.
 
-Treat `skills/` as Build Loop's internal implementation tree. Do not load
-helper skills directly unless a public entrypoint, command file, or orchestrator
-instruction explicitly references that helper.
+Treat `skills/` as Build Loop's internal implementation tree. Do not load a
+helper skill directly unless `/build-loop:run`, a command file, or an
+orchestrator instruction explicitly references that helper.
 
-For the full policy, read `docs/agent-surface-policy.md`.
+For the full policy, read `docs/agent-surface-policy.md`. It and this file are
+enforced against the code by `scripts/test_agent_surface_policy.py`.

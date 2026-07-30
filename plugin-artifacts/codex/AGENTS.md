@@ -47,6 +47,19 @@ rally stop codex --json
 
 **Codex heartbeat parity:** codex sessions emit presence via `session_probe.py --tool codex` (wired in `.codex/hooks.json` `SessionStart`), so their presence/claims/lead decay identically to claude sessions — parity proven by `scripts/rally_point/heartbeat_parity_vectors.json`.
 
+## Skill index — how to find the right skill
+
+`docs/SKILL-INDEX.md` is the routing table for every skill in this repo: one row per skill giving its id, when to use it, how an agent reaches it, and whether it is user-facing. Read that file when you need to decide which skill owns a request. It is plain markdown with no host-specific syntax, so Codex, Claude Code, Cursor, and any other agent get the same answer from the same file.
+
+The index is **generated** from `skills/**/SKILL.md` frontmatter, never hand-maintained — a hand-kept list would be a second source of truth and would drift from the skills it describes. Authoring a skill is therefore enough to get it indexed; regenerate and the row appears.
+
+```bash
+python3 scripts/skill_index.py --workdir . --apply   # regenerate after adding or editing a skill
+python3 scripts/skill_index.py --workdir . --check   # exit 1 when the index is stale
+```
+
+`--check` is the drift guard: run it before declaring any skill work done, and treat a non-zero exit as "run `--apply`", not as a reason to edit the index. To change a row, edit that skill's `SKILL.md` description. The script scans any plugin root via `--workdir`, so sibling plugins reuse it with no new code.
+
 ## Output style
 
 Concise output — say only what the user needs to decide or act; cut narration, restated context, filler; no jargon.

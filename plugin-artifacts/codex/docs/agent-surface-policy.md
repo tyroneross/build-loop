@@ -16,6 +16,19 @@ repository-maintenance, and closeout intent internally.
 Claude Code exposes one human-facing command: `/build-loop:run`. Every source
 skill remains internal through `user-invocable: false`.
 
+## How A Skill Becomes Public
+
+A skill under `skills/` is public only if its own frontmatter both flips
+`user-invocable` to true AND carries a non-empty `public-justification:` line.
+The declaration and the exposing field are the same artifact, so there is no
+separate allowlist to fall out of sync with the skills themselves. Today no
+source skill claims a justification, so the public Claude surface is empty.
+
+`scripts/test_agent_surface_policy.py` enforces that rule over every
+`skills/**/SKILL.md` and asserts this file never claims otherwise. A hardcoded
+list of public entrypoints previously lived in that test; it drifted from the
+shipped policy and is not coming back.
+
 ## Host Rules
 
 Codex and ChatGPT install from `plugin-artifacts/codex`. The artifact is

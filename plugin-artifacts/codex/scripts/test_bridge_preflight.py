@@ -34,12 +34,19 @@ hint pointing at the missing skill body.
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 SKILLS_DIR = REPO_ROOT / "skills"
+
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+# Single source of truth for "is this skill allowed to be public?" — see
+# UserInvocableFlagTests below.
+from test_agent_surface_policy import surface_violation  # noqa: E402
 
 PREFLIGHT_PATTERNS = (
     # State-object lookups (plugin-availability)
@@ -143,47 +150,40 @@ class BridgePreflightTests(unittest.TestCase):
 
 
 class UserInvocableFlagTests(unittest.TestCase):
-    """Bridges should be `user-invocable: false` — they're called by other
-    skills or the orchestrator, not directly by the user. A bridge that's
-    user-invocable will surface in the skills index and confuse routing.
+    """Bridges are `user-invocable: false` — they're called by other skills or
+    the orchestrator, not directly by the user. A user-invocable bridge surfaces
+    in the skills index and confuses routing.
 
-    EXCEPTION list below covers bridges that intentionally expose a
-    user-facing invocation (rare; document the reason in the SKILL.md)."""
-
-    # Bridges that are legitimately user-invocable. Document the reason
-    # in the SKILL.md frontmatter / body, not just here.
-    USER_INVOCABLE_EXCEPTIONS = {
-        "defenseclaw-bridge",  # ad-hoc spec generation per its own description
-    }
+    This is the SAME invariant `test_agent_surface_policy.py` applies to every
+    skill, so it delegates to that module's `surface_violation` rather than
+    restating the rule. The old local `USER_INVOCABLE_EXCEPTIONS` allowlist was
+    deleted for exactly the reason the hardcoded `CLAUDE_PUBLIC_ENTRYPOINTS` set
+    was: a second copy of the policy drifts. Its one entry
+    (`defenseclaw-bridge`) had already gone stale — that skill has shipped
+    `user-invocable: false` for some time, so the exemption exempted nothing.
+    A bridge that genuinely needs exposure declares `public-justification:` in
+    its own frontmatter; no list here needs editing.
+    """
 
     def test_bridges_are_not_user_invocable(self) -> None:
         if not SKILLS_DIR.is_dir():
             self.skipTest(f"{SKILLS_DIR} not present")
         bridges = [d for d in sorted(SKILLS_DIR.iterdir()) if d.is_dir() and is_bridge_skill(d)]
+        self.assertNotEqual(bridges, [], "no bridge skills found — the scan is vacuous")
         violations: list[str] = []
         for bridge_dir in bridges:
-            if bridge_dir.name in self.USER_INVOCABLE_EXCEPTIONS:
-                continue
             skill_md = bridge_dir / "SKILL.md"
             if not skill_md.is_file():
                 continue
-            text = skill_md.read_text(encoding="utf-8")
-            m = FRONTMATTER_RE.match(text)
+            m = FRONTMATTER_RE.match(skill_md.read_text(encoding="utf-8"))
             if not m:
                 continue
-            frontmatter = m.group(1)
-            # Look for `user-invocable: false` (or true)
-            ui_match = re.search(r"^user-invocable:\s*(\S+)\s*$", frontmatter, re.MULTILINE)
-            if ui_match is None:
-                # No flag = defaults to user-invocable (per Claude Code docs)
-                violations.append(f"{bridge_dir.name}: no `user-invocable: false` flag (defaults to true)")
-            elif ui_match.group(1).strip() != "false":
-                violations.append(
-                    f"{bridge_dir.name}: user-invocable={ui_match.group(1).strip()!r} (should be false)"
-                )
+            violation = surface_violation(bridge_dir.name, m.group(1))
+            if violation is not None:
+                violations.append(violation)
         self.assertEqual(
             violations, [],
-            "Bridges should set `user-invocable: false` so they're called by "
+            "Bridges must set `user-invocable: false` so they're called by "
             "skills/orchestrator, not surfaced to users:\n  " + "\n  ".join(violations),
         )
 

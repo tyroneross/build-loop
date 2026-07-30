@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "0fa9372b359474d9ab1dfbbeb8936ed726c94c01769518ca2511ffa02439f20e"
+    "content_sha256": "0285896813d8d3a9c12ff74f3004dca8877d590f19bdffdad06e7604ced4ea61"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1844,6 +1844,7 @@
       "scripts/enforce_canonical_memory.py": "enforce_canonical_memory.py — C-MEMORY/canonical_writer enforcement gate.",
       "scripts/enforce_retro_signals.py": "enforce_retro_signals.py — second signal source for recurring-pattern-detector.",
       "scripts/exec_state.py": "exec_state.py — producer CLI for execution-state item_iteration telemetry.",
+      "scripts/experimental_ignore.py": "experimental_ignore.py — make git state ENCODE the promotion decision.",
       "scripts/extensions_approve.py": "extensions_approve.py — list pending drafts; approve one (checks -> move into plugin/).\"\"\"",
       "scripts/extensions_check.py": "extensions_check.py — deterministic pre-approval checks for a learned skill.\"\"\"",
       "scripts/extensions_init.py": "extensions_init.py — scaffold ~/.build-loop-extensions (idempotent) + skills-dir registration.\"\"\"",
@@ -2047,13 +2048,16 @@
       "scripts/semantic_index/_bench_hybrid.py": "Quick latency bench for the SQLite hybrid recall path.",
       "scripts/semantic_index/backfill.py": "Backfill embeddings for semantic_facts rows where ``embedding_json IS NULL``.",
       "scripts/semantic_index/hybrid.py": "Hybrid keyword+embedding rerank for the SQLite semantic index.",
+      "scripts/skill_index.py": "",
       "scripts/slice_acp.py": "Slice the ACP to a file set for a single subagent dispatch.",
       "scripts/stale_context_check.py": "",
+      "scripts/stamp_skill_frontmatter.py": "",
       "scripts/state_finalize.py": "M4 — Best-effort Stop hook annotation for crash detection.",
       "scripts/status_refresh.py": "status_refresh.py — keep a project's canonical CURRENT.md status file honest.",
       "scripts/stop_closeout.py": "stop_closeout.py — structural run-close for INLINE build-loop runs (f6).",
       "scripts/supersede_decision.py": "Explicit supersession CLI for canonical build-loop memory.",
       "scripts/surface_pending_lessons.py": "Surface pending-lesson candidates for the HOST coding agent to refine.",
+      "scripts/surface_policy.py": "",
       "scripts/sync_agent_model_defaults.py": "Regenerate every agent's ``model:`` frontmatter from the model index.",
       "scripts/sync_db_from_files.py": "Rebuild Postgres state from canonical build-loop-memory markdown files.",
       "scripts/sync_navgator_lessons.py": "One-way NavGator lessons -> local SQLite semantic-facts sync.",
