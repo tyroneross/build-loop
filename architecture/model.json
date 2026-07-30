@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "619adbf39bd9ad2e6bde27b8908b2de030f80bb7f39bd9f4aeb4a29abaa1c6a4"
+    "content_sha256": "553ce5e9b5de8f07084d4f1d666adb869b2a7a648e9aa6b44ba6ec6ea7c0f451"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -851,7 +851,7 @@
         "file": "agents/advisor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-28"
         }
       },
       "alignment-checker": {
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-21"
+          "date": "2026-07-28"
         }
       },
       "database-assessor": {
@@ -905,7 +905,7 @@
         "file": "agents/database-assessor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-22"
+          "date": "2026-07-28"
         }
       },
       "design-contract-specialist": {
@@ -959,7 +959,7 @@
         "file": "agents/independent-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-07"
+          "date": "2026-07-28"
         }
       },
       "leak-scanner": {
@@ -1013,7 +1013,7 @@
         "file": "agents/plan-critic.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-28"
         }
       },
       "promotion-reviewer": {
@@ -1067,7 +1067,7 @@
         "file": "agents/security-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-27"
+          "date": "2026-07-28"
         }
       },
       "self-improvement-architect": {

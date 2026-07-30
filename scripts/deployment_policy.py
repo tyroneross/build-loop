@@ -245,21 +245,66 @@ def classify_command(
     return "unknown", "command is not recognized as a supported deployment target"
 
 
+_QUOTED_REGION = re.compile(r"""'[^']*'|"[^"]*\"""", re.VERBOSE)
+
+
 def _split(command: str) -> list[str]:
+    """Argv tokens for the command. Quoted DATA never becomes tokens.
+
+    Why the fallback strips quotes (2026-07-29): `shlex.split` raises on an
+    unbalanced quote — which a prose argument containing an apostrophe reliably
+    produces. The old fallback was a bare `command.split()`, so every word of
+    that prose became a "token", and the substring classifiers below then read
+    argument data as command structure. A `rally say handoff --summary "...
+    preview ... deploy ..."` message classified as a preview deploy and was
+    hard-blocked, three times across two sessions, including a read-only
+    investigation *into this defect*.
+
+    Blast radius is why it matters: on any repo with one standing HIGH finding,
+    the pre-deploy gate turns that misclassification into a hard block, so any
+    command whose PROSE mentions deployment becomes unrunnable. That
+    specifically punishes coordination messages, incident write-ups, and
+    investigations about deploys.
+
+    On parse failure, drop quoted regions before splitting: a real deploy
+    carries its tool and verb as bare argv tokens, never inside quoted data,
+    so nothing genuine is lost.
+    """
     try:
         return shlex.split(command)
     except ValueError:
-        return command.split()
+        return _QUOTED_REGION.sub(" ", command).split()
+
+
+def _structural_tokens(lower_tokens: list[str]) -> list[str]:
+    """Tokens that can carry command MEANING, i.e. flags, paths, and bare words.
+
+    A token containing whitespace is a quoted argument — prose, a commit
+    message, a summary — and its contents describe something rather than doing
+    it. `shlex.split` preserves such an argument as ONE token, so a plain
+    substring scan over tokens still reads `git commit -m "explain the
+    testflight upload flow"` as a TestFlight upload. Flags (`--testflight-only`)
+    and paths (`/usr/bin/testflight`) never contain a space, so dropping
+    whitespace-bearing tokens costs no genuine command shape.
+    """
+    return [token for token in lower_tokens if not any(ch.isspace() for ch in token)]
 
 
 def _is_testflight_command(lower_text: str, lower_tokens: list[str]) -> bool:
-    if "testflight" in lower_text:
+    # Token-scoped, not text-scoped — same reason as _is_preview_command below.
+    # Substring-within-token is kept for genuine command shapes
+    # (`--testflight-only`, a path ending in /testflight); quoted prose is
+    # excluded by _structural_tokens.
+    structural = _structural_tokens(lower_tokens)
+    if any("testflight" in token for token in structural):
         return True
     if "xcrun" in lower_tokens and "altool" in lower_tokens and "--upload-app" in lower_tokens:
         return True
     if "xcodebuild" in lower_tokens and "-exportarchive" in lower_tokens:
         return True
-    if ("app-store-connect" in lower_text or "appstoreconnect" in lower_text) and "upload" in lower_text:
+    if any(
+        "app-store-connect" in token or "appstoreconnect" in token for token in structural
+    ) and any("upload" in token for token in structural):
         return True
     return False
 
@@ -453,7 +498,12 @@ def _is_preview_command(lower_text: str, lower_tokens: list[str]) -> bool:
         return "--prod" not in lower_tokens and not _has_option_value(lower_tokens, "--target", "production")
     if "netlify" in lower_tokens and "deploy" in lower_tokens:
         return "--prod" not in lower_tokens and not _has_option_value(lower_tokens, "--context", "production")
-    return "preview" in lower_text and "deploy" in lower_text
+    # Both words must be argv TOKENS, not substrings of the command text.
+    # `lower_text` includes quoted argument data, so a prose summary mentioning
+    # a preview deploy used to classify as one. Sibling of the `_is_testflight`
+    # fix above and of the earlier `git stash push` defect in this file: the
+    # recurring shape is argument data read as command structure.
+    return "preview" in lower_tokens and "deploy" in lower_tokens
 
 
 def _has_option_value(tokens: list[str], option: str, value: str) -> bool:

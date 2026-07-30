@@ -230,6 +230,53 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class QuotedProseIsNotACommandTests(unittest.TestCase):
+    """Argument DATA must never be read as command structure.
+
+    Regression, 2026-07-29: `_is_preview_command` ended in
+    `"preview" in lower_text and "deploy" in lower_text` — a substring test over
+    the whole command, quoted arguments included. Combined with `_split`'s bare
+    `command.split()` fallback on unbalanced quotes (an apostrophe in prose does
+    it), every word of a prose argument became a "token".
+
+    A `rally say handoff --summary "..."` coordination message therefore
+    classified as a preview deploy and was HARD-BLOCKED by the pre-deploy gate —
+    three times across two sessions, including a read-only investigation into
+    this very defect. Blast radius: on any repo carrying one standing HIGH
+    finding, any command whose PROSE mentions deployment becomes unrunnable,
+    which specifically punishes coordination messages and incident write-ups.
+
+    Third sibling of this shape, after `git stash push` (subcommand position vs
+    token presence) and the `.env.example` filename pattern.
+    """
+
+    PROSE = [
+        # The message that was actually blocked. The apostrophe breaks shlex.
+        '''rally say handoff --summary "owner's call: preview isn't production, deploy later"''',
+        'echo "writing up the preview deploy incident"',
+        'git commit -m "note: the preview deploy gate misfired"',
+        'git commit -m "docs: explain the testflight upload flow"',
+    ]
+
+    GENUINE = ["vercel deploy", "netlify deploy", "npx vercel deploy"]
+
+    def test_prose_about_deploying_is_not_a_deploy(self) -> None:
+        for cmd in self.PROSE:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(is_deploy_like(cmd))
+
+    def test_genuine_deploys_still_classify(self) -> None:
+        for cmd in self.GENUINE:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(is_deploy_like(cmd))
+
+    def test_negative_control(self) -> None:
+        # Guards against a vacuous suite: bare argv tokens must still trip the
+        # preview path, so the assertions above test SCOPING rather than a
+        # blanket "nothing is ever a preview deploy".
+        self.assertTrue(is_deploy_like("vercel deploy --target preview"))
+
+
 class DeployLikeRecognizerTests(unittest.TestCase):
     """is_deploy_like() gates the pre-deploy security scan.
 
