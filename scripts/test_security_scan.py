@@ -962,3 +962,40 @@ class TestApiCheckPrecision(_DiffScanBase):
         rc, data = self._scan(d)
         ids = {f["check_id"] for f in data["findings"]}
         self.assertNotIn("H", ids, "'required' in an error string is not an identity check")
+
+
+class TestSqlStatementDetectorPrecision(unittest.TestCase):
+    """The SQL-injection rule must distinguish a statement from English.
+
+    Observed: an error-message f-string containing the words "DELETE" and
+    "from" was reported as SQL injection and hard-blocked a push. The rule
+    allowed unlimited distance between the verb and a clause keyword, which is
+    exactly the shape of ordinary prose.
+    """
+
+    def _is_sql(self, line):
+        return bool(security_scan._SQL_STMT_RE.search(line))
+
+    def test_prose_containing_sql_words_is_not_sql(self):
+        for line in [
+            'msg = f"Fix the test and DELETE the entry from {PATH}, or "',
+            'msg = f"UPDATE the set of files in {d}"',
+            'note = f"CREATE a table of contents for {x}"',
+            'doc = f"SELECT is a keyword; INSERT is another"',
+        ]:
+            self.assertFalse(self._is_sql(line), f"prose flagged as SQL: {line}")
+
+    def test_real_statements_are_still_detected(self):
+        # The negative control. Tightening the rule must not blind it — each of
+        # these is a genuine injection sink if interpolated.
+        for line in [
+            'db.query(f"DELETE FROM users WHERE id={uid}")',
+            'db.query(f"SELECT a, b, c FROM t WHERE id={uid}")',
+            'db.query(f"INSERT INTO t VALUES ({v})")',
+            'db.query(f"UPDATE users SET name={n}")',
+            'db.query(f"UPDATE users SET name = {n}")',
+            'db.query(f"CREATE TABLE {t} (id int)")',
+            'db.query(f"DROP INDEX {i}")',
+            'db.query(f"MERGE INTO t USING {s}")',
+        ]:
+            self.assertTrue(self._is_sql(line), f"real SQL missed: {line}")

@@ -597,9 +597,32 @@ _SQL_TEMPLATE_RE = re.compile(
 # A real SQL statement: a verb PLUS a clause/structural token. Guards f-string /
 # .format() SQL checks so English prose ("Failed to update cache: {e}") that
 # merely contains a keyword is not flagged.
+# Does this line contain an actual SQL STATEMENT?
+#
+# The previous form allowed any distance between the verb and a clause keyword
+# ("VERB ... anything ... FROM"), which matches ordinary English. The observed
+# false positive was an error message:
+#
+#     + f"\n\nFix the test and DELETE the entry from {BASELINE_RELPATH}, or "
+#
+# "DELETE" + later "from" satisfied the rule, so a human-readable string was
+# reported as SQL injection — and it hard-blocked a push.
+#
+# Real SQL uses canonical adjacent pairs: DELETE FROM, INSERT INTO, CREATE
+# TABLE, DROP INDEX, MERGE INTO. Only SELECT genuinely puts arbitrary distance
+# between the verb and FROM (a long column list), so SELECT keeps the loose
+# form and every other verb requires its true neighbour. UPDATE allows one
+# table reference before SET, which is its real grammar.
 _SQL_STMT_RE = re.compile(
-    r"\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|MERGE)\b"
-    r"[^\n]*?\b(?:FROM|INTO|SET|WHERE|VALUES|TABLE|JOIN|COLUMN|INDEX|DATABASE|SCHEMA|CONFLICT)\b",
+    r"\bSELECT\b[^\n]*?\bFROM\b"
+    r"|\bDELETE\s+FROM\b"
+    r"|\bINSERT\s+(?:INTO|OR\s+\w+\s+INTO)\b"
+    # SET must be followed by an assignment. Without that, "UPDATE the set of
+    # files" parses as UPDATE <table:the> SET — prose again.
+    r"|\bUPDATE\s+[\w.\"`\[\]{}$]+\s+SET\s+[\w.\"`\[\]{}$]+\s*="
+    r"|\b(?:CREATE|ALTER|DROP|TRUNCATE)\s+(?:TEMP(?:ORARY)?\s+|UNIQUE\s+|MATERIALIZED\s+)*"
+    r"(?:TABLE|INDEX|DATABASE|SCHEMA|VIEW|COLUMN|SEQUENCE|TRIGGER)\b"
+    r"|\bMERGE\s+INTO\b",
     re.IGNORECASE,
 )
 
