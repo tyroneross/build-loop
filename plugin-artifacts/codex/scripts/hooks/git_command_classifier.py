@@ -258,8 +258,21 @@ def classify_command(cmd: str) -> set[str]:
         try:
             tokens = shlex.split(seg)
         except ValueError:
-            # Unbalanced quotes — cannot parse this segment. Stay conservative.
-            found.update(SUBCOMMANDS_OF_INTEREST)
+            # Unbalanced quotes — cannot parse this segment. Stay conservative,
+            # but only for a segment that could plausibly BE a git command.
+            #
+            # Same guard the heredoc branch already applies above: a segment with
+            # no "git" in it cannot hide a git subcommand no matter how it parses,
+            # so claiming both is not conservatism, it is a false positive.
+            #
+            # Observed 2026-07-30: `psql "$URL" -tAc "select 'role: '||..."` — SQL
+            # string literals use apostrophes, shlex rejects the segment, and this
+            # branch reported commit+push on a command containing no git at all.
+            # The pre-push security gate then hard-blocked a production migration.
+            # Third sibling of the argument-data-as-command-structure defect, after
+            # `git stash push` and the deploy-policy substring tests.
+            if "git" in seg:
+                found.update(SUBCOMMANDS_OF_INTEREST)
             continue
         sub = _git_subcommand(tokens)
         if sub in SUBCOMMANDS_OF_INTEREST:

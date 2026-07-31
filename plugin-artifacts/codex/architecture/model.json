@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "0285896813d8d3a9c12ff74f3004dca8877d590f19bdffdad06e7604ced4ea61"
+    "content_sha256": "2bc5e8b161600a50ae7264d821f8c6144755a5b776cd52ad50567149a5db6b85"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1076,7 +1076,7 @@
         "file": "agents/self-improvement-architect.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-06-24"
+          "date": "2026-07-30"
         }
       },
       "synthesis-critic": {
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-26"
+          "date": "2026-07-30"
         }
       },
       "building-with-deepagents": {
@@ -1473,7 +1473,7 @@
         "file": "skills/self-improve/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-05-28"
+          "date": "2026-07-30"
         }
       },
       "spec-writing": {
@@ -1574,6 +1574,7 @@
       "scripts/check_cache_sync.py": "Check source repo ↔ plugin cache sync for plugin work.",
       "scripts/check_private_slugs.py": "Pre-commit guard — fails a commit that stages a private app slug.",
       "scripts/check_runtime_memory_tracking.py": "Fail when runtime memory/state directories are tracked.",
+      "scripts/ci_known_red_gate.py": "ci_known_red_gate.py — apply the known-red baseline to the CI test run.",
       "scripts/classify_action.py": "Classify an orchestrator action into one of four MECE labels.",
       "scripts/classify_model_tier.py": "Classify an unknown model id into a build-loop tier — host-neutral.",
       "scripts/cleanup_legacy_memory_stubs.py": "cleanup_legacy_memory_stubs.py — safely remove migration .MOVED.md stubs.",
@@ -1616,6 +1617,7 @@
       "scripts/enforce_retro_signals.py": "enforce_retro_signals.py — second signal source for recurring-pattern-detector.",
       "scripts/exec_state.py": "exec_state.py — producer CLI for execution-state item_iteration telemetry.",
       "scripts/experimental_ignore.py": "experimental_ignore.py — make git state ENCODE the promotion decision.",
+      "scripts/exposure_policy.py": "",
       "scripts/extensions_approve.py": "extensions_approve.py — list pending drafts; approve one (checks -> move into plugin/).\"\"\"",
       "scripts/extensions_check.py": "extensions_check.py — deterministic pre-approval checks for a learned skill.\"\"\"",
       "scripts/extensions_init.py": "extensions_init.py — scaffold ~/.build-loop-extensions (idempotent) + skills-dir registration.\"\"\"",

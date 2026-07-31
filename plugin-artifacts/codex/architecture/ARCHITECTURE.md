@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 50 skills · 377 scripts · 21 hooks** (auto-discovered 02858968)
+**29 agents · 50 skills · 379 scripts · 21 hooks** (auto-discovered 2bc5e8b1)
 
 <details><summary>agents</summary>
 
@@ -45,7 +45,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `root-cause-investigator` — inherit · _updated 2026-06-24 by Tyrone Ross_ — Use this agent when a debugging symptom needs deep causal analysis beyond surface-level diagnosis. Builds a causal tree (not a single chain) to explore multiple potential root causes in parallel. Flags when investigation reaches external/environmental boundaries or when internet research is needed. Examples - "why does this keep failing", "what's the real cause", "dig deeper into this error", "this fix didn't stick".
 - `scope-auditor` — opus · _updated 2026-07-22 by Tyrone Ross_ — Read-only Plan→Execute boundary check. For every commit that changes a public function/component/type signature, traces every caller-site outside the commit's owned-files, then either confirms `internal_only: true` or appends the missing caller files to the appropriate commit's owned-files list. Prevents the "fan-out scope-blindness" defect class observed in round-2 of dispatch-pattern testing (example-app 2026-05-0…
 - `security-reviewer` — opus · _updated 2026-07-28 by Tyrone Ross_ — Adversarial read-only security review of implementer output against OWASP LLM Top 10, OWASP Agentic Top 10, OWASP Web Top 10 (HTTP boundary only), and starter MITRE ATLAS techniques. Runs in Phase 4 Review sub-step A in parallel with `independent-auditor` at `scope: "build"`, but only when Assess flagged `triggers.riskSurfaceChange: true`.
-- `self-improvement-architect` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Takes a pattern proposal from `recurring-pattern-detector` and drafts a concrete experimental SKILL.md (or agent definition) the build-loop can use immediately. Uses the `plugin-dev:skill-development` or `plugin-dev:agent-development` skill as the authoring reference. Writes output to `.build-loop/skills/experimental/<name>/SKILL.md` — project-local, clearly marked experimental, easy for the user to remove.
+- `self-improvement-architect` — sonnet · _updated 2026-07-30 by Tyrone Ross_ — Takes a pattern proposal from `recurring-pattern-detector` and drafts a concrete experimental SKILL.md (or agent definition) the build-loop can use immediately. Uses the `plugin-dev:skill-development` or `plugin-dev:agent-development` skill as the authoring reference. Writes output to `.build-loop/skills/experimental/<name>/SKILL.md` — project-local, clearly marked experimental, easy for the user to remove.
 - `synthesis-critic` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Read-only model-based critic for the subjective synthesis dimensions (`copy_tone`, `empty_state`) that `attestation_lint.py` cannot grade deterministically. Runs in Phase 4.5 after the attestation lint, only on commits that touch UI files. WARN-only — never blocks a commit.
 - `transcript-pattern-miner` — haiku · _updated 2026-06-24 by Tyrone Ross_ — Scans local Claude Code session transcripts for recurring patterns worth promoting to skills, agents, hooks, or feedback notes. Pure stdlib regex miner — no LLM calls, no network. Five categories: user corrections, repeated tool sequences, cross-project file patterns, manual command rituals, and observed secrets (rotation tracker). Output is markdown report + candidates JSON consumed by self-improvement-architect.
 - `ui-validator` — sonnet · _updated 2026-06-24 by Tyrone Ross_ — Run deterministic UI scans against the running dev server: layout collisions, touch-target violations, console errors, hydration stability, computed-style diffs vs prior baseline, and per-route visual SSIM. Used at Phase 3 chunk-close on UI-touching chunks and at Phase 4 Review sub-step B on every build that has `uiTarget != null`. Owns its own browser session so authed routes scan correctly.
@@ -169,6 +169,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/check_cache_sync.py`
 - `scripts/check_private_slugs.py`
 - `scripts/check_runtime_memory_tracking.py`
+- `scripts/ci_known_red_gate.py`
 - `scripts/classify_action.py`
 - `scripts/classify_model_tier.py`
 - `scripts/cleanup_legacy_memory_stubs.py`
@@ -211,6 +212,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/enforce_retro_signals.py`
 - `scripts/exec_state.py`
 - `scripts/experimental_ignore.py`
+- `scripts/exposure_policy.py`
 - `scripts/extensions_approve.py`
 - `scripts/extensions_check.py`
 - `scripts/extensions_init.py`
