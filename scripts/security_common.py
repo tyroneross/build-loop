@@ -59,6 +59,48 @@ def strip_string_literals(line: str) -> str:
     return line
 
 
+# Files that cannot be reached by any runtime. Framework routers load exact
+# filenames (route.ts, handler.py, +server.ts); a sibling with a backup or
+# disabled suffix is inert no matter what it contains. Reporting a finding in
+# one costs a reviewer the same attention as a live route and buys nothing,
+# and these files skew a deploy gate's totals badly because they are usually
+# stale copies of code whose live version has already been fixed.
+_INERT_SUFFIXES = (
+    ".bak",
+    ".old",
+    ".orig",
+    ".disabled",
+    ".backup",
+    ".save",
+    ".tmp",
+    ".example",
+    ".sample",
+    ".template",
+)
+
+_INERT_MARKERS = (
+    "phase1-backup",
+    "integration_example",
+    "_archive",
+    "node_modules",
+)
+
+
+def is_inert_file(path: Path) -> bool:
+    """True when no runtime can load this file, so its contents are not surface.
+
+    Checked before any API check emits. A finding here is never actionable —
+    the correct response is deletion, which is a hygiene task, not a security
+    gate's business.
+    """
+    name = path.name.lower()
+    if name.endswith(_INERT_SUFFIXES):
+        return True
+    # Timestamped backups: route.ts.phase1-backup-20251010-232611
+    lowered = str(path).lower()
+    return any(marker in lowered for marker in _INERT_MARKERS)
+
+
 def is_api_path(path: Path) -> bool:
     """True when the file sits on a conventional server route/handler path.
 
@@ -66,6 +108,8 @@ def is_api_path(path: Path) -> bool:
     that reads an extra file, because every check here also requires a positive
     handler match before it emits.
     """
+    if is_inert_file(path):
+        return False
     parts_lower = [p.lower() for p in path.parts]
     return (
         "api" in parts_lower
