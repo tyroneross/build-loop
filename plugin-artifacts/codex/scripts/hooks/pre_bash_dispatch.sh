@@ -243,18 +243,51 @@ case " $_GITCLASS " in
             # findings are ADVISORY — only a CRITICAL among them blocks — so the
             # gate covers the whole repo without a stranger's old MEDIUM wedging
             # an unrelated push.
-            _SCAN_ARGS=(--path "$CWD" --fail-on high --spot-check)
+            # Scan the repo BEING PUSHED, not the shell's working directory.
+            #
+            # $CWD is where the shell happens to sit, which is not necessarily
+            # what `git push` targets. `cd /other/repo && git push` and
+            # `git -C /other/repo push` both push a repo the shell is not in.
+            # Using $CWD there gates the push on findings from an UNRELATED
+            # repository — observed 2026-07-30: a push of atomize-ai was blocked
+            # by two findings in build-loop, which is both a false block and a
+            # false clean (the pushed repo went unscanned).
+            #
+            # Resolution order mirrors what git itself would honour:
+            #   1. an explicit `git -C <path>`
+            #   2. a `cd <path>` that precedes the push in the same command
+            #   3. $CWD
+            # Then normalise to the repo root, since a subdirectory would scan
+            # only part of the tree.
+            _SCAN_TARGET="$CWD"
+            _GIT_C_PATH=$(printf '%s' "$CMD" | sed -n 's/.*git[[:space:]]\{1,\}-C[[:space:]]\{1,\}\([^[:space:];&|]\{1,\}\).*/\1/p' | head -1)
+            _CD_PATH=$(printf '%s' "$CMD" | sed -n 's/^[[:space:]]*cd[[:space:]]\{1,\}\([^;&|]\{1,\}\).*/\1/p' | head -1)
+            _CD_PATH=$(printf '%s' "$_CD_PATH" | sed 's/[[:space:]]*$//' | tr -d '"'"'")
+            for _cand in "$_GIT_C_PATH" "$_CD_PATH"; do
+                [ -n "$_cand" ] || continue
+                case "$_cand" in
+                    "~"*) _cand="$HOME${_cand#\~}" ;;
+                esac
+                [ -d "$_cand" ] || continue
+                _SCAN_TARGET="$_cand"
+                break
+            done
+            # Repo root, or leave as-is when it is not a work tree (the scanner
+            # tolerates a plain directory; never fail the hook over this).
+            _TOPLEVEL=$(git -C "$_SCAN_TARGET" rev-parse --show-toplevel 2>/dev/null || true)
+            [ -n "$_TOPLEVEL" ] && [ -d "$_TOPLEVEL" ] && _SCAN_TARGET="$_TOPLEVEL"
+            _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check)
             # Scope the scan to the push delta: only what's actually being pushed
             # (files changed vs the upstream tracking branch), not the whole tree.
             # No upstream (detached/new branch) → keep the whole-repo scan (safe
             # fallback; scanner also falls back on any bad ref).
-            _UPSTREAM=$(git -C "$CWD" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+            _UPSTREAM=$(git -C "$_SCAN_TARGET" rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
             # Current branch — the push is only plain when the pushed ref IS the
             # current branch (h2: comparing to the tracking STRING alone let
             # `git push origin main` on a feature branch scope to the wrong,
             # empty delta while local main's secret shipped). Empty on detached
             # HEAD → classifier can't prove plain → full scan.
-            _BRANCH=$(git -C "$CWD" symbolic-ref --short HEAD 2>/dev/null || true)
+            _BRANCH=$(git -C "$_SCAN_TARGET" symbolic-ref --short HEAD 2>/dev/null || true)
             # f2: the command string does NOT determine the push destination —
             # push config does. Two shapes classify "plain" from ref-name
             # equality alone yet ship content outside upstream..HEAD:
@@ -268,8 +301,8 @@ case " $_GITCLASS " in
             # represent. The push is config-plain ONLY when push.default is
             # empty/simple/upstream/current AND @{push} == @{u}. Anything else →
             # _CFG_PLAIN=no → OMIT --diff → full scan (fail-safe).
-            _PDEF=$(git -C "$CWD" config --get push.default 2>/dev/null || true)
-            _PUSHDEST=$(git -C "$CWD" rev-parse --abbrev-ref @{push} 2>/dev/null || true)
+            _PDEF=$(git -C "$_SCAN_TARGET" config --get push.default 2>/dev/null || true)
+            _PUSHDEST=$(git -C "$_SCAN_TARGET" rev-parse --abbrev-ref @{push} 2>/dev/null || true)
             _CFG_PLAIN=no
             case "$_PDEF" in
                 ""|simple|upstream|current)

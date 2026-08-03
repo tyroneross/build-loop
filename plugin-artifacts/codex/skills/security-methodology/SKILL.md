@@ -94,6 +94,9 @@ Phase 1 Assess sets the flag when any of these are introduced or modified:
 - An auth, authz, identity, or permission boundary change (LLM07, ASI03, A01).
 - An external API call introduced by the build (LLM05, ASI04, A06, A10).
 - Handling of new user data classes — PII, financial, health, credentials, regulated records (LLM06, NIST Data Privacy).
+- A lifecycle-hook registration or editor/agent auto-load surface — `.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`, `hooks/*.json`, githooks, launchd/cron plists (ASI02, A06 supply chain).
+- An installer or provisioner path — anything that downloads, chmods, or executes a binary, or builds source, reachable from a hook or startup path (A06, ATLAS supply chain).
+- Code that interpolates stored or descriptor-supplied strings into shell commands or into model context — prompt-to-shell and prompt-to-context render paths (LLM01, ASI05, A03).
 
 The orchestrator scans the goal text for keywords matching these classes and inspects the planned file set. Either signal flips the trigger; the trigger is sticky for the rest of the build.
 
@@ -110,5 +113,18 @@ The orchestrator scans the goal text for keywords matching these classes and ins
 
 1. **Route-auth enumeration** — walk **every** `app/api/**/route.ts` (or the framework equivalent) handler; confirm each mutating/DDL endpoint has an auth guard, AND that the guard **fails closed** when its secret env is unset (the `token !== process.env.X` bypass when `X` is undefined → `undefined !== undefined` is false → passes). Owned by `security-reviewer` (OWASP A01). Do not sample — enumerate.
 2. **Destructive-FK / data-integrity sweep** — grep the schema for `onDelete: Cascade` (and `SetNull`), missing FK indexes, and merge/delete paths that destroy rather than reassign. Owned by `database-assessor`. A cascade that silently deletes user data is a security/integrity finding even when every route is authed.
+
+## Repo-trust audit sweep (from the Lattice audit of agent-rally-point, issue #52)
+
+An independent external audit found 3 Critical findings in agent-rally-point that this canon's OWASP/ATLAS grading never surfaced. The gap was the lens, not the frameworks. When a build touches any of the three new trigger signals above — hook registrations, installers, or string-to-shell/context render paths — the review MUST also run these four checks:
+
+1. **Trust-on-clone.** Ask what executes or gains authority when someone merely opens or trusts the repo: auto-loaded hooks, provisioners reachable from startup, tracked binaries, symlinks, SVG payloads, git bundles. Grade the repo as an attack vector, not just the diff.
+2. **Doc-claims vs implementation.** Extract security and behavior claims from docs ("does not install hooks", "proves the plan is safe", "the gate blocks X") and grade each against code. Fact-checking rendered data does not cover this; claims need their own pass.
+3. **False security boundaries.** For every gate, approval flow, or "blocked" message: name what it actually interposes on. A control that observes an event stream but cannot stop the child process is telemetry, not a boundary.
+4. **Render-path tracing.** Follow stored, descriptor-supplied, or peer-authored strings to every point where they become shell text or model context. Each such path needs quoting/allowlisting plus an adversarial test that proves a hostile string is rejected or neutralized.
+
+Report structure for these findings, borrowed from the exemplar (`gh issue view 52 -R tyroneross/agent-rally-point`): stable per-project finding IDs, severity, file:line citation for every claim, a per-finding required fix, plus two honesty sections — "positive containment observations" (explicitly scoped as not offsetting findings) and "unreviewed surface" (what the review skipped and why). The unreviewed-surface section is mandatory; a review that doesn't state its blind spots overstates its coverage.
+
+Assume at least two untrusted actors when grading multi-agent or shared-repo tooling: a second contributor to the repo, and a same-UID local process. "Single operator on one Mac" is a deployment fact, not a threat model — write the actual trust model down.
 
 **Risk-presentation default (SC-1 — bounded-risk user posture).** Lead every security finding with a **blast-radius verdict** (who/what is reachable, and from where — public vs. private-and-unpushed vs. inert-behind-a-schema-gate). When exposure is **proven contained**, present hardening (rotation, revokes, extra gates) as **recommended-but-deferrable**, not a hard blocker. Hard-gate ONLY when the blast radius is **unbounded, public, or unproven**. Rationale: this operator gates hardening on demonstrated blast radius, not on the existence of a risk — forcing rotation when exposure is provably private wastes cycles. This is a *presentation/gating* default, never a reason to skip a sweep or under-report a finding. See user-preference `feedback_security_blast_radius_first`.

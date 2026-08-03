@@ -715,8 +715,14 @@ class TestSpotCheckCoverage(_DiffScanBase):
 class TestApiChecksWiredIntoScanner(_DiffScanBase):
     """The H-N checks must actually run through the CLI, not just in unit tests."""
 
+    # Real broken object-level authorization: the route DOES establish who is
+    # calling, then queries by a request-supplied id without scoping to them.
+    # The identity call is load-bearing — a handler with no principal at all is
+    # unauthenticated mutation (check I), a different defect. Conflating the two
+    # made check H fire on every public read of a shared table.
     _VULN_ROUTE = (
         "export async function DELETE(req, { params }) {\n"
+        "  const session = await getServerSession();\n"
         "  await db.document.delete({ where: { id: params.id } });\n"
         "}\n"
     )
@@ -764,7 +770,12 @@ class TestDocsRouteIsNotProse(_DiffScanBase):
         self._commit(d, "add docs route")
         rc, data = self._scan(d)
         ids = {f["check_id"] for f in data["findings"]}
-        self.assertIn("H", ids, "an API route named /docs must not be treated as prose")
+        # The claim under test is that the file was SCANNED, not which check
+        # fired. This fixture has no auth at all, so the correct finding is I
+        # (unauthenticated mutation) rather than H (object-level authorization,
+        # which needs a principal to confuse). Asserting on I keeps the test
+        # about routing-vs-prose instead of quietly pinning check H's rule.
+        self.assertIn("I", ids, "an API route named /docs must not be treated as prose")
 
     def test_real_docs_tree_still_skips_code_checks(self):
         d = self._mkdir()
@@ -777,3 +788,214 @@ class TestDocsRouteIsNotProse(_DiffScanBase):
         rc, data = self._scan(d)
         ids = {f["check_id"] for f in data["findings"]}
         self.assertNotIn("H", ids, "a snippet in the docs tree must stay exempt")
+
+
+class TestApiCheckPrecision(_DiffScanBase):
+    """Regressions for the four false-positive classes that made this gate
+    unusable on a real Next.js app: it reported 49 CRITICAL and 123 HIGH, none
+    of them reachable, while missing four genuinely open endpoints. A deploy
+    gate that is wrong at that rate trains people to bypass it, which is worse
+    than having no gate."""
+
+    def test_public_read_of_shared_table_is_not_object_authz(self):
+        # No identity anywhere: this is a catalogue endpoint, not BOLA. There
+        # is no second principal whose object could be substituted.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/articles/[id]/route.ts",
+                    "export async function GET(req, { params }) {\n"
+                    "  return Response.json(await db.article.findUnique({ where: { id: params.id } }));\n"
+                    "}\n")
+        self._commit(d, "public article read")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertNotIn("H", ids, "a public read with no principal is not object-level authz")
+
+    def test_authenticated_unscoped_query_still_flagged(self):
+        # The negative control for the test above. Same query, but the route
+        # resolves a caller first — that IS the defect check H exists for. If
+        # this ever stops firing, the precision fix has gone too far.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/notes/[id]/route.ts",
+                    "export async function DELETE(req, { params }) {\n"
+                    "  const session = await getServerSession();\n"
+                    "  await db.note.delete({ where: { id: params.id } });\n"
+                    "}\n")
+        self._commit(d, "authenticated unscoped delete")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertIn("H", ids, "authenticated + unscoped by request id is real BOLA")
+
+    def test_project_named_guard_counts_as_authentication(self):
+        # A codebase that wraps its own auth helper was previously reported as
+        # having "no authentication reference anywhere in the handler file" on
+        # every route that used it.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/prefs/route.ts",
+                    "export async function POST(req) {\n"
+                    "  const identity = await resolveIdentityOr503();\n"
+                    "  if (!identity.ok) return identity.response;\n"
+                    "  await db.pref.create({ data: { userId: identity.userId } });\n"
+                    "}\n")
+        self._commit(d, "route using a project-named guard")
+        rc, data = self._scan(d)
+        missing_auth = [
+            f for f in data["findings"]
+            if f["check_id"] == "I" and "no authentication" in f["message"]
+        ]
+        self.assertEqual(missing_auth, [], "resolveIdentityOr503 is an auth guard")
+
+    def test_requireAdmin_counts_as_authentication(self):
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/admin/things/route.ts",
+                    "export async function POST(req) {\n"
+                    "  const denied = await requireAdmin(req);\n"
+                    "  if (denied) return denied;\n"
+                    "  await db.thing.create({ data: {} });\n"
+                    "}\n")
+        self._commit(d, "admin route")
+        rc, data = self._scan(d)
+        missing_auth = [
+            f for f in data["findings"]
+            if f["check_id"] == "I" and "no authentication" in f["message"]
+        ]
+        self.assertEqual(missing_auth, [], "requireAdmin is an auth guard")
+
+    def test_deployment_mode_check_is_not_a_fail_open_secret(self):
+        # `NODE_ENV !== 'development'` denies when the variable is unset. It
+        # fails CLOSED — the opposite of the defect this rule describes — and
+        # the suggested remedy ("assert the secret is present") is meaningless
+        # for a variable the platform always sets.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/devtools/route.ts",
+                    "export async function POST(req) {\n"
+                    "  if (process.env.NODE_ENV !== 'development') {\n"
+                    "    return new Response(null, { status: 404 });\n"
+                    "  }\n"
+                    "  await db.thing.create({ data: {} });\n"
+                    "}\n")
+        self._commit(d, "dev-only route")
+        rc, data = self._scan(d)
+        fail_open = [f for f in data["findings"] if "comparison passes" in f["message"]]
+        self.assertEqual(fail_open, [], "a dev-mode guard is not a fail-open secret compare")
+
+    def test_real_unset_secret_comparison_still_flagged(self):
+        # Negative control for the rule above: an actual secret compared with no
+        # presence assertion must still fire.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/hook/route.ts",
+                    "export async function POST(req) {\n"
+                    "  if (req.headers.get('x-token') !== process.env.WEBHOOK_SECRET) {\n"
+                    "    return new Response(null, { status: 401 });\n"
+                    "  }\n"
+                    "  await db.thing.create({ data: {} });\n"
+                    "}\n")
+        self._commit(d, "webhook route")
+        rc, data = self._scan(d)
+        fail_open = [f for f in data["findings"] if "comparison passes" in f["message"]]
+        self.assertTrue(fail_open, "an unasserted secret comparison is still a finding")
+
+    def test_inert_backup_files_are_not_scanned(self):
+        # No framework router loads route.ts.bak. A finding there is never
+        # actionable and skews a gate's totals with stale copies of code whose
+        # live version is already fixed.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/legacy/route.ts.bak",
+                    "export async function DELETE(req, { params }) {\n"
+                    "  const session = await getServerSession();\n"
+                    "  await db.document.delete({ where: { id: params.id } });\n"
+                    "}\n")
+        self._commit(d, "inert backup")
+        rc, data = self._scan(d)
+        from_bak = [f for f in data["findings"] if f["file"].endswith(".bak")]
+        self.assertEqual(from_bak, [], "inert backup files are not attack surface")
+
+    def test_admin_route_on_shared_data_is_not_object_authz(self):
+        # Role-based authorization is the control here. An admin editing a
+        # shared catalogue is not reaching "another principal's object".
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/admin/entities/[id]/route.ts",
+                    "export async function PATCH(req, { params }) {\n"
+                    "  const denied = await requireAdmin(req);\n"
+                    "  if (denied) return denied;\n"
+                    "  await db.entity.update({ where: { id: params.id }, data: {} });\n"
+                    "}\n")
+        self._commit(d, "admin entity edit")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertNotIn("H", ids, "role-gated admin edit of shared data is not BOLA")
+
+    def test_non_admin_authenticated_route_still_flagged(self):
+        # Negative control for the carve-out above: an ordinary signed-in user
+        # is still a principal among many, so unscoped access is still BOLA.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/notes/[id]/route.ts",
+                    "export async function PATCH(req, { params }) {\n"
+                    "  const session = await getServerSession();\n"
+                    "  await db.note.update({ where: { id: params.id }, data: {} });\n"
+                    "}\n")
+        self._commit(d, "user note edit")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertIn("H", ids, "a non-admin authenticated route must still be checked")
+
+    def test_error_message_required_is_not_an_identity_check(self):
+        # `require[A-Z]\w*` under IGNORECASE matches the ordinary word
+        # "required". Every route with a validation message then looked
+        # authenticated to check H and guarded to check I.
+        d = self._mkdir()
+        self._init(d)
+        self._write(d, "app/api/things/[id]/route.ts",
+                    "export async function GET(req, { params }) {\n"
+                    "  if (!params.id) return Response.json({ error: 'id is required' }, { status: 400 });\n"
+                    "  return Response.json(await db.thing.findUnique({ where: { id: params.id } }));\n"
+                    "}\n")
+        self._commit(d, "validation message only")
+        rc, data = self._scan(d)
+        ids = {f["check_id"] for f in data["findings"]}
+        self.assertNotIn("H", ids, "'required' in an error string is not an identity check")
+
+
+class TestSqlStatementDetectorPrecision(unittest.TestCase):
+    """The SQL-injection rule must distinguish a statement from English.
+
+    Observed: an error-message f-string containing the words "DELETE" and
+    "from" was reported as SQL injection and hard-blocked a push. The rule
+    allowed unlimited distance between the verb and a clause keyword, which is
+    exactly the shape of ordinary prose.
+    """
+
+    def _is_sql(self, line):
+        return bool(security_scan._SQL_STMT_RE.search(line))
+
+    def test_prose_containing_sql_words_is_not_sql(self):
+        for line in [
+            'msg = f"Fix the test and DELETE the entry from {PATH}, or "',
+            'msg = f"UPDATE the set of files in {d}"',
+            'note = f"CREATE a table of contents for {x}"',
+            'doc = f"SELECT is a keyword; INSERT is another"',
+        ]:
+            self.assertFalse(self._is_sql(line), f"prose flagged as SQL: {line}")
+
+    def test_real_statements_are_still_detected(self):
+        # The negative control. Tightening the rule must not blind it — each of
+        # these is a genuine injection sink if interpolated.
+        for line in [
+            'db.query(f"DELETE FROM users WHERE id={uid}")',
+            'db.query(f"SELECT a, b, c FROM t WHERE id={uid}")',
+            'db.query(f"INSERT INTO t VALUES ({v})")',
+            'db.query(f"UPDATE users SET name={n}")',
+            'db.query(f"UPDATE users SET name = {n}")',
+            'db.query(f"CREATE TABLE {t} (id int)")',
+            'db.query(f"DROP INDEX {i}")',
+            'db.query(f"MERGE INTO t USING {s}")',
+        ]:
+            self.assertTrue(self._is_sql(line), f"real SQL missed: {line}")

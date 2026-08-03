@@ -83,6 +83,54 @@ OWNER_PREDICATE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Evidence that the handler establishes WHO is calling. Required before check H
+# can call anything object-level authorization: no principal, no BOLA.
+#
+# Matches the framework primitives plus the naming conventions codebases
+# actually use for their own guards — require*/ensure*/assert* prefixes, the
+# *Or401/*Or403/*Or503 suffix idiom, and resolve*Identity. Those conventions are
+# near-universal, so this stays portable instead of hard-coding one project's
+# helper names.
+#
+# The camelCase convention alternatives are wrapped in (?-i:...) — case
+# SENSITIVE — even though the rest of the pattern is case-insensitive. Under
+# IGNORECASE the class [A-Z] also matches lowercase, so `require[A-Z]\w*`
+# matched the ordinary English word "required" (as in the error string
+# "articleId is required"). That single letter-class turned every route with a
+# validation message into a route with an authentication guard. Pinned by
+# test_error_message_required_is_not_an_identity_check.
+IDENTITY_RESOLUTION_RE = re.compile(
+    r"\b(?:getServerSession|getSession|auth\s*\(|currentUser|getCurrentUser|"
+    r"getUser\w*|useUser|clerkClient|getAuth|supabase\.auth|"
+    r"session\.user|req(?:uest)?\.user|ctx\.user|g\.user|"
+    r"user_?id\s*=|userId\s*=|current_user|get_current_user|"
+    r"protectedProcedure|login_required|jwt\.verify|jwtVerify|verifyToken)\b"
+    r"|(?-i:\b(?:require[A-Z]\w*|ensure[A-Z]\w*|assert[A-Z]\w*|"
+    r"resolve\w*Identity\w*|\w+Or(?:401|403|503))\s*\()",
+    re.IGNORECASE,
+)
+
+# A role/privilege gate rather than an ownership gate. Its presence means the
+# route's authorization model is "may this caller act at all", not "does this
+# caller own this row" — so the absence of an owner predicate is the design,
+# not a defect.
+#
+# An admin editing a shared catalogue is the ordinary shape of an admin
+# endpoint. Demanding `where: { userId }` there asks the query to scope to a
+# principal that is explicitly authorized across all of them. Before this
+# carve-out, admin routes were the single largest remaining source of CRITICAL
+# object-authorization findings on a real app — every one of them correct code.
+ROLE_GUARD_RE = re.compile(
+    r"\brequire(?:Local)?Admin\b|\brequireRole\b|\brequirePermission\b|"
+    r"\bisAdmin\b|\badminOnly\b|\bensureAdmin\b|\bassertAdmin\b|"
+    r"\bhasPermission\b|\bhasRole\b|\bcheckPermission\b|\bauthorizeRole\b|"
+    r"role\s*(?:===?|==|!=)\s*[\"']admin[\"']|"
+    r"\brole\s*:\s*[\"']admin[\"']|"
+    r"@admin_required\b|@staff_member_required\b|\bis_staff\b|\bis_superuser\b|"
+    r"\bIsAdminUser\b|\bAdminOnly\b",
+    re.IGNORECASE,
+)
+
 # A database read or write. Broad on purpose: the check only fires when this
 # co-occurs with request-derived input AND no owner predicate.
 DB_ACCESS_RE = re.compile(
@@ -148,6 +196,32 @@ def check_H_object_authorization(path: Path, lines: list[str]) -> list[dict[str,
         return []
     if not REQUEST_INPUT_RE.search(text):
         return []
+    # THE THIRD SIGNAL: this route must have a principal.
+    #
+    # Broken object-level authorization means one caller reaching another
+    # caller's object. That presupposes callers are distinguishable — the
+    # finding's own wording says "an authenticated caller can substitute another
+    # principal's object ID". A handler that never resolves an identity has no
+    # principals to confuse: it is a public read of shared data, which is the
+    # normal shape of a catalogue, feed, or docs endpoint.
+    #
+    # Without this signal the check fires on every read of a globally-shared
+    # table and buries the real findings. Measured on a 3,386-file Next.js app:
+    # 49 CRITICAL, none of them reachable, while four genuinely open endpoints
+    # in the same tree went unreported.
+    #
+    # The trade is a deliberate false negative — an app that authenticates
+    # somewhere other than the handler file, and queries by request id without
+    # scoping, is missed here. Check I covers the missing-guard half of that,
+    # and a gate that cries wolf is worse than one that occasionally stays
+    # quiet.
+    if not IDENTITY_RESOLUTION_RE.search(text):
+        return []
+    # Role-based authorization is a complete control for this class. A caller
+    # the route has already authorized as an operator is not "another
+    # principal" relative to shared records.
+    if ROLE_GUARD_RE.search(text):
+        return []
     # The control: the query is scoped to the caller. Anywhere in the file is
     # enough — handler files are small, and a false negative here is preferable
     # to blocking a deploy on a correctly-scoped query the regex misread.
@@ -188,10 +262,52 @@ AUTH_GUARD_RE = re.compile(
     r"currentUser|getUser|clerkClient|getAuth|supabase\.auth|"
     r"authenticate|authorize|isAuthenticated|ensureLoggedIn|"
     r"protectedProcedure|login_required|@requires_auth|Depends\s*\(\s*get_current_user)\b|"
+    # Project-defined guards. Codebases name their own helpers, and a check that
+    # only knows framework primitives reports every one of them as unguarded.
+    # These three conventions cover the overwhelming majority:
+    #   require*/ensure*/assert*  — requireAdmin, ensureSignedIn, assertOwner
+    #   *Or401 / *Or403 / *Or503  — resolveIdentityOr503
+    #   resolve*Identity          — resolveIdentity, resolveUserIdentity
+    # A codebase that adopted a wrapper for exactly this purpose was previously
+    # reported as having "no authentication reference anywhere in the file" on
+    # every route that used it — the single largest false-positive source in
+    # this check.
+    # Case-SENSITIVE: see the note on IDENTITY_RESOLUTION_RE. Under IGNORECASE
+    # the [A-Z] class matches lowercase, so "required" in a validation message
+    # would register as an auth guard.
+    r"(?-i:\b(?:require[A-Z]\w*|ensure[A-Z]\w*|assert[A-Z]\w*|"
+    r"\w+Or(?:401|403|503)|resolve\w*Identity\w*|\w*Guard\w*)\s*\()|"
     r"headers\(\)\.get\s*\(\s*[\"']authorization[\"']|"
     r"\breq(?:uest)?\.headers\[?[\.\"']*authorization",
     re.IGNORECASE,
 )
+
+# A repo-root request interceptor. Next.js middleware.ts (renamed proxy.ts in
+# Next 16), SvelteKit hooks.server.ts, Remix entry.server.tsx, and Django/Rails
+# middleware all gate whole path prefixes BEFORE any handler runs, which a
+# per-file check cannot see.
+#
+# Its presence does not prove a given route is gated — the interceptor might
+# allow-list that path — so this does not clear the finding. It downgrades the
+# severity, because "no guard visible in this file, and the repo has a
+# route-prefix gate that may cover it" is a materially weaker claim than "this
+# endpoint is open", and only the first is honest from static per-file reading.
+_INTERCEPTOR_NAMES = (
+    "middleware.ts", "middleware.js", "middleware.tsx",
+    "proxy.ts", "proxy.js",
+    "hooks.server.ts", "hooks.server.js",
+    "entry.server.tsx", "entry.server.ts",
+)
+
+
+def _repo_has_route_interceptor(path: Path) -> bool:
+    """Walk up to the repo root looking for a request interceptor."""
+    for parent in list(path.parents)[:12]:
+        if (parent / ".git").exists() or (parent / "package.json").exists():
+            if any((parent / name).exists() for name in _INTERCEPTOR_NAMES):
+                return True
+            # Keep walking: a monorepo package root is not the repo root.
+    return False
 
 # The fail-open bypass: comparing a caller-supplied token to an env var that may
 # be undefined. If the env var is unset, `undefined !== undefined` is false and
@@ -203,6 +319,20 @@ FAIL_OPEN_CMP_RE = re.compile(
     r"env\.\w+)"
     r"|(?:process\.env\.\w+|env\.\w+|os\.environ\.get\s*\([^)]*\)|os\.getenv\s*\([^)]*\))"
     r"\s*(?:!==?|===?)",
+    re.IGNORECASE,
+)
+
+# Deployment-mode and feature-flag variables. Not secrets, so a comparison
+# against one is not the fail-open-secret defect. Kept narrow and explicit
+# rather than "any name without KEY/SECRET/TOKEN in it", so a genuinely
+# secret-bearing variable with an unusual name still gets flagged.
+# NOTE: no bare `ENV` alternative. `\bENV\b` matches the `env` inside
+# `process.env.WEBHOOK_SECRET`, which silently suppressed every real finding
+# this check exists for. Caught by test_real_unset_secret_comparison_still_flagged.
+_NON_SECRET_ENV_RE = re.compile(
+    r"\b(?:NODE_ENV|ENVIRONMENT|APP_ENV|RAILS_ENV|FLASK_ENV|DJANGO_ENV|"
+    r"DEPLOY_ENV|STAGE|VERCEL_ENV|NEXT_PUBLIC_VERCEL_ENV|DEBUG|"
+    r"ENABLE_\w+|FEATURE_\w+|FF_\w+|\w+_ENABLED)\b",
     re.IGNORECASE,
 )
 
@@ -241,6 +371,18 @@ def check_I_auth_guard(path: Path, lines: list[str]) -> list[dict[str, Any]]:
             continue
         if ENV_PRESENCE_GUARD_RE.search(text):
             continue
+        # NODE_ENV and friends are not secrets, and the idiom they appear in is
+        # the opposite of fail-open. `if (NODE_ENV !== 'development') return 404`
+        # denies whenever the variable is unset, empty, or anything other than
+        # the one permitted value — it fails CLOSED, which is the correct shape
+        # for a dev-only route. The fail-open defect this check exists for is a
+        # comparison against an unset SECRET, where absence makes the comparison
+        # succeed. Treating a deployment-mode check as that defect produced a
+        # large block of unfixable findings whose recommended remedy
+        # ("assert the secret is present at module load") is meaningless for a
+        # variable the platform always sets.
+        if _NON_SECRET_ENV_RE.search(stripped):
+            continue
         out.extend(_emit(
             lines,
             i,
@@ -263,13 +405,22 @@ def check_I_auth_guard(path: Path, lines: list[str]) -> list[dict[str, Any]]:
     # I1 — no auth reference of any kind on a mutating route.
     if not has_guard:
         line_no, snippet = first_match_line(lines, MUTATING_HANDLER_RE)
+        # A repo-root interceptor gates path prefixes before any handler runs.
+        # Static per-file reading cannot tell whether it covers THIS path, so
+        # state the weaker, true claim instead of the strong, possibly-false one.
+        gated_upstream = _repo_has_route_interceptor(path)
         out.extend(_emit(
             lines,
             line_no,
-            severity="HIGH",
+            severity="MEDIUM" if gated_upstream else "HIGH",
             owasp_ids="A01",
             file_path=path,
             message=(
+                "Mutating endpoint has no authentication or authorization reference "
+                "in the handler file; the repo has a route-prefix interceptor "
+                "(middleware/proxy) that may or may not cover this path — verify "
+                "which tier it assigns"
+                if gated_upstream else
                 "Mutating endpoint has no authentication or authorization reference "
                 "anywhere in the handler file"
             ),
