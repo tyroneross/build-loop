@@ -88,6 +88,32 @@ STATE_DIR = Path(
 ) / "build-loop"
 PID_FILE = STATE_DIR / "embed-daemon.pid"
 
+# Idle shutdown. The resident cost of this daemon is MEMORY, not CPU: it sits
+# at ~0% CPU holding ~785MB of loaded model. A CPU-threshold kill-switch would
+# therefore never fire. Exiting after a stretch with no real embed traffic is
+# what actually returns the RAM.
+#
+# 0 disables idle shutdown entirely (the pre-2026-08 behavior).
+# Exit is clean (status 0) so a launchd KeepAlive of {SuccessfulExit: false}
+# leaves the daemon stopped, while still restarting it after a crash.
+IDLE_TIMEOUT_S = int(os.environ.get("EMBED_DAEMON_IDLE_TIMEOUT", "1800"))
+_IDLE_CHECK_INTERVAL_S = 30
+
+_last_request_at = time.monotonic()
+_idle_lock = threading.Lock()
+
+
+def _touch_idle_clock() -> None:
+    """Mark now as the last real request. Called on every embed request."""
+    global _last_request_at
+    with _idle_lock:
+        _last_request_at = time.monotonic()
+
+
+def _idle_seconds() -> float:
+    with _idle_lock:
+        return time.monotonic() - _last_request_at
+
 # Module-level state (process-singleton).
 _START_TS: float = 0.0
 _MODEL_READY: bool = False
@@ -200,6 +226,8 @@ class _Handler(BaseHTTPRequestHandler):
             "warm": _MODEL_READY,
             "uptime_s": round(time.monotonic() - _START_TS, 3),
             "pid": os.getpid(),
+            "idle_s": round(_idle_seconds(), 1),
+            "idle_timeout_s": IDLE_TIMEOUT_S,
         }
         self._send_json(HTTPStatus.OK, body)
 
@@ -207,6 +235,10 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path not in ("/embed", "/embed_batch"):
             self._send_error(HTTPStatus.NOT_FOUND, f"unknown path: {self.path}")
             return
+        # Real work resets the idle clock. GET /health deliberately does not:
+        # a health probe is not usage, and counting it would keep the model
+        # resident forever.
+        _touch_idle_clock()
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -385,6 +417,13 @@ def serve() -> int:
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
 
+    if IDLE_TIMEOUT_S > 0:
+        _start_idle_watchdog(server, _shutdown_done)
+        _log.info(
+            "idle shutdown armed: exit after %ds without an embed request",
+            IDLE_TIMEOUT_S,
+        )
+
     _write_pid_file()
     _log.info("listening on http://%s:%d (pid=%d)", host, port, os.getpid())
     try:
@@ -394,6 +433,31 @@ def serve() -> int:
         _remove_pid_file()
         _log.info("daemon stopped")
     return 0
+
+
+def _start_idle_watchdog(server: HTTPServer, done: threading.Event) -> threading.Thread:
+    """Exit cleanly once no embed request has arrived for IDLE_TIMEOUT_S.
+
+    Frees the loaded model's resident memory when the daemon is not being
+    used. Callers degrade to in-process embedding, so an exit is a slowdown,
+    never a failure.
+    """
+    def _watch() -> None:
+        while not done.is_set():
+            if done.wait(timeout=_IDLE_CHECK_INTERVAL_S):
+                return
+            idle = _idle_seconds()
+            if idle >= IDLE_TIMEOUT_S:
+                _log.info(
+                    "idle for %.0fs (limit %ds); shutting down to release memory",
+                    idle, IDLE_TIMEOUT_S,
+                )
+                _graceful_close(server, done)
+                return
+
+    thread = threading.Thread(target=_watch, name="idle-watchdog", daemon=True)
+    thread.start()
+    return thread
 
 
 def _graceful_close(server: HTTPServer, done: threading.Event) -> None:
