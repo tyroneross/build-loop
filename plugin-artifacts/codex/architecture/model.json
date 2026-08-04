@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2bc5e8b161600a50ae7264d821f8c6144755a5b776cd52ad50567149a5db6b85"
+    "content_sha256": "4e8c22c1fb175630d86562cbe1c4a99f2f06af6c2b696b52c141d67c93d3b62d"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1457,7 +1457,7 @@
         "file": "skills/security-methodology/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-06"
+          "date": "2026-08-03"
         }
       },
       "security-scan": {
@@ -1777,7 +1777,6 @@
       "scripts/regenerate_knowledge_index.py": "Regenerate `.episodic/decisions/INDEX.md` and `.episodic/issues/INDEX.md`.",
       "scripts/report_lint.py": "User-facing output style lint for build-loop's Phase 4 Review-G draft.",
       "scripts/rerank.py": "Cross-encoder rerank for hybrid retrieval (Phase A chunk 4).",
-      "scripts/rerank_daemon.py": "Long-running cross-encoder rerank daemon (Phase G).",
       "scripts/research_packet.py": "research_packet.py — Research packet generation for build-loop.",
       "scripts/research_trigger.py": "Research trigger and depth classifier for build-loop Phase 1/2.\"\"\"",
       "scripts/resolve_agent_model.py": "Resolve an agent's `(segment, tier)` role to a dispatch model — the FRONT DOOR.",
@@ -1859,6 +1858,7 @@
       "scripts/verify_worktree_target.py": "Verify a dispatched isolation worktree actually resolves to the INTENDED target repo.",
       "scripts/version_advisor.py": "Advise (never auto-bump) plugin versions for build-loop Review Sub-step D Gate 6.",
       "scripts/version_drift_warning.py": "Detect drift between source manifest version and installed plugin version.",
+      "scripts/waivers.py": "waivers.py — the durable waiver register behind constitution rule C-FINDINGS.",
       "scripts/wake_scheduler.py": "Host-portable self-resume planner — `wake_when` decision engine.",
       "scripts/wiki_client.py": "Wiki client: federate Tyrone's Obsidian LLM Wiki as a 4th RRF leg.",
       "scripts/wiki_local.py": "In-process wiki search (Phase I).",

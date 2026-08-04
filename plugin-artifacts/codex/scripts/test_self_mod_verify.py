@@ -297,6 +297,94 @@ class TestScopeChanged(unittest.TestCase):
         self.assertEqual(payload["ran"], [])
 
 
+    def test_mirror_copy_under_plugin_artifacts_is_never_a_gate_target(self) -> None:
+        """A test file under a generated mirror tree must not be collected.
+
+        Regression: `plugin-artifacts/codex/` mirrors `scripts/`, so every one of
+        its `test_*.py` files shares a basename with its source twin. When git
+        reported both copies as changed, the gate handed both to pytest, which
+        aborted collection with "import file mismatch" and surfaced verdict=error
+        — the gate failing on a change that was itself green. Discovery now drops
+        anything under a generated tree, so only the `scripts/` copy runs.
+        """
+        scripts = self.workdir / "scripts"
+        scripts.mkdir(exist_ok=True)
+        source_test = scripts / "test_mirrored_thing.py"
+        source_test.write_text("def test_ok(): assert True\n")
+        mirror = self.workdir / "plugin-artifacts" / "codex" / "scripts"
+        mirror.mkdir(parents=True)
+        mirror_test = mirror / "test_mirrored_thing.py"
+        mirror_test.write_text("def test_ok(): assert True\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", str(source_test), str(mirror_test),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "pass", msg=f"stderr={r.stderr!r}")
+        self.assertEqual(
+            [Path(p).resolve() for p in payload["ran"]],
+            [source_test.resolve()],
+            msg=f"mirror copy leaked into gate targets: {payload['ran']}",
+        )
+
+    def test_mirror_copy_alone_maps_to_no_gate_target(self) -> None:
+        """A change confined to the generated mirror has nothing to verify."""
+        mirror = self.workdir / "plugin-artifacts" / "codex" / "scripts"
+        mirror.mkdir(parents=True)
+        mirror_test = mirror / "test_only_in_mirror.py"
+        mirror_test.write_text("def test_ok(): assert True\n")
+
+        r = _run([
+            "--workdir", str(self.workdir),
+            "--scope", "changed",
+            "--changed-files", str(mirror_test),
+            "--json",
+        ])
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["verdict"], "no_tests", msg=f"stderr={r.stderr!r}")
+        self.assertEqual(payload["ran"], [])
+
+
+class TestNoGateTreePredicate(unittest.TestCase):
+    """`_in_non_gate_tree` classifies mirror trees without touching the disk."""
+
+    def setUp(self) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("self_mod_verify", SCRIPT)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_every_named_tree_is_excluded(self) -> None:
+        for tree in self.mod._NON_GATE_TREES:
+            path = self.workdir / tree / "scripts" / "test_x.py"
+            self.assertTrue(
+                self.mod._in_non_gate_tree(path, self.workdir), tree
+            )
+
+    def test_ordinary_scripts_path_is_not_excluded(self) -> None:
+        path = self.workdir / "scripts" / "test_x.py"
+        self.assertFalse(self.mod._in_non_gate_tree(path, self.workdir))
+
+    def test_substring_match_does_not_falsely_exclude(self) -> None:
+        path = self.workdir / "scripts" / "distribution" / "test_x.py"
+        self.assertFalse(self.mod._in_non_gate_tree(path, self.workdir))
+
+    def test_workdir_inside_a_mirror_tree_still_gates_its_own_scripts(self) -> None:
+        """Running the gate FROM inside the artifact must not exclude everything."""
+        inner = self.workdir / "plugin-artifacts" / "codex"
+        path = inner / "scripts" / "test_x.py"
+        self.assertFalse(self.mod._in_non_gate_tree(path, inner))
+
+
 class TestNoPytest(unittest.TestCase):
     """When no tests are found, verdict = no_tests, exit 3 (inconclusive)."""
 
@@ -392,21 +480,80 @@ class TestPytestTimeoutProbe(unittest.TestCase):
         self.mod = self_mod_verify
 
     def test_probe_reports_plugin_presence_for_the_real_runner(self) -> None:
-        runner = self.mod._find_runner(Path(__file__).resolve().parent.parent)
+        repo = Path(__file__).resolve().parent.parent
+        runner = self.mod._find_runner(repo)
         if runner is None:
             self.skipTest("no pytest runner available")
-        answer = self.mod._runner_has_pytest_timeout(runner)
+        answer = self.mod._runner_has_pytest_timeout(runner, cwd=repo)
         self.assertIsInstance(answer, bool)
         # Cross-check against the runner itself so the probe cannot silently
-        # invert: `pytest --version` lists loaded plugins.
+        # invert. `--version` must be DOUBLED: modern pytest prints only
+        # "pytest <N>" for a single flag and reserves the registered-plugin list
+        # for the doubled form. This cross-check used the single flag and so
+        # agreed with the probe's own blind spot — both reported "no plugin"
+        # against a venv that had it, and the gate ran without hang protection.
         r = subprocess.run(
-            [*runner, "--version", "-p", "no:cacheprovider"],
+            [*runner, "--version", "--version", "-p", "no:cacheprovider"],
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=str(repo),
         )
         expected = "timeout" in (r.stdout + r.stderr).lower()
         self.assertEqual(answer, expected)
+
+    def test_probe_sees_a_plugin_that_the_runner_really_loaded(self) -> None:
+        """Ground truth, not self-consistency: if the resolved runner loads
+        pytest-timeout, the probe must say True.
+
+        The sibling test above only asserts probe == cross-check, so a probe and
+        a cross-check that share a blind spot agree while both are wrong. This
+        one reads the plugin list directly and requires the probe to match it.
+        """
+        repo = Path(__file__).resolve().parent.parent
+        runner = self.mod._find_runner(repo)
+        if runner is None:
+            self.skipTest("no pytest runner available")
+        listing = subprocess.run(
+            [*runner, "--version", "--version", "-p", "no:cacheprovider"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(repo),
+        )
+        if "pytest-timeout" not in (listing.stdout + listing.stderr):
+            self.skipTest("resolved runner has no pytest-timeout installed")
+        self.assertTrue(
+            self.mod._runner_has_pytest_timeout(runner, cwd=repo),
+            msg="runner loads pytest-timeout but the probe reported it missing; "
+                "per-test hang protection would be silently dropped",
+        )
+
+    def test_probe_answers_for_the_directory_the_suite_will_run_in(self) -> None:
+        """The probe must be asked in the run's working directory.
+
+        `uv run pytest` resolves its virtualenv from the working directory, so a
+        probe taken in the plugin repo answered "pytest-timeout installed" while
+        the run, executed in a temp workdir, reached a venv without it and exited
+        4 — surfacing verdict=error on a healthy tree. Probing the temp workdir
+        must therefore be allowed to disagree with probing the repo, and the
+        production call site passes cwd=workdir.
+        """
+        repo = Path(__file__).resolve().parent.parent
+        runner = self.mod._find_runner(repo)
+        if runner is None:
+            self.skipTest("no pytest runner available")
+        with tempfile.TemporaryDirectory() as elsewhere:
+            # Both answers must be booleans obtained WITHOUT raising; the point
+            # is that cwd is a real input to the probe, not that they differ on
+            # every machine.
+            here = self.mod._runner_has_pytest_timeout(runner, cwd=repo)
+            there = self.mod._runner_has_pytest_timeout(runner, cwd=elsewhere)
+            self.assertIsInstance(here, bool)
+            self.assertIsInstance(there, bool)
+        # The production path must pass the workdir through, not probe blind.
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("_runner_has_pytest_timeout(runner_base, cwd=workdir)", source)
 
     def test_probe_fails_closed_on_a_broken_runner(self) -> None:
         # A probe that cannot answer must say False: dropping the flag degrades

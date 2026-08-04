@@ -117,11 +117,37 @@ def _is_core_path(rel_posix: str) -> bool:
     return any(rel_posix.startswith(p) for p in _CORE_PREFIXES)
 
 
+# Generated / vendored trees that MIRROR scripts/ and tests/. Their test files
+# are build output, never gate targets: `plugin-artifacts/codex/` alone mirrors
+# 217 `test_*.py` files whose basenames collide with their `scripts/` twins, and
+# pytest aborts the whole collection with "import file mismatch" the moment both
+# copies land in one invocation. Discovery therefore never returns a path under
+# these roots — excluding them at the source beats de-duplicating downstream.
+_NON_GATE_TREES = (
+    "plugin-artifacts",
+    "dist",
+    "build",
+    "node_modules",
+    "vendor",
+    ".venv",
+)
+
+
+def _in_non_gate_tree(path: Path, workdir: Path) -> bool:
+    """True when ``path`` lives under a generated/vendored mirror tree."""
+    try:
+        parts = path.resolve().relative_to(Path(workdir).resolve()).parts
+    except (ValueError, OSError):
+        parts = path.parts
+    return any(part in _NON_GATE_TREES for part in parts)
+
+
 # ---------------------------------------------------------------------------
 # Test-runner discovery
 # ---------------------------------------------------------------------------
 
-def _runner_has_pytest_timeout(runner_base: list[str]) -> bool:
+def _runner_has_pytest_timeout(runner_base: list[str],
+                               cwd: Path | str | None = None) -> bool:
     """True when the RESOLVED runner interpreter has the pytest-timeout plugin.
 
     Asks the same interpreter that will run the suite, rather than importing
@@ -130,13 +156,28 @@ def _runner_has_pytest_timeout(runner_base: list[str]) -> bool:
     wrong environment. Fails CLOSED to False — a probe that cannot answer drops
     the flag, which degrades cleanly, instead of passing a flag that would make
     pytest exit 4 on an unrecognized option.
+
+    ``--version`` is passed TWICE on purpose. Modern pytest prints only
+    ``pytest <N>`` for a single ``--version`` and reserves the registered-plugin
+    list for the doubled form, so a single-flag probe reported "not installed"
+    against a venv that had pytest-timeout — and every full-scope gate run
+    silently lost per-test hang protection while saying so in a warning nobody
+    actioned. The doubled flag is also accepted by older pytest, which printed
+    the plugin list either way.
+
+    ``cwd`` must be the SAME directory the suite will run in. ``uv run pytest``
+    resolves its virtualenv from the working directory, so probing in one
+    directory and running in another answers for the wrong environment — the
+    probe said "installed" from the plugin repo while the run, executed in a
+    temp workdir, hit a venv without the plugin and exited 4.
     """
     try:
         r = subprocess.run(
-            [*runner_base, "--version", "-p", "no:cacheprovider"],
+            [*runner_base, "--version", "--version", "-p", "no:cacheprovider"],
             capture_output=True,
             text=True,
             timeout=10,
+            cwd=str(cwd) if cwd is not None else None,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -227,6 +268,12 @@ def _tests_for_changed(workdir: Path, changed_files: list[str]) -> list[str]:
         # the gate would surface as verdict=error. Non-.py changes map to no
         # test target (verdict no_tests, exit 0) unless a sibling test exists.
         if p.suffix != ".py":
+            continue
+
+        # A mirror copy under plugin-artifacts/ (or another generated tree) is
+        # build output, not a gate target — and collecting it alongside its
+        # scripts/ twin aborts the run with "import file mismatch".
+        if _in_non_gate_tree(p, workdir):
             continue
 
         if p.name.startswith("test_"):
@@ -715,7 +762,7 @@ def verify(
         # plugin is present, drop it (with a warning) when it is not. A gate that
         # cannot run because an OPTIONAL plugin is missing has verified nothing,
         # which is strictly worse than running without the hang guard.
-        if _runner_has_pytest_timeout(runner_base):
+        if _runner_has_pytest_timeout(runner_base, cwd=workdir):
             cmd += ["--timeout=120", "--timeout-method=thread"]
         else:
             print(

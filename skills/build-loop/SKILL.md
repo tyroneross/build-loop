@@ -104,6 +104,19 @@ Self-heal is **both reactive and proactive**. It is not only triggered by errors
 
 **Closure test (counterfactual):** a root cause is not closed at "an actionable control." It is closed only when the named lever would have **prevented, detected, or contained THIS exact failure on the real input** (not a hand-constructed one) — a control that exists but stays dormant on the real signal does not count. **Fix strength:** prefer the strongest feasible control — `eliminate → impossible-state → automated-block → detect → contain → decision-support → docs` — over the reflex "add a detect-gate." A dependency you don't own is never "ignore it": isolate / validate / monitor / degrade / escalate / accept-residual-risk explicitly.
 
+### Finding disposition — "pre-existing" is not a decision (C-FINDINGS / every_finding_dispositioned)
+
+Every finding a run surfaces — lint, type, security, scanner or detector warning, failing or skipped test, deprecation, contract drift — reaches exactly one terminal state before "done": **fixed**, **waived against a durable record**, or **escalated as a new record**. "Pre-existing" says when a defect arrived, never whether it may stand. A report that names a warning and moves on has disclosed it, not dispositioned it; across runs that is how a repo accretes permanent warnings every future run re-observes and re-dismisses at full token cost.
+
+Route each finding: **inside** the run's owned files → fix it (C-HEAL self-heal, then C-RCA to root cause). **Outside** them → escalate and record — `scripts/backlog.py new` for this repo, `scripts/file_to_operations_center.py` for any other (`references/keep-going-policy.md` §"Flagged-issue default route") — and report the returned id. Scope bounds what a run FIXES; it never bounds what a run RECORDS, so out-of-scope findings get handed off rather than absorbed. **Genuinely acceptable** → waive, and only against a durable record:
+
+```bash
+python3 scripts/waivers.py check --repo "$PWD" --rule <id> --path <file> [--anchor <sym|line:N>] --json   # exit 0 = already waived
+python3 scripts/waivers.py new   --repo "$PWD" --rule <id> --path <file> --rationale "..." --authority "user|agent:<name>|decision:<path>" --expires "<date|version|until-file-changes>"
+```
+
+An agent's own unrecorded "out of scope" or "not mine" is not a waiver, and a user's spoken waiver counts only once written. Every waiver names its expiry; absent one it defaults to re-surfacing the next time its covered file changes. Phase 4G carries the `## Findings disposition` table — one row per finding, its state, and the record it points at.
+
 ### Follow-up auto-drain at chunk boundary
 
 A chunk boundary is not a checkpoint. When the orchestrator (or any session under the build-loop skill) is about to write a final report containing a "still-to-do" / "deferred" / "next pass" list of same-shape, same-intent items, route those items through the follow-up queue instead of writing them to the user as prose questions:

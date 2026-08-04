@@ -74,16 +74,22 @@ def _unpack_floats(blob: bytes) -> list[float]:
     return list(struct.unpack(f"{n}f", blob))
 
 
-def _try_embed(text: str) -> list[float] | None:
-    """Return embedding vector or None if backend unavailable."""
+def _try_embed(text: str) -> tuple[list[float] | None, str | None]:
+    """Return (embedding vector, model name), or (None, None) if unavailable.
+
+    The model name is returned so the reranker can refuse to score stored
+    vectors that came from a DIFFERENT embedding model. Two models can share a
+    dimension (bge-m3 and mxbai-embed-large-v1 are both 1024), so a mismatch
+    raises no error — it silently produces meaningless cosine scores.
+    """
     if os.environ.get("EMBED_BACKEND_UNAVAILABLE"):
-        return None
+        return None, None
     try:
         import embed_backend as _eb  # type: ignore  # noqa: PLC0415
         vec = _eb.embed(text)
-        return list(vec)
+        return list(vec), _eb.active_model()
     except Exception:  # noqa: BLE001
-        return None
+        return None, None
 
 
 def query(
@@ -146,9 +152,9 @@ def _run_query(
         return []
 
     # Hybrid rerank if embeddings are available.
-    goal_vec = _try_embed(goal_text)
+    goal_vec, goal_model = _try_embed(goal_text)
     if goal_vec is not None and _embeddings_populated(conn):
-        candidates = _cosine_rerank(conn, candidates, goal_vec)
+        candidates = _cosine_rerank(conn, candidates, goal_vec, goal_model)
 
     # Trim to limit.
     results = candidates[:limit]
@@ -248,18 +254,35 @@ def _embeddings_populated(conn) -> bool:
     return count > 0
 
 
-def _cosine_rerank(conn, candidates: list[dict], goal_vec: list[float]) -> list[dict]:
+def _cosine_rerank(
+    conn,
+    candidates: list[dict],
+    goal_vec: list[float],
+    goal_model: str | None = None,
+) -> list[dict]:
     """Rerank BM25 candidates by cosine similarity of stored embeddings.
 
     Returns candidates sorted by cosine similarity (descending). Candidates
-    without an embedding retain their BM25 rank at the end.
+    without a *same-model* embedding retain their BM25 rank at the end.
+
+    Vectors from a different embedding model are excluded rather than scored.
+    Cross-model cosine is meaningless, and because models can share a dimension
+    the mismatch is silent — excluding degrades to BM25 instead of ranking on
+    noise. `goal_model=None` (backend didn't report one) keeps the legacy
+    unfiltered behavior.
     """
     ids = [r["id"] for r in candidates]
     placeholders = ",".join("?" * len(ids))
-    emb_rows = conn.execute(
-        f"SELECT fact_id, vec FROM embeddings WHERE fact_id IN ({placeholders})",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
-        ids,
-    ).fetchall()
+    if goal_model:
+        emb_rows = conn.execute(
+            f"SELECT fact_id, vec FROM embeddings WHERE fact_id IN ({placeholders}) AND model = ?",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
+            [*ids, goal_model],
+        ).fetchall()
+    else:
+        emb_rows = conn.execute(
+            f"SELECT fact_id, vec FROM embeddings WHERE fact_id IN ({placeholders})",  # nosec: only ?-placeholders / constant fragments interpolated; values bound as params
+            ids,
+        ).fetchall()
     emb_map = {row["fact_id"]: _unpack_floats(row["vec"]) for row in emb_rows}
 
     scored = []
