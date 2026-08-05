@@ -115,6 +115,17 @@ def build_record(args: argparse.Namespace, workdir: Path) -> dict:
     return record
 
 
+def _enforce_owed_verification(workdir: Path, record: dict) -> dict | None:
+    """Deferred import so a missing/broken module cannot block a run record."""
+    try:
+        import owed_verification  # noqa: WPS433
+
+        return owed_verification.enforce_for_run_record(
+            workdir, record, written_by="append_run")
+    except Exception:  # noqa: BLE001 — the run record is the priority
+        return None
+
+
 def append_run(state_path: Path, record: dict) -> dict:
     # One writer contract: lock + atomic replace, never a bare read/write race.
     with LockedFile(state_path):
@@ -177,6 +188,18 @@ def main(argv: list[str] | None = None) -> int:
     state_path = workdir / ".build-loop" / "state.json"
     record = build_record(args, workdir)
     result = append_run(state_path, record)
+    # GAP-1: a run closes with a real independent-auditor verdict OR with a
+    # manifest naming what is owed -- never with neither. Bound to the write
+    # that persists the record rather than left to the caller, because the
+    # caller remembering is exactly what failed: five runs closed here with
+    # `auditor_status: not-run:parent-must-dispatch` and no manifest, while the
+    # contract calling that write MANDATORY sat in markdown. Fail-open.
+    manifest = _enforce_owed_verification(workdir, record)
+    if manifest is not None:
+        result["owed_verification"] = {
+            "owed": manifest.get("owed", []),
+            "reason": manifest.get("reason"),
+        }
     if args.json:
         print(json.dumps(result))
     else:

@@ -263,3 +263,64 @@ class TestCLI(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# The meta-defect: this module was CORRECT, COMPLETE, TESTED -- and had zero
+# executable call sites. Every reference to it lived in markdown that an agent
+# had to remember to obey, so the escape hatch never fired once, including on
+# runs that explicitly recorded `auditor_status: not-run:parent-must-dispatch`.
+# A module reachable only from prose is documentation wearing a .py extension.
+# ---------------------------------------------------------------------------
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def test_the_manifest_writer_has_an_executable_call_site():
+    """Guard against this module going back to being prose-only.
+
+    Deliberately does NOT count markdown: prose calling itself a mandate is
+    exactly the state that failed. It also does not count this test file, or
+    the module itself, for the same reason -- a module imported only by its own
+    tests is still unreachable from a real run.
+    """
+    root = _repo_root()
+    module = Path(__file__).resolve().parent / "owed_verification.py"
+    callers = []
+    for path in sorted((root / "scripts").rglob("*.py")):
+        if path.name.startswith("test_") or path == module:
+            continue
+        if "plugin-artifacts" in path.parts:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "import owed_verification" in text or "owed_verification." in text:
+            callers.append(str(path.relative_to(root)))
+
+    assert callers, (
+        "scripts/owed_verification.py has no executable call site. It is "
+        "reachable only from markdown, which is the exact state in which the "
+        "GAP-1 escape hatch never fired on five consecutive runs. Wire it into "
+        "the run-close path, or delete it and stop claiming the guarantee."
+    )
+
+
+def test_both_run_close_writers_enforce_the_manifest():
+    """Name the two writers explicitly.
+
+    One wired writer is not the guarantee -- `append_run.py` is the path the
+    five real runs took, and `write_run_entry` is the orchestrator's. A run
+    closing through either must land a verdict or a manifest, so a future
+    refactor that unwires one of them has to fail here rather than silently
+    reopen half the hole.
+    """
+    scripts = Path(__file__).resolve().parent
+    for name in ("append_run.py", "write_run_entry/__main__.py"):
+        text = (scripts / name).read_text(encoding="utf-8")
+        assert "_enforce_owed_verification" in text, (
+            f"{name} no longer enforces the owed-verification manifest; a run "
+            "closing through it can record no auditor verdict and owe nothing"
+        )

@@ -300,5 +300,95 @@ class AdditiveOptionalFieldsTests(unittest.TestCase):
         self.assertNotIn("harness", self._last_run())
 
 
+
+class OwedVerificationEnforcementTests(unittest.TestCase):
+    """GAP-1: a run cannot close with neither a verdict nor a manifest."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+        self.state = self.workdir / ".build-loop" / "state.json"
+        self.manifest = self.workdir / ".build-loop" / "owed-verification.json"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _judge_file(self, decisions: list) -> str:
+        p = self.workdir / "judges.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(decisions))
+        return str(p)
+
+    def _args(self, **overrides: str) -> list[str]:
+        args = {
+            "--workdir": str(self.workdir),
+            "--goal": "ship a code change",
+            "--outcome": "pass",
+            "--phases-json": "{}",
+        }
+        args.update(overrides)
+        flat: list[str] = []
+        for k, v in args.items():
+            flat.extend([k, v])
+        return flat
+
+    def test_pending_hook_packet_does_not_satisfy_the_auditor_requirement(self) -> None:
+        """The verdict-blindness defect, tested where it actually lives.
+
+        `auditor_present` matched on the judge_id substring alone, so six
+        `verdict: pending, status: packet_emitted` rows -- an audit packet
+        EMITTED and never answered -- certified two real runs as reviewed.
+        A packet is a request for a verdict, not a verdict.
+
+        Asserted against the function rather than the CLI on purpose: the CLI
+        rejects `pending` earlier, on the judge-decision verdict ENUM, but
+        `scripts/audit_before_commit.py` writes these rows straight into
+        state.json without passing that enum. So the enum is not the control
+        here, and testing through the CLI would prove a protection this defect
+        routes around.
+        """
+        sys.path.insert(0, str(HERE))
+        from write_run_entry.validators import auditor_present
+
+        packet = [{"judge_id": "independent-auditor-hook",
+                   "verdict": "pending", "status": "packet_emitted"}]
+        self.assertFalse(auditor_present(packet),
+                         "an emitted-but-unanswered packet is not a verdict")
+        # ...and the exact six-row shape the two real runs carried.
+        self.assertFalse(auditor_present(packet * 6))
+
+    def test_a_rendered_verdict_still_satisfies(self) -> None:
+        """Acquittal half: the tightening must not reject real verdicts, and a
+        NEGATIVE verdict is still a verdict -- `nay` means the auditor ran."""
+        sys.path.insert(0, str(HERE))
+        from write_run_entry.validators import auditor_present
+
+        for verdict in ("yay", "suggest", "nay", "rethink", "new_approach"):
+            with self.subTest(verdict=verdict):
+                self.assertTrue(auditor_present(
+                    [{"judge_id": "independent-auditor", "verdict": verdict}]))
+
+    def test_entry_past_the_gate_without_a_verdict_leaves_a_manifest(self) -> None:
+        """The exit-3 gate only fires on scope=build + pass + filesTouched.
+        Everything outside that intersection reached the writer owing nothing
+        on disk -- which is where all five real runs landed."""
+        result = run(self._args(**{
+            "--scope": "none", "--files-touched": "src/x.py", "--outcome": "partial",
+        }))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue(self.manifest.exists(),
+                        "a code-touching run with no verdict must owe one")
+        owed = json.loads(self.manifest.read_text())["owed"]
+        self.assertIn("independent-auditor", owed)
+        self.assertIs(json.loads(self.state.read_text()).get("review_incomplete"), True)
+
+    def test_a_quiet_entry_owes_nothing(self) -> None:
+        """Precision: a run that touched nothing and engaged no auditor is not
+        an escaped review. A flag that is always on is a flag nobody reads."""
+        result = run(self._args(**{"--outcome": "partial"}))
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertFalse(self.manifest.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

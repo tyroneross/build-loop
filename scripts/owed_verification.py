@@ -290,6 +290,97 @@ def write_manifest(
     return payload
 
 
+AUTO_OWED_VERIFIER = "independent-auditor"
+
+# Auditor statuses that SAY the auditor did not render a verdict. The
+# orchestrator contract already requires the manifest on exactly these, which
+# is why they are the first trigger: the branch was recorded honestly and the
+# manifest still never appeared.
+_NOT_RUN_PREFIXES = ("not-run:",)
+_NOT_RUN_EXACT = {"cross-vendor-deferred"}
+
+
+def owed_reason_for_record(record: dict[str, Any]) -> str | None:
+    """Why this run record owes an independent-auditor verdict, or None.
+
+    Three triggers, each one a real run that closed owing nothing on disk
+    (RossLabs-AI-Assistant/.build-loop/state.json, 2026-07-21 .. 2026-08-04):
+
+    1. ``auditor_status`` names a not-run branch. The contract calls the
+       manifest MANDATORY here; prose cannot enforce itself.
+    2. The auditor appears in ``judge_decisions[]`` with no rendered verdict --
+       an emitted packet, which is a request for a verdict, not one.
+    3. The run touched files and carries no auditor verdict at all.
+
+    Deliberately NOT a blanket "no verdict means owed": a run that touched
+    nothing and never engaged an auditor is not an escaped review, and owing on
+    it would set ``review_incomplete`` on nearly every run. A flag that is
+    always on is a flag nobody reads.
+    """
+    status = str(record.get("auditor_status") or "").strip().lower()
+    if status.startswith(_NOT_RUN_PREFIXES) or status in _NOT_RUN_EXACT:
+        return f"auditor_status={record.get('auditor_status')!r} names a not-run branch"
+
+    try:
+        from write_run_entry.validators import AUDITOR_JUDGE_MARKER, auditor_present
+    except Exception:  # noqa: BLE001 — enforcement must never break the write
+        return None
+
+    if auditor_present(record.get("judge_decisions")):
+        return None
+
+    decisions = record.get("judge_decisions")
+    if isinstance(decisions, list):
+        for item in decisions:
+            if isinstance(item, dict) and AUDITOR_JUDGE_MARKER in str(item.get("judge_id", "")):
+                return (
+                    "judge_decisions[] names the auditor but carries no rendered "
+                    "verdict (an emitted packet is a request for one)"
+                )
+
+    if record.get("filesTouched"):
+        return "the run touched files and recorded no independent-auditor verdict"
+    return None
+
+
+def enforce_for_run_record(
+    workdir: Path,
+    record: dict[str, Any],
+    *,
+    written_by: str,
+    diff_range: str = "unknown",
+) -> dict[str, Any] | None:
+    """Write the owed manifest when a closing run record carries no verdict.
+
+    This is the whole GAP-1 closure. ``owed_verification.py`` was correct and
+    complete and had ZERO executable call sites: every reference to it lived in
+    markdown an agent had to remember to obey, so the escape hatch never fired
+    even on runs that explicitly recorded ``not-run:parent-must-dispatch``.
+
+    Making the manifest a side effect of the same write that persists the run
+    record is what removes the remembering. A run now closes with a real
+    verdict or with a manifest naming what is owed; it can no longer close with
+    neither, because the code path that writes one also writes the other.
+
+    Fail-open by construction: a run record must still land even if this
+    cannot. Returns the manifest when written, else None.
+    """
+    try:
+        reason = owed_reason_for_record(record)
+        if reason is None:
+            return None
+        return write_manifest(
+            workdir,
+            run_id=str(record.get("run_id") or "unknown"),
+            diff_range=diff_range,
+            owed=[AUTO_OWED_VERIFIER],
+            reason=reason,
+            written_by=written_by,
+        )
+    except Exception:  # noqa: BLE001 — never break the run-record write
+        return None
+
+
 def check_manifest(workdir: Path) -> dict[str, Any]:
     """Answer 'is this run's review complete?'.
 
