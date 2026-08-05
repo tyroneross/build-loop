@@ -44,15 +44,13 @@ PATH_IN_TITLE_RE = re.compile(r"'([^']+)'")
 # like a hot spot. Reporting that as a defect is a false positive every time.
 NON_ACTIONABLE_KINDS = {"high_churn_file"}
 
-# Findings about these paths are noise regardless of kind: they are build
-# products, not authored source.
-GENERATED_PATH_HINTS = (
-    "architecture/model.json",
-    "architecture/ARCHITECTURE.md",
-    "docs/build-loop-flow-mockup.html",
-    "INDEX.md",
-    "INDEX.jsonl",
-    ".build-loop/",
+# Findings about build products are noise regardless of kind. The definition
+# lives in one place because the PRODUCER (self_review.efficiency.scan_churn)
+# now suppresses the same class at emission; two copies of this list would
+# drift and reopen the false-positive queue from the producer side.
+from self_review.generated_paths import (  # noqa: E402
+    GENERATED_PATH_HINTS,
+    matched_generated_hint,
 )
 
 # Findings that are not code fixes at all. They belong in memory or in the
@@ -120,9 +118,9 @@ def is_non_actionable(p: dict) -> tuple[bool, str]:
     if p["kind"] in NON_ACTIONABLE_KINDS:
         return True, f"{p['kind']} is advisory-only (rolling-window churn)"
     blob = f"{p['finding']} {p.get('script','')}"
-    for hint in GENERATED_PATH_HINTS:
-        if hint in blob:
-            return True, f"target is a generated artifact ({hint})"
+    hint = matched_generated_hint(blob)
+    if hint:
+        return True, f"target is a generated artifact ({hint})"
     return False, ""
 
 
