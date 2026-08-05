@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "4e8c22c1fb175630d86562cbe1c4a99f2f06af6c2b696b52c141d67c93d3b62d"
+    "content_sha256": "94a929d7489a95908919cf7cb781ac6de742f7f052e66b1f25e3ef71b322d75e"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-28"
+          "date": "2026-08-04"
         }
       },
       "database-assessor": {
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-30"
+          "date": "2026-08-04"
         }
       },
       "building-with-deepagents": {
@@ -1611,6 +1611,7 @@
       "scripts/dispatch_identity.py": "Generate and validate build-loop dispatch task ids.",
       "scripts/dogfood_reload_checkpoint.py": "Dogfood reload checkpoint helper.\"\"\"",
       "scripts/drain_proposals.py": "drain_proposals.py — cross-repo proposal-drain gate (the multiplier).",
+      "scripts/drain_self_review_proposals.py": "Consumer for the self-review proposal queue.",
       "scripts/embed_backend.py": "Embedding backend abstraction for repo-local episodic memory.",
       "scripts/embed_daemon.py": "Long-running embedder daemon (Phase H).",
       "scripts/enforce_canonical_memory.py": "enforce_canonical_memory.py — C-MEMORY/canonical_writer enforcement gate.",
