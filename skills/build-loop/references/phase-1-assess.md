@@ -187,6 +187,25 @@ manifest is an explicit source-only run record.
    This is the canonical active view over existing state, queue, and
    project-scoped memory backlog surfaces. Do not create a second task ledger by
    default. See `references/task-capture-policy.md`.
+14b. **Groundwork request intake** (blocking when present): when
+   `GROUNDWORK_BUILD_REQUEST` is set or `.designdoc/build-request.json` exists,
+   validate the request and its adjacent canonical Spec before planning:
+
+   ```bash
+   request="${GROUNDWORK_BUILD_REQUEST:-$PWD/.designdoc/build-request.json}"
+   spec="${GROUNDWORK_SPEC:-$(dirname "$request")/spec.json}"
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/groundwork_exchange.py" validate-request \
+     --request "$request" --spec "$spec" \
+     --output "$PWD/.build-loop/groundwork-request.json"
+   ```
+
+   Exit 0 binds `specDigest`, the ordered `taskDigest`, and the self-digested
+   request; carry its task IDs, acceptance criteria, dependencies, and manual
+   boundaries into the plan without rewriting Groundwork's desired state. Exit
+   2 is a Phase 1 failure: stop this request path and report the exact contract
+   error. Never downgrade an invalid or stale request to an ordinary prompt.
+   Keep the request and Spec paths for Review-G, where Build Loop returns
+   implementation evidence and Groundwork calculates convergence.
 15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).
 16. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
     - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work; the checkpoint reactions (severity + reason) tell you whether overlap is `merged_residue` / `squash_landed` / `active_conflict`. See `agents/build-orchestrator.md` §Multi-session concurrency.

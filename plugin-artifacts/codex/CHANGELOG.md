@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.37.0 — 2026-08-05
+
+### Added
+- Groundwork BuildRequest v1 intake and digest-bound ImplementationMap v1 output connect intended product architecture to verified repository implementation evidence.
+- Claude and Codex artifacts ship the same stdlib-only exchange adapter and prove checksum plus execution parity in isolated caches.
 
 ### Changed
 - Verification-verdict agents (`fix-critique`, `fact-checker`, `overfitting-reviewer`, `promotion-reviewer`, `scope-auditor`) repinned `model: opus` → `model: fable`, closing the drift against the standing model org (2026-06-09: Fable owns verification verdicts). Orchestrators stay Opus; execution stays Sonnet; pattern scanners stay Haiku.

@@ -57,6 +57,14 @@ What you observe: the agent prints a short status line per phase (`[Phase 1: Ass
 
 You do not pick a mode. `/build-loop:run` auto-routes build, fix, refactor, optimize, research, and test requests to the right path.
 
+### Groundwork exchange
+
+When a project contains `.designdoc/build-request.json` (or sets `GROUNDWORK_BUILD_REQUEST`), Build Loop validates that request against its adjacent canonical `spec.json` before planning. It preserves Groundwork's ordered tasks, dependency graph, acceptance criteria, and external manual actions as the build boundary.
+
+After implementation and verification, Review-G writes `.designdoc/implementation-map.json`. The map binds each reported task, component, contract, or requirement and its repository-local evidence to the original request, Spec, and task digests. Build Loop reports implementation evidence; Groundwork remains the authority for desired state and calculates convergence.
+
+The exchange adapter ships with identical bytes for Claude Code and Codex at `scripts/groundwork_exchange.py`. Run `python3 scripts/groundwork_exchange.py --help` for the validation and emission commands.
+
 ## Install
 
 The plugin installs and updates through the host's **native marketplace** — no npm step, no global install, no `sudo`:
@@ -74,7 +82,7 @@ The host owns install, versioning, and `/plugin update`. Restart the host to loa
 The legacy `build-loop-install` binary syncs the same files into the host caches manually. Prefer the marketplace above; use this only to pin an exact version or on a host without marketplace support.
 
 ```bash
-npm install -g @tyroneross/build-loop@0.36.4
+npm install -g @tyroneross/build-loop@0.37.0
 build-loop-install --host all
 ```
 
@@ -231,7 +239,7 @@ It is for developers running AI coding agents on non-trivial changes: features, 
 
 ### What is the fastest way to try it?
 
-`npm install -g @tyroneross/build-loop@0.36.4`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
+`npm install -g @tyroneross/build-loop@0.37.0`, then `build-loop-install --host all`, then `/build-loop:run <your task>` inside a project. See [Quick start](#quick-start).
 
 ### How is it different from just letting an agent code directly?
 
@@ -302,7 +310,7 @@ python3 scripts/test_plugin_manifest.py
 python3 scripts/test_agent_surface_policy.py
 npm run codex:build-artifact
 npm pack --dry-run --json
-python3 scripts/verify_release_surface.py --version v0.36.4 --branch main --remote origin --json
+python3 scripts/verify_release_surface.py --version v0.37.0 --branch main --remote origin --json
 ```
 
 Publishing to GitHub Packages, npmjs, or GitHub Releases is a release action. Run it only when explicitly requested by the human owner.

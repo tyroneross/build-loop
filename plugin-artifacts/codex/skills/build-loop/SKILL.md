@@ -213,6 +213,8 @@ Build-loop prefers installed plugins and skills over reinventing patterns. Each 
 
 Understand current state, load memory through the automatic context bootstrap, detect tools, map architecture, capture north star + update intent, assess clean-sheet vs current-constraints approach lenses, define goal and criteria. Writes `.build-loop/context-bootstrap.json`, `.build-loop/context/current.md` via `scripts/context_snapshot.py`, `.build-loop/intent.md`, and `.build-loop/goal.md`.
 
+Groundwork intake: when `$GROUNDWORK_BUILD_REQUEST` or `.designdoc/build-request.json` is present, validate it with the adjacent canonical Spec through `scripts/groundwork_exchange.py validate-request` before planning; failures block Execute.
+
 Key steps: detect plugins → set sub-routers → map architecture → run `scripts/context_bootstrap.py` (bootstrap surfaces queue counts+top items+progressive lessons in the packet; check `session_prefs.continue_from_queues` and ask the user ONCE when "ask" and any queue has items; see `agents/build-orchestrator.md` §"Queue surfacing + session preference" and `AGENTS.md` §"Memory bootstrap + queue surfacing" for the full surface+ask protocol) → run `scripts/research_trigger.py` to decide Research plugin depth and blocked final-claim handling → run `scripts/task_surface.py` when surfacing open work → load PRD if present → capture intent → capture approach lenses for non-trivial recommendations → for UI work load `references/ui-io-contract.md` and inventory affected inputs/outputs → define scoring criteria → synthesis-density routing (count `synthesis_dimensions`; escalate to thinking-tier when > 5).
 
 **Load `skills/build-loop/references/phase-1-assess.md`** for the full step-by-step protocol including UI pre-flight, workspace concurrency checks, recovery check, and synthesis-density routing details.
@@ -236,6 +238,8 @@ Key steps: subagent-driven-development → model assignment (Sonnet default) →
 ## Phase 4: Review — Critic, Validate, Fact-Check, Simplify, Auto-Resolve, Report
 
 Seven sub-steps run in order (A–G): Critic → Validate → Optimize (opt-in) → Fact-Check → Simplify → Auto-Resolve → Report. F (Auto-Resolve) drains non-destructive items via `scripts/autonomy_gate.py` (auto/warn/confirm/block routing). G (Report) is final-pass-only.
+
+Groundwork return: when Phase 1 accepted a request, Review-G emits `.designdoc/implementation-map.json` through `scripts/groundwork_exchange.py emit-map`; failures route to Iterate and Groundwork alone calculates convergence.
 
 Key steps: independent-auditor (build scope) adversarial read → build-loop-owned UI validation when UI changed → code-based graders → live smoke gate → LLM judges → fact-checker + mock-scanner + architecture-rules in parallel → simplify → autonomy gate queue → final scorecard + run entry → **non-gating post-push retrospective dispatch** (`build-loop:retrospective-synthesizer` writes the 9-section `.build-loop/retrospectives/<date>/<run-id>.md` + ≤5-line summary surfaced inline; enforce-candidates land at `.build-loop/proposals/enforce-from-retro/` for human review — never auto-promoted; fire-and-continue, run-close is NOT delayed). On self-recursive runs, G appends `## Self-modifications (readback)` listing every self-modification attempted this run — file, what/why, gate verdict, additional-review finding — so the human sees results at the end without the loop stopping. Full spec in `agents/build-orchestrator.md` §G.
 
