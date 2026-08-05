@@ -47,6 +47,24 @@ The report describes what the change DOES FOR THE USER, not the feature or mecha
 
 This is judgment, not a deterministic check: `report_lint.py` does NOT grade outcome framing (a fuzzy "is this outcome-framed?" rule would false-green on disguised mechanism prose and false-block on terse-but-correct outcome reports). The rule is enforced by the Review-G one-pass self-heal — the orchestrator rewrites a mechanism-only lead into an outcome-first one before emitting.
 
+### Release notes lead with one useful claim
+
+Each release-note item starts with a direct statement: `[Actor] [strong verb] [specific outcome].` The next sentence explains why the outcome matters. Lists, implementation details, and examples then support the claim.
+
+- Name the actor. Use `Rally`, `Claude Code`, or `Codex` when that system owns the action.
+- State the result before the mechanism. Tell the reader what now works, what stops failing, or what becomes easier.
+- Treat a list as evidence, not insight. Do not lead with a comma-separated inventory of commands, lifecycle events, files, or checks.
+- Keep examples after the point. Details such as lead changes, claim closure, expired-claim takeover, release, and resolution clarify the rule after the reader knows what the rule achieves.
+- Check each item before publishing: actor + verb + outcome; reason next; supporting detail last.
+
+**Weak — the inventory substitutes for the point:**
+
+> Lead-seat changes, claim closure, takeover, release, and resolution now enforce authority at the write boundary.
+
+**Strong — the statement explains the outcome first:**
+
+> Rally enforces ownership at the write boundary so one agent cannot close or transfer another agent's work. This protection covers lead changes, claim closure, expired-claim takeover, release, and resolution.
+
 ### Good — outcome-framed (the user-approved target style)
 
 ```
