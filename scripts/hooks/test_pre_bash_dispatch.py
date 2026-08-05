@@ -47,20 +47,34 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def make_buildloop_repo(tmp: Path) -> Path:
-    """A git repo with .build-loop/config.json so the dispatcher scope guard
-    enforces (it no-ops outside build-loop projects)."""
-    repo = tmp / "repo"
+def make_plain_repo(tmp: Path, name: str = "repo") -> Path:
+    """A git repo with NO .build-loop/ — a repository that never opted in."""
+    repo = tmp / name
     repo.mkdir(parents=True, exist_ok=True)
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@example.com")
     _git(repo, "config", "user.name", "Test")
-    (repo / ".build-loop").mkdir(parents=True, exist_ok=True)
-    (repo / ".build-loop" / "config.json").write_text("{}", encoding="utf-8")
     # An initial commit so HEAD exists and `git show :<f>` works on staged files.
     (repo / "README.md").write_text("seed\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-q", "-m", "seed")
+    return repo
+
+
+def make_buildloop_repo(
+    tmp: Path,
+    name: str = "repo",
+    config: dict | str = "{}",
+) -> Path:
+    """A git repo with .build-loop/config.json so the dispatcher scope guard
+    enforces (it no-ops outside build-loop projects).
+
+    ``config`` accepts a dict (serialized) or a raw string, so a deliberately
+    malformed config can be planted for the unreadable-config path."""
+    repo = make_plain_repo(tmp, name)
+    (repo / ".build-loop").mkdir(parents=True, exist_ok=True)
+    body = config if isinstance(config, str) else json.dumps(config)
+    (repo / ".build-loop" / "config.json").write_text(body, encoding="utf-8")
     return repo
 
 
@@ -71,11 +85,20 @@ def run_dispatch(
     path_env: str | None = None,
     minimal_env: bool = False,
     plugin_root: Path | None = None,
+    event_cwd: Path | None = None,
 ) -> subprocess.CompletedProcess:
     """Drive the dispatcher exactly as Claude Code would: PreToolUse event JSON
     on stdin, process cwd == the repo (the commit auditor reads the repo via
-    `git rev-parse` in its own cwd)."""
-    event = json.dumps({"tool_input": {"command": command}, "cwd": str(repo)})
+    `git rev-parse` in its own cwd).
+
+    ``event_cwd`` overrides the event's ``cwd`` field — the SESSION's working
+    directory, which Claude Code reports and which need not be the repository the
+    command acts on. Both the process cwd and the event cwd move together, since
+    that is how the real harness behaves."""
+    session_cwd = event_cwd or repo
+    event = json.dumps(
+        {"tool_input": {"command": command}, "cwd": str(session_cwd)}
+    )
     if minimal_env:
         env = {"PATH": path_env or "/usr/bin:/bin"}
     else:
@@ -85,7 +108,7 @@ def run_dispatch(
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root or PLUGIN_ROOT)
     return subprocess.run(
         ["bash", str(DISPATCH)],
-        cwd=repo,
+        cwd=session_cwd,
         input=event,
         capture_output=True,
         text=True,
@@ -498,6 +521,192 @@ class SecurityPushConfigAwarenessTests(unittest.TestCase):
             f"plain default-config push must stay delta-scoped (exit 0); "
             f"stderr={r.stderr!r}",
         )
+
+
+class PerRepoConfigResolutionTests(unittest.TestCase):
+    """The security gates must resolve `.build-loop/` state from the repository
+    the command ACTS ON, not from the session's working directory.
+
+    Observed failure (2026-08-03): a vault push ran with the session parked in a
+    different build-loop repo. `_SCAN_TARGET` already resolved to the vault, but
+    the excludeGlobs were read from `$CWD/.build-loop/config.json` — the SESSION
+    repo's config — so the vault's own dispositions were dropped and the push
+    blocked on 2 HIGH / 40 MEDIUM findings that all sat inside excluded paths.
+    Re-running the scanner with those excludes returned exit 0. Nothing was said:
+    a config missing at the guessed path is indistinguishable from a repo with no
+    excludes, so the gate degraded silently and the same push later succeeded
+    purely because the shell happened to be in the vault.
+
+    `archive/` is the excluded directory throughout — `vendor/` would have been
+    skipped by the scanner's own SKIP_DIRS, making these tests pass for the wrong
+    reason."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _plant_secret(self, repo: Path, relpath: str) -> None:
+        target = repo / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_SECRET_LINE, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", f"add {relpath}")
+
+    # ── push gate ────────────────────────────────────────────────────────────
+
+    def test_excludes_come_from_the_pushed_repo_not_the_session_repo(self) -> None:
+        """THE REPRODUCTION. Session sits in one build-loop repo; the command
+        pushes another whose config excludes the path holding the secret. The
+        pushed repo has no upstream, so this is a full scan either way — the only
+        variable is WHOSE excludeGlobs apply. Pre-fix: the session repo's empty
+        config → no excludes → HIGH → exit 2 (a false block on a finding the
+        owner already dispositioned). Fixed: the pushed repo's config → excluded
+        → exit 0."""
+        session = make_buildloop_repo(self.tmp, name="session")
+        target = make_buildloop_repo(
+            self.tmp,
+            name="target",
+            config={"securityScan": {"excludeGlobs": ["archive/**"]}},
+        )
+        self._plant_secret(target, "archive/old-notes.js")
+        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        self.assertEqual(
+            r.returncode, 0,
+            "the pushed repo's own excludeGlobs must apply; "
+            f"stderr={r.stderr!r}",
+        )
+
+    def test_pushed_repo_excludes_do_not_hide_an_unexcluded_secret(self) -> None:
+        """Control for the above: honouring the target's config must not become
+        a blanket pass. Same shape, secret OUTSIDE the excluded path → block."""
+        session = make_buildloop_repo(self.tmp, name="session")
+        target = make_buildloop_repo(
+            self.tmp,
+            name="target",
+            config={"securityScan": {"excludeGlobs": ["archive/**"]}},
+        )
+        self._plant_secret(target, "src/auth.ts")
+        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
+        self.assertIn("security scan found HIGH", r.stderr)
+
+    def test_missing_config_stays_a_silent_no_op(self) -> None:
+        """Fail-open contract preserved: a repo that never opted in has no
+        config, which is a legitimate 'no excludes' — the scan proceeds and says
+        nothing about it."""
+        session = make_buildloop_repo(self.tmp, name="session")
+        target = make_plain_repo(self.tmp, name="target")
+        self._plant_secret(target, "archive/old-notes.js")
+        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
+        self.assertIn("security scan found HIGH", r.stderr)
+        self.assertNotIn(
+            "could not be read", r.stderr,
+            "a missing config must not warn — only an unreadable one does",
+        )
+
+    def test_unreadable_config_announces_itself(self) -> None:
+        """A config that EXISTS but cannot be parsed is not the same as absent:
+        its owner wrote dispositions the scan is about to ignore. Silence there
+        is what let the wrong-directory read hide, so this path names the file
+        and states the consequence, then scans without excludes."""
+        session = make_buildloop_repo(self.tmp, name="session")
+        target = make_buildloop_repo(
+            self.tmp, name="target", config='{"securityScan": {,,,}'
+        )
+        self._plant_secret(target, "archive/old-notes.js")
+        r = run_dispatch(session, f"cd {target} && git push", event_cwd=session)
+        self.assertIn("could not be read", r.stderr)
+        self.assertIn(str(target / ".build-loop" / "config.json"), r.stderr)
+        self.assertEqual(
+            r.returncode, 2,
+            f"an unreadable config still scans (without excludes); "
+            f"stderr={r.stderr!r}",
+        )
+
+    # ── subdirectory sessions ────────────────────────────────────────────────
+
+    def test_subdirectory_session_still_gates_the_repo(self) -> None:
+        """The opt-in marker lives at the repo root, so a session parked in
+        `<repo>/.obsidian/plugins/<x>` used to fall out of the scope guard and
+        escape every gate — enforcement determined by how deep the shell sat, not
+        by the repository. Secret outside the excluded path → must block."""
+        repo = make_buildloop_repo(
+            self.tmp,
+            name="repo",
+            config={"securityScan": {"excludeGlobs": ["archive/**"]}},
+        )
+        self._plant_secret(repo, "src/auth.ts")
+        sub = repo / ".obsidian" / "plugins" / "daily-planner"
+        sub.mkdir(parents=True, exist_ok=True)
+        r = run_dispatch(repo, "git push", event_cwd=sub)
+        self.assertEqual(
+            r.returncode, 2,
+            f"a subdirectory session must still be gated; stderr={r.stderr!r}",
+        )
+        self.assertIn("security scan found HIGH", r.stderr)
+
+    def test_subdirectory_session_honours_the_root_config(self) -> None:
+        """Paired with the test above, which proves the gate fires from this same
+        subdirectory: here the only difference is that the secret sits inside the
+        ROOT config's excluded path, so the run passes."""
+        repo = make_buildloop_repo(
+            self.tmp,
+            name="repo",
+            config={"securityScan": {"excludeGlobs": ["archive/**"]}},
+        )
+        self._plant_secret(repo, "archive/old-notes.js")
+        sub = repo / ".obsidian" / "plugins" / "daily-planner"
+        sub.mkdir(parents=True, exist_ok=True)
+        r = run_dispatch(repo, "git push", event_cwd=sub)
+        self.assertEqual(
+            r.returncode, 0,
+            "the repo-root config must apply to a push from a subdirectory; "
+            f"stderr={r.stderr!r}",
+        )
+
+    # ── deploy gate (same class, same fix) ───────────────────────────────────
+
+    def test_deploy_scans_and_configures_the_deployed_repo(self) -> None:
+        """`git push` is not the only way code ships. The pre-deploy gate read
+        both its scan root and its excludeGlobs from `$CWD`, so `cd <repo> &&
+        vercel deploy` scanned the session's tree instead. Session repo carries
+        an unexcluded secret (pre-fix: scanned → exit 2, a false block); the
+        deployed repo's secret is excluded by its own config (fixed: exit 0)."""
+        session = make_buildloop_repo(self.tmp, name="session")
+        self._plant_secret(session, "src/leak.ts")
+        target = make_buildloop_repo(
+            self.tmp,
+            name="target",
+            config={"securityScan": {"excludeGlobs": ["archive/**"]}},
+        )
+        self._plant_secret(target, "archive/old-notes.js")
+        r = run_dispatch(
+            session, f"cd {target} && vercel deploy --prod", event_cwd=session
+        )
+        self.assertEqual(
+            r.returncode, 0,
+            "the deploy gate must scan the deployed repo under its own config; "
+            f"stderr={r.stderr!r}",
+        )
+
+    def test_deploy_gate_still_blocks_an_unexcluded_secret(self) -> None:
+        """Control: retargeting the deploy scan must not disarm it."""
+        session = make_buildloop_repo(self.tmp, name="session")
+        target = make_buildloop_repo(
+            self.tmp,
+            name="target",
+            config={"securityScan": {"excludeGlobs": ["archive/**"]}},
+        )
+        self._plant_secret(target, "src/auth.ts")
+        r = run_dispatch(
+            session, f"cd {target} && vercel deploy --prod", event_cwd=session
+        )
+        self.assertEqual(r.returncode, 2, f"stderr={r.stderr!r}")
+        self.assertIn("security scan found HIGH", r.stderr)
 
 
 class DispatchFailOpenTests(unittest.TestCase):

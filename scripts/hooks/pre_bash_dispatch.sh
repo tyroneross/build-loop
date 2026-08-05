@@ -69,13 +69,128 @@ if [ -z "$CMD" ]; then
     exit 0
 fi
 
+# ── Per-repo state resolution ────────────────────────────────────────────────
+# Every `.build-loop/` read below resolves against the REPOSITORY THE COMMAND
+# ACTS ON, never the session's working directory. The two differ routinely —
+# `cd /other/repo && git push`, `git -C /other/repo push`, or a session parked in
+# a subdirectory — and the difference used to be silent, because a config that
+# does not exist at the guessed path reads as "no config".
+#
+# Named failure that earns this (2026-08-03): a vault push was gated on the
+# SESSION repo's config instead of the vault's, so the vault's own
+# securityScan.excludeGlobs were dropped and the push blocked on 2 HIGH / 40
+# MEDIUM findings that all sat inside already-excluded paths. Re-running the
+# scanner with those excludes returned exit 0. The same push then succeeded once
+# the shell happened to sit in the vault — which makes the gate a property of
+# where the shell is parked rather than of the repository, and teaches users to
+# reach for BUILD_LOOP_HOOKS=off.
+
+# Directory → the root of the repository that owns it. `.build-loop/` lives at
+# the repo root, so a command run from a subdirectory must still find it. Falls
+# back to the directory itself when it is not a work tree (the scanner tolerates
+# a plain directory; never fail the hook over this).
+_bl_repo_root() {
+    local dir="$1" top=""
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        printf '%s' "$dir"
+        return 0
+    fi
+    top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "$top" ] && [ -d "$top" ]; then
+        printf '%s' "$top"
+    else
+        printf '%s' "$dir"
+    fi
+}
+
+# The directory the COMMAND operates on. Resolution order mirrors what git
+# itself honours:
+#   1. an explicit `git -C <path>`
+#   2. a `cd <path>` leading the command
+#   3. $CWD
+# Relative candidates resolve against $CWD (the shell's directory), not the hook
+# process's — the hook runs wherever Claude Code spawned it.
+_bl_effective_dir() {
+    local git_c cd_p cand
+    git_c=$(printf '%s' "$CMD" | sed -n 's/.*git[[:space:]]\{1,\}-C[[:space:]]\{1,\}\([^[:space:];&|]\{1,\}\).*/\1/p' | head -1 || true)
+    cd_p=$(printf '%s' "$CMD" | sed -n 's/^[[:space:]]*cd[[:space:]]\{1,\}\([^;&|]\{1,\}\).*/\1/p' | head -1 || true)
+    cd_p=$(printf '%s' "$cd_p" | sed -e 's/[[:space:]]*$//' -e "s/[\"']//g" || true)
+    for cand in "$git_c" "$cd_p"; do
+        [ -n "$cand" ] || continue
+        case "$cand" in
+            "~"*) cand="$HOME${cand#\~}" ;;
+            /*) : ;;
+            *) cand="$CWD/$cand" ;;
+        esac
+        [ -d "$cand" ] || continue
+        printf '%s' "$cand"
+        return 0
+    done
+    printf '%s' "$CWD"
+}
+
+# securityScan.excludeGlobs from a repo's own config, one glob per line.
+#
+# Silence policy: a repo with NO config legitimately has no excludes, so a
+# missing file stays a quiet no-op. A config that EXISTS but cannot be read is a
+# different thing — its owner wrote dispositions the scan is about to ignore —
+# so it says so on stderr. Silent degradation is precisely what let the
+# wrong-directory read hide for as long as it did.
+_bl_exclude_globs() {
+    local cfg="$1" out="" rc=0
+    [ -f "$cfg" ] || return 0
+    out=$(python3 - "$cfg" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("top-level JSON is not an object")
+    section = data.get("securityScan", {})
+    if not isinstance(section, dict):
+        raise ValueError("securityScan is not an object")
+    globs = section.get("excludeGlobs", [])
+    if not isinstance(globs, list):
+        raise ValueError("securityScan.excludeGlobs is not a list")
+except Exception as exc:
+    print(f"[build-loop] {path}: {exc}", file=sys.stderr)
+    sys.exit(3)
+for g in globs:
+    if isinstance(g, str) and g:
+        print(g)
+PY
+) || rc=$?
+    if [ "$rc" != "0" ]; then
+        printf '[build-loop] security config exists at %s but could not be read — scanning WITHOUT its excludeGlobs.\n' "$cfg" >&2
+        return 0
+    fi
+    printf '%s' "$out"
+}
+
 # Scope guard (mirrors the sub-hooks): only police Bash in build-loop projects.
-# Empty/root/HOME cwd never enforces.
+# Empty/root/HOME cwd never enforces — HOME hosts ~/.build-loop/ (global memory
+# + audit state), so a literal existence check there would arm the gate for
+# every shell command run from the user's home directory.
 if [ -z "$CWD" ] || [ "$CWD" = "/" ] || [ "$CWD" = "$HOME" ]; then
     printf '{}'
     exit 0
 fi
+# The opt-in marker lives at the REPO ROOT, so checking $CWD alone made
+# enforcement depend on how deep in the tree the shell happened to sit: a session
+# in `<repo>/.obsidian/plugins/<x>` escaped every gate in a repo that HAD opted
+# in — accidental non-enforcement, not a security property. $CWD is checked
+# first, so an in-root session (the common case) still costs no subprocess.
+BL_SCOPE_ROOT="$CWD"
 if [ ! -f "$CWD/.build-loop/state.json" ] && [ ! -f "$CWD/.build-loop/config.json" ]; then
+    BL_SCOPE_ROOT=$(_bl_repo_root "$CWD")
+fi
+if [ "$BL_SCOPE_ROOT" = "/" ] || [ "$BL_SCOPE_ROOT" = "$HOME" ]; then
+    printf '{}'
+    exit 0
+fi
+if [ ! -f "$BL_SCOPE_ROOT/.build-loop/state.json" ] && [ ! -f "$BL_SCOPE_ROOT/.build-loop/config.json" ]; then
     printf '{}'
     exit 0
 fi
@@ -244,38 +359,14 @@ case " $_GITCLASS " in
             # gate covers the whole repo without a stranger's old MEDIUM wedging
             # an unrelated push.
             # Scan the repo BEING PUSHED, not the shell's working directory.
-            #
             # $CWD is where the shell happens to sit, which is not necessarily
-            # what `git push` targets. `cd /other/repo && git push` and
-            # `git -C /other/repo push` both push a repo the shell is not in.
-            # Using $CWD there gates the push on findings from an UNRELATED
-            # repository — observed 2026-07-30: a push of atomize-ai was blocked
-            # by two findings in build-loop, which is both a false block and a
-            # false clean (the pushed repo went unscanned).
-            #
-            # Resolution order mirrors what git itself would honour:
-            #   1. an explicit `git -C <path>`
-            #   2. a `cd <path>` that precedes the push in the same command
-            #   3. $CWD
-            # Then normalise to the repo root, since a subdirectory would scan
-            # only part of the tree.
-            _SCAN_TARGET="$CWD"
-            _GIT_C_PATH=$(printf '%s' "$CMD" | sed -n 's/.*git[[:space:]]\{1,\}-C[[:space:]]\{1,\}\([^[:space:];&|]\{1,\}\).*/\1/p' | head -1)
-            _CD_PATH=$(printf '%s' "$CMD" | sed -n 's/^[[:space:]]*cd[[:space:]]\{1,\}\([^;&|]\{1,\}\).*/\1/p' | head -1)
-            _CD_PATH=$(printf '%s' "$_CD_PATH" | sed 's/[[:space:]]*$//' | tr -d '"'"'")
-            for _cand in "$_GIT_C_PATH" "$_CD_PATH"; do
-                [ -n "$_cand" ] || continue
-                case "$_cand" in
-                    "~"*) _cand="$HOME${_cand#\~}" ;;
-                esac
-                [ -d "$_cand" ] || continue
-                _SCAN_TARGET="$_cand"
-                break
-            done
-            # Repo root, or leave as-is when it is not a work tree (the scanner
-            # tolerates a plain directory; never fail the hook over this).
-            _TOPLEVEL=$(git -C "$_SCAN_TARGET" rev-parse --show-toplevel 2>/dev/null || true)
-            [ -n "$_TOPLEVEL" ] && [ -d "$_TOPLEVEL" ] && _SCAN_TARGET="$_TOPLEVEL"
+            # what `git push` targets — observed 2026-07-30: a push of atomize-ai
+            # was blocked by two findings in build-loop, which is both a false
+            # block and a false clean (the pushed repo went unscanned).
+            # _bl_effective_dir / _bl_repo_root carry the resolution rules; the
+            # root normalisation matters because a subdirectory would scan only
+            # part of the tree.
+            _SCAN_TARGET=$(_bl_repo_root "$(_bl_effective_dir)")
             _SCAN_ARGS=(--path "$_SCAN_TARGET" --fail-on high --spot-check)
             # Scope the scan to the push delta: only what's actually being pushed
             # (files changed vs the upstream tracking branch), not the whole tree.
@@ -423,26 +514,18 @@ PY
                 fi
                 # else: non-plain push → omit --diff → full-repo scan.
             fi
-            # Optional excludeGlobs from .build-loop/config.json (best-effort; a
-            # missing file/key is a silent no-op — never a hard dependency).
-            if [ -f "$CWD/.build-loop/config.json" ]; then
-                _EX_GLOBS=$(python3 -c 'import sys,json
-try:
-    d=json.load(open(sys.argv[1]))
-    g=d.get("securityScan",{}).get("excludeGlobs",[])
-    if isinstance(g,list):
-        for x in g:
-            if isinstance(x,str) and x: print(x)
-except Exception:
-    pass' "$CWD/.build-loop/config.json" 2>/dev/null || true)
-                while IFS= read -r _glob; do
-                    if [ -n "$_glob" ]; then
-                        _SCAN_ARGS+=(--exclude "$_glob")
-                    fi
-                done <<EOF
+            # excludeGlobs from the config of the repo BEING PUSHED. The globs
+            # are matched relative to --path, so config and scan root must be the
+            # same directory — reading one repo's dispositions while scanning
+            # another's tree drops every exclude silently.
+            _EX_GLOBS=$(_bl_exclude_globs "$_SCAN_TARGET/.build-loop/config.json")
+            while IFS= read -r _glob; do
+                if [ -n "$_glob" ]; then
+                    _SCAN_ARGS+=(--exclude "$_glob")
+                fi
+            done <<EOF
 $_EX_GLOBS
 EOF
-            fi
             _SCAN_RC=0
             _SCAN_OUT=$(python3 "$_SCAN" "${_SCAN_ARGS[@]}" 2>&1) || _SCAN_RC=$?
             if [ "$_SCAN_RC" = "1" ]; then
@@ -494,25 +577,19 @@ PY
 )
         case "$_DTARGET" in
             production|testflight|preview|deploy)
-                _DSCAN_ARGS=(--path "$CWD" --fail-on high)
-                if [ -f "$CWD/.build-loop/config.json" ]; then
-                    _DEX_GLOBS=$(python3 -c 'import sys,json
-try:
-    d=json.load(open(sys.argv[1]))
-    g=d.get("securityScan",{}).get("excludeGlobs",[])
-    if isinstance(g,list):
-        for x in g:
-            if isinstance(x,str) and x: print(x)
-except Exception:
-    pass' "$CWD/.build-loop/config.json" 2>/dev/null || true)
-                    while IFS= read -r _dglob; do
-                        if [ -n "$_dglob" ]; then
-                            _DSCAN_ARGS+=(--exclude "$_dglob")
-                        fi
-                    done <<EOF
+                # Same resolution as the push gate: `cd apps/web && vercel
+                # deploy` ships a repo the shell need not be sitting in, so both
+                # the scan root and the config come from the acted-on repo.
+                _DSCAN_TARGET=$(_bl_repo_root "$(_bl_effective_dir)")
+                _DSCAN_ARGS=(--path "$_DSCAN_TARGET" --fail-on high)
+                _DEX_GLOBS=$(_bl_exclude_globs "$_DSCAN_TARGET/.build-loop/config.json")
+                while IFS= read -r _dglob; do
+                    if [ -n "$_dglob" ]; then
+                        _DSCAN_ARGS+=(--exclude "$_dglob")
+                    fi
+                done <<EOF
 $_DEX_GLOBS
 EOF
-                fi
                 _DSCAN_RC=0
                 _DSCAN_OUT=$(python3 "$_DSCAN" "${_DSCAN_ARGS[@]}" 2>&1) || _DSCAN_RC=$?
                 if [ "$_DSCAN_RC" = "1" ]; then
