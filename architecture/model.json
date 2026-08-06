@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d841645b04e893f73c0cdfc0e68fe997c9753381a8c7c97d5240f4e51b1edac8"
+    "content_sha256": "7f1e74d5fcc88209f4cca3320152d2d5dc7331dcafd8613804e77fd6dc3c7622"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-04"
+          "date": "2026-08-05"
         }
       },
       "database-assessor": {
@@ -959,7 +959,7 @@
         "file": "agents/independent-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-28"
+          "date": "2026-08-05"
         }
       },
       "leak-scanner": {
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-04"
+          "date": "2026-08-05"
         }
       },
       "building-with-deepagents": {
