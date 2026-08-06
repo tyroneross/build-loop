@@ -80,9 +80,21 @@ claim — there is no `non_goals` enforcement code to wire up).
 
 Run this protocol on every build, judged by the orchestrator LLM — never a regex, never a detector script, never a binary gate. Depth scales with ambiguity, not a threshold. The behavior is intrinsic to Phase 1; no separate skill, script, or routing step gates it.
 
-### Step A — One-line concrete restatement (always)
+### Step A — Preserve the request contract, then restate it (always)
 
-Read the user's goal text and the surrounding context. Write a single sentence restating the most likely concrete interpretation to `.build-loop/intent.md` under a `## Restated intent` heading. For a concrete unambiguous goal, this is the entire protocol — write the line and move on. No options, no assumption-tagging, no exploration detour. The auto-execute fast path is unaffected.
+Read the user's goal text and the surrounding context. Before summarizing, write every result-bearing clause from the current request and any still-active earlier request to `.build-loop/intent.md` under `## Request contract`, with stable IDs:
+
+```md
+## Request contract
+- RC-1 — `<verbatim result-bearing user clause>`
+- RC-2 — `<verbatim result-bearing user clause>`
+```
+
+Quote the clause closely enough that a later plan cannot silently weaken `all`, `full`, `comprehensive`, `fix`, `remediate`, `expand`, or an equivalent outcome verb. Preserve cumulative additions across user turns. A later user message replaces an earlier clause only when the user explicitly changes or withdraws it; a plan, diagnostic, time estimate, sample, or agent-authored non-goal cannot do so. Redact literal credentials, secrets, or unnecessary personal identifiers while preserving the requested outcome.
+
+Then write one sentence restating the most likely concrete interpretation under `## Restated intent`. For a concrete unambiguous goal, the request contract plus this sentence is the entire protocol — write them and move on. No options, no assumption-tagging, no exploration detour. The auto-execute fast path is unaffected.
+
+Every plan task and acceptance criterion maps to one or more `RC-*` IDs. A plan may sequence or decompose an outcome; it may not turn an `RC-*` outcome into a non-goal, representative sample, future follow-up, or documentation-only result without an explicit user decision recorded against that ID.
 
 Heuristics the LLM uses (judgment, not a checklist):
 
@@ -129,6 +141,9 @@ Mirror the result to `.build-loop/state.json.intent`:
 
 ```json
 {
+  "request_contract": [
+    {"id": "RC-1", "clause": "<result-bearing clause>", "source": "user"}
+  ],
   "restated_intent": "<one sentence>",
   "approach_options": ["<label>", "<label>"],   // optional; empty when Step A alone fired
   "assumptions": ["<line>", "<line>"],          // optional; empty when no leaps were made
@@ -170,8 +185,32 @@ regex that judged intent *content*; it only answers "does this file belong to th
 - **Never `## Held`.** Advisory output only. Phase 2 Plan proceeds with whatever Step A or A+B produced.
 - **Never blocks Phase 1.** A goal that is too ambiguous to restate concretely still gets restated as the best-effort interpretation + assumptions tagged. The flow proceeds.
 - **Fail-safe.** Any error in this protocol (file write fails, intent.md missing) is logged as one line and the build continues. No exit-non-zero path exists here.
-- **Auto-execute fast path preserved.** A concrete unambiguous goal produces the one-line restatement only. Zero added cost for Step B/C. No skill dispatch, no script call, no detection layer.
+- **Auto-execute fast path preserved.** A concrete unambiguous goal produces only the compact request contract plus one-line restatement. Zero added cost for Step B/C. No skill dispatch, no script call, no detection layer.
 - **Fork-on-uncertainty consumes the output.** When Step B fired AND `confidence == "medium"|"low"` AND Phase 2 surfaces 2+ viable approaches differing only on implementation tradeoffs, the orchestrator's existing fork-on-uncertainty rule fans out worktrees per approach. The protocol provides the options; the existing rule consumes them.
+
+## Original-intent closure contract
+
+The request contract remains authoritative through Plan, Execute, Review, and Iterate. When the run discovers a defect, omission, incomplete coverage, or failed check that is a natural part of satisfying an `RC-*` outcome, classify it as `intent_relation: same_intent`. Same-intent work is already authorized; do not stop for permission or demote it because it was discovered after planning.
+
+Every same-intent item must reach exactly one evidenced terminal disposition:
+
+| Disposition | Required evidence |
+|---|---|
+| `fixed` | A closure probe, test, source-coverage check, or runtime observation on the real input |
+| `user_deferred` | An explicit user decision naming the deferred item |
+| `external_blocked` | Evidence of the missing credential, unavailable dependency, or external state plus the remaining action |
+| `waived` | An explicit user-approved, scoped waiver with a durable record and expiry |
+
+`documented`, `diagnosed`, `sampled`, `representative`, `under-captured`, `thin`, `pre-existing`, `escalated`, `backlogged`, `follow-up`, `future work`, and `out of scope` are not terminal dispositions for same-intent work. A bounded sample cannot close an outcome that says `all`, `full`, `comprehensive`, or `exhaustive`.
+
+Before Review-G, re-read `## Request contract`, enumerate every `RC-*` outcome and every discovered same-intent item, and verify that each has a terminal disposition with evidence. Safe, determinate open items route to Iterate automatically. If the plan itself weakened an `RC-*` outcome, return to Plan and repair the plan before continuing.
+
+### Calibration examples
+
+- **REVISE — sampled exhaustive request:** RC-1 says “check and fix comprehensive coverage across all Booth, ERAU, and SJSU files.” The run spot-checks 13 files and records `coverage: under-captured`. The item remains `same_intent/open`; continue source-by-source remediation and re-run coverage verification.
+- **PASS — legitimately thin source:** RC-1 requires comprehensive capture. A two-line source contains one reusable fact, the synthesis preserves it with provenance, and a source-relative coverage check finds no omitted dimension. `fixed` with that check is terminal.
+- **REPORT BLOCKED — external dependency:** An encrypted source cannot be opened without a credential the user controls. Record `external_blocked` with the failing access evidence and exact remaining extraction step; do not label the source complete.
+- **PASS — explicit narrowing:** The user explicitly changes RC-1 to “integration files only; defer semantic expansion.” Record the decision against RC-1 as `user_deferred`; an agent-authored scope cut is insufficient.
 
 ### Why intrinsic, not gated
 

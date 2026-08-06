@@ -407,6 +407,42 @@ class EnvTemplateCarveOutTests(_GitRepoCase):
 
 
 class EscalatedPacketTests(_GitRepoCase):
+    def test_packet_includes_plan_report_diagnostics_and_open_queues(self) -> None:
+        surfaces = {
+            ".build-loop/intent.md": "## Request contract\n- RC-1: cover all sources\n",
+            ".build-loop/plan.md": "PLAN-SENTINEL exhaustive source audit\n",
+            ".build-loop/report.md": "REPORT-SENTINEL 13 sources sampled\n",
+            ".build-loop/diagnostics/coverage.md": "DIAGNOSTIC-SENTINEL under-captured\n",
+            ".build-loop/issues/coverage.md": "ISSUE-SENTINEL Booth remains open\n",
+            ".build-loop/followup/erau.md": "FOLLOWUP-SENTINEL visual carriers\n",
+            ".build-loop/backlog/sjsu.md": "BACKLOG-SENTINEL equations\n",
+        }
+        for relative, body in surfaces.items():
+            path = self.repo / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        self._write_and_stage("docs/notes.md", "Some prose about the project.\n")
+
+        result = self._run_hook()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for heading in (
+            "### Active plan",
+            "### Current report",
+            "### Current diagnostics",
+            "### Open issue / follow-up / backlog queues",
+        ):
+            self.assertIn(heading, result.stderr)
+        for sentinel in (
+            "PLAN-SENTINEL",
+            "REPORT-SENTINEL",
+            "DIAGNOSTIC-SENTINEL",
+            "ISSUE-SENTINEL",
+            "FOLLOWUP-SENTINEL",
+            "BACKLOG-SENTINEL",
+        ):
+            self.assertIn(sentinel, result.stderr)
+
     def test_high_risk_packet_is_mandatory_and_cites_files(self) -> None:
         self._write_and_stage(
             "ios/Views/NewFeatureSheet.swift",

@@ -214,6 +214,46 @@ def _find_prd(root: Path) -> tuple[Path | None, str]:
     return None, ""
 
 
+def _find_active_surface(
+    root: Path,
+    candidates: tuple[str, ...],
+    patterns: tuple[str, ...],
+) -> tuple[Path | None, str]:
+    """Read the preferred exact surface, else the newest matching artifact."""
+    for relative in candidates:
+        path = root / relative
+        if path.is_file():
+            return path, _read_optional(path, MAX_PRD_CHARS)
+    matches = {
+        path
+        for pattern in patterns
+        for path in root.glob(pattern)
+        if path.is_file() and path.suffix.lower() in {".md", ".json", ".txt", ".log"}
+    }
+    if not matches:
+        return None, ""
+    newest = max(matches, key=lambda path: path.stat().st_mtime)
+    return newest, _read_optional(newest, MAX_PRD_CHARS)
+
+
+def _surface_inventory(root: Path, patterns: tuple[str, ...], max_files: int = 8) -> str:
+    """Return recent paths plus bounded excerpts for diagnostics and open queues."""
+    matches = {
+        path
+        for pattern in patterns
+        for path in root.glob(pattern)
+        if path.is_file() and path.suffix.lower() in {".md", ".json", ".txt", ".log"}
+    }
+    ordered = sorted(matches, key=lambda path: path.stat().st_mtime, reverse=True)[:max_files]
+    if not ordered:
+        return ""
+    chunks = []
+    for path in ordered:
+        excerpt = _read_optional(path, 240).strip().replace("\n", " ")
+        chunks.append(f"- `{path.relative_to(root)}`: {excerpt or '_(empty)_'}")
+    return "\n".join(chunks)
+
+
 def _constitution_rule_ids(constitution_text: str, files: list[str], diff_body: str) -> list[str]:
     """Keyword-match rule IDs in the constitution that the diff plausibly touches."""
     if not constitution_text:
@@ -767,6 +807,24 @@ def _emit_packet(root: Path) -> int:
     claude_md = _read_optional(root / "CLAUDE.md", MAX_TEXT_CHARS)
     readme_head = "\n".join(_read_optional(root / "README.md").splitlines()[:README_HEAD_LINES])
     prd_path, prd_body = _find_prd(root)
+    plan_path, plan_body = _find_active_surface(
+        root,
+        (".build-loop/plan.md", ".build-loop/plan.json"),
+        (".build-loop/plans/**/*.md", ".build-loop/plans/**/*.json"),
+    )
+    report_path, report_body = _find_active_surface(
+        root,
+        (".build-loop/report.md", ".build-loop/report.json"),
+        (".build-loop/reports/**/*.md", ".build-loop/reports/**/*.json"),
+    )
+    diagnostics = _surface_inventory(
+        root,
+        (".build-loop/diagnostics/**/*", "diagnostics/**/*", "outputs/health/**/*"),
+    )
+    open_queues = _surface_inventory(
+        root,
+        (".build-loop/issues/**/*", ".build-loop/followup/**/*", ".build-loop/backlog/**/*"),
+    )
     constitution = _read_optional(Path.home() / ".build-loop" / "memory" / "constitution.md")
     trajectory = _run(["git", "log", "--oneline", "-5"]).strip()
 
@@ -820,6 +878,24 @@ def _emit_packet(root: Path) -> int:
 
     out("### Goal\n")
     out((goal or "_(none found)_") + "\n\n")
+
+    out("### Active plan\n")
+    if plan_path:
+        out(f"From `{plan_path.relative_to(root)}`:\n\n{plan_body}\n\n")
+    else:
+        out("_(none found)_\n\n")
+
+    out("### Current report\n")
+    if report_path:
+        out(f"From `{report_path.relative_to(root)}`:\n\n{report_body}\n\n")
+    else:
+        out("_(none found)_\n\n")
+
+    out("### Current diagnostics\n")
+    out((diagnostics or "_(none found)_") + "\n\n")
+
+    out("### Open issue / follow-up / backlog queues\n")
+    out((open_queues or "_(none found)_") + "\n\n")
 
     out("### Repo CLAUDE.md (head)\n")
     out((claude_md or "_(none found)_") + "\n\n")
