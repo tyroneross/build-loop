@@ -22,6 +22,7 @@
 2. **Identify parallel-safe tasks** vs sequential dependencies — build a dependency graph
    - If the graph has 2+ independent / parallel-safe chunks, write `parallel_batch:` naming the chunks that will dispatch together.
    - If the graph appears parallelizable but execution must serialize, write `parallel_skipped_reason:` with the specific dependency, tool limit, or coordination constraint.
+2a. **Recompute resource profile**: rerun `scripts/review_trigger.py` with every planned `--changed-file` and `--lines-changed <expected-delta>`. Persist the result at `state.json.execution.resourceProfile`; promote to `high` when either Assess or Plan returned `high`. Carry its `review_steps` into Review instead of dispatching every optional reviewer by default.
 3. **Map each task to intent**: state which user workflow, user-value rule, and north-star outcome it supports. Remove tasks that add complexity without clear user value.
 3a. **Approach Lenses section**: For non-trivial architecture, workflow, dependency, UI/product, or long-lived interface decisions, add `## Approach Lenses` before the task list. Use the Phase 1 `.build-loop/state.json.approachLenses` summary and include:
    - **Clean-sheet best approach**: the use-case-first answer if no prior implementation debt or historical decisions constrained the design.
@@ -53,6 +54,7 @@
 
 **Optimization checklist** (review the plan for these before proceeding):
 - Can more tasks run in parallel? Unnecessary sequential bottlenecks?
+- Does planned fan-out fit `references/resource-aware-execution.md` — token-led for cloud, CPU-led for local, measured usage before T-shirt fallback?
 - Can subagent context be smaller? Shared reads that should be done once?
 - Missing dependencies, interface mismatches, env assumptions?
 - Changes that could conflict with each other (oscillation risk)?

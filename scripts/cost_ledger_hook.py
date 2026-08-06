@@ -167,6 +167,27 @@ def _existing_task_ids(ledger_path: Path) -> set[str]:
 
 def _build_namespace(dispatch: dict, task_id: str, run_id: str | None) -> SimpleNamespace:
     """Mirror write_cost_ledger_row's argparse Namespace so we reuse build_row (DRY)."""
+    try:
+        import parallelism
+
+        model_size = parallelism.classify_model_size(dispatch["model"])
+        execution_location = parallelism.classify_execution_location(dispatch["model"])
+        token_estimate = parallelism.estimate_tokens_per_worker(model_size)
+    except Exception:
+        model_size = "medium"
+        execution_location = "cloud"
+        token_estimate = 16_000
+
+    agent_name = str(dispatch["subagent_type"]).split(":")[-1]
+    if agent_name in {"implementer", "explore"}:
+        phase = "execute"
+    elif agent_name in {"architecture-scout", "advisor", "plan-critic", "scope-auditor"}:
+        phase = "plan"
+    elif agent_name in {"recurring-pattern-detector", "self-improvement-architect", "promotion-reviewer"}:
+        phase = "learn"
+    else:
+        phase = "review"
+
     return SimpleNamespace(
         agent=dispatch["subagent_type"],
         task_id=task_id,
@@ -174,8 +195,19 @@ def _build_namespace(dispatch: dict, task_id: str, run_id: str | None) -> Simple
         status="completed" if dispatch.get("completed") else "dispatched",
         dispatch_mode="fan-out" if dispatch["run_in_background"] else "inline",
         files_changed_count=None,
-        tokens_estimate=None,
-        tokens_source="unknown",
+        tokens_estimate=token_estimate,
+        tokens_source="heuristic",
+        input_tokens=None,
+        output_tokens=None,
+        cache_read_input_tokens=None,
+        cache_creation_input_tokens=None,
+        phase=phase,
+        execution_location=execution_location,
+        model_size=model_size,
+        output_size="medium",
+        effort="medium",
+        fanout_limit=None,
+        fanout_primary_constraint=None,
         wall_clock_seconds=None,
         started_at=dispatch.get("ts"),
         completed_at=None,

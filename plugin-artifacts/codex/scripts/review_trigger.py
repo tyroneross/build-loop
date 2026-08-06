@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-PROFILE_VERSION = "1.0"
+PROFILE_VERSION = "1.1"
 UNKNOWN_VALUES = {"unknown", "uncertain", "ambiguous", "tbd", "unverified"}
 TRUE_VALUES = {"1", "true", "yes", "y", "on", "required", "high", "critical"}
 FALSE_VALUES = {"0", "false", "no", "n", "off", "none", "low", "minor", "trivial"}
@@ -49,6 +49,25 @@ FILE_REASON_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("model_tool_change", ("llm", "model", "agent", "tool", "mcp")),
     ("runtime_integration", ("runtime", "server", "worker", "daemon")),
 )
+
+REVIEW_STEPS = {
+    "skip": ("deterministic_validation",),
+    "standard": (
+        "independent_auditor",
+        "validate",
+        "report",
+        "learn_cheap",
+    ),
+    "high": (
+        "independent_auditor",
+        "validate",
+        "fact_check",
+        "simplify",
+        "auto_resolve",
+        "report",
+        "learn",
+    ),
+}
 
 def _norm_key(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
@@ -182,11 +201,24 @@ def build_profile(context: dict[str, Any], changed_files: list[str] | None = Non
 
     reasons = sorted(set(high_risk_reasons + plan_reasons))
     high_risk = bool(high_risk_reasons)
+    if high_risk:
+        execution_profile = "high"
+    elif plan_reasons:
+        execution_profile = "standard"
+    else:
+        execution_profile = "skip"
 
     return {
         "profile_version": PROFILE_VERSION,
-        "independent_review_required": high_risk,
+        "execution_profile": execution_profile,
+        "independent_review_required": execution_profile != "skip",
         "cross_vendor_required": high_risk,
+        "review_steps": list(REVIEW_STEPS[execution_profile]),
+        "conditional_review_steps": (
+            []
+            if execution_profile in {"skip", "high"}
+            else ["fact_check_on_changed_claims", "security_on_risk_signal", "simplify_on_complexity_signal"]
+        ),
         "reasons": reasons,
         "changed_files": sorted(set(files)),
     }
@@ -212,10 +244,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Emit build-loop quality gate trigger profile")
     parser.add_argument("--context", help="JSON context file; defaults to .build-loop/state.json when present")
     parser.add_argument("--changed-file", action="append", default=[], help="Changed file path; repeatable")
+    parser.add_argument("--lines-changed", type=int, help="Expected or actual absolute line delta")
     parser.add_argument("--json", action="store_true", help="emit JSON (default)")
     args = parser.parse_args(argv)
 
     context = _load_context(args.context)
+    if args.lines_changed is not None:
+        context["lines_changed"] = abs(args.lines_changed)
     print(json.dumps(build_profile(context, args.changed_file), indent=2, sort_keys=True))
     return 0
 

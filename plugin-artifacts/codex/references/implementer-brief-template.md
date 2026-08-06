@@ -186,6 +186,6 @@ Same constraint, same enforcement. The contextual form spends more tokens to car
 
 ## Note on brief size budget
 
-Each implementer brief is its own input cost — the orchestrator pays Thinking-tier rate to write 80-120 lines × N implementers. For N=4 parallel, that's ~400 lines of brief text at Thinking rate. **This is a real cost** that doesn't show in implementer envelope token estimates. Generate a task id with `scripts/dispatch_identity.py --plain` and track the dispatch/return pair with `scripts/write_cost_ledger_row.py`.
+Each implementer brief is its own input cost — the orchestrator pays Thinking-tier rate to write 80-120 lines × N implementers. For N=4 parallel, that's ~400 lines of brief text at Thinking rate. **This is a real cost.** Generate a task id with `scripts/dispatch_identity.py --plain`; `cost_ledger_hook.py` records a T-shirt estimate automatically, and provider adapters enrich the same id with measured input/output/cache buckets through `scripts/write_cost_ledger_row.py`.
 
-The cost is worth paying when the work-shape supports parallelism (Mode A wins on time). For sequential or cross-cutting features, prefer Mode B (single Opus context) where the brief overhead disappears.
+Resolve fan-out through `skills/build-loop/references/resource-aware-execution.md`. The cost is worth paying when the work-shape supports parallelism. For sequential or cross-cutting features, prefer Mode B (one context) where repeated brief overhead disappears.

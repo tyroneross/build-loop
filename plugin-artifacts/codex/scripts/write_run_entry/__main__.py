@@ -269,6 +269,17 @@ def _ledger_rows_for_run(run_id: str) -> int:
     return count
 
 
+def _enforce_owed_verification(workdir: Path, entry: dict) -> dict | None:
+    """Deferred import so a missing/broken module cannot block a run entry."""
+    try:
+        import owed_verification  # noqa: WPS433
+
+        return owed_verification.enforce_for_run_record(
+            workdir, entry, written_by="write_run_entry")
+    except Exception:  # noqa: BLE001 — the run entry is the priority
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
@@ -323,6 +334,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         append_run_entry(state_path, entry)
         log(f"appended run entry to {state_path} (run_id={run_id})")
+        # GAP-1, same contract as scripts/append_run.py: past the exit-3 gate,
+        # a record that still carries no auditor verdict leaves a manifest
+        # naming what is owed. The gate above only fires on scope=build + pass
+        # + filesTouched, so everything outside that intersection reached here
+        # owing nothing on disk. Fail-open; the record is already written.
+        _enforce_owed_verification(workdir, entry)
         if active:
             append_experiment_rows(experiments_dir, run_id, active, args.outcome, date)
     except CorruptStateError as e:

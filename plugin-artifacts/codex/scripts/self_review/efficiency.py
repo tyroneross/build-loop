@@ -14,6 +14,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from generated_paths import is_generated_path
+
 # Heuristic thresholds
 _CHURN_THRESHOLD = 5
 _FAILURE_THRESHOLD = 2
@@ -272,6 +274,14 @@ def scan_churn(
         dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=window_days)
     ).strftime("%Y-%m-%d")
     churn = _git_churn_files(workdir, since_date, errors)
+    # Drop build products BEFORE ranking. A commit hook regenerates them on
+    # every commit, so they otherwise occupy the top slots and crowd real
+    # authored hot spots out of the top-5 window entirely.
+    churn = Counter({
+        path: count
+        for path, count in churn.items()
+        if not is_generated_path(path)
+    })
     for filepath, count in churn.most_common(5):
         if count < _CHURN_THRESHOLD:
             continue

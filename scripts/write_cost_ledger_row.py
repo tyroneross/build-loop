@@ -45,6 +45,12 @@ VALID_STATUSES = {
     "needs_dependency", "failed", "concurrent_modification_detected",
     "dispatched",  # row written at dispatch time, before return
 }
+MEASURED_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
 
 
 def log(msg: str) -> None:
@@ -57,6 +63,11 @@ def iso_utc(now: datetime | None = None) -> str:
 
 
 def build_row(args: argparse.Namespace) -> dict[str, Any]:
+    for field in (*MEASURED_TOKEN_FIELDS, "tokens_estimate", "fanout_limit"):
+        value = getattr(args, field, None)
+        if value is not None and value < 0:
+            raise ValueError(f"{field} must be non-negative")
+
     row: dict[str, Any] = {
         "ts": iso_utc(),
         "source": "build-loop",
@@ -70,6 +81,29 @@ def build_row(args: argparse.Namespace) -> dict[str, Any]:
         "tokens_source": args.tokens_source,
         "est_cost_usd": None,
     }
+    measured_total = 0
+    measured_present = False
+    for field in MEASURED_TOKEN_FIELDS:
+        value = getattr(args, field, None)
+        if value is not None:
+            row[field] = value
+            measured_total += value
+            measured_present = True
+    if measured_present:
+        row["measured_total_tokens"] = measured_total
+
+    for field in (
+        "phase",
+        "execution_location",
+        "model_size",
+        "output_size",
+        "effort",
+        "fanout_limit",
+        "fanout_primary_constraint",
+    ):
+        value = getattr(args, field, None)
+        if value is not None:
+            row[field] = value
     if args.wall_clock_seconds is not None:
         row["wall_clock_seconds"] = args.wall_clock_seconds
         row["latency_ms"] = int(args.wall_clock_seconds * 1000)
@@ -118,7 +152,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dispatch-mode", required=True, choices=sorted(VALID_DISPATCH_MODES))
     p.add_argument("--files-changed-count", type=int, default=None)
     p.add_argument("--tokens-estimate", type=int, default=None)
-    p.add_argument("--tokens-source", default="envelope", choices=["envelope", "usage", "unknown"])
+    p.add_argument(
+        "--tokens-source",
+        default="envelope",
+        choices=["envelope", "usage", "measured", "heuristic", "unknown"],
+    )
+    p.add_argument("--input-tokens", type=int, default=None)
+    p.add_argument("--output-tokens", type=int, default=None)
+    p.add_argument("--cache-read-input-tokens", type=int, default=None)
+    p.add_argument("--cache-creation-input-tokens", type=int, default=None)
+    p.add_argument("--phase", default=None)
+    p.add_argument("--execution-location", choices=["cloud", "local"], default=None)
+    p.add_argument("--model-size", choices=["small", "medium", "large", "xlarge"], default=None)
+    p.add_argument("--output-size", choices=["small", "medium", "large"], default=None)
+    p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max", "ultra"], default=None)
+    p.add_argument("--fanout-limit", type=int, default=None)
+    p.add_argument("--fanout-primary-constraint", choices=["token", "cpu"], default=None)
     p.add_argument("--wall-clock-seconds", type=float, default=None)
     p.add_argument("--started-at", default=None, help="ISO8601 dispatch timestamp")
     p.add_argument("--completed-at", default=None, help="ISO8601 return timestamp")

@@ -117,6 +117,11 @@ class CostLedgerHookTest(unittest.TestCase):
         self.assertEqual(row["dispatch_mode"], "inline")
         self.assertEqual(row["status"], "completed")
         self.assertEqual(row["run_id"], "bl-testrun-001")
+        self.assertEqual(row["tokens_source"], "heuristic")
+        self.assertEqual(row["tokens_estimate"], 16000)
+        self.assertEqual(row["model_size"], "medium")
+        self.assertEqual(row["execution_location"], "cloud")
+        self.assertEqual(row["phase"], "execute")
 
     def test_background_dispatch_is_fanout(self):
         ctx = _make_context(self.tmp)

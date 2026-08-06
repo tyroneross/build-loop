@@ -72,6 +72,20 @@ ERRORS_COUNT="$( python3 -c "import json,sys; d=json.loads(sys.stdin.read()); pr
 log "gatherer done; queued=$QUEUED_COUNT errors=$ERRORS_COUNT"
 
 # ---------------------------------------------------------------------------
+# 4a. Drain producer churn before any model reads the proposal queue
+# ---------------------------------------------------------------------------
+DRAIN_STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+DRAIN_JSON="$( python3 scripts/drain_self_review_proposals.py \
+    --workdir "$REPO" --archive --stamp "$DRAIN_STAMP" --json \
+    2>>"$RUN_LOG" || true )"
+if [[ -n "$DRAIN_JSON" ]]; then
+    ACTIONABLE_COUNT="$( python3 -c "import json,sys; d=json.loads(sys.stdin.read().split('\\narchived',1)[0]); print(d.get('actionable','?'))" <<< "$DRAIN_JSON" 2>/dev/null || echo "?" )"
+    log "proposal drain complete; actionable=$ACTIONABLE_COUNT"
+else
+    log "proposal drain unavailable; continuing with queue unchanged"
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Light mode: done (digest + queue produced; no auto-apply)
 # ---------------------------------------------------------------------------
 if [[ "$MODE" == "light" ]]; then

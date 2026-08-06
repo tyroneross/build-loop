@@ -64,18 +64,39 @@ def validate_entry(entry: dict) -> None:
         raise ValueError(f"outcome must be one of {sorted(VALID_OUTCOMES)}, got {entry['outcome']!r}")
 
 
+# A record that names the auditor but carries no judgement. The deterministic
+# hook writes exactly this when it emits an audit packet: the packet is a
+# REQUEST for a verdict, and treating it as one is how six `verdict: pending`
+# rows certified two runs as reviewed (RossLabs-AI-Assistant, 2026-07-21 and
+# 2026-08-03). Membership here means "not yet judged", never "judged badly" --
+# a `block` or `request_changes` IS a verdict and must count as present.
+NON_VERDICT_VALUES = {"", "pending", "none", "n/a"}
+NON_VERDICT_STATUSES = {"packet_emitted", "pending"}
+
+
 def auditor_present(judge_decisions: object) -> bool:
-    """True when judge_decisions[] carries a real independent-auditor verdict.
+    """True when judge_decisions[] carries a real independent-auditor VERDICT.
 
     Matches both the dispatched `independent-auditor` agent and the
     `independent-auditor-hook` record. An empty list, None, or a list of only
     other judges (an inline self-audit substituting for a real dispatch) is False.
+
+    A matching judge_id is necessary and NOT sufficient: the entry must also
+    carry a rendered verdict. Matching on the id alone let an emitted-but-never-
+    answered audit packet satisfy every caller of this function.
     """
     if not isinstance(judge_decisions, list):
         return False
     for item in judge_decisions:
-        if isinstance(item, dict) and AUDITOR_JUDGE_MARKER in str(item.get("judge_id", "")):
-            return True
+        if not isinstance(item, dict):
+            continue
+        if AUDITOR_JUDGE_MARKER not in str(item.get("judge_id", "")):
+            continue
+        verdict = str(item.get("verdict") or "").strip().lower()
+        status = str(item.get("status") or "").strip().lower()
+        if verdict in NON_VERDICT_VALUES or status in NON_VERDICT_STATUSES:
+            continue
+        return True
     return False
 
 

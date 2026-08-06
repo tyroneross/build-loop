@@ -16,12 +16,18 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from parallelism import (
+    DEFAULT_CLOUD_TOKEN_BUDGET,
     DEFAULT_MAX,
     HARD_CEILING,
+    classify_execution_location,
+    classify_model_size,
+    estimate_tokens_per_worker,
     effective_max_implementers,
+    measured_tokens_per_worker,
     plan_batches,
     partition_overlap,
     describe,
+    resolve_fanout,
 )
 
 
@@ -53,10 +59,11 @@ def workdir_with_config(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 class TestEffectiveMaxNoConfig:
-    def test_no_config_returns_min_of_default_budget_ceiling(self, tmp_workdir: Path) -> None:
+    def test_no_config_adds_conservative_cloud_token_cap(self, tmp_workdir: Path) -> None:
         cpu = os.cpu_count() or 4
         budget = max(1, cpu - 2)
-        expected = max(1, min(DEFAULT_MAX, budget, HARD_CEILING))
+        token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
+        expected = max(1, min(DEFAULT_MAX, budget, HARD_CEILING, token_cap))
         assert effective_max_implementers(tmp_workdir) == expected
 
 
@@ -67,7 +74,8 @@ class TestEffectiveMaxWithConfig:
             pytest.skip("machine has too few cores for this scenario")
         wd = workdir_with_config(10)
         budget = max(1, cpu - 2)
-        expected = max(1, min(10, budget, HARD_CEILING))
+        token_cap = DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker()
+        expected = max(1, min(10, budget, HARD_CEILING, token_cap))
         assert effective_max_implementers(wd) == expected
 
     def test_config_50_capped_at_hard_ceiling_or_budget(self, workdir_with_config) -> None:
@@ -84,7 +92,9 @@ class TestEffectiveMaxWithConfig:
         """On a machine with >=14 cores budget>=12, config=50 → HARD_CEILING=12."""
         wd = workdir_with_config(50)
         with patch("parallelism.os.cpu_count", return_value=16):
-            assert effective_max_implementers(wd) == HARD_CEILING
+            assert effective_max_implementers(
+                wd, execution_location="local", model_size="small"
+            ) == HARD_CEILING
 
 
 class TestEffectiveMaxRequested:
@@ -97,13 +107,17 @@ class TestEffectiveMaxRequested:
     def test_requested_still_capped_by_hard_ceiling(self, workdir_with_config) -> None:
         wd = workdir_with_config(2)
         with patch("parallelism.os.cpu_count", return_value=16):
-            result = effective_max_implementers(wd, requested=100)
+            result = effective_max_implementers(
+                wd, requested=100, execution_location="local", model_size="small"
+            )
         assert result == HARD_CEILING
 
     def test_requested_capped_by_budget(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=4):
             # budget = max(1, 4-2) = 2
-            result = effective_max_implementers(tmp_workdir, requested=8)
+            result = effective_max_implementers(
+                tmp_workdir, requested=8, execution_location="local", model_size="small"
+            )
         assert result == 2
 
 
@@ -111,11 +125,11 @@ class TestEffectiveMaxFloor:
     def test_floor_at_1_when_cpu_count_is_2(self, tmp_workdir: Path) -> None:
         """cpu_count=2 → budget=max(1,0)=1 → effective=1."""
         with patch("parallelism.os.cpu_count", return_value=2):
-            assert effective_max_implementers(tmp_workdir) == 1
+            assert effective_max_implementers(tmp_workdir, execution_location="local") == 1
 
     def test_floor_at_1_when_cpu_count_is_1(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=1):
-            assert effective_max_implementers(tmp_workdir) == 1
+            assert effective_max_implementers(tmp_workdir, execution_location="local") == 1
 
 
 class TestEffectiveMaxFailSoft:
@@ -126,7 +140,12 @@ class TestEffectiveMaxFailSoft:
         with patch("parallelism.os.cpu_count", return_value=16):
             result = effective_max_implementers(tmp_path)
         # Falls back to DEFAULT_MAX; on 16-core machine budget=14, ceiling=12
-        assert result == min(DEFAULT_MAX, 14, HARD_CEILING)
+        assert result == min(
+            DEFAULT_MAX,
+            14,
+            HARD_CEILING,
+            DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker(),
+        )
 
     def test_missing_parallelism_key(self, tmp_path: Path) -> None:
         cfg_dir = tmp_path / ".build-loop"
@@ -134,12 +153,117 @@ class TestEffectiveMaxFailSoft:
         (cfg_dir / "config.json").write_text(json.dumps({"other": "stuff"}))
         with patch("parallelism.os.cpu_count", return_value=16):
             result = effective_max_implementers(tmp_path)
-        assert result == min(DEFAULT_MAX, 14, HARD_CEILING)
+        assert result == min(
+            DEFAULT_MAX,
+            14,
+            HARD_CEILING,
+            DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker(),
+        )
 
     def test_missing_config_file(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=16):
             result = effective_max_implementers(tmp_workdir)
-        assert result == min(DEFAULT_MAX, 14, HARD_CEILING)
+        assert result == min(
+            DEFAULT_MAX,
+            14,
+            HARD_CEILING,
+            DEFAULT_CLOUD_TOKEN_BUDGET // estimate_tokens_per_worker(),
+        )
+
+
+class TestResourceAwareFanout:
+    def test_cloud_uses_measured_tokens_as_primary_cap(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=16):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=8,
+                execution_location="cloud",
+                token_budget=100_000,
+                measured_tokens=40_000,
+            )
+        assert profile["primary_constraint"] == "token"
+        assert profile["token_estimate_source"] == "measured"
+        assert profile["token_cap"] == 2
+        assert profile["effective_max"] == 2
+
+    def test_cloud_falls_back_to_model_and_output_tshirts(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=16):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=8,
+                execution_location="cloud",
+                model="gpt-5.6-terra",
+                output_size="large",
+                effort="xhigh",
+                token_budget=100_000,
+            )
+        assert profile["model_size"] == "medium"
+        assert profile["token_estimate_source"] == "heuristic"
+        assert profile["tokens_per_worker"] == 49_000
+        assert profile["effective_max"] == 2
+
+    def test_sol_high_is_more_conservative_than_terra_medium(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=16):
+            terra = resolve_fanout(
+                tmp_workdir, model="gpt-5.6-terra", effort="medium", token_budget=96_000
+            )
+            sol = resolve_fanout(
+                tmp_workdir, model="gpt-5.6-sol", effort="high", token_budget=96_000
+            )
+        assert terra["effective_max"] == 6
+        assert sol["effective_max"] == 2
+
+    def test_local_small_model_is_cpu_led(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=10):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=8,
+                execution_location="local",
+                model_size="small",
+            )
+        assert profile["primary_constraint"] == "cpu"
+        assert profile["token_budget"] is None
+        assert profile["cpu_cap"] == 8
+        assert profile["effective_max"] == 8
+
+    def test_local_large_model_reserves_more_cpu(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=10):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=8,
+                execution_location="local",
+                model_size="large",
+            )
+        assert profile["cpu_per_worker"] == 4
+        assert profile["cpu_cap"] == 2
+        assert profile["effective_max"] == 2
+
+    def test_exact_measured_rows_override_heuristic(self, tmp_path: Path) -> None:
+        ledger = tmp_path / "ledger.jsonl"
+        ledger.write_text(
+            "\n".join(
+                json.dumps({
+                    "model": "cloud-code",
+                    "agent": "implementer",
+                    "status": "completed",
+                    "input_tokens": inp,
+                    "output_tokens": out,
+                })
+                for inp, out in ((10_000, 2_000), (20_000, 4_000), (30_000, 6_000))
+            ) + "\n"
+        )
+        assert measured_tokens_per_worker(
+            ledger, model="cloud-code", agent="implementer"
+        ) == 24_000
+
+    def test_location_inference_uses_provider_not_open_weight_name(self) -> None:
+        assert classify_execution_location("qwen-32b", provider="cloud") == "cloud"
+        assert classify_execution_location("qwen-32b", provider="ollama") == "local"
+
+    def test_model_size_classification(self) -> None:
+        assert classify_model_size("gpt-5.6-sol") == "xlarge"
+        assert classify_model_size("gpt-5.6-terra") == "medium"
+        assert classify_model_size("claude-haiku") == "small"
 
 
 # ---------------------------------------------------------------------------
@@ -179,12 +303,17 @@ class TestPlanBatches:
 class TestDescribe:
     def test_all_keys_present(self, tmp_workdir: Path) -> None:
         result = describe(tmp_workdir)
-        expected_keys = {"cpu_count", "cpu_budget", "config_max", "hard_ceiling", "effective_max"}
-        assert expected_keys == set(result.keys())
+        expected_keys = {
+            "cpu_count", "cpu_budget", "config_max", "hard_ceiling",
+            "effective_max", "primary_constraint", "token_estimate_source",
+            "tokens_per_worker", "cpu_cap", "token_cap",
+        }
+        assert expected_keys <= set(result.keys())
 
-    def test_values_are_positive_ints(self, tmp_workdir: Path) -> None:
+    def test_numeric_caps_are_positive_ints(self, tmp_workdir: Path) -> None:
         result = describe(tmp_workdir)
-        for key, val in result.items():
+        for key in ("cpu_count", "cpu_budget", "config_max", "hard_ceiling", "effective_max"):
+            val = result[key]
             assert isinstance(val, int) and val >= 1, f"{key}={val!r} should be a positive int"
 
     def test_effective_max_consistent(self, tmp_workdir: Path) -> None:

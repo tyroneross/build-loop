@@ -1,0 +1,6 @@
+{"task_id":"scenario-01-simple-bugfix","source":"skills/build-loop/references/refactor-history/scenarios/01-simple-bugfix.md","size":"small","risk":"standard","expected_profile":"standard"}
+{"task_id":"scenario-02-ui-iteration","source":"skills/build-loop/references/refactor-history/scenarios/02-ui-build-with-iteration.md","size":"medium","risk":"high","expected_profile":"high"}
+{"task_id":"scenario-03-multi-failure","source":"skills/build-loop/references/refactor-history/scenarios/03-multi-failure-escalation.md","size":"large","risk":"high","expected_profile":"high"}
+{"task_id":"scenario-04-ui-fallback","source":"skills/build-loop/references/refactor-history/scenarios/04-ui-build-ibr-absent.md","size":"medium","risk":"high","expected_profile":"high"}
+{"task_id":"scenario-05-large-refactor","source":"skills/build-loop/references/refactor-history/scenarios/05-refactor-navgator-absent.md","size":"large","risk":"high","expected_profile":"high"}
+{"task_id":"scenario-06-debugger-fallback","source":"skills/build-loop/references/refactor-history/scenarios/06-recurring-bug-debugger-absent.md","size":"medium","risk":"standard","expected_profile":"standard"}

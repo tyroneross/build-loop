@@ -93,3 +93,73 @@ def test_extra_json_cannot_override_identity(tmp_path):  # f9
     rec = _state(tmp_path)["runs"][0]
     assert rec["run_id"] == "r1" and rec["source"] == "append_run"   # identity preserved
     assert rec["security_findings"][0]["mapped_risk"] == "LLM01"     # non-identity extra applied
+
+
+# ---------------------------------------------------------------------------
+# GAP-1 closure: a run cannot close with neither an auditor verdict nor a
+# manifest saying one is owed. Each case below is a real run observed in
+# RossLabs-AI-Assistant/.build-loop/state.json between 2026-07-30 and
+# 2026-08-04, all of which closed with neither.
+# ---------------------------------------------------------------------------
+
+def _manifest(workdir):
+    path = workdir / ".build-loop" / "owed-verification.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def test_not_run_auditor_status_writes_owed_manifest(tmp_path):
+    """The exact shape of bl-20260730T060344Z and bl-20260804T072147Z.
+
+    Both honestly recorded `auditor_status: not-run:parent-must-dispatch` --
+    the branch the orchestrator contract calls a MANDATORY manifest write --
+    and neither wrote one, because "MANDATORY" was a sentence in a markdown
+    file rather than a call.
+    """
+    _run(tmp_path, "--run-id", "r-notrun", "--outcome", "partial",
+         "--extra-json", json.dumps({"auditor_status": "not-run:parent-must-dispatch"}))
+    man = _manifest(tmp_path)
+    assert man is not None, "a not-run auditor_status must leave a manifest on disk"
+    assert "independent-auditor" in man["owed"]
+    assert _state(tmp_path).get("review_incomplete") is True
+
+
+def test_pending_hook_packet_is_not_a_verdict(tmp_path):
+    """The shape of hook_20260721T071240Z and hook_20260803T180457Z.
+
+    Six `independent-auditor-hook` rows, every one `verdict: pending`,
+    `status: packet_emitted`. A packet is a request for a verdict, not a
+    verdict, and `auditor_present` matched it on the judge_id substring alone.
+    """
+    _run(tmp_path, "--run-id", "r-pending", "--outcome", "partial",
+         "--extra-json", json.dumps({"judge_decisions": [
+             {"judge_id": "independent-auditor-hook", "verdict": "pending",
+              "status": "packet_emitted"}]}))
+    assert _manifest(tmp_path) is not None, (
+        "a packet with no verdict must not satisfy the auditor requirement"
+    )
+
+
+def test_code_touching_run_without_a_verdict_owes_one(tmp_path):
+    _run(tmp_path, "--run-id", "r-code", "--outcome", "done",
+         "--files-touched", "core/thing.py,scripts/other.py")
+    man = _manifest(tmp_path)
+    assert man is not None and "independent-auditor" in man["owed"]
+
+
+def test_a_real_verdict_owes_nothing(tmp_path):
+    """The acquittal half. Without this the enforcement could owe on every run
+    and still look identically green above."""
+    _run(tmp_path, "--run-id", "r-ok", "--outcome", "done",
+         "--files-touched", "core/thing.py",
+         "--extra-json", json.dumps({"judge_decisions": [
+             {"judge_id": "independent-auditor", "verdict": "approve"}]}))
+    assert _manifest(tmp_path) is None, "a real verdict must not owe a manifest"
+    assert _state(tmp_path).get("review_incomplete") is not True
+
+
+def test_a_quiet_run_that_touched_nothing_owes_nothing(tmp_path):
+    """Precision guard. A no-files run with no auditor engagement is not an
+    escaped review, and flagging it would make review_incomplete meaningless --
+    a noisy gate gets disabled, which is worse than no gate."""
+    _run(tmp_path, "--run-id", "r-quiet", "--outcome", "partial")
+    assert _manifest(tmp_path) is None

@@ -180,5 +180,57 @@ class TaskIdCorrelationTests(unittest.TestCase):
             self.assertEqual(rows[1]["elapsed_seconds"], 42.5)
 
 
+class MeasuredTokenTelemetryTests(unittest.TestCase):
+    def test_measured_buckets_and_fanout_context_are_recorded(self):
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "cost-ledger.jsonl"
+            rc, _, err = _run(
+                _base_args(ledger)
+                + [
+                    "--tokens-source", "measured",
+                    "--input-tokens", "1000",
+                    "--output-tokens", "200",
+                    "--cache-read-input-tokens", "3000",
+                    "--cache-creation-input-tokens", "400",
+                    "--phase", "execute",
+                    "--execution-location", "cloud",
+                    "--model-size", "medium",
+                    "--output-size", "large",
+                    "--effort", "xhigh",
+                    "--fanout-limit", "3",
+                    "--fanout-primary-constraint", "token",
+                ]
+            )
+            self.assertEqual(rc, 0, err)
+            row = _read_rows(ledger)[0]
+            self.assertEqual(row["measured_total_tokens"], 4600)
+            self.assertEqual(row["cache_read_input_tokens"], 3000)
+            self.assertEqual(row["phase"], "execute")
+            self.assertEqual(row["fanout_limit"], 3)
+            self.assertEqual(row["fanout_primary_constraint"], "token")
+
+    def test_heuristic_row_remains_separate_from_measured_buckets(self):
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "cost-ledger.jsonl"
+            rc, _, err = _run(
+                _base_args(ledger)
+                + ["--tokens-estimate", "16000", "--tokens-source", "heuristic"]
+            )
+            self.assertEqual(rc, 0, err)
+            row = _read_rows(ledger)[0]
+            self.assertEqual(row["tokens_estimate"], 16000)
+            self.assertNotIn("measured_total_tokens", row)
+
+    def test_negative_measured_bucket_is_rejected(self):
+        with TemporaryDirectory() as td:
+            ledger = Path(td) / "cost-ledger.jsonl"
+            rc, _, err = _run(
+                _base_args(ledger) + ["--input-tokens", "-1"]
+            )
+            self.assertEqual(rc, 1)
+            self.assertIn("input_tokens must be non-negative", err)
+            self.assertFalse(ledger.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
