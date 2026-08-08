@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "58b4912289fd01974c41392773e310731ac6c3e94f823d756b76ccfcbe8613b2"
+    "content_sha256": "207849eb3632525fe9cb08f0d9516c87d01d1da5ca994ca4952d771d44e5de92"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-04"
+          "date": "2026-08-07"
         }
       },
       "database-assessor": {
@@ -959,7 +959,7 @@
         "file": "agents/independent-auditor.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-28"
+          "date": "2026-08-07"
         }
       },
       "leak-scanner": {
@@ -1067,7 +1067,7 @@
         "file": "agents/security-reviewer.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-28"
+          "date": "2026-08-07"
         }
       },
       "self-improvement-architect": {
@@ -1425,7 +1425,7 @@
         "file": "skills/repo-maintenance/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-26"
+          "date": "2026-08-07"
         }
       },
       "research": {
@@ -1549,7 +1549,9 @@
       "scripts/audit_git.py": "audit_git.py — Read-only git front door for read-only agents (e.g. independent-auditor).",
       "scripts/audit_memory_invocation.py": "Runtime probe for build-loop memory call sites.",
       "scripts/audit_record_verdict.py": "Backfill the hook-path verdict into runs[-1].judge_decisions[].",
+      "scripts/autonomy_dashboard.py": "Loopback-only dashboard for durable Build Loop autonomy decisions.\"\"\"",
       "scripts/autonomy_gate.py": "Classify arbitrary build-loop actions against a generalized autonomy policy.",
+      "scripts/autonomy_supervisor.py": "Deterministic control plane for outcome-based Build Loop autonomy.",
       "scripts/backend_health.py": "Phase 1 backend health-check surface.",
       "scripts/backlog/__init__.py": "scripts/backlog/ — capture-time product-impact triage + causal-tree assessment.",
       "scripts/backlog/assess.py": "assess.py — render a product-impacting deferral as a backlog-item markdown.",
