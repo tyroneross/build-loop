@@ -117,6 +117,25 @@ Give every worktree, branch, stash, dirty path set, sibling source, and artifact
 
 Before mutation, create dated annotated recovery tags for pre-integration `main`, every branch head, and every stash commit under `archive/pre-closeout-YYYY-MM-DD/`. Preserve dirty state including untracked files. Prefer fast-forward integration; re-run the canonical verifier on exact final `main` after the last mutation.
 
+### Grade the base, not the test result
+
+Before assigning `integrate` to any branch, score it. A passing suite describes the branch **at its own base**, and says nothing about merging into today's `main`:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/merge_risk.py" --branch <b> --target main \
+    --evidence "test suite=pass" --evidence-time <ISO8601 when the suite ran> --json
+# or sweep every local branch, risk-first:
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/merge_risk.py" --all-branches --json
+```
+
+The load-bearing field is `contested_files` — files the branch changed that `main` **also** changed since the merge-base. When that set is non-empty, `evidence_valid_against_target` is `false` and the verdict is `stale_base_evidence_invalid` (`risk: high`, exit 1). Green evidence supplied alongside contested files makes the verdict more alarming, not less; the script records `evidence_ignored_reason: "produced_at_stale_base"` rather than letting a pass downgrade the risk.
+
+Verdicts: `stale_base_evidence_invalid` and `conflict_likely` are `high` (exit 1 — an auto-merge path must refuse) · `behind_but_disjoint` is `medium` · `mergeable_evidence_current` is `low`. `predicted_conflicts` comes from `git merge-tree` and is `null` (never `0`) when the probe is unavailable — a silent probe does not become evidence of mergeability. The script is read-only: no merge, rebase, checkout, or ref write.
+
+`stale_base_evidence_invalid` maps to `blocked`, not `integrate`. Rebase or re-verify against current `main` first, then re-score.
+
+Observed 2026-08-07: branch `bl/run-938939` passed `cargo build`, `cargo test`, and a Python↔Rust parity suite 5288/5288 — at a base of 2026-07-30, while `main` had since changed those same files twice. A scorer reading "tests pass" as low-risk would have auto-merged it. The rebase produced 5 conflict hunks, and the branch side did not compile against `main` (`E0609`, `E0599`).
+
 Clean in dependency order: auxiliary worktrees, contained branches, patch-equivalent branches with recovery proof, archived stashes, stale worktree metadata, then authorized generated artifacts. Never use `git reset --hard` or force-delete unique state as cleanup.
 
 ## Report distinct truths

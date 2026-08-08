@@ -23,6 +23,35 @@ Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux
 
 The "code is cheap, AI agents build fast" framing: the orchestrator does NOT defer based on patch size. It defers only when `architecture_impact: true` (new component, new data flow, navigation graph change, schema migration, auth provider swap). Everything else is fair game for the current loop.
 
+## Premise re-validation gate (MANDATORY before scheduling any queue item)
+
+A queue item is written at one moment and executed at another. By the time it surfaces, the bug may be fixed, the file moved, or the precondition false — and executing it then manufactures fake progress and burns a run. Before scheduling any item drained from `.build-loop/issues/`, `.build-loop/backlog/`, or `.build-loop/followup/`:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/premise_revalidation.py" gate --item <path> --repo "$PWD" --json
+```
+
+Exit 0 = `fresh`, schedule it. Exit 1 = do not schedule; route by `reason_code`:
+
+| Verdict | Meaning | Route |
+|---|---|---|
+| `fresh` | Within the window, or re-validated with evidence | Schedule |
+| `stale_needs_revalidation` | Past the window (default 7d), never re-checked | Re-check the premise against the live repo, then `validate --note "<what you checked>"`; if it has resolved, close the item with that receipt |
+| `premise_broken` | A cited path or commit the item depends on is genuinely gone | Close the item with the receipt; do not implement |
+| `needs_human_recheck` | A cited path **relocated** (same basename elsewhere), or extraction was ambiguous | Re-read the item against the new path before acting |
+
+Freshness falls back to `created` when `validated` is absent, so an item filed minutes ago is fresh by construction — the gate cannot deadlock a queue fed by the current run. Stamp freshness only through:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/premise_revalidation.py" validate --item <path> --note "<evidence>"
+```
+
+`--note` is required. A bare timestamp asserts freshness without evidence, which is the failure being fixed.
+
+**Why `needs_human_recheck` is a separate verdict from `premise_broken`.** 2026-08-07: a sweep of 67 queue cards found 16 (24%) whose premise had already resolved — one claimed 65 commits were stranded by a push blocker that had cleared two days earlier. Several card specs even carried hand-written *"VALIDATE FIRST (mandatory) … if stale, write a receipt and STOP"* prose, which proves the need was known and unautomated. The sharper finding: **the careful human sweep was itself stale** — it reported a file as deleted when the file had been relocated, and a repo as 0 ahead when it was 6. A missing path is therefore never enough to declare a premise dead; the gate checks for a same-basename relocation first and asks for a human re-read instead of concluding. Staleness is also repo-dependent (one repo measured 4/4 stale, another 12 live to 1 stale), so the gate is per-item, never a blanket policy.
+
+Mirrors the Operations Center design (`validated_at` + refusal at the same gate that already refuses an unrunnable card, commit `3fd0a23`) rather than reinventing it.
+
 **Fan-out** (mode-dependent): After dequeue, partition entries by `files_touched` into independent groups (no overlapping files).
 
 - **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 5, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.

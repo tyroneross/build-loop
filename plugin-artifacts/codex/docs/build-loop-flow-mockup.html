@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "cce0ad20bb63ecd761b3af93db63a90d4b503787ec07bb3e6461490a6eef6bd0"
+    "content_sha256": "58b4912289fd01974c41392773e310731ac6c3e94f823d756b76ccfcbe8613b2"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1775,6 +1775,7 @@
       "scripts/attestation_lint.py": "",
       "scripts/attribution_stamp.py": "Idempotent attribution stamper for Apache-2.0 repos.",
       "scripts/audit_before_commit.py": "Independent commit auditor — boundary-gated audit packet builder.",
+      "scripts/audit_git.py": "audit_git.py — Read-only git front door for read-only agents (e.g. independent-auditor).",
       "scripts/audit_memory_invocation.py": "Runtime probe for build-loop memory call sites.",
       "scripts/audit_record_verdict.py": "Backfill the hook-path verdict into runs[-1].judge_decisions[].",
       "scripts/autonomy_gate.py": "Classify arbitrary build-loop actions against a generalized autonomy policy.",
@@ -1865,6 +1866,7 @@
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
+      "scripts/hostile_input_gate.py": "Review gate for commits that claim to close a security/safety finding.",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
       "scripts/import_manifest_lint.py": "import_manifest_lint.py — catch undeclared third-party imports before CI.",
       "scripts/infer_risk_surface.py": "infer_risk_surface.py — deterministic riskSurfaceChange auto-infer.",
@@ -1917,6 +1919,7 @@
       "scripts/memory_telemetry.py": "Memory-read / memory-write telemetry writer.",
       "scripts/memory_update_ledger.py": "Global append-only update ledger for build-loop memory.",
       "scripts/memory_writer.py": "Canonical writer for build-loop-memory files with provenance frontmatter.",
+      "scripts/merge_risk.py": "Merge-risk scoring that grades the BASE, not the test result.",
       "scripts/mermaid_render.py": "Render mermaid diagrams from a markdown or .mmd file for visual QA.",
       "scripts/methodology_drift_lint.py": "Methodology drift lint — single-source guard for the four methodology docs.",
       "scripts/metric_runner.py": "Extract the last meaningful numeric value from command output.",
@@ -1942,6 +1945,8 @@
       "scripts/parallelism.py": "",
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
+      "scripts/preauthorization.py": "Collect and evaluate a run's standing pre-authorization for unattended execution.",
+      "scripts/premise_revalidation.py": "premise_revalidation.py — re-validate queue-item premises at drain time.",
       "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",
       "scripts/prepush_judgment_gate.py": "prepush_judgment_gate.py — BLOCKING Frontier-judgment gate at the push boundary.",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
@@ -2054,6 +2059,7 @@
       "scripts/semantic_index/hybrid.py": "Hybrid keyword+embedding rerank for the SQLite semantic index.",
       "scripts/skill_index.py": "",
       "scripts/slice_acp.py": "Slice the ACP to a file set for a single subagent dispatch.",
+      "scripts/staged_content_gate.py": "staged_content_gate.py — grade what will actually be committed, not what",
       "scripts/stale_context_check.py": "",
       "scripts/stamp_skill_frontmatter.py": "",
       "scripts/state_finalize.py": "M4 — Best-effort Stop hook annotation for crash detection.",
@@ -2086,6 +2092,7 @@
       "scripts/transcript_pattern_miner/textproc.py": "textproc — message text extraction, meta-block stripping, bash normalization.\"\"\"",
       "scripts/ux_triage.py": "Static-scan UX-impacting issues and write queue entries for build-loop Review Sub-step D.",
       "scripts/validate_knowledge.py": "Validate the `.episodic/` + `.semantic/` + `.procedural/` tree.",
+      "scripts/verification_claim_probe.py": "Re-execute the literal command behind a subagent verification claim.",
       "scripts/verify_deploy.py": "Post-deploy verification gate for the build-loop plugin (Vercel web deploys).",
       "scripts/verify_release_surface.py": "Verify the complete release surface for a build-loop / plugin version.",
       "scripts/verify_worktree_target.py": "Verify a dispatched isolation worktree actually resolves to the INTENDED target repo.",

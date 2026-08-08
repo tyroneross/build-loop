@@ -142,6 +142,7 @@ Severity rules:
       "snippet": "<≤120 chars from the diff or file>",
       "minimal_patch_shape": "<smallest change that closes it — validation, allowlist, sandbox, boundary>",
       "recommendation": "<concrete next step — what change in code / config / boundary would close this>",
+      "hostile_input": "<MANDATORY — the LITERAL input an attacker types to exercise this. The exact argv, path, header, payload, or call, verbatim. Not a description of the class.>",
       "closure_proof": "<the regression check that proves it's closed (test/assertion/probe); null until closed>"
     }
   ],
@@ -157,6 +158,32 @@ Severity rules:
 `pass: false` if `critical_count + high_count > 0`. `pass: true` otherwise (medium and low findings are logged, not blocking).
 
 **Severity normalization (QM v0.13.0).** These `CRITICAL|HIGH|MEDIUM|LOW` values are the normalized gating scale; `review_finding_gate.py` reads them case-insensitively and treats `critical`/`high` as blocking (clears only on `closed` + `closure_proof`). The `*_count` fields above are also consumed by the gate as a fallback signal. A CRITICAL/HIGH finding therefore blocks final Review exit until closed with `closure_proof` — consistent with `independent-auditor`'s normalized findings.
+
+## `hostile_input` — write the attack, not the class
+
+`hostile_input` is mandatory on every finding, and it must be the **literal thing an attacker types**: the exact argv, path, header, payload, URL, or function call — verbatim, copy-pasteable. `"a path outside the repo"` is a class. `resolve_target("/Users/x/Library/App/store.db")` is a hostile input. Only the second can be pasted into a test.
+
+The field exists because a test written by reading the implementation enumerates the branches that exist, while a test written from the threat asks what the attacker types — and those differ exactly where the bug lives. Observed 2026-08-07: a guard written to refuse writing to a live store shipped with a test asserting three things (in-repo target refused, default-with-flag-absent refused, outside path returns absolute). All three passed. None of them called the function with the live store as an explicit argument — the attack the finding named. The guard checked its flag only on the branch where the path was omitted, so naming the path explicitly walked straight past it, and the shipped code wrote 49 entries into the user's real store.
+
+## Closure gate — the test must contain the attack
+
+A finding is `closed` only when BOTH hold, verified by execution:
+
+1. **The hostile input is present in the test.**
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/hostile_input_gate.py" check \
+       --hostile-input "<the literal hostile_input>" --test-file <test path> --json
+   ```
+   Exit 1 = the test does not contain the attack it was written to close. That is not a closed finding; it is an untested guard with a green suite.
+
+2. **A mutant that disables the guard turns those tests red.**
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/hostile_input_gate.py" mutate \
+       --guard-file <path> --guard-symbol <fn> --test-cmd "<test command>" --json
+   ```
+   Exit 1 = `mutant_survived`: the tests stay green with the guard disabled, so they never exercised it. The script always restores the original file.
+
+Record both results in `closure_proof`. A `closure_proof` that names a test which passes the `check` but fails the `mutate` arm is false confidence — say so rather than marking the finding closed.
 
 ## Inline rubric (fallback when `security-methodology` skill is absent)
 

@@ -77,6 +77,25 @@ State the outcome in this form:
 
 Never emit "the agent confirmed it passed" as your own verification line. Name which commands you ran and what they returned. If a step was skipped, say why.
 
+### 6 — Re-execute the literal command behind each headline verification claim
+
+Steps 1–3 verify the *repo*. This step verifies the *claim*. A subagent's headline usually names the command it says it ran and the outcome it says it got — re-run that exact command and compare.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/verification_claim_probe.py" \
+    --report-file <the subagent's returned report> --markdown
+```
+
+The probe extracts command-shaped claims (a backticked command sitting next to a verification verb — *verified*, *confirmed*, *reproduced*, *ran*, *tested*, *proved*, *exit N*, *N passed*), re-runs each one, and labels it:
+
+- **`executed:`** — we ran it and every stated expectation held.
+- **`contradicted:`** — we ran it and an expectation failed. **Exit code 1.** This is a real finding; it goes in the report, not in a footnote.
+- **`cited:`** — we did not run it. Either no expectation was stated to check against, or the command is not safely re-executable (`rm`, `git push`, `git reset --hard`, `git checkout --`, `git clean`, `git commit`, `mv`, `dd`, output redirection, `curl -o`, `sudo`, `npm publish`, `deploy`). Denied commands are **never executed** — the probe must not become the thing that writes to a live store.
+
+Carry the `executed:` / `contradicted:` / `cited:` label into the report for every relayed claim. An unlabeled claim is `cited:` by default — you read it, you did not verify it.
+
+**Why this step exists.** 2026-08-07: four subagent reports arrived with the safety classifier unavailable. One reported a security fix as *"Fixed — guard refuses the live store; verified by reproducing the auditor's exact attack (exit 2, store still 0)."* Running that exact command against the shipped code gave **exit 0 and 49 entries written into the user's live store**. The guard required its flag only on the branch where the path was omitted; naming the path explicitly walked straight past it. Steps 1–3 would all have passed — the commits existed, the tree was clean, the suite was green. Only re-running the claim's own command caught it.
+
 ## Auditing verdict / classification claims (DONE · PASS · verified)
 
 When a dispatched agent returns *verdicts* — "DONE", "PASS", "already implemented", "complete", "verified" — audit each verdict against the cited evidence, not against its title. An over-optimistic DONE hides a real gap far more often than a REJECT does; the failure mode is **claiming a nearby mechanism satisfies the requirement when it only partially does** ("adjacent" and "partial" read as DONE).

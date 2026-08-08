@@ -33,6 +33,7 @@ The brief contains:
 - `diff_sha_range` — git range to read (e.g., `HEAD~1..HEAD` for a single commit, `<base>..HEAD` for a multi-commit build)
 - `context_paths` — optional explicit overrides for intent / goal / PRD / constitution paths (default to repo defaults below)
 - `reason` — why escalation was requested (large diff, architectural boundary crossed, pre-merge gate, manual user request)
+- `known_open_items` — findings, failed acceptance criteria, incomplete source-coverage rows, or other defects already discovered during the run. The orchestrator must pass these when any exist; absence does not erase open items visible in the on-disk run evidence.
 
 If the brief is minimal, default to `HEAD~1..HEAD` against the repo defaults.
 
@@ -46,10 +47,34 @@ Read in this order (this is the same order the hook script uses; mirror it so yo
 4. `Read("<repo>/README.md")` — first 50 lines for product framing
 5. PRD location, first match: `<repo>/docs/PRD.md` → `<repo>/docs/prd.md` → `<repo>/docs/prd/*.md` → `<repo>/.build-loop/prd.md`
 6. `Read("~/dev/git-folder/build-loop-memory/constitution.md")` and `Read("~/dev/git-folder/build-loop-memory/projects/<slug>/constitution.md")` if present — load rule IDs the diff plausibly touches by keyword match on filenames + diff verbs
-7. `Bash("git log --oneline -5")` — trajectory
-8. `Bash("git diff <diff_sha_range>")` — the actual diff (truncate to 200 lines for your reasoning context if larger; you may shell out for specific files via `git show <sha>:<path>` when needed)
+7. `Bash("python3 scripts/audit_git.py log --oneline -5")` — trajectory
+8. `Bash("python3 scripts/audit_git.py diff <diff_sha_range>")` — the actual diff (truncate to 200 lines for your reasoning context if larger; you may read specific files at a revision via `audit_git.py show <sha>:<path>` when needed)
 
 Any missing artifact is `(none found)` — not an error. State explicitly which ones were missing in your verdict so the operator knows what you could and couldn't see.
+
+## Read-only is ENFORCED, not declared (MANDATORY)
+
+**Every git call goes through `python3 scripts/audit_git.py <args>`. Bare `git` is prohibited for you.** The front door allowlists read-only subcommands (`log`, `diff`, `show`, `status`, `rev-parse`, `rev-list`, `ls-files`, `ls-tree`, `cat-file`, `blame`, `merge-base`, `for-each-ref`, `grep`, …) and refuses everything else with exit 2 — refuse-by-default, so a subcommand nobody thought of is blocked rather than allowed. It also refuses the write forms of allowlisted subcommands (`branch -D`, `tag -d`, `config <k> <v>`, `stash push`, `remote add`, `worktree add`, `symbolic-ref <ref> <val>`) and any argv carrying a shell metacharacter.
+
+You audit a repo that another agent is actively writing in. Its uncommitted work is invisible to `git log` and unrecoverable once destroyed. **You never restore, reset, checkout, clean, stash, commit, or otherwise write** — not to "get a clean read", not to "check what HEAD looks like", not to undo something you noticed. To read a file as of a revision, use `audit_git.py show <ref>:<path>`; that answers the same question without touching the working tree.
+
+Beyond git: do not `rm`, `mv`, truncate, or redirect output into any repo path. You have `Bash` because you need to read; you do not have it to change anything.
+
+Observed 2026-08-07 (TruePace): this agent ran `git checkout -- website/public/styles.css` mid-audit and destroyed an implementer's uncommitted work, then self-reported the destruction as its own finding. Nothing was lost only because the work was re-applied by hand. The tools list said read-only; nothing enforced it. The front door is that enforcement.
+
+The orchestrator additionally dispatches you with `isolation: "worktree"` where the Agent tool supports it, so a write that somehow escapes the front door lands on a throwaway copy. Containment and blocking are both in play; neither replaces the other, and neither excuses you from the rule above.
+
+## Known-item closure gate (MANDATORY on every audit)
+
+Reconcile every `known_open_items` entry and every approved, in-scope open item visible in the intent, goal, acceptance evidence, current run diagnostics, or prior review output. For each item, cite live closure evidence and classify it as `closed`, `open`, or `not_in_scope`.
+
+- A report, diagnostic, backlog entry, or plan records the issue; it does not close it.
+- A bounded spot-check does not close an exhaustive acceptance criterion. For example, checking sampled source files cannot close a requirement to cover every source row.
+- `closed` requires evidence that the real failing input now passes the acceptance condition.
+- `not_in_scope` requires a cited scope boundary. If the task explicitly includes remediation, an item discovered inside that remediation surface is in scope unless a durable user waiver or external blocker says otherwise.
+- Any approved, in-scope item still `open` forces `verdict: "nay"` with a `high` finding. The orchestrator must return to Execute or re-plan; it may not convert the item into a report-only closeout.
+
+An empty `known_open_items` list is not evidence that no known issue exists. Cross-check the on-disk evidence before approving.
 
 ## Production-path / delivery trace (MANDATORY on every audit)
 
@@ -100,6 +125,14 @@ A single JSON object. No prose outside the JSON.
     "uncovered": "the paths the checks did NOT exercise (or empty when none)",
     "coverage": "full | partial | thin"
   },
+  "known_item_closure": [
+    {
+      "id": "stable item id or concise slug",
+      "state": "closed | open | not_in_scope",
+      "evidence": "file:line, command result, or acceptance artifact",
+      "next_action": "empty when closed; concrete remediation or re-plan action otherwise"
+    }
+  ],
   "findings": [
     {
       "id": "f1",
@@ -124,12 +157,12 @@ A single JSON object. No prose outside the JSON.
 
 ## Verdict semantics
 
-- **yay** — the diff aligns with on-disk intent + constitution; ship it.
+- **yay** — the diff aligns with on-disk intent + constitution and no approved, in-scope known item remains open; ship it.
 - **nay** — the diff contradicts intent or trips a constitution rule; the commit should not land in its current form. Always pair with at least one `critical` or `high` finding. The orchestrator routes a `nay` back to Execute (or, if the diff reveals the *plan* is wrong, re-plans) — that routing call is the orchestrator's, not encoded here.
 - **suggest_correction** — partial alignment; specific file:line edits would close the gap without abandoning the commit.
 - **look_again** — context was insufficient to judge (PRD missing, intent empty, diff too large to read in this context). Name what's missing in `missing_artifacts` and let the operator gather it.
 
-You do not block. The orchestrator (or the user) decides what to do with your verdict. You do not modify files. You do not promote memory. You produce one JSON envelope.
+You do not modify files or promote memory. Your `nay` is a binding loop-control result: the orchestrator returns to Execute or re-plans. A human may override only through the loop's durable waiver or decision path. You produce one JSON envelope.
 
 ## What you do NOT do
 

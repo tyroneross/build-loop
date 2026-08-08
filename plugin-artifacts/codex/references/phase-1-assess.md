@@ -194,6 +194,44 @@ manifest is an explicit source-only run record.
     - **Branch divergence**: `git rev-list --count HEAD..origin/main` and `origin/main..HEAD`. If local main is ahead of origin AND a feature branch will be cut, recommend branching from `origin/main` directly (`git checkout -b <name> origin/main`) so unpushed local commits don't ride into the eventual squash and bundle under a misleading title.
     - **Recovery if symptoms appear during build** (file writes vanish, system reminders flag "intentional" reverts, `git status` clean): pause edits, run `ps aux | grep claude` + `git log --oneline -- <affected paths>` to identify the colliding session/squash, then re-apply dropped work on a fresh branch from `origin/main`.
 
+### Pre-authorization interview (unattended runs only)
+
+Fires when the run is meant to proceed without a human present: autonomous / `--long` mode, a background or headless dispatch, a `ScheduleWakeup` resume, or an explicit "run this unattended / overnight / while I'm out". Skip it entirely for attended interactive runs — the normal gates already work when someone is watching.
+
+Collect the standing policy **once, up front**, instead of discovering each stop mid-run. Four questions, asked together in a single `AskUserQuestion`:
+
+1. **Repo scope** — which repos/paths may this run write to?
+2. **Irreversible-action policy** — `skip_and_record` (skip and log the exact command) · `surface_and_wait` · `never_attempt`.
+3. **Conditional gates** — any action pre-authorized *only when a measurement clears a threshold*. This is the one that carries weight: *"deploy only if contrast measures ≥ 4.5:1"* authorizes an outcome, not an action.
+4. **Stop rule** — consecutive failures on the same problem, and wall-clock ceiling.
+
+Record it:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/preauthorization.py" record \
+    --run-id "<run_id>" --unattended --repo-scope "$PWD" \
+    --irreversible-policy skip_and_record --stop-rule-failures 5 --stop-rule-hours 8 \
+    --gate '{"id":"deploy-contrast","action":"deploy","metric":"contrast_ratio","op":">=","threshold":4.5,"measurement_source":"computed from rendered fg/bg","on_fail":"skip_and_record"}' \
+    --workdir "$PWD" --json
+```
+
+At the moment a gated action comes up, evaluate it against a **measured** value:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/preauthorization.py" evaluate \
+    --gate deploy-contrast --measured 4.2045 --workdir "$PWD" --json    # exit 1 — refused
+```
+
+Rules the script enforces, so they cannot erode:
+
+- A gate recorded without a `measurement_source` is rejected at record time. An authorization whose evidence source is unnamed cannot be checked later.
+- A gated action with **no measurement supplied** returns `confirm`, never `auto`. The gate existing is not the authorization.
+- Pre-authorization can only relax a `confirm` into an `auto` for an action it explicitly covers with a satisfied condition. It never relaxes a `block`, never covers an action outside `repo_scope`, and an absent `preauthorization.json` authorizes nothing.
+
+This is the proactive counterpart to `scripts/question_timeout.py`, which resolves questions reactively once the run is already moving. Both may be active; the interview answers what it can before the run starts, the timeout handles what it could not anticipate.
+
+**Why.** 2026-08-07: four questions asked up front converted a run that would have stopped six times into one that ran unattended across three repos. The conditional gate proved its own worth by refusing — the authorized deploy did not fire, because the value it was authorized against measured 4.2045 against a 4.5 threshold. Blanket approval would have shipped it.
+
 ### UI scope and mockup pre-flight (when uiTarget != null)
 
 **UI pre-flight**: If project has `mockups/` or `.mockup-gallery/` and goal references selected mockups, run the design-rule scanner against the mockup HTML/CSS first to surface conflicts before coding:
