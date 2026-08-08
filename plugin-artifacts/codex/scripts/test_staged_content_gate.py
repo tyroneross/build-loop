@@ -298,5 +298,59 @@ class TestCopyUntracked(StagedContentGateTestCase):
         self.assertIn("present", copy_result["stdout"])
 
 
+class TestMaterializationIsAsserted(StagedContentGateTestCase):
+    """A pass on an empty tree is the gate reproducing its own thesis.
+
+    `git checkout-index --all` exits 0 when it writes ZERO files, and tolerant
+    commands return 0 on nothing (`ruff check .`, `mypy .`, a loop over an empty
+    glob). Without asserting that something was materialized, this gate would
+    certify an artifact it never examined — exactly the defect it exists to
+    catch, one level down.
+    """
+
+    def test_empty_index_is_a_setup_error_not_a_pass(self) -> None:
+        repo = self.tmp_path / "empty"
+        repo.mkdir()
+        _git(repo, "init")
+        _git(repo, "config", "user.email", "t@example.com")
+        _git(repo, "config", "user.name", "Test")
+
+        # `true` exits 0. On an empty tree that 0 means nothing was checked.
+        result = scg.run_against_index(repo, "true", timeout=30)
+        self.assertEqual(result["materialized_files"], 0)
+        self.assertTrue(result["setup_error"])
+        self.assertEqual(result["returncode"], 2, "a vacuous run must not report the command's 0")
+
+    def test_materialized_files_is_reported_on_a_real_run(self) -> None:
+        repo = _make_repo(self.tmp_path)
+        result = scg.run_against_index(repo, "true", timeout=30)
+        self.assertGreater(result["materialized_files"], 0)
+        self.assertEqual(result["returncode"], 0)
+        self.assertNotIn("setup_error", result)
+
+    def test_expect_path_absent_is_a_setup_error(self) -> None:
+        """The file under test was never staged, so the run would not grade it."""
+        repo = _make_repo(self.tmp_path)
+        (repo / "test_new.py").write_text("assert True\n")  # written, NOT git-added
+
+        result = scg.run_against_index(
+            repo, "true", timeout=30, expect_paths=["test_new.py"]
+        )
+        self.assertTrue(result["setup_error"])
+        self.assertEqual(result["returncode"], 2)
+        self.assertIn("test_new.py", result["missing_expected_paths"])
+
+    def test_expect_path_present_when_staged(self) -> None:
+        repo = _make_repo(self.tmp_path)
+        (repo / "test_new.py").write_text("assert True\n")
+        _git(repo, "add", "test_new.py")
+
+        result = scg.run_against_index(
+            repo, "true", timeout=30, expect_paths=["test_new.py"]
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertNotIn("setup_error", result)
+
+
 if __name__ == "__main__":
     unittest.main()

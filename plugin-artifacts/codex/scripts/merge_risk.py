@@ -171,6 +171,7 @@ def score(
     evidence_time: str | datetime | None = None,
     evidence: dict[str, str] | None = None,
     strict: bool = False,
+    allow_unprobed: bool = False,
 ) -> dict:
     """Score merge risk of `branch` against `target`. Read-only.
 
@@ -179,6 +180,18 @@ def score(
     what target changed since their merge-base (`contested_files`), and
     refuses to let passing test evidence downgrade the risk when that
     evidence was produced at a base that no longer reflects target.
+
+    Two related fail-closed rules:
+
+    * A conflict probe that could not run (`predicted_conflicts is None`)
+      is NOT evidence of mergeability. `None` is falsy just like `0`, so
+      without an explicit check it would silently fall through to the
+      "mergeable" verdict -- a run we could not observe is not a pass.
+      Set `allow_unprobed=True` to opt into treating an unprobed branch
+      as a clean exit (the verdict is still recorded either way).
+    * An explicit `evidence={"label": "fail"}` claim must never be
+      ignored -- the CLI's `--evidence label=pass|fail` metavar promises
+      the fail case is read, not just parsed.
     """
     repo = Path(repo)
     evidence = dict(evidence or {})
@@ -226,6 +239,10 @@ def score(
     # the newest target commit touching a branch-touched file.
     evidence_valid_against_target = (not contested_files) and (not time_stale)
 
+    # An explicit fail claim in --evidence must never be silently dropped:
+    # the CLI promises "label=pass|fail" is read, not just parsed.
+    evidence_has_failure = any(status == "fail" for status in evidence.values())
+
     # ---- verdict, in priority order --------------------------------------
     evidence_ignored_reason = None
     if not evidence_valid_against_target:
@@ -233,13 +250,32 @@ def score(
         risk = "high"
         if evidence:
             # A green suite recorded against a stale base is NOT evidence of
-            # mergeability -- it must never downgrade the verdict.
-            evidence_ignored_reason = "produced_at_stale_base"
+            # mergeability -- it must never downgrade the verdict. A stale
+            # base invalidates the evidence entirely, pass or fail, so this
+            # verdict outranks the failing-evidence check below; the reason
+            # names both when both are present.
+            evidence_ignored_reason = (
+                "produced_at_stale_base_and_failing_evidence"
+                if evidence_has_failure
+                else "produced_at_stale_base"
+            )
+    elif evidence_has_failure:
+        # A failing suite is a positive signal of non-mergeability -- it
+        # must never be ignored just because contested_files is empty.
+        verdict = "evidence_failing"
+        risk = "high"
     elif predicted_conflicts:
         verdict = "conflict_likely"
         risk = "high"
     elif behind > 0 and not contested_files:
         verdict = "behind_but_disjoint"
+        risk = "medium"
+    elif predicted_conflicts is None:
+        # The probe never ran (git too old, corrupt object, unrelated
+        # histories, etc). `None` is falsy exactly like `0` -- without this
+        # branch the `elif predicted_conflicts:` check above would let an
+        # unobserved probe fall through to "mergeable". It never gets here.
+        verdict = "conflict_probe_unavailable"
         risk = "medium"
     else:
         verdict = "mergeable_evidence_current"
@@ -249,6 +285,8 @@ def score(
         exit_code = 0
     elif verdict == "behind_but_disjoint":
         exit_code = 1 if strict else 0
+    elif verdict == "conflict_probe_unavailable":
+        exit_code = 0 if allow_unprobed else 1
     else:
         exit_code = 1
 
@@ -278,14 +316,19 @@ def score(
 _RISK_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
-def sweep(repo: str | Path, target: str = "main", strict: bool = False) -> list[dict]:
+def sweep(
+    repo: str | Path,
+    target: str = "main",
+    strict: bool = False,
+    allow_unprobed: bool = False,
+) -> list[dict]:
     """Score every local branch (except target) against target. Read-only."""
     repo = Path(repo)
     branches = [b for b in _list_local_branches(repo) if b != target]
     results = []
     for b in branches:
         try:
-            results.append(score(repo, b, target=target, strict=strict))
+            results.append(score(repo, b, target=target, strict=strict, allow_unprobed=allow_unprobed))
         except subprocess.CalledProcessError as exc:
             results.append({
                 "branch": b,
@@ -332,13 +375,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit JSON")
     parser.add_argument("--strict", action="store_true", help="behind_but_disjoint also exits 1")
     parser.add_argument("--all-branches", action="store_true", help="sweep every local branch, risk-first")
+    parser.add_argument(
+        "--allow-unprobed",
+        action="store_true",
+        help=(
+            "opt into exit 0 when the conflict probe could not run "
+            "(verdict stays conflict_probe_unavailable either way)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     repo = Path(args.repo).resolve()
     evidence = _parse_evidence_args(args.evidence)
 
     if args.all_branches:
-        results = sweep(repo, target=args.target, strict=args.strict)
+        results = sweep(repo, target=args.target, strict=args.strict, allow_unprobed=args.allow_unprobed)
         if args.json:
             print(json.dumps(results, indent=2))
         else:
@@ -358,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_time=args.evidence_time,
             evidence=evidence,
             strict=args.strict,
+            allow_unprobed=args.allow_unprobed,
         )
     except subprocess.CalledProcessError as exc:
         print(f"error: git command failed: {exc}", file=sys.stderr)

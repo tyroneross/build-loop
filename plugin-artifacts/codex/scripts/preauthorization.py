@@ -27,8 +27,16 @@ with a satisfied, evidence-backed condition. It can NEVER produce `auto` for:
   (b) a conditional gate with no measurement supplied
   (c) a conditional gate whose measurement fails its threshold
   (d) anything `autonomy_gate.classify()` calls `block`
-Each of these is an explicit branch in the code below (`check_action()`,
-`evaluate_gate()`, `check_action_guarded()`), not just documentation.
+  (e) a path outside the recorded `repo_scope`, when a path is being checked
+Each of these is an explicit branch in the code below — (a) in `check_action()`,
+(b) in `check_action()`, (c) in `evaluate_gate()`, and (d)+(e) in
+`check_action_guarded()` / `evaluate_gate_guarded()` — not just documentation.
+`evaluate_gate()` on its own enforces ONLY (c); it takes no action string and
+no workdir, so it cannot see (d) or (e). Any caller that is about to ACT on an
+`evaluate_gate()` result — not just inspect it — MUST go through
+`evaluate_gate_guarded()` instead, the same way `check_action_guarded()` is
+required over bare `check_action()`. The CLI's `evaluate` subcommand calls
+`evaluate_gate_guarded()`, never `evaluate_gate()` directly.
 
 Schema (`.build-loop/preauthorization.json`):
   {
@@ -48,7 +56,8 @@ Subcommands:
   record       write the standing preauthorization (validates gates before writing)
   show         print the recorded preauthorization
   check        is an action covered by a standing authorization (no measurement)?
-  evaluate     compare a measured value against a named conditional gate — the
+  evaluate     compare a measured value against a named conditional gate, guarded
+               by the block check (and scope check when --path is given) — the
                load-bearing surface; exit 0 when authorized, exit 1 when refused
   scope-check  is a path inside the recorded repo_scope?
 """
@@ -216,7 +225,8 @@ def record(
 
 
 # ---------------------------------------------------------------------------
-# evaluate_gate — the load-bearing surface
+# evaluate_gate — the measurement comparison (see evaluate_gate_guarded below
+# for the load-bearing surface any caller acting on the result must use)
 # ---------------------------------------------------------------------------
 
 
@@ -230,7 +240,16 @@ def _find_gate(config: dict[str, Any] | None, gate_id: str) -> dict[str, Any] | 
 
 
 def evaluate_gate(config: dict[str, Any] | None, gate_id: str, measured: float) -> dict[str, Any]:
-    """Compare `measured` against gate.threshold using gate.op.
+    """Compare `measured` against gate.threshold using gate.op — MEASUREMENT ONLY.
+
+    This function performs the numeric comparison and nothing else: it takes no
+    `workdir` and no action string, so it structurally CANNOT consult
+    `autonomy_gate.classify()` (safety branch (d)) or `scope_check()` (repo
+    scope). Any caller that is about to ACT on this result — not just inspect
+    it — MUST call `evaluate_gate_guarded()` instead, which runs the block
+    guard and the optional scope check BEFORE delegating here. Calling this
+    function directly and then authorizing on its output bypasses those two
+    safety branches.
 
     No epsilon slack — `4.5 >= 4.5` authorizes on the boundary exactly, and a
     measurement that falls even fractionally short (e.g. 4.2045 < 4.5) refuses,
@@ -370,6 +389,62 @@ def check_action_guarded(workdir: Path, config: dict[str, Any] | None, action: s
     return check_action(config, action)
 
 
+def evaluate_gate_guarded(
+    workdir: Path,
+    config: dict[str, Any] | None,
+    gate_id: str,
+    measured: float,
+    path: str | None = None,
+) -> dict[str, Any]:
+    """`evaluate_gate()` plus the non-negotiable block guard AND scope check.
+
+    This is THE surface any caller must use before ACTING on an evaluate
+    result — `evaluate_gate()` alone only performs the measurement comparison
+    and cannot see `action` or `workdir`, so it cannot enforce safety branches
+    (a)/(d) from the module docstring. Order matters and is fixed:
+
+      1. `autonomy_gate.classify()` — a `block` here is NEVER relaxed, no
+         matter how satisfied `measured` is. Checked first, before the
+         measurement is even looked at.
+      2. `scope_check()` — when `path` is supplied, a path outside every
+         recorded `repo_scope` entry is refused, again regardless of the
+         measurement.
+      3. Only once both guards clear does this delegate to `evaluate_gate()`
+         for the actual threshold comparison.
+    """
+    gate = _find_gate(config, gate_id)
+    action = gate.get("action") if isinstance(gate, dict) else None
+    if action is not None:
+        baseline = _autonomy_baseline_action(workdir, action)
+        if baseline == "block":
+            return {
+                "gate": gate_id,
+                "metric": gate.get("metric") if isinstance(gate, dict) else None,
+                "op": gate.get("op") if isinstance(gate, dict) else None,
+                "threshold": gate.get("threshold") if isinstance(gate, dict) else None,
+                "measured": measured,
+                "authorized": False,
+                "verdict": "block",
+                "reason": "autonomy_gate classifies this gate's action as block; preauthorization never relaxes a block",
+            }
+
+    if path is not None:
+        scope_result = scope_check(config, path)
+        if not scope_result["in_scope"]:
+            return {
+                "gate": gate_id,
+                "metric": gate.get("metric") if isinstance(gate, dict) else None,
+                "op": gate.get("op") if isinstance(gate, dict) else None,
+                "threshold": gate.get("threshold") if isinstance(gate, dict) else None,
+                "measured": measured,
+                "authorized": False,
+                "verdict": "block",
+                "reason": "path_outside_repo_scope",
+            }
+
+    return evaluate_gate(config, gate_id, measured)
+
+
 # ---------------------------------------------------------------------------
 # scope-check
 # ---------------------------------------------------------------------------
@@ -461,8 +536,10 @@ def _cmd_check(args: argparse.Namespace) -> int:
 def _cmd_evaluate(args: argparse.Namespace) -> int:
     workdir = Path(args.workdir).resolve()
     config = load(workdir)
-    result = evaluate_gate(config, args.gate, args.measured)
+    result = evaluate_gate_guarded(workdir, config, args.gate, args.measured, path=args.path)
     _print(result, args.emit_json)
+    if result["verdict"] == "block":
+        return 1
     return 0 if result["authorized"] else 1
 
 
@@ -510,6 +587,9 @@ def main(argv: list[str] | None = None) -> int:
     p_eval.add_argument("--workdir", default=".")
     p_eval.add_argument("--gate", required=True, help="conditional_gate id")
     p_eval.add_argument("--measured", required=True, type=float)
+    p_eval.add_argument(
+        "--path", default=None, help="optional path to also verify against repo_scope before authorizing"
+    )
     p_eval.add_argument("--json", action="store_true", dest="emit_json")
     p_eval.set_defaults(func=_cmd_evaluate)
 

@@ -665,6 +665,49 @@ def _graded_content_alignment(root: Path) -> str:
     return "".join(lines)
 
 
+def _intent_freshness(root: Path) -> str:
+    """Report whether `.build-loop/intent.md` describes THIS run or a prior one.
+
+    `scripts/intent_freshness.py` already answers this correctly. The recurring
+    failure is not a missing check — it is a check with no caller: Phase 1 is
+    supposed to run it and, on 2026-07-21 and again on 2026-08-07, did not. The
+    prior corrective action was a paragraph appended to intent.md explaining the
+    miss, which is a note in the artifact that itself goes stale; it held for one
+    run.
+
+    Putting the read here gives it a caller that cannot be forgotten — the hook
+    fires at every git-commit boundary regardless of who commits — and reuses the
+    delivery pattern `_graded_content_alignment` already proved out. An auditor
+    reading this packet against a stale intent is grading a diff against the
+    WRONG north star and cannot say so unless the packet tells it.
+
+    Advisory only: a stale intent never blocks a commit. Fail-open on any error.
+    """
+    try:
+        import intent_freshness as _if
+
+        env = _if.evaluate(root)
+    except Exception as exc:  # noqa: BLE001 — never crash a commit over a report section
+        return f"_(intent freshness unavailable: {exc!r})_\n"
+
+    verdict = env.get("verdict")
+    if verdict == "fresh":
+        return f"- verdict: **fresh** — intent.md is stamped for the current run ({env.get('current_run_id')}).\n"
+    lines = [f"- verdict: **{verdict}**\n"]
+    if env.get("stamped_run_id"):
+        lines.append(f"- stamped for: `{env['stamped_run_id']}`\n")
+    if env.get("current_run_id"):
+        lines.append(f"- current run: `{env['current_run_id']}`\n")
+    if env.get("advice"):
+        lines.append(f"- {env['advice']}\n")
+    lines.append(
+        "- **Weigh this diff against the intent with that in mind.** A stale intent.md "
+        "describes prior work, so an alignment verdict rendered against it is unfounded; "
+        "say so rather than scoring alignment you cannot actually assess.\n"
+    )
+    return "".join(lines)
+
+
 def _recent_trajectory(root: Path) -> str:
     state_path = root / ".build-loop" / "state.json"
     if not state_path.is_file():
@@ -867,6 +910,11 @@ def _emit_packet(root: Path) -> int:
     out("```diff\n")
     out(diff_display or "(empty)")
     out("\n```\n\n")
+
+    # Freshness FIRST, so the intent text below is read with the right weight.
+    out("### Intent freshness\n")
+    out(_intent_freshness(root))
+    out("\n")
 
     out("### Intent\n")
     out((intent or "_(none found)_") + "\n\n")

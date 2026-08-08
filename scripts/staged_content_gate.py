@@ -48,17 +48,20 @@ shell out):
     check_divergence(repo: Path) -> dict
     run_against_index(repo: Path, command: str, timeout: int = 600,
                        copy_untracked: bool = False,
-                       keep_tmpdir: bool = False) -> dict
+                       keep_tmpdir: bool = False,
+                       expect_paths: list[str] | None = None) -> dict
 
 CLI:
     staged_content_gate.py --check [--strict] [--repo <path>] [--json]
     staged_content_gate.py --run "<shell command>" [--repo <path>]
-        [--timeout SECONDS] [--copy-untracked] [--keep-tmpdir] [--json]
+        [--timeout SECONDS] [--copy-untracked] [--keep-tmpdir]
+        [--expect-path PATH ...] [--json]
 
 Exit codes:
     --check:  0 aligned or diverged (non-strict) · 1 diverged (--strict)
     --run:    mirrors the command's own returncode · 2 setup failure
-              (e.g. checkout-index failed) · 3 timeout
+              (checkout-index failed, ZERO files materialized, or an
+              --expect-path was absent from the graded index) · 3 timeout
     neither --check nor --run given: 2 (usage error)
 """
 from __future__ import annotations
@@ -200,16 +203,30 @@ def run_against_index(
     timeout: int = DEFAULT_TIMEOUT_S,
     copy_untracked: bool = False,
     keep_tmpdir: bool = False,
+    expect_paths: list[str] | None = None,
 ) -> dict:
     """Materialize the INDEX (not the working tree, not a stash) into a
     throwaway directory and run ``command`` there. This is the hermetic fix:
     whatever ``git commit`` would actually record is what gets graded.
 
     Returns a dict with ``mode: "run"``, ``tmpdir``, ``command``,
-    ``returncode``, ``stdout``, ``stderr``, ``graded: "staged_index"``, and
-    ``timed_out``. On setup failure (``checkout-index`` itself fails),
-    ``returncode`` is 2 and ``setup_error`` is True. On timeout,
-    ``returncode`` is 3 and ``timed_out`` is True.
+    ``returncode``, ``stdout``, ``stderr``, ``graded: "staged_index"``,
+    ``materialized_files``, and ``timed_out``. On setup failure
+    (``checkout-index`` fails, nothing was materialized, or an ``expect_paths``
+    entry is absent), ``returncode`` is 2 and ``setup_error`` is True. On
+    timeout, ``returncode`` is 3 and ``timed_out`` is True.
+
+    **Why the materialization is asserted rather than assumed.**
+    ``git checkout-index --all`` exits 0 when it writes ZERO files (an empty
+    index, or an index with no tracked entries), and tolerant commands return 0
+    on nothing: ``ruff check .``, ``mypy .``, and a shell loop over an empty
+    glob all exit 0 in an empty directory. Without the count below, this gate
+    reproduces its own thesis one level down — a green result certifying an
+    artifact it never examined. ``expect_paths`` is the stronger form: name the
+    file under test and the gate refuses to report a pass if that file was not
+    actually part of what it graded. A test file created but not yet ``git
+    add``-ed is absent by design (it is not being committed), and that absence
+    should surface as a setup error rather than as a green run.
     """
     tmpdir = tempfile.mkdtemp(prefix="staged-content-gate-")
     result: dict = {
@@ -220,6 +237,7 @@ def run_against_index(
         "stdout": "",
         "stderr": "",
         "graded": "staged_index",
+        "materialized_files": 0,
         "timed_out": False,
     }
     try:
@@ -236,6 +254,32 @@ def run_against_index(
 
         if copy_untracked:
             _copy_untracked_into(repo, Path(tmpdir))
+
+        # Assert we actually graded something (see the docstring). A zero-file
+        # tmpdir means every downstream "pass" is vacuous.
+        materialized = sum(1 for p in Path(tmpdir).rglob("*") if p.is_file())
+        result["materialized_files"] = materialized
+        if materialized == 0:
+            result["returncode"] = 2
+            result["setup_error"] = True
+            result["stderr"] = (
+                "nothing was materialized from the index — checkout-index wrote 0 files. "
+                "A command run here would grade an empty tree and could exit 0 for that reason."
+            )
+            return result
+
+        if expect_paths:
+            missing = [p for p in expect_paths if not (Path(tmpdir) / p).exists()]
+            if missing:
+                result["returncode"] = 2
+                result["setup_error"] = True
+                result["missing_expected_paths"] = missing
+                result["stderr"] = (
+                    "expected path(s) absent from the graded index: "
+                    + ", ".join(missing)
+                    + " — they are not staged, so this run would not have graded them."
+                )
+                return result
 
         try:
             proc = subprocess.run(
@@ -276,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--copy-untracked", action="store_true",
                          help="Also copy untracked, non-ignored files into the --run tmpdir (default OFF)")
     parser.add_argument("--keep-tmpdir", action="store_true", help="Do not delete the --run tmpdir on exit")
+    parser.add_argument("--expect-path", dest="expect_paths", action="append", default=None,
+                        metavar="PATH",
+                        help="Repo-relative path that MUST be present in the graded index; "
+                             "repeatable. Absent -> setup error (exit 2), so a pass cannot be "
+                             "reported for a run that never contained the file under test.")
     parser.add_argument("--json", action="store_true", help="No-op — output is always JSON (kept for CLI parity)")
     args = parser.parse_args(argv)
 
@@ -288,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.timeout,
             copy_untracked=args.copy_untracked,
             keep_tmpdir=args.keep_tmpdir,
+            expect_paths=args.expect_paths,
         )
         print(json.dumps(result, indent=2))
         return result["returncode"] if isinstance(result["returncode"], int) else 2

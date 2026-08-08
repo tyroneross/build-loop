@@ -4,6 +4,7 @@
 """Tests for preauthorization.py. Zero deps. Run: python3 test_preauthorization.py"""
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -297,6 +298,180 @@ class ScopeCheckTests(unittest.TestCase):
             "--path", str(self.repo_a / "file.txt"),
         )
         self.assertEqual(result.returncode, 0, msg=result.stdout)
+
+
+class EvaluateGateGuardedTests(unittest.TestCase):
+    """F3: evaluate_gate_guarded is the door the block guard actually lives on."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workdir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_blocked_action_is_never_authorized_even_with_a_satisfied_measurement(self) -> None:
+        """THE CONVICTION: a satisfied measurement must not launder a blocked
+        action into an auto. `rm -rf /` is a DEFAULT_BLOCK_FOR pattern in
+        autonomy_gate.py, so classify() returns 'block' for it regardless of
+        any recorded conditional_gate or measurement."""
+        gate = json.dumps(
+            {
+                "id": "delete-guard",
+                "action": "rm -rf /",
+                "metric": "confidence",
+                "op": ">=",
+                "threshold": 0.5,
+                "measurement_source": "n/a",
+                "on_fail": "skip_and_record",
+            }
+        )
+        setup = run_cli(
+            "record",
+            "--workdir", str(self.workdir),
+            "--run-id", "run_evaluate_block_guard",
+            "--unattended",
+            "--repo-scope", str(self.workdir),
+            "--irreversible-policy", "skip_and_record",
+            "--stop-rule-failures", "5",
+            "--stop-rule-hours", "8",
+            "--gate", gate,
+            "--json",
+        )
+        self.assertEqual(setup.returncode, 0, msg=setup.stderr)
+
+        # Measurement clears the threshold with room to spare (0.99 >= 0.5) —
+        # if the block guard were missing, this would authorize.
+        result = run_cli(
+            "evaluate",
+            "--workdir", str(self.workdir),
+            "--gate", "delete-guard",
+            "--measured", "0.99",
+            "--json",
+        )
+        data = envelope(result)
+        self.assertFalse(data["authorized"], msg=str(data))
+        self.assertEqual(data["verdict"], "block", msg=str(data))
+        self.assertNotEqual(result.returncode, 0, msg=f"stdout: {result.stdout}")
+
+        # Also true at the importable-function layer, bypassing the CLI.
+        config = preauthorization.load(self.workdir)
+        direct = preauthorization.evaluate_gate_guarded(self.workdir, config, "delete-guard", 0.99)
+        self.assertFalse(direct["authorized"], msg=str(direct))
+        self.assertEqual(direct["verdict"], "block", msg=str(direct))
+
+    def test_out_of_scope_path_refused_at_evaluate(self) -> None:
+        repo_a = self.workdir / "repoA"
+        repo_b = self.workdir / "repoB"
+        repo_a.mkdir()
+        repo_b.mkdir()
+
+        gate = json.dumps(
+            {
+                "id": "deploy-contrast",
+                "action": "deploy",
+                "metric": "contrast_ratio",
+                "op": ">=",
+                "threshold": 4.5,
+                "measurement_source": "computed from rendered fg/bg",
+                "on_fail": "skip_and_record",
+            }
+        )
+        setup = run_cli(
+            "record",
+            "--workdir", str(repo_a),
+            "--run-id", "run_evaluate_scope",
+            "--unattended",
+            "--repo-scope", str(repo_a),
+            "--irreversible-policy", "skip_and_record",
+            "--stop-rule-failures", "5",
+            "--stop-rule-hours", "8",
+            "--gate", gate,
+            "--json",
+        )
+        self.assertEqual(setup.returncode, 0, msg=setup.stderr)
+
+        # A satisfied measurement (7.1 >= 4.5) with an out-of-scope --path
+        # must still refuse.
+        result = run_cli(
+            "evaluate",
+            "--workdir", str(repo_a),
+            "--gate", "deploy-contrast",
+            "--measured", "7.1",
+            "--path", str(repo_b / "secret.txt"),
+            "--json",
+        )
+        data = envelope(result)
+        self.assertFalse(data["authorized"], msg=str(data))
+        self.assertEqual(data["verdict"], "block", msg=str(data))
+        self.assertNotEqual(result.returncode, 0, msg=f"stdout: {result.stdout}")
+
+        # `..` traversal resolving outside repo_scope is refused the same way.
+        traversal_path = str(repo_a / ".." / "repoB" / "secret.txt")
+        result_traversal = run_cli(
+            "evaluate",
+            "--workdir", str(repo_a),
+            "--gate", "deploy-contrast",
+            "--measured", "7.1",
+            "--path", traversal_path,
+            "--json",
+        )
+        data_traversal = envelope(result_traversal)
+        self.assertFalse(data_traversal["authorized"], msg=str(data_traversal))
+        self.assertEqual(data_traversal["verdict"], "block", msg=str(data_traversal))
+        self.assertNotEqual(result_traversal.returncode, 0, msg=f"stdout: {result_traversal.stdout}")
+
+        # An in-scope path with the same satisfied measurement still authorizes.
+        result_in_scope = run_cli(
+            "evaluate",
+            "--workdir", str(repo_a),
+            "--gate", "deploy-contrast",
+            "--measured", "7.1",
+            "--path", str(repo_a / "file.txt"),
+            "--json",
+        )
+        data_in_scope = envelope(result_in_scope)
+        self.assertTrue(data_in_scope["authorized"], msg=str(data_in_scope))
+        self.assertEqual(result_in_scope.returncode, 0, msg=f"stdout: {result_in_scope.stdout}")
+
+    def test_docstring_claim_matches_code(self) -> None:
+        """Reflection: `_cmd_evaluate` must call `evaluate_gate_guarded`, not
+        the bare `evaluate_gate`, so the guard cannot be silently unwired by a
+        future edit without this test catching it."""
+        import inspect
+
+        source = inspect.getsource(preauthorization._cmd_evaluate)
+        self.assertIn(
+            "evaluate_gate_guarded(",
+            source,
+            msg="_cmd_evaluate must call evaluate_gate_guarded(), the guarded surface",
+        )
+        self.assertNotIn(
+            "= evaluate_gate(",
+            source,
+            msg="_cmd_evaluate must not call the bare, unguarded evaluate_gate() directly",
+        )
+
+        # Belt-and-suspenders: patch evaluate_gate_guarded and confirm the CLI
+        # path actually invokes it (not just that the source text mentions it).
+        from unittest import mock
+
+        sentinel = {
+            "gate": "x",
+            "metric": None,
+            "op": None,
+            "threshold": None,
+            "measured": 1.0,
+            "authorized": True,
+            "verdict": "auto",
+            "reason": "sentinel",
+        }
+        with mock.patch.object(preauthorization, "evaluate_gate_guarded", return_value=sentinel) as spy:
+            args = argparse.Namespace(
+                workdir=str(self.workdir), gate="x", measured=1.0, path=None, emit_json=True
+            )
+            preauthorization._cmd_evaluate(args)
+        spy.assert_called_once()
 
 
 class BlockGuardTests(unittest.TestCase):

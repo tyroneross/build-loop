@@ -240,6 +240,133 @@ class TestConflictProbeUnavailable(unittest.TestCase):
 
 
 @unittest.skipUnless(_git_available_with_merge_tree(), "git is not available")
+class TestUnavailableProbeIsNotMergeable(unittest.TestCase):
+    """F5 conviction: a silent probe must not become evidence of mergeability."""
+
+    def _clean_branch_repo(self, tmp_path: Path) -> Path:
+        repo = _make_repo(tmp_path)
+        _commit_file(repo, "README.md", "hello\n", "init")
+        _git(repo, "checkout", "-b", "feature")
+        _commit_file(repo, "feature.rs", "fn f() {}\n", "feature work")
+        # target ("main") is untouched since the base -- behind == 0,
+        # contested_files == [] -- otherwise clean.
+        return repo
+
+    def test_unavailable_probe_is_not_mergeable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo = self._clean_branch_repo(tmp_path)
+
+            original_probe = merge_risk.probe_conflicts
+            merge_risk.probe_conflicts = lambda *a, **kw: (None, "unavailable")
+            try:
+                result = merge_risk.score(repo, branch="feature", target="main")
+            finally:
+                merge_risk.probe_conflicts = original_probe
+
+            self.assertIsNone(result["predicted_conflicts"])
+            self.assertEqual(result["behind"], 0)
+            self.assertEqual(result["contested_files"], [])
+
+            # THE CONVICTION: an unobserved probe must not read as
+            # mergeable, even though `None` is falsy just like `0`.
+            self.assertNotEqual(result["verdict"], "mergeable_evidence_current")
+            self.assertEqual(result["verdict"], "conflict_probe_unavailable")
+            self.assertEqual(result["risk"], "medium")
+            self.assertNotEqual(result["exit_code"], 0)
+
+    def test_allow_unprobed_opts_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo = self._clean_branch_repo(tmp_path)
+
+            original_probe = merge_risk.probe_conflicts
+            merge_risk.probe_conflicts = lambda *a, **kw: (None, "unavailable")
+            try:
+                result = merge_risk.score(
+                    repo, branch="feature", target="main", allow_unprobed=True,
+                )
+            finally:
+                merge_risk.probe_conflicts = original_probe
+
+            # Verdict stays recorded as unprobed -- allow_unprobed only
+            # changes the exit code, never papers over the fact.
+            self.assertEqual(result["verdict"], "conflict_probe_unavailable")
+            self.assertEqual(result["exit_code"], 0)
+
+
+@unittest.skipUnless(_git_available_with_merge_tree(), "git is not available")
+class TestFailingEvidence(unittest.TestCase):
+    """F15 conviction: a parsed --evidence "label=fail" must not be ignored."""
+
+    def test_failing_evidence_is_high_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo = _make_repo(tmp_path)
+            _commit_file(repo, "README.md", "hello\n", "init")
+            _git(repo, "checkout", "-b", "feature")
+            _commit_file(repo, "feature.rs", "fn f() {}\n", "feature work")
+            # target untouched since base -- clean by every other measure.
+
+            result = merge_risk.score(
+                repo,
+                branch="feature",
+                target="main",
+                evidence={"suite": "fail"},
+            )
+
+            self.assertEqual(result["verdict"], "evidence_failing")
+            self.assertEqual(result["risk"], "high")
+            self.assertEqual(result["exit_code"], 1)
+
+            cli = subprocess.run(
+                [
+                    sys.executable, str(_SCRIPTS / "merge_risk.py"),
+                    "--repo", str(repo),
+                    "--branch", "feature",
+                    "--target", "main",
+                    "--evidence", "suite=fail",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(cli.returncode, 1, cli.stdout + cli.stderr)
+
+    def test_stale_base_outranks_failing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo = _make_repo(tmp_path)
+
+            _commit_file(repo, "shared.rs", "fn shared() -> i32 { 1 }\n", "init shared.rs")
+            _git(repo, "checkout", "-b", "feature")
+            _commit_file(
+                repo, "shared.rs", "fn shared() -> i32 { 2 }\n", "feature: change shared.rs",
+            )
+            _git(repo, "checkout", "main")
+            # main changes the SAME file since the base -- stale + contested.
+            _commit_file(repo, "shared.rs", "fn shared() -> i32 { 3 }\n", "main: change shared.rs")
+
+            result = merge_risk.score(
+                repo,
+                branch="feature",
+                target="main",
+                evidence={"suite": "fail"},
+            )
+
+            # The stale-base verdict wins over the failing-evidence verdict.
+            self.assertEqual(result["verdict"], "stale_base_evidence_invalid")
+            self.assertEqual(result["risk"], "high")
+            self.assertEqual(result["exit_code"], 1)
+
+            # The reason names both conditions -- a stale base invalidates
+            # the evidence entirely, pass or fail.
+            reason = result["evidence_ignored_reason"]
+            self.assertIn("stale_base", reason)
+            self.assertIn("fail", reason)
+
+
+@unittest.skipUnless(_git_available_with_merge_tree(), "git is not available")
 class TestAllBranchesSweep(unittest.TestCase):
     def test_all_branches_sweep_sorts_risk_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
