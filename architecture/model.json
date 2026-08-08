@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "113600f93b8d3702df64ca8a80cfeb77be4e26d189c4da8cfeb85cff0b3763bf"
+    "content_sha256": "906a871ac01921f698b6b42c23b0be8426e31a22b305755bbdb89c5f9fad9a8f"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1714,6 +1714,7 @@
       "scripts/parallelism.py": "",
       "scripts/perturbation_spotcheck.py": "Isomorphic-perturbation spot-check for outcome-based verify gates. WARN-only.",
       "scripts/plan_verify.py": "",
+      "scripts/premise_revalidation.py": "premise_revalidation.py — re-validate queue-item premises at drain time.",
       "scripts/prepush_dist_gate.py": "prepush_dist_gate.py — auto-rebuild the committed ``dist/`` before a push.",
       "scripts/prepush_judgment_gate.py": "prepush_judgment_gate.py — BLOCKING Frontier-judgment gate at the push boundary.",
       "scripts/prepush_test_gate.py": "prepush_test_gate.py — deterministic pre-push test gate (composes with deploy-HOLD).",
