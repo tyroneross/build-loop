@@ -115,6 +115,19 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry/__main__.py" \
 
 This invocation MUST fire on every Phase 4G regardless of dispatch path (Skill, Agent tool, per-commit, resume). The `--harness-json` block lands as `state.json.runs[].harness` (additive; older readers ignore it). **`--scope build` arms the review-completeness gate** (`bl-enforce-independent-auditor-dispatch`): a `pass` that touched code with no real `independent-auditor` verdict in `judge-decisions.json` exits **3** and writes no entry — an inline self-audit is not a substitute. On exit 3, dispatch the `independent-auditor` at build scope (Review-A), append its verdict to `judge-decisions.json`, and re-run; do not reach Report with an empty/inline-only auditor record on shipped code. (Use `--scope chunk`/`none` only for per-chunk or non-shipping runs.)
 
+### Run-close assertion (MANDATORY — the `runs[]` write is verified, not assumed)
+
+Immediately after `write_run_entry` returns:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" \
+  --workdir "$PWD" --run-id "<run_id>" --require-orchestrator --json
+```
+
+Exit 0 (`recorded`) → continue to the milestone append. Exit 1 → the run is not closed and the report may not be emitted: `missing` (no `runs[]` entry for this `run_id`), `floor_only` (only a hook-written `source: append_run` floor record — the Review-G write never landed), `no_state` (no `.build-loop/state.json` in this workdir at all — the run left no durable footprint). Each failure prints the exact `remediation` command; run it, then re-run the lint.
+
+The `MUST fire on every Phase 4G` rule above and the `--scope build` review-completeness gate both live inside the writer, so neither can catch **non-invocation** — the failure observed on 2026-07-16, when six sequential dispatched orchestrators each returned a quality report and wrote no `runs[]` entry, retrospective, milestone, or feedback line, starving Phase 6 Learn of a six-run day. This lint reads durable state instead of participating in the write. The matching half is the dispatching parent's completion-boundary check (`skills/build-loop/references/verify-dispatch.md` §6): Review-G catches a write that failed, the parent catches a run that never reached Review-G. Contract locked by `scripts/test_run_close_lint.py`; full rationale in `skills/build-loop/references/phase-4-review.md` §"Run-close assertion".
+
 ### Mandatory milestone append (every run, append-only)
 
 Immediately after `write_run_entry/__main__.py` completes, run:

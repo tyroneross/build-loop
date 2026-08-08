@@ -212,6 +212,8 @@ RUN_ID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/write_run_entry.py" \
 
 Capture `RUN_ID` from stdout and cite it in the scorecard. Always pass `--security-findings-json` even when `triggers.riskSurfaceChange` was false — the script silently treats a missing file as no findings. Exit codes: `0` ok, `1` validation error, `2` filesystem error.
 
+Then assert the mutation landed — `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/run_close_lint.py" --workdir "$PWD" --run-id "$RUN_ID" --require-orchestrator --json`. Exit 1 means the run record is missing, floor-only, or the workdir has no state at all, and the run is not closed. A writer's own exit code only reports on invocations that happened; this lint is what catches the write that never fired. See `references/phase-4-review.md` §"Run-close assertion".
+
 ### Resolved debugger incidents
 
 Use the native `Skill("build-loop:debugging-memory")` with `{op:"store", ...}`. Procedure also in `Skill("build-loop:debugging-memory")` §"Review-F outcome feedback":
