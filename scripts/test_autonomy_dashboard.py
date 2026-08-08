@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
 import threading
 import urllib.error
@@ -117,6 +118,24 @@ def test_http_rejects_foreign_host_header(live_server: str) -> None:
     assert error.value.code == 403
 
 
+def test_shutdown_rejects_wrong_instance_token(repo: Path) -> None:
+    server = dashboard.create_server(
+        repo, "127.0.0.1", 0, quiet=True, instance_id="expected-instance"
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}"
+        with pytest.raises(urllib.error.HTTPError) as error:
+            _post(url, "/api/shutdown", {"instance_id": "wrong-instance"})
+        assert error.value.code == 400
+        assert thread.is_alive()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
 def test_html_has_semantic_controls_and_autosave_contract() -> None:
     html = (Path(__file__).resolve().parents[1] / "docs/autonomy-dashboard.html").read_text(encoding="utf-8")
     for token in ("<main", "node('fieldset')", "node('legend'", "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue this decision"):
@@ -128,3 +147,36 @@ def test_html_has_semantic_controls_and_autosave_contract() -> None:
 def test_non_loopback_bind_is_rejected(repo: Path) -> None:
     with pytest.raises(ValueError, match="loopback"):
         dashboard.create_server(repo, "0.0.0.0", 0)
+
+
+def test_dashboard_status_reports_not_started(repo: Path) -> None:
+    status = dashboard.dashboard_status(repo)
+    assert status["running"] is False
+    assert status["reason"] == "not_started"
+
+
+def test_background_lifecycle_survives_launcher_and_stops_cleanly(repo: Path) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    try:
+        started = dashboard.start_dashboard(repo, "127.0.0.1", port, quiet=True)
+        assert started["started"] is True
+        assert started["running"] is True
+        assert started["url"] == f"http://127.0.0.1:{port}"
+        assert dashboard.dashboard_status(repo)["running"] is True
+    finally:
+        stopped = dashboard.stop_dashboard(repo)
+    assert stopped["stopped"] is True
+    assert dashboard.dashboard_status(repo)["reason"] == "not_started"
+
+
+def test_stale_runtime_state_is_removed_without_signaling(repo: Path) -> None:
+    state_path = repo / dashboard.SERVER_STATE_PATH
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "instance_id": "dead", "pid": 999_999, "url": "http://127.0.0.1:1"
+    }), encoding="utf-8")
+    result = dashboard.stop_dashboard(repo)
+    assert result == {"stopped": False, "reason": "not_running"}
+    assert not state_path.exists()

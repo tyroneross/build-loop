@@ -6,7 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+import uuid
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +26,8 @@ from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
 MAX_BODY_BYTES = 64 * 1024
 MAX_NOTE_CHARS = 8_000
 STORE_PATH = Path(".build-loop/autonomy-dashboard/responses.jsonl")
+SERVER_STATE_PATH = Path(".build-loop/autonomy-dashboard/server.json")
+SERVER_LOG_PATH = Path(".build-loop/autonomy-dashboard/server.log")
 FOLLOWUP_DIR = Path(".build-loop/followup")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -255,6 +263,13 @@ def make_handler(workdir: Path, html_path: Path) -> type[BaseHTTPRequestHandler]
             if not self._request_allowed():
                 self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "loopback requests only"})
                 return
+            if self.path == "/api/health":
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "instance_id": getattr(self.server, "instance_id", ""),
+                    "pid": os.getpid(),
+                })
+                return
             if self.path == "/api/state":
                 self._json(HTTPStatus.OK, {"ok": True, **store.state()})
                 return
@@ -281,6 +296,12 @@ def make_handler(workdir: Path, html_path: Path) -> type[BaseHTTPRequestHandler]
                     event = store.save(str(payload.get("gap_id") or ""), str(payload.get("choice_id") or ""), str(payload.get("note") or ""))
                 elif self.path == "/api/actions":
                     event = store.queue(str(payload.get("gap_id") or ""))
+                elif self.path == "/api/shutdown":
+                    expected = getattr(self.server, "instance_id", "")
+                    if not expected or payload.get("instance_id") != expected:
+                        raise ValueError("instance_id does not match the running dashboard")
+                    event = {"event": "server_stopping", "pid": os.getpid()}
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
                     return
@@ -292,13 +313,172 @@ def make_handler(workdir: Path, html_path: Path) -> type[BaseHTTPRequestHandler]
     return DashboardHandler
 
 
-def create_server(workdir: Path, host: str, port: int, *, quiet: bool = False) -> ThreadingHTTPServer:
+def create_server(
+    workdir: Path,
+    host: str,
+    port: int,
+    *,
+    quiet: bool = False,
+    instance_id: str = "",
+) -> ThreadingHTTPServer:
     if host not in LOOPBACK_HOSTS:
         raise ValueError("dashboard host must be loopback")
     html_path = Path(__file__).resolve().parents[1] / "docs" / "autonomy-dashboard.html"
     server = ThreadingHTTPServer((host, port), make_handler(workdir.resolve(), html_path))
     server.quiet = quiet  # type: ignore[attr-defined]
+    server.instance_id = instance_id  # type: ignore[attr-defined]
     return server
+
+
+def _server_state(workdir: Path) -> dict[str, Any]:
+    path = workdir.resolve() / SERVER_STATE_PATH
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _health(state: dict[str, Any], timeout: float = 0.5) -> bool:
+    url = str(state.get("url") or "")
+    instance_id = str(state.get("instance_id") or "")
+    if not url or not instance_id:
+        return False
+    try:
+        with urllib.request.urlopen(url + "/api/health", timeout=timeout) as response:
+            payload = json.loads(response.read())
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+    return (
+        bool(payload.get("ok"))
+        and payload.get("instance_id") == instance_id
+        and payload.get("pid") == state.get("pid")
+    )
+
+
+def dashboard_status(workdir: Path) -> dict[str, Any]:
+    workdir = workdir.resolve()
+    state = _server_state(workdir)
+    running = _health(state)
+    return {
+        "running": running,
+        "pid": state.get("pid"),
+        "url": state.get("url"),
+        "started_at": state.get("started_at"),
+        "log_path": str(workdir / SERVER_LOG_PATH),
+        "reason": "healthy" if running else ("stale_state" if state else "not_started"),
+    }
+
+
+def _serve_foreground(
+    workdir: Path,
+    host: str,
+    port: int,
+    *,
+    quiet: bool,
+    instance_id: str,
+) -> int:
+    try:
+        server = create_server(workdir, host, port, quiet=quiet, instance_id=instance_id)
+    except (OSError, ValueError) as exc:
+        print(f"autonomy_dashboard: {exc}", file=sys.stderr)
+        return 2
+    url = f"http://{host}:{server.server_port}"
+    state_path = workdir / SERVER_STATE_PATH
+    state = {
+        "instance_id": instance_id,
+        "pid": os.getpid(),
+        "url": url,
+        "host": host,
+        "port": server.server_port,
+        "workdir": str(workdir),
+        "started_at": _now(),
+    }
+    atomic_write_bytes(state_path, (json.dumps(state, indent=2, sort_keys=True) + "\n").encode())
+    print(f"Autonomy dashboard: {url}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        current = _server_state(workdir)
+        if current.get("instance_id") == instance_id:
+            state_path.unlink(missing_ok=True)
+    return 0
+
+
+def start_dashboard(workdir: Path, host: str, port: int, *, quiet: bool = False) -> dict[str, Any]:
+    workdir = workdir.resolve()
+    current = dashboard_status(workdir)
+    if current["running"]:
+        return {**current, "started": False}
+    (workdir / SERVER_STATE_PATH).unlink(missing_ok=True)
+    log_path = workdir / SERVER_LOG_PATH
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    instance_id = uuid.uuid4().hex
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--workdir", str(workdir),
+        "--host", host,
+        "--port", str(port),
+        "--foreground",
+        "--instance-id", instance_id,
+        "--quiet",
+    ]
+    with log_path.open("ab") as log_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=workdir,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=log_handle,
+            start_new_session=True,
+            close_fds=True,
+        )
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        state = _server_state(workdir)
+        if state.get("instance_id") == instance_id and _health(state):
+            return {**dashboard_status(workdir), "started": True}
+        if process.poll() is not None:
+            break
+        time.sleep(0.05)
+    detail = log_path.read_text(encoding="utf-8", errors="replace")[-1000:]
+    raise RuntimeError(f"dashboard did not start; see {log_path}: {detail.strip()}")
+
+
+def stop_dashboard(workdir: Path) -> dict[str, Any]:
+    workdir = workdir.resolve()
+    state = _server_state(workdir)
+    state_path = workdir / SERVER_STATE_PATH
+    if not state or not _health(state):
+        state_path.unlink(missing_ok=True)
+        return {"stopped": False, "reason": "not_running"}
+    pid = int(state["pid"])
+    request = urllib.request.Request(
+        str(state["url"]) + "/api/shutdown",
+        data=json.dumps({"instance_id": state["instance_id"]}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1) as response:
+            payload = json.loads(response.read())
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        return {"stopped": False, "reason": f"shutdown_request_failed: {exc}", "pid": pid}
+    if not payload.get("ok"):
+        return {"stopped": False, "reason": "shutdown_rejected", "pid": pid}
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if not _health(state, timeout=0.1):
+            state_path.unlink(missing_ok=True)
+            return {"stopped": True, "pid": pid, "url": state.get("url")}
+        time.sleep(0.05)
+    return {"stopped": False, "reason": "shutdown_timeout", "pid": pid, "url": state.get("url")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -307,24 +487,38 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--print-state", action="store_true")
+    parser.add_argument("--foreground", action="store_true")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--stop", action="store_true")
+    parser.add_argument("--instance-id", default="")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
     workdir = Path(args.workdir).resolve()
     if args.print_state:
         print(json.dumps(DecisionStore(workdir).state(), indent=2, sort_keys=True))
         return 0
+    if args.status:
+        status = dashboard_status(workdir)
+        print(json.dumps(status, indent=2, sort_keys=True))
+        return 0 if status["running"] else 1
+    if args.stop:
+        stopped = stop_dashboard(workdir)
+        print(json.dumps(stopped, indent=2, sort_keys=True))
+        return 0 if stopped.get("reason") != "shutdown_timeout" else 2
+    if args.foreground:
+        return _serve_foreground(
+            workdir,
+            args.host,
+            args.port,
+            quiet=args.quiet,
+            instance_id=args.instance_id or uuid.uuid4().hex,
+        )
     try:
-        server = create_server(workdir, args.host, args.port, quiet=args.quiet)
-    except (OSError, ValueError) as exc:
+        status = start_dashboard(workdir, args.host, args.port, quiet=args.quiet)
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"autonomy_dashboard: {exc}", file=sys.stderr)
         return 2
-    print(f"Autonomy dashboard: http://{args.host}:{server.server_port}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    print(json.dumps(status, indent=2, sort_keys=True))
     return 0
 
 

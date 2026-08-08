@@ -12,8 +12,17 @@ user outcome.
 python3 scripts/autonomy_dashboard.py --workdir "$PWD" --port 8765
 ```
 
-Open `http://127.0.0.1:8765`. The server refuses non-loopback binding and
-non-loopback Host/Origin headers.
+The command starts a detached local server that survives the launching terminal
+or agent session. Open `http://127.0.0.1:8765`. Check or stop it with:
+
+```bash
+python3 scripts/autonomy_dashboard.py --workdir "$PWD" --status
+python3 scripts/autonomy_dashboard.py --workdir "$PWD" --stop
+```
+
+Use `--foreground` only when an external process manager owns the server
+lifecycle. The server refuses non-loopback binding and non-loopback Host/Origin
+headers.
 
 ## Persistence contract
 
