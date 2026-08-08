@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "2fc0347451f872df4c64602c30774aca6220015ab6b96a3d6a3bc9869593474d"
+    "content_sha256": "113600f93b8d3702df64ca8a80cfeb77be4e26d189c4da8cfeb85cff0b3763bf"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1546,6 +1546,7 @@
       "scripts/attestation_lint.py": "",
       "scripts/attribution_stamp.py": "Idempotent attribution stamper for Apache-2.0 repos.",
       "scripts/audit_before_commit.py": "Independent commit auditor — boundary-gated audit packet builder.",
+      "scripts/audit_git.py": "audit_git.py — Read-only git front door for read-only agents (e.g. independent-auditor).",
       "scripts/audit_memory_invocation.py": "Runtime probe for build-loop memory call sites.",
       "scripts/audit_record_verdict.py": "Backfill the hook-path verdict into runs[-1].judge_decisions[].",
       "scripts/autonomy_gate.py": "Classify arbitrary build-loop actions against a generalized autonomy policy.",
