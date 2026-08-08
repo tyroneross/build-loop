@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- `append_run` corroborates the caller's commit and goal before writing `state.json.runs[]` instead of trusting them (enforce-candidate E3). A SHA reachable from neither the run's push range nor HEAD is recorded as `pending`, with the refused value kept on `provenance.supplied_commit`; a goal that diverges from the run's own `intent.md` warns without changing the record. New `scripts/run_provenance.py` (ported from agent-rally-point, where the logic was first tested) plus `--push-range` / `--intent` / `--strict-provenance` flags.
+
 ### Changed
 - Verification-verdict agents (`fix-critique`, `fact-checker`, `overfitting-reviewer`, `promotion-reviewer`, `scope-auditor`) repinned `model: opus` → `model: fable`, closing the drift against the standing model org (2026-06-09: Fable owns verification verdicts). Orchestrators stay Opus; execution stays Sonnet; pattern scanners stay Haiku.
 - Renamed the repository-governance entrypoint to `repo-maintenance`; `repo-closeout` remains a one-release compatibility alias.

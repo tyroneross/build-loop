@@ -16,6 +16,11 @@ through `atomic_io.LockedFile` + `atomic_write_bytes` (the single-failure-site
 write contract) so it can't race the orchestrator or corrupt state.json on crash.
 Append-only and idempotent on `run_id`; refuses to clobber an unparseable file or
 to replace a richer orchestrator-written record.
+
+The caller's `commit` and `goal` are corroborated against git and the run's
+`intent.md` by `run_provenance` before the record is validated (enforce-candidate
+E3). An unreachable SHA is downgraded to `pending` rather than written, because a
+record that names the wrong commit is worse than one that names none.
 """
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from atomic_io import LockedFile, atomic_write_bytes  # noqa: E402
+import run_provenance  # noqa: E402  (commit/goal corroboration — E3)
 
 try:
     from write_run_entry.validators import validate_entry  # noqa: E402
@@ -36,7 +42,10 @@ except Exception:  # validators is optional; canonical shape is the real fix
 
 # Human-friendly CLI outcomes → canonical runs[] vocabulary (validators.VALID_OUTCOMES).
 _OUTCOME_MAP = {"done": "pass", "partial": "partial", "blocked": "fail"}
-_IMMUTABLE = {"run_id", "date", "source"}  # never overridable via --extra-json
+# Never overridable via --extra-json. `provenance` is the record of what the gate
+# below decided, so a caller that could set it could certify its own SHA.
+_IMMUTABLE = {"run_id", "date", "source", "provenance"}
+_PENDING = "pending"
 
 
 def _utc_date() -> str:
@@ -52,6 +61,43 @@ def _git_head(workdir: Path) -> str:
         return out.stdout.strip() if out.returncode == 0 else ""
     except Exception:
         return ""
+
+
+def _apply_provenance(args: argparse.Namespace, workdir: Path, record: dict) -> None:
+    """Corroborate `record["commit"]` + `record["goal"]`, mutating the record.
+
+    A `block` finding means the SHA is not reachable from the run's push range
+    (or HEAD): the caller's value is replaced with `pending`, and the refusal is
+    recorded on `provenance.supplied_commit` so the wrong SHA stays auditable
+    without being presented as fact. `--strict-provenance` raises instead, for
+    callers that would rather review than record.
+
+    Uses `getattr` for every new field: `stop_closeout` builds its own
+    SimpleNamespace by hand, and this must not require it to grow arguments.
+    """
+    supplied = record.get("commit") or ""
+    result = run_provenance.validate_run_provenance(
+        run_id=record["run_id"],
+        commit=supplied,
+        goal=record.get("goal") or "",
+        repo_root=str(workdir),
+        push_range=getattr(args, "push_range", None) or None,
+        intent_path=(
+            getattr(args, "intent", None) or run_provenance.resolve_intent_path(workdir)
+        ),
+    )
+    provenance = {"ok": result["ok"], "findings": result["findings"]}
+    if not result["ok"]:
+        detail = "; ".join(
+            f["detail"] for f in result["findings"] if f.get("severity") == "block"
+        )
+        if getattr(args, "strict_provenance", False):
+            raise SystemExit(f"run provenance rejected for {record['run_id']}: {detail}")
+        provenance["supplied_commit"] = supplied
+        record["commit"] = _PENDING
+    for line in run_provenance.format_findings(result["findings"]):
+        print(line, file=sys.stderr)
+    record["provenance"] = provenance
 
 
 def build_record(args: argparse.Namespace, workdir: Path) -> dict:
@@ -90,6 +136,10 @@ def build_record(args: argparse.Namespace, workdir: Path) -> dict:
             for k in _IMMUTABLE:
                 extra.pop(k, None)  # identity fields are not overridable
             record.update(extra)
+    # E3: corroborate the commit + goal the caller handed us. Runs AFTER the
+    # --extra-json merge because that merge can set `commit`, and an unvalidated
+    # override is the same defect by another door.
+    _apply_provenance(args, workdir, record)
     # Item 3B: never stamp a SHIPPED run as fail. Reconcile the proposed outcome
     # against ground truth (git merge state + auditor verdict + Rally facts) BEFORE
     # the record is validated/written. A crash-orphaned run whose work actually
@@ -177,6 +227,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--outcome", default="done", choices=["done", "partial", "blocked"])
     p.add_argument("--host", default="claude_code", choices=["claude_code", "codex", "gemini", "other"])
     p.add_argument("--commit", default="")
+    p.add_argument("--push-range", default="",
+                   help="git range the run actually pushed (e.g. cb9cba9..3cb8295); "
+                        "--commit must be reachable from it")
+    p.add_argument("--intent", default="",
+                   help="intent/plan markdown to check --goal against "
+                        "(default: <workdir>/.build-loop/intent.md)")
+    p.add_argument("--strict-provenance", action="store_true",
+                   help="raise on an unreachable --commit instead of recording 'pending'")
     p.add_argument("--files-touched", default="")
     p.add_argument("--manual-intervention", action="append", help='"<phase>:<note>" (repeatable)')
     p.add_argument("--phase", action="append", help='"<phase-id>:<status>" (repeatable)')
@@ -188,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
     state_path = workdir / ".build-loop" / "state.json"
     record = build_record(args, workdir)
     result = append_run(state_path, record)
+    if record.get("provenance", {}).get("findings"):
+        result["provenance"] = record["provenance"]
     # GAP-1: a run closes with a real independent-auditor verdict OR with a
     # manifest naming what is owed -- never with neither. Bound to the write
     # that persists the record rather than left to the caller, because the

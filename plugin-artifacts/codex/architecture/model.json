@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "c6679969f12c67f73ffa655d34ddada918da2c91cf36826804ee5ca16207fb5f"
+    "content_sha256": "cce0ad20bb63ecd761b3af93db63a90d4b503787ec07bb3e6461490a6eef6bd0"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1795,6 +1795,7 @@
       "scripts/route_decision.py": "",
       "scripts/rrf.py": "Reciprocal Rank Fusion for hybrid retrieval.",
       "scripts/run_loc_delta.py": "run_loc_delta.py — net-LOC delta for a build-loop run report (observability, no gate).",
+      "scripts/run_provenance.py": "run_provenance — corroborate a run record's commit + goal before it is written.",
       "scripts/runtime_smoke.py": "Runtime smoke gate entry point for the build-loop plugin.",
       "scripts/runtime_smoke_adapters/__init__.py": "",
       "scripts/runtime_smoke_adapters/nextjs.py": "Next.js dev-server adapter for the runtime smoke gate.",

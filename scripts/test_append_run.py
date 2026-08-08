@@ -163,3 +163,117 @@ def test_a_quiet_run_that_touched_nothing_owes_nothing(tmp_path):
     a noisy gate gets disabled, which is worse than no gate."""
     _run(tmp_path, "--run-id", "r-quiet", "--outcome", "partial")
     assert _manifest(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# E3 closure: append_run corroborates the caller's commit + goal instead of
+# trusting them. The anchor is the real record written 2026-07-09, whose commit
+# `6616b71` was reachable from neither the run's push range nor its branch.
+# ---------------------------------------------------------------------------
+
+def _git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _repo(tmp_path):
+    """A two-commit repo. Returns [sha1, sha2] (full SHAs)."""
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    shas = []
+    for i in range(2):
+        (tmp_path / f"f{i}.txt").write_text(str(i))
+        _git(tmp_path, "add", "-A")
+        _git(tmp_path, "commit", "-q", "-m", f"c{i}")
+        shas.append(_git(tmp_path, "rev-parse", "HEAD"))
+    return shas
+
+
+def test_unreachable_commit_is_recorded_as_pending(tmp_path):
+    """The defect. A SHA that corroborates against nothing must not be written as
+    if it did; `pending` is the honest value, and the refused SHA stays on the
+    record so the wrong claim is auditable rather than erased."""
+    _repo(tmp_path)
+    out = _run(tmp_path, "--run-id", "r-bad", "--outcome", "done", "--commit", "6616b71")
+    rec = _state(tmp_path)["runs"][0]
+    assert rec["commit"] == "pending"
+    assert rec["provenance"]["ok"] is False
+    assert rec["provenance"]["supplied_commit"] == "6616b71"
+    assert out["provenance"]["findings"][0]["code"] == "commit_unreachable"
+
+
+def test_reachable_commit_is_written_through(tmp_path):
+    """Acquittal. Without this the gate could downgrade every commit to pending
+    and every assertion above would still pass."""
+    shas = _repo(tmp_path)
+    _run(tmp_path, "--run-id", "r-good", "--outcome", "done", "--commit", shas[-1])
+    rec = _state(tmp_path)["runs"][0]
+    assert rec["commit"] == shas[-1] and rec["provenance"]["ok"] is True
+
+
+def test_derived_head_commit_is_written_through(tmp_path):
+    """The default path: no --commit, so append_run derives HEAD itself. Its own
+    derivation must not trip the gate it now runs."""
+    shas = _repo(tmp_path)
+    _run(tmp_path, "--run-id", "r-head", "--outcome", "done")
+    rec = _state(tmp_path)["runs"][0]
+    assert shas[-1].startswith(rec["commit"]) and rec["provenance"]["ok"] is True
+
+
+def test_commit_outside_push_range_is_pending(tmp_path):
+    shas = _repo(tmp_path)
+    _run(tmp_path, "--run-id", "r-range", "--outcome", "done",
+         "--commit", shas[0], "--push-range", f"{shas[0]}..{shas[1]}")
+    assert _state(tmp_path)["runs"][0]["commit"] == "pending"
+
+
+def test_strict_provenance_raises_instead_of_recording(tmp_path):
+    """The review arm. A caller that would rather stop than record `pending`."""
+    _repo(tmp_path)
+    res = _run(tmp_path, "--run-id", "r-strict", "--outcome", "done",
+               "--commit", "6616b71", "--strict-provenance", expect_ok=False)
+    assert res.returncode != 0 and "run provenance rejected" in res.stderr
+    assert not (tmp_path / ".build-loop" / "state.json").exists()
+
+
+def test_extra_json_commit_is_validated_too(tmp_path):
+    """--extra-json can set `commit`. Validating before the merge would leave the
+    same defect reachable through the other door."""
+    _repo(tmp_path)
+    _run(tmp_path, "--run-id", "r-extra", "--outcome", "done",
+         "--extra-json", json.dumps({"commit": "6616b71"}))
+    assert _state(tmp_path)["runs"][0]["commit"] == "pending"
+
+
+def test_extra_json_cannot_forge_provenance(tmp_path):
+    """`provenance` is the gate's own verdict; a caller that could set it could
+    certify its own SHA."""
+    _repo(tmp_path)
+    _run(tmp_path, "--run-id", "r-forge", "--outcome", "done", "--commit", "6616b71",
+         "--extra-json", json.dumps({"provenance": {"ok": True, "findings": []}}))
+    rec = _state(tmp_path)["runs"][0]
+    assert rec["provenance"]["ok"] is False and rec["commit"] == "pending"
+
+
+def test_goal_mismatch_warns_without_changing_the_record(tmp_path):
+    shas = _repo(tmp_path)
+    bl = tmp_path / ".build-loop"
+    bl.mkdir(exist_ok=True)
+    (bl / "intent.md").write_text("# Intent — Fix the retrospective pipeline\n")
+    out = _run(tmp_path, "--run-id", "r-goal", "--outcome", "done",
+               "--commit", shas[-1], "--goal", "Bump the dependency allowlist")
+    rec = _state(tmp_path)["runs"][0]
+    assert rec["commit"] == shas[-1], "a goal warning must not touch the commit"
+    assert rec["goal"] == "Bump the dependency allowlist"
+    assert out["provenance"]["ok"] is True
+    assert out["provenance"]["findings"][0]["code"] == "goal_mismatch"
+
+
+def test_non_git_workdir_still_records_the_run(tmp_path):
+    """Every test above this block runs in a non-git tmp_path. The gate must not
+    have made a run record conditional on a git checkout."""
+    out = _run(tmp_path, "--run-id", "r-nogit", "--goal", "ship X", "--outcome", "done")
+    assert out["action"] == "appended"
+    assert _state(tmp_path)["runs"][0]["commit"] == ""
