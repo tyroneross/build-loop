@@ -354,6 +354,37 @@ If a category is empty (no Held items, no Blocked items), omit the section entir
 
 Write scorecard to `.build-loop/evals/YYYY-MM-DD-<topic>-scorecard.md`.
 
+**Groundwork implementation-map return (blocking when Phase 1 accepted a
+request).** Write `.build-loop/groundwork-evidence.json` with exactly
+`mappings`, `evidence`, and `deviations`. Map only request target IDs. Every
+`implemented`/`verified` mapping names both existing repository-relative files
+and real commits; every `verified` mapping references passing test/runtime evidence;
+every passed evidence row names an existing repository-relative `artifactPath`
+under `.build-loop/evidence/` whose bytes the adapter hashes. A passed row is
+not trusted merely because the draft says `outcome: passed`: include one
+`--verified-evidence-id` per evidence ID whose command Review-B actually ran
+successfully. Then run:
+
+```bash
+request="${GROUNDWORK_BUILD_REQUEST:-$PWD/.designdoc/build-request.json}"
+spec="${GROUNDWORK_SPEC:-$(dirname "$request")/spec.json}"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/groundwork_exchange.py" emit-map \
+  --request "$request" --spec "$spec" \
+  --evidence "$PWD/.build-loop/groundwork-evidence.json" \
+  --workdir "$PWD" --output "$(dirname "$request")/implementation-map.json" \
+  --producer-version auto --created-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --verified-evidence-id "<id-from-Review-B>"
+```
+
+Any non-zero adapter exit routes to Iterate; contract and operational failures
+return structured JSON with exit 2. Review-G cannot pass with stale bindings, unsafe
+paths, missing commits/artifacts, unsupported targets, or a `verified` status
+without passing evidence. Repeat `--verified-evidence-id` for each passed
+receipt; never grant it to an unexecuted, stale, or user-supplied assertion.
+Report the output digest and path. Build Loop never
+writes Groundwork convergence or mutates `spec.json`; Groundwork independently
+validates the map and calculates `groundwork.convergence/v1`.
+
 **Debugger store + outcome**: for each resolved Review-B/Iterate failure, write a native `.build-loop/issues/<incident>.md` incident note with `{symptom, root_cause, fix, tags, files}`. If `availablePlugins.codingDebugger` is true and the run explicitly requested cross-project memory, mirror the same outcome to standalone Coding Debugger. Both sides of the memory feedback loop — local store and outcome status — are required for learning.
 
 **Orphan scan**: invoke `Skill("build-loop:architecture-dead")` — runs `navgator dead`, diffs against the Phase 1 Assess baseline, surfaces ONLY new orphans introduced this build. No-ops cleanly when `.navgator/architecture/index.json` is absent.
