@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "68e08ae667a7f92272413eab237471edae3b38478019b530e5c75d2c510a6d03"
+    "content_sha256": "fd235a66c62a67908c225eaa902ac396caaa80e7eff070e4b48354d558ce1cbc"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1690,6 +1690,7 @@
       "scripts/memory_telemetry.py": "Memory-read / memory-write telemetry writer.",
       "scripts/memory_update_ledger.py": "Global append-only update ledger for build-loop memory.",
       "scripts/memory_writer.py": "Canonical writer for build-loop-memory files with provenance frontmatter.",
+      "scripts/merge_risk.py": "Merge-risk scoring that grades the BASE, not the test result.",
       "scripts/mermaid_render.py": "Render mermaid diagrams from a markdown or .mmd file for visual QA.",
       "scripts/methodology_drift_lint.py": "Methodology drift lint — single-source guard for the four methodology docs.",
       "scripts/metric_runner.py": "Extract the last meaningful numeric value from command output.",
