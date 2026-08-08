@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "cce0ad20bb63ecd761b3af93db63a90d4b503787ec07bb3e6461490a6eef6bd0"
+    "content_sha256": "610a8d7d45cc4810ed5a04b86a08310ed7fad6edc70768d40fc0a9656302a979"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1825,6 +1825,7 @@
       "scripts/semantic_index/hybrid.py": "Hybrid keyword+embedding rerank for the SQLite semantic index.",
       "scripts/skill_index.py": "",
       "scripts/slice_acp.py": "Slice the ACP to a file set for a single subagent dispatch.",
+      "scripts/staged_content_gate.py": "staged_content_gate.py — grade what will actually be committed, not what",
       "scripts/stale_context_check.py": "",
       "scripts/stamp_skill_frontmatter.py": "",
       "scripts/state_finalize.py": "M4 — Best-effort Stop hook annotation for crash detection.",
