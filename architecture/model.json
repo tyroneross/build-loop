@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "906a871ac01921f698b6b42c23b0be8426e31a22b305755bbdb89c5f9fad9a8f"
+    "content_sha256": "68e08ae667a7f92272413eab237471edae3b38478019b530e5c75d2c510a6d03"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1637,6 +1637,7 @@
       "scripts/hooks/session_end_retro_sweep.py": "SessionEnd retrospective sweep — the auto-actuator for \"don't make me ask\".",
       "scripts/hooks/unbounded_wait_gate.py": "Reject a wait that has no condition.",
       "scripts/host_capabilities.py": "Host capability resolver — the single source of truth for what wakeup/resume",
+      "scripts/hostile_input_gate.py": "Review gate for commits that claim to close a security/safety finding.",
       "scripts/ibr_quickpass.py": "Run the project's existing IBR test suite (a \"quick pass\") for build-loop Review Sub-step B.",
       "scripts/import_manifest_lint.py": "import_manifest_lint.py — catch undeclared third-party imports before CI.",
       "scripts/infer_risk_surface.py": "infer_risk_surface.py — deterministic riskSurfaceChange auto-infer.",
