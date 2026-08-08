@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,7 +15,16 @@ import pytest
 
 # Add the scripts directory so we can import directly
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
-from handoff.__main__ import compose, _queue_items, _landmines, _git_state, _read_state
+from handoff.__main__ import (
+    compose,
+    _queue_items,
+    _landmines,
+    _git_state,
+    _read_state,
+    _render_working_tree,
+    _top_level,
+    _GIT_STATUS_CAP,
+)
 
 
 @pytest.fixture()
@@ -223,6 +234,100 @@ class TestLandmines:
         bl = tmp_path / ".build-loop"
         bl.mkdir()
         assert _landmines(bl, {"runs": [{"run_id": "r"}]}) == []
+
+
+class TestWorkingTree:
+    """Regression: §4 Git State was 2,999 of a 3,214-line handoff (93%) on a
+    repo with ~2,981 pre-existing dirty tooling files, burying every section a
+    fresh session actually needs (atomize-ai, 2026-07-25)."""
+
+    @staticmethod
+    def _noisy(n_noise: int = 3000) -> list[str]:
+        lines = [f" M .navgator/cache/{i:05d}.json" for i in range(n_noise)]
+        lines += [" M src/app.ts", "?? src/new.ts", " D README.md"]
+        return sorted(lines)
+
+    def test_clean_tree(self) -> None:
+        assert "clean" in _render_working_tree([])
+
+    def test_under_cap_lists_everything(self) -> None:
+        lines = [f" M f{i}.ts" for i in range(_GIT_STATUS_CAP)]
+        out = _render_working_tree(lines)
+        assert all(line in out for line in lines)
+        assert "Top-level path" not in out
+
+    def test_over_cap_collapses_to_table(self) -> None:
+        out = _render_working_tree(self._noisy())
+        assert len(out.splitlines()) < 100
+        assert "| `.navgator/` | 3,000 |" in out
+        assert "3,003 dirty" in out
+
+    def test_over_cap_keeps_the_real_edits(self) -> None:
+        """Head-40 would emit 40 `.navgator/` paths and cut every source edit;
+        smallest-group-first keeps the files a resumer needs."""
+        out = _render_working_tree(self._noisy())
+        assert "src/app.ts" in out
+        assert "README.md" in out
+        assert ".navgator/cache/00000.json" not in out
+
+    def test_every_file_still_accounted_for(self) -> None:
+        """A cap on enumeration is not a cap on information."""
+        out = _render_working_tree(self._noisy())
+        assert "| `.navgator/` | 3,000 | 3,000 M | — |" in out
+        assert "| `src/` | 2 |" in out
+        assert "| `(repo root)` | 1 |" in out
+
+    def test_over_cap_warns_against_add_all(self) -> None:
+        out = _render_working_tree(self._noisy())
+        assert "`git add -A`" in out
+        assert "--full-git" in out
+
+    def test_under_cap_does_not_warn(self) -> None:
+        out = _render_working_tree([" M a.ts", " M b.ts"])
+        assert "git add -A" not in out
+
+    def test_full_git_restores_every_path(self) -> None:
+        lines = self._noisy()
+        out = _render_working_tree(lines, full=True)
+        assert all(line in out for line in lines)
+        assert "Top-level path" not in out
+
+    def test_single_huge_group_summarizes_without_listing(self) -> None:
+        out = _render_working_tree([f" M .navgator/{i}.json" for i in range(500)])
+        assert "No group is small enough" in out
+        assert "| `.navgator/` | 500 |" in out
+
+    def test_compose_renders_section_4(self, fake_bl: Path) -> None:
+        """compose() must go through the renderer, not the raw dump."""
+        assert "### Working-tree status" in compose(fake_bl)["document"]
+        assert "### Working-tree status" in compose(fake_bl, full_git=True)["document"]
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+    def test_first_status_line_keeps_its_leading_space(self, tmp_path: Path) -> None:
+        """Regression: `_run().strip()` ate the leading space of the FIRST
+        status line only, shifting it one char left -- so ` M .build-loop/x`
+        grouped under `build-loop/`, a directory that does not exist."""
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=tmp_path, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        (tmp_path / ".build-loop").mkdir()
+        (tmp_path / ".build-loop" / "x.md").write_text("a", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+        (tmp_path / ".build-loop" / "x.md").write_text("b", encoding="utf-8")
+
+        [line] = _git_state(tmp_path)["status_lines"]
+        assert line == " M .build-loop/x.md"
+        assert _top_level(line) == ".build-loop/"
+
+    def test_top_level_handles_rename_root_and_spaces(self) -> None:
+        assert _top_level("R  old/a.ts -> new/b.ts") == "new/"
+        assert _top_level(" M README.md") == "(repo root)"
+        assert _top_level('?? "dir with space/x.ts"') == "dir with space/"
 
 
 class TestNoTruncation:

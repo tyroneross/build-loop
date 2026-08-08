@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 50 skills · 383 scripts · 21 hooks** (auto-discovered cce0ad20)
+**29 agents · 50 skills · 390 scripts · 21 hooks** (auto-discovered 58b49122)
 
 <details><summary>agents</summary>
 
@@ -141,6 +141,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/attestation_lint.py`
 - `scripts/attribution_stamp.py`
 - `scripts/audit_before_commit.py`
+- `scripts/audit_git.py`
 - `scripts/audit_memory_invocation.py`
 - `scripts/audit_record_verdict.py`
 - `scripts/autonomy_gate.py`
@@ -231,6 +232,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/hooks/session_end_retro_sweep.py`
 - `scripts/hooks/unbounded_wait_gate.py`
 - `scripts/host_capabilities.py`
+- `scripts/hostile_input_gate.py`
 - `scripts/ibr_quickpass.py`
 - `scripts/import_manifest_lint.py`
 - `scripts/infer_risk_surface.py`
@@ -283,6 +285,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/memory_telemetry.py`
 - `scripts/memory_update_ledger.py`
 - `scripts/memory_writer.py`
+- `scripts/merge_risk.py`
 - `scripts/mermaid_render.py`
 - `scripts/methodology_drift_lint.py`
 - `scripts/metric_runner.py`
@@ -308,6 +311,8 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/parallelism.py`
 - `scripts/perturbation_spotcheck.py`
 - `scripts/plan_verify.py`
+- `scripts/preauthorization.py`
+- `scripts/premise_revalidation.py`
 - `scripts/prepush_dist_gate.py`
 - `scripts/prepush_judgment_gate.py`
 - `scripts/prepush_test_gate.py`
@@ -420,6 +425,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/semantic_index/hybrid.py`
 - `scripts/skill_index.py`
 - `scripts/slice_acp.py`
+- `scripts/staged_content_gate.py`
 - `scripts/stale_context_check.py`
 - `scripts/stamp_skill_frontmatter.py`
 - `scripts/state_finalize.py`
@@ -452,6 +458,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/transcript_pattern_miner/textproc.py`
 - `scripts/ux_triage.py`
 - `scripts/validate_knowledge.py`
+- `scripts/verification_claim_probe.py`
 - `scripts/verify_deploy.py`
 - `scripts/verify_release_surface.py`
 - `scripts/verify_worktree_target.py`

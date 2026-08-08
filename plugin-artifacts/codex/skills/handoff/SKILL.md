@@ -114,11 +114,28 @@ Nine fixed sections (always the same order; absent data renders as "n/a"):
 | 1 | North Star (intent) — incl. Orientation + glossary | `.build-loop/intent.md` (inlined WHOLE) |
 | 2 | Current Goal — incl. open decisions | `.build-loop/goal.md` (inlined WHOLE) |
 | 3 | Phase + Live Checklist | `.build-loop/state.json` (execution + runs[]) |
-| 4 | Git State | `git status` + `git log` |
+| 4 | Git State | `git status` + `git log` (working-tree listing capped — see below) |
 | 5 | Queues | `followup/`, `backlog/`, `ux-queue/`, `issues/` |
 | 6 | Gotchas / Lessons | `.build-loop/feedback.md` |
 | 7 | Last Run Summary | `state.json.runs[-1]` |
-| 8 | Resume Instructions | generated (workdir, phase context) |
+| 8 | Landmines | detected (stale `.current-run-id`, `.push-hold`, crash marker, …) |
+| 9 | Resume Instructions | generated (workdir, phase context) |
+
+### §4 working-tree listing is capped at 40 paths
+
+Above 40 dirty files, §4 lists the paths in the **smallest** top-level groups and
+collapses the rest into a count-by-top-level-path table, then prints a
+`git add -A` warning. Reproduced 2026-07-25 on atomize-ai: ~2,981 pre-existing
+dirty tooling files (`.navgator/`, `.build-loop/`, `.bookmark/`, `.rally/`) made §4
+2,999 of the document's 3,214 lines — 93% — burying North Star, Goal, Landmines,
+and Resume Instructions past 3,000 lines of cache paths. A handoff exists for when
+context is scarce, so paying 3,000 lines for it inverts the tool's purpose.
+
+The cap is on **enumeration only**: every dirty file is still counted in the table.
+Smallest-group-first is what keeps it useful — `git status` sorts by path, so a
+head-40 would have emitted 40 `.bookmark/` cache paths and cut every source edit.
+
+`--full-git` restores the raw per-file listing when it is genuinely wanted.
 
 ## Usage — no flag (emit doc)
 
@@ -139,6 +156,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handoff --workdir "$PWD" --json
 ```
 
 Emits a JSON envelope `{document, sources, errors, ts}` for programmatic use.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/handoff --workdir "$PWD" --full-git
+```
+
+Lists every dirty path in §4 instead of capping at 40 and summarizing the rest.
+Combines with any of the flags above.
 
 ## Usage — `--launch` (fresh session)
 
@@ -171,7 +195,7 @@ new session starts.
 `scripts/handoff/__main__.py` reads `.build-loop/` using only `json`, `pathlib`,
 and `subprocess` from the standard library — no new dependencies. It does NOT
 re-implement state parsing; it reads `state.json` directly at the same paths the
-orchestrator already writes. Tests: `scripts/handoff/test_handoff.py` (13 tests).
+orchestrator already writes. Tests: `scripts/handoff/test_handoff.py`.
 
 ## Host-agnostic design
 

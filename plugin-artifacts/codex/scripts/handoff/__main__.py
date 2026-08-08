@@ -4,7 +4,7 @@
 """Compose a build-loop handoff document from .build-loop/ run state.
 
 Usage:
-    python3 scripts/handoff [--workdir DIR] [--output FILE] [--json]
+    python3 scripts/handoff [--workdir DIR] [--output FILE] [--json] [--full-git]
 
 Reads:
   .build-loop/intent.md        — north star
@@ -122,15 +122,21 @@ def _git_state(workdir: Path) -> dict:
         "branch": "unknown",
         "ahead_behind": "unknown",
         "recent_commits": [],
-        "status_summary": "clean",
+        "status_lines": [],
     }
 
     def _run(*args: str) -> str:
+        # rstrip("\n"), never .strip(): `git status --short` encodes staged-vs-
+        # worktree state in the first TWO columns, so a leading space is data.
+        # .strip() ate it on the first line only, shifting that one line left by
+        # one -- which read as ` M .build-loop/x` -> top-level `build-loop/`,
+        # a directory that does not exist. Harmless while the blob was dumped
+        # verbatim, wrong the moment anything parses it.
         try:
             return subprocess.check_output(
                 list(args), cwd=str(workdir), stderr=subprocess.DEVNULL,
                 text=True, timeout=10
-            ).strip()
+            ).rstrip("\n")
         except Exception:
             return ""
 
@@ -149,8 +155,122 @@ def _git_state(workdir: Path) -> dict:
     result["recent_commits"] = log_raw.splitlines() if log_raw else []
 
     status_raw = _run("git", "status", "--short")
-    result["status_summary"] = status_raw or "clean"
+    result["status_lines"] = status_raw.splitlines() if status_raw else []
     return result
+
+
+# ---------------------------------------------------------------------------
+# Working-tree rendering
+# ---------------------------------------------------------------------------
+
+# Cap on the per-file working-tree listing. Observed 2026-07-25 on atomize-ai:
+# ~2,981 pre-existing dirty tooling files (.navgator/, .build-loop/, .bookmark/,
+# .rally/, .betterer.results) made §4 Git State 2,999 of the document's 3,214
+# lines -- 93%. North Star, Goal, Landmines and Resume Instructions sat past
+# 3,000 lines of .navgator paths, so the handoff cost more context than it
+# saved. That inverts the tool's purpose: a handoff exists for when context is
+# scarce. Hand-collapsing that dump to a per-top-level-path table took it to
+# 254 lines with no loss of decision-relevant content.
+#
+# This is a cap on ENUMERATION, not on information -- unlike the queue-count
+# and intent.md truncation bugs this file records elsewhere. Every dirty file
+# is still accounted for in the summary table, and `--full-git` restores the
+# raw list.
+_GIT_STATUS_CAP = 40
+
+
+def _status_path(line: str) -> str:
+    """Path out of a `git status --short` line: `XY path`, `R  old -> new`."""
+    raw = line[3:] if len(line) > 3 else ""
+    if " -> " in raw:
+        raw = raw.split(" -> ", 1)[1]
+    return raw.strip().strip('"')
+
+
+def _top_level(line: str) -> str:
+    head, sep, _ = _status_path(line).partition("/")
+    return f"{head}/" if sep else "(repo root)"
+
+
+def _status_mix(lines: list[str]) -> str:
+    """`2,380 M, 9 ??` -- deleted and untracked read very differently."""
+    counts: dict[str, int] = {}
+    for line in lines:
+        counts[line[:2].strip() or "?"] = counts.get(line[:2].strip() or "?", 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{n:,} {code}" for code, n in ordered)
+
+
+def _render_working_tree(status_lines: list[str], *, full: bool = False) -> str:
+    """§4's working-tree block: full listing, or listing + summary table.
+
+    Under the cap (or with `--full-git`) this is the raw `git status --short`
+    output, unchanged. Over it, the listing is filled SMALLEST-GROUP-FIRST and
+    the rest collapses to a count-by-top-level-path table.
+
+    Smallest-first matters. `git status` sorts by path, so a naive head-40 on
+    the motivating repo would have emitted 40 lines of `.betterer.results` and
+    `.bookmark/` and cut every source edit -- the one part of the listing a
+    resumer needs. A group of 2 dirty files is a signal; a group of 2,389 is
+    tooling state whose row in the table says everything the enumeration would.
+    """
+    total = len(status_lines)
+    if total == 0:
+        return "### Working-tree status\n```\nclean\n```"
+
+    if full or total <= _GIT_STATUS_CAP:
+        body = "\n".join(status_lines)
+        return f"### Working-tree status ({total:,} dirty)\n```\n{body}\n```"
+
+    groups: dict[str, list[str]] = {}
+    for line in status_lines:
+        groups.setdefault(_top_level(line), []).append(line)
+
+    listed: list[str] = []
+    shown: set[str] = set()
+    budget = _GIT_STATUS_CAP
+    for key, lines in sorted(groups.items(), key=lambda kv: (len(kv[1]), kv[0])):
+        if len(lines) > budget:
+            break
+        listed.extend(lines)
+        shown.add(key)
+        budget -= len(lines)
+
+    out = [f"### Working-tree status ({total:,} dirty)", ""]
+    out.append(
+        f"> **Do not `git add -A` or `git add .` in this repo.** {total:,} files are "
+        f"dirty and most are pre-existing tooling state, not your work. Stage the "
+        f"paths you changed, by name."
+    )
+    out.append("")
+    if listed:
+        out.append(
+            f"Listing the {len(listed):,} file(s) in the smallest groups — the ones "
+            f"most likely to be real edits. Every other dirty file is counted in the "
+            f"table below."
+        )
+        out.append("```")
+        out.extend(listed)
+        out.append("```")
+    else:
+        out.append(
+            "No group is small enough to enumerate under the "
+            f"{_GIT_STATUS_CAP}-path cap; all {total:,} files are summarized below."
+        )
+    out.append("")
+    out.append("| Top-level path | Files | Status mix | Listed above |")
+    out.append("|---|---:|---|---|")
+    for key, lines in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        out.append(
+            f"| `{key}` | {len(lines):,} | {_status_mix(lines)} | "
+            f"{'all' if key in shown else '—'} |"
+        )
+    out.append("")
+    out.append(
+        f"Full per-file listing: re-run `scripts/handoff` with `--full-git` "
+        f"(emits all {total:,} paths)."
+    )
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -313,10 +433,7 @@ Ahead/behind: {ahead_behind}
 ### Recent commits
 {recent_commits}
 
-### Working-tree status
-```
-{status_summary}
-```
+{working_tree}
 
 ## 5. Queues
 
@@ -368,7 +485,7 @@ def _section(items: list[str], fallback: str = "none") -> str:
     return "\n".join(f"- {t}" for t in items)
 
 
-def compose(workdir: Path) -> dict:
+def compose(workdir: Path, *, full_git: bool = False) -> dict:
     """Read all sources, return {document, sources, errors}."""
     bl = workdir / ".build-loop"
     sources: list[str] = []
@@ -429,7 +546,7 @@ def compose(workdir: Path) -> dict:
         branch=git["branch"],
         ahead_behind=git["ahead_behind"],
         recent_commits=recent_commits,
-        status_summary=git["status_summary"],
+        working_tree=_render_working_tree(git["status_lines"], full=full_git),
         followup_count=len(followup_titles),
         followup_items=_section(followup_titles),
         backlog_count=len(backlog_titles),
@@ -479,10 +596,14 @@ def main() -> None:
                         help="Write handoff doc to this file (default: stdout)")
     parser.add_argument("--json", dest="json_out", action="store_true",
                         help="Emit JSON envelope: {document, sources, errors, ts}")
+    parser.add_argument("--full-git", dest="full_git", action="store_true",
+                        help=f"List every dirty path in §4 instead of capping the "
+                             f"listing at {_GIT_STATUS_CAP} and summarizing the rest "
+                             f"by top-level path")
     args = parser.parse_args()
 
     workdir = args.workdir.resolve()
-    result = compose(workdir)
+    result = compose(workdir, full_git=args.full_git)
 
     if args.json_out:
         print(json.dumps(result, ensure_ascii=False))

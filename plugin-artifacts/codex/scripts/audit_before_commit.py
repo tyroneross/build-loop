@@ -619,6 +619,52 @@ def _library_context(diff_body: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _graded_content_alignment(root: Path) -> str:
+    """Report whether the working tree still matches the index for staged paths.
+
+    git commits the INDEX; a pre-commit verification hook typically runs in the
+    WORKING TREE. When those diverge, a green suite certifies bytes that are not
+    being committed. Observed 2026-08-07 (RossLabs-AI-Assistant `5066d1f`): tests
+    landed WITHOUT their fix because `git add` ran while an implementer had the
+    file reverted to prove a mutation, and the hook reported 80/80 green against
+    the reverted-then-refixed working tree.
+
+    Divergence is NOT itself a defect — `git add -p` partial staging is normal and
+    common, so this section is informational and never blocks. What it does is make
+    the mismatch VISIBLE at the moment a verification claim is being attached to a
+    commit, so "the suite passed" can be read as "the suite passed against
+    something else". Fail-open: any error yields a one-line note.
+    """
+    try:
+        import staged_content_gate as _scg
+
+        result = _scg.check_divergence(root)
+    except Exception as exc:  # noqa: BLE001 — never crash a commit over a report section
+        return f"_(alignment check unavailable: {exc!r})_\n"
+
+    if result.get("verdict") == "aligned":
+        return (
+            f"- verdict: **aligned** — working tree matches the index for all "
+            f"{result.get('staged_count', 0)} staged path(s); a working-tree test run "
+            "describes the same bytes being committed.\n"
+        )
+
+    divergent = result.get("divergent") or []
+    lines = [
+        f"- verdict: **diverged** — {len(divergent)} of {result.get('staged_count', 0)} "
+        "staged path(s) differ between the index and the working tree.\n",
+        "- **Any verification that ran in the working tree does NOT describe this commit.** "
+        "Re-run it against the staged content before treating it as evidence:\n",
+        "  `python3 scripts/staged_content_gate.py --run \"<your test command>\"`\n",
+        "- divergent paths:\n",
+    ]
+    for entry in divergent[:20]:
+        lines.append(f"  - `{entry.get('path')}` ({entry.get('reason')})\n")
+    if len(divergent) > 20:
+        lines.append(f"  - … and {len(divergent) - 20} more\n")
+    return "".join(lines)
+
+
 def _recent_trajectory(root: Path) -> str:
     state_path = root / ".build-loop" / "state.json"
     if not state_path.is_file():
@@ -789,6 +835,13 @@ def _emit_packet(root: Path) -> int:
         for f in risk["risky_files"]:
             out(f"- `{f}`\n")
         out("\n")
+
+    # What is being GRADED vs what is being COMMITTED. A verification that ran
+    # against the working tree describes different bytes than the ones git is
+    # about to record whenever the index and worktree have diverged.
+    out("### Graded-content alignment\n")
+    out(_graded_content_alignment(root))
+    out("\n")
 
     out("### Risk classification\n")
     out(f"- level: **{risk['level']}**\n")
