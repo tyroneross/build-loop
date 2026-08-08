@@ -67,6 +67,10 @@ class _Base(unittest.TestCase):
         return bl.cmd_sync(_NS(repo=str(self.repo), today=today,
                                no_mirror=no_mirror, prune=prune))
 
+    def _update(self, item_id, status, today="2026-06-20", no_mirror=False):
+        return bl.cmd_update(_NS(repo=str(self.repo), id=item_id, status=status,
+                                 today=today, no_mirror=no_mirror))
+
 
 class _NS:
     """Tiny argparse.Namespace stand-in."""
@@ -1104,6 +1108,131 @@ class TestSyncSafety(_Base):
                         f"item must land under {good_root}, got {item_path}")
         self.assertFalse(nested_root.exists(),
                          f"must NOT create doubly-nested store at {nested_root}")
+
+
+class TestUpdate(_Base):
+    """`update` is the supported status-change route — the hand-edit-then-forget-
+    to-sync path is what it replaces, so every test here asserts the DERIVED
+    views (INDEX, archive, mirror) are consistent when the command returns."""
+
+    def test_update_sets_status_and_bumps_updated(self):
+        r = self._new(area="search", title="x")
+        res = self._update(r["id"], "in-progress")
+        self.assertTrue(res["changed"])
+        self.assertEqual(res["status"], {"from": "open", "to": "in-progress"})
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["status"], "in-progress")
+        self.assertEqual(fm["updated"], "2026-06-20")
+        self.assertEqual(fm["created"], "2026-06-16", "created must not move")
+
+    def test_update_preserves_body_and_other_fields(self):
+        r = self._new(area="search", title='tricky "quoted" : title',
+                      entities="a,b", priority="P1", gated="db-migration",
+                      provenance_source="followup", provenance_ref="x.md")
+        before = Path(r["path"]).read_text(encoding="utf-8")
+        body_before = bl.parse_frontmatter(before)[1]
+        res = self._update(r["id"], "blocked")
+        fm, body_after = bl.parse_frontmatter(
+            Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(body_after, body_before, "body must survive verbatim")
+        self.assertEqual(fm["title"], 'tricky "quoted" : title')
+        self.assertEqual(fm["entities"], ["a", "b"])
+        self.assertEqual(fm["priority"], "P1")
+        self.assertEqual(fm["gated"], "db-migration")
+        self.assertEqual(fm["provenance"], {"source": "followup", "ref": "x.md"})
+
+    def test_update_preserves_unknown_future_fields(self):
+        # Forward-compat: a field written by a NEWER build-loop must not be
+        # dropped by this version's rewrite.
+        r = self._new(area="search", title="x")
+        p = Path(r["path"])
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "owner: unassigned", "owner: unassigned\nfuture_field: keep-me"),
+            encoding="utf-8")
+        res = self._update(r["id"], "deferred")
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm.get("future_field"), "keep-me")
+
+    def test_update_runs_sync_so_index_reflects_the_change(self):
+        # The defect being fixed: a hand-edit without a follow-up sync left the
+        # INDEX stale. One `update` call must leave the INDEX correct.
+        r = self._new(area="search", title="index me")
+        self._sync()
+        index = bl.backlog_root(self.repo) / "INDEX.md"
+        self.assertIn("open", index.read_text(encoding="utf-8"))
+        self._update(r["id"], "blocked")
+        self.assertIn("blocked", index.read_text(encoding="utf-8"))
+
+    def test_update_to_done_archives_and_reports_final_path(self):
+        r = self._new(area="search", title="finish me")
+        res = self._update(r["id"], "done")
+        self.assertIn(r["id"], res["sync"]["consolidation"]["archived"])
+        final = Path(res["path"])
+        self.assertTrue(final.exists(), "reported path must be where the file is")
+        self.assertEqual(final.parent, bl.archive_dir(self.repo))
+        self.assertFalse((bl.items_dir(self.repo) / f"{r['id']}.md").exists())
+
+    def test_update_reopens_an_archived_item_back_into_items(self):
+        r = self._new(area="search", title="reopen me")
+        self._update(r["id"], "done")
+        self.assertTrue((bl.archive_dir(self.repo) / f"{r['id']}.md").exists())
+        res = self._update(r["id"], "open", today="2026-06-21")
+        self.assertTrue(res["unarchived"])
+        self.assertTrue((bl.items_dir(self.repo) / f"{r['id']}.md").exists(),
+                        "a reopened item must return to items/ or the INDEX "
+                        "(active-only) never shows it again")
+        self.assertFalse((bl.archive_dir(self.repo) / f"{r['id']}.md").exists())
+        self.assertIn(r["id"],
+                      (bl.backlog_root(self.repo) / "INDEX.md").read_text(encoding="utf-8"))
+
+    def test_noop_update_does_not_bump_updated(self):
+        r = self._new(area="search", title="x")
+        res = self._update(r["id"], "open")
+        self.assertFalse(res["changed"])
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["updated"], "2026-06-16", "no change -> no date churn")
+
+    def test_unknown_id_raises(self):
+        self._new(area="search", title="x")
+        with self.assertRaises(ValueError) as cm:
+            self._update("NOPE-NOPE-000", "done")
+        self.assertIn("no backlog item", str(cm.exception))
+
+    def test_duplicate_id_refuses_to_guess(self):
+        r = self._new(area="search", title="x")
+        twin = bl.items_dir(self.repo) / "TWIN.md"
+        twin.write_text(Path(r["path"]).read_text(encoding="utf-8"), encoding="utf-8")
+        with self.assertRaises(ValueError) as cm:
+            self._update(r["id"], "done")
+        self.assertIn("duplicate id", str(cm.exception))
+        # Neither file was touched.
+        self.assertEqual(bl.parse_frontmatter(twin.read_text(encoding="utf-8"))[0]["status"],
+                         "open")
+
+    def test_invalid_status_rejected_by_cli(self):
+        r = self._new(area="search", title="x")
+        parser = bl.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["update", r["id"], "--repo", str(self.repo),
+                               "--status", "finished"])
+
+    def test_cli_end_to_end_via_main(self):
+        r = self._new(area="search", title="x")
+        rc = bl.main(["update", r["id"], "--repo", str(self.repo),
+                      "--status", "in-progress", "--today", "2026-06-20",
+                      "--no-mirror"])
+        self.assertEqual(rc, 0)
+        fm, _ = bl.parse_frontmatter(
+            (bl.items_dir(self.repo) / f"{r['id']}.md").read_text(encoding="utf-8"))
+        self.assertEqual(fm["status"], "in-progress")
+
+    def test_update_mirrors_to_memory(self):
+        r = self._new(area="search", title="x")
+        res = self._update(r["id"], "blocked")
+        mirrored = Path(res["sync"]["mirror"]["dir"]) / f"{r['id']}.md"
+        fm, _ = bl.parse_frontmatter(mirrored.read_text(encoding="utf-8"))
+        self.assertEqual(fm["status"], "blocked",
+                         "the trailing sync must carry the change to the mirror")
 
 
 class TestNormalizeRepo(unittest.TestCase):

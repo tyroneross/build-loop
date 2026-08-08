@@ -28,8 +28,14 @@ Subcommands::
                      [--priority P2] [--status open] [--gated none]
                      [--entities a,b] [--provenance-source ...] [--provenance-ref ...]
                      [--evidence p1,p2] [--owner ...] [--review-days 30] [--today YYYY-MM-DD]
+    backlog.py update <ID> --repo <path> --status <s> [--today YYYY-MM-DD] [--no-mirror]
     backlog.py sync  --repo <path> [--today YYYY-MM-DD] [--no-mirror] [--prune]
     backlog.py list  --repo <path> [--status ...] [--area ...] [--priority ...]
+
+``update`` is the supported way to change an item's status: it validates the
+value, stamps ``updated``, un-archives a reopened item, and runs the same
+consolidate/INDEX/mirror pipeline as ``sync`` — so the derived views can never
+drift from a hand-edit that forgot the follow-up sync.
 
 All commands print a JSON summary on stdout (``list`` prints a text table
 unless ``--json``).
@@ -1431,9 +1437,110 @@ def cmd_adopt(args: argparse.Namespace) -> dict[str, Any]:
 
 
 class _NS_sync:
-    """Minimal namespace to drive cmd_sync from adopt without re-parsing argv."""
+    """Minimal namespace to drive cmd_sync from adopt/update without re-parsing argv."""
     def __init__(self, **kw):
         self.__dict__.update(kw)
+
+
+# ----------------------------------------------------------------------------
+# `update` — the ONLY supported way to change an item's status
+# ----------------------------------------------------------------------------
+#
+# Before this existed the documented route was "hand-edit items/<ID>.md, then
+# remember to run sync". Two things went wrong every time someone forgot the
+# second half: the status skipped validation (a typo'd `status: done ` silently
+# never archived), and INDEX.md + the memory mirror drifted from the items that
+# are the truth. `update` makes both mechanical — validate, stamp `updated`,
+# then run the same consolidate → INDEX → mirror pipeline `sync` runs.
+
+def find_item(repo: Path, item_id: str) -> dict[str, Any]:
+    """Return the one item (items/ or archive/) whose frontmatter ``id`` matches.
+
+    Resolves by frontmatter id rather than filename so an item whose file was
+    renamed by hand is still reachable. Raises ``ValueError`` on no match, and
+    on MULTIPLE matches — a duplicate id (bad merge / hand-edit) is exactly the
+    case where guessing which file to write would lose work, so we surface all
+    paths instead, matching sync's ``## ⚠ Duplicate IDs`` guard.
+    """
+    matches = [
+        it for it in load_items(repo, include_archive=True)
+        if str(it.get("id")) == item_id
+    ]
+    if not matches:
+        raise ValueError(
+            f"no backlog item with id {item_id!r} under {backlog_root(repo)}"
+        )
+    if len(matches) > 1:
+        paths = ", ".join(str(m.get("_path")) for m in matches)
+        raise ValueError(
+            f"duplicate id {item_id!r} in {len(matches)} files ({paths}) — "
+            f"resolve the duplicate by hand before updating"
+        )
+    return matches[0]
+
+
+def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
+    repo = normalize_repo(args.repo)
+    ensure_dirs(repo)
+    today = resolve_today(args.today)
+
+    # argparse `choices` already enforces this on the CLI path; re-checked here
+    # because cmd_update is also called programmatically (tests, other scripts).
+    if args.status not in STATUS_VALUES:
+        raise ValueError(f"--status must be one of {STATUS_VALUES}, got {args.status!r}")
+
+    item = find_item(repo, args.id)
+    path = Path(str(item.pop("_path")))
+    body = str(item.pop("_body", ""))
+    archived = bool(item.pop("_archived", False))
+    old_status = str(item.get("status"))
+    changed = old_status != args.status
+
+    # A reopened archived item must return to items/ or it stays invisible: the
+    # INDEX renders active items only, so leaving it in archive/ would make the
+    # update look applied while the derived view never shows it. Collision is
+    # checked BEFORE the write so a conflict can't leave a half-applied state.
+    unarchive = changed and archived and args.status not in ARCHIVE_STATUSES
+    dest = items_dir(repo) / path.name
+    if unarchive and dest.exists():
+        raise ValueError(
+            f"cannot un-archive {args.id!r}: {dest} already exists — "
+            f"resolve the collision by hand"
+        )
+
+    if changed:
+        item["status"] = args.status
+        item["updated"] = today
+        doc = render_frontmatter(item) + "\n" + body
+        if not doc.endswith("\n"):
+            doc += "\n"
+        _atomic_write_text(path, doc)
+        if unarchive:
+            path.replace(dest)
+            path = dest
+
+    # Always sync, even on a no-op status change: the point of routing through
+    # this command is that INDEX + mirror are consistent after it returns.
+    sync_report = cmd_sync(_NS_sync(
+        repo=str(repo), today=today,
+        no_mirror=bool(getattr(args, "no_mirror", False)), prune=False,
+    ))
+    # `sync` archives a just-done item, so report where the file actually landed.
+    final = archive_dir(repo) / path.name
+    if not path.exists() and final.exists():
+        path = final
+
+    return {
+        "command": "update",
+        "id": args.id,
+        "path": str(path),
+        "changed": changed,
+        "status": {"from": old_status, "to": args.status},
+        "updated": today if changed else item.get("updated"),
+        "unarchived": unarchive,
+        "sync": sync_report,
+        "today": today,
+    }
 
 
 # ----------------------------------------------------------------------------
@@ -1548,6 +1655,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Skip the personal-memory mirror in the trailing sync.")
     pa.add_argument("--json", action="store_true")
 
+    pu = sub.add_parser(
+        "update",
+        help="Change an item's status (validated), stamp `updated`, then sync.",
+    )
+    pu.add_argument("id", help="Item ID, e.g. BUIL-TOOLING-mt3k9p7q.")
+    pu.add_argument("--repo", required=True)
+    pu.add_argument("--slug", default="",
+                    help="Override project slug (worktree/CI checkout).")
+    pu.add_argument("--status", required=True, choices=STATUS_VALUES)
+    pu.add_argument("--today", default=None)
+    pu.add_argument("--no-mirror", action="store_true",
+                    help="Skip the personal-memory mirror in the trailing sync.")
+    pu.add_argument("--json", action="store_true")
+
     pl = sub.add_parser("list", help="Filtered text/JSON view of items.")
     pl.add_argument("--repo", required=True)
     pl.add_argument("--slug", default="",
@@ -1577,6 +1698,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
         elif args.command == "adopt":
             result = cmd_adopt(args)
+            print(json.dumps(result, indent=2))
+        elif args.command == "update":
+            result = cmd_update(args)
             print(json.dumps(result, indent=2))
         elif args.command == "list":
             result = cmd_list(args)
