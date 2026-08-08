@@ -176,7 +176,18 @@ CATEGORY_KEYWORDS = [
                       "route-guard", "route guard", "pre-skill",
                       "prompt-submit", "skill-routing", "skill routing",
                       # Privacy/secret scanners are validation gates.
-                      "privacy", "secret", "pii")),
+                      "privacy", "secret", "pii",
+                      # Commit/dispatch-boundary gates landed 2026-08-07, each
+                      # grounded in an observed failure. They are validation
+                      # infrastructure, not execution: none of them changes the
+                      # build, they only decide whether a claim may stand.
+                      #   staged_content_gate — grade the index, not the worktree
+                      #   audit_git           — read-only git front door
+                      #   preauthorization    — standing policy for unattended runs
+                      "staged content", "staged_content", "front door",
+                      "front-door", "read-only git", "read_only git",
+                      "pre-authoriz", "preauthoriz", "unattended",
+                      "standing policy", "conditional gate")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",

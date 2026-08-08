@@ -1009,6 +1009,38 @@ _SHELL_TOOL_AGENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Markup and stylesheets spell ordinary content with the same quoted words an
+# agent config uses: `<div class="exec">` in a plain layout div matched the rule
+# above with no agent, no tool list, and no executable code in the file
+# (WorkWiki outputs/cx-premium-deck/Archive/design-archetypes.html:140). Prose
+# (.md/.rst/.txt) never reaches check G — `_is_content_file` stops it upstream —
+# so this set covers only what that gate leaves through. It stays a deny-list
+# rather than a `_CODE_EXTENSIONS`-style allow-list because an allow-list would
+# also drop extensionless and unlisted config formats, trading a false positive
+# for a false negative in a security check.
+_MARKUP_EXTENSIONS: frozenset[str] = frozenset({
+    ".html", ".htm", ".xhtml", ".xml", ".svg",
+    ".css", ".scss", ".sass", ".less",
+    ".csv", ".tsv",
+})
+
+# A shell tool is excessive agency only when it is named IN an agent's tool
+# list, so require the enclosing tool-list key rather than trusting the bare
+# quoted word.
+_AGENT_TOOL_CONTEXT_RE = re.compile(
+    r"allowed[_-]?tools|disallowed[_-]?tools|\btools\b|\bfunctions\b"
+    r"|tool_choice|tool[_-]?names|mcpServers|permissions",
+    re.IGNORECASE,
+)
+# `"tools": [` sits a few lines above its elements when an array is written one
+# entry per line, so the context scan looks back a small window.
+_AGENT_TOOL_CONTEXT_LOOKBACK = 5
+
+def _has_agent_tool_context(lines: list[str], lineno: int) -> bool:
+    """True when a tool-list key sits on line ``lineno`` (1-based) or just above."""
+    start = max(0, lineno - 1 - _AGENT_TOOL_CONTEXT_LOOKBACK)
+    return any(_AGENT_TOOL_CONTEXT_RE.search(ln) for ln in lines[start:lineno])
+
 def check_G_prompt_injection(path: Path, lines: list[str]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for lineno, raw in enumerate(lines, 1):
@@ -1045,8 +1077,15 @@ def check_G_prompt_injection(path: Path, lines: list[str]) -> list[dict[str, Any
         _shell_tool_m = _SHELL_TOOL_AGENT_RE.search(raw)
         # A quoted token immediately followed by ':' is a dict KEY (a config flag
         # like `"terminal": True`), not a tool named in an agent's tool LIST.
-        # Only the list-element form is the excessive-agency risk.
-        if _shell_tool_m and raw[_shell_tool_m.end():_shell_tool_m.end() + 1] != ":":
+        # Only the list-element form is the excessive-agency risk. Markup files
+        # and lines with no surrounding tool-list key carry the word as content,
+        # not as a granted capability.
+        if (
+            _shell_tool_m
+            and raw[_shell_tool_m.end():_shell_tool_m.end() + 1] != ":"
+            and path.suffix.lower() not in _MARKUP_EXTENSIONS
+            and _has_agent_tool_context(lines, lineno)
+        ):
             findings.append(_finding(
                 severity="MEDIUM",
                 owasp_ids="LLM08/ASI02/ASI05",

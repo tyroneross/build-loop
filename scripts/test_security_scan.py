@@ -169,6 +169,48 @@ class TestCheckC(unittest.TestCase):
             Path("agent.py"), ['    tools = ["bash", "read_file"]\n'])
         self.assertTrue(any("Shell/exec" in f["message"] for f in findings))
 
+    def _shell(self, path_str, lines):
+        return [
+            f for f in security_scan.check_G_prompt_injection(Path(path_str), lines)
+            if "Shell/exec" in f["message"]
+        ]
+
+    def test_shell_word_in_markup_not_flagged(self):
+        # `class="exec"` in a layout div is content, not a granted capability.
+        self.assertEqual(
+            self._shell("outputs/deck/design-archetypes.html", ['  <div class="exec">\n']),
+            [],
+        )
+
+    def test_shell_word_in_stylesheet_not_flagged(self):
+        self.assertEqual(self._shell("site/theme.css", ['.exec, .shell { color: red; }\n']), [])
+
+    def test_markup_with_real_tool_list_still_flagged(self):
+        # The markup guard is extension-scoped; a genuine tool list inside an
+        # inline script is still caught because the file is not markup-suffixed.
+        lines = ['const agent = { tools: ["bash"] };\n']
+        self.assertEqual(len(self._shell("src/agent.ts", lines)), 1)
+
+    def test_quoted_shell_word_without_tool_context_not_flagged(self):
+        self.assertEqual(self._shell("src/log.py", ['    mode = "exec"\n']), [])
+
+    def test_multiline_tool_array_flagged_from_lookback(self):
+        lines = [
+            '{\n',
+            '  "allowed_tools": [\n',
+            '    "read",\n',
+            '    "bash"\n',
+            '  ]\n',
+            '}\n',
+        ]
+        findings = self._shell(".mcp.json", lines)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["line"], 4)
+
+    def test_tool_context_beyond_lookback_window_not_flagged(self):
+        lines = ['  "tools": [\n'] + ['    "read",\n'] * 8 + ['    "bash"\n']
+        self.assertEqual(self._shell(".mcp.json", lines), [])
+
 
 class TestCheckE(unittest.TestCase):
     def _run(self, path_str, lines):
