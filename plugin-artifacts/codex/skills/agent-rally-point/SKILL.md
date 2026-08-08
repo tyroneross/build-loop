@@ -50,6 +50,8 @@ surfaced on Rally Point records as top-level `build_loop_id` and
   `scripts/agent_rally.py where`; do not hardcode legacy channel roots.
 - Write cross-session events through `scripts/rally_point/post.py::post()`;
   do not append directly to `changes.jsonl`.
+- Correct a wrong fact by appending a retraction (`agent_rally.py retract`),
+  never by editing the log. See "Retracting a wrong fact" below.
 - Keep `build_loop_id` separate from `producer_metadata`.
 - Keep substrate files independent from build-loop memory/orchestration
   internals. If a build-loop-specific integration is needed, put it in a thin
@@ -73,6 +75,42 @@ preview for the newest unread direct/broadcast inbox records. Counts are
 session-ack aware; read `inbox/<tool>.jsonl` or `inbox/all.jsonl` before acting
 on a full message, then run `ack-inbox` after handling it. Ack cursors live
 under `inbox/.acks/` and never rewrite the append-only inbox payloads.
+
+## Retracting a wrong fact
+
+The ledger is append-only, so a posted fact is never edited or deleted. Withdraw
+one by appending a **retraction** that names its `event_id` — the `[fact_...]`
+id shown in `rally room`:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_rally.py retract \
+  --workdir "$PWD" --session-id "$SESSION_ID" --tool "$TOOL_ID" \
+  --fact fact_f4c9_18c99988bcb40648 \
+  --reason "wrong sha — read from a stale worktree" \
+  --superseded-by fact_a1b2_0f3e4d5c6b7a8901   # optional: the corrected fact
+```
+
+From then on every build-loop read path drops the withdrawn fact and keeps the
+retraction, so peers see the correction instead of the bad claim. `--superseded-by`
+is optional: use it when a corrected fact replaces the retracted one, omit it when
+the fact was simply wrong.
+
+Guardrails: an unknown `--fact` id exits 1 rather than posting a retraction that
+neutralizes nothing (`--force` overrides, for a fact in a store build-loop cannot
+read back); a second retraction of the same fact exits 1 as `retract-noop`; and
+retracting a retraction is refused, because that would erase the correction trail
+— post a new corrective fact instead.
+
+Limits worth knowing before you rely on it:
+
+- **Resolution is build-loop-side.** `rally room` is the Rust binary and does not
+  yet honor retractions, so a retracted fact still appears there (as does the
+  retraction next to it). Native `rally retract` is filed against the
+  `agent-rally-point` repo.
+- **A fact a peer already read cannot be un-read.** A retraction arriving in a
+  later poll surfaces as its own record; it cannot reach back into context a peer
+  already consumed.
+- **Pre-`fact.v1` records carry no `event_id`** and therefore cannot be targeted.
 
 ## Task Heartbeat — still on the claimed task
 

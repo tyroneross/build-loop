@@ -60,6 +60,10 @@ _SURFACE_PAYLOAD_KEYS = (
     "from_session_id", "lease_until", "scope", "mode", "run_id",
     "acknowledges", "requested_action", "reason", "from_tool", "to_tool",
     "subject", "owner_tool", "resource", "requires_ack",
+    # Retraction targets: structured event ids, so an orchestrator seeing a
+    # retraction in its tail knows WHICH fact was withdrawn and what replaced
+    # it, without having to parse the subject line.
+    "retracts", "superseded_by",
 )
 _FREETEXT_CAP = 240
 

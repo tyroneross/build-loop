@@ -295,7 +295,12 @@ def _read_recent_changes(
     floor = policy.archive_floor_weight
     if include_archived:
         # Fold in physically-rotated (archived) change logs for retrieval.
-        recs = recs + changes.read_archived_changes(channel_dir)
+        # Each source resolves retractions within its own batch, so re-resolve
+        # across the merged list: a fact rotated into the archive can be
+        # retracted by a record that only exists in the live log.
+        recs = changes.apply_retractions(
+            recs + changes.read_archived_changes(channel_dir)
+        )
     weighted = [(_change_recency_weight(r, now, hl), r) for r in recs]
     if not include_archived:
         weighted = [(w, r) for (w, r) in weighted if not decay.is_archivable(w, floor)]

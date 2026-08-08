@@ -45,6 +45,7 @@
         "scripts/test_build_loop_id.py",
         "scripts/test_agent_rally_where.py",
         "scripts/test_agent_rally_status.py",
+        "scripts/test_agent_rally_retract.py",
         "hooks/test_rally_point_hooks.sh"
       ],
       "stable_interfaces": [

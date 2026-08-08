@@ -11,6 +11,13 @@ line and need no lock. The log is **immutable**: this module exposes
 only ``append_change`` and ``read_changes_since`` — no rewrite, delete,
 or truncate entry point exists (by design, see ``test_no_mutation_api``).
 
+A wrong fact is therefore withdrawn by APPENDING a retraction record, not
+by editing the log. The read paths below resolve those retractions
+(``rally_point.retraction``): the retracted record is dropped from the
+returned batch and the retraction record survives, so every reader stops
+re-surfacing the withdrawn claim while the correction stays auditable.
+Pass ``resolve_retractions=False`` for the raw, unresolved log.
+
 Record schema (defined here once; D7 — unknown ``kind`` warns, never
 drops):
 
@@ -55,6 +62,10 @@ KNOWN_KINDS = (
     "escalation",
     "standby",
     "wake",
+    # Added 2026-08-07: the append-only remedy for a wrong fact. A "retract"
+    # record names the event_id it withdraws (and optionally the fact that
+    # supersedes it); readers resolve it via `rally_point.retraction`.
+    "retract",
 )
 
 _RECORD_KEYS = (
@@ -77,8 +88,10 @@ def _int_or_zero(value) -> int:
 
 try:  # package import
     from .fact_v1 import FACT_SCHEMA
+    from .retraction import apply as apply_retractions
 except ImportError:  # script import (sys.path-inserted, no parent package)
     from fact_v1 import FACT_SCHEMA  # type: ignore
+    from retraction import apply as apply_retractions  # type: ignore
 
 # Single source of truth: the schema string lives in fact_v1.FACT_SCHEMA (the
 # emitter). ``FACT_V1_SCHEMA`` is kept as the local read-back alias so the
@@ -286,17 +299,29 @@ def append_change(channel_dir: Path, record: dict) -> None:
         return
 
 
-def read_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
+def read_changes_since(
+    channel_dir: Path, offset: int, *, resolve_retractions: bool = True
+) -> tuple[list, int]:
     """Return ``(new_records, new_byte_offset)`` from byte ``offset``.
 
     Absent log → ``([], 0)``. Reader takes no lock and never writes the
     log. A trailing partial line (writer mid-append) is left for the
     next poll: the returned offset only advances past complete lines.
+
+    Retractions are resolved within the returned batch (see the module
+    docstring): a full read (``offset=0``) therefore never surfaces a
+    withdrawn fact, and a tail read surfaces the retraction record itself
+    — the correct signal, since a fact a peer already consumed cannot be
+    un-read. ``resolve_retractions=False`` returns the raw log, which is
+    what a retraction author needs in order to see its own target.
     """
     d = Path(channel_dir)
     native_log_dir = d / _NATIVE_LOG_DIR
     if native_log_dir.is_dir():
-        return _read_repo_local_changes_since(d, offset)
+        records, latest = _read_repo_local_changes_since(d, offset)
+        if resolve_retractions:
+            records = apply_retractions(records)
+        return records, latest
 
     p = _log_path(channel_dir)
     try:
@@ -320,10 +345,14 @@ def read_changes_since(channel_dir: Path, offset: int) -> tuple[list, int]:
                     continue  # skip a corrupt line, keep offset advancing
     except OSError:
         return [], offset
+    if resolve_retractions:
+        records = apply_retractions(records)
     return records, new_offset
 
 
-def read_archived_changes(channel_dir: Path) -> list:
+def read_archived_changes(
+    channel_dir: Path, *, resolve_retractions: bool = True
+) -> list:
     """Return normalized rows from ROTATED change logs (``changes.jsonl.<DATE>``).
 
     `lifecycle.rotate_changes_log` renames an over-threshold ``changes.jsonl``
@@ -332,6 +361,10 @@ def read_archived_changes(channel_dir: Path) -> list:
     ``--include-archived`` on the listing surfaces. Lossless: it only reads,
     never moves or deletes. Returns rows oldest-first across all rotated files.
     Corrupt lines / unreadable files are skipped (best-effort).
+
+    Retractions resolve within the archived batch. A caller that MERGES this
+    with the live log must re-resolve across the merged list (see
+    ``apply_retractions``) — a rotated fact can be retracted by a live record.
     """
     d = Path(channel_dir)
     records: list = []
@@ -352,6 +385,8 @@ def read_archived_changes(channel_dir: Path) -> list:
                         continue
         except OSError:
             continue
+    if resolve_retractions:
+        records = apply_retractions(records)
     return records
 
 

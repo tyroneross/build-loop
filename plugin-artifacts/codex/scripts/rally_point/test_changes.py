@@ -280,3 +280,109 @@ def test_read_archived_changes_reads_rotated_files(chan: Path):
 def test_read_archived_changes_absent_is_empty(chan: Path):
     assert ch.read_archived_changes(chan) == []
     assert ch.read_archived_changes(chan / "nope") == []
+
+
+# --- retraction resolution (append-only withdrawal of a wrong fact) --------
+
+def _rec(chan: Path, *, kind, payload, revision, event_id=None):
+    record = ch.make_record(kind=kind, tool="t", model="m", run_id="r",
+                            app_slug="a", payload=payload, revision=revision)
+    if event_id:
+        record["event_id"] = event_id
+    ch.append_change(chan, record)
+    return record
+
+
+def test_full_read_drops_a_retracted_fact_and_keeps_the_retraction(chan: Path):
+    import retraction as rt
+
+    _rec(chan, kind="decision", payload={"subject": "wrong"}, revision=1,
+         event_id="fact_bad")
+    _rec(chan, kind="decision", payload={"subject": "right"}, revision=2,
+         event_id="fact_good")
+    _rec(chan, kind="retract", revision=3, event_id="r1",
+         payload=rt.build_payload(target="fact_bad", reason="posted in error"))
+
+    records, _off = ch.read_changes_since(chan, 0)
+    ids = [r.get("event_id") for r in records]
+    assert "fact_bad" not in ids, "retracted fact still surfaced"
+    assert ids == ["fact_good", "r1"]
+
+
+def test_raw_read_still_returns_the_retracted_fact(chan: Path):
+    """The log itself is untouched — resolution is a read-time projection."""
+    import retraction as rt
+
+    _rec(chan, kind="decision", payload={}, revision=1, event_id="fact_bad")
+    _rec(chan, kind="retract", revision=2, event_id="r1",
+         payload=rt.build_payload(target="fact_bad", reason="oops"))
+
+    raw, _off = ch.read_changes_since(chan, 0, resolve_retractions=False)
+    assert [r.get("event_id") for r in raw] == ["fact_bad", "r1"]
+    # and the bytes on disk are unchanged
+    lines = (chan / "changes.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+
+
+def test_records_without_event_id_are_untouched(chan: Path):
+    """Legacy records carry no event_id and can never be accidentally dropped."""
+    import retraction as rt
+
+    _rec(chan, kind="decision", payload={"legacy": True}, revision=1)
+    _rec(chan, kind="retract", revision=2, event_id="r1",
+         payload=rt.build_payload(target="fact_bad", reason="unrelated"))
+
+    records, _off = ch.read_changes_since(chan, 0)
+    assert len(records) == 2
+
+
+def test_archived_read_resolves_retractions(chan: Path):
+    import retraction as rt
+
+    bad = ch.make_record(kind="decision", tool="t", model="m", run_id="r",
+                         app_slug="a", payload={}, revision=1)
+    bad["event_id"] = "fact_bad"
+    ret = ch.make_record(kind="retract", tool="t", model="m", run_id="r",
+                         app_slug="a", revision=2,
+                         payload=rt.build_payload(target="fact_bad", reason="x"))
+    ret["event_id"] = "r1"
+    (chan / "changes.jsonl.2026-06-01").write_text(
+        json.dumps(bad) + "\n" + json.dumps(ret) + "\n", encoding="utf-8"
+    )
+    archived = ch.read_archived_changes(chan)
+    assert [a.get("event_id") for a in archived] == ["r1"]
+    raw = ch.read_archived_changes(chan, resolve_retractions=False)
+    assert len(raw) == 2
+
+
+def test_retract_is_a_known_kind(chan: Path):
+    assert "retract" in ch.KNOWN_KINDS
+
+
+def test_native_store_round_trip_still_resolves(chan: Path):
+    """A retraction that survives only as `subject` still neutralizes its target.
+
+    The canonical rally binary keeps its own fixed fact schema: it remaps the
+    `retract` kind to `artifact` and drops unknown payload keys, so `subject` /
+    `summary` are the only carriers left. This is the native `.rally/log` shape.
+    """
+    log = chan / "log"
+    log.mkdir()
+    rows = [
+        {"seq": 1, "occurred_at": "2026-08-07T00:00:00Z", "event_type": "decision",
+         "payload": {"event_id": "fact_bad", "subject": "wrong number",
+                     "tool": "codex", "kind": "decision"}},
+        {"seq": 2, "occurred_at": "2026-08-07T00:01:00Z", "event_type": "artifact",
+         "payload": {"event_id": "fact_r", "subject": "retract: fact_bad",
+                     "summary": "bad read [retracts=fact_bad superseded_by=fact_ok]",
+                     "tool": "claude_code", "kind": "artifact"}},
+    ]
+    (log / "000.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+    )
+    records, _seq = ch.read_changes_since(chan, 0)
+    assert [r.get("event_id") for r in records] == ["fact_r"]
+
+    import retraction as rt
+    raw, _seq = ch.read_changes_since(chan, 0, resolve_retractions=False)
+    assert rt.index(raw)["fact_bad"]["superseded_by"] == "fact_ok"

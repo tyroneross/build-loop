@@ -59,6 +59,7 @@ from rally_point import (  # noqa: E402
     inbox,
     leadership,
     presence,
+    retraction,
     roster as _roster,
     task_heartbeat,
 )
@@ -355,6 +356,99 @@ def cmd_escalate(args: argparse.Namespace) -> int:
         "action": "escalation-posted",
         "app_slug": slug,
         "channel_revision": new_rev,
+    })
+
+
+def _read_raw_log(channel_dir: Path) -> list[dict[str, Any]]:
+    """Return the UNRESOLVED log (live + archived) — what a retraction author needs.
+
+    The normal read paths drop already-retracted records, so a retraction author
+    reading through them could not see its own target. This is the raw view.
+    """
+    records, _offset = changes.read_changes_since(
+        channel_dir, 0, resolve_retractions=False
+    )
+    return records + changes.read_archived_changes(
+        channel_dir, resolve_retractions=False
+    )
+
+
+def cmd_retract(args: argparse.Namespace) -> int:
+    """Withdraw a previously posted fact by APPENDING a retraction record.
+
+    The log is immutable — nothing is edited or deleted. The retraction names
+    the target's ``event_id`` (and optionally the fact that supersedes it), and
+    every build-loop read path stops surfacing the withdrawn claim from then on.
+
+    Exit 1 when the target cannot be found or cannot be retracted, so a caller
+    can tell a typo'd id from a landed retraction. ``--force`` posts anyway,
+    for a fact that lives only in a store build-loop cannot read back.
+    """
+    slug, channel_dir = _resolve_channel(args.workdir)
+    target = args.fact.strip()
+    raw = _read_raw_log(channel_dir)
+    existing = retraction.index(raw)
+    match = next((r for r in raw if r.get("event_id") == target), None)
+
+    def _reject(action: str, detail: str) -> int:
+        _emit({
+            "action": action,
+            "app_slug": slug,
+            "fact": target,
+            "accepted": False,
+            "detail": detail,
+        })
+        return 1
+
+    if target in existing:
+        return _reject(
+            "retract-noop",
+            f"already retracted by {existing[target]['retracted_by']}"
+            f" ({existing[target]['reason'] or 'no reason recorded'})",
+        )
+    if match is not None and retraction.is_retraction(match):
+        return _reject(
+            "retract-refused",
+            "target is itself a retraction; retracting it would erase the "
+            "correction trail. Post a new corrective fact instead.",
+        )
+    if match is None and not args.force:
+        return _reject(
+            "retract-target-not-found",
+            "no record with this event_id in the readable log. Re-check the id "
+            "from `rally room`, or pass --force if the fact lives in a store "
+            "build-loop cannot read back.",
+        )
+
+    payload = retraction.build_payload(
+        target=target,
+        reason=args.reason,
+        superseded_by=args.superseded_by,
+        session_id=args.session_id,
+    )
+    new_rev = post(
+        channel_dir=channel_dir,
+        kind=retraction.RETRACT_KIND,
+        tool=args.tool,
+        model=args.model,
+        run_id=args.run_id,
+        app_slug=slug,
+        payload=payload,
+        workdir=Path(args.workdir).expanduser().resolve(),
+    )
+    return _emit({
+        "action": "retracted" if new_rev is not None else "retract-rejected",
+        "app_slug": slug,
+        "fact": target,
+        "target_found": match is not None,
+        "superseded_by": args.superseded_by,
+        "superseded_by_found": (
+            None if not args.superseded_by
+            else any(r.get("event_id") == args.superseded_by for r in raw)
+        ),
+        "reason": payload["reason"],
+        "channel_revision": new_rev,
+        "accepted": new_rev is not None,
     })
 
 
@@ -906,6 +1000,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp_esc.add_argument("--reason", required=True)
     sp_esc.add_argument("--needs", default="lead-or-user-attention")
     sp_esc.set_defaults(func=cmd_escalate)
+
+    sp_retract = sub.add_parser(
+        "retract",
+        help="Withdraw a previously posted fact by appending a retraction record.",
+    )
+    _common(sp_retract)
+    sp_retract.add_argument(
+        "--fact", required=True,
+        help="event_id of the fact to withdraw (the `[fact_...]` id in `rally room`).")
+    sp_retract.add_argument(
+        "--reason", required=True,
+        help="Why the fact is being withdrawn — surfaced to peers in its place.")
+    sp_retract.add_argument(
+        "--superseded-by", default=None, dest="superseded_by",
+        help="Optional event_id of the corrected fact that replaces this one.")
+    sp_retract.add_argument(
+        "--force", action="store_true",
+        help="Post even when the target is not in the readable log.")
+    sp_retract.set_defaults(func=cmd_retract)
 
     sp_status_post = sub.add_parser(
         "status-post",
