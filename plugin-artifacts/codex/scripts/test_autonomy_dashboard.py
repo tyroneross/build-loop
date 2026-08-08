@@ -138,7 +138,11 @@ def test_shutdown_rejects_wrong_instance_token(repo: Path) -> None:
 
 def test_html_has_semantic_controls_and_autosave_contract() -> None:
     html = (Path(__file__).resolve().parents[1] / "docs/autonomy-dashboard.html").read_text(encoding="utf-8")
-    for token in ("<main", "node('fieldset')", "node('legend'", "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue this decision"):
+    for token in (
+        "<main", "node('details'", "node('summary'", "node('fieldset')", "node('legend'",
+        "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue this decision",
+        '"Avenir Next"', "--canvas: #f6fbff", "--accent: #00836f", "min-height: 44px",
+    ):
         assert token in html
     assert "innerHTML" not in html
     assert "linear-gradient" not in html

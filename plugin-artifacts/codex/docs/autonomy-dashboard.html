@@ -7,136 +7,158 @@
   <title>Build Loop Autonomy Decisions</title>
   <style>
     :root {
-      --ink: #172033;
-      --muted: #5f6878;
-      --paper: #f4f2ec;
-      --surface: #fffefa;
-      --line: #d9d5cb;
-      --accent: #1c5f59;
-      --accent-soft: #e1efeb;
-      --signal: #b5552a;
-      --signal-soft: #faeadd;
+      --canvas: #f6fbff;
+      --surface: #ffffff;
+      --ink: #313438;
+      --muted: #6f7277;
+      --line: #caced3;
+      --accent: #00836f;
+      --accent-strong: #09362d;
+      --accent-soft: #c2f0e4;
       --success: #286344;
       --error: #a23535;
-      --shadow: 0 14px 40px rgb(23 32 51 / 9%);
-      --radius: 18px;
+      --shadow: 0 18px 50px rgb(49 52 56 / 8%);
+      --radius: 20px;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
-      background: var(--paper);
+      background: var(--canvas);
       color: var(--ink);
-      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.5;
+      font-family: "Avenir Next", Avenir, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 1rem;
+      line-height: 1.6;
+      text-rendering: optimizeLegibility;
     }
     button, textarea, input { font: inherit; }
-    button, label { -webkit-tap-highlight-color: transparent; }
-    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 80px; }
+    button, label, summary { -webkit-tap-highlight-color: transparent; }
+    .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 80px; }
     .masthead {
       display: grid;
-      grid-template-columns: minmax(0, 1.7fr) minmax(260px, .8fr);
-      gap: 26px;
-      align-items: stretch;
-      margin-bottom: 26px;
-    }
-    .hero, .summary {
+      grid-template-columns: minmax(0, 1.55fr) minmax(270px, .65fr);
+      overflow: hidden;
+      margin-bottom: 16px;
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 24px;
+      border-radius: 28px;
       box-shadow: var(--shadow);
     }
-    .hero { padding: clamp(28px, 5vw, 58px); }
+    .hero { padding: clamp(30px, 5vw, 58px); }
     .eyebrow, .priority {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
       color: var(--accent);
       font-size: .73rem;
       font-weight: 800;
-      letter-spacing: .12em;
+      letter-spacing: .1em;
       text-transform: uppercase;
     }
-    .eyebrow::before { content: ""; width: 22px; height: 2px; background: currentColor; }
     h1 {
-      max-width: 820px;
-      margin: 18px 0 17px;
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(2.35rem, 5vw, 4.6rem);
-      font-weight: 500;
+      max-width: 760px;
+      margin: 15px 0 16px;
+      font-size: clamp(2.25rem, 4.8vw, 4.35rem);
+      font-weight: 750;
       letter-spacing: -.045em;
-      line-height: 1.01;
+      line-height: 1.04;
     }
-    .hero p { max-width: 730px; margin: 0; color: var(--muted); font-size: 1.05rem; }
-    .summary { padding: 26px; display: flex; flex-direction: column; justify-content: space-between; }
-    .summary h2 { margin: 0 0 6px; font-size: 1rem; }
-    .summary p { margin: 0; color: var(--muted); font-size: .9rem; }
-    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 24px; }
-    .metric { padding: 14px 8px; border-radius: 13px; background: #f0eee7; text-align: center; }
-    .metric strong { display: block; font-size: 1.45rem; }
+    .hero p { max-width: 690px; margin: 0; color: var(--muted); font-size: 1.08rem; }
+    .readiness {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 32px 28px;
+      border-left: 1px solid var(--line);
+      background: color-mix(in srgb, var(--canvas) 62%, white);
+    }
+    .readiness h2 { margin: 0 0 6px; font-size: 1rem; }
+    .readiness p { margin: 0; color: var(--muted); font-size: .88rem; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 26px; }
+    .metric { padding: 8px 6px; text-align: center; }
+    .metric + .metric { border-left: 1px solid var(--line); }
+    .metric strong { display: block; color: var(--accent-strong); font-size: 1.55rem; line-height: 1.2; }
     .metric span { color: var(--muted); font-size: .72rem; }
     .principle {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      margin: 12px 0 28px;
-      padding: 15px 18px;
-      border-left: 4px solid var(--signal);
-      background: var(--signal-soft);
-      color: #713616;
-      border-radius: 0 12px 12px 0;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      margin: 0 0 34px;
+      padding: 14px 18px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, white);
+      background: color-mix(in srgb, var(--accent-soft) 62%, white);
+      color: var(--accent-strong);
+      border-radius: 14px;
+      font-size: .91rem;
     }
     .principle strong { flex: 0 0 auto; }
     .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 0 0 16px; }
-    .toolbar h2 { margin: 0; font-family: Georgia, serif; font-size: 1.8rem; font-weight: 500; }
+    .toolbar h2 { margin: 0; font-size: 1.75rem; font-weight: 750; letter-spacing: -.025em; }
     .toolbar p { margin: 4px 0 0; color: var(--muted); }
     .legend { display: flex; gap: 8px; flex-wrap: wrap; }
-    .legend span { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: var(--surface); font-size: .75rem; }
+    .legend span { color: var(--muted); font-size: .75rem; }
+    .legend span + span::before { content: "·"; margin-right: 8px; color: var(--line); }
     #loading { padding: 42px; text-align: center; color: var(--muted); }
-    .cards { display: grid; gap: 18px; }
+    .cards { display: grid; gap: 12px; }
     .gap-card {
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      box-shadow: 0 8px 22px rgb(23 32 51 / 5%);
+      box-shadow: 0 8px 24px rgb(49 52 56 / 4%);
       overflow: hidden;
     }
-    .card-head { display: grid; grid-template-columns: auto 1fr auto; gap: 15px; align-items: start; padding: 24px 26px 20px; }
-    .priority { width: 40px; height: 40px; justify-content: center; border-radius: 11px; background: var(--accent-soft); letter-spacing: .04em; }
+    .gap-card[open] { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); box-shadow: var(--shadow); }
+    .card-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      min-height: 88px;
+      padding: 19px 22px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .card-head::-webkit-details-marker { display: none; }
+    .card-head:hover { background: color-mix(in srgb, var(--canvas) 48%, white); }
+    .card-head:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
+    .priority { width: 44px; height: 44px; justify-content: center; border-radius: 12px; background: var(--accent-soft); letter-spacing: .04em; }
     .card-head h3 { margin: 0; font-size: 1.15rem; line-height: 1.35; }
-    .big-idea { margin: 7px 0 0; color: var(--accent); font-family: Georgia, serif; font-size: 1.22rem; line-height: 1.35; }
+    .big-idea { margin: 4px 0 0; color: var(--muted); font-size: .92rem; line-height: 1.45; }
+    .card-meta { display: grid; min-width: 118px; gap: 4px; justify-items: end; }
     .status { min-width: 92px; color: var(--muted); font-size: .76rem; text-align: right; }
     .status[data-kind="saved"], .status[data-kind="queued"] { color: var(--success); }
     .status[data-kind="error"] { color: var(--error); }
-    .explain { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid var(--line); background: #faf9f5; }
-    .explain section { padding: 20px 24px; }
+    .disclosure-label { color: var(--accent); font-size: .75rem; font-weight: 750; }
+    .disclosure-label::after { content: "↓"; display: inline-block; margin-left: 7px; transition: transform 160ms ease; }
+    .gap-card[open] .disclosure-label::after { transform: rotate(180deg); }
+    .explain { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 55%, white); }
+    .explain section { padding: 19px 22px; }
     .explain section + section { border-left: 1px solid var(--line); }
     .explain h4 { margin: 0 0 9px; color: var(--muted); font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; }
     .explain ul { margin: 0; padding-left: 18px; font-size: .88rem; }
     .explain li + li { margin-top: 6px; }
     .why { margin: 0; font-size: .9rem; }
-    .decision { padding: 24px 26px 26px; }
+    .decision { padding: 22px; }
     fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
     legend { margin-bottom: 13px; font-weight: 750; }
-    .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; }
+    .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .choice {
       position: relative;
       display: flex;
       flex-direction: column;
-      min-height: 190px;
-      padding: 16px;
+      min-height: 168px;
+      padding: 15px;
       border: 1px solid var(--line);
       border-radius: 14px;
-      background: white;
+      background: var(--surface);
       cursor: pointer;
       transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
     }
-    .choice:hover { border-color: #9d988d; transform: translateY(-1px); }
-    .choice:has(input:checked) { border: 2px solid var(--accent); padding: 15px; box-shadow: 0 0 0 4px var(--accent-soft); }
+    .choice:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .choice:has(input:checked) { border: 2px solid var(--accent); padding: 14px; box-shadow: 0 0 0 4px var(--accent-soft); }
     .choice input { position: absolute; opacity: 0; pointer-events: none; }
-    .choice input:focus-visible + .choice-title { outline: 3px solid #e3a076; outline-offset: 4px; border-radius: 3px; }
+    .choice input:focus-visible + .choice-title { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
     .choice-title { display: flex; align-items: center; gap: 8px; font-weight: 800; }
-    .choice-title::before { content: ""; width: 13px; height: 13px; border: 2px solid #918d83; border-radius: 50%; }
+    .choice-title::before { content: ""; width: 13px; height: 13px; border: 2px solid var(--muted); border-radius: 50%; }
     input:checked + .choice-title::before { border: 4px solid var(--accent); }
     .recommended { margin-left: auto; padding: 3px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: .65rem; letter-spacing: .04em; text-transform: uppercase; }
     .impact { display: grid; gap: 5px; margin: 13px 0 0; color: var(--muted); font-size: .76rem; }
@@ -144,28 +166,32 @@
     .impact b { color: var(--ink); font-weight: 700; }
     .note-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; margin-top: 16px; }
     .note-label { display: grid; gap: 7px; color: var(--muted); font-size: .79rem; }
-    textarea { width: 100%; min-height: 82px; resize: vertical; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: white; color: var(--ink); }
+    textarea { width: 100%; min-height: 82px; resize: vertical; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--ink); }
     textarea:focus { outline: 3px solid var(--accent-soft); border-color: var(--accent); }
-    button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 11px; background: var(--accent); color: white; font-weight: 750; cursor: pointer; }
-    button:hover { background: #134c47; }
-    button:focus-visible { outline: 3px solid #e3a076; outline-offset: 3px; }
-    button:disabled { cursor: not-allowed; opacity: .45; }
+    button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 11px; background: var(--accent); color: #ffffff; font-weight: 750; cursor: pointer; }
+    button:hover { background: var(--accent-strong); }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    button:disabled { cursor: not-allowed; background: color-mix(in srgb, var(--line) 70%, white); color: var(--ink); }
     .footer-note { margin-top: 22px; color: var(--muted); text-align: center; font-size: .8rem; }
     @media (max-width: 900px) {
       .masthead { grid-template-columns: 1fr; }
+      .readiness { border-top: 1px solid var(--line); border-left: 0; }
       .choices { grid-template-columns: 1fr; }
       .choice { min-height: 0; }
     }
     @media (max-width: 700px) {
       .shell { width: min(100% - 20px, 1180px); padding-top: 10px; }
-      .hero, .summary { border-radius: 17px; }
+      .masthead { border-radius: 18px; }
       .hero { padding: 26px 22px; }
+      .readiness { padding: 22px; }
       .toolbar { align-items: flex-start; flex-direction: column; }
-      .card-head { grid-template-columns: auto 1fr; padding: 20px; }
-      .status { grid-column: 2; text-align: left; }
+      .legend { display: none; }
+      .card-head { grid-template-columns: auto minmax(0, 1fr); padding: 18px; }
+      .card-meta { grid-column: 2; justify-items: start; }
+      .status { text-align: left; }
       .explain { grid-template-columns: 1fr; }
       .explain section + section { border-left: 0; border-top: 1px solid var(--line); }
-      .decision { padding: 20px; }
+      .decision { padding: 18px; }
       .note-row { grid-template-columns: 1fr; }
       button { width: 100%; }
     }
@@ -183,7 +209,7 @@
         <h1>Finish the related work. Ask only when the outcome changes.</h1>
         <p id="big-idea">Build Loop should finish related work by default and interrupt you only when your decision changes the outcome.</p>
       </header>
-      <aside class="summary" aria-labelledby="summary-title">
+      <aside class="readiness" aria-labelledby="summary-title">
         <div>
           <h2 id="summary-title">Decision state</h2>
           <p>Responses save as you work. Queuing makes the selected direction agent-readable.</p>
@@ -308,14 +334,17 @@
 
     function renderGap(gap) {
       const current = state.responses[gap.id];
-      const article = node('article', { className: 'gap-card', id: gap.id });
-      const head = node('div', { className: 'card-head' });
+      const article = node('details', { className: 'gap-card', id: gap.id });
+      if (gap === state.gaps[0]) article.open = true;
+      const head = node('summary', { className: 'card-head' });
       const titleWrap = node('div');
       titleWrap.append(node('h3', {}, gap.gap), node('p', { className: 'big-idea' }, gap.big_idea));
       const status = node('div', { className: 'status', role: 'status', 'aria-live': 'polite' }, current?.queued_path ? `Queued · ${current.queued_path}` : current ? 'Saved' : 'Choose an option');
       if (current?.queued_path) status.dataset.kind = 'queued';
       else if (current) status.dataset.kind = 'saved';
-      head.append(node('div', { className: 'priority' }, gap.priority), titleWrap, status);
+      const cardMeta = node('div', { className: 'card-meta' });
+      cardMeta.append(status, node('span', { className: 'disclosure-label' }, 'Review decision'));
+      head.append(node('div', { className: 'priority' }, gap.priority), titleWrap, cardMeta);
 
       const explain = node('div', { className: 'explain' });
       explain.append(listSection('Pain now', gap.pain), listSection('Resolution payoff', gap.payoff));
