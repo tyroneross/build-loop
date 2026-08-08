@@ -182,7 +182,16 @@ def _freshness_date(fm: dict[str, Any]) -> tuple[str | None, str | None]:
 # ----------------------------------------------------------------------------
 
 _BACKTICK_RE = re.compile(r"`([^`\s]+)`")
-_BARE_PATH_RE = re.compile(r"\b((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6})\b")
+# A negative lookbehind (NOT `\b`) opens this so a leading dot-directory
+# (`.build-loop/...`, `.github/...`, `.claude-plugin/...`) is admitted into
+# the match rather than having its `.` stripped off as a "word boundary" —
+# `\b` sits BETWEEN a non-word char (nothing, or another dot) and the first
+# letter, so `\b((?:...)+...)"` on ".build-loop/config.json" was matching
+# from "build-loop" onward, discarding the leading dot and inventing a
+# garbage second candidate. `.?` in the group makes the leading dot part of
+# the captured token; the lookbehind still refuses to start mid-token (e.g.
+# never re-anchors after a `.` or `/` that's itself inside a longer path).
+_BARE_PATH_RE = re.compile(r"(?<![\w./~-])(\.?(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6})\b")
 _PATH_EXT_HINT_RE = re.compile(r"\.[A-Za-z0-9]{1,6}$")
 
 # A cited SHA must appear near a commit-ish word — bare 7-40 char hex runs are
@@ -201,6 +210,13 @@ def _looks_like_path_token(tok: str) -> bool:
     if "://" in tok or tok.startswith("http"):
         return False
     if tok.startswith("-"):
+        return False
+    if "::" in tok:
+        # A pytest node ID (`scripts/test_x.py::TestA::test_b`) is a test
+        # SELECTOR, not a filesystem path — the part after `::` is a class/
+        # function name that will never exist on disk. Backtick extraction
+        # (`_BACKTICK_RE`) has no internal boundary check, so a whole node ID
+        # citation would otherwise be captured verbatim and convicted broken.
         return False
     if "/" not in tok:
         return False
@@ -284,6 +300,17 @@ def build_basename_index(repo: Path) -> dict[str, list[str]]:
     return idx
 
 
+def _anchor_target_exists(repo: Path, rel: str) -> bool:
+    """True if the cited path exists on disk. A leading ``~/`` is resolved
+    against ``$HOME`` (``os.path.expanduser`` honors the env var, so tests
+    can override it) rather than treated as a literal repo-relative
+    subdirectory named ``~`` — ``~/.codex/hooks.json`` is a real global-config
+    path, not a broken repo path, and must not be convicted as one."""
+    if rel == "~" or rel.startswith("~/"):
+        return Path(os.path.expanduser(rel)).exists()
+    return (repo / rel).exists()
+
+
 def _relocation_candidates(
     repo: Path, rel_path: str, basename_index: dict[str, list[str]] | None
 ) -> list[str]:
@@ -337,6 +364,7 @@ def classify_item(
             "excluded": True,
             "freshness_source": None,
             "freshness_date": None,
+            "freshness_error": None,
             "age_days": None,
             "window_days": window_days,
             "anchors": {
@@ -350,7 +378,14 @@ def classify_item(
 
     freshness_source, freshness_value = _freshness_date(fm)
     age_days: int | None = None
-    stale = False
+    freshness_error: str | None = None
+    # Fail-safe default: an item with NO freshness signal at all (neither
+    # `validated` nor `created`) is the oldest, least-tracked card in the
+    # queue — treat it as stale, not fresh, until a real date is on record.
+    # Matches the fail-safe posture the sibling gates take
+    # (hostile_input_gate.py, merge_risk.py "never guesses") instead of
+    # letting an undated item fall through to `fresh` by default.
+    stale = True
     if freshness_value:
         try:
             age_days = (date.fromisoformat(today) - date.fromisoformat(freshness_value)).days
@@ -359,13 +394,24 @@ def classify_item(
             # PAST the window is stale.
             stale = age_days > window_days
         except ValueError:
-            pass  # malformed date — degrade gracefully, don't crash the sweep
+            # Malformed date (`2026/08/01`, `yesterday`, ...). Previously
+            # swallowed silently (`except ValueError: pass`) and fell through
+            # to the `stale = False` default, i.e. an unparseable date read
+            # as FRESH — a fail-open bug (C-AGENT/no_silent_failure). Now
+            # fails CLOSED (stale) and surfaces the reason via
+            # `freshness_error` instead of disappearing.
+            freshness_error = (
+                f"freshness date {freshness_value!r} (source: {freshness_source}) "
+                "is not a valid ISO-8601 date (YYYY-MM-DD) — treated as stale, "
+                "not silently defaulted to fresh"
+            )
+            stale = True
 
     paths = extract_paths(body)
     broken_paths: list[dict[str, Any]] = []
     relocated_paths: list[dict[str, Any]] = []
     for rel in paths:
-        if (repo / rel).exists():
+        if _anchor_target_exists(repo, rel):
             continue
         candidates = _relocation_candidates(repo, rel, basename_index)
         if candidates:
@@ -391,12 +437,20 @@ def classify_item(
     else:
         verdict = "fresh"
 
+    reason_code = verdict
+    if verdict == "stale_needs_revalidation" and (freshness_value is None or freshness_error):
+        # Distinguish "genuinely past the window" from "we could never
+        # establish a freshness date at all" — both fail closed to the same
+        # verdict, but the reason an operator sees should say which.
+        reason_code = "no_parseable_freshness_date"
+
     return {
         "verdict": verdict,
-        "reason_code": verdict,
+        "reason_code": reason_code,
         "excluded": False,
         "freshness_source": freshness_source,
         "freshness_date": freshness_value,
+        "freshness_error": freshness_error,
         "age_days": age_days,
         "window_days": window_days,
         "anchors": {

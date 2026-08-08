@@ -12,12 +12,14 @@ tempfile.TemporaryDirectory instead of pytest's tmp_path fixture.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
@@ -299,6 +301,158 @@ class TestSHAReachability(BaseTestCase):
 
         self.assertEqual(result["verdict"], "premise_broken")
         self.assertIn(fake_sha, result["anchors"]["broken_shas"])
+
+
+class TestDotDirectoryPathsAreNotFalseConvictions(BaseTestCase):
+    """F6: `_BARE_PATH_RE` used to open with `\\b`, which sits BETWEEN the
+    leading dot and the first letter of a dot-directory citation — every
+    `.build-loop/...`, `.github/...`, `.claude-plugin/...` reference was
+    extracted with its leading dot stripped, producing a path that can never
+    exist and convicting a real, existing file as `premise_broken`."""
+
+    def test_dot_directory_paths_are_not_false_convictions(self) -> None:
+
+        self.assertEqual(
+            pr.extract_paths("see `.build-loop/config.json`"),
+            [".build-loop/config.json"],
+        )
+        self.assertEqual(
+            pr.extract_paths("edit .github/workflows/x.yml"),
+            [".github/workflows/x.yml"],
+        )
+        self.assertEqual(
+            pr.extract_paths("see `.claude-plugin/plugin.json` for the manifest"),
+            [".claude-plugin/plugin.json"],
+        )
+
+        # End-to-end: a real dot-directory file cited in an item body must
+        # come back `fresh`, not `premise_broken`.
+        item = self.item_path("issues", "cites-dot-dir.md")
+        cited = self.repo / ".build-loop" / "config.json"
+        cited.parent.mkdir(parents=True, exist_ok=True)
+        cited.write_text("{}\n", encoding="utf-8")
+        _write_item(
+            item,
+            created=_days_ago(0),
+            body="## Problem\nSee `.build-loop/config.json` for the setting.\n",
+        )
+
+        result = pr.gate(item, repo=self.repo, window_days=7)
+
+        self.assertEqual(result["verdict"], "fresh")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["anchors"]["broken_paths"], [])
+
+
+class TestPytestNodeIdIsNotExtractedAsAPath(BaseTestCase):
+    """F6: backtick extraction has no internal `::` boundary check, so a
+    pytest node ID citation (`scripts/test_x.py::TestA::test_b`) was captured
+    verbatim and convicted broken — the class/function suffix will never
+    exist on disk."""
+
+    def test_pytest_node_id_is_not_extracted_as_a_path(self) -> None:
+
+        node_id = "scripts/test_x.py::TestA::test_b"
+        self.assertNotIn(node_id, pr.extract_paths(f"run `{node_id}`"))
+
+        item = self.item_path("issues", "cites-node-id.md")
+        real_test_file = self.repo / "scripts" / "test_x.py"
+        real_test_file.parent.mkdir(parents=True, exist_ok=True)
+        real_test_file.write_text("# test\n", encoding="utf-8")
+        _write_item(
+            item,
+            created=_days_ago(0),
+            body=f"## Problem\nRegression test: `{node_id}`.\n",
+        )
+
+        result = pr.gate(item, repo=self.repo, window_days=7)
+
+        self.assertEqual(result["verdict"], "fresh")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["anchors"]["broken_paths"], [])
+
+
+class TestHomeRelativePathResolves(BaseTestCase):
+    """F6: `~/.codex/hooks.json` is a real global-config path, not a
+    repo-relative miss — a leading `~/` must resolve against `$HOME`."""
+
+    def test_home_relative_path_resolves(self) -> None:
+
+        with tempfile.TemporaryDirectory() as fake_home_str:
+            fake_home = Path(fake_home_str)
+            codex_dir = fake_home / ".codex"
+            codex_dir.mkdir(parents=True, exist_ok=True)
+            (codex_dir / "hooks.json").write_text("{}\n", encoding="utf-8")
+
+            with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+                item = self.item_path("issues", "cites-home-path.md")
+                _write_item(
+                    item,
+                    created=_days_ago(0),
+                    body="## Problem\nInstall into `~/.codex/hooks.json`.\n",
+                )
+
+                result = pr.gate(item, repo=self.repo, window_days=7)
+
+        self.assertEqual(result["verdict"], "fresh")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["anchors"]["broken_paths"], [])
+
+    def test_home_relative_path_missing_is_still_broken(self) -> None:
+        """A `~/`-anchored citation that genuinely does not exist under
+        $HOME must still be caught — resolving `~/` is not a blanket skip."""
+
+        with tempfile.TemporaryDirectory() as fake_home_str:
+            fake_home = Path(fake_home_str)  # deliberately empty — no .codex/
+
+            with mock.patch.dict(os.environ, {"HOME": str(fake_home)}):
+                item = self.item_path("issues", "cites-missing-home-path.md")
+                _write_item(
+                    item,
+                    created=_days_ago(0),
+                    body="## Problem\nInstall into `~/.codex/hooks.json`.\n",
+                )
+
+                result = pr.gate(item, repo=self.repo, window_days=7)
+
+        self.assertEqual(result["verdict"], "premise_broken")
+        broken = [b["path"] for b in result["anchors"]["broken_paths"]]
+        self.assertIn("~/.codex/hooks.json", broken)
+
+
+class TestNoParseableFreshnessDateFailsClosed(BaseTestCase):
+    """F9: two fail-open paths used to return `fresh` for an item whose
+    freshness was never established — an undated item, and one with a
+    malformed date. Both must fail CLOSED (stale), not open (fresh)."""
+
+    def test_item_with_no_date_is_not_fresh(self) -> None:
+
+        item = self.item_path("issues", "no-date-item.md")
+        item.parent.mkdir(parents=True, exist_ok=True)
+        # Deliberately no `created:`/`validated:` field at all.
+        item.write_text(
+            "---\ntitle: No date\nstatus: open\n---\n\n## Problem\nNo dates here.\n",
+            encoding="utf-8",
+        )
+
+        result = pr.gate(item, repo=self.repo, window_days=7)
+
+        self.assertEqual(result["verdict"], "stale_needs_revalidation")
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIsNone(result["freshness_date"])
+
+    def test_malformed_date_is_not_fresh_and_reports_why(self) -> None:
+
+        item = self.item_path("issues", "malformed-date-item.md")
+        _write_item(item, created="2026/08/01")  # not ISO-8601
+
+        result = pr.gate(item, repo=self.repo, window_days=7)
+
+        self.assertEqual(result["verdict"], "stale_needs_revalidation")
+        self.assertEqual(result["exit_code"], 1)
+        self.assertEqual(result["reason_code"], "no_parseable_freshness_date")
+        self.assertIsNotNone(result.get("freshness_error"))
+        self.assertIn("2026/08/01", result["freshness_error"])
 
 
 class TestCLI(BaseTestCase):

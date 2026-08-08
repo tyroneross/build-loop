@@ -27,12 +27,27 @@ Claim object shape:
    "command": "<literal shell command>",
    "expected": {"returncode": N} | {"stdout_contains": "..."} | {"stderr_contains": "..."}}
 
-Safety: a command is classified BEFORE execution. Anything mutating or
-irreversible (rm, git push, git reset --hard, git checkout --, git clean,
-git commit, mv, dd, redirection into a file, curl/wget -o, sudo, npm
-publish, deploy, ...) is refused and returned as "cited" with a
-"not_safely_re-executable: <why>" reason. The probe must never become the
-thing that writes 49 rows into a live store.
+Safety: a command is classified BEFORE execution, by an ALLOWLIST. The input
+is LLM-authored prose, so nothing about it can be enumerated in advance — a
+deny-list is structurally unable to be correct here. Three gates, in order:
+
+  1. Any shell metacharacter or redirection (> >> < | ; & && || ` $( newline)
+     refuses the command outright. This script runs with shell=True, so a
+     metacharacter is arbitrary shell.
+  2. A `git` head delegates to scripts/audit_git.py `classify()` — one table
+     governs both scripts, so they cannot drift. If that import fails, the
+     git command is refused (never a permissive fallback).
+  3. Otherwise the command head must appear in _ALLOWED_HEADS, a fixed set of
+     verification-shaped commands (pytest, python3, cargo test, npm test, ...).
+     Multi-word heads are matched as a unit: `npm test` is allowed, `npm` is
+     not, so `npm install` is refused.
+
+Anything refused is returned as "cited" with a "not_safely_re-executable:
+<why>" reason and is NEVER executed. The probe must never become the thing
+that writes 49 rows into a live store.
+
+--allow is the explicit operator escape hatch: exact-string match against the
+whole command, empty by default.
 
 CLI:
   python3 verification_claim_probe.py --claims-file claims.json
@@ -40,14 +55,18 @@ CLI:
   cat report.md | python3 verification_claim_probe.py
 
 Exit codes:
-  0 — no contradicted claims (verdict: clean)
+  0 — at least one claim executed and no claim contradicted (verdict: clean)
   1 — at least one claim contradicted (verdict: contradicted_claims_present)
+  2 — nothing was actually executed (verdict: nothing_executed): no claims
+      extracted, or every claim refused / lacked a checkable expectation. A
+      run we could not observe is not a pass, so it must not exit 0.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -55,43 +74,152 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Safety classification — minimal deny-list.
+# Safety classification — ALLOWLIST.
+#
+# History: this gate used to be a 13-pattern DENY-list. Its input is command
+# text EXTRACTED FROM AN LLM-AUTHORED REPORT, and you cannot enumerate what a
+# model might emit — so the deny-list let through, among others,
+# `pytest -q >> ~/.zshrc` (the redirection regex deliberately exempted the
+# append form), `git checkout main`, `git reset`, `git stash`,
+# `truncate -s 0 f`, `chmod 777 /`, `psql -c "drop table t"`,
+# `docker compose down -v`, and `npm install`. Deny-lists are refuted by this
+# threat model; the gate is now default-refuse.
 #
 # scripts/classify_action.py answers a different question (SAFE/RISKY/
 # PRODUCTION/DECISION for an orchestrator ACTION, gated on production
-# deployment targeting). "Is this safe to blindly re-execute as a
-# verification probe" is a narrower, stricter question — we deny on
-# pattern match alone, regardless of environment target — so we replicate a
-# minimal, conservative deny-list here rather than force-fit that API.
+# deployment targeting), which is why it is not reused here. The git arm IS
+# shared: it delegates to scripts/audit_git.py, so the two scripts cannot
+# disagree about whether `git checkout` is safe.
 # ---------------------------------------------------------------------------
 
-_DENY_CHECKS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\brm\b"), "rm (destructive delete)"),
-    (re.compile(r"\bgit\s+push\b"), "git push (network mutation)"),
-    (re.compile(r"\bgit\s+reset\s+--hard\b"), "git reset --hard (discards work)"),
-    (re.compile(r"\bgit\s+checkout\s+--\b"), "git checkout -- (discards work)"),
-    (re.compile(r"\bgit\s+clean\b"), "git clean (deletes untracked files)"),
-    (re.compile(r"\bgit\s+commit\b"), "git commit (mutates history)"),
-    (re.compile(r"\bmv\b"), "mv (moves/overwrites files)"),
-    (re.compile(r"\bdd\b"), "dd (raw disk/file write)"),
-    (re.compile(r"(?<![>\d])>(?!>)"), "> redirection into a file"),
-    (re.compile(r"\bcurl\b[^|;&]*(-o\b|--output\b)"), "curl -o (writes downloaded file)"),
-    (re.compile(r"\bwget\b[^|;&]*(-o\b|-O\b|--output-document\b)"), "wget -O (writes downloaded file)"),
-    (re.compile(r"\bsudo\b"), "sudo (privilege escalation)"),
-    (re.compile(r"\bnpm\s+publish\b"), "npm publish (irreversible release)"),
-    (re.compile(r"\bdeploy\b", re.IGNORECASE), "deploy (production-shaped action)"),
+# Ordered longest-first so the refusal reason names the right operator
+# (`>>` before `>`, `&&` before `&`, `||` before `|`).
+_SHELL_METACHARACTERS: tuple[tuple[str, str], ...] = (
+    (">>", "append redirection (>>) — writes into a file"),
+    (">", "output redirection (>) — writes into a file"),
+    ("<", "input redirection (<)"),
+    ("&&", "command chaining (&&)"),
+    ("||", "command chaining (||)"),
+    ("|", "pipe (|)"),
+    (";", "command separator (;)"),
+    ("&", "background/chaining (&)"),
+    ("`", "command substitution (backtick)"),
+    ("$(", "command substitution ($(...))"),
+    ("\n", "newline (multiple commands)"),
+    ("\r", "carriage return (multiple commands)"),
 )
+
+# Verification-shaped command heads. Tuples are matched as a unit against the
+# leading tokens, longest first: ("npm", "test") is allowed but ("npm",) is
+# not, so `npm install` is refused. Adding a bare head here widens the gate to
+# every subcommand of that tool — do that only for tools with no write mode.
+_ALLOWED_HEADS: frozenset[tuple[str, ...]] = frozenset({
+    ("pytest",),
+    ("python",),
+    ("python3",),
+    ("node",),
+    ("npm", "test"),
+    ("npm", "run", "test"),
+    ("pnpm", "test"),
+    ("yarn", "test"),
+    ("cargo", "test"),
+    ("cargo", "build"),
+    ("cargo", "check"),
+    ("go", "test"),
+    ("swift", "test"),
+    ("ruff",),
+    ("mypy",),
+    ("tsc",),
+    ("eslint",),
+    ("jest",),
+    ("vitest",),
+    ("jq",),
+    ("shellcheck",),
+    ("make", "test"),
+})
+
+_MAX_HEAD_TOKENS = max(len(h) for h in _ALLOWED_HEADS)
+
+_PYTHON_ALIAS_RE = re.compile(r"^python3(?:\.\d+)?$")
+_PYTHON2_ALIAS_RE = re.compile(r"^python(?:\.\d+)?$")
+
+
+def _normalize_head(token: str) -> str:
+    """Strip any directory prefix and fold versioned python names.
+
+    `/opt/homebrew/bin/python3.13` and `python3` are the same head. Everything
+    else is compared by basename so an absolute path cannot smuggle a
+    non-allowlisted tool past the set membership test.
+    """
+    name = Path(token).name
+    if _PYTHON_ALIAS_RE.match(name):
+        return "python3"
+    if _PYTHON2_ALIAS_RE.match(name):
+        return "python"
+    return name
+
+
+def _classify_git(git_args: list[str]) -> tuple[bool, str]:
+    """Delegate a git command to scripts/audit_git.py `classify()`.
+
+    One table governs both scripts. If audit_git cannot be loaded or raises,
+    the git command is REFUSED — never a permissive fallback.
+    """
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        import audit_git
+    except Exception as exc:  # pragma: no cover - import failure is environmental
+        return False, f"git refused — audit_git allowlist unavailable ({type(exc).__name__}: {exc})"
+    try:
+        verdict = audit_git.classify(git_args)
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, f"git refused — audit_git.classify raised {type(exc).__name__}: {exc}"
+    if not isinstance(verdict, dict) or not verdict.get("allowed"):
+        reason = ""
+        if isinstance(verdict, dict):
+            reason = verdict.get("reason") or verdict.get("reason_code") or ""
+        return False, f"git refused by audit_git allowlist: {reason or 'not on the read-only allowlist'}"
+    return True, ""
 
 
 def _is_safe_to_reexecute(command: str) -> tuple[bool, str]:
-    """Return (safe, why). why is empty when safe, else the matched deny reason."""
+    """Return (safe, why). why is empty when safe, else the refusal reason.
+
+    Default-refuse. A command is safe only if it carries no shell
+    metacharacter AND (its head is on _ALLOWED_HEADS OR audit_git allows the
+    git form).
+    """
     cmd = command.strip()
     if not cmd:
         return False, "empty command"
-    for pattern, why in _DENY_CHECKS:
-        if pattern.search(cmd):
+
+    for token, why in _SHELL_METACHARACTERS:
+        if token in cmd:
             return False, why
-    return True, ""
+
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError as exc:
+        return False, f"unparseable command ({exc})"
+    if not tokens:
+        return False, "empty command"
+
+    head = _normalize_head(tokens[0])
+
+    if head == "git":
+        return _classify_git(tokens[1:])
+
+    normalized = [head] + tokens[1 : _MAX_HEAD_TOKENS]
+    for width in range(min(_MAX_HEAD_TOKENS, len(normalized)), 0, -1):
+        if tuple(normalized[:width]) in _ALLOWED_HEADS:
+            return True, ""
+
+    return False, (
+        f"{head!r} is not on the verification allowlist "
+        "(only verification-shaped commands are re-executed)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +342,8 @@ def probe(
     """Re-execute each claim's command (when safe) and grade it against `expected`.
 
     allow: literal command strings pre-approved by the caller to run even if
-    they'd otherwise match the deny-list (explicit opt-in only; empty by
-    default — nothing is auto-allowed).
+    the allowlist would refuse them (exact whole-command match; explicit
+    operator opt-in only; empty by default — nothing is auto-allowed).
     """
     allow_set = set(allow or [])
     results: list[dict[str, Any]] = []
@@ -355,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow",
         default="",
-        help="comma-separated list of exact commands pre-approved to run despite a deny-list match",
+        help="comma-separated list of exact commands pre-approved to run despite an allowlist refusal",
     )
     args = parser.parse_args(argv)
 
@@ -373,14 +501,22 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
 
-    verdict = "contradicted_claims_present" if counts["contradicted"] > 0 else "clean"
+    # A run we could not observe is not a pass. Zero claims extracted, every
+    # claim refused, or every claim run with no checkable expectation all mean
+    # nothing was verified — that must not read as exit 0 to an orchestrator.
+    if counts["contradicted"] > 0:
+        verdict, exit_code = "contradicted_claims_present", 1
+    elif counts["executed"] == 0:
+        verdict, exit_code = "nothing_executed", 2
+    else:
+        verdict, exit_code = "clean", 0
 
     if args.markdown:
         print(render_markdown(results))
     else:
         print(json.dumps({"claims": results, "counts": counts, "verdict": verdict}, indent=2))
 
-    return 1 if counts["contradicted"] > 0 else 0
+    return exit_code
 
 
 if __name__ == "__main__":

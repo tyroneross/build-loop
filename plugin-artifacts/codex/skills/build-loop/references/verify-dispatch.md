@@ -90,7 +90,11 @@ The probe extracts command-shaped claims (a backticked command sitting next to a
 
 - **`executed:`** — we ran it and every stated expectation held.
 - **`contradicted:`** — we ran it and an expectation failed. **Exit code 1.** This is a real finding; it goes in the report, not in a footnote.
-- **`cited:`** — we did not run it. Either no expectation was stated to check against, or the command is not safely re-executable (`rm`, `git push`, `git reset --hard`, `git checkout --`, `git clean`, `git commit`, `mv`, `dd`, output redirection, `curl -o`, `sudo`, `npm publish`, `deploy`). Denied commands are **never executed** — the probe must not become the thing that writes to a live store.
+- **`cited:`** — we did not run it. Either no expectation was stated to check against, or the command is not safely re-executable.
+
+**Exit 2 = `nothing_executed`.** Zero claims extracted, or every claim refused, or every claim ran with no expectation to check — the probe verified nothing. Treat exit 2 as "unverified", never as "clean"; a run we could not observe is not a pass.
+
+The safety layer is an **allowlist, not a deny-list**, because the commands come from LLM-authored report text and you cannot enumerate what a model might emit. Only verification-shaped heads run (`pytest`, `python3`, `node`, `npm test`, `cargo test`, `go test`, `swift test`, `ruff`, `mypy`, `tsc`, `eslint`, `jest`, `vitest`, `jq`, …), any shell metacharacter or redirection refuses outright, and a `git` command is delegated to `scripts/audit_git.py`'s classifier so the two scripts cannot drift on what counts as safe. Everything else is `cited`. Denied commands are **never executed** — the probe must not become the thing that writes to a live store.
 
 Carry the `executed:` / `contradicted:` / `cited:` label into the report for every relayed claim. An unlabeled claim is `cited:` by default — you read it, you did not verify it.
 

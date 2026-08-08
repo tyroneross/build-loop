@@ -30,8 +30,11 @@ import difflib
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +46,7 @@ _COMMON_PATH_WORDS = {
     "tmp", "var", "usr", "home", "users", "library", "private", "etc",
     "bin", "local", "opt", "data", "files", "folder", "user",
     "documents", "desktop", "downloads", "application", "support",
+    "contents", "resources", "containers", "caches", "preferences",
 }
 
 
@@ -55,9 +59,20 @@ def _normalize(text: str) -> str:
 
 
 def _distinctive_token(hostile_input: str) -> Optional[str]:
-    """Longest non-trivial path segment or token (>=6 chars, not a common word)."""
+    """Longest non-trivial path segment or token (>=6 chars, not a common word).
+
+    A macOS-shaped path segment like ``Application Support`` is two common
+    words joined by a space, not one distinguishing token -- but neither
+    word alone matches ``segment.lower()`` against ``_COMMON_PATH_WORDS``, so
+    without this split the *whole* two-word segment slips through as a false
+    "distinctive" match (the F4 finding: any test touching any
+    ``~/Library/Application Support/...`` path would satisfy the gate).
+    Splitting each path segment on whitespace before the common-word test
+    judges it word-by-word instead of as one opaque blob.
+    """
     normalized = _normalize(hostile_input)
-    segments = [seg for seg in re.split(r"[\\/]+", normalized) if seg]
+    raw_segments = [seg for seg in re.split(r"[\\/]+", normalized) if seg]
+    segments = [part for seg in raw_segments for part in seg.split() if part]
     candidates = [
         seg for seg in segments
         if len(seg) >= 6 and seg.lower() not in _COMMON_PATH_WORDS
@@ -142,16 +157,43 @@ def _check_single_input(hostile_input: str, test_files: list[str]) -> dict:
     }
 
 
-def check_hostile_input_present(hostile_inputs: list[str], test_files: list[str]) -> dict:
-    """Assert each hostile input literally (or near-literally) appears in test_files."""
+def check_hostile_input_present(
+    hostile_inputs: list[str],
+    test_files: list[str],
+    accept_weak_match: bool = False,
+) -> dict:
+    """Assert each hostile input literally (or near-literally) appears in test_files.
+
+    A `matched_via: "distinctive_token"` result is a weak match -- it means
+    only a path SEGMENT of the hostile input was found, not the literal
+    input. Left unguarded, that scored identically to a literal match and
+    would have closed the very incident this gate was built from (F4): a
+    test that merely mentions ``Application Support`` in an unrelated path
+    satisfied the gate for a hostile input that also happened to pass
+    through a directory of that name. When any input matched ONLY weakly and
+    the caller has not explicitly opted in via `accept_weak_match`, the
+    verdict is `hostile_input_weak_match_only` rather than
+    `hostile_input_covered`, and the CLI exits 1 for it just like an absent
+    input.
+    """
     results = [_check_single_input(hi, test_files) for hi in hostile_inputs]
     absent = [r["input"] for r in results if not r["present"]]
+    weak = [r["input"] for r in results if r["present"] and r["matched_via"] == "distinctive_token"]
     all_present = not absent
+
+    if absent:
+        verdict = "hostile_input_absent"
+    elif weak and not accept_weak_match:
+        verdict = "hostile_input_weak_match_only"
+    else:
+        verdict = "hostile_input_covered"
+
     return {
         "hostile_inputs": results,
         "all_present": all_present,
-        "verdict": "hostile_input_covered" if all_present else "hostile_input_absent",
+        "verdict": verdict,
         "absent": absent,
+        "weak": weak,
     }
 
 
@@ -231,15 +273,15 @@ def _run_test_cmd(
 ) -> subprocess.CompletedProcess:
     """Run the caller's test command for the mutation arm.
 
-    `shell=True` is deliberate and the input is trusted by contract: `test_cmd`
-    is the reviewer's own test invocation (`python3 scripts/test_x.py`,
-    `cd sub && npm test`), supplied by the orchestrator or a human at the
-    command line — the same trust boundary as `staged_content_gate.py --run` and
-    `verification_claim_probe.py`, both of which need a shell for `&&`, env
-    prefixes, and redirection that a bare argv list cannot express. This is a
-    dev-time gate, not a network- or model-facing surface: nothing here parses
-    untrusted or LLM-generated text into the command. The command is never built
-    by string concatenation with scanned content — it is passed through verbatim.
+    `shell=True` is deliberate: `--test-cmd` is a required CLI argument,
+    supplied verbatim by the reviewer or orchestrator at invocation time. No
+    code path in this module extracts, derives, or reconstructs it from
+    scanned, fetched, or model-generated text, and it is never built by
+    string concatenation with scanned content — it is passed through as
+    given. That is the trust boundary this `# nosec` relies on, checked
+    against THIS module's own code paths only. It is not a claim that any
+    other script sharing `shell=True` has the same boundary or the same
+    blast radius; each `# nosec` must stand on what its own file does.
     """
     # Resolve the module constant at CALL time, not as a default argument: a
     # default binds once at def time, so a caller (or a test) that adjusts
@@ -250,28 +292,159 @@ def _run_test_cmd(
     )
 
 
-def mutant_turns_tests_red(
-    guard_file: str,
+def _git_repo_root(path: Path) -> Optional[Path]:
+    """Resolve the git repo root containing `path`, or None if it isn't one."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    return Path(out.stdout.strip()).resolve()
+
+
+def _materialize_repo_copy(repo_root: Path) -> tuple[str, bool]:
+    """`git checkout-index --all --force` the INDEX into a throwaway tmpdir.
+
+    Mirrors `staged_content_gate.run_against_index` -- the sibling that
+    already does this correctly for hermetic grading. Returns
+    (tmpdir, checkout_succeeded); the caller owns removing tmpdir.
+    """
+    tmpdir = tempfile.mkdtemp(prefix="hostile-input-gate-mutant-")
+    prefix = tmpdir if tmpdir.endswith(os.sep) else tmpdir + os.sep
+    checkout = subprocess.run(
+        ["git", "-C", str(repo_root), "checkout-index", "--all", "--force", f"--prefix={prefix}"],
+        capture_output=True, text=True, check=False,
+    )
+    return tmpdir, checkout.returncode == 0
+
+
+def _mutant_turns_tests_red_isolated(
+    guard_path: Path,
     guard_symbol: str,
     test_cmd: str,
-    repo: Optional[str] = None,
+    explicit_cwd: Path,
+    repo_root: Path,
 ) -> dict:
-    """Plant a permissive mutant of guard_symbol in guard_file and check test_cmd.
-
-    Always restores the original file bytes, even on error, and reports
-    whether that restore actually landed.
+    """Plant the mutant in a throwaway materialization of `repo_root`'s INDEX,
+    never in the live checkout. The live guard file is never written, so
+    there is nothing for a concurrent `git add`/`git commit`, a SIGKILL, an
+    OOM kill, or a host restart to observe or stage mid-run.
     """
-    guard_path = Path(guard_file)
     original_bytes = guard_path.read_bytes()
-    cwd = repo or str(guard_path.resolve().parent)
-    result: dict = {"baseline": {}, "mutant": {}, "verdict": None, "restored": False}
+    result: dict = {
+        "baseline": {}, "mutant": {}, "verdict": None,
+        "restored": False, "isolated": True,
+    }
+    tmpdir, checkout_ok = _materialize_repo_copy(repo_root)
+    try:
+        if not checkout_ok:
+            result["verdict"] = "isolation_setup_failed"
+            result["restored"] = True
+            result["restored_note"] = "no live write occurred (isolated run)"
+            return result
+
+        guard_rel = guard_path.relative_to(repo_root)
+        try:
+            cwd_rel = explicit_cwd.resolve().relative_to(repo_root)
+        except ValueError:
+            cwd_rel = Path(".")
+
+        tmp_guard_path = Path(tmpdir) / guard_rel
+        tmp_cwd = Path(tmpdir) / cwd_rel
+
+        materialized_via = "checkout-index"
+        if not tmp_guard_path.exists():
+            # Untracked guard file -- checkout-index only writes tracked
+            # index entries -- so copy it in explicitly.
+            tmp_guard_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_guard_path.write_bytes(original_bytes)
+            materialized_via = "checkout-index+untracked-copy"
+        result["materialized_via"] = materialized_via
+
+        try:
+            baseline_proc = _run_test_cmd(test_cmd, str(tmp_cwd))
+        except subprocess.TimeoutExpired:
+            # Fail-safe: a run we could not observe is never evidence the
+            # guard is tested. Never fall through to `mutant_convicted`.
+            result["verdict"] = "mutant_run_timeout"
+            result["timed_out"] = "baseline"
+            result["restored"] = True
+            result["restored_note"] = "no live write occurred (isolated run)"
+            return result
+        result["baseline"] = {"returncode": baseline_proc.returncode}
+        if baseline_proc.returncode != 0:
+            result["verdict"] = "baseline_red"
+            result["restored"] = True
+            result["restored_note"] = "no live write occurred (isolated run)"
+            return result
+
+        mutated_text, language = _plant_mutant(
+            tmp_guard_path.read_bytes().decode("utf-8"), guard_symbol
+        )
+        result["language"] = language
+        tmp_guard_path.write_text(mutated_text, encoding="utf-8")
+
+        try:
+            mutant_proc = _run_test_cmd(test_cmd, str(tmp_cwd))
+        except subprocess.TimeoutExpired:
+            result["verdict"] = "mutant_run_timeout"
+            result["timed_out"] = "mutant"
+            result["restored"] = True
+            result["restored_note"] = "no live write occurred (isolated run)"
+            return result
+        result["mutant"] = {"returncode": mutant_proc.returncode}
+        result["verdict"] = "mutant_survived" if mutant_proc.returncode == 0 else "mutant_convicted"
+        result["restored"] = True
+        result["restored_note"] = "no live write occurred (isolated run)"
+        return result
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _mutant_turns_tests_red_inplace(
+    guard_path: Path,
+    guard_symbol: str,
+    test_cmd: str,
+    original_bytes: bytes,
+    explicit_cwd: Path,
+) -> dict:
+    """Legacy path used only when guard_path is not inside a git repository,
+    so there is no INDEX to materialize a hermetic copy from. Writes the
+    mutant directly into the live file and restores it in a `finally`, with
+    SIGINT/SIGTERM handlers registered so an interrupted run still restores
+    -- this is the one path where that matters, since the isolated path
+    above never writes the live file at all.
+    """
+    cwd = str(explicit_cwd)
+    result: dict = {
+        "baseline": {}, "mutant": {}, "verdict": None,
+        "restored": False, "isolated": False,
+    }
+
+    def _handle_signal(signum, _frame):
+        try:
+            guard_path.write_bytes(original_bytes)
+        finally:
+            sys.exit(128 + signum)
+
+    old_handlers: dict = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            old_handlers[sig] = signal.signal(sig, _handle_signal)
+        except (ValueError, OSError):
+            # e.g. not running on the main thread -- best effort only.
+            pass
 
     try:
         try:
             baseline_proc = _run_test_cmd(test_cmd, cwd)
         except subprocess.TimeoutExpired:
-            # Fail-safe: a run we could not observe is never evidence the guard
-            # is tested. Never fall through to `mutant_convicted` on a timeout.
+            # Fail-safe: a run we could not observe is never evidence the
+            # guard is tested. Never fall through to `mutant_convicted`.
             result["verdict"] = "mutant_run_timeout"
             result["timed_out"] = "baseline"
             return result
@@ -303,6 +476,49 @@ def mutant_turns_tests_red(
         except OSError:
             result["restored"] = False
             result["restore_failed"] = True
+        for sig, handler in old_handlers.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
+
+
+def mutant_turns_tests_red(
+    guard_file: str,
+    guard_symbol: str,
+    test_cmd: str,
+    repo: Optional[str] = None,
+) -> dict:
+    """Plant a permissive mutant of guard_symbol in guard_file and check
+    whether test_cmd goes red.
+
+    When guard_file lives inside a git repository, the mutant is planted in
+    a throwaway materialization of that repo's INDEX (`git checkout-index
+    --all --force`, the same mechanism `staged_content_gate.run_against_index`
+    uses) and test_cmd runs there -- the live checkout is never written, so
+    there is nothing for a concurrent `git add`/`git commit`, a SIGKILL, an
+    OOM kill, or a host restart to ever observe or stage. `restored: true` is
+    still reported for API compatibility, with a note that no live write
+    occurred. Falls back to the historical in-place-with-restore behavior
+    (with SIGINT/SIGTERM restore handlers registered) only when guard_file is
+    not inside a git repository; that path sets `isolated: False`.
+    """
+    guard_path = Path(guard_file).resolve()
+    original_bytes = guard_path.read_bytes()
+    explicit_cwd = Path(repo).resolve() if repo else guard_path.parent
+
+    repo_root = _git_repo_root(guard_path.parent)
+    if repo_root is not None:
+        try:
+            guard_path.relative_to(repo_root)
+        except ValueError:
+            # guard_path isn't actually inside the repo root we found --
+            # nothing to materialize it from; fall back to in-place.
+            repo_root = None
+
+    if repo_root is not None:
+        return _mutant_turns_tests_red_isolated(guard_path, guard_symbol, test_cmd, explicit_cwd, repo_root)
+    return _mutant_turns_tests_red_inplace(guard_path, guard_symbol, test_cmd, original_bytes, explicit_cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +536,11 @@ def _build_parser() -> argparse.ArgumentParser:
     check_p.add_argument("--hostile-input", action="append", dest="hostile_inputs", required=True)
     check_p.add_argument("--test-file", action="append", dest="test_files", required=True)
     check_p.add_argument("--repo", default=None)
+    check_p.add_argument(
+        "--accept-weak-match", action="store_true",
+        help="Treat a distinctive-token-only (segment, not literal) match as coverage. "
+             "Off by default -- a weak match alone must not close a finding.",
+    )
     check_p.add_argument("--json", action="store_true")
 
     mutate_p = sub.add_parser("mutate", help="Plant a permissive mutant and confirm test_cmd goes red")
@@ -346,19 +567,25 @@ def main(argv: Optional[list[str]] = None) -> int:
                 tf if os.path.isabs(tf) else os.path.join(args.repo, tf)
                 for tf in test_files
             ]
-        result = check_hostile_input_present(args.hostile_inputs, test_files)
+        result = check_hostile_input_present(
+            args.hostile_inputs, test_files, accept_weak_match=args.accept_weak_match
+        )
         _emit(result, args.json)
-        return 0 if result["all_present"] else 1
+        # verdict, not all_present, is authoritative: all_present is True for
+        # a weak-match-only result too, and a weak match must not exit 0
+        # unless the caller explicitly opted in via --accept-weak-match.
+        return 0 if result["verdict"] == "hostile_input_covered" else 1
 
     if args.command == "mutate":
         result = mutant_turns_tests_red(
             args.guard_file, args.guard_symbol, args.test_cmd, repo=args.repo
         )
         _emit(result, args.json)
-        if result["verdict"] in ("baseline_red", "mutant_run_timeout"):
-            # A run we could not observe is not a pass. Exit 0 here would let a
-            # hung test suite read as "mutant convicted, finding closed" — the
-            # same fail-open shape this gate exists to catch.
+        if result["verdict"] in ("baseline_red", "mutant_run_timeout", "isolation_setup_failed"):
+            # A run we could not observe (or couldn't even set up) is not a
+            # pass. Exit 0 here would let a hung test suite, or a broken
+            # isolation setup, read as "mutant convicted, finding closed" —
+            # the same fail-open shape this gate exists to catch.
             return 2
         if result["verdict"] == "mutant_survived":
             return 1

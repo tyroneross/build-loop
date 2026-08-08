@@ -174,7 +174,7 @@ A finding is `closed` only when BOTH hold, verified by execution:
    python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/hostile_input_gate.py" check \
        --hostile-input "<the literal hostile_input>" --test-file <test path> --json
    ```
-   Exit 1 = the test does not contain the attack it was written to close. That is not a closed finding; it is an untested guard with a green suite.
+   Exit 1 = the test does not contain the attack it was written to close (`hostile_input_absent`), **or** it contains only a weak token match (`hostile_input_weak_match_only`). Either way that is not a closed finding; it is an untested guard with a green suite. `matched_via` names which tier matched — `literal`, `normalized`, or `distinctive_token` — and only the first two close a finding. `--accept-weak-match` exists as an explicit, off-by-default override; using it is a judgment you must state, not a default. The weak tier is gated because a path-segment match is how the original incident's own test would have scored as covered.
 
 2. **A mutant that disables the guard turns those tests red.**
    ```bash
