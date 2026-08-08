@@ -196,7 +196,8 @@ def _status_mix(lines: list[str]) -> str:
     """`2,380 M, 9 ??` -- deleted and untracked read very differently."""
     counts: dict[str, int] = {}
     for line in lines:
-        counts[line[:2].strip() or "?"] = counts.get(line[:2].strip() or "?", 0) + 1
+        code = line[:2].strip() or "?"
+        counts[code] = counts.get(code, 0) + 1
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return ", ".join(f"{n:,} {code}" for code, n in ordered)
 
@@ -239,8 +240,9 @@ def _render_working_tree(status_lines: list[str], *, full: bool = False) -> str:
     out = [f"### Working-tree status ({total:,} dirty)", ""]
     out.append(
         f"> **Do not `git add -A` or `git add .` in this repo.** {total:,} files are "
-        f"dirty and most are pre-existing tooling state, not your work. Stage the "
-        f"paths you changed, by name."
+        f"dirty — far more than one change touches, so a blanket stage would sweep "
+        f"state you did not author into your commit. Stage the paths you changed, "
+        f"by name."
     )
     out.append("")
     if listed:
