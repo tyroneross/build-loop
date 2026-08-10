@@ -30,6 +30,9 @@ headers.
   `.build-loop/autonomy-dashboard/responses.jsonl`.
 - Reload and process restart reconstruct the latest response per gap from that
   append-only log.
+- Each collapsed card names the selected policy and shows saved/queued state;
+  JavaScript applies selected styling directly so feedback does not depend on
+  CSS `:has()` support.
 - **Queue this decision** appends `response_queued` and creates
   `.build-loop/followup/dashboard-<gap>-<timestamp>.md`.
 - Agents may read saved responses for context. They act only on queued follow-up
@@ -48,4 +51,6 @@ headers.
 The dashboard explains and records choices. `scripts/autonomy_supervisor.py`
 owns execution policy: missing-information routing, task-shape learning, bounded
 queue manifests, discovered-issue classification, convergence enforcement, and
-live provider/host/cost backpressure.
+live provider/host/cost backpressure. Queue sizing and fan-out are adaptive;
+150 is an absolute ceiling, not a target. The third repeated unresolved verdict
+requires independent audit and the fifth quarantines the item.

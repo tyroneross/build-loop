@@ -77,8 +77,8 @@ The orchestrator writes `state.execution.budget` at autonomous-mode start:
 | Mode | Per-build cap | Per-item cap |
 |---|---|---|
 | Classic (autonomous=false) | 5 | n/a |
-| Autonomous default | 25 | 3 same-verdict |
-| Autonomous long | 25 | 3 same-verdict |
+| Autonomous default | 25 | audit at 3 identical unresolved verdicts; quarantine at 5 |
+| Autonomous long | 25 | audit at 3 identical unresolved verdicts; quarantine at 5 |
 
 `maxIterateAttemptsAutonomous` is configurable in `.build-loop/config.json.autonomy.maxIterateAttemptsAutonomous`.
 

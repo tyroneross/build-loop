@@ -32,7 +32,7 @@ def test_gap_contract_is_complete_and_impact_is_four_lens() -> None:
 def test_response_append_log_reconstructs_latest_after_restart(repo: Path) -> None:
     first = dashboard.DecisionStore(repo)
     first.save("convergence", "three", "Initial direction")
-    latest = first.save("convergence", "two", "Updated direction")
+    latest = first.save("convergence", "five", "Updated direction")
     restarted = dashboard.DecisionStore(repo)
     assert restarted.latest()["convergence"] == latest
     assert len((repo / dashboard.STORE_PATH).read_text(encoding="utf-8").splitlines()) == 2
@@ -52,13 +52,13 @@ def test_queue_requires_saved_response_and_creates_agent_readable_followup(repo:
     store = dashboard.DecisionStore(repo)
     with pytest.raises(ValueError, match="save a response"):
         store.queue("convergence")
-    store.save("convergence", "three", "Keep evidence from all three attempts.")
+    store.save("convergence", "five", "Audit at three; quarantine at five.")
     queued = store.queue("convergence")
     path = repo / queued["queued_path"]
     assert path.exists()
     text = path.read_text(encoding="utf-8")
-    assert "Choice: Quarantine at 3" in text
-    assert "> Keep evidence from all three attempts." in text
+    assert "Choice: Audit 3 · quarantine 5" in text
+    assert "> Audit at three; quarantine at five." in text
     assert store.latest()["convergence"]["event"] == "response_queued"
 
 
@@ -100,15 +100,27 @@ def test_live_http_save_reload_and_queue(live_server: str, repo: Path) -> None:
     assert state["ok"] is True
     assert len(state["gaps"]) == 6
     status, saved = _post(live_server, "/api/responses", {
-        "gap_id": "bounded-related-work", "choice_id": "cap-12", "note": "Reserve capacity for discovered work."
+        "gap_id": "bounded-related-work", "choice_id": "adaptive", "note": "Reserve capacity for discovered work."
     })
-    assert status == 200 and saved["response"]["choice_id"] == "cap-12"
+    assert status == 200 and saved["response"]["choice_id"] == "adaptive"
     status, queued = _post(live_server, "/api/actions", {"gap_id": "bounded-related-work"})
     assert status == 200
     assert (repo / queued["response"]["queued_path"]).exists()
     with urllib.request.urlopen(live_server + "/api/state", timeout=2) as response:
         reloaded = json.loads(response.read())
     assert reloaded["responses"]["bounded-related-work"]["queued_path"]
+
+
+def test_old_cap_12_selection_migrates_to_adaptive_policy(repo: Path) -> None:
+    path = repo / dashboard.STORE_PATH
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "event": "response_queued", "gap_id": "bounded-related-work",
+        "choice_id": "cap-12", "note": "", "queued_path": "old.md",
+    }) + "\n", encoding="utf-8")
+    latest = dashboard.DecisionStore(repo).latest()["bounded-related-work"]
+    assert latest["choice_id"] == "adaptive"
+    assert latest["migrated_from"] == "cap-12"
 
 
 def test_http_rejects_foreign_host_header(live_server: str) -> None:
@@ -142,6 +154,8 @@ def test_html_has_semantic_controls_and_autosave_contract() -> None:
         "<main", "node('details'", "node('summary'", "node('fieldset')", "node('legend'",
         "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue this decision",
         '"Avenir Next"', "--canvas: #f6fbff", "--accent: #00836f", "min-height: 44px",
+        "is-selected", "Selected policy", "Saved and queued",
+        "const saved = await save(card, gap);", "if (!saved) return;",
     ):
         assert token in html
     assert "innerHTML" not in html

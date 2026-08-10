@@ -88,13 +88,12 @@ class TestEffectiveMaxWithConfig:
         # Must never exceed cpu_budget
         assert result <= budget
 
-    def test_config_50_is_12_on_beefy_machine(self, workdir_with_config) -> None:
-        """On a machine with >=14 cores budget>=12, config=50 → HARD_CEILING=12."""
+    def test_config_50_remains_cpu_bounded_on_local_machine(self, workdir_with_config) -> None:
         wd = workdir_with_config(50)
         with patch("parallelism.os.cpu_count", return_value=16):
             assert effective_max_implementers(
                 wd, execution_location="local", model_size="small"
-            ) == HARD_CEILING
+            ) == 14
 
 
 class TestEffectiveMaxRequested:
@@ -104,13 +103,13 @@ class TestEffectiveMaxRequested:
             result = effective_max_implementers(wd, requested=3)
         assert result == 3
 
-    def test_requested_still_capped_by_hard_ceiling(self, workdir_with_config) -> None:
+    def test_requested_still_capped_by_cpu_capacity(self, workdir_with_config) -> None:
         wd = workdir_with_config(2)
         with patch("parallelism.os.cpu_count", return_value=16):
             result = effective_max_implementers(
                 wd, requested=100, execution_location="local", model_size="small"
             )
-        assert result == HARD_CEILING
+        assert result == 14
 
     def test_requested_capped_by_budget(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=4):
@@ -172,6 +171,61 @@ class TestEffectiveMaxFailSoft:
 
 
 class TestResourceAwareFanout:
+    def test_absolute_ceiling_is_reachable_only_when_every_cap_allows_it(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=256):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=300,
+                execution_location="cloud",
+                model_size="small",
+                token_budget=3_000_000,
+                independent_items=240,
+                shared_capacity=200,
+            )
+        assert HARD_CEILING == 150
+        assert profile["effective_max"] == 150
+        assert profile["limiting_factors"] == ["hard_ceiling"]
+
+    def test_independent_work_and_other_sessions_reduce_admission(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=64):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=80,
+                execution_location="cloud",
+                model_size="small",
+                token_budget=1_000_000,
+                independent_items=9,
+                shared_capacity=12,
+                active_elsewhere=5,
+            )
+        assert profile["available_shared_capacity"] == 7
+        assert profile["effective_max"] == 7
+        assert profile["limiting_factors"] == ["shared_capacity"]
+
+    def test_exhausted_shared_capacity_admits_zero_workers(self, tmp_workdir: Path) -> None:
+        with patch("parallelism.os.cpu_count", return_value=64):
+            profile = resolve_fanout(
+                tmp_workdir,
+                requested=20,
+                execution_location="local",
+                model_size="small",
+                shared_capacity=150,
+                active_elsewhere=150,
+            )
+        assert profile["available_shared_capacity"] == 0
+        assert profile["effective_max"] == 0
+
+    def test_zero_shared_capacity_is_binding(self, tmp_workdir: Path) -> None:
+        profile = resolve_fanout(
+            tmp_workdir,
+            requested=10,
+            independent_items=10,
+            shared_capacity=0,
+        )
+        assert profile["available_shared_capacity"] == 0
+        assert profile["effective_max"] == 0
+        assert "shared_capacity" in profile["limiting_factors"]
+
     def test_cloud_uses_measured_tokens_as_primary_cap(self, tmp_workdir: Path) -> None:
         with patch("parallelism.os.cpu_count", return_value=16):
             profile = resolve_fanout(

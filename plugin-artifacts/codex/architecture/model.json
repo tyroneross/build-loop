@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "207849eb3632525fe9cb08f0d9516c87d01d1da5ca994ca4952d771d44e5de92"
+    "content_sha256": "2ed8049808419a7c8705e32d08876c4eebb1abeb4b21d23cf54fa1c940a289f7"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1851,6 +1851,7 @@
       "scripts/task_surface.py": "Derived active task surface for build-loop.\"\"\"",
       "scripts/temporal_membership.py": "temporal_membership.py — gate attaching an external record to a run by time + host overlap.",
       "scripts/token_efficiency_benchmark.py": "Compare exact-repeat Build Loop runs using measured tokens and quality outcomes.\"\"\"",
+      "scripts/tool_trace.py": "OTel-shaped, redacted tool-call traces for supervision and learning.",
       "scripts/transcript-pattern-miner.py": "transcript-pattern-miner.py — thin shim; implementation lives in transcript_pattern_miner/.",
       "scripts/transcript_pattern_miner/__init__.py": "transcript_pattern_miner — folder-per-capability package.",
       "scripts/transcript_pattern_miner/__main__.py": "transcript_pattern_miner.__main__ — CLI entry point.",

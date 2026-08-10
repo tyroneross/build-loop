@@ -50,13 +50,13 @@ DEFAULT_GAPS: tuple[dict[str, Any], ...] = (
         "id": "bounded-related-work",
         "priority": "P0",
         "gap": "Open queues can expand faster than a run can finish.",
-        "big_idea": "Snapshot a small, intent-aligned queue and finish it before admitting more work.",
+        "big_idea": "Let the supervisor size a finite, intent-aligned manifest from the task and live capacity.",
         "pain": ["New arrivals move the finish line.", "Large proposal pools consume review time.", "Unrelated work can enter through broad keywords."],
-        "payoff": ["Each run has a finite manifest.", "Related discoveries still complete in the same run.", "Later arrivals wait for the next manifest."],
-        "why": "Bounded admission preserves the user's outcome while allowing useful discoveries to extend the plan.",
+        "payoff": ["Each run still has a finite manifest.", "Task shape and evidence determine useful breadth.", "Later arrivals wait for the next manifest."],
+        "why": "Adaptive bounded admission changes batch size without moving the finish line.",
         "options": [
-            {"id": "cap-12", "label": "Cap at 12", "recommended": True, "impact": {"owner": "Predictable batches with useful breadth.", "app": "Intent scoring selects the manifest.", "user": "Related fixes land together.", "other": "Excess aligned items defer automatically."}},
-            {"id": "cap-6", "label": "Cap at 6", "recommended": False, "impact": {"owner": "Shorter review batches.", "app": "More queue cycles.", "user": "Smaller releases.", "other": "More related work waits."}},
+            {"id": "adaptive", "label": "Supervisor sets batch", "recommended": True, "impact": {"owner": "Gets finite batches sized to the work.", "app": "Uses task shape, history, and live capacity.", "user": "Related fixes land together without arbitrary breadth.", "other": "The 150 absolute ceiling remains binding."}},
+            {"id": "conservative", "label": "Prefer small batches", "recommended": False, "impact": {"owner": "Gets shorter review batches.", "app": "Ramps capacity more slowly.", "user": "Receives smaller releases.", "other": "More aligned work waits."}},
             {"id": "manual", "label": "Manual admission", "recommended": False, "impact": {"owner": "Chooses every item.", "app": "No automatic manifest.", "user": "Related fixes may split across runs.", "other": "Highest intervention cost."}},
         ],
     },
@@ -64,14 +64,14 @@ DEFAULT_GAPS: tuple[dict[str, Any], ...] = (
         "id": "convergence",
         "priority": "P0",
         "gap": "Repeated verdicts can consume the full run without changing evidence.",
-        "big_idea": "Three identical verdicts should quarantine the item and keep the run moving.",
+        "big_idea": "Audit the third unresolved repeat; quarantine the fifth and keep the run moving.",
         "pain": ["One item can monopolize the budget.", "Retries repeat the same reasoning.", "Other valid work waits behind a stuck item."],
-        "payoff": ["The run advances after three identical outcomes.", "The stuck item retains evidence for follow-up.", "Failures become visible patterns for learning."],
-        "why": "A persisted per-item counter converts a written limit into an enforceable route.",
+        "payoff": ["An independent auditor challenges the third repeat.", "The fifth repeat quarantines with full evidence.", "Resolved issues reset the counter."],
+        "why": "A persisted counter and mandatory audit prevent both infinite retries and premature quarantine.",
         "options": [
-            {"id": "three", "label": "Quarantine at 3", "recommended": True, "impact": {"owner": "Gets a concise blocked-item report.", "app": "Prevents infinite item loops.", "user": "Other fixes continue shipping.", "other": "A difficult item may need a later focused run."}},
-            {"id": "two", "label": "Quarantine at 2", "recommended": False, "impact": {"owner": "Gets faster escalation.", "app": "Uses less retry evidence.", "user": "More issues defer early.", "other": "Lower compute use."}},
-            {"id": "five", "label": "Quarantine at 5", "recommended": False, "impact": {"owner": "Allows deeper automated recovery.", "app": "Spends more time per stuck item.", "user": "Other work waits longer.", "other": "Higher compute use."}},
+            {"id": "five", "label": "Audit 3 · quarantine 5", "recommended": True, "impact": {"owner": "Gets an independent challenge before deferral.", "app": "Requires audit before attempt four.", "user": "Difficult fixes get evidence without blocking forever.", "other": "Quarantine retains all five attempts."}},
+            {"id": "three", "label": "Quarantine at 3", "recommended": False, "impact": {"owner": "Gets faster deferral.", "app": "Uses less recovery evidence.", "user": "More difficult issues defer early.", "other": "Lower compute use."}},
+            {"id": "manual-audit", "label": "Choose each audit", "recommended": False, "impact": {"owner": "Controls each escalation.", "app": "Waits at repeat boundaries.", "user": "Delivery depends on owner availability.", "other": "Highest intervention cost."}},
         ],
     },
     {
@@ -119,6 +119,7 @@ DEFAULT_GAPS: tuple[dict[str, Any], ...] = (
 )
 
 GAPS_BY_ID = {gap["id"]: gap for gap in DEFAULT_GAPS}
+CHOICE_MIGRATIONS = {("bounded-related-work", "cap-12"): "adaptive"}
 
 
 def _now() -> str:
@@ -149,6 +150,11 @@ class DecisionStore:
             except ValueError:
                 continue
             if isinstance(event, dict) and event.get("gap_id") in GAPS_BY_ID:
+                event = dict(event)
+                migrated = CHOICE_MIGRATIONS.get((event["gap_id"], event.get("choice_id")))
+                if migrated:
+                    event["choice_id"] = migrated
+                    event["migrated_from"] = "cap-12"
                 latest[event["gap_id"]] = event
         return latest
 

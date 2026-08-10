@@ -99,7 +99,7 @@ Per attempt:
    - **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `build-loop:debugging-memory` `{op:"assess"}`. Pass `model: sonnet` to domain assessors explicitly (override `inherit` default to prevent 4× Opus fan-out from the Opus 4.7 orchestrator). The full procedure is documented in `skills/debug-loop/SKILL.md` §"If stuck — parallel multi-domain assessment".
    - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
 3. **Build the prioritized work list** from the table above (Validate failures + UX queue).
-4. **Partition for parallel fan-out**: group by disjoint `files_touched`; dispatch ≤4 subagents in parallel.
+4. **Partition for parallel fan-out**: group by disjoint `files_touched`; use `autonomy_supervisor.py fanout` for the binding dynamic admission count. The absolute ceiling is 150, while independent work, shared capacity, provider errors, cost, memory, disk, load, latency, and measured thermal stability normally set a lower limit.
 5. **Execute fixes**; for UI files, run the UI re-validate hook before continuing.
 6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
 7. **Followup overflow**: when the iteration cap (5) is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips its own Plan phase for these entries.
@@ -110,15 +110,20 @@ After every item outcome, enforce the per-item limit:
 
 ```bash
 python3 scripts/autonomy_supervisor.py --workdir "$PWD" verdict \
-  --item "<stable-item-id>" --verdict "<verdict>" --limit 3
+  --item "<stable-item-id>" --verdict "<verdict>" --limit 5 --audit-at 3 \
+  --actor-id "<worker-id>" --actor-session "<worker-session-id>"
 ```
 
-`action: quarantine` moves the item to follow-up with the three verdict receipts
-and continues the remaining manifest. A changed verdict resets the consecutive
-counter.
+`action: independent_audit` dispatches a different worker/session. The orchestrator first
+records the returned `verify` action in the current run's agent ledger with
+`refs.item_id` and `refs.session_id`, then records its evidence with
+`autonomy_supervisor.py audit --item <stable-item-id> --evidence <evidence>
+--auditor-id <auditor-id> --auditor-session <auditor-session-id>`. Only then may the
+fourth attempt start. `action: quarantine` moves the item to follow-up with all five
+verdict receipts and continues the manifest. A resolved verdict resets the counter.
 
 **Convergence detection**:
-- Same criterion fails 2x with the same root cause → invoke the causal-tree re-plan; a third identical verdict quarantines the item
+- Same criterion fails 2x with the same root cause → invoke the causal-tree re-plan; the third identical unresolved verdict requires an independent audit, and the fifth quarantines the item
 - Fix A breaks criterion B (oscillation) → revert the weaker reversible fix, re-plan once, then quarantine on recurrence
 - 3+ criteria fail simultaneously after a fix → treat as one systemic issue, re-plan from the shared cause, and continue unaffected manifest items
 

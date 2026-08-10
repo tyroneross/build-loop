@@ -13,7 +13,12 @@ import version_drift_warning as vdw  # noqa: E402
 
 
 def _g(wd: Path, *args: str, check=True) -> str:
-    r = subprocess.run(["git", "-C", str(wd), *args], capture_output=True, text=True, check=check)
+    r = subprocess.run(
+        ["git", "-c", "tag.gpgSign=false", "-C", str(wd), *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
     return r.stdout.strip()
 
 

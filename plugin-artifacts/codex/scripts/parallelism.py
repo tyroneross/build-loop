@@ -36,7 +36,7 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-HARD_CEILING: int = 12  # never exceed — coordination / token overhead
+HARD_CEILING: int = 150  # absolute admission ceiling; resource caps stay binding
 DEFAULT_MAX: int = 8    # new default, up from the prior hardcoded 4
 DEFAULT_CLOUD_TOKEN_BUDGET: int = 96_000
 
@@ -198,6 +198,9 @@ def resolve_fanout(
     measured_tokens: int | None = None,
     agent: str | None = None,
     ledger_path: Path | None = None,
+    independent_items: int | None = None,
+    shared_capacity: int | None = None,
+    active_elsewhere: int = 0,
 ) -> dict:
     """Resolve fan-out and expose every constraint that produced the answer."""
     workdir = Path(workdir)
@@ -235,9 +238,15 @@ def resolve_fanout(
         "hard_ceiling": HARD_CEILING,
         "cpu": cpu_cap,
     }
+    if isinstance(independent_items, int) and independent_items >= 0:
+        caps["independent_work"] = independent_items
+    available_shared_capacity = None
+    if isinstance(shared_capacity, int) and shared_capacity >= 0:
+        available_shared_capacity = max(0, shared_capacity - max(0, active_elsewhere))
+        caps["shared_capacity"] = available_shared_capacity
     if token_cap is not None:
         caps["token"] = token_cap
-    effective = max(1, min(caps.values()))
+    effective = max(0, min(caps.values()))
 
     return {
         "execution_location": location,
@@ -249,6 +258,11 @@ def resolve_fanout(
         "config_max": config_max,
         "requested": requested,
         "hard_ceiling": HARD_CEILING,
+        "admission_policy": "adaptive_minimum",
+        "independent_items": independent_items,
+        "shared_capacity": shared_capacity,
+        "active_elsewhere": max(0, active_elsewhere),
+        "available_shared_capacity": available_shared_capacity,
         "model": model,
         "model_size": size,
         "output_size": output,
@@ -344,6 +358,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token-budget", type=int, default=None)
     p.add_argument("--measured-tokens-per-worker", type=int, default=None)
     p.add_argument("--agent", default=None)
+    p.add_argument("--independent-items", type=int, default=None)
+    p.add_argument("--shared-capacity", type=int, default=None)
+    p.add_argument("--active-elsewhere", type=int, default=0)
     p.add_argument(
         "--ledger-path",
         type=Path,
@@ -382,6 +399,9 @@ def main(argv: list[str] | None = None) -> None:
         "token_budget": args.token_budget,
         "measured_tokens": args.measured_tokens_per_worker,
         "agent": args.agent,
+        "independent_items": args.independent_items,
+        "shared_capacity": args.shared_capacity,
+        "active_elsewhere": args.active_elsewhere,
         "ledger_path": args.ledger_path,
     }
     if args.describe:

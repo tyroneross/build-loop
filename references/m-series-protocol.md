@@ -143,3 +143,21 @@ The single-axis `--tier`-only form (above) stays the default and is unchanged. F
 **Release caveat**: the `hooks/hooks.json` registration is inert in an INSTALLED plugin copy until a plugin release ships. A local `--plugin-dir` checkout picks it up on next session start.
 
 **Failure mode**: the hook exits 0 unconditionally; a ledger-write failure never halts a turn. Telemetry is best-effort. **Why independent of M1/M2**: M1/M2 protect resume correctness; M3 produces the external measurement record so dispatch-pattern claims can be evidenced rather than estimated.
+
+### Tool-call trace stream
+
+`scripts/tool_trace.py` complements the dispatch cost ledger with one
+OTel-shaped span per tool call. PreToolUse, PostToolUse, and PostToolUseFailure
+hooks emit immediate bounded events; the Stop hook reconciles the transcript so
+missing host events still become one completed span. The Codex Stop adapter uses
+the same reconciler when a transcript path is available.
+
+The repo-local stream is `.build-loop/telemetry/tool-traces.jsonl`. It rotates
+at 10 MB with two retained files. Inputs and results are recursively redacted,
+bounded to 512-character previews, and accompanied by size and SHA-256. Raw
+unbounded bodies and secret-key fields never enter the trace. Hook failures are
+fail-open and never change the tool result.
+
+`autonomy_supervisor.py fanout` consumes error, repeat, rate-limit, latency,
+resource, and stable-window signals for adaptive admission. The retrospective
+consumes the same trace summary and routes repeated call patterns into Phase 6.

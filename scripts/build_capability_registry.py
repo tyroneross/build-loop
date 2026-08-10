@@ -128,7 +128,9 @@ CATEGORY_KEYWORDS = [
                       # proposal-drain gate are self-heal / keep-going lifecycle:
                       "operations center", "operations-center",
                       "cross-repo issue", "flagged-issue",
-                      "proposal-drain", "proposal drain", "cross-repo proposal")),
+                      "proposal-drain", "proposal drain", "cross-repo proposal",
+                      # Registry/index surfaces describe routing metadata.
+                      "skill_index", "skill index")),
     # Multi-session coordination surfaces — Rally Point bridge, presence,
     # handoffs, and the per-run coord file. Distinct from `meta` (single-run
     # orchestration) because these surfaces coordinate ACROSS agents/sessions.
@@ -176,13 +178,19 @@ CATEGORY_KEYWORDS = [
                       "route-guard", "route guard", "pre-skill",
                       "prompt-submit", "skill-routing", "skill routing",
                       # Privacy/secret scanners are validation gates.
-                      "privacy", "secret", "pii")),
+                      "privacy", "secret", "pii",
+                      # Governance and commit-boundary controls.
+                      "audit_git", "exposure_policy", "owed_verification",
+                      "preauthorization", "run_provenance", "security_checks",
+                      "security_common", "staged_content_gate",
+                      "stamp_skill_frontmatter", "surface_policy",
+                      "verify_worktree_target", "waivers")),
     ("planning",     ("plan", "spec", "rfc", "writing-plan", "plan-verify",
                       "prd")),
     ("execution",    ("implement", "execute", "implementer", "build", "ship",
                       "deploy")),
     ("observability", ("observ", "tracing", "telemetry", "logging", "log",
-                       "cost-ledger", "cost ledger")),
+                       "cost-ledger", "cost ledger", "cost_rca")),
     ("memory",       ("memory", "decision", "recall", "knowledge", "episodic",
                       "semantic", "embedding", "embed_backend", "retrieval",
                       "backend health", "backend_health",
