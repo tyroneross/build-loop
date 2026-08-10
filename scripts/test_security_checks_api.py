@@ -35,6 +35,7 @@ class TestH(unittest.TestCase):
     def test_unscoped_read_fires(self):
         f = self._h("""
 export async function GET(req, { params }) {
+  const identity = await resolveIdentity();
   const doc = await db.document.findUnique({ where: { id: params.id } });
   return Response.json(doc);
 }
@@ -46,6 +47,7 @@ export async function GET(req, { params }) {
     def test_unscoped_mutation_is_critical(self):
         f = self._h("""
 export async function DELETE(req, { params }) {
+  const identity = await resolveIdentity();
   await db.document.delete({ where: { id: params.id } });
   return new Response(null, { status: 204 });
 }

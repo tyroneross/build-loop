@@ -134,27 +134,22 @@ class EmbedBackendTests(unittest.TestCase):
         self.assertIn("MLX", eb.fallback_reason() or "")
 
     @unittest.skipUnless(_mlx_importable() and _ollama_up(), "need both backends")
-    def test_cross_backend_cosine_above_threshold(self) -> None:
-        """M-G: identical text under MLX vs Ollama yields cosine ≥ 0.95.
-
-        Measured baseline ≈ 0.9664; threshold gives margin for any
-        per-machine numerical drift.
-        """
+    def test_cross_backend_models_are_versioned_separately(self) -> None:
+        """MLX and Ollama defaults occupy different vector spaces."""
         sample = "Postgres with pgvector extension powers retrieval"
 
         eb_mlx = _fresh_module({"EMBED_BACKEND": "mlx"})
         v_mlx = eb_mlx.embed(sample)
+        mlx_model = eb_mlx.active_model()
 
         eb_oll = _fresh_module({"EMBED_BACKEND": "ollama"})
         v_oll = eb_oll.embed(sample)
+        ollama_model = eb_oll.active_model()
 
         cos = _cos(_l2(v_mlx), _l2(v_oll))
-        self.assertGreaterEqual(
-            cos, 0.95,
-            msg=f"cross-backend cosine {cos:.4f} below 0.95 threshold",
-        )
-        # Sanity: should also be < 1.0 (different code paths)
-        self.assertLess(cos, 0.9999)
+        self.assertNotEqual(mlx_model, ollama_model)
+        self.assertEqual(len(v_mlx), len(v_oll))
+        self.assertTrue(math.isfinite(cos))
 
     @unittest.skipUnless(_mlx_importable(), "mlx_embeddings not installed")
     def test_singleton_caches_backend(self) -> None:

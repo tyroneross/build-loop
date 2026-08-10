@@ -73,7 +73,7 @@
     }
     .readiness h2 { margin: 0 0 6px; font-size: 1rem; }
     .readiness p { margin: 0; color: var(--muted); font-size: .88rem; }
-    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 26px; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 26px; }
     .metric { padding: 8px 6px; text-align: center; }
     .metric + .metric { border-left: 1px solid var(--line); }
     .metric strong { display: block; color: var(--accent-strong); font-size: 1.55rem; line-height: 1.2; }
@@ -127,7 +127,7 @@
     .selected-policy { color: var(--accent-strong); font-size: .81rem; font-weight: 800; text-align: right; }
     .selected-policy:empty { display: none; }
     .status { min-width: 92px; color: var(--muted); font-size: .76rem; text-align: right; }
-    .status[data-kind="saved"], .status[data-kind="queued"] { color: var(--success); }
+    .status[data-kind="saved"], .status[data-kind="queued"], .status[data-kind="applied"] { color: var(--success); }
     .status[data-kind="error"] { color: var(--error); }
     .disclosure-label { color: var(--accent); font-size: .75rem; font-weight: 750; }
     .disclosure-label::after { content: "↓"; display: inline-block; margin-left: 7px; transition: transform 160ms ease; }
@@ -168,6 +168,10 @@
     .impact div { display: grid; grid-template-columns: 42px 1fr; gap: 5px; }
     .impact b { color: var(--ink); font-weight: 700; }
     .note-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; margin-top: 16px; }
+    .applied-note { margin-top: 16px; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--success) 32%, white); border-radius: 12px; background: color-mix(in srgb, var(--accent-soft) 52%, white); }
+    .applied-note strong { color: var(--success); }
+    .applied-note p { margin: 3px 0 0; font-size: .84rem; }
+    .applied-note code { overflow-wrap: anywhere; color: var(--muted); font-size: .76rem; }
     .note-label { display: grid; gap: 7px; color: var(--muted); font-size: .79rem; }
     textarea { width: 100%; min-height: 82px; resize: vertical; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--ink); }
     textarea:focus { outline: 3px solid var(--accent-soft); border-color: var(--accent); }
@@ -216,12 +220,13 @@
       <aside class="readiness" aria-labelledby="summary-title">
         <div>
           <h2 id="summary-title">Decision state</h2>
-          <p>Responses save as you work. Queuing makes the selected direction agent-readable.</p>
+          <p>Saved records your choice. Queued schedules work. Applied confirms validated execution.</p>
         </div>
         <div class="metrics" aria-live="polite">
           <div class="metric"><strong id="gap-count">—</strong><span>gaps</span></div>
-          <div class="metric"><strong id="saved-count">—</strong><span>saved</span></div>
+          <div class="metric"><strong id="saved-count">—</strong><span>decided</span></div>
           <div class="metric"><strong id="queued-count">—</strong><span>queued</span></div>
+          <div class="metric"><strong id="applied-count">—</strong><span>applied</span></div>
         </div>
       </aside>
     </div>
@@ -236,7 +241,7 @@
       <div id="loading" role="status">Loading autonomy decisions…</div>
       <div id="cards" class="cards"></div>
     </section>
-    <p class="footer-note">Local control plane · append-only decisions · explicit queue action</p>
+    <p class="footer-note">Local control plane · append-only decisions · evidence-backed completion</p>
   </main>
 
   <script>
@@ -259,7 +264,8 @@
       const responses = Object.values(state.responses);
       document.querySelector('#gap-count').textContent = state.gaps.length;
       document.querySelector('#saved-count').textContent = responses.filter(item => item.choice_id || item.note).length;
-      document.querySelector('#queued-count').textContent = responses.filter(item => item.queued_path).length;
+      document.querySelector('#queued-count').textContent = responses.filter(item => item.event === 'response_queued').length;
+      document.querySelector('#applied-count').textContent = responses.filter(item => item.event === 'response_applied').length;
     }
 
     function listSection(title, values) {
@@ -289,7 +295,7 @@
       card.querySelectorAll('.choice').forEach(label => {
         label.classList.toggle('is-selected', label.querySelector('input')?.checked);
       });
-      if (phase === 'queued') statusFor(card, 'Saved and queued', 'queued');
+      if (phase === 'queued') statusFor(card, 'Queued for Build Loop', 'queued');
     }
 
     async function post(path, payload) {
@@ -363,8 +369,12 @@
       const head = node('summary', { className: 'card-head' });
       const titleWrap = node('div');
       titleWrap.append(node('h3', {}, gap.gap), node('p', { className: 'big-idea' }, gap.big_idea));
-      const status = node('div', { className: 'status', role: 'status', 'aria-live': 'polite' }, current?.queued_path ? `Queued · ${current.queued_path}` : current ? 'Saved' : 'Choose an option');
-      if (current?.queued_path) status.dataset.kind = 'queued';
+      const isApplied = current?.event === 'response_applied';
+      const isQueued = current?.event === 'response_queued';
+      const statusText = isApplied ? 'Applied · validated' : isQueued ? 'Queued for Build Loop' : current ? 'Saved' : 'Choose an option';
+      const status = node('div', { className: 'status', role: 'status', 'aria-live': 'polite' }, statusText);
+      if (isApplied) status.dataset.kind = 'applied';
+      else if (isQueued) status.dataset.kind = 'queued';
       else if (current) status.dataset.kind = 'saved';
       const cardMeta = node('div', { className: 'card-meta' });
       const currentOption = selectedOption(gap, current?.choice_id);
@@ -390,8 +400,16 @@
       const textarea = node('textarea', { maxlength: '8000', placeholder: 'Example: Use the recommended policy, but cap proposal items at four per manifest.' });
       textarea.value = current?.note || '';
       noteLabel.append(textarea);
-      const button = node('button', { type: 'button' }, current?.queued_path ? 'Queue updated decision' : 'Queue this decision');
+      const buttonLabel = isApplied ? 'Queue a revision' : isQueued ? 'Replace queued decision' : 'Queue for Build Loop';
+      const button = node('button', { type: 'button' }, buttonLabel);
       button.disabled = !current?.choice_id && !current?.note;
+      if (isApplied) {
+        const applied = node('div', { className: 'applied-note' });
+        applied.append(node('strong', {}, 'Applied'));
+        applied.append(node('p', {}, current.summary || 'Build Loop validated and completed this decision.'));
+        applied.append(node('code', {}, current.evidence || 'Completion evidence recorded.'));
+        decision.append(applied);
+      }
       noteRow.append(noteLabel, button);
       decision.append(fieldset, noteRow);
       article.append(head, explain, decision);

@@ -65,7 +65,7 @@ def shipped_python_files() -> list[Path]:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*.py")):
-            if EXCLUDED_PARTS & set(path.parts):
+            if EXCLUDED_PARTS & set(path.relative_to(REPO_ROOT).parts):
                 continue
             out.append(path)
     return out

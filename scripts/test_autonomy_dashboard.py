@@ -59,6 +59,176 @@ def test_queue_requires_saved_response_and_creates_agent_readable_followup(repo:
     text = path.read_text(encoding="utf-8")
     assert "Choice: Audit 3 · quarantine 5" in text
     assert "> Audit at three; quarantine at five." in text
+    assert "dashboard_gap_id: convergence" in text
+    assert store.latest()["convergence"]["event"] == "response_queued"
+
+
+def test_requeue_supersedes_prior_executable_item(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    store.save("convergence", "three", "Initial")
+    first = repo / store.queue("convergence")["queued_path"]
+    store.save("convergence", "five", "Revised")
+    assert not first.exists()
+    assert list((repo / dashboard.SUPERSEDED_DIR).glob(first.name))
+    second_event = store.queue("convergence")
+    second = repo / second_event["queued_path"]
+    assert not first.exists()
+    assert second.exists()
+    assert list((repo / dashboard.FOLLOWUP_DIR).glob("dashboard-convergence-*.md")) == [second]
+
+
+def test_queue_is_idempotent_until_the_response_changes(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    store.save("convergence", "five", "")
+    first = store.queue("convergence")
+    second = store.queue("convergence")
+    assert second == first
+    assert len(list((repo / dashboard.FOLLOWUP_DIR).glob("dashboard-convergence-*.md"))) == 1
+    assert not (repo / dashboard.SUPERSEDED_DIR).exists()
+
+
+def test_queue_rejects_missing_instruction_and_symlink_escape(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    store.save("convergence", "five", "")
+    queued = store.queue("convergence")
+    (repo / queued["queued_path"]).unlink()
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        store.queue("convergence")
+
+    escaped_repo = repo / "escaped"
+    escaped_repo.mkdir()
+    second = dashboard.DecisionStore(escaped_repo)
+    second.save("convergence", "five", "")
+    with tempfile.TemporaryDirectory() as outside_dir:
+        followup = escaped_repo / dashboard.FOLLOWUP_DIR
+        followup.parent.mkdir(parents=True, exist_ok=True)
+        followup.symlink_to(outside_dir, target_is_directory=True)
+        with pytest.raises(ValueError, match="inside the repository"):
+            second.queue("convergence")
+        assert not list(Path(outside_dir).iterdir())
+        legacy = Path(outside_dir) / "dashboard-convergence-legacy.md"
+        legacy.write_text(
+            "---\nsource: autonomy-dashboard\n"
+            "title: Apply autonomy decision for convergence\n---\n",
+            encoding="utf-8",
+        )
+        with second.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "event": "response_queued", "gap_id": "convergence", "choice_id": "five",
+                "note": "", "queued_path": str(followup.relative_to(escaped_repo) / legacy.name),
+            }) + "\n")
+        with pytest.raises(ValueError, match="inside the repository"):
+            second.complete("convergence", "commit:abc; tests:pass; audit:PASS")
+        assert legacy.exists()
+
+
+def test_completion_requires_evidence_and_archives_live_instruction(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    store.save("outcome-supervisor", "adopt", "")
+    with pytest.raises(ValueError, match="queue the response"):
+        store.complete("outcome-supervisor", "commit:abc; tests:pass; audit:PASS")
+    queued = store.queue("outcome-supervisor")
+    queued_path = repo / queued["queued_path"]
+    with pytest.raises(ValueError, match="requires non-empty"):
+        store.complete("outcome-supervisor", "")
+    applied = store.complete(
+        "outcome-supervisor", "commit:abc; tests:12 passed; audit:PASS", "Supervisor active"
+    )
+    assert applied["event"] == "response_applied"
+    assert applied["queued_path"] is None
+    assert applied["summary"] == "Supervisor active"
+    assert not queued_path.exists()
+    assert (repo / applied["applied_paths"][0]).exists()
+    assert store.complete(
+        "outcome-supervisor", "commit:different; tests:pass; audit:PASS"
+    ) == applied
+
+
+def test_completion_rejects_untrusted_or_missing_queue_path(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    path = repo / dashboard.STORE_PATH
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "event": "response_queued", "gap_id": "convergence", "choice_id": "five",
+        "note": "", "queued_path": "outside.md",
+    }) + "\n", encoding="utf-8")
+    (repo / "outside.md").write_text("must remain", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing"):
+        store.complete("convergence", "commit:abc; tests:pass; audit:PASS")
+    assert (repo / "outside.md").read_text(encoding="utf-8") == "must remain"
+
+
+def test_completion_rejects_forged_followup_and_archive_symlink(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    followup = repo / dashboard.FOLLOWUP_DIR
+    followup.mkdir(parents=True)
+    forged = followup / "unrelated.md"
+    forged.write_text("source: autonomy-dashboard\n", encoding="utf-8")
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text(json.dumps({
+        "event": "response_queued", "gap_id": "convergence", "choice_id": "five",
+        "note": "", "queued_path": str(forged.relative_to(repo)),
+    }) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing"):
+        store.complete("convergence", "commit:abc; tests:pass; audit:PASS")
+    assert forged.exists()
+
+    store.save("outcome-supervisor", "adopt", "")
+    queued = repo / store.queue("outcome-supervisor")["queued_path"]
+    with tempfile.TemporaryDirectory() as outside_dir:
+        outside = Path(outside_dir)
+        applied_link = repo / dashboard.APPLIED_DIR
+        applied_link.parent.mkdir(parents=True, exist_ok=True)
+        applied_link.symlink_to(outside, target_is_directory=True)
+        with pytest.raises(ValueError, match="inside the repository"):
+            store.complete("outcome-supervisor", "commit:abc; tests:pass; audit:PASS")
+        assert queued.exists()
+        assert not list(outside.iterdir())
+
+
+def test_completion_requires_structured_validation_evidence(repo: Path) -> None:
+    store = dashboard.DecisionStore(repo)
+    store.save("outcome-supervisor", "adopt", "")
+    store.queue("outcome-supervisor")
+    for evidence in ("x", "commit:abc", "commit:abc; tests:pass; audit:"):
+        with pytest.raises(ValueError, match="commit, tests, and audit"):
+            store.complete("outcome-supervisor", evidence)
+
+
+def test_partial_multi_item_archive_rolls_back(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = dashboard.DecisionStore(repo)
+    followup = repo / dashboard.FOLLOWUP_DIR
+    followup.mkdir(parents=True)
+    paths = [followup / f"dashboard-convergence-legacy-{number}.md" for number in (1, 2)]
+    events = []
+    for path in paths:
+        path.write_text(
+            "---\nsource: autonomy-dashboard\n"
+            "title: Apply autonomy decision for convergence\n---\n",
+            encoding="utf-8",
+        )
+        events.append({
+            "event": "response_queued", "gap_id": "convergence", "choice_id": "five",
+            "note": "", "queued_path": str(path.relative_to(repo)),
+        })
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    original_replace = Path.replace
+    move_count = 0
+
+    def fail_second_move(source: Path, target: Path) -> Path:
+        nonlocal move_count
+        move_count += 1
+        if move_count == 2:
+            raise OSError("forced second move failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_second_move)
+    with pytest.raises(OSError, match="forced second move"):
+        store.save("convergence", "three", "revision")
+    assert all(path.exists() for path in paths)
     assert store.latest()["convergence"]["event"] == "response_queued"
 
 
@@ -109,6 +279,15 @@ def test_live_http_save_reload_and_queue(live_server: str, repo: Path) -> None:
     with urllib.request.urlopen(live_server + "/api/state", timeout=2) as response:
         reloaded = json.loads(response.read())
     assert reloaded["responses"]["bounded-related-work"]["queued_path"]
+    status, applied = _post(live_server, "/api/completions", {
+        "gap_id": "bounded-related-work", "summary": "Adaptive queue active",
+        "evidence": "commit:abc; tests:pass; audit:PASS",
+    })
+    assert status == 200
+    assert applied["response"]["event"] == "response_applied"
+    with urllib.request.urlopen(live_server + "/api/state", timeout=2) as response:
+        completed = json.loads(response.read())
+    assert completed["responses"]["bounded-related-work"]["event"] == "response_applied"
 
 
 def test_old_cap_12_selection_migrates_to_adaptive_policy(repo: Path) -> None:
@@ -152,9 +331,10 @@ def test_html_has_semantic_controls_and_autosave_contract() -> None:
     html = (Path(__file__).resolve().parents[1] / "docs/autonomy-dashboard.html").read_text(encoding="utf-8")
     for token in (
         "<main", "node('details'", "node('summary'", "node('fieldset')", "node('legend'",
-        "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue this decision",
+        "aria-live", "prefers-reduced-motion", "scheduleSave", "Queue for Build Loop",
         '"Avenir Next"', "--canvas: #f6fbff", "--accent: #00836f", "min-height: 44px",
-        "is-selected", "Selected policy", "Saved and queued",
+        "is-selected", "Selected policy", "Queued for Build Loop", "response_applied",
+        "applied-count", "Applied · validated", "evidence-backed completion",
         "const saved = await save(card, gap);", "if (!saved) return;",
     ):
         assert token in html

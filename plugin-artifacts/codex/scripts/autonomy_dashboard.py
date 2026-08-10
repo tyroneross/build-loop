@@ -29,6 +29,8 @@ STORE_PATH = Path(".build-loop/autonomy-dashboard/responses.jsonl")
 SERVER_STATE_PATH = Path(".build-loop/autonomy-dashboard/server.json")
 SERVER_LOG_PATH = Path(".build-loop/autonomy-dashboard/server.log")
 FOLLOWUP_DIR = Path(".build-loop/followup")
+APPLIED_DIR = Path(".build-loop/autonomy-dashboard/applied")
+SUPERSEDED_DIR = Path(".build-loop/autonomy-dashboard/superseded")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 DEFAULT_GAPS: tuple[dict[str, Any], ...] = (
@@ -139,24 +141,99 @@ class DecisionStore:
     def __init__(self, workdir: Path) -> None:
         self.workdir = workdir.resolve()
         self.path = self.workdir / STORE_PATH
+        self.operation_lock = self.path.with_name("operations")
 
-    def latest(self) -> dict[str, dict[str, Any]]:
+    def _events(self) -> list[dict[str, Any]]:
         if not self.path.exists():
-            return {}
-        latest: dict[str, dict[str, Any]] = {}
+            return []
+        events: list[dict[str, Any]] = []
         for line in self.path.read_text(encoding="utf-8").splitlines():
             try:
                 event = json.loads(line)
             except ValueError:
                 continue
             if isinstance(event, dict) and event.get("gap_id") in GAPS_BY_ID:
-                event = dict(event)
-                migrated = CHOICE_MIGRATIONS.get((event["gap_id"], event.get("choice_id")))
-                if migrated:
-                    event["choice_id"] = migrated
-                    event["migrated_from"] = "cap-12"
-                latest[event["gap_id"]] = event
+                events.append(event)
+        return events
+
+    def latest(self) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for raw_event in self._events():
+            event = dict(raw_event)
+            migrated = CHOICE_MIGRATIONS.get((event["gap_id"], event.get("choice_id")))
+            if migrated:
+                event["choice_id"] = migrated
+                event["migrated_from"] = "cap-12"
+            latest[event["gap_id"]] = event
         return latest
+
+    def _queued_paths(self, gap_id: str) -> list[Path]:
+        queue_dir = (self.workdir / FOLLOWUP_DIR).resolve()
+        try:
+            queue_dir.relative_to(self.workdir)
+        except ValueError as exc:
+            raise ValueError("dashboard queue directory must stay inside the repository") from exc
+        paths: list[Path] = []
+        for event in self._events():
+            if event.get("gap_id") != gap_id or event.get("event") != "response_queued":
+                continue
+            value = event.get("queued_path")
+            if not isinstance(value, str) or not value:
+                continue
+            path = (self.workdir / value).resolve()
+            try:
+                path.relative_to(queue_dir)
+            except ValueError:
+                continue
+            if path.is_file() and self._is_dashboard_item(path, gap_id) and path not in paths:
+                paths.append(path)
+        return paths
+
+    @staticmethod
+    def _is_dashboard_item(path: Path, gap_id: str) -> bool:
+        if not path.name.startswith(f"dashboard-{gap_id}-") or path.suffix != ".md":
+            return False
+        text = path.read_text(encoding="utf-8", errors="replace")[:4_000]
+        if "source: autonomy-dashboard" not in text:
+            return False
+        declared = f"dashboard_gap_id: {gap_id}"
+        legacy_title = f"title: Apply autonomy decision for {gap_id}"
+        return declared in text or legacy_title in text
+
+    def _archive_queued(self, gap_id: str, directory: Path) -> list[tuple[Path, Path]]:
+        sources = self._queued_paths(gap_id)
+        if not sources:
+            return []
+        destination_dir = self._contained_directory(directory)
+        moved: list[tuple[Path, Path]] = []
+        try:
+            for source in sources:
+                destination = destination_dir / source.name
+                suffix = 1
+                while destination.exists():
+                    destination = destination_dir / f"{source.stem}-{suffix}{source.suffix}"
+                    suffix += 1
+                source.replace(destination)
+                moved.append((source, destination))
+        except Exception:
+            for source, destination in reversed(moved):
+                destination.replace(source)
+            raise
+        return moved
+
+    def _contained_directory(self, directory: Path) -> Path:
+        requested_dir = self.workdir / directory
+        try:
+            requested_dir.parent.resolve().relative_to(self.workdir)
+        except ValueError as exc:
+            raise ValueError("dashboard storage directory must stay inside the repository") from exc
+        requested_dir.mkdir(parents=True, exist_ok=True)
+        resolved = requested_dir.resolve()
+        try:
+            resolved.relative_to(self.workdir)
+        except ValueError as exc:
+            raise ValueError("dashboard storage directory must stay inside the repository") from exc
+        return resolved
 
     def save(self, gap_id: str, choice_id: str, note: str) -> dict[str, Any]:
         gap = GAPS_BY_ID.get(gap_id)
@@ -170,48 +247,115 @@ class DecisionStore:
         if not choice_id and not note.strip():
             raise ValueError("select a choice or enter direction")
         event = {"event": "response_saved", "gap_id": gap_id, "choice_id": choice_id, "note": note, "saved_at": _now(), "queued_path": None}
-        _append_event(self.path, event)
+        with LockedFile(self.operation_lock):
+            moved: list[tuple[Path, Path]] = []
+            try:
+                moved = self._archive_queued(gap_id, SUPERSEDED_DIR)
+                _append_event(self.path, event)
+            except Exception:
+                for source, destination in reversed(moved):
+                    destination.replace(source)
+                raise
         return event
 
     def queue(self, gap_id: str) -> dict[str, Any]:
-        latest = self.latest().get(gap_id)
-        if latest is None or latest.get("event") not in {"response_saved", "response_queued"}:
-            raise ValueError("save a response before queuing it")
-        gap = GAPS_BY_ID[gap_id]
-        choice = next((option for option in gap["options"] if option["id"] == latest["choice_id"]), None)
-        if choice is None:
-            choice = {
-                "label": "Free-text direction",
-                "impact": {
-                    "owner": "The written direction controls this follow-up.",
-                    "app": "The agent maps the direction to current repository evidence.",
-                    "user": "Impact depends on the recorded direction.",
-                    "other": "Normal autonomy and validation gates remain active.",
-                },
-            }
-        queue_dir = self.workdir / FOLLOWUP_DIR
-        queue_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = queue_dir / f"dashboard-{gap_id}-{stamp}.md"
-        suffix = 1
-        while path.exists():
-            path = queue_dir / f"dashboard-{gap_id}-{stamp}-{suffix}.md"
-            suffix += 1
-        note_lines = str(latest.get("note") or "No additional direction.").splitlines() or ["No additional direction."]
-        impact_lines = [f"- {name.title()}: {value}" for name, value in choice["impact"].items()]
-        content = "\n".join([
-            "---", f"title: Apply autonomy decision for {gap_id}", f"created: {datetime.now(timezone.utc).date().isoformat()}",
-            "source: autonomy-dashboard", "classify: SAFE", "status: open", "---", "", "## Decision", "",
-            f"Gap: {gap['gap']}", f"Choice: {choice['label']}", "", "## Direction", "",
-            *[f"> {line}" for line in note_lines], "", "## Impact", "", *impact_lines, "", "## Acceptance", "",
-            "- Re-check this decision against the live repository and current intent.",
-            "- Apply the selected policy through the canonical Build Loop mechanism.",
-            "- Validate the affected behavior and record the evidence.", "",
-        ])
-        atomic_write_bytes(path, content.encode())
-        event = {**latest, "event": "response_queued", "queued_at": _now(), "queued_path": str(path.relative_to(self.workdir))}
-        _append_event(self.path, event)
-        return event
+        with LockedFile(self.operation_lock):
+            latest = self.latest().get(gap_id)
+            if latest is None or latest.get("event") not in {"response_saved", "response_queued"}:
+                raise ValueError("save a response before queuing it")
+            if latest.get("event") == "response_queued":
+                live = self._queued_paths(gap_id)
+                value = latest.get("queued_path")
+                current = (self.workdir / value).resolve() if isinstance(value, str) else None
+                if current is not None and live == [current]:
+                    return latest
+                raise ValueError("queued follow-up is missing or ambiguous; save the response again before requeueing")
+            gap = GAPS_BY_ID[gap_id]
+            choice = next((option for option in gap["options"] if option["id"] == latest["choice_id"]), None)
+            if choice is None:
+                choice = {
+                    "label": "Free-text direction",
+                    "impact": {
+                        "owner": "The written direction controls this follow-up.",
+                        "app": "The agent maps the direction to current repository evidence.",
+                        "user": "Impact depends on the recorded direction.",
+                        "other": "Normal autonomy and validation gates remain active.",
+                    },
+                }
+            queue_dir = self._contained_directory(FOLLOWUP_DIR)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            path = queue_dir / f"dashboard-{gap_id}-{stamp}.md"
+            suffix = 1
+            while path.exists():
+                path = queue_dir / f"dashboard-{gap_id}-{stamp}-{suffix}.md"
+                suffix += 1
+            note_lines = str(latest.get("note") or "No additional direction.").splitlines() or ["No additional direction."]
+            impact_lines = [f"- {name.title()}: {value}" for name, value in choice["impact"].items()]
+            content = "\n".join([
+                "---", f"title: Apply autonomy decision for {gap_id}", f"created: {datetime.now(timezone.utc).date().isoformat()}",
+                "source: autonomy-dashboard", f"dashboard_gap_id: {gap_id}", "classify: SAFE", "status: open", "---", "", "## Decision", "",
+                f"Gap: {gap['gap']}", f"Choice: {choice['label']}", "", "## Direction", "",
+                *[f"> {line}" for line in note_lines], "", "## Impact", "", *impact_lines, "", "## Acceptance", "",
+                "- Re-check this decision against the live repository and current intent.",
+                "- Apply the selected policy through the canonical Build Loop mechanism.",
+                "- Validate the affected behavior and record the evidence.",
+                "- After validation, mark this dashboard decision applied with the evidence.", "",
+            ])
+            atomic_write_bytes(path, content.encode())
+            moved: list[tuple[Path, Path]] = []
+            try:
+                moved = self._archive_queued(gap_id, SUPERSEDED_DIR)
+                event = {**latest, "event": "response_queued", "queued_at": _now(), "queued_path": str(path.relative_to(self.workdir))}
+                _append_event(self.path, event)
+            except Exception:
+                path.unlink(missing_ok=True)
+                for source, destination in reversed(moved):
+                    destination.replace(source)
+                raise
+            return event
+
+    def complete(self, gap_id: str, evidence: str, summary: str = "") -> dict[str, Any]:
+        evidence = evidence.strip()
+        required = ("commit", "tests", "audit")
+        evidence_parts = {
+            key.strip().lower(): value.strip()
+            for part in evidence.split(";")
+            if ":" in part
+            for key, value in [part.split(":", 1)]
+        }
+        missing = [key for key in required if not evidence_parts.get(key)]
+        if missing:
+            raise ValueError(f"completion evidence requires non-empty commit, tests, and audit fields; missing: {', '.join(missing)}")
+        if len(evidence) > MAX_NOTE_CHARS or len(summary) > MAX_NOTE_CHARS:
+            raise ValueError(f"completion text exceeds {MAX_NOTE_CHARS} characters")
+        with LockedFile(self.operation_lock):
+            latest = self.latest().get(gap_id)
+            if latest is None:
+                raise ValueError("unknown or unsaved gap_id")
+            if latest.get("event") == "response_applied":
+                return latest
+            if latest.get("event") != "response_queued":
+                raise ValueError("queue the response before marking it applied")
+            moved: list[tuple[Path, Path]] = []
+            try:
+                moved = self._archive_queued(gap_id, APPLIED_DIR)
+                if not moved:
+                    raise ValueError("queued follow-up is missing; cannot prove completion")
+                event = {
+                    **latest,
+                    "event": "response_applied",
+                    "applied_at": _now(),
+                    "applied_paths": [str(destination.relative_to(self.workdir)) for _, destination in moved],
+                    "evidence": evidence,
+                    "summary": summary.strip(),
+                    "queued_path": None,
+                }
+                _append_event(self.path, event)
+            except Exception:
+                for source, destination in reversed(moved):
+                    destination.replace(source)
+                raise
+            return event
 
     def state(self) -> dict[str, Any]:
         return {"big_idea": "Build Loop should finish related work by default and interrupt you only when your decision changes the outcome.", "gaps": DEFAULT_GAPS, "responses": self.latest()}
@@ -302,6 +446,12 @@ def make_handler(workdir: Path, html_path: Path) -> type[BaseHTTPRequestHandler]
                     event = store.save(str(payload.get("gap_id") or ""), str(payload.get("choice_id") or ""), str(payload.get("note") or ""))
                 elif self.path == "/api/actions":
                     event = store.queue(str(payload.get("gap_id") or ""))
+                elif self.path == "/api/completions":
+                    event = store.complete(
+                        str(payload.get("gap_id") or ""),
+                        str(payload.get("evidence") or ""),
+                        str(payload.get("summary") or ""),
+                    )
                 elif self.path == "/api/shutdown":
                     expected = getattr(self.server, "instance_id", "")
                     if not expected or payload.get("instance_id") != expected:
@@ -493,6 +643,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--print-state", action="store_true")
+    parser.add_argument("--complete", metavar="GAP_ID")
+    parser.add_argument("--evidence", default="")
+    parser.add_argument("--summary", default="")
     parser.add_argument("--foreground", action="store_true")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--stop", action="store_true")
@@ -502,6 +655,14 @@ def main(argv: list[str] | None = None) -> int:
     workdir = Path(args.workdir).resolve()
     if args.print_state:
         print(json.dumps(DecisionStore(workdir).state(), indent=2, sort_keys=True))
+        return 0
+    if args.complete:
+        try:
+            event = DecisionStore(workdir).complete(args.complete, args.evidence, args.summary)
+        except (OSError, ValueError, TimeoutError) as exc:
+            print(f"autonomy_dashboard: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(event, indent=2, sort_keys=True))
         return 0
     if args.status:
         status = dashboard_status(workdir)

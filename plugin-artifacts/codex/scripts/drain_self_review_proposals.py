@@ -117,7 +117,12 @@ def is_stale(p: dict) -> tuple[bool, str]:
 def is_non_actionable(p: dict) -> tuple[bool, str]:
     if p["kind"] in NON_ACTIONABLE_KINDS:
         return True, f"{p['kind']} is advisory-only (rolling-window churn)"
-    blob = f"{p['finding']} {p.get('script','')}"
+    script = str(p.get("script", ""))
+    marker = "/.build-loop/worktrees/"
+    if marker in script:
+        worktree_relative = script.split(marker, 1)[1]
+        script = worktree_relative.split("/", 1)[1] if "/" in worktree_relative else script
+    blob = f"{p['finding']} {script}"
     hint = matched_generated_hint(blob)
     if hint:
         return True, f"target is a generated artifact ({hint})"

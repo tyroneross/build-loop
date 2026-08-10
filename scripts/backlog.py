@@ -612,18 +612,20 @@ def _b32_crockford(n: int, width: int) -> str:
 # at 2039-09-07. After it, the prefix wraps the high digit once and ordering
 # resumes — and uniqueness is never affected, since the random tail carries that
 # regardless. The time prefix is navigational-only (`ls` sort), not a uniqueness
-# guarantee. Random component: 3 bytes of os.urandom -> ~4.8 Crockford digits; we
-# render 5 digits (25 bits) for headroom.
+# guarantee. Random component: 8 bytes of os.urandom -> ~12.8 Crockford digits;
+# we render 13 digits (65-bit capacity carrying 64 random bits). This keeps
+# million-item distributed batches below a one-in-37-million collision risk;
+# the atomic on-disk retry remains the final absolute guard.
 _TOKEN_TIME_WIDTH = 8
-_TOKEN_RAND_BYTES = 3
-_TOKEN_RAND_WIDTH = 5
+_TOKEN_RAND_BYTES = 8
+_TOKEN_RAND_WIDTH = 13
 
 
 def mint_id_token(now_ms: int | None = None) -> str:
     """Mint a collision-resistant, time-ordered item-ID suffix with ZERO
     coordination.
 
-    Shape: ``<8 base32 time digits><5 base32 random digits>`` (13 lowercase
+    Shape: ``<8 base32 time digits><13 base32 random digits>`` (21 lowercase
     Crockford base32 chars). The leading time component makes IDs roughly sort
     by creation in ``ls`` (readability / navigation); the trailing
     ``os.urandom``-seeded random component makes them unique across agents,
@@ -631,7 +633,7 @@ def mint_id_token(now_ms: int | None = None) -> str:
     multi-agent contract. ``os.urandom`` (via ``secrets``) is the entropy source,
     never a clock-only or ``Math.random``-style value.
 
-    The astronomically-rare same-millisecond + same-25-random-bits clash is
+    The astronomically-rare same-millisecond + same-64-random-bits clash is
     still caught and re-minted by ``atomic_create_item``'s O_EXCL retry, so the
     on-disk guarantee is absolute, not merely probabilistic.
     """
