@@ -35,15 +35,15 @@ Intent → internal mode:
 
 ### Parallelism config
 
-Fan-out width is machine-aware. The cap is `effective_max_implementers(workdir)` from `scripts/parallelism.py`: `min(config.parallelism.maxImplementers, cpu_count−2, hard ceiling 12)`, defaulting to 8 when no config is present.
+Fan-out width is supervisor-controlled. `autonomy_supervisor.py fanout` resolves `parallelism.py` capacity, then applies live backpressure. Effective width is the minimum of independent MECE work, project/request capacity, CPU headroom, cloud token budget, shared cross-session capacity, and the absolute ceiling of 150. Default project capacity remains 8.
 
-To raise the cap toward the hard ceiling, set in `.build-loop/config.json`:
+To set a project preference, use `.build-loop/config.json`:
 
 ```json
 { "parallelism": { "maxImplementers": 8 } }
 ```
 
-Values above 12 are clamped. Values above `cpu_count−2` are clamped to `cpu_count−2` to leave headroom for the orchestrator and host OS.
+The preference never forces that many workers. The supervisor admits only independent chunks supported by live resource and provider telemetry. Values above 150 are clamped; local capacity also preserves two CPU cores for the orchestrator and host OS.
 
 ## Autonomous Mode + Per-Commit Mode
 
@@ -251,7 +251,7 @@ Key steps: independent-auditor (build scope) adversarial read → build-loop-own
 
 Fix failures surfaced by Review plus drain the UX queue from Sub-step D Gates 7-8, systematically. Loops back to Review after each pass. Hard stop at 5 iterations.
 
-Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → fan-out up to `effective_max` implementers (see `scripts/parallelism.py effective_max_implementers(workdir)` — default 8; `min(config.parallelism.maxImplementers, cpu_count−2, hard ceiling 12)`) → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → causal-tree at 3 fails) → UI re-validate hook → overflow to followup/.
+Key steps: prioritized work list (Validate failures → blocker UX → major UX → optimization → UI coverage gaps) → supervisor-selected adaptive fan-out (default project preference 8; absolute ceiling 150; resource, provider, independent-work, and shared-capacity limits remain binding) → stuck-cascade (evidence-gap → memory re-check → parallel assess at 2 fails → independent audit at the third same unresolved verdict → quarantine at the fifth) → UI re-validate hook → overflow to followup/.
 
 **Load `skills/build-loop/references/phase-5-iterate.md`** for the full prioritized work list, status routing for all 9 implementer return values, convergence detection, and followup overflow protocol.
 
@@ -259,7 +259,7 @@ Key steps: prioritized work list (Validate failures → blocker UX → major UX 
 
 Detect recurring patterns across recent runs, auto-draft experimental skills/agents. **Always runs after Review-G** (v0.30.0+) and always emits a `## Learn` outcome line. Three outcome states: **accruing** (`runs[] < 3` → `Learn: accruing (N/3 runs)`), **deferred** (debug-only `closeout: false` or budget-exhausted → write `learn-deferred-<run-id>.md` marker → `Learn: deferred — <reason>`), or **full** (`runs[] >= 3` AND pattern crossing threshold AND not-deferred). Promotion to `active/` still requires explicit `/build-loop:promote-experiment` (safety boundary). The prior `autoSelfImprove: false` opt-out is deprecated to a migration no-op — old configs do not error.
 
-Key steps: recurring-pattern-detector (Haiku; reads `state.json.runs[]` AND `.build-loop/proposals/enforce-from-retro/*.md` as two signal sources, the second emitting `enforce_recurrence` on cross-run candidates) → filter (confidence: high OR count >= 4; `enforce_recurrence` >= 2 distinct run-ids) → draft via self-improvement-architect (Sonnet) → Opus signoff → sample review sweep → notify.
+Key steps: recurring-pattern-detector (Haiku; reads run records, retrospective enforce-candidates, classified learning objects, and redacted tool-trace summaries) → filter (confidence: high OR count >= 4; `enforce_recurrence` >= 2 distinct run-ids; repeated identical tool calls >= 3 become evidence-aware retry candidates) → draft via self-improvement-architect (Sonnet) → Opus signoff → sample review sweep → notify.
 
 **Load `skills/build-loop/references/phase-6-learn.md`** for the full gating-outcomes table, detect-filter-draft-signoff flow, auto-promote rules, and user control commands.
 

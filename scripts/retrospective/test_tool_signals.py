@@ -169,6 +169,29 @@ class NewSectionsInBuildTests(unittest.TestCase):
         joined = " ".join(s["enforce_candidates"])
         self.assertIn("Automate recurring ritual", joined)
 
+    def test_tool_trace_feeds_recursive_learning_without_transcript(self) -> None:
+        d = self._tmp()
+        trace_path = d / "tool-traces.jsonl"
+        rows = []
+        for index in range(4):
+            rows.append({
+                "event": "reconciled",
+                "span_id": f"span-{index}",
+                "status": {"code": "ERROR" if index == 0 else "OK"},
+                "duration_ms": 100 + index,
+                "attributes": {
+                    "build_loop.run_id": "session-test",
+                    "gen_ai.tool.name": "Bash",
+                    "gen_ai.tool.call.arguments.sha256": "same-input",
+                    "gen_ai.tool.call.result.preview": "error" if index == 0 else "ok",
+                },
+            })
+        trace_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+        result = build(None, {}, "", "", "session-test", trace_jsonl=trace_path)
+        self.assertEqual(result["meta"]["trace_tool_calls"], 4)
+        self.assertEqual(result["meta"]["trace_tool_errors"], 1)
+        self.assertIn("Reduce repeated identical tool calls", " ".join(result["enforce_candidates"]))
+
 
 if __name__ == "__main__":
     unittest.main()

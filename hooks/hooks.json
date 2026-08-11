@@ -76,6 +76,16 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase start >/dev/null 2>&1 || true",
+            "timeout": 1000
+          }
+        ]
+      },
+      {
         "matcher": "Skill",
         "hooks": [
           {
@@ -118,6 +128,16 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase end >/dev/null 2>&1 || true",
+            "timeout": 1000
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -133,7 +153,29 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" hook --phase error >/dev/null 2>&1 || true",
+            "timeout": 1000
+          }
+        ]
+      }
+    ],
     "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/tool_trace.py\" --workdir \"$CLAUDE_PROJECT_DIR\" ingest >/dev/null 2>&1 || true; printf '{}'",
+            "timeout": 5000
+          }
+        ]
+      },
       {
         "matcher": "",
         "hooks": [

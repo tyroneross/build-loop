@@ -84,7 +84,9 @@ def test_no_legacy_memory_path_references_outside_allowlist():
     outside the explicit allowlist."""
     offenders: list[tuple[str, int, str]] = []
     for relpath in _git_ls_files():
-        if relpath in ALLOWLIST:
+        # Generated plugin artifacts mirror canonical sources. Scanning both
+        # creates duplicate findings whose allowlist path can never match.
+        if relpath.startswith("plugin-artifacts/") or relpath in ALLOWLIST:
             continue
         try:
             text = (REPO_ROOT / relpath).read_text(encoding="utf-8")

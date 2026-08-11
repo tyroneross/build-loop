@@ -16,7 +16,7 @@ Format spec + drift gate: `architecture/README.md`.
 
 <!-- ARCH_COMPONENTS_START -->
 <!-- run: python3 scripts/architecture_diagram/generate.py -->
-**29 agents · 50 skills · 393 scripts · 21 hooks** (auto-discovered 0a32c279)
+**29 agents · 50 skills · 395 scripts · 21 hooks** (auto-discovered 33c065a1)
 
 <details><summary>agents</summary>
 
@@ -144,7 +144,9 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/audit_git.py`
 - `scripts/audit_memory_invocation.py`
 - `scripts/audit_record_verdict.py`
+- `scripts/autonomy_dashboard.py`
 - `scripts/autonomy_gate.py`
+- `scripts/autonomy_supervisor.py`
 - `scripts/backend_health.py`
 - `scripts/backlog.py`
 - `scripts/backlog/__init__.py`
@@ -303,7 +305,6 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/model_overrides.py`
 - `scripts/model_resolver.py`
 - `scripts/model_taxonomy.py`
-- `scripts/ops_state_probe.py`
 - `scripts/optimize_doe.py`
 - `scripts/optimize_loop.py`
 - `scripts/optimize_suggest_factors.py`
@@ -447,6 +448,7 @@ Format spec + drift gate: `architecture/README.md`.
 - `scripts/task_surface.py`
 - `scripts/temporal_membership.py`
 - `scripts/token_efficiency_benchmark.py`
+- `scripts/tool_trace.py`
 - `scripts/transcript-pattern-miner.py`
 - `scripts/transcript_pattern_miner/__init__.py`
 - `scripts/transcript_pattern_miner/__main__.py`

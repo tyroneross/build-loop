@@ -67,11 +67,11 @@ In either mode, each implementer dispatch (or inline pass) MUST include: (1) abs
 
 - `fixed` → mark queue entry done (delete the .md).
 - `partial` → keep entry, schedule re-pass next iteration.
-- `scope_breach` → ask user before extending scope.
+- `scope_breach` → re-plan when the added files stay inside authorized repo scope and resolve to current intent; otherwise route through `autonomy_supervisor.py classify-related`.
 - `deferred_architecture` → move entry to Review-F deferred list.
 - `evidence_stale` → re-run `ux_triage.py --clear` to regenerate the queue, then re-pass.
 - `plan_malformed` → same as `evidence_stale`; log the malformed entry's id to `.build-loop/state.json.malformedPlans[]`.
-- `needs_dependency` → ask user (same routing as `scope_breach`); never auto-add deps.
+- `needs_dependency` → classify the concrete dependency change; SAFE/RISKY follows the normal isolated route, DECISION/PRODUCTION surfaces with impact.
 - `failed` → if attempts on this entry < 2, re-pass with the implementer's `notes` injected as `additional_context`; if attempts >= 2, escalate the implementer to Opus per `Skill("build-loop:model-tiering")` §Escalation Triggers and re-pass once more; if still `failed`, surface in Review-F as ❓ Unfixed.
 - `concurrent_modification_detected` → abort the current parallel batch immediately, surface in Review-F.
 
@@ -90,7 +90,7 @@ When iteration cap is reached and queue entries remain, write them to `.build-lo
 ## Convergence rules
 
 - Same failure 2x with same root cause → escalate to user (unless the stuck-iteration cascade above already escalated first).
-- Fix A breaks criterion B → flag oscillation, ask user.
+- Fix A breaks criterion B → revert the weaker reversible fix, re-plan once, then quarantine the item if oscillation recurs.
 - 3+ simultaneous failures after a fix → systemic, stop and reassess.
 - Hard stop at 5 iterations (classic mode) or 25 iterations (autonomous mode); proceed to final Review sub-step F/G with remaining ❓ Unfixed and queue overflow written to `.build-loop/followup/`.
 
@@ -115,7 +115,7 @@ When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-d
 
 **Body — drain the queue:**
 
-1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/backlog/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`). Backlog items (longer-lived deferred work) are treated identically to issues during draining — same alignment-checker routing, same per-item cap.
+1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/backlog/*.md` + `.build-loop/followup/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`). Backlog and follow-up items are treated identically to issues during draining — same alignment-checker routing, same per-item cap.
 2. **For each item (sequential — alignment-check is per-item):**
    a. Dispatch `Agent(subagent_type="build-loop:alignment-checker", prompt=<brief>)` with `item_path`, `item_kind`, `workdir`, `current_task_id` (null when §15.2 working-state not yet shipped on this branch — graceful degradation per the agent's own contract), and the last 5 verdicts for consistency cross-checking.
    b. Parse the JSON verdict (the agent returns exactly one JSON object, no fence). Append to `state.runs[].alignment_verdicts[]` (one row per item, capped at 200 per run).
@@ -123,9 +123,9 @@ When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-d
       - **`aligned`** — schedule the item for Phase 2 → 3 → 4. Treat as a one-item plan: feed alignment-checker's `reason` + `matched_anchors` to plan-critic as part of the brief so plan-critic knows why this item earned alignment.
       - **`misaligned`** — `mv` the item to `.build-loop/followup/<basename>`. Append a markdown footer to the moved file: `\n\n---\n_Deferred by alignment-checker: <reason>. Violated: <comma-separated violated_non_goals>._\n`.
       - **`uncertain`** — emit `PushNotification` with item path + `uncertainty_evidence`. `TaskCreate` a follow-up task captioned `Review uncertain queue item: <basename>`. Do NOT block — continue loop with remaining items.
-   d. **Per-item cap — Phase A logs only.** Plan §14.6 — per-item ≤ 3 same-verdict cap enforced in Phase C. Phase A logs a one-line warning when the same item gets the same verdict ≥ 3 times: `[autonomous] item <basename> received <verdict> for 3rd time — Phase C will force misaligned`.
+   d. **Per-item cap — enforced.** Run `autonomy_supervisor.py verdict --item <stable-id> --verdict <verdict> --limit 5 --audit-at 3 --actor-id <worker-id> --actor-session <worker-session-id>` after each item outcome. `action: independent_audit` requires a different worker/session whose current-run agent-ledger `verify` row names the item and session; the `audit` command validates and hashes that receipt before the fourth attempt. `action: quarantine` moves the item plus five verdict receipts to follow-up and continues the manifest. A resolved verdict resets the consecutive count.
    e. **Record item telemetry (fail-open).** Append one `item_iteration` row so `task_surface.py` and dry-run review show per-item attempt history with the tier that judged it: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/exec_state.py item-iteration --workdir "$PWD" --item-id <basename> --status <started|deferred|stopped> --validator alignment-checker --tier code` — status maps from the verdict (`aligned`→`started`, `misaligned`→`deferred`, `uncertain`→`stopped`); `--tier code` is the alignment-checker's tier and resolves the model via `model_overrides`. A non-zero exit is logged and skipped — telemetry never wedges the loop.
-3. **Commit + advance.** When an `aligned` item finishes Phase 2 → 4, record completion telemetry: `exec_state.py item-iteration --workdir "$PWD" --item-id <basename> --status passed --validator independent-auditor --tier frontier` (the item's Review-A verdict tier — same `--tier frontier`→`fable` resolution the agent-ledger records, so the two lanes join on `item-id`). Then the standard Phase 3 commit step runs. Increment `state.execution.budget.commits_since_push`. **Push behavior in Phase A is unchanged from today** (manual) — `scripts/autonomous_push.py` ships in Phase B. The `budget_check.py` envelope's `should_push_now` field is informational only in Phase A; the orchestrator surfaces it in check-ins but does not push autonomously yet.
+3. **Commit + advance.** When an `aligned` item finishes Phase 2 → 4, record completion telemetry: `exec_state.py item-iteration --workdir "$PWD" --item-id <basename> --status passed --validator independent-auditor --tier frontier` (the item's Review-A verdict tier — same `--tier frontier`→`fable` resolution the agent-ledger records, so the two lanes join on `item-id`). Then the standard Phase 3 commit step runs. For an item with `source: autonomy-dashboard`, call `autonomy_dashboard.py --complete <dashboard_gap_id> --summary "<what changed>" --evidence "commit:<sha>; tests:<result>; audit:<verdict>"`; this archives the executable instruction and publishes `Applied` evidence. Increment `state.execution.budget.commits_since_push`. **Push behavior in Phase A is unchanged from today** (manual) — `scripts/autonomous_push.py` ships in Phase B. The `budget_check.py` envelope's `should_push_now` field is informational only in Phase A; the orchestrator surfaces it in check-ins but does not push autonomously yet.
 
 **Exit conditions (any one stops the loop):**
 

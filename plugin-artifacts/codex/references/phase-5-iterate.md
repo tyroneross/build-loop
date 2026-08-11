@@ -10,6 +10,16 @@
 
 Entered when Review sub-step A, B, or D finds blocking issues OR `.build-loop/ux-queue/` is non-empty. Critic-only failures (strong-checkpoint from A without touching B) route to Execute instead — no iteration counter burn.
 
+**Bounded admission at first entry.** Snapshot pre-existing, intent-aligned queue
+work once with `python3 scripts/autonomy_supervisor.py --workdir "$PWD" snapshot
+--goal "<intent>" --limit <configured-or-12>`. Schedule only paths in
+`.build-loop/autonomy/queue-manifest.json`; later queue arrivals wait for the
+next manifest. An issue discovered while executing the current work is handled
+separately: run `classify-related` and execute it in this run when the verdict is
+`execute` (intent-aligned, inside the repo, reversible, and deterministically
+testable). `followup` writes a durable item. `decision` names why the owner is
+needed, available choices, and owner/app/user/other impact.
+
 **Iterate input contract (prioritized work list)**:
 
 | Priority | Source | Notes |
@@ -54,18 +64,25 @@ Mirrors the Operations Center design (`validated_at` + refusal at the same gate 
 
 **Fan-out** (mode-dependent): After dequeue, partition entries by `files_touched` into independent groups (no overlapping files).
 
+Before each fan-out and after a provider/worker error, run
+`autonomy_supervisor.py backpressure --signals '<json>'`. Feed available 429
+count, memory percentage, free disk, thermal state, error streak, cost use and
+ceiling, current concurrency, and stable-window count. Obey `pause_new_work`,
+`reduce_concurrency`, `steady`, or `recover_one`; finish in-flight chunks before
+reducing admission. Missing signals retain current concurrency.
+
 - **Top-level mode** (orchestrator invoked directly via the user's session): dispatch up to 4 `implementer` subagents in parallel via `Agent(subagent_type="build-loop:implementer", ...)` per the bundled `agents/implementer.md` (Sonnet 5, scoped tools=[Read, Write, Edit, Bash, Glob, Grep]). Hard cap from `~/.claude/CLAUDE.md` §Sub-Agents. Sequential groups process after the parallel batch.
 - **Subagent mode** (orchestrator was itself spawned via `Agent(...)` so the no-sub-sub-agents rule applies): degrade to **inline-implementer mode** — iterate the queue serially, apply each fix following the implementer's protocol (scope to `files_touched`, refuse `architecture_impact: true`, verify locally before declaring fixed). No parallelism, same quality bar. The orchestrator surfaces the degradation in Review-F.
 
 In both modes, each pass returns the same structured outcome (status + files_changed + verifications). Status routing covers all 9 implementer return values:
 - `fixed` → mark done (delete the .md)
 - `partial` → keep entry, re-pass next iteration
-- `scope_breach` → ask user before extending scope
+- `scope_breach` → re-plan automatically when the added files remain inside the authorized repo and resolve to the current intent; otherwise route through `classify-related`
 - `deferred_architecture` → Review-F surfaces for explicit user confirmation
 - `evidence_stale` → regenerate via `ux_triage.py --clear`, then re-pass
 - `plan_malformed` → same as `evidence_stale` (regenerate); log id to `.build-loop/state.json.malformedPlans[]`
-- `needs_dependency` → ask user; never auto-add deps
-- `failed` → re-pass with implementer's `notes` as `additional_context`; after 2 attempts escalate to Opus per `model-tiering`; after 3 surface as ❓ Unfixed
+- `needs_dependency` → classify the concrete dependency change with `classify_action.py`; SAFE/RISKY follows its normal branch route, while DECISION/PRODUCTION surfaces with impact
+- `failed` → re-pass with implementer's `notes` as `additional_context`; after 2 attempts escalate per `model-tiering`; after 3 identical verdicts quarantine and continue
 - `concurrent_modification_detected` → abort current parallel batch (orchestrator partition bug; never transient)
 
 Results re-enter Sub-step B for re-validation. For Validate failures (no queue entry), construct an inline plan in the same shape and treat identically.
@@ -82,17 +99,39 @@ Per attempt:
    - **2 consecutive same-root-cause failures** → parallel multi-domain assessment via `build-loop:debugging-memory` `{op:"assess"}`. Pass `model: sonnet` to domain assessors explicitly (override `inherit` default to prevent 4× Opus fan-out from the Opus 4.7 orchestrator). The full procedure is documented in `skills/debug-loop/SKILL.md` §"If stuck — parallel multi-domain assessment".
    - **3 consecutive same-criterion failures** → causal-tree investigation via `Skill("build-loop:debug-loop")`. Runs its own 7-phase cycle internally; returns with fix applied or hard-stop.
 3. **Build the prioritized work list** from the table above (Validate failures + UX queue).
-4. **Partition for parallel fan-out**: group by disjoint `files_touched`; dispatch ≤4 subagents in parallel.
+4. **Partition for parallel fan-out**: group by disjoint `files_touched`; use `autonomy_supervisor.py fanout` for the binding dynamic admission count. The absolute ceiling is 150, while independent work, shared capacity, provider errors, cost, memory, disk, load, latency, and measured thermal stability normally set a lower limit.
 5. **Execute fixes**; for UI files, run the UI re-validate hook before continuing.
 6. **Loop back to Review sub-step B** (Validate). Sub-step A (Critic) usually skipped on re-runs unless the fix touched new files. Sub-steps C-F run only on final pass.
+   - When the completed queue file has `source: autonomy-dashboard`, read its
+     `dashboard_gap_id` and record the validated completion before advancing:
+     `python3 scripts/autonomy_dashboard.py --workdir "$PWD" --complete
+     "<dashboard_gap_id>" --summary "<what changed>" --evidence
+     "commit:<sha>; tests:<result>; audit:<verdict>"`. This moves the file out
+     of the executable follow-up queue and makes the dashboard show `Applied`.
 7. **Followup overflow**: when the iteration cap (5) is reached and queue entries remain, write them to `.build-loop/followup/<topic>.md` for a subsequent `/build-loop:run` invocation. Plan content is already complete — the followup build skips its own Plan phase for these entries.
    - **`judgment-owed-<run-id>.md`** entries (written by `stop_closeout` when a stakes-gated inline run closed at the inline floor) mean: **dispatch the owed verification layer(s) named in the file for that run** (the Frontier auditor/advisor it skipped), then the file is cleared automatically on the next passing Stop. Do not treat it as a code work-item — it is a dispatch-the-judgment debt.
 8. **Track**: attempt count, what failed, what was attempted, what changed, queue depth before/after each pass.
 
+After every item outcome, enforce the per-item limit:
+
+```bash
+python3 scripts/autonomy_supervisor.py --workdir "$PWD" verdict \
+  --item "<stable-item-id>" --verdict "<verdict>" --limit 5 --audit-at 3 \
+  --actor-id "<worker-id>" --actor-session "<worker-session-id>"
+```
+
+`action: independent_audit` dispatches a different worker/session. The orchestrator first
+records the returned `verify` action in the current run's agent ledger with
+`refs.item_id` and `refs.session_id`, then records its evidence with
+`autonomy_supervisor.py audit --item <stable-item-id> --evidence <evidence>
+--auditor-id <auditor-id> --auditor-session <auditor-session-id>`. Only then may the
+fourth attempt start. `action: quarantine` moves the item to follow-up with all five
+verdict receipts and continues the manifest. A resolved verdict resets the counter.
+
 **Convergence detection**:
-- Same criterion fails 2x with same root cause → escalate to user
-- Fix A breaks criterion B (oscillation) → flag and ask user
-- 3+ criteria fail simultaneously after a fix → systemic issue, stop and reassess
+- Same criterion fails 2x with the same root cause → invoke the causal-tree re-plan; the third identical unresolved verdict requires an independent audit, and the fifth quarantines the item
+- Fix A breaks criterion B (oscillation) → revert the weaker reversible fix, re-plan once, then quarantine on recurrence
+- 3+ criteria fail simultaneously after a fix → treat as one systemic issue, re-plan from the shared cause, and continue unaffected manifest items
 
 **Stop condition (QM v0.13.0 — severity-aware, replaces the blunt 5-cap for critical/high)**. The 5-iteration cap still bounds the loop, but it **cannot finalize with an open `critical` or `high` finding** (the no-critical/high exit gate in Review-G, `review_finding_gate.py`, blocks the final pass). On reaching the cap:
 - **Open `critical`/`high` remain** → do NOT silently ship as ❓ Unfixed. Escalate to the user with the blocking findings and their `closure_proof` gaps; the build does not pass until they close or the user explicitly waives. (If the same approach keeps failing, re-plan instead of burning more iterations.)

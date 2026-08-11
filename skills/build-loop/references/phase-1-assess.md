@@ -207,6 +207,40 @@ manifest is an explicit source-only run record.
    error. Never downgrade an invalid or stale request to an ordinary prompt.
    Keep the request and Spec paths for Review-G, where Build Loop returns
    implementation evidence and Groundwork calculates convergence.
+14c. **Outcome-autonomy preflight** (required before autonomous, background,
+   headless, `--long`, or resumed queue-drain work): assemble the facts already
+   known from intent, goal, plan, credentials, deployment policy, and tool
+   detection. Initialize the runtime envelope once, then assess missing facts:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/autonomy_supervisor.py" \
+     --workdir "$PWD" initialize --run-id "<run_id>" --goal "<outcome>" \
+     [--long | --budget 30m] [--autonomous false]
+   python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/autonomy_supervisor.py" \
+     --workdir "$PWD" preflight --request \
+     '{"goal":"<outcome>","success_criteria":["<pass condition>"],"scope_roots":["<repo>"],"validation_commands":["<command>"],"external_dependencies":[]}'
+   ```
+
+   Persist the envelope at `state.json.execution.autonomyPreflight`. Process it
+   before Plan:
+
+   - `questions[]` contains only facts that change production, reversibility,
+     authorized scope, or a major user-facing outcome. Ask them together once;
+     include `why` and `impact` from the envelope.
+   - `assumptions[]` contains reversible gaps. Record every assumption in the
+     plan and execute its named `validation` before the first dependent chunk.
+   - `task_profile` summarizes prior runs of the same task shape. Use
+     `supervision_recommended` to enable checkpointed queue supervision; never
+     treat elapsed time as the outcome or a reason to stop useful work.
+
+   The initializer enforces `--budget` over `--long`, persists one host-neutral
+   budget envelope, and marks the deadline as a soft finalization target. The
+   run still optimizes for the accepted outcome and related validated work.
+
+   After closeout, append actual duration, related discoveries/completions, and
+   interventions with `autonomy_supervisor.py record-run`. This makes future
+   preflight task-specific. No history means `insufficient_history`, never a
+   guessed claim.
 15. **Recovery check**: This used to be a phase-level marker. As of v0.11 the canonical recovery surface is the `--resume` argument and the heartbeat-staleness path documented under §Resume Protocol. The pre-Assess resolver already ran by the time Phase 1 starts; if it returned `decision: "prompt_user"` and the user chose "fresh", proceed normally; if they chose `--resume`, you're not in this code path (the agent is in §0 Resume mode instead).
 16. **Workspace concurrency check** (advisory, no blocking — surface as one-line notes):
     - **Concurrent sessions**: `ps aux | grep -c "[c]laude$"`. If `>1`, warn that other sessions on this repo can silently revert each other's work; the checkpoint reactions (severity + reason) tell you whether overlap is `merged_residue` / `squash_landed` / `active_conflict`. See `agents/build-orchestrator.md` §Multi-session concurrency.

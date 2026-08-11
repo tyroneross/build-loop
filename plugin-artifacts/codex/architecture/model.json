@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "0a32c279c390ccd773c93159ee420cdd162c80913b11e71425bb3e0be16aa61f"
+    "content_sha256": "33c065a185fffc8c4c99b45a89f35d7ea32c380c12e708bf246e9ab1017a58db"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1549,7 +1549,9 @@
       "scripts/audit_git.py": "audit_git.py — Read-only git front door for read-only agents (e.g. independent-auditor).",
       "scripts/audit_memory_invocation.py": "Runtime probe for build-loop memory call sites.",
       "scripts/audit_record_verdict.py": "Backfill the hook-path verdict into runs[-1].judge_decisions[].",
+      "scripts/autonomy_dashboard.py": "Loopback-only dashboard for durable Build Loop autonomy decisions.\"\"\"",
       "scripts/autonomy_gate.py": "Classify arbitrary build-loop actions against a generalized autonomy policy.",
+      "scripts/autonomy_supervisor.py": "Deterministic control plane for outcome-based Build Loop autonomy.",
       "scripts/backend_health.py": "Phase 1 backend health-check surface.",
       "scripts/backlog/__init__.py": "scripts/backlog/ — capture-time product-impact triage + causal-tree assessment.",
       "scripts/backlog/assess.py": "assess.py — render a product-impacting deferral as a backlog-item markdown.",
@@ -1708,7 +1710,6 @@
       "scripts/model_overrides.py": "Resolve build-loop model tier overrides.",
       "scripts/model_resolver.py": "Host-neutral model-tier resolver with availability fallback.",
       "scripts/model_taxonomy.py": "Two-axis model taxonomy loader — the SINGLE source of truth.",
-      "scripts/ops_state_probe.py": "Operational-state probe: what is actually ON, OFF, CORRUPT, or UNKNOWN.",
       "scripts/optimize_doe.py": "DOE matrix generation + effects analysis for build-loop:optimize.",
       "scripts/optimize_loop.py": "optimize_loop.py — Core loop mechanics for the build-loop optimize skill.",
       "scripts/optimize_suggest_factors.py": "Scan a repo for tunable parameters that could be DOE factors.",
@@ -1852,6 +1853,7 @@
       "scripts/task_surface.py": "Derived active task surface for build-loop.\"\"\"",
       "scripts/temporal_membership.py": "temporal_membership.py — gate attaching an external record to a run by time + host overlap.",
       "scripts/token_efficiency_benchmark.py": "Compare exact-repeat Build Loop runs using measured tokens and quality outcomes.\"\"\"",
+      "scripts/tool_trace.py": "OTel-shaped, redacted tool-call traces for supervision and learning.",
       "scripts/transcript-pattern-miner.py": "transcript-pattern-miner.py — thin shim; implementation lives in transcript_pattern_miner/.",
       "scripts/transcript_pattern_miner/__init__.py": "transcript_pattern_miner — folder-per-capability package.",
       "scripts/transcript_pattern_miner/__main__.py": "transcript_pattern_miner.__main__ — CLI entry point.",

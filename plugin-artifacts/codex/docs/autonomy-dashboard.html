@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Build Loop Autonomy Decisions</title>
+  <style>
+    :root {
+      --canvas: #f6fbff;
+      --surface: #ffffff;
+      --ink: #313438;
+      --muted: #6f7277;
+      --line: #caced3;
+      --accent: #00836f;
+      --accent-strong: #09362d;
+      --accent-soft: #c2f0e4;
+      --success: #286344;
+      --error: #a23535;
+      --shadow: 0 18px 50px rgb(49 52 56 / 8%);
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: "Avenir Next", Avenir, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 1rem;
+      line-height: 1.6;
+      text-rendering: optimizeLegibility;
+    }
+    button, textarea, input { font: inherit; }
+    button, label, summary { -webkit-tap-highlight-color: transparent; }
+    .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 80px; }
+    .masthead {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(270px, .65fr);
+      overflow: hidden;
+      margin-bottom: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(30px, 5vw, 58px); }
+    .eyebrow, .priority {
+      display: inline-flex;
+      align-items: center;
+      color: var(--accent);
+      font-size: .73rem;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 760px;
+      margin: 15px 0 16px;
+      font-size: clamp(2.25rem, 4.8vw, 4.35rem);
+      font-weight: 750;
+      letter-spacing: -.045em;
+      line-height: 1.04;
+    }
+    .hero p { max-width: 690px; margin: 0; color: var(--muted); font-size: 1.08rem; }
+    .readiness {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 32px 28px;
+      border-left: 1px solid var(--line);
+      background: color-mix(in srgb, var(--canvas) 62%, white);
+    }
+    .readiness h2 { margin: 0 0 6px; font-size: 1rem; }
+    .readiness p { margin: 0; color: var(--muted); font-size: .88rem; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 26px; }
+    .metric { padding: 8px 6px; text-align: center; }
+    .metric + .metric { border-left: 1px solid var(--line); }
+    .metric strong { display: block; color: var(--accent-strong); font-size: 1.55rem; line-height: 1.2; }
+    .metric span { color: var(--muted); font-size: .72rem; }
+    .principle {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      margin: 0 0 34px;
+      padding: 14px 18px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, white);
+      background: color-mix(in srgb, var(--accent-soft) 62%, white);
+      color: var(--accent-strong);
+      border-radius: 14px;
+      font-size: .91rem;
+    }
+    .principle strong { flex: 0 0 auto; }
+    .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 0 0 16px; }
+    .toolbar h2 { margin: 0; font-size: 1.75rem; font-weight: 750; letter-spacing: -.025em; }
+    .toolbar p { margin: 4px 0 0; color: var(--muted); }
+    .legend { display: flex; gap: 8px; flex-wrap: wrap; }
+    .legend span { color: var(--muted); font-size: .75rem; }
+    .legend span + span::before { content: "·"; margin-right: 8px; color: var(--line); }
+    #loading { padding: 42px; text-align: center; color: var(--muted); }
+    .cards { display: grid; gap: 12px; }
+    .gap-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 24px rgb(49 52 56 / 4%);
+      overflow: hidden;
+    }
+    .gap-card[open] { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); box-shadow: var(--shadow); }
+    .card-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      min-height: 88px;
+      padding: 19px 22px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .card-head::-webkit-details-marker { display: none; }
+    .card-head:hover { background: color-mix(in srgb, var(--canvas) 48%, white); }
+    .card-head:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
+    .priority { width: 44px; height: 44px; justify-content: center; border-radius: 12px; background: var(--accent-soft); letter-spacing: .04em; }
+    .card-head h3 { margin: 0; font-size: 1.15rem; line-height: 1.35; }
+    .big-idea { margin: 4px 0 0; color: var(--muted); font-size: .92rem; line-height: 1.45; }
+    .card-meta { display: grid; min-width: 118px; gap: 4px; justify-items: end; }
+    .selected-policy { color: var(--accent-strong); font-size: .81rem; font-weight: 800; text-align: right; }
+    .selected-policy:empty { display: none; }
+    .status { min-width: 92px; color: var(--muted); font-size: .76rem; text-align: right; }
+    .status[data-kind="saved"], .status[data-kind="queued"], .status[data-kind="applied"] { color: var(--success); }
+    .status[data-kind="error"] { color: var(--error); }
+    .disclosure-label { color: var(--accent); font-size: .75rem; font-weight: 750; }
+    .disclosure-label::after { content: "↓"; display: inline-block; margin-left: 7px; transition: transform 160ms ease; }
+    .gap-card[open] .disclosure-label::after { transform: rotate(180deg); }
+    .explain { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 55%, white); }
+    .explain section { padding: 19px 22px; }
+    .explain section + section { border-left: 1px solid var(--line); }
+    .explain h4 { margin: 0 0 9px; color: var(--muted); font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; }
+    .explain ul { margin: 0; padding-left: 18px; font-size: .88rem; }
+    .explain li + li { margin-top: 6px; }
+    .why { margin: 0; font-size: .9rem; }
+    .decision { padding: 22px; }
+    fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+    legend { margin-bottom: 13px; font-weight: 750; }
+    .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .choice {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 168px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }
+    .choice:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .choice:has(input:checked), .choice.is-selected { border: 2px solid var(--accent); padding: 14px; box-shadow: 0 0 0 4px var(--accent-soft); }
+    .choice input { position: absolute; opacity: 0; pointer-events: none; }
+    .choice input:focus-visible + .choice-title { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
+    .choice-title { display: flex; align-items: center; gap: 8px; font-weight: 800; }
+    .choice-title::before { content: ""; width: 13px; height: 13px; border: 2px solid var(--muted); border-radius: 50%; }
+    input:checked + .choice-title::before { border: 4px solid var(--accent); }
+    .choice.is-selected .choice-title::after { content: "Selected"; margin-left: auto; color: var(--success); font-size: .69rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .recommended { margin-left: auto; padding: 3px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: .65rem; letter-spacing: .04em; text-transform: uppercase; }
+    .impact { display: grid; gap: 5px; margin: 13px 0 0; color: var(--muted); font-size: .76rem; }
+    .impact div { display: grid; grid-template-columns: 42px 1fr; gap: 5px; }
+    .impact b { color: var(--ink); font-weight: 700; }
+    .note-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; margin-top: 16px; }
+    .applied-note { margin-top: 16px; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--success) 32%, white); border-radius: 12px; background: color-mix(in srgb, var(--accent-soft) 52%, white); }
+    .applied-note strong { color: var(--success); }
+    .applied-note p { margin: 3px 0 0; font-size: .84rem; }
+    .applied-note code { overflow-wrap: anywhere; color: var(--muted); font-size: .76rem; }
+    .note-label { display: grid; gap: 7px; color: var(--muted); font-size: .79rem; }
+    textarea { width: 100%; min-height: 82px; resize: vertical; padding: 12px 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); color: var(--ink); }
+    textarea:focus { outline: 3px solid var(--accent-soft); border-color: var(--accent); }
+    button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 11px; background: var(--accent); color: #ffffff; font-weight: 750; cursor: pointer; }
+    button:hover { background: var(--accent-strong); }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    button:disabled { cursor: not-allowed; background: color-mix(in srgb, var(--line) 70%, white); color: var(--ink); }
+    .footer-note { margin-top: 22px; color: var(--muted); text-align: center; font-size: .8rem; }
+    @media (max-width: 900px) {
+      .masthead { grid-template-columns: 1fr; }
+      .readiness { border-top: 1px solid var(--line); border-left: 0; }
+      .choices { grid-template-columns: 1fr; }
+      .choice { min-height: 0; }
+    }
+    @media (max-width: 700px) {
+      .shell { width: min(100% - 20px, 1180px); padding-top: 10px; }
+      .masthead { border-radius: 18px; }
+      .hero { padding: 26px 22px; }
+      .readiness { padding: 22px; }
+      .toolbar { align-items: flex-start; flex-direction: column; }
+      .legend { display: none; }
+      .card-head { grid-template-columns: auto minmax(0, 1fr); padding: 18px; }
+      .card-meta { grid-column: 2; justify-items: start; }
+      .selected-policy { text-align: left; }
+      .status { text-align: left; }
+      .explain { grid-template-columns: 1fr; }
+      .explain section + section { border-left: 0; border-top: 1px solid var(--line); }
+      .decision { padding: 18px; }
+      .note-row { grid-template-columns: 1fr; }
+      button { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="masthead">
+      <header class="hero">
+        <div class="eyebrow">Autonomy decisions</div>
+        <h1>Finish the related work. Ask only when the outcome changes.</h1>
+        <p id="big-idea">Build Loop should finish related work by default and interrupt you only when your decision changes the outcome.</p>
+      </header>
+      <aside class="readiness" aria-labelledby="summary-title">
+        <div>
+          <h2 id="summary-title">Decision state</h2>
+          <p>Saved records your choice. Queued schedules work. Applied confirms validated execution.</p>
+        </div>
+        <div class="metrics" aria-live="polite">
+          <div class="metric"><strong id="gap-count">—</strong><span>gaps</span></div>
+          <div class="metric"><strong id="saved-count">—</strong><span>decided</span></div>
+          <div class="metric"><strong id="queued-count">—</strong><span>queued</span></div>
+          <div class="metric"><strong id="applied-count">—</strong><span>applied</span></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="principle"><strong>Operating rule</strong><span>Related + reversible + testable work executes. Production, irreversible actions, scope expansion, and major user choices request a decision.</span></div>
+
+    <section aria-labelledby="gaps-title">
+      <div class="toolbar">
+        <div><h2 id="gaps-title">Choose the operating policy</h2><p>Each card connects the gap to your cost, the resolution, and its impact.</p></div>
+        <div class="legend" aria-label="Priority legend"><span>P0 run integrity</span><span>P1 intervention</span><span>P2 capacity</span></div>
+      </div>
+      <div id="loading" role="status">Loading autonomy decisions…</div>
+      <div id="cards" class="cards"></div>
+    </section>
+    <p class="footer-note">Local control plane · append-only decisions · evidence-backed completion</p>
+  </main>
+
+  <script>
+    const cards = document.querySelector('#cards');
+    const loading = document.querySelector('#loading');
+    const timers = new Map();
+    let state = { gaps: [], responses: {} };
+
+    function node(tag, attrs = {}, text = '') {
+      const element = document.createElement(tag);
+      Object.entries(attrs).forEach(([key, value]) => {
+        if (key === 'className') element.className = value;
+        else element.setAttribute(key, value);
+      });
+      if (text) element.textContent = text;
+      return element;
+    }
+
+    function updateMetrics() {
+      const responses = Object.values(state.responses);
+      document.querySelector('#gap-count').textContent = state.gaps.length;
+      document.querySelector('#saved-count').textContent = responses.filter(item => item.choice_id || item.note).length;
+      document.querySelector('#queued-count').textContent = responses.filter(item => item.event === 'response_queued').length;
+      document.querySelector('#applied-count').textContent = responses.filter(item => item.event === 'response_applied').length;
+    }
+
+    function listSection(title, values) {
+      const section = node('section');
+      section.append(node('h4', {}, title));
+      const list = node('ul');
+      values.forEach(value => list.append(node('li', {}, value)));
+      section.append(list);
+      return section;
+    }
+
+    function statusFor(card, message, kind = '') {
+      const status = card.querySelector('.status');
+      status.textContent = message;
+      status.dataset.kind = kind;
+    }
+
+    function selectedOption(gap, choiceId) {
+      return gap.options.find(option => option.id === choiceId);
+    }
+
+    function reflectSelection(card, gap, response, phase = 'saved') {
+      const option = selectedOption(gap, response?.choice_id);
+      const summary = card.querySelector('.selected-policy');
+      summary.textContent = option ? `✓ ${option.label}` : response?.note ? '✓ Custom direction' : '';
+      card.dataset.selected = response?.choice_id || response?.note ? 'true' : 'false';
+      card.querySelectorAll('.choice').forEach(label => {
+        label.classList.toggle('is-selected', label.querySelector('input')?.checked);
+      });
+      if (phase === 'queued') statusFor(card, 'Queued for Build Loop', 'queued');
+    }
+
+    async function post(path, payload) {
+      const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Request failed');
+      return body.response;
+    }
+
+    async function save(card, gap) {
+      const selected = card.querySelector('input:checked');
+      const note = card.querySelector('textarea').value;
+      if (!selected && !note.trim()) return false;
+      statusFor(card, 'Saving…');
+      try {
+        const response = await post('/api/responses', { gap_id: gap.id, choice_id: selected?.value || '', note });
+        state.responses[gap.id] = response;
+        card.querySelector('button').disabled = false;
+        reflectSelection(card, gap, response);
+        statusFor(card, `Saved ${new Date(response.saved_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`, 'saved');
+        updateMetrics();
+        return true;
+      } catch (error) {
+        statusFor(card, error.message, 'error');
+        return false;
+      }
+    }
+
+    function scheduleSave(card, gap) {
+      clearTimeout(timers.get(gap.id));
+      statusFor(card, 'Unsaved changes');
+      timers.set(gap.id, setTimeout(() => save(card, gap), 450));
+    }
+
+    async function queueDecision(card, gap) {
+      clearTimeout(timers.get(gap.id));
+      const saved = await save(card, gap);
+      if (!saved) return;
+      statusFor(card, 'Queuing…');
+      try {
+        const response = await post('/api/actions', { gap_id: gap.id });
+        state.responses[gap.id] = response;
+        reflectSelection(card, gap, response, 'queued');
+        updateMetrics();
+      } catch (error) {
+        statusFor(card, error.message, 'error');
+      }
+    }
+
+    function optionCard(gap, option, current) {
+      const label = node('label', { className: 'choice' });
+      const input = node('input', { type: 'radio', name: `choice-${gap.id}`, value: option.id });
+      input.checked = current?.choice_id === option.id;
+      if (input.checked) label.classList.add('is-selected');
+      const title = node('span', { className: 'choice-title' }, option.label);
+      if (option.recommended) title.append(node('span', { className: 'recommended' }, 'Recommended'));
+      const impact = node('span', { className: 'impact' });
+      Object.entries(option.impact).forEach(([name, value]) => {
+        const row = node('div');
+        row.append(node('b', {}, name), node('span', {}, value));
+        impact.append(row);
+      });
+      label.append(input, title, impact);
+      return label;
+    }
+
+    function renderGap(gap) {
+      const current = state.responses[gap.id];
+      const article = node('details', { className: 'gap-card', id: gap.id });
+      if (gap === state.gaps[0]) article.open = true;
+      const head = node('summary', { className: 'card-head' });
+      const titleWrap = node('div');
+      titleWrap.append(node('h3', {}, gap.gap), node('p', { className: 'big-idea' }, gap.big_idea));
+      const isApplied = current?.event === 'response_applied';
+      const isQueued = current?.event === 'response_queued';
+      const statusText = isApplied ? 'Applied · validated' : isQueued ? 'Queued for Build Loop' : current ? 'Saved' : 'Choose an option';
+      const status = node('div', { className: 'status', role: 'status', 'aria-live': 'polite' }, statusText);
+      if (isApplied) status.dataset.kind = 'applied';
+      else if (isQueued) status.dataset.kind = 'queued';
+      else if (current) status.dataset.kind = 'saved';
+      const cardMeta = node('div', { className: 'card-meta' });
+      const currentOption = selectedOption(gap, current?.choice_id);
+      const selectedPolicy = node('div', { className: 'selected-policy', 'aria-label': 'Selected policy' }, currentOption ? `✓ ${currentOption.label}` : current?.note ? '✓ Custom direction' : '');
+      cardMeta.append(selectedPolicy, status, node('span', { className: 'disclosure-label' }, 'Review decision'));
+      head.append(node('div', { className: 'priority' }, gap.priority), titleWrap, cardMeta);
+
+      const explain = node('div', { className: 'explain' });
+      explain.append(listSection('Pain now', gap.pain), listSection('Resolution payoff', gap.payoff));
+      const why = node('section');
+      why.append(node('h4', {}, 'Why this works'), node('p', { className: 'why' }, gap.why));
+      explain.append(why);
+
+      const decision = node('div', { className: 'decision' });
+      const fieldset = node('fieldset');
+      fieldset.append(node('legend', {}, 'Select a policy'));
+      const choices = node('div', { className: 'choices' });
+      gap.options.forEach(option => choices.append(optionCard(gap, option, current)));
+      fieldset.append(choices);
+      const noteRow = node('div', { className: 'note-row' });
+      const noteLabel = node('label', { className: 'note-label' });
+      noteLabel.append(node('span', {}, 'Add direction, conditions, or a different option'));
+      const textarea = node('textarea', { maxlength: '8000', placeholder: 'Example: Use the recommended policy, but cap proposal items at four per manifest.' });
+      textarea.value = current?.note || '';
+      noteLabel.append(textarea);
+      const buttonLabel = isApplied ? 'Queue a revision' : isQueued ? 'Replace queued decision' : 'Queue for Build Loop';
+      const button = node('button', { type: 'button' }, buttonLabel);
+      button.disabled = !current?.choice_id && !current?.note;
+      if (isApplied) {
+        const applied = node('div', { className: 'applied-note' });
+        applied.append(node('strong', {}, 'Applied'));
+        applied.append(node('p', {}, current.summary || 'Build Loop validated and completed this decision.'));
+        applied.append(node('code', {}, current.evidence || 'Completion evidence recorded.'));
+        decision.append(applied);
+      }
+      noteRow.append(noteLabel, button);
+      decision.append(fieldset, noteRow);
+      article.append(head, explain, decision);
+
+      choices.addEventListener('change', () => {
+        button.disabled = false;
+        const pending = { choice_id: choices.querySelector('input:checked')?.value || '', note: textarea.value };
+        reflectSelection(article, gap, pending);
+        statusFor(article, 'Saving selection…');
+        scheduleSave(article, gap);
+      });
+      textarea.addEventListener('input', () => { button.disabled = !textarea.value.trim() && !choices.querySelector('input:checked'); scheduleSave(article, gap); });
+      button.addEventListener('click', () => queueDecision(article, gap));
+      return article;
+    }
+
+    async function load() {
+      try {
+        const response = await fetch('/api/state', { cache: 'no-store' });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Unable to load dashboard');
+        state = body;
+        document.querySelector('#big-idea').textContent = body.big_idea;
+        body.gaps.forEach(gap => cards.append(renderGap(gap)));
+        loading.hidden = true;
+        updateMetrics();
+      } catch (error) {
+        loading.textContent = `Dashboard failed to load: ${error.message}`;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

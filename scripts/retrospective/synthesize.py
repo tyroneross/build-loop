@@ -300,8 +300,11 @@ def run(
         repo = _derive_repo_slug(workdir)
         intent_one = _intent_one_line(intent_md)
 
-        sections = build_sections(tx, state, intent_md, plan_md, rid,
-                                  transcript_note=tx_reason)
+        sections = build_sections(
+            tx, state, intent_md, plan_md, rid,
+            transcript_note=tx_reason,
+            trace_jsonl=workdir / ".build-loop/telemetry/tool-traces.jsonl",
+        )
 
         # Promote BEFORE writing the active/summary pair: the summary must carry
         # the real durable path so closeout's `wrote_memory` status is reachable,

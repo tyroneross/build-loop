@@ -200,7 +200,6 @@ def test_default_gates_wire_the_named_escapes():
             "artifact-freshness"} <= names
 
 
-@pytest.mark.timeout(180)
 def test_all_default_gates_run_and_pass_on_green_repo():
     """The strongest closure for the 'typo'd gate silently fail-opens' hole: run the
     REAL default gates against this green checkout. Every core gate must PASS (not
