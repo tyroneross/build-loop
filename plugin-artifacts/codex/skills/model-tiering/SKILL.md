@@ -57,6 +57,12 @@ Build-loop's agent frontmatter uses Anthropic model aliases (`fable`, `opus`, `s
 
 The role-and-task table below uses tier names. The Anthropic-default mapping in the right column is illustrative; substitute your equivalents at swap time.
 
+### Groq workload catalog (on demand)
+
+When the task asks which Groq API model or system should run a downstream workload, read both `references/provider-catalogs/groq.md` and `references/provider-catalogs/groq-models.json`. The first contains dated decision guidance; the second is the machine-readable snapshot and freshness contract.
+
+Keep this separate from host-agent reachability. A Groq catalog entry does not become an available Build Loop subagent model until a host adapter works and the model clears the role-specific benchmark. Reverify the catalog after its `review_after` date, on any deprecation change, and before production billing or capacity decisions because availability, pricing, rate limits, advertised throughput, and capability compatibility are dynamic.
+
 ### GPT-5.6 Codex policy
 
 - **Sol** is approved for planning synthesis and gating verification agents: `advisor`, `plan-critic`, `scope-auditor`, `independent-auditor`, `fix-critique`, `fact-checker`, `security-reviewer`, `overfitting-reviewer`, and `promotion-reviewer`.
