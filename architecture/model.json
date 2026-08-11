@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "71e71bcea93d806f05100b95e6b288a84a6dce18f05d3646f3784cbb1c4c8ba5"
+    "content_sha256": "02ceb1d5b3653eab9ebad4604ea2633c97c0964403f73a867587c0a11eda6fec"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -896,7 +896,7 @@
         "file": "agents/build-orchestrator.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-08"
+          "date": "2026-08-11"
         }
       },
       "database-assessor": {

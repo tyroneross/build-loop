@@ -41,6 +41,18 @@ from typing import Any
 
 EXPECTED_SCHEMA_VERSION = 1
 
+# Source of truth for the 9 return statuses is the writer, not a copy here.
+# `scripts/` is on sys.path when this file runs as a script; the fallback keeps
+# the module importable from a host that maps scripts/ differently.
+try:
+    from write_run_entry.execstate import EXECUTION_RETURN_STATUSES
+except ImportError:  # pragma: no cover — exercised only on an unusual sys.path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        from write_run_entry.execstate import EXECUTION_RETURN_STATUSES
+    except ImportError:
+        EXECUTION_RETURN_STATUSES = set()  # degrade to "never warn", never crash
+
 
 def _load_state(workdir: Path) -> dict | None:
     p = workdir / ".build-loop" / "state.json"
@@ -138,6 +150,56 @@ def _file_mtime(workdir: Path, rel: str) -> datetime | None:
         return None
 
 
+def _normalize_completed_chunks(execution: dict) -> tuple[list[dict], list[str]]:
+    """Read `completed_chunks` in every shape that exists on disk.
+
+    The canonical writer (`write_run_entry/execstate.py:_mutate_return_chunk`)
+    appends ``{"chunk_id", "status", "completed_at"}``. Two other shapes are in
+    live state files and both used to reach this module unguarded:
+
+      * bare id strings — ``"c1"`` — which raised AttributeError on `.get`,
+        killing the run with a traceback instead of a decision envelope;
+      * a legacy dict keyed ``{"id", "sha", "status"}`` whose status vocabulary
+        ("completed") is outside EXECUTION_RETURN_STATUSES, so the caller's
+        ``status == "fixed"`` test silently skipped the chunk.
+
+    Returns the normalized entries plus a warning per non-canonical entry, so a
+    degraded read is reported rather than passing as a clean one.
+    """
+    normalized: list[dict] = []
+    warnings: list[str] = []
+
+    for entry in execution.get("completed_chunks", []):
+        if isinstance(entry, str):
+            normalized.append({"chunk_id": entry, "status": None, "completed_at": None})
+            warnings.append(
+                f"completed_chunks entry {entry!r} is a bare id (pre-schema state); "
+                "concurrent-modification detection skipped for it"
+            )
+            continue
+        if not isinstance(entry, dict):
+            warnings.append(f"completed_chunks entry of type {type(entry).__name__} ignored")
+            continue
+
+        cid = entry.get("chunk_id") or entry.get("id")
+        if not cid:
+            warnings.append("completed_chunks entry has neither 'chunk_id' nor 'id'; ignored")
+            continue
+        status = entry.get("status")
+        if status is not None and status not in EXECUTION_RETURN_STATUSES:
+            warnings.append(
+                f"completed_chunks entry {cid!r} has status {status!r}, outside the "
+                "canonical return statuses; treated as unverified"
+            )
+        normalized.append({
+            "chunk_id": cid,
+            "status": status,
+            "completed_at": entry.get("completed_at"),
+        })
+
+    return normalized, warnings
+
+
 def _detect_concurrent_modifications(
     workdir: Path,
     execution: dict,
@@ -150,11 +212,11 @@ def _detect_concurrent_modifications(
     """
     git_dirty = _git_unstaged_files(workdir)
     flagged: list[dict] = []
-    for entry in execution.get("completed_chunks", []):
+    for entry in _normalize_completed_chunks(execution)[0]:
         cid = entry.get("chunk_id")
         if not cid or entry.get("status") != "fixed":
             continue
-        completed_at = _parse_iso(entry.get("completed_at", ""))
+        completed_at = _parse_iso(entry.get("completed_at") or "")
         owned = _files_for_chunk(execution, cid)
         modified: list[str] = []
         for rel in owned:
@@ -199,7 +261,7 @@ def _compute_remaining(
             "reason": "in_flight_no_clean_return",
         })
 
-    for entry in execution.get("completed_chunks", []):
+    for entry in _normalize_completed_chunks(execution)[0]:
         cid = entry.get("chunk_id")
         if cid in flagged_ids:
             remaining.append({
@@ -234,6 +296,21 @@ def resolve(
         }
 
     execution = state.get("execution") if isinstance(state, dict) else None
+
+    # Schema compatibility is checked BEFORE either branch. It used to be
+    # checked only on the --resume path, so the no-argument path could hand the
+    # user "resume with --resume <run-id>" and that exact command would then
+    # abort on an incompatible schema. Advice the tool's own next step refuses
+    # is worse than no advice.
+    if isinstance(execution, dict) and execution.get("phase") != "report" \
+            and execution.get("schema_version") != EXPECTED_SCHEMA_VERSION:
+        return {
+            "decision": "abort",
+            "reason": f"incompatible schema_version {execution.get('schema_version')!r} "
+                      f"(expected {EXPECTED_SCHEMA_VERSION}); upgrade build-loop or start fresh",
+            "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,
+            "concurrent_modifications": [], "execution_block": execution, "envelopes": {},
+        }
 
     # No --resume: surface heartbeat staleness check (M4 primary signal).
     if not resume_arg:
@@ -306,6 +383,7 @@ def resolve(
     concurrent_mods = _detect_concurrent_modifications(workdir, execution)
     remaining = _compute_remaining(execution, envelopes, concurrent_mods)
     budget_resume = _resolve_budget_on_resume(execution)
+    state_warnings = _normalize_completed_chunks(execution)[1]
     return {
         "decision": "resume",
         "reason": f"resuming {resume_arg} at phase={execution.get('phase')} "
@@ -317,6 +395,9 @@ def resolve(
         "execution_block": execution,
         "envelopes": envelopes,
         "budget_resume": budget_resume,
+        # Non-canonical completed_chunks entries degrade the concurrent-mod
+        # check. Report that rather than let a partial read look like a clean one.
+        "state_warnings": state_warnings,
     }
 
 
