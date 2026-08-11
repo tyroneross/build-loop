@@ -287,3 +287,63 @@ def test_scan_prefers_resolved_submodule_over_package_fallback(tmp_path: Path) -
 
     assert (by_file["pkg/schemas.py"], by_file["pkg/taxonomy.py"]) in edges
     assert (by_file["pkg/schemas.py"], by_file["pkg/__init__.py"]) not in edges
+
+
+def test_scan_resolves_bare_import_between_direct_scripts(tmp_path: Path) -> None:
+    _write(tmp_path / "scripts" / "runner.py", "import helper\n")
+    _write(tmp_path / "scripts" / "helper.py", "VALUE = 1\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["scripts/runner.py"], by_file["scripts/helper.py"]) in edges
+
+
+def test_scan_does_not_treat_package_absolute_import_as_sibling(tmp_path: Path) -> None:
+    _write(tmp_path / "pkg" / "__init__.py", "")
+    _write(tmp_path / "pkg" / "runner.py", "import helper\n")
+    _write(tmp_path / "pkg" / "helper.py", "VALUE = 1\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["pkg/runner.py"], by_file["pkg/helper.py"]) not in edges
+
+
+def test_scan_preserves_root_absolute_import_before_script_sibling(tmp_path: Path) -> None:
+    _write(tmp_path / "helper.py", "ROOT = 1\n")
+    _write(tmp_path / "scripts" / "runner.py", "import helper\n")
+    _write(tmp_path / "scripts" / "helper.py", "SIBLING = 1\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["scripts/runner.py"], by_file["helper.py"]) in edges
+    assert (by_file["scripts/runner.py"], by_file["scripts/helper.py"]) not in edges
+
+
+def test_scan_does_not_resolve_sibling_below_package_ancestor(tmp_path: Path) -> None:
+    _write(tmp_path / "pkg" / "__init__.py", "")
+    _write(tmp_path / "pkg" / "tools" / "runner.py", "import helper\n")
+    _write(tmp_path / "pkg" / "tools" / "helper.py", "VALUE = 1\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["pkg/tools/runner.py"], by_file["pkg/tools/helper.py"]) not in edges
+
+
+def test_scan_rejects_dotted_sibling_shadowed_by_module_file(tmp_path: Path) -> None:
+    _write(tmp_path / "scripts" / "runner.py", "import helper.sub\n")
+    _write(tmp_path / "scripts" / "helper.py", "VALUE = 1\n")
+    _write(tmp_path / "scripts" / "helper" / "sub.py", "VALUE = 2\n")
+
+    result = scan_repo(tmp_path)
+    by_file = {c.metadata["file"]: c.component_id for c in result.components}
+    edges = {(c.from_id, c.to_id) for c in result.connections}
+
+    assert (by_file["scripts/runner.py"], by_file["scripts/helper/sub.py"]) not in edges
