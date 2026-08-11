@@ -155,7 +155,18 @@ def load_tier_cache(workdir: Path) -> dict[str, dict[str, Any]]:
 # present, else None (no filter) so an unknown host is never wrongly constrained.
 _HOST_PROVIDER_SIGNALS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("CLAUDECODE", "CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "ANTHROPIC_API_KEY"), "anthropic"),
-    (("CODEX_SANDBOX", "CODEX_HOME", "OPENAI_API_KEY"), "openai"),
+    # Codex Desktop/CLI commonly authenticates outside the child process, so a
+    # Codex run may have no OPENAI_API_KEY. Prefer its host markers and retain
+    # the key as a fallback for direct OpenAI-hosted runners.
+    ((
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_THREAD_ID",
+        "CODEX_SHELL",
+        "CODEX_CI",
+        "CODEX_SANDBOX",
+        "CODEX_HOME",
+        "OPENAI_API_KEY",
+    ), "openai"),
     (("GEMINI_CLI", "GEMINI_API_KEY", "GOOGLE_API_KEY"), "google"),
 )
 

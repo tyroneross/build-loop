@@ -1134,6 +1134,41 @@ def staleness_context(workdir: Path, timeout: float = 5.0) -> dict[str, Any]:
     return out
 
 
+def ops_state_context(workdir: Path) -> dict[str, Any]:
+    """Operational-state probe: is what we think is running actually running?
+
+    RCA 2026-07-25 (atomize-ai): 59 corrupted production env values silently
+    disabled features for ~6 months (strict ``=== 'true'`` reads on values with
+    trailing newlines / captured inline comments). Every Phase-1 Assess had
+    memory, queues, lessons, and architecture — and no concept of runtime
+    state. This section closes that gap: flags classified ON / OFF / CORRUPT /
+    UNKNOWN from code read-sites + the freshest local env source, persisted to
+    ``.build-loop/ops-state.json``. Fail-soft: any error yields a compact
+    reasons-only result; never blocks bootstrap.
+    """
+    try:
+        from ops_state_probe import (  # noqa: PLC0415
+            probe_ops_state, summary_line, write_repo_artifact,
+        )
+        result = probe_ops_state(workdir)
+        write_repo_artifact(workdir, result)
+        c = result["counts"]
+        return {
+            "exists": bool(result["flags"]) or bool(result["corrupt_other_keys"]),
+            "summary": summary_line(result),
+            "counts": c,
+            "corrupt_flags": [
+                f["name"] for f in result["flags"] if f["status"] == "CORRUPT"
+            ],
+            "corrupt_values_total": result["corrupt_values_total"],
+            "env_source": result.get("env_source"),
+            "artifact": ".build-loop/ops-state.json",
+            "reasons": result.get("reasons") or [],
+        }
+    except Exception as exc:  # noqa: BLE001 — fail-soft by contract
+        return {"exists": False, "reasons": [f"ops_state_error: {exc}"]}
+
+
 def agent_brief(packet: dict[str, Any]) -> str:
     canonical = packet["sources"]["canonical_memory"]
     repo = packet["sources"]["repo_local"]
@@ -1188,6 +1223,14 @@ def agent_brief(packet: dict[str, Any]) -> str:
             f"- Decision-quality doctrine: 12 rules loaded for Phase 1/2 "
             f"(packet.decision_quality.text; {dq.get('path')})"
         )
+
+    # Operational state — always surfaced when any flag read-site exists.
+    # CORRUPT > 0 is a warning: a strict `=== 'true'` reader is being silently
+    # inverted by a defective env value (the exact 6-month atomize-ai failure).
+    ops = packet.get("ops_state") or {}
+    if ops.get("exists"):
+        marker = "⚠ " if (ops.get("counts", {}).get("CORRUPT") or ops.get("corrupt_values_total")) else ""
+        lines.append(f"- {marker}Ops state: {ops.get('summary')} — full: {ops.get('artifact')}")
 
     # Queue summary line — only when at least one queue has items.
     queue_parts = []
@@ -1383,6 +1426,7 @@ def build_packet(
         "session_prefs": read_session_prefs(workdir),
         "staleness": staleness_context(workdir),
         "reference_freshness": reference_freshness_context(workdir, project),
+        "ops_state": ops_state_context(workdir),
         "sources": {
             "canonical_memory": canonical_memory_context(
                 workdir=workdir,

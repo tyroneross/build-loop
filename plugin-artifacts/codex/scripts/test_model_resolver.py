@@ -302,7 +302,9 @@ class HostProvidersFilterTests(unittest.TestCase):
             "--workdir", td, "--tier", "frontier", "--json",
             env={"BUILD_LOOP_HOST_PROVIDERS": "", "CLAUDECODE": "",
                  "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "",
-                 "ANTHROPIC_API_KEY": ""},
+                 "ANTHROPIC_API_KEY": "", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "",
+                 "CODEX_THREAD_ID": "", "CODEX_SHELL": "", "CODEX_CI": "",
+                 "CODEX_SANDBOX": "", "CODEX_HOME": "", "OPENAI_API_KEY": ""},
         )
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -334,7 +336,9 @@ class HostProvidersFilterTests(unittest.TestCase):
                 "--workdir", td, "--tier", "frontier", "--json",
                 env={"BUILD_LOOP_HOST_PROVIDERS": "", "CLAUDECODE": "",
                      "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "",
-                     "ANTHROPIC_API_KEY": ""},
+                     "ANTHROPIC_API_KEY": "", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "",
+                     "CODEX_THREAD_ID": "", "CODEX_SHELL": "", "CODEX_CI": "",
+                     "CODEX_SANDBOX": "", "CODEX_HOME": "", "OPENAI_API_KEY": ""},
             )
             payload = json.loads(result.stdout)
             self.assertEqual(payload["model"], "gpt-5.6-sol")
@@ -564,6 +568,27 @@ class HostDetectionTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "opus")
+
+    def test_detected_codex_host_via_env_default(self) -> None:
+        # Codex Desktop supplies host markers but commonly no OPENAI_API_KEY.
+        # With Anthropic frontier entries unavailable, the default dispatch path
+        # must stay on the OpenAI provider and select Sol.
+        with tempfile.TemporaryDirectory() as td:
+            result = run_resolver(
+                "--workdir", td, "--tier", "frontier",
+                "--unavailable", "opus,fable", "--plain",
+                env={
+                    "BUILD_LOOP_HOST_PROVIDERS": "",
+                    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE": "Codex Desktop",
+                    "CODEX_THREAD_ID": "thread-test",
+                    "CODEX_SHELL": "1",
+                    "CODEX_CI": "1",
+                    "CLAUDECODE": "", "CLAUDE_CODE": "",
+                    "CLAUDE_CODE_SESSION_ID": "", "ANTHROPIC_API_KEY": "",
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "gpt-5.6-sol")
 
     def test_host_filter_any_disables_filtering(self) -> None:
         # --host-providers any opts out: cross-vendor frontier alternate allowed
