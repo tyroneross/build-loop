@@ -57,6 +57,14 @@ What you observe: the agent prints a short status line per phase (`[Phase 1: Ass
 
 You do not pick a mode. `/build-loop:run` auto-routes build, fix, refactor, optimize, research, and test requests to the right path.
 
+### Groundwork exchange
+
+When a project contains `.designdoc/build-request.json` (or sets `GROUNDWORK_BUILD_REQUEST`), Build Loop validates that request against its adjacent canonical `spec.json` before planning. It preserves Groundwork's ordered tasks, dependency graph, acceptance criteria, and external manual actions as the build boundary.
+
+After implementation and verification, Review-G writes `.designdoc/implementation-map.json`. The map binds each reported task, component, contract, or requirement and its repository-local evidence to the original request, Spec, and task digests. Build Loop reports implementation evidence; Groundwork remains the authority for desired state and calculates convergence.
+
+The exchange adapter ships with identical bytes for Claude Code and Codex at `scripts/groundwork_exchange.py`. Run `python3 scripts/groundwork_exchange.py --help` for the validation and emission commands.
+
 ## Install
 
 The plugin installs and updates through the host's **native marketplace** — no npm step, no global install, no `sudo`:

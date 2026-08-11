@@ -88,6 +88,7 @@ REQUIRED_RUNTIME_PATHS = (
     Path("commands") / "run.md",
     Path("hooks") / "hooks.json",
     Path("scripts") / "self_mod_verify.py",
+    Path("scripts") / "groundwork_exchange.py",
     Path("scripts") / "sync_plugin_cache.py",
     Path("skills") / "build-loop" / "SKILL.md",
     Path("skills") / "debug-loop" / "SKILL.md",

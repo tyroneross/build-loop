@@ -92,6 +92,7 @@ class CodexPluginArtifactTests(unittest.TestCase):
                 "commands/run.md",
                 "hooks/hooks.json",
                 "scripts/self_mod_verify.py",
+                "scripts/groundwork_exchange.py",
                 "scripts/test_self_mod_verify.py",
                 "skills/build-loop/SKILL.md",
                 "skills/debug-loop/SKILL.md",

@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/build-loop",
-  "version": "0.36.7",
+  "version": "0.37.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
@@ -33,6 +33,7 @@
     "scripts/build_codex_plugin_artifact.py",
     "scripts/check_cache_sync.py",
     "scripts/embed_backend.py",
+    "scripts/groundwork_exchange.py",
     "scripts/install_memory.py",
     "scripts/lessons_index",
     "scripts/memory_context",
@@ -63,7 +64,8 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py scripts/test_build_loop_install_cli.py && bash scripts/hooks/test_hooks.sh",
+    "test": "python3 -m unittest scripts/test_commit_state_check.py scripts/test_bridge_preflight.py scripts/test_mcp_registration.py scripts/test_build_loop_install_cli.py scripts/test_codex_plugin_artifact.py scripts/test_groundwork_exchange.py scripts/test_groundwork_exchange_distribution.py && bash scripts/hooks/test_hooks.sh",
+    "test:groundwork-exchange": "python3 -m unittest scripts/test_groundwork_exchange.py scripts/test_groundwork_exchange_distribution.py",
     "benchmark": "node benchmark-scoring.js",
     "clean": "rm -rf dist",
     "plugin:prune-cache": "python3 scripts/prune_plugin_cache.py --source .",
