@@ -142,6 +142,21 @@ def test_generated_artifacts_are_dropped_regardless_of_kind(proposals: Path):
     assert len(r["non_actionable"]) == 1, "build products are not authored source"
 
 
+def test_authored_source_inside_build_loop_worktree_is_not_generated(proposals: Path, tmp_path: Path):
+    script = tmp_path / ".build-loop" / "worktrees" / "run-1" / "scripts" / "worker.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("x = 1", encoding="utf-8")
+    _write(
+        proposals,
+        "p.md",
+        finding="No test file for worker.py",
+        kind="self_missing_test",
+        evidence=f"script='{script}' expected_test='{script.parent / 'test_worker.py'}'",
+    )
+    result = drain_mod.drain(proposals)
+    assert len(result["buckets"]["auto-fixable"]) == 1
+
+
 def test_routing_sends_each_kind_to_its_lane(proposals: Path, tmp_path: Path):
     _write(proposals, "t.md", finding="No test file for z.py", kind="self_missing_test",
            evidence=f"script='{__file__}' expected_test='{tmp_path / 'test_z.py'}'")

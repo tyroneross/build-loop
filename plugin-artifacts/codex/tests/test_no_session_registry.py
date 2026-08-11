@@ -72,7 +72,11 @@ def test_no_live_session_registry_invocation_in_tracked_files() -> None:
         tracked = []  # no matches at all = pass
     offenders: list[str] = []
     for rel in tracked:
-        if not rel or rel == "tests/test_no_session_registry.py":
+        if (
+            not rel
+            or rel == "tests/test_no_session_registry.py"
+            or rel.startswith("plugin-artifacts/")
+        ):
             continue  # this guard names the patterns by construction
         try:
             text = (REPO / rel).read_text(encoding="utf-8")

@@ -29,6 +29,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -365,6 +366,27 @@ class HardeningTests(MemIsolationMixin, unittest.TestCase):
         self.assertEqual(cp.returncode, 0, msg=f"stderr: {cp.stderr}")
         contents = self.log_file.read_text() if self.log_file.exists() else ""
         self.assertIn("budget exceeded", contents.lower(), msg=f"expected budget log: {contents!r}")
+
+    def test_completed_inference_is_preserved_when_budget_expires_before_writes(self) -> None:
+        import scan_transcript_for_decisions as scan  # noqa: PLC0415
+
+        with (
+            mock.patch.dict(os.environ, {"AGENT_MEMORY_ROOT": self._memroot.name}),
+            mock.patch.object(scan, "budget_exceeded", side_effect=[False, True]),
+        ):
+            rc = scan.main([
+                "--workdir", str(self.workdir),
+                "--transcript", str(self.transcript),
+                "--no-db",
+                "--mock-llm-output", str(self.mock_path),
+                "--log-file", str(self.log_file),
+                "--lock-file", str(self.lock_file),
+            ])
+
+        review_dir = self._decisions_dir("_unscoped") / "_review"
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(list(review_dir.glob("*.md"))), 1)
+        self.assertIn("preserved completed inference", self.log_file.read_text())
 
     def test_log_rotation_when_oversize(self) -> None:
         """Log file >10MB gets truncated to last 1MB on next write."""

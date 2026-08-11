@@ -130,7 +130,20 @@ def parse_worktrees(repo: Path) -> list[dict[str, Any]]:
                     current["branch"] = branch.removeprefix("refs/heads/")
                 path = Path(str(current["worktree"]))
                 current["exists"] = path.exists()
-                current["dirty_paths"] = parse_status(repo=path) if path.exists() else []
+                git_root = (
+                    run_git(path, "rev-parse", "--show-toplevel", check=False)
+                    if path.exists()
+                    else None
+                )
+                current["git_available"] = bool(
+                    git_root
+                    and git_root.returncode == 0
+                    and git_root.stdout.strip()
+                    and Path(git_root.stdout.strip()).resolve() == path.resolve()
+                )
+                current["dirty_paths"] = (
+                    parse_status(repo=path) if current["git_available"] else []
+                )
                 current["dirty"] = bool(current["dirty_paths"])
                 records.append(current)
                 current = {}
@@ -1007,7 +1020,7 @@ def audit(
         "missing_worktrees": [
             str(worktree["worktree"])
             for worktree in worktrees
-            if not worktree.get("exists", True)
+            if not worktree.get("git_available", False)
         ],
         "branches": branches,
         "stashes": stash_inventory(root),

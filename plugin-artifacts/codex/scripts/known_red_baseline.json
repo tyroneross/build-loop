@@ -26,24 +26,5 @@
     "days away, not weeks.",
     "'expires' is YYYY-MM-DD (UTC date). Past that date the gate blocks."
   ],
-  "entries": [
-    {
-      "test": "scripts/test_prepush_test_gate.py::test_all_default_gates_run_and_pass_on_green_repo",
-      "reason": "Self-referential: runs the real default gate set against this checkout, so it stays red until the tree itself is green. Blocked only by test_embed_backend and by an uncommitted context_bootstrap.py change owned by another session.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_prepush_test_gate.py::test_shallow_clone_skips_artifact_freshness",
-      "reason": "Self-referential: runs the real default gate set against this checkout, so it stays red until the tree itself is green. Blocked only by test_embed_backend and by an uncommitted context_bootstrap.py change owned by another session.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    },
-    {
-      "test": "scripts/test_embed_backend.py",
-      "reason": "One backend-selection assertion is red at HEAD and env-dependent (passes/skips when mlx_embeddings is absent or the embed daemon is running), so the failing node id is not stable across machines. File-scoped for that reason.",
-      "owner": "tyroneross",
-      "expires": "2026-08-13"
-    }
-  ]
+  "entries": []
 }

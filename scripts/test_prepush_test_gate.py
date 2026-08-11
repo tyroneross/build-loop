@@ -576,10 +576,10 @@ def test_real_pytest_gates_opt_into_classification():
 
 
 def test_shipped_baseline_is_valid_and_every_entry_is_bounded():
-    """The repo's own baseline must load, and no entry may be open-ended."""
+    """The baseline may be empty; every suppression that exists must be bounded."""
     bl = gate.load_baseline(REPO)
     assert bl["ok"], bl["error"]
-    assert bl["entries"], "baseline is empty — seed it or delete the mechanism"
+    assert isinstance(bl["entries"], list)
     for e in bl["entries"]:
         for field in gate._BASELINE_REQUIRED_FIELDS:
             assert e[field].strip(), f"{e['test']} has an empty {field}"

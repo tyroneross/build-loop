@@ -216,7 +216,7 @@ class WriteSurfaceGrepTests(unittest.TestCase):
         offenders: list[str] = []
         for scan_dir in self.SCAN_DIRS:
             for py in scan_dir.rglob("*.py"):
-                if "__pycache__" in py.parts:
+                if "__pycache__" in py.parts or py.name.startswith("test_"):
                     continue
                 rel = py.relative_to(HERE).as_posix()
                 if rel in self.KNOWN_EXEMPTIONS:

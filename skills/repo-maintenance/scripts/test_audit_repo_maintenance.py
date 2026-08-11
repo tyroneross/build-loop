@@ -88,6 +88,27 @@ class AuditRepoMaintenanceTests(unittest.TestCase):
             [worktree.resolve()],
         )
 
+    def test_prunable_worktree_directory_with_broken_git_pointer_does_not_abort(self) -> None:
+        worktree = Path(self.tempdir.name) / "prunable-worktree"
+        git(self.repo, "worktree", "add", "-b", "prunable-lane", str(worktree))
+        (worktree / ".git").unlink()
+
+        report = MODULE.audit(self.repo)
+
+        prunable = next(
+            item
+            for item in report["worktrees"]
+            if Path(item["worktree"]).resolve() == worktree.resolve()
+        )
+        self.assertTrue(prunable["exists"])
+        self.assertFalse(prunable["git_available"])
+        self.assertFalse(prunable["dirty"])
+        self.assertEqual(prunable["dirty_paths"], [])
+        self.assertIn(
+            worktree.resolve(),
+            [Path(path).resolve() for path in report["missing_worktrees"]],
+        )
+
     def test_merged_branch_becomes_removal_candidate(self) -> None:
         git(self.repo, "checkout", "-b", "feature")
         (self.repo / "feature.txt").write_text("feature\n", encoding="utf-8")

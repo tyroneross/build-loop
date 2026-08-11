@@ -20,8 +20,8 @@ Hook contract — never fail the session:
   - Any error logs and exits 0
   - Wall-clock budget (`SCRIPT_WALL_CLOCK_BUDGET_S`, default 25s, env override
     `SCAN_BUDGET_S`) is checked before the LLM call and between writes; on
-    overrun the script logs "budget exceeded" and exits 0 with whatever it
-    has completed (writes are individually atomic via write_decision.py)
+    overrun after inference, remaining candidates are downgraded to the cheap
+    local review queue so completed model work is not discarded
   - A non-blocking `fcntl.flock` on `/tmp/build-loop-scan.lock` (or the
     `--lock-file` override) prevents concurrent sessions from contending;
     a held lock causes immediate clean exit 0
@@ -81,9 +81,9 @@ WRITE_DECISION_SCRIPT = HERE / "write_decision" / "__main__.py"
 # Wall-clock budget contract: the script self-imposes a tighter budget
 # than the Claude Code hook timeout (60s). Default 25s leaves plenty of
 # headroom even on a cold qwen3:8b call. Override via env `SCAN_BUDGET_S`.
-# When budget is exceeded, the script logs and exits 0 cleanly with
-# whatever was already written. Individual writes are atomic
-# (write_decision.py uses fcntl + os.replace) so partial completion is safe.
+# When inference consumes the budget, remaining candidates are persisted to
+# the local review queue without DB or embedding work. Individual writes are
+# atomic (write_decision.py uses fcntl + os.replace).
 SCRIPT_WALL_CLOCK_BUDGET_S = 25
 
 # Default lock file. Overrideable via --lock-file. Lives in /tmp because
@@ -923,12 +923,23 @@ def main(argv: list[str] | None = None) -> int:
     trusted_count = 0
     review_count = 0
     skipped_dup = 0
-    for item in items:
-        # Budget check #3: between writes. Each write is atomic so partial completion is safe.
+    for index, item in enumerate(items):
+        # Budget check #3: conserve completed inference. Remaining candidates
+        # go to the cheap local review queue instead of being discarded or
+        # starting DB/embedding work after the deadline.
         if budget_exceeded():
+            queued_after_budget = 0
+            for pending in items[index:]:
+                fallback = dict(pending)
+                fallback["confidence"] = "inferred"
+                ok, _ = write_review(workdir, fallback)
+                if ok:
+                    review_count += 1
+                    queued_after_budget += 1
             log(
-                f"scan: budget exceeded ({_BUDGET_S}s); bailing with partial results "
-                f"(trusted={trusted_count}, review={review_count}, skipped_dup={skipped_dup})"
+                f"scan: budget exceeded ({_BUDGET_S}s); preserved completed inference "
+                f"(queued_review={queued_after_budget}, trusted={trusted_count}, "
+                f"review={review_count}, skipped_dup={skipped_dup})"
             )
             return 0
         confidence = (item.get("confidence") or "").strip()
