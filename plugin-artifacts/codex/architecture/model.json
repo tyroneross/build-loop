@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "d591b5444e2bb0268c54c4ff3a2a5b15ed14e8de28d85119a8e676abfce1f104"
+    "content_sha256": "427a3e597cbdec5be84e52c93fd1734ab08ab6022e25a03ed4b78322ce686071"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1353,7 +1353,7 @@
         "file": "skills/model-tiering/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-07-22"
+          "date": "2026-08-07"
         }
       },
       "native-ax-driver": {
@@ -1764,6 +1764,7 @@
       "scripts/rally_point/producer_metadata.py": "Producer metadata helper attached to every Rally Point write.",
       "scripts/rally_point/rally.py": "Rally Point rally pointer helpers.",
       "scripts/rally_point/reaper.py": "Rally Point reaper FACADE — delegates physical cleanup to the Rust binary.",
+      "scripts/rally_point/retraction.py": "Rally Point retraction — neutralize a posted fact without mutating the log.",
       "scripts/rally_point/revision.py": "Rally Point revision counter — the cheap \"did anything change\" signal.",
       "scripts/rally_point/roster.py": "Rally Point roster — cross-channel live agent view.",
       "scripts/rally_point/session_probe.py": "Rally Point session probe — auto-invoke runtime for session entry.",

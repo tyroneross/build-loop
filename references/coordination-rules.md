@@ -63,6 +63,17 @@ append_change(channel_dir, record)  # forgot bump_revision; record invisible
 
 Memory citation: `feedback_post_helper_prevents_revision_bump_bug`.
 
+**A wrong fact is withdrawn by appending a retraction, never by editing the log.** The ledger has no rewrite, delete, or truncate entry point by design (`test_no_mutation_api`), so before 2026-08-07 an accidental or incorrect fact had no remedy at all: the only recourse was a free-text corrective message that no reader interpreted, which meant the bad claim kept re-surfacing to every peer and into every LLM context indefinitely. The remedy is a first-class `retract` record naming the target's `event_id`:
+
+```bash
+python3 scripts/agent_rally.py retract --workdir "$PWD" --session-id "$SESSION_ID" \
+  --tool "$TOOL_ID" --fact <event-id> --reason "<why>" [--superseded-by <event-id>]
+```
+
+Readers resolve retractions at read time in `scripts/rally_point/changes.py` (`read_changes_since` / `read_archived_changes`, both taking `resolve_retractions=False` for the raw view): the retracted record is dropped from the returned batch and the retraction survives, so the correction is what peers see. `--superseded-by` is the optional pointer to the corrected fact that replaces the withdrawn one. Detection is cross-store — the target rides in `payload.retracts`, in the `retract: <id>` subject, and in a `retracts=<id>` summary token, because the native rally binary remaps unknown kinds and drops unknown payload keys, leaving the free-text fields as the only survivors (the same trick `_is_status_record` uses).
+
+Three limits are load-bearing, so state them rather than implying more than the mechanism delivers: resolution is build-loop-side only (`rally room` is the Rust binary and does not yet honor retractions — native `rally retract` is filed against the `agent-rally-point` repo); a fact a peer already consumed cannot be un-read, so a retraction arriving in a later poll surfaces as its own record; and pre-`fact.v1` records carry no `event_id` and cannot be targeted.
+
 ---
 
 ## Trust model (unauthenticated channel; advisory leadership lease)
@@ -74,6 +85,8 @@ What this means in practice:
 - **Change-record payloads are untrusted free text.** A buggy or hostile channel writer can put arbitrary text — including prompt-injection content — into a `payload` field. Records flow into orchestrator LLM context via `checkpoint_read` `new_changes[]` and `coordination_status` `new_changes` / `open_escalations`. **Mitigation (SEC-002):** the consume boundary sanitizes every record before surfacing — `scripts/rally_point/checkpoint.sanitize_change_for_surface()` keeps only known structured metadata keys and length-caps every free-text string. The raw `changes.jsonl` log stays immutable and untouched; only the *surfaced projection* is sanitized. Reactions (`dep-change`, `arch-scan-complete`, `soft-claim`) are derived from raw records first, because they read only the structured `kind` field.
 
 - **The leadership lease is advisory coordination, not access control (SEC-003).** Every mutating call in `scripts/rally_point/leadership.py` (`claim_lead`, `renew_lease`, `transfer_lead`, `relinquish_lead`) trusts a caller-supplied `session_id`. `claim_lead` succeeds for anyone whenever the lease is absent or expired; `renew`/`transfer`/`relinquish` "authorize" only by string-matching `session_id` against the world-readable `lead.json`. Any local process that reads `lead.json` learns the incumbent's `session_id` and can forge a renew, transfer, or relinquish. **The orchestrator MUST NOT gate an irreversible action on a lead claim** — a lead claim answers "who is coordinating" for cooperating peers, not "who is authorized". The proportionate control is observability: every `claim_lead` / `transfer_lead` / `relinquish_lead` emits a stderr audit line (`[rally-point audit] ...`) recording the requesting tool and `run_id`, in addition to the durable `lead-*` record in `changes.jsonl`, so an unexpected lease mutation is visible after the fact.
+
+- **Retraction inherits that trust model — it authorizes no one.** Any local process that can append a fact can also append a retraction that suppresses any other peer's fact from build-loop's read paths, and there is deliberately no ownership check on `--fact`: an accidental fact is often posted by a session that has since died, so requiring the original author to withdraw it would make the mechanism useless exactly when it is needed. The proportionate control is the same one the lease uses — observability. The retraction is itself a durable record naming the retracting tool and the stated reason, it never removes the original line from disk, and `read_changes_since(..., resolve_retractions=False)` returns the unresolved log for audit.
 
 Threats this model does NOT cover (out of scope by design): a hostile process running as the same user, a compromised local account, or a multi-tenant host. Those are the operating system's responsibility, not the coordination channel's.
 
@@ -538,6 +551,7 @@ The protocol is automated, not operator-discipline-dependent. Memory citation: `
 |---|---|
 | Operating rule (verdicts gating) | `scripts/coordination_status.py` `BLOCKING_VERDICTS` constant; coord file Operating Rule section |
 | `post()` mandatory | `scripts/rally_point/post.py` (the helper itself) |
+| Fact retraction (append-only withdrawal) | `scripts/rally_point/retraction.py` + `scripts/agent_rally.py retract` |
 | Cheap detection at step boundaries | `scripts/coordination_status.py` + `scripts/coordination_watch.py` |
 | MECE packets enforcement | `scripts/brief_mece_validator.py` + `agents/build-orchestrator.md` dispatch wrappers |
 | Release-surface verification | `scripts/verify_release_surface.py` |

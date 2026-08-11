@@ -7,7 +7,8 @@ Maps a parsed import specifier either to a repo-relative file (the in-tree
 (``uses-package`` edge). Python relative/absolute resolution is split into two
 helpers; ``_external_package_for_import`` returns early per extension family.
 
-Resolution logic is unchanged — same candidate order, same first-match wins.
+Bare imports missing from the existing absolute roots also resolve beside direct
+scripts. Package directories keep Python's absolute-import semantics.
 """
 
 from __future__ import annotations
@@ -133,13 +134,45 @@ def _resolve_py_absolute(module: str, repo_files: Set[str]) -> Optional[str]:
     return None
 
 
+def _resolve_py_script_sibling(
+    module: str,
+    from_rel: str,
+    repo_files: Set[str],
+) -> Optional[str]:
+    """Resolve a still-unresolved import beside a direct, non-package script."""
+    from_dir = posixpath.dirname(from_rel.replace("\\", "/"))
+    if not from_dir:
+        return None
+
+    package_dir = from_dir
+    while package_dir:
+        if f"{package_dir}/__init__.py" in repo_files:
+            return None
+        package_dir = posixpath.dirname(package_dir)
+
+    sibling_prefix = from_dir
+    for part in module.split(".")[:-1]:
+        sibling_prefix = posixpath.join(sibling_prefix, part)
+        if f"{sibling_prefix}.py" in repo_files:
+            return None
+
+    stem = posixpath.join(from_dir, module.replace(".", "/"))
+    for candidate in (f"{stem}.py", f"{stem}/__init__.py"):
+        if candidate in repo_files:
+            return candidate
+    return None
+
+
 def _resolve_py_import(module: str, from_rel: str, repo_files: Set[str]) -> Optional[str]:
     """Map a Python import string to a repo-relative file, if it lives in-tree."""
     if not module:
         return None
     if module.startswith("."):
         return _resolve_py_relative(module, from_rel, repo_files)
-    return _resolve_py_absolute(module, repo_files)
+    absolute = _resolve_py_absolute(module, repo_files)
+    if absolute:
+        return absolute
+    return _resolve_py_script_sibling(module, from_rel, repo_files)
 
 
 # ---------------------------------------------------------------------------
