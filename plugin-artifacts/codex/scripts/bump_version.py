@@ -43,6 +43,17 @@ MIRRORS: list[tuple[str, Path, tuple[object, ...]]] = [
     ("Claude marketplace metadata", REPO_ROOT / ".claude-plugin" / "marketplace.json", ("metadata", "version")),
     ("Claude marketplace entry", REPO_ROOT / ".claude-plugin" / "marketplace.json", ("plugins", 0, "version")),
     ("open-agents marketplace mirror", REPO_ROOT / ".agents" / "plugins" / "marketplace.json", ("version",)),
+    # `verify_release_surface.py` checks the npm package version too, so leaving
+    # it out reproduced exactly the drift this script exists to prevent: the
+    # 0.37.1 bump synced 5 fields and left package.json on 0.37.0, which the
+    # release gate then failed. A surface the release gate checks is a surface
+    # this script must own.
+    ("npm package manifest", REPO_ROOT / "package.json", ("version",)),
+    # npm writes the version twice in the lockfile and the release gate checks
+    # both. `npm install` would sync them, but the bump must not depend on
+    # anyone remembering to run it.
+    ("npm lockfile root", REPO_ROOT / "package-lock.json", ("version",)),
+    ("npm lockfile self-entry", REPO_ROOT / "package-lock.json", ("packages", "", "version")),
 ]
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -175,7 +186,7 @@ def main() -> int:
                 print(f"  {m['path']}{m['field']} = {shown}  ({m['label']})")
             print("  fix: python3 scripts/bump_version.py --sync")
         else:
-            print(f"bump_version: all 5 version fields agree at {state['canonical']}")
+            print(f"bump_version: all {len(MIRRORS) + 1} version fields agree at {state['canonical']}")
         return 1 if drifted else 0
 
     version = args.set or state["canonical"]
