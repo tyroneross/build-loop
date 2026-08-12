@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "8f409b844c9166c32efd2d088533e64c22e6038e71c3b583a4a7f58d260707bd"
+    "content_sha256": "4c6260488e4e5dad07967d6cca6d5f10fb948a704e7022b3c4c6c04f196dc4b6"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1217,7 +1217,7 @@
         "file": "skills/build-loop/SKILL.md",
         "last_updated": {
           "author": "Tyrone Ross",
-          "date": "2026-08-05"
+          "date": "2026-08-11"
         }
       },
       "building-with-deepagents": {
@@ -1709,6 +1709,7 @@
       "scripts/model_overrides.py": "Resolve build-loop model tier overrides.",
       "scripts/model_resolver.py": "Host-neutral model-tier resolver with availability fallback.",
       "scripts/model_taxonomy.py": "Two-axis model taxonomy loader — the SINGLE source of truth.",
+      "scripts/ops_state_probe.py": "Operational-state probe: what is actually ON, OFF, CORRUPT, or UNKNOWN.",
       "scripts/optimize_doe.py": "DOE matrix generation + effects analysis for build-loop:optimize.",
       "scripts/optimize_loop.py": "optimize_loop.py — Core loop mechanics for the build-loop optimize skill.",
       "scripts/optimize_suggest_factors.py": "Scan a repo for tunable parameters that could be DOE factors.",
