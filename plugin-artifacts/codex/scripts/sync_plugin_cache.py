@@ -33,7 +33,21 @@ if str(HERE) not in sys.path:
 import check_cache_sync as cache_sync  # type: ignore  # noqa: E402
 
 
-EXCLUDE_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".build-loop", ".rally"}
+EXCLUDE_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", ".build-loop", ".rally",
+    # Per-tool runtime state (the `.<toolname>/` convention). All gitignored, so
+    # none of it belongs in a plugin cache. Named, observed failure (2026-08-11):
+    # `.ibr/browser-profile/` held a stopped Chrome's SingletonSocket /
+    # SingletonLock / SingletonCookie / RunningChromeVersion. shutil.copytree
+    # raised on those four dangling entries, so EVERY `build-loop-install
+    # --host claude` failed while the installer still printed
+    # "claude: OK build-loop@<version>". The Claude cache sat on 0.37.0 for
+    # multiple bumps. Codex was unaffected — it syncs the generated
+    # plugin-artifacts/codex tree, not the repo root.
+    ".ibr", ".navgator", ".spectra", ".bookmark", ".episodic", ".procedural",
+    ".in_use", ".pytest_cache", ".claude-code-debugger", ".localsmartz",
+    ".ci-rally-apps",
+}
 HOOK_NAMES = ("post-commit", "post-merge", "post-checkout", "post-rewrite")
 HOOK_MARKER = "# --- BEGIN build-loop plugin-cache-sync ---"
 HOOK_MARKER_END = "# --- END build-loop plugin-cache-sync ---"
@@ -101,7 +115,29 @@ def materialize_head(source: Path) -> tempfile.TemporaryDirectory[str]:
 
 
 def ignore_dirty_tree(_dir: str, names: list[str]) -> set[str]:
-    return {name for name in names if name in EXCLUDE_DIRS}
+    """Skip excluded dirs, and anything copytree cannot copy.
+
+    The exclude list handles the runtime dirs we know about. This second clause
+    handles the ones we don't: a socket, a FIFO, or a symlink whose target has
+    gone away raises inside shutil.copytree and aborts the whole sync. A plugin
+    cache should skip an unreadable runtime artifact, not fail the install.
+    """
+    skip = {name for name in names if name in EXCLUDE_DIRS}
+    base = Path(_dir)
+    for name in names:
+        if name in skip:
+            continue
+        p = base / name
+        try:
+            if p.is_symlink() and not p.exists():
+                skip.add(name)          # dangling symlink
+                continue
+            st = p.lstat()
+            if stat.S_ISSOCK(st.st_mode) or stat.S_ISFIFO(st.st_mode):
+                skip.add(name)          # socket / named pipe
+        except OSError:
+            skip.add(name)              # vanished mid-walk
+    return skip
 
 
 def copy_tree_to_temp(source: Path, target_parent: Path) -> Path:
