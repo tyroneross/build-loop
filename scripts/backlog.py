@@ -28,7 +28,11 @@ Subcommands::
                      [--priority P2] [--status open] [--gated none]
                      [--entities a,b] [--provenance-source ...] [--provenance-ref ...]
                      [--evidence p1,p2] [--owner ...] [--review-days 30] [--today YYYY-MM-DD]
-    backlog.py update <ID> --repo <path> --status <s> [--today YYYY-MM-DD] [--no-mirror]
+    backlog.py update <ID> --repo <path> [--status <s>] [--bucket <b>]
+                     [--workstream <name>] [--today YYYY-MM-DD] [--no-mirror]
+    backlog.py promote <ID> --repo <path> [--target-branch <branch>]
+                      [--approval-file <receipt.json>] [--worktree <path>]
+    backlog.py reconcile --repo <path> [--source-repo <path>] [--apply]
     backlog.py sync  --repo <path> [--today YYYY-MM-DD] [--no-mirror] [--prune]
     backlog.py list  --repo <path> [--status ...] [--area ...] [--priority ...]
 
@@ -48,6 +52,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -69,6 +74,8 @@ STATUS_VALUES = ("open", "in-progress", "blocked", "deferred", "done", "dropped"
 PRIORITY_VALUES = ("P0", "P1", "P2", "P3")
 TYPE_VALUES = ("feature", "fix", "debt", "infra", "decision", "cleanup", "research")
 GATED_VALUES = ("none", "prod-deploy", "db-migration", "infra", "product-decision")
+BUCKET_VALUES = ("planned", "initiative", "decision")
+PROTECTED_BRANCHES = ("main", "master")
 
 # Items in these statuses are consolidated to archive/ by `sync`.
 ARCHIVE_STATUSES = ("done", "dropped")
@@ -77,6 +84,7 @@ ARCHIVE_STATUSES = ("done", "dropped")
 # stable key order.
 FIELD_ORDER = (
     "id", "schema_version", "title", "status", "priority", "type", "area",
+    "bucket", "workstream", "related_to", "decision_options", "decision_impacts",
     "entities", "gated", "provenance", "evidence", "supersedes", "superseded_by",
     "created", "updated", "review_by", "owner",
 )
@@ -99,6 +107,11 @@ def item_defaults() -> dict[str, Any]:
         "priority": "P2",
         "type": "debt",
         "area": "general",
+        "bucket": "planned",
+        "workstream": "",
+        "related_to": [],
+        "decision_options": [],
+        "decision_impacts": [],
         "entities": [],
         "gated": "none",
         "provenance": {},
@@ -460,6 +473,10 @@ def read_item(text: str) -> tuple[dict[str, Any], str]:
     fm, body = parse_frontmatter(text)
     merged = item_defaults()
     merged.update(fm)  # explicit values (incl. unknown future fields) win
+    # Legacy decision items predate ``bucket``. Preserve their meaning instead
+    # of making them pickup-eligible through the generic planned default.
+    if "bucket" not in fm and str(merged.get("type")) == "decision":
+        merged["bucket"] = "decision"
     return merged, body
 
 
@@ -543,9 +560,28 @@ def archive_dir(repo: Path) -> Path:
     return backlog_root(repo) / "archive"
 
 
+def validate_store_paths(repo: Path) -> None:
+    """Reject symlinked store components that escape the repository."""
+    root = repo.resolve()
+    for candidate in (
+        repo / ".build-loop",
+        backlog_root(repo),
+        items_dir(repo),
+        archive_dir(repo),
+    ):
+        if not candidate.exists():
+            continue
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"backlog path resolves outside the repo: {candidate}") from exc
+
+
 def ensure_dirs(repo: Path) -> None:
+    validate_store_paths(repo)
     items_dir(repo).mkdir(parents=True, exist_ok=True)
     archive_dir(repo).mkdir(parents=True, exist_ok=True)
+    validate_store_paths(repo)
     # Drop the INDEX.md merge rule whenever the backlog materialises (new/sync/
     # adopt all route through here), not only on adopt's full scaffold — so a
     # backlog first created by `new` still gets conflict-by-regeneration. Written
@@ -566,6 +602,7 @@ def _item_files(directory: Path) -> list[Path]:
 
 def load_items(repo: Path, include_archive: bool = False) -> list[dict[str, Any]]:
     """Load all item frontmatter dicts (+ _path, _body) from items/ (and archive/)."""
+    validate_store_paths(repo)
     items: list[dict[str, Any]] = []
     dirs = [items_dir(repo)]
     if include_archive:
@@ -618,18 +655,17 @@ def _b32_crockford(n: int, width: int) -> str:
 # at 2039-09-07. After it, the prefix wraps the high digit once and ordering
 # resumes — and uniqueness is never affected, since the random tail carries that
 # regardless. The time prefix is navigational-only (`ls` sort), not a uniqueness
-# guarantee. Random component: 3 bytes of os.urandom -> ~4.8 Crockford digits; we
-# render 5 digits (25 bits) for headroom.
+# guarantee. Random component: 8 CSPRNG bytes -> 13 Crockford digits (64 bits).
 _TOKEN_TIME_WIDTH = 8
-_TOKEN_RAND_BYTES = 3
-_TOKEN_RAND_WIDTH = 5
+_TOKEN_RAND_BYTES = 8
+_TOKEN_RAND_WIDTH = 13
 
 
 def mint_id_token(now_ms: int | None = None) -> str:
     """Mint a collision-resistant, time-ordered item-ID suffix with ZERO
     coordination.
 
-    Shape: ``<8 base32 time digits><5 base32 random digits>`` (13 lowercase
+    Shape: ``<8 base32 time digits><13 base32 random digits>`` (21 lowercase
     Crockford base32 chars). The leading time component makes IDs roughly sort
     by creation in ``ls`` (readability / navigation); the trailing
     ``os.urandom``-seeded random component makes them unique across agents,
@@ -637,7 +673,7 @@ def mint_id_token(now_ms: int | None = None) -> str:
     multi-agent contract. ``os.urandom`` (via ``secrets``) is the entropy source,
     never a clock-only or ``Math.random``-style value.
 
-    The astronomically-rare same-millisecond + same-25-random-bits clash is
+    The astronomically-rare same-millisecond + same-64-random-bits clash is
     still caught and re-minted by ``atomic_create_item``'s O_EXCL retry, so the
     on-disk guarantee is absolute, not merely probabilistic.
     """
@@ -742,6 +778,14 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"--type must be one of {TYPE_VALUES}, got {args.type!r}")
     if args.gated not in GATED_VALUES:
         raise ValueError(f"--gated must be one of {GATED_VALUES}, got {args.gated!r}")
+    bucket = getattr(args, "bucket", "") or ("decision" if args.type == "decision" else "planned")
+    if bucket not in BUCKET_VALUES:
+        raise ValueError(f"--bucket must be one of {BUCKET_VALUES}, got {bucket!r}")
+    if bucket == "decision" and args.type != "decision":
+        raise ValueError("--bucket decision requires --type decision")
+    if args.type == "decision" and bucket != "decision":
+        raise ValueError("--type decision requires --bucket decision")
+    gated = "product-decision" if bucket == "initiative" and args.gated == "none" else args.gated
 
     provenance: dict[str, Any] = {}
     if args.provenance_source or args.provenance_ref:
@@ -764,8 +808,13 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
             "priority": args.priority,
             "type": args.type,
             "area": args.area,
+            "bucket": bucket,
+            "workstream": getattr(args, "workstream", "") or args.area,
+            "related_to": _csv(getattr(args, "related_to", "")),
+            "decision_options": list(getattr(args, "decision_option", []) or []),
+            "decision_impacts": list(getattr(args, "decision_impact", []) or []),
             "entities": _csv(args.entities),
-            "gated": args.gated,
+            "gated": gated,
             "provenance": provenance,
             "evidence": _csv(args.evidence),
             "supersedes": None,
@@ -790,6 +839,7 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
         "id": item_id,
         "path": str(path),
         "slug": project_slug(repo),
+        "bucket": bucket,
     }
 
 
@@ -799,10 +849,12 @@ def cmd_new(args: argparse.Namespace) -> dict[str, Any]:
 
 _STATUS_RANK = {s: i for i, s in enumerate(STATUS_VALUES)}
 _PRIORITY_RANK = {p: i for i, p in enumerate(PRIORITY_VALUES)}
+_BUCKET_RANK = {b: i for i, b in enumerate(BUCKET_VALUES)}
 
 
 def _sort_key(item: dict[str, Any]) -> tuple:
     return (
+        _BUCKET_RANK.get(str(item.get("bucket")), 99),
         _STATUS_RANK.get(str(item.get("status")), 99),
         str(item.get("area", "")),
         _PRIORITY_RANK.get(str(item.get("priority")), 99),
@@ -818,7 +870,7 @@ def _esc_cell(value: Any) -> str:
 def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
     """Render INDEX.md deterministically from open (non-archived) items.
 
-    Grouped status -> area -> priority. Stale (past review_by) and gated items
+    Grouped bucket -> status -> area -> priority. Stale (past review_by) and gated items
     are flagged in dedicated columns so any agent sees them at a glance.
     Identical item sets always produce a byte-identical INDEX (no timestamps in
     the body — the date column is per-item `updated`, not "now").
@@ -834,6 +886,10 @@ def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
     )
     stale = [it for it in active_sorted if _is_stale(it, today)]
     gated = [it for it in active_sorted if str(it.get("gated", "none")) != "none"]
+    bucket_counts = {
+        bucket: sum(1 for it in active_sorted if str(it.get("bucket")) == bucket)
+        for bucket in BUCKET_VALUES
+    }
     # Defense in depth: surface any id shared by 2+ items LOUDLY. With token IDs
     # a duplicate is astronomically unlikely on the mint path, but a bad merge of
     # two branches that both (legacy) minted `...-001`, OR a hand-authored item
@@ -857,6 +913,9 @@ def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
     lines.append(f"- Open P0/P1: {open_p01}")
     lines.append(f"- Past review_by (stale): {len(stale)}")
     lines.append(f"- Gated: {len(gated)}")
+    lines.append(f"- Planned pickup: {bucket_counts['planned']}")
+    lines.append(f"- Gated initiatives: {bucket_counts['initiative']}")
+    lines.append(f"- User decisions: {bucket_counts['decision']}")
     if dup_groups:
         lines.append(f"- ⚠ Duplicate IDs: {len(dup_groups)}")
     lines.append("")
@@ -895,33 +954,42 @@ def render_index(repo: Path, items: list[dict[str, Any]], today: str) -> str:
             )
         lines.append("")
 
-    # Main table, grouped by status then area.
+    # Main table, grouped by bucket then status then area.
     lines.append("## Items")
     lines.append("")
     if not active_sorted:
         lines.append("_No active items._")
         lines.append("")
     else:
+        last_bucket = None
         last_status = None
         last_area = None
         for it in active_sorted:
+            bucket = str(it.get("bucket", "planned"))
             status = str(it.get("status", ""))
             area = str(it.get("area", ""))
+            if bucket != last_bucket:
+                lines.append(f"### {bucket}")
+                lines.append("")
+                last_bucket = bucket
+                last_status = None
+                last_area = None
             if status != last_status:
-                lines.append(f"### {status}")
+                lines.append(f"#### {status}")
                 lines.append("")
                 last_status = status
                 last_area = None
             if area != last_area:
-                lines.append(f"#### {area or '(no area)'}")
+                lines.append(f"##### {area or '(no area)'}")
                 lines.append("")
-                lines.append("| id | priority | type | title | gated | review_by |")
-                lines.append("|----|----------|------|-------|-------|-----------|")
+                lines.append("| id | priority | type | title | workstream | gated | review_by |")
+                lines.append("|----|----------|------|-------|------------|-------|-----------|")
                 last_area = area
             lines.append(
                 f"| {_esc_cell(it.get('id'))} | {_esc_cell(it.get('priority'))} "
                 f"| {_esc_cell(it.get('type'))} | {_esc_cell(it.get('title'))} "
-                f"| {_esc_cell(it.get('gated'))} | {_esc_cell(it.get('review_by'))} |"
+                f"| {_esc_cell(it.get('workstream'))} | {_esc_cell(it.get('gated'))} "
+                f"| {_esc_cell(it.get('review_by'))} |"
             )
         lines.append("")
 
@@ -1486,21 +1554,39 @@ def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
 
     # argparse `choices` already enforces this on the CLI path; re-checked here
     # because cmd_update is also called programmatically (tests, other scripts).
-    if args.status not in STATUS_VALUES:
-        raise ValueError(f"--status must be one of {STATUS_VALUES}, got {args.status!r}")
+    status = getattr(args, "status", None)
+    bucket = getattr(args, "bucket", None)
+    workstream = getattr(args, "workstream", None)
+    if status is None and bucket is None and workstream is None:
+        raise ValueError("update requires at least one of --status, --bucket, or --workstream")
+    if status is not None and status not in STATUS_VALUES:
+        raise ValueError(f"--status must be one of {STATUS_VALUES}, got {status!r}")
+    if bucket is not None and bucket not in BUCKET_VALUES:
+        raise ValueError(f"--bucket must be one of {BUCKET_VALUES}, got {bucket!r}")
 
     item = find_item(repo, args.id)
     path = Path(str(item.pop("_path")))
     body = str(item.pop("_body", ""))
     archived = bool(item.pop("_archived", False))
     old_status = str(item.get("status"))
-    changed = old_status != args.status
+    old_bucket = str(item.get("bucket"))
+    old_workstream = str(item.get("workstream"))
+    next_status = status if status is not None else old_status
+    next_bucket = bucket if bucket is not None else old_bucket
+    next_workstream = workstream if workstream is not None else old_workstream
+    if next_bucket == "decision" and str(item.get("type")) != "decision":
+        raise ValueError("bucket decision requires type decision")
+    if str(item.get("type")) == "decision" and next_bucket != "decision":
+        raise ValueError("type decision must remain in bucket decision")
+    changed = (old_status, old_bucket, old_workstream) != (
+        next_status, next_bucket, next_workstream
+    )
 
     # A reopened archived item must return to items/ or it stays invisible: the
     # INDEX renders active items only, so leaving it in archive/ would make the
     # update look applied while the derived view never shows it. Collision is
     # checked BEFORE the write so a conflict can't leave a half-applied state.
-    unarchive = changed and archived and args.status not in ARCHIVE_STATUSES
+    unarchive = changed and archived and next_status not in ARCHIVE_STATUSES
     dest = items_dir(repo) / path.name
     if unarchive and dest.exists():
         raise ValueError(
@@ -1509,7 +1595,13 @@ def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     if changed:
-        item["status"] = args.status
+        item["status"] = next_status
+        item["bucket"] = next_bucket
+        item["workstream"] = next_workstream
+        if next_bucket == "initiative" and item.get("gated") == "none":
+            item["gated"] = "product-decision"
+        elif old_bucket == "initiative" and next_bucket == "planned" and item.get("gated") == "product-decision":
+            item["gated"] = "none"
         item["updated"] = today
         doc = render_frontmatter(item) + "\n" + body
         if not doc.endswith("\n"):
@@ -1535,11 +1627,271 @@ def cmd_update(args: argparse.Namespace) -> dict[str, Any]:
         "id": args.id,
         "path": str(path),
         "changed": changed,
-        "status": {"from": old_status, "to": args.status},
+        "status": {"from": old_status, "to": next_status},
+        "bucket": {"from": old_bucket, "to": next_bucket},
+        "workstream": {"from": old_workstream, "to": next_workstream},
         "updated": today if changed else item.get("updated"),
         "unarchived": unarchive,
         "sync": sync_report,
         "today": today,
+    }
+
+
+def _approval_receipt(repo: Path, item_id: str, raw_path: str) -> dict[str, Any]:
+    """Validate a user-approval receipt kept under .build-loop/approvals/."""
+    if not raw_path:
+        raise ValueError("initiative promotion requires --approval-file")
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = repo / path
+    path = path.resolve()
+    root = (repo / ".build-loop" / "approvals").resolve()
+    try:
+        root.relative_to(repo.resolve())
+    except ValueError as exc:
+        raise ValueError("approval directory resolves outside the repo") from exc
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("approval file must be inside .build-loop/approvals/") from exc
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid approval receipt {path}: {exc}") from exc
+    expected = {"backlog_id": item_id, "decision": "approved", "actor": "user"}
+    for key, value in expected.items():
+        if receipt.get(key) != value:
+            raise ValueError(f"approval receipt must contain {key}={value!r}")
+    return {"path": str(path), "decided_at": receipt.get("decided_at")}
+
+
+def _initiative_worktree(repo: Path, target_branch: str, raw_path: str) -> str:
+    if not target_branch or target_branch in PROTECTED_BRANCHES:
+        raise ValueError("initiative promotion requires a non-main --target-branch")
+    if not raw_path:
+        raise ValueError("initiative promotion requires --worktree on its isolated branch")
+    worktree = Path(raw_path).expanduser().resolve()
+    if worktree == repo.resolve():
+        raise ValueError("initiative worktree must be separate from the backlog repo checkout")
+    def _git_output(path: Path, *command: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(path), *command],
+            check=True, capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+
+    try:
+        actual = _git_output(worktree, "branch", "--show-current")
+        repo_common_raw = _git_output(repo, "rev-parse", "--git-common-dir")
+        worktree_common_raw = _git_output(worktree, "rev-parse", "--git-common-dir")
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"cannot verify initiative worktree: {exc}") from exc
+    repo_common = Path(repo_common_raw)
+    if not repo_common.is_absolute():
+        repo_common = repo / repo_common
+    worktree_common = Path(worktree_common_raw)
+    if not worktree_common.is_absolute():
+        worktree_common = worktree / worktree_common
+    if repo_common.resolve() != worktree_common.resolve():
+        raise ValueError("initiative worktree must belong to the backlog repository")
+    if actual != target_branch:
+        raise ValueError(
+            f"initiative worktree branch {actual!r} does not match target {target_branch!r}"
+        )
+    return str(worktree)
+
+
+def _queue_receipt_path(repo: Path, item_id: str) -> Path:
+    queue = repo / ".build-loop" / "queue"
+    parent = queue.parent.resolve()
+    try:
+        parent.relative_to(repo.resolve())
+    except ValueError as exc:
+        raise ValueError("queue parent resolves outside the repo") from exc
+    queue.mkdir(parents=True, exist_ok=True)
+    try:
+        queue.resolve().relative_to(repo.resolve())
+    except ValueError as exc:
+        raise ValueError("queue directory resolves outside the repo") from exc
+    return queue / f"{item_id}.md"
+
+
+def cmd_promote(args: argparse.Namespace) -> dict[str, Any]:
+    """Promote eligible deferred work into the active execution queue."""
+    repo = normalize_repo(args.repo)
+    item = find_item(repo, args.id)
+    bucket = str(item.get("bucket"))
+    if bucket == "decision":
+        raise ValueError("user decisions are contextual prompts and cannot become executable queue items")
+    if str(item.get("status")) in ARCHIVE_STATUSES:
+        raise ValueError("archived backlog items cannot be promoted")
+
+    target_branch = getattr(args, "target_branch", "") or ""
+    approval: dict[str, Any] | None = None
+    worktree = ""
+    production_policy = "normal"
+    if bucket == "initiative":
+        approval = _approval_receipt(repo, args.id, getattr(args, "approval_file", ""))
+        worktree = _initiative_worktree(repo, target_branch, getattr(args, "worktree", ""))
+        production_policy = "prohibited"
+
+    queue_workdir = Path(worktree) if bucket == "initiative" else repo
+    dest = _queue_receipt_path(queue_workdir, args.id)
+    if dest.is_symlink():
+        raise ValueError(f"queue receipt path must not be a symlink: {dest}")
+    if dest.exists():
+        fm, _ = parse_frontmatter(dest.read_text(encoding="utf-8"))
+        if fm.get("source_backlog_id") == args.id:
+            changed = False
+            if str(item.get("status")) != "in-progress":
+                cmd_update(_NS_sync(
+                    repo=str(repo), id=args.id, status="in-progress", bucket=None,
+                    workstream=None, today=getattr(args, "today", None),
+                    no_mirror=bool(getattr(args, "no_mirror", False)),
+                ))
+                changed = True
+            return {"command": "promote", "id": args.id, "queued": True,
+                    "changed": changed, "path": str(dest)}
+        raise ValueError(f"queue receipt collision at {dest}")
+
+    receipt = {
+        "title": item.get("title"),
+        "source_backlog_id": args.id,
+        "status": "queued",
+        "outcome": getattr(args, "outcome", "") or item.get("title"),
+        "workstream": item.get("workstream") or item.get("area"),
+        "bucket": bucket,
+        "related_to": item.get("related_to") or [],
+        "target_branch": target_branch or None,
+        "worktree": worktree or None,
+        "approval_ref": approval.get("path") if approval else None,
+        "production_policy": production_policy,
+        "source_repo": str(repo.resolve()),
+    }
+    body = (
+        "## Queue contract\n\n"
+        "Execute only work aligned to the named outcome. Add newly discovered "
+        "dependent tasks to this queue; route user choices back to backlog decision items.\n\n"
+        f"## Backlog context\n\n{str(item.get('_body') or '').lstrip()}"
+    )
+    doc = render_frontmatter(receipt) + "\n\n" + body
+    source_path = Path(str(item["_path"]))
+    source_text = source_path.read_text(encoding="utf-8")
+    try:
+        fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        try:
+            os.write(fd, doc.encode("utf-8"))
+        finally:
+            os.close(fd)
+        cmd_update(_NS_sync(
+            repo=str(repo), id=args.id, status="in-progress", bucket=None,
+            workstream=None, today=getattr(args, "today", None),
+            no_mirror=bool(getattr(args, "no_mirror", False)),
+        ))
+    except Exception:
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        try:
+            _atomic_write_text(source_path, source_text)
+            cmd_sync(_NS_sync(
+                repo=str(repo), today=getattr(args, "today", None),
+                no_mirror=bool(getattr(args, "no_mirror", False)), prune=False,
+            ))
+        except Exception:
+            pass
+        raise
+    return {"command": "promote", "id": args.id, "queued": True,
+            "changed": True, "path": str(dest),
+            "production_policy": production_policy}
+
+
+def _source_documents(repo: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in load_items(repo, include_archive=True):
+        iid = str(item.get("id") or "")
+        path = Path(str(item.get("_path") or ""))
+        if iid and path.is_file():
+            out[iid] = path.read_text(encoding="utf-8")
+    return out
+
+
+def cmd_reconcile(args: argparse.Namespace) -> dict[str, Any]:
+    """Union canonical, peer-worktree, and mirror stores without overwriting."""
+    repo = normalize_repo(args.repo)
+    canonical = _source_documents(repo)
+    sources: list[tuple[str, dict[str, str]]] = []
+    for raw in getattr(args, "source_repo", []) or []:
+        source_repo = normalize_repo(raw)
+        sources.append((str(source_repo), _source_documents(source_repo)))
+    mirror_dir = memory_root() / "projects" / project_slug(repo) / "backlog"
+    mirror_docs: dict[str, str] = {}
+    for item in _load_mirror_items(mirror_dir):
+        path = Path(str(item.get("_path") or ""))
+        if item.get("id") and path.is_file():
+            mirror_docs[str(item["id"])] = path.read_text(encoding="utf-8")
+    sources.append((str(mirror_dir), mirror_docs))
+
+    recover: dict[str, tuple[str, str]] = {}
+    conflicts: list[dict[str, str]] = []
+    mirror_drift: list[dict[str, str]] = []
+    seen = dict(canonical)
+    for label, docs in sources:
+        for iid, text in docs.items():
+            if iid not in seen:
+                seen[iid] = text
+                recover[iid] = (label, text)
+            elif seen[iid] != text:
+                finding = {"id": iid, "source": label,
+                           "reason": "same id has different content"}
+                if label == str(mirror_dir):
+                    mirror_drift.append(finding)
+                else:
+                    conflicts.append(finding)
+
+    applied: list[str] = []
+    applied_paths: list[Path] = []
+    if getattr(args, "apply", False):
+        if conflicts:
+            raise ValueError("reconcile found content conflicts; no files were written")
+        ensure_dirs(repo)
+        target = items_dir(repo).resolve()
+        try:
+            target.relative_to(repo.resolve())
+        except ValueError as exc:
+            raise ValueError("canonical items directory resolves outside the repo") from exc
+        try:
+            for iid, (_, text) in sorted(recover.items()):
+                dest = target / f"{iid}.md"
+                try:
+                    fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                except FileExistsError as exc:
+                    raise ValueError(f"reconcile destination appeared concurrently: {dest}") from exc
+                try:
+                    os.write(fd, text.encode("utf-8"))
+                finally:
+                    os.close(fd)
+                applied.append(iid)
+                applied_paths.append(dest)
+            cmd_sync(_NS_sync(repo=str(repo), today=getattr(args, "today", None),
+                              no_mirror=False, prune=True))
+        except Exception:
+            for path in reversed(applied_paths):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            try:
+                write_index(repo, resolve_today(getattr(args, "today", None)))
+            except Exception:
+                pass
+            raise
+
+    return {
+        "command": "reconcile", "dry_run": not bool(getattr(args, "apply", False)),
+        "canonical_count": len(canonical), "union_count": len(seen),
+        "recover": [{"id": iid, "source": src} for iid, (src, _) in sorted(recover.items())],
+        "conflicts": conflicts, "mirror_drift": mirror_drift, "applied": applied,
     }
 
 
@@ -1558,6 +1910,10 @@ def cmd_list(args: argparse.Namespace) -> dict[str, Any]:
             return False
         if args.priority and str(it.get("priority")) != args.priority:
             return False
+        if getattr(args, "bucket", "") and str(it.get("bucket")) != args.bucket:
+            return False
+        if getattr(args, "workstream", "") and str(it.get("workstream")) != args.workstream:
+            return False
         return True
 
     filtered = sorted([it for it in items if keep(it)], key=_sort_key)
@@ -1567,6 +1923,8 @@ def cmd_list(args: argparse.Namespace) -> dict[str, Any]:
             "status": it.get("status"),
             "priority": it.get("priority"),
             "type": it.get("type"),
+            "bucket": it.get("bucket"),
+            "workstream": it.get("workstream"),
             "area": it.get("area"),
             "gated": it.get("gated"),
             "title": it.get("title"),
@@ -1583,8 +1941,8 @@ def _print_list_text(result: dict[str, Any]) -> None:
         return
     for r in rows:
         gated = f" [gated:{r['gated']}]" if r.get("gated") and r["gated"] != "none" else ""
-        print(f"{r['id']:<20} {r['priority']:<3} {str(r['status']):<12} "
-              f"{str(r['area']):<14} {r['title']}{gated}")
+        print(f"{r['id']:<20} {r['priority']:<3} {str(r['bucket']):<10} "
+              f"{str(r['status']):<12} {str(r['area']):<14} {r['title']}{gated}")
     print(f"\n{result['count']} item(s)")
 
 
@@ -1610,6 +1968,14 @@ def build_parser() -> argparse.ArgumentParser:
     pn.add_argument("--priority", default="P2", choices=PRIORITY_VALUES)
     pn.add_argument("--status", default="open", choices=STATUS_VALUES)
     pn.add_argument("--gated", default="none", choices=GATED_VALUES)
+    pn.add_argument("--bucket", default="", choices=("",) + BUCKET_VALUES,
+                    help="Deferred-work class. Defaults to decision for decision types, planned otherwise.")
+    pn.add_argument("--workstream", default="",
+                    help="Outcome/branch context used for relevant pickup and decision surfacing.")
+    pn.add_argument("--related-to", default="", dest="related_to",
+                    help="comma-separated task, goal, branch, or item IDs")
+    pn.add_argument("--decision-option", action="append", default=[], dest="decision_option")
+    pn.add_argument("--decision-impact", action="append", default=[], dest="decision_impact")
     pn.add_argument("--entities", default="", help="comma-separated")
     pn.add_argument("--evidence", default="", help="comma-separated paths/refs")
     pn.add_argument("--provenance-source", default="", dest="provenance_source")
@@ -1663,11 +2029,39 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--repo", required=True)
     pu.add_argument("--slug", default="",
                     help="Override project slug (worktree/CI checkout).")
-    pu.add_argument("--status", required=True, choices=STATUS_VALUES)
+    pu.add_argument("--status", default=None, choices=STATUS_VALUES)
+    pu.add_argument("--bucket", default=None, choices=BUCKET_VALUES)
+    pu.add_argument("--workstream", default=None)
     pu.add_argument("--today", default=None)
     pu.add_argument("--no-mirror", action="store_true",
                     help="Skip the personal-memory mirror in the trailing sync.")
     pu.add_argument("--json", action="store_true")
+
+    pp = sub.add_parser(
+        "promote",
+        help="Move planned/approved initiative work into the active queue.",
+    )
+    pp.add_argument("id")
+    pp.add_argument("--repo", required=True)
+    pp.add_argument("--slug", default="")
+    pp.add_argument("--outcome", default="")
+    pp.add_argument("--target-branch", default="", dest="target_branch")
+    pp.add_argument("--approval-file", default="", dest="approval_file")
+    pp.add_argument("--worktree", default="")
+    pp.add_argument("--today", default=None)
+    pp.add_argument("--no-mirror", action="store_true")
+    pp.add_argument("--json", action="store_true")
+
+    pr = sub.add_parser(
+        "reconcile",
+        help="Dry-run-first lossless union of canonical, peer, and mirror backlog stores.",
+    )
+    pr.add_argument("--repo", required=True)
+    pr.add_argument("--slug", default="")
+    pr.add_argument("--source-repo", action="append", default=[], dest="source_repo")
+    pr.add_argument("--apply", action="store_true")
+    pr.add_argument("--today", default=None)
+    pr.add_argument("--json", action="store_true")
 
     pl = sub.add_parser("list", help="Filtered text/JSON view of items.")
     pl.add_argument("--repo", required=True)
@@ -1676,6 +2070,8 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--status", default="")
     pl.add_argument("--area", default="")
     pl.add_argument("--priority", default="")
+    pl.add_argument("--bucket", default="", choices=("",) + BUCKET_VALUES)
+    pl.add_argument("--workstream", default="")
     pl.add_argument("--include-archive", action="store_true", dest="include_archive")
     pl.add_argument("--json", action="store_true")
 
@@ -1701,6 +2097,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
         elif args.command == "update":
             result = cmd_update(args)
+            print(json.dumps(result, indent=2))
+        elif args.command == "promote":
+            result = cmd_promote(args)
+            print(json.dumps(result, indent=2))
+        elif args.command == "reconcile":
+            result = cmd_reconcile(args)
             print(json.dumps(result, indent=2))
         elif args.command == "list":
             result = cmd_list(args)

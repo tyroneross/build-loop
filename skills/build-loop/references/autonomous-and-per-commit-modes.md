@@ -9,9 +9,9 @@ each; the full detail lives here and loads on demand.
 
 ## Autonomous Mode (Queue-Drain Loop)
 
-Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains its own `ux-queue/` + `issues/` + `proposals/`, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. Default since this mode shipped (`--autonomous=false` opts back to classic one-pass).
+Autonomous mode generalizes Phase 5 Iterate into a self-replenishing worker that drains executable `queue/` + `ux-queue/` + `issues/` + `followup/` lanes, alignment-checks each item against the original intent, executes the aligned subset, and commits in batches until the queue is empty or the wall-clock budget elapses. Proposals and backlog items remain non-executable.
 
-**End-of-run backlog/issues drain — SHIPPED DEFAULT 2026-06-04**: every run now auto-drains `.build-loop/issues/` then `.build-loop/backlog/` at end-of-thread without asking. Reversible per-repo via `.build-loop/config.json`:
+**End-of-run queue continuation:** every run may continue its executable lanes at end-of-thread. Backlog work joins only through `backlog.py promote` at a planning boundary. Planned work is pickup-eligible; initiatives require user approval and an isolated non-main worktree; decisions only surface for matching workstreams.
 
 ```json
 { "sessionPrefs": { "continueFromQueues": "never" } }

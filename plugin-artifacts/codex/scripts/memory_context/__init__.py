@@ -344,7 +344,6 @@ def build_current(
         prefix="decision",
         limit=limit,
         max_chars=max_chars,
-        query=query,
     )
     project_lessons = _recent_markdown(
         project_lessons_dir(project_tag),

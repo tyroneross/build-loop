@@ -37,6 +37,7 @@ import argparse
 import json
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -520,6 +521,11 @@ def analyze(workdir: Path, command: str) -> dict[str, str | bool]:
     protected = load_protected_branches(workdir)
     target, reason = classify_command(command, protected_branches=protected)
     action = policy.get(target, DEFAULT_POLICY[target])
+    if target == "production":
+        hold = initiative_production_hold(workdir)
+        if hold:
+            action = "block"
+            reason = f"initiative production prohibited by {hold}"
     return {
         "target": target,
         "action": action,
@@ -527,6 +533,50 @@ def analyze(workdir: Path, command: str) -> dict[str, str | bool]:
         "policySource": source,
         "reason": reason,
     }
+
+
+def initiative_production_hold(workdir: Path) -> str | None:
+    """Return the matching initiative queue receipt for the active branch."""
+    try:
+        branch = subprocess.run(
+            ["git", "-C", str(workdir), "branch", "--show-current"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+    except OSError:
+        return None
+    if not branch:
+        return None
+    queue = workdir / ".build-loop" / "queue"
+    try:
+        queue.resolve().relative_to(workdir.resolve())
+    except (OSError, ValueError):
+        return None
+    try:
+        receipts = sorted(queue.glob("*.md")) if queue.is_dir() else []
+    except OSError:
+        return None
+    for path in receipts:
+        try:
+            path.resolve().relative_to(queue.resolve())
+        except (OSError, ValueError):
+            continue
+        try:
+            head = path.read_text(encoding="utf-8").split("---", 2)[1]
+        except (OSError, IndexError):
+            continue
+        fields: dict[str, str] = {}
+        for line in head.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            fields[key.strip()] = value.strip().strip('"').strip("'")
+        if (
+            fields.get("bucket") == "initiative"
+            and fields.get("production_policy") == "prohibited"
+            and fields.get("target_branch") == branch
+        ):
+            return str(path)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

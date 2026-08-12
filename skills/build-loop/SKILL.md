@@ -52,7 +52,7 @@ Both are conditional modes — their flag tables, budget/iteration caps, questio
 - the invocation carries `--long` / `--budget` / `--autonomous=false`, or the goal text matches a long-running keyword (`overnight`, `large-scale`, `multi-day`, …) → **Autonomous Mode** detail;
 - `state.json.selfRecursive.enabled` is true, or the invocation carries `--per-commit` / `--no-per-commit` → **Per-Commit Mode** detail.
 
-Default behavior with none of those signals: classic single-pass Phase 1–6, 2h budget, autonomous queue-drain on. The end-of-run `issues/` then `backlog/` drain is a SHIPPED DEFAULT (2026-06-04), reversible per-repo via `.build-loop/config.json` `sessionPrefs.continueFromQueues: "never"`.
+Default behavior with none of those signals: classic single-pass Phase 1–6, 2h budget, autonomous execution-queue drain on. Backlog items stay deferred until class-aware promotion at a planning boundary; initiatives and decisions never auto-promote.
 
 ## Scope Check
 
@@ -378,7 +378,7 @@ Contextual material loaded on demand (not at skill invocation):
 - `references/leadership.md` — Initiative + decision-escalation doctrine (decide-at-70%, self-research → memory → peers → persona panel → human-only-for-irreversible, parallel-work-before-idling, token-posture gauge). Synthesized from intent-based leadership / mission command / two-door decisions.
 - `references/research-trigger-policy.md` — Research plugin trigger/depth gate, t-shirt depth lower bounds, and final-claim citation/unavailable rule
 - `references/task-capture-policy.md` — Read-only active task surface over existing plan/state/queue/backlog surfaces; no new task ledger by default
-- `references/backlog-system.md` — Host-agnostic, multi-repo backlog system: MD+YAML items (canonical truth) + regenerable INDEX, pure-stdlib `scripts/backlog.py` (new/sync/list), one-way mirror to personal memory. Read via `BACKLOG.md`→`INDEX.md`→grep; write via the CLI
+- `references/backlog-system.md` — Host-agnostic classed backlog: planned pickup, approval-gated initiatives, contextual user decisions, lossless reconciliation, and explicit promotion into the executable queue
 - `references/agent-role-taxonomy.md` — Lead/peer/coder-assessor/reviewer/skill responsibility map; use before adding or renaming agents.
 - `references/capability-routing.md` — Full capability routing table, trigger conditions, sub-routers
 - `references/recent-design-structures.md` — Recent UI structure library loaded by `design-contract-specialist` in Phase 2. Structures are options, not mandates.

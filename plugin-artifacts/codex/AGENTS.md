@@ -167,11 +167,11 @@ Run once at the Phase 1 preamble, immediately after `run_id` is known and before
      --workdir "$PWD" --query "<goal-keywords>" \
      --output "$PWD/.build-loop/context-bootstrap.json" --json
    ```
-   The packet covers: canonical `build-loop-memory` root/project `MEMORY.md` + `constitution.md`, indexed recall via `memory_facade.py`, repo-local `.build-loop/{feedback,state,goal,intent,plan}` files, Codex memory registry `~/.codex/memories/MEMORY.md` plus linked rollout summaries, best-effort Rally/coordination state, **queue counts + top items** (`queues.{issues,backlog,ux-queue,followup,proposals}.{count,top[]}`), a **backlog summary** (`backlog.{open_p01,stale,gated}` from `.build-loop/backlog/INDEX.md` when present), **progressive lessons** (`lessons_progressive[]` — SQLite FTS5, scoped to current work, zero external deps; degrades gracefully when DB absent), and `session_prefs`.
+   The packet covers memory, repo-local state, Codex memory, Rally coordination, **executable queue counts** (`queues.{queue,issues,ux-queue,followup}`), non-executable inboxes, a **classed backlog summary** (`backlog.{planned,initiatives,decisions}`), workstream-relevant decisions in `backlog_work.relevant_decisions`, progressive lessons, and `session_prefs`.
 
-   **Backlog system (host-neutral, any agent).** Deferred-but-wanted work lives in `<repo>/.build-loop/backlog/` as plain Markdown+YAML items (`items/<ID>.md`, canonical truth) with a regenerated `INDEX.md` (derived view). Read it with `cat <repo>/BACKLOG.md` → `INDEX.md` → `grep` over `items/*.md`; write it with `python3 ${RUNTIME_PLUGIN_ROOT}/scripts/backlog.py {new,sync,list} --repo <path>` (pure stdlib — runs under bare `python3`, no host SDK). `sync` regenerates INDEX deterministically, archives done/dropped (never deletes), flags past-`review_by` items, and mirrors active items one-way into the user's personal memory (`build-loop-memory/projects/<slug>/backlog/`) for a cross-repo view. Full convention, schema, and lifecycle: `references/backlog-system.md`.
+   **Backlog system (host-neutral, any agent).** Deferred work lives in `<repo>/.build-loop/backlog/items/` and uses `bucket: planned | initiative | decision`. Planned items are pickup-eligible only at a planning boundary; `promote` creates an executable queue receipt. Initiatives require a user approval receipt plus an isolated non-main worktree and carry `production_policy: prohibited`. Decisions never auto-promote; they surface only when their `workstream`/`related_to` matches active work, and only dependent tasks wait. Use `scripts/backlog.py {new,update,promote,reconcile,sync,list}`; `reconcile` is dry-run-first and lossless.
 3. **Surface + ask once** (immediately after reading the packet):
-   - Read `packet.agent_brief` for the one-liner summary, then check each queue: if any `queues.*.count > 0`, emit `#issues=N #backlog=M …` plus the top item titles from `queues.*.top[0].title`.
+   - Read `packet.agent_brief`. Queue counts cover executable lanes only. Backlog candidates and relevant decisions come from `packet.backlog_work`; never treat backlog items as queued work until `promote` writes a queue receipt.
    - Surface `lessons_progressive[].name` (up to 3) as ambient context so planning reflects recent learnings.
    - Check `session_prefs.continue_from_queues`:
      - `"always"` → include queue work in the plan without asking.
@@ -187,10 +187,10 @@ After the main build's followup drain completes (or `.build-loop/followup/` was 
 ```python
 from scripts.context_bootstrap import should_continue_into_queues, pending_queue_items
 should_continue = should_continue_into_queues(workdir)   # True iff session_prefs == "always"
-pending        = pending_queue_items(workdir)             # {"issues": N, "backlog": M}
+pending        = pending_queue_items(workdir)             # queue/issues/ux-queue/followup
 ```
 
-Proceed only when BOTH `should_continue is True` AND `pending["issues"] + pending["backlog"] > 0`. When both are true, enter one additional Phase 5 iterate cycle targeting `.build-loop/issues/` then `.build-loop/backlog/` (issues first). Use the same iterate machinery: alignment-checker per item, scope-auditor, independent-auditor post-fix; same iterate-cap and stop conditions. Items classified `PRODUCTION` or `DECISION` → surface in report, do not auto-execute. When either condition is false, the run ends — do NOT ask again (the preference was already captured at session start).
+Proceed only when BOTH `should_continue is True` AND `sum(pending.values()) > 0`. Drain `.build-loop/queue/`, then issues, UX queue, and followup. Backlog stays deferred. At a new planning boundary, an agent may select a relevant `planned` candidate and call `backlog.py promote`; it may not auto-pick initiatives or decisions.
 
 **Multi-session presence (Rally Point — cross-host: Claude Code, Codex, Gemini CLI, others):**
 
@@ -511,7 +511,7 @@ Build loop stores state in `.build-loop/` within the project directory:
 │   └── <id>.md
 ├── followup/            # Overflow when iteration cap hit; input to subsequent build
 │   └── <topic>.md
-├── backlog/             # Deferred-but-wanted work (drained by end-of-run continuation)
+├── backlog/             # Deferred work; classed and never drained as an execution queue
 │   ├── INDEX.md         # DERIVED view — regenerated by `scripts/backlog.py sync`; do not hand-edit
 │   ├── items/<ID>.md    # CANONICAL items — host-neutral MD+YAML (id/status/priority/type/area/gated/provenance/evidence/review_by)
 │   └── archive/<ID>.md  # done/dropped items (never deleted)

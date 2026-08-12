@@ -237,7 +237,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "658269fe59acc9551857c119eb5690ef4be5b7a2f44ffe5c7682fb786885e67a"
+    "content_sha256": "8f409b844c9166c32efd2d088533e64c22e6038e71c3b583a4a7f58d260707bd"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1908,6 +1908,7 @@
       "scripts/memory_consolidate/promote/promote.py": "Recurrence-gated project→global promotion.",
       "scripts/memory_context/__init__.py": "Fast, host-neutral context surface for build-loop-memory.",
       "scripts/memory_facade/__init__.py": "Unified read facade over build-loop's memory surfaces.",
+      "scripts/memory_facade/backlog.py": "Recall backlog items from canonical and personal-mirror stores by ID.\"\"\"",
       "scripts/memory_facade/common.py": "Shared helpers for memory_facade sub-modules.",
       "scripts/memory_facade/debugger.py": "Backend 4: build-loop native debugging incident reader.\"\"\"",
       "scripts/memory_facade/decisions.py": "Backend 2: canonical decision indexes + project decisions/*.md reader.\"\"\"",
@@ -1937,7 +1938,6 @@
       "scripts/model_overrides.py": "Resolve build-loop model tier overrides.",
       "scripts/model_resolver.py": "Host-neutral model-tier resolver with availability fallback.",
       "scripts/model_taxonomy.py": "Two-axis model taxonomy loader — the SINGLE source of truth.",
-      "scripts/ops_state_probe.py": "Operational-state probe: what is actually ON, OFF, CORRUPT, or UNKNOWN.",
       "scripts/optimize_doe.py": "DOE matrix generation + effects analysis for build-loop:optimize.",
       "scripts/optimize_loop.py": "optimize_loop.py — Core loop mechanics for the build-loop optimize skill.",
       "scripts/optimize_suggest_factors.py": "Scan a repo for tunable parameters that could be DOE factors.",

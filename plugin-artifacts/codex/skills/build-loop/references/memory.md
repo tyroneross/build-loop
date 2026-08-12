@@ -50,7 +50,7 @@ Three work/knowledge artifact types, each with a clear WRITE → READ → TRACK 
 | Artifact | Write (where) | Read / Track | Lifetime |
 |---|---|---|---|
 | **issues** | `<repo>/.build-loop/issues/<id>.md` — current-run bugs | Phase 5 Iterate drains them; repo-local so inherently scoped | short-lived (resolve → delete) |
-| **backlog** | durable: `build-loop-memory/projects/<slug>/backlog.md` (slug folder = repo scope); active: `<repo>/.build-loop/backlog/<id>.md` | read before planning self-work; Phase 5 drains active items | long-lived |
+| **backlog** | canonical: `<repo>/.build-loop/backlog/items/<ID>.md`; mirror: `build-loop-memory/projects/<slug>/backlog/<ID>.md` | classed deferred work; planned items require promotion, initiatives require approval/isolation, decisions surface by workstream | long-lived |
 | **backlog-archive** | `build-loop-memory/projects/<slug>/backlog-archive.md` | closed/moved/superseded items land here **with rationale + ref** — never deleted silently | durable |
 | **lessons** | `projects/<slug>/lessons/` (project) OR top-level `lessons/` (cross-project, stored `_unscoped`) — via `memory_writer.py` | `context_bootstrap` recall scopes to `(slug OR _unscoped)` — never other projects | durable |
 

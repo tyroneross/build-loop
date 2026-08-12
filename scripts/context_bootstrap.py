@@ -55,7 +55,8 @@ CONSTITUTION_TEMPLATE = HERE.parent / "templates" / "memory" / "constitution.md.
 # orchestrator's judgment rules are present when it decides — phase-gated
 # injection, not a prose "load X" instruction (reference-activation lesson).
 DECISION_QUALITY_REF = HERE.parent / "references" / "decision-quality.md"
-QUEUE_NAMES = ("issues", "backlog", "ux-queue", "followup", "proposals", "pending-lessons")
+QUEUE_NAMES = ("queue", "issues", "ux-queue", "followup")
+INBOX_NAMES = ("proposals", "pending-lessons")
 SESSION_PREFS_VALID = ("ask", "always", "never")
 REPO_LOCAL_FILES = (
     ".build-loop/feedback.md",
@@ -267,6 +268,23 @@ def queue_context(workdir: Path) -> dict[str, Any]:
     return result
 
 
+def inbox_context(workdir: Path) -> dict[str, Any]:
+    """Count non-executable proposal/learning inboxes separately from queues."""
+    bl = workdir / ".build-loop"
+    result: dict[str, Any] = {}
+    for name in INBOX_NAMES:
+        directory = bl / name
+        try:
+            items = sorted(directory.glob("*.md")) if directory.is_dir() else []
+        except OSError:
+            items = []
+        result[name] = {
+            "count": len(items),
+            "top": [{"title": _frontmatter_title(path), "file": path.name} for path in items[:3]],
+        }
+    return result
+
+
 def backlog_summary(workdir: Path) -> dict[str, Any]:
     """Surface a compact backlog signal at Phase 1 Assess.
 
@@ -301,6 +319,9 @@ def backlog_summary(workdir: Path) -> dict[str, Any]:
         "open_p01": _grab("Open P0/P1"),
         "stale": _grab("Past review_by (stale)"),
         "gated": _grab("Gated"),
+        "planned": _grab("Planned pickup"),
+        "initiatives": _grab("Gated initiatives"),
+        "decisions": _grab("User decisions"),
     }
 
 
@@ -373,6 +394,80 @@ def backlog_discoverability(workdir: Path) -> dict[str, Any]:
                   ".gitignore so it commits with the repo.")
 
     return {"notice": notice, "adoptable": adoptable, "gitignored": gitignored}
+
+
+def backlog_work_context(
+    workdir: Path,
+    query: str,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Separate pickup candidates from workstream-relevant user decisions.
+
+    Decisions never enter the executable queue. A decision surfaces only when
+    its explicit workstream or a related task/goal/branch token matches the
+    current query, checkout name, or active branch. Unrelated decisions remain
+    dormant while work continues.
+    """
+    branch = ""
+    try:
+        branch = subprocess.run(
+            ["git", "-C", str(workdir), "branch", "--show-current"],
+            capture_output=True, text=True, timeout=3, check=False,
+        ).stdout.strip()
+    except OSError:
+        pass
+    context_fields = (query.lower(), workdir.name.lower(), branch.lower())
+
+    def _matches_context(selector: str) -> bool:
+        escaped = re.escape(selector.strip().lower())
+        if not escaped:
+            return False
+        pattern = rf"(?<![a-z0-9]){escaped}(?![a-z0-9])"
+        return any(re.search(pattern, field) for field in context_fields)
+
+    planned: list[dict[str, Any]] = []
+    initiatives: list[dict[str, Any]] = []
+    decisions: list[dict[str, Any]] = []
+    for row in rows:
+        bucket = str(row.get("bucket") or "planned")
+        compact = {
+            "id": row.get("id"),
+            "title": row.get("title"),
+            "priority": row.get("priority"),
+            "workstream": row.get("workstream"),
+            "source": row.get("source"),
+            "needs_reconcile": bool(row.get("needs_reconcile")),
+        }
+        if bucket == "planned" and row.get("status") in ("open", "deferred"):
+            planned.append(compact)
+        elif bucket == "initiative" and row.get("status") in ("open", "deferred"):
+            initiatives.append({
+                **compact,
+                "pickup": "requires user approval and an isolated non-main worktree",
+                "production_policy": "prohibited",
+            })
+        elif bucket == "decision" and row.get("status") not in ("done", "dropped"):
+            selectors = [str(row.get("workstream") or "").strip().lower()]
+            selectors.extend(str(value).strip().lower() for value in row.get("related_to") or [])
+            selectors = [value for value in selectors if value]
+            if selectors and any(_matches_context(value) for value in selectors):
+                options = list(row.get("decision_options") or [])
+                impacts = list(row.get("decision_impacts") or [])
+                decisions.append({
+                    **compact,
+                    "question": row.get("title"),
+                    "options": options,
+                    "impacts": impacts,
+                    "ready": len(options) >= 2 and bool(impacts),
+                    "blocks": list(row.get("related_to") or []),
+                    "behavior": "ask when user is available; continue unrelated reversible work",
+                })
+    return {
+        "planned_pickup": planned[:5],
+        "gated_initiatives": initiatives[:5],
+        "relevant_decisions": decisions[:5],
+        "active_branch": branch,
+    }
 
 
 def lessons_progressive_context(
@@ -514,10 +609,10 @@ def write_session_prefs(
 
 
 def should_continue_into_queues(workdir: Path) -> bool:
-    """Return True when the end-of-run backlog/issues drain should run.
+    """Return True when the active execution queue should continue draining.
 
     SHIPPED DEFAULT (2026-06-04): an *unset* preference behaves as ``"always"``
-    so every build-loop run auto-drains its backlog at end-of-thread without
+    so every build-loop run continues its outcome-bound queue without
     operator intervention. Existing explicit preferences are still respected:
 
     - ``source == "default"`` (unset, fresh repo)   → True  (auto-drain)
@@ -538,15 +633,15 @@ def should_continue_into_queues(workdir: Path) -> bool:
 
 
 def pending_queue_items(workdir: Path) -> dict[str, Any]:
-    """Return per-queue counts for issues and backlog only.
+    """Return counts for executable lanes only; backlog is never a queue.
 
     Used by the end-of-run continuation check to decide whether there is
     actually anything to drain before entering the extra iterate cycle.
-    Returns {"issues": int, "backlog": int} — never raises.
+    Returns queue/issues/ux-queue/followup counts — never raises.
     """
     bl = workdir / ".build-loop"
     result: dict[str, Any] = {}
-    for qname in ("issues", "backlog"):
+    for qname in QUEUE_NAMES:
         qdir = bl / qname
         if not qdir.is_dir():
             result[qname] = 0
@@ -627,7 +722,7 @@ def canonical_memory_context(
     include_debugger: bool,
     max_chars: int,
 ) -> dict[str, Any]:
-    kinds = ["runs", "decisions", "lessons"]
+    kinds = ["runs", "decisions", "lessons", "backlog"]
     if include_postgres:
         kinds.append("semantic")
     if include_debugger:
@@ -1205,6 +1300,14 @@ def agent_brief(packet: dict[str, Any]) -> str:
         top_str = "; ".join(t for t in top_titles[:3] if t)
         lines.append(f"- Queues: {' '.join(queue_parts)}{' — top: ' + top_str if top_str else ''}")
 
+    inbox_parts = [
+        f"#{name}={data.get('count', 0)}"
+        for name, data in (packet.get("inboxes") or {}).items()
+        if data.get("count", 0)
+    ]
+    if inbox_parts:
+        lines.append(f"- Inboxes (non-executable): {' '.join(inbox_parts)}")
+
     # Backlog summary line — only when a backlog INDEX exists. Compact signal:
     # open P0/P1, past-review_by (stale), and gated counts.
     backlog = packet.get("backlog") or {}
@@ -1213,7 +1316,18 @@ def agent_brief(packet: dict[str, Any]) -> str:
             f"- Backlog: {backlog.get('active', 0)} active "
             f"(P0/P1={backlog.get('open_p01', 0)}, "
             f"stale={backlog.get('stale', 0)}, "
-            f"gated={backlog.get('gated', 0)})"
+            f"planned={backlog.get('planned', 0)}, "
+            f"initiatives={backlog.get('initiatives', 0)}, "
+            f"decisions={backlog.get('decisions', 0)})"
+        )
+
+    backlog_work = packet.get("backlog_work") or {}
+    relevant = backlog_work.get("relevant_decisions") or []
+    if relevant:
+        ready = sum(1 for item in relevant if item.get("ready"))
+        lines.append(
+            f"- Relevant user decisions: {len(relevant)} ({ready} fully specified); "
+            "ask asynchronously and continue unrelated reversible work."
         )
 
     # Discoverability nudge (adoptable scattered work, or a gitignored backlog
@@ -1372,6 +1486,7 @@ def build_packet(
         "working_context": working_context,
         "decision_quality": decision_quality_doctrine(),
         "queues": queue_context(workdir),
+        "inboxes": inbox_context(workdir),
         "backlog": backlog_summary(workdir),
         "backlog_discoverability": backlog_discoverability(workdir),
         "lessons_progressive": lessons,
@@ -1414,6 +1529,8 @@ def build_packet(
     # Merge lesson reasons into canonical_memory reasons for surfacing.
     if lesson_reasons:
         packet["sources"]["canonical_memory"].setdefault("reasons", []).extend(lesson_reasons)
+    backlog_rows = packet["sources"]["canonical_memory"].get("results_by_kind", {}).get("backlog", [])
+    packet["backlog_work"] = backlog_work_context(workdir, query, backlog_rows)
     packet["agent_brief"] = agent_brief(packet)
 
     # FIX-3: record a memory-read telemetry event for the surfaced lessons.
