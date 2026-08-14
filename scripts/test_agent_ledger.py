@@ -10,6 +10,8 @@ the CLI surface the orchestrator shells out to.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -270,6 +272,65 @@ class AppendReadTests(unittest.TestCase):
             self.assertTrue(env["ok"], env)
             self.assertEqual(env["projection"]["status"], "projected")
             self.assertEqual(len(agent_ledger.read(path)), 2)
+
+    @unittest.skipUnless(shutil.which("rally"), "rally binary not installed")
+    def test_real_agent_ledger_projection_uses_standalone_rally(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            home = root / "home"
+            home.mkdir()
+            repo = root / "ledger-native"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            row = agent_ledger.build_row(
+                run_id="real-rally-row",
+                agent="cursor",
+                action="verify",
+                model="cursor-agent",
+                status="pass",
+                ts="2026-08-14T00:00:00Z",
+            )
+            updates = {"HOME": str(home)}
+            with mock.patch.dict(os.environ, updates, clear=False):
+                for key in (
+                    "AGENT_RALLY_BINARY",
+                    "AGENT_RALLY_DISCOVER",
+                    "AGENT_RALLY_APPS_ROOT",
+                    "BUILD_LOOP_APPS_ROOT",
+                    "BUILD_LOOP_BRIDGE_INTERNAL_ONLY",
+                ):
+                    os.environ.pop(key, None)
+                from rally_point import discovery_bridge
+
+                discovery_bridge.clear_cache()
+                env = agent_ledger.append(
+                    agent_ledger.default_ledger_path(repo), row, workdir=repo
+                )
+                discovery_bridge.clear_cache()
+
+            self.assertTrue(env["ok"], env)
+            self.assertEqual(env["projection"]["status"], "projected")
+            self.assertEqual(env["projection"]["backend"], "rally")
+            self.assertFalse((repo / ".rally" / "changes.jsonl").exists())
+            raw_rows = []
+            for log in (repo / ".rally" / "log").glob("*.jsonl"):
+                raw_rows.extend(
+                    json.loads(line)
+                    for line in log.read_text().splitlines()
+                    if line.strip()
+                )
+            matching = [
+                item for item in raw_rows
+                if (item.get("payload") or {}).get("tool") == "cursor"
+                and (item.get("payload") or {}).get("kind") == "artifact"
+                and str((item.get("payload") or {}).get("subject", "")).startswith(
+                    "agent-ledger:"
+                )
+            ]
+            self.assertEqual(len(matching), 1)
+            evidence = (matching[0]["payload"].get("evidence") or [None])[0]
+            projected_payload = json.loads(evidence)
+            self.assertEqual(projected_payload["agent_ledger"], row)
 
 
 class SummarizeTests(unittest.TestCase):

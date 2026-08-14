@@ -29,6 +29,7 @@ if str(_HERE) not in sys.path:
 import capability as _cap  # noqa: E402
 import discovery_bridge as db  # noqa: E402
 import fact_v1 as fv  # noqa: E402
+from post import post  # noqa: E402
 
 
 class _Env:
@@ -299,6 +300,73 @@ def test_lossless_round_trip(tmp_path):
     assert data2["facts_read"] == len(facts)
     assert data2["facts_skipped_existing"] == len(facts)
     assert data2["facts_migrated"] == 0
+
+
+@pytest.mark.skipif(_rally_binary() is None, reason="rally binary not installed")
+def test_real_build_loop_failover_and_incremental_recovery(monkeypatch, tmp_path):
+    """Three hosts spool locally, then Rally imports once and catches later growth."""
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "host-matrix-recovery"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("AGENT_RALLY_BINARY", raising=False)
+    monkeypatch.delenv("AGENT_RALLY_DISCOVER", raising=False)
+    monkeypatch.delenv("BUILD_LOOP_APPS_ROOT", raising=False)
+    monkeypatch.delenv("AGENT_RALLY_APPS_ROOT", raising=False)
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
+    db.clear_cache()
+
+    local = db.resolve(repo)
+    assert local.backend == "build-loop-local"
+    for revision, tool in enumerate(("codex", "claude_code", "cursor"), start=1):
+        assert post(
+            channel_dir=Path(local.channel_dir),
+            kind="artifact",
+            tool=tool,
+            model=f"{tool}-model",
+            run_id="host-matrix",
+            app_slug=local.app_slug,
+            payload={"subject": f"{tool} offline"},
+            workdir=repo,
+        ) == revision
+
+    monkeypatch.delenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
+    db.clear_cache()
+    native = db.resolve(repo)
+    assert native.backend == "rally"
+    assert native.transport == "rally-cli"
+    first = db.maybe_auto_migrate(repo, native)
+    assert first is not None
+    assert first["facts_read"] == 3
+    assert first["facts_migrated"] == 3
+    assert first["facts_skipped_existing"] == 0
+    assert not (repo / ".rally" / "changes.jsonl").exists()
+    assert db.maybe_auto_migrate(repo, native) is None
+
+    monkeypatch.setenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY", "1")
+    db.clear_cache()
+    local_again = db.resolve(repo)
+    assert post(
+        channel_dir=Path(local_again.channel_dir),
+        kind="artifact",
+        tool="cursor",
+        model="cursor-agent",
+        run_id="host-matrix",
+        app_slug=local_again.app_slug,
+        payload={"subject": "cursor follow-up"},
+        workdir=repo,
+    ) == 4
+
+    monkeypatch.delenv("BUILD_LOOP_BRIDGE_INTERNAL_ONLY")
+    db.clear_cache()
+    native_again = db.resolve(repo)
+    second = db.maybe_auto_migrate(repo, native_again)
+    assert second is not None
+    assert second["facts_read"] == 4
+    assert second["facts_migrated"] == 1
+    assert second["facts_skipped_existing"] == 3
 
 
 @pytest.mark.skipif(_rally_binary() is None, reason="rally binary not installed")
