@@ -14,10 +14,10 @@ function:
 
     recall(query, kind=None, project=None, limit=10) -> RecallEnvelope
 
-`kind` filters by store name: "runs" | "decisions" | "lessons" | "semantic" |
-"debugger" (or None for all). `project` filters semantic_facts by project
+`kind` filters by store name: "runs" | "decisions" | "lessons" | "backlog" |
+"semantic" | "debugger" (or None for all). `project` filters project stores
 label. `limit` is per-store cap (the merged result returns up to
-`5 * limit`).
+`len(KINDS) * limit`).
 
 Each backend degrades gracefully:
   - state.json runs   → returns [] silently if file missing.
@@ -76,19 +76,22 @@ from .decisions import (  # noqa: E402
 )
 from .semantic import read_semantic  # noqa: E402
 from .debugger import read_debugger_impl  # noqa: E402
+from .backlog import read_backlog  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_LIMIT = 10
-KINDS = ("runs", "decisions", "lessons", "semantic", "debugger")
+KINDS = ("runs", "decisions", "lessons", "backlog", "semantic", "debugger")
 KIND_ALIASES = {
     "decision": "decisions",
     "lesson": "lessons",
+    "work": "backlog",
+    "backlogs": "backlog",
     "semantic_facts": "semantic",
     "debug": "debugger",
-    # Preserve the frozen five-bucket envelope while allowing callers to ask
-    # for research/reference recall through the lessons lane.
+    # Research/reference recall stays in the lessons lane; deferred work has a
+    # dedicated backlog lane so derived INDEX files cannot hide it.
     "research": "lessons",
     "reference": "lessons",
 }
@@ -171,6 +174,7 @@ def _fan_out(
         "runs":      lambda: read_runs(workdir, query, limit),
         "decisions": lambda: read_decisions(workdir, query, limit),
         "lessons":   lambda: read_lessons(workdir, query, limit),
+        "backlog":   lambda: read_backlog(workdir, query, limit, project),
         "semantic":  lambda: read_semantic(workdir, query, limit, project, skip_postgres=skip_postgres),
         "debugger":  lambda: read_debugger(workdir, query, limit, project),
     }

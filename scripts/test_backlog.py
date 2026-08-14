@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _THIS = Path(__file__).resolve()
 _BACKLOG_PY = _THIS.parent / "backlog.py"
@@ -59,6 +61,11 @@ class _Base(unittest.TestCase):
                  provenance_ref=kw.get("provenance_ref", ""),
                  owner=kw.get("owner", ""), context=kw.get("context", ""),
                  notes=kw.get("notes", ""),
+                 bucket=kw.get("bucket", ""),
+                 workstream=kw.get("workstream", ""),
+                 related_to=kw.get("related_to", ""),
+                 decision_option=kw.get("decision_option", []),
+                 decision_impact=kw.get("decision_impact", []),
                  review_days=kw.get("review_days", 30),
                  today=kw.get("today", "2026-06-16"))
         return bl.cmd_new(ns)
@@ -66,6 +73,10 @@ class _Base(unittest.TestCase):
     def _sync(self, today="2026-06-16", no_mirror=False, prune=False):
         return bl.cmd_sync(_NS(repo=str(self.repo), today=today,
                                no_mirror=no_mirror, prune=prune))
+
+    def _update(self, item_id, status, today="2026-06-20", no_mirror=False):
+        return bl.cmd_update(_NS(repo=str(self.repo), id=item_id, status=status,
+                                 today=today, no_mirror=no_mirror))
 
 
 class _NS:
@@ -100,6 +111,10 @@ class TestCreate(_Base):
         self.assertFalse(res["id"].endswith("-001"))
         # And the ID-shape regex (the single membership test) accepts it.
         self.assertRegex(res["id"], bl._ITEM_ID_RE)
+        token = res["id"].rsplit("-", 1)[1]
+        self.assertEqual(bl._TOKEN_RAND_BYTES, 8)
+        self.assertEqual(len(token), 21)
+        self.assertEqual(len(token[bl._TOKEN_TIME_WIDTH:]), 13)
 
 
 class TestIdIncrement(_Base):
@@ -1031,7 +1046,7 @@ class TestNoThirdPartyImports(unittest.TestCase):
     # Python 3.10+ stdlib top-level module allowlist used by backlog.py.
     _STDLIB = {
         "__future__", "argparse", "datetime", "json", "os", "re",
-        "secrets", "sys", "time", "pathlib", "typing",
+        "secrets", "subprocess", "sys", "time", "pathlib", "typing",
     }
 
     def test_only_stdlib_imports(self):
@@ -1104,6 +1119,417 @@ class TestSyncSafety(_Base):
                         f"item must land under {good_root}, got {item_path}")
         self.assertFalse(nested_root.exists(),
                          f"must NOT create doubly-nested store at {nested_root}")
+
+
+class TestUpdate(_Base):
+    """`update` is the supported status-change route — the hand-edit-then-forget-
+    to-sync path is what it replaces, so every test here asserts the DERIVED
+    views (INDEX, archive, mirror) are consistent when the command returns."""
+
+    def test_update_sets_status_and_bumps_updated(self):
+        r = self._new(area="search", title="x")
+        res = self._update(r["id"], "in-progress")
+        self.assertTrue(res["changed"])
+        self.assertEqual(res["status"], {"from": "open", "to": "in-progress"})
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["status"], "in-progress")
+        self.assertEqual(fm["updated"], "2026-06-20")
+        self.assertEqual(fm["created"], "2026-06-16", "created must not move")
+
+    def test_update_preserves_body_and_other_fields(self):
+        r = self._new(area="search", title='tricky "quoted" : title',
+                      entities="a,b", priority="P1", gated="db-migration",
+                      provenance_source="followup", provenance_ref="x.md")
+        before = Path(r["path"]).read_text(encoding="utf-8")
+        body_before = bl.parse_frontmatter(before)[1]
+        res = self._update(r["id"], "blocked")
+        fm, body_after = bl.parse_frontmatter(
+            Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(body_after, body_before, "body must survive verbatim")
+        self.assertEqual(fm["title"], 'tricky "quoted" : title')
+        self.assertEqual(fm["entities"], ["a", "b"])
+        self.assertEqual(fm["priority"], "P1")
+        self.assertEqual(fm["gated"], "db-migration")
+        self.assertEqual(fm["provenance"], {"source": "followup", "ref": "x.md"})
+
+    def test_update_preserves_unknown_future_fields(self):
+        # Forward-compat: a field written by a NEWER build-loop must not be
+        # dropped by this version's rewrite.
+        r = self._new(area="search", title="x")
+        p = Path(r["path"])
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "owner: unassigned", "owner: unassigned\nfuture_field: keep-me"),
+            encoding="utf-8")
+        res = self._update(r["id"], "deferred")
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm.get("future_field"), "keep-me")
+
+    def test_update_runs_sync_so_index_reflects_the_change(self):
+        # The defect being fixed: a hand-edit without a follow-up sync left the
+        # INDEX stale. One `update` call must leave the INDEX correct.
+        r = self._new(area="search", title="index me")
+        self._sync()
+        index = bl.backlog_root(self.repo) / "INDEX.md"
+        self.assertIn("open", index.read_text(encoding="utf-8"))
+        self._update(r["id"], "blocked")
+        self.assertIn("blocked", index.read_text(encoding="utf-8"))
+
+    def test_update_to_done_archives_and_reports_final_path(self):
+        r = self._new(area="search", title="finish me")
+        res = self._update(r["id"], "done")
+        self.assertIn(r["id"], res["sync"]["consolidation"]["archived"])
+        final = Path(res["path"])
+        self.assertTrue(final.exists(), "reported path must be where the file is")
+        self.assertEqual(final.parent, bl.archive_dir(self.repo))
+        self.assertFalse((bl.items_dir(self.repo) / f"{r['id']}.md").exists())
+
+    def test_update_reopens_an_archived_item_back_into_items(self):
+        r = self._new(area="search", title="reopen me")
+        self._update(r["id"], "done")
+        self.assertTrue((bl.archive_dir(self.repo) / f"{r['id']}.md").exists())
+        res = self._update(r["id"], "open", today="2026-06-21")
+        self.assertTrue(res["unarchived"])
+        self.assertTrue((bl.items_dir(self.repo) / f"{r['id']}.md").exists(),
+                        "a reopened item must return to items/ or the INDEX "
+                        "(active-only) never shows it again")
+        self.assertFalse((bl.archive_dir(self.repo) / f"{r['id']}.md").exists())
+        self.assertIn(r["id"],
+                      (bl.backlog_root(self.repo) / "INDEX.md").read_text(encoding="utf-8"))
+
+    def test_noop_update_does_not_bump_updated(self):
+        r = self._new(area="search", title="x")
+        res = self._update(r["id"], "open")
+        self.assertFalse(res["changed"])
+        fm, _ = bl.parse_frontmatter(Path(res["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["updated"], "2026-06-16", "no change -> no date churn")
+
+    def test_unknown_id_raises(self):
+        self._new(area="search", title="x")
+        with self.assertRaises(ValueError) as cm:
+            self._update("NOPE-NOPE-000", "done")
+        self.assertIn("no backlog item", str(cm.exception))
+
+    def test_duplicate_id_refuses_to_guess(self):
+        r = self._new(area="search", title="x")
+        twin = bl.items_dir(self.repo) / "TWIN.md"
+        twin.write_text(Path(r["path"]).read_text(encoding="utf-8"), encoding="utf-8")
+        with self.assertRaises(ValueError) as cm:
+            self._update(r["id"], "done")
+        self.assertIn("duplicate id", str(cm.exception))
+        # Neither file was touched.
+        self.assertEqual(bl.parse_frontmatter(twin.read_text(encoding="utf-8"))[0]["status"],
+                         "open")
+
+    def test_invalid_status_rejected_by_cli(self):
+        r = self._new(area="search", title="x")
+        parser = bl.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["update", r["id"], "--repo", str(self.repo),
+                               "--status", "finished"])
+
+    def test_cli_end_to_end_via_main(self):
+        r = self._new(area="search", title="x")
+        rc = bl.main(["update", r["id"], "--repo", str(self.repo),
+                      "--status", "in-progress", "--today", "2026-06-20",
+                      "--no-mirror"])
+        self.assertEqual(rc, 0)
+        fm, _ = bl.parse_frontmatter(
+            (bl.items_dir(self.repo) / f"{r['id']}.md").read_text(encoding="utf-8"))
+        self.assertEqual(fm["status"], "in-progress")
+
+    def test_update_mirrors_to_memory(self):
+        r = self._new(area="search", title="x")
+        res = self._update(r["id"], "blocked")
+        mirrored = Path(res["sync"]["mirror"]["dir"]) / f"{r['id']}.md"
+        fm, _ = bl.parse_frontmatter(mirrored.read_text(encoding="utf-8"))
+        self.assertEqual(fm["status"], "blocked",
+                         "the trailing sync must carry the change to the mirror")
+
+
+class TestBucketsPromotionAndReconcile(_Base):
+    def _initiative_checkout(self, item_id):
+        import json, subprocess
+        approvals = self.repo / ".build-loop" / "approvals"
+        approvals.mkdir(parents=True, exist_ok=True)
+        receipt = approvals / f"{item_id}.json"
+        receipt.write_text(json.dumps({
+            "backlog_id": item_id, "decision": "approved", "actor": "user",
+            "decided_at": "2026-06-20T10:00:00Z",
+        }), encoding="utf-8")
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "fixture"], check=True)
+        wt = Path(self._tmp.name) / "initiative-wt"
+        subprocess.run([
+            "git", "-C", str(self.repo), "worktree", "add", "-q", "-b",
+            "feature/redesign", str(wt),
+        ], check=True)
+        return receipt, wt
+
+    def test_legacy_decision_defaults_to_decision_bucket(self):
+        fm, _ = bl.read_item("---\nid: X-DECISION-001\ntype: decision\n---\n")
+        self.assertEqual(fm["bucket"], "decision")
+
+    def test_new_defaults_work_to_planned_and_decisions_to_decision(self):
+        planned = self._new(title="known future work")
+        decision = self._new(typ="decision", title="choose layout")
+        p_fm, _ = bl.read_item(Path(planned["path"]).read_text(encoding="utf-8"))
+        d_fm, _ = bl.read_item(Path(decision["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(p_fm["bucket"], "planned")
+        self.assertEqual(d_fm["bucket"], "decision")
+
+    def test_index_groups_the_three_backlog_buckets(self):
+        self._new(title="planned")
+        self._new(title="initiative", bucket="initiative")
+        self._new(typ="decision", title="decision")
+        text = bl.render_index(self.repo, bl.load_items(self.repo), "2026-06-16")
+        self.assertIn("- Planned pickup: 1", text)
+        self.assertIn("- Gated initiatives: 1", text)
+        self.assertIn("- User decisions: 1", text)
+        self.assertIn("### planned", text)
+        self.assertIn("### initiative", text)
+        self.assertIn("### decision", text)
+
+    def test_update_reclassifies_planned_to_gated_initiative(self):
+        item = self._new(title="redesign")
+        result = bl.cmd_update(_NS(
+            repo=str(self.repo), id=item["id"], status=None,
+            bucket="initiative", workstream="dashboard-b",
+            today="2026-06-20", no_mirror=True,
+        ))
+        fm, _ = bl.read_item(Path(result["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(fm["bucket"], "initiative")
+        self.assertEqual(fm["workstream"], "dashboard-b")
+        self.assertEqual(fm["gated"], "product-decision")
+
+    def test_planned_promotes_to_active_queue(self):
+        item = self._new(title="ship parser", workstream="parser")
+        result = bl.cmd_promote(_NS(
+            repo=str(self.repo), id=item["id"], outcome="parser works",
+            target_branch="", approval_file="", worktree="",
+            today="2026-06-20", no_mirror=True,
+        ))
+        self.assertTrue(result["queued"])
+        receipt = Path(result["path"])
+        fm, _ = bl.parse_frontmatter(receipt.read_text(encoding="utf-8"))
+        self.assertEqual(fm["source_backlog_id"], item["id"])
+        self.assertEqual(fm["production_policy"], "normal")
+        source, _ = bl.read_item(Path(item["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(source["status"], "in-progress")
+
+    def test_decision_cannot_promote(self):
+        item = self._new(typ="decision", title="choose parser")
+        with self.assertRaisesRegex(ValueError, "cannot become executable"):
+            bl.cmd_promote(_NS(repo=str(self.repo), id=item["id"], outcome="",
+                               target_branch="", approval_file="", worktree=""))
+
+    def test_initiative_requires_user_receipt_and_separate_verified_branch(self):
+        item = self._new(title="redesign all UI", bucket="initiative")
+        with self.assertRaisesRegex(ValueError, "approval-file"):
+            bl.cmd_promote(_NS(repo=str(self.repo), id=item["id"], outcome="",
+                               target_branch="feature/redesign", approval_file="",
+                               worktree=""))
+
+        receipt, wt = self._initiative_checkout(item["id"])
+        result = bl.cmd_promote(_NS(
+            repo=str(self.repo), id=item["id"], outcome="approved redesign",
+            target_branch="feature/redesign", approval_file=str(receipt),
+            worktree=str(wt), today="2026-06-20", no_mirror=True,
+        ))
+        self.assertEqual(result["production_policy"], "prohibited")
+        self.assertEqual(
+            Path(result["path"]).parent.resolve(),
+            (wt / ".build-loop" / "queue").resolve(),
+        )
+        config = wt / ".build-loop" / "config.json"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text(
+            '{"deploymentPolicy":{"production":"auto"}}', encoding="utf-8"
+        )
+        policy = subprocess.run(
+            [__import__("sys").executable, str(_THIS.parent / "deployment_policy.py"),
+             "--workdir", str(wt), "--command", "vercel deploy --prod"],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(__import__("json").loads(policy.stdout)["action"], "block")
+
+    def test_initiative_rejects_same_named_branch_in_unrelated_repo(self):
+        import json, subprocess
+        item = self._new(title="redesign", bucket="initiative")
+        approvals = self.repo / ".build-loop" / "approvals"
+        approvals.mkdir(parents=True)
+        receipt = approvals / f"{item['id']}.json"
+        receipt.write_text(json.dumps({
+            "backlog_id": item["id"], "decision": "approved", "actor": "user",
+        }), encoding="utf-8")
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
+        unrelated = Path(self._tmp.name) / "unrelated"
+        subprocess.run([
+            "git", "init", "-q", "-b", "feature/redesign", str(unrelated)
+        ], check=True)
+
+        with self.assertRaisesRegex(ValueError, "belong to the backlog repository"):
+            bl.cmd_promote(_NS(
+                repo=str(self.repo), id=item["id"], outcome="",
+                target_branch="feature/redesign", approval_file=str(receipt),
+                worktree=str(unrelated), today="2026-06-20", no_mirror=True,
+            ))
+
+    def test_failed_promotion_restores_source_and_removes_queue_receipt(self):
+        item = self._new(title="atomic promotion")
+        source = Path(item["path"])
+        before = source.read_text(encoding="utf-8")
+
+        with mock.patch.object(bl, "cmd_sync", side_effect=RuntimeError("forced sync failure")):
+            with self.assertRaisesRegex(RuntimeError, "forced sync failure"):
+                bl.cmd_promote(_NS(
+                    repo=str(self.repo), id=item["id"], outcome="atomic",
+                    target_branch="", approval_file="", worktree="",
+                    today="2026-06-20", no_mirror=True,
+                ))
+
+        self.assertEqual(source.read_text(encoding="utf-8"), before)
+        self.assertFalse((self.repo / ".build-loop" / "queue" / source.name).exists())
+
+    def test_promote_rejects_queue_directory_symlink_escape(self):
+        item = self._new(title="stay inside repo")
+        outside = Path(self._tmp.name) / "outside-queue"
+        outside.mkdir()
+        queue = self.repo / ".build-loop" / "queue"
+        queue.symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, "queue directory resolves outside"):
+            bl.cmd_promote(_NS(
+                repo=str(self.repo), id=item["id"], outcome="contained",
+                target_branch="", approval_file="", worktree="",
+                today="2026-06-20", no_mirror=True,
+            ))
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_initiative_rejects_approval_directory_symlink_escape(self):
+        import json
+        item = self._new(title="redesign", bucket="initiative")
+        outside = Path(self._tmp.name) / "outside-approvals"
+        outside.mkdir()
+        receipt = outside / f"{item['id']}.json"
+        receipt.write_text(json.dumps({
+            "backlog_id": item["id"], "decision": "approved", "actor": "user",
+        }), encoding="utf-8")
+        (self.repo / ".build-loop" / "approvals").symlink_to(
+            outside, target_is_directory=True
+        )
+
+        with self.assertRaisesRegex(ValueError, "approval directory resolves outside"):
+            bl.cmd_promote(_NS(
+                repo=str(self.repo), id=item["id"], outcome="",
+                target_branch="feature/redesign", approval_file=str(receipt),
+                worktree="",
+            ))
+
+    def test_store_rejects_items_directory_symlink_escape(self):
+        item = self._new(title="canonical")
+        original = bl.items_dir(self.repo)
+        saved = original.with_name("saved-items")
+        original.rename(saved)
+        outside = Path(self._tmp.name) / "outside-items"
+        outside.mkdir()
+        original.symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, "backlog path resolves outside"):
+            bl.load_items(self.repo)
+        self.assertTrue((saved / f"{item['id']}.md").exists())
+
+    def test_reconcile_recovers_mirror_only_and_is_idempotent(self):
+        item = self._new(title="mirror-only")
+        source = Path(item["path"])
+        mirror = self.mem / "projects" / "myproj-app" / "backlog"
+        mirror.mkdir(parents=True)
+        (mirror / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        source.unlink()
+
+        dry = bl.cmd_reconcile(_NS(repo=str(self.repo), source_repo=[], apply=False,
+                                   today="2026-06-20"))
+        self.assertEqual([r["id"] for r in dry["recover"]], [item["id"]])
+        self.assertFalse((bl.items_dir(self.repo) / source.name).exists())
+        applied = bl.cmd_reconcile(_NS(repo=str(self.repo), source_repo=[], apply=True,
+                                       today="2026-06-20"))
+        self.assertEqual(applied["applied"], [item["id"]])
+        again = bl.cmd_reconcile(_NS(repo=str(self.repo), source_repo=[], apply=False,
+                                     today="2026-06-20"))
+        self.assertEqual(again["recover"], [])
+
+    def test_reconcile_reports_mirror_drift_without_blocking_canonical_truth(self):
+        item = self._new(title="canonical")
+        source = Path(item["path"])
+        mirror = self.mem / "projects" / "myproj-app" / "backlog"
+        mirror.mkdir(parents=True)
+        (mirror / source.name).write_text(
+            source.read_text(encoding="utf-8").replace("canonical", "different"),
+            encoding="utf-8",
+        )
+        dry = bl.cmd_reconcile(_NS(repo=str(self.repo), source_repo=[], apply=False,
+                                   today="2026-06-20"))
+        self.assertEqual(dry["conflicts"], [])
+        self.assertEqual(len(dry["mirror_drift"]), 1)
+        applied = bl.cmd_reconcile(_NS(repo=str(self.repo), source_repo=[], apply=True,
+                                       today="2026-06-20"))
+        self.assertEqual(applied["applied"], [])
+        mirrored, _ = bl.read_item((mirror / source.name).read_text(encoding="utf-8"))
+        self.assertEqual(mirrored["title"], "canonical")
+        self.assertEqual(bl.load_items(self.repo)[0]["title"], "canonical")
+
+    def test_reconcile_peer_conflict_fails_before_write(self):
+        item = self._new(title="canonical")
+        source = Path(item["path"])
+        peer = Path(self._tmp.name) / "peer-repo"
+        peer_item = bl.items_dir(peer) / source.name
+        peer_item.parent.mkdir(parents=True)
+        peer_item.write_text(
+            source.read_text(encoding="utf-8").replace("canonical", "different"),
+            encoding="utf-8",
+        )
+        dry = bl.cmd_reconcile(_NS(
+            repo=str(self.repo), source_repo=[str(peer)], apply=False,
+            today="2026-06-20",
+        ))
+        self.assertEqual(len(dry["conflicts"]), 1)
+        with self.assertRaisesRegex(ValueError, "content conflicts"):
+            bl.cmd_reconcile(_NS(
+                repo=str(self.repo), source_repo=[str(peer)], apply=True,
+                today="2026-06-20",
+            ))
+        self.assertEqual(bl.load_items(self.repo)[0]["title"], "canonical")
+
+    def test_reconcile_rolls_back_partial_multi_item_write(self):
+        created = [self._new(title=f"recover {index}") for index in range(2)]
+        mirror = self.mem / "projects" / "myproj-app" / "backlog"
+        mirror.mkdir(parents=True)
+        for item in created:
+            source = Path(item["path"])
+            (mirror / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            source.unlink()
+
+        real_open = bl.os.open
+        destination_opens = 0
+
+        def fail_second_destination(path, flags, mode=0o777):
+            nonlocal destination_opens
+            if flags & bl.os.O_EXCL:
+                destination_opens += 1
+                if destination_opens == 2:
+                    raise OSError("forced second write failure")
+            return real_open(path, flags, mode)
+
+        with mock.patch.object(bl.os, "open", side_effect=fail_second_destination):
+            with self.assertRaisesRegex(OSError, "forced second write failure"):
+                bl.cmd_reconcile(_NS(
+                    repo=str(self.repo), source_repo=[], apply=True,
+                    today="2026-06-20",
+                ))
+
+        self.assertEqual(list(bl.items_dir(self.repo).glob("*.md")), [])
 
 
 class TestNormalizeRepo(unittest.TestCase):

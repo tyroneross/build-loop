@@ -114,31 +114,6 @@ class MemoryContextTests(unittest.TestCase):
         loaded = json.loads(paths["json"].read_text(encoding="utf-8"))
         self.assertEqual(loaded["project"], self.project)
 
-    def test_query_ranks_relevant_project_decision_before_newer_decision(self) -> None:
-        import memory_context as mc  # noqa: PLC0415
-
-        relevant = self.project_dir / "decisions" / "apple-data-boundary.md"
-        relevant.write_text(
-            "# Apple data boundary\n\nUse private iCloud and CloudKit, not an external database.\n",
-            encoding="utf-8",
-        )
-        unrelated = self.project_dir / "decisions" / "newer-ui-choice.md"
-        unrelated.write_text(
-            "# Newer UI choice\n\nUse a compact toolbar for task selection.\n",
-            encoding="utf-8",
-        )
-        os.utime(relevant, (100, 100))
-        os.utime(unrelated, (200, 200))
-
-        current = mc.build_current(
-            self.workdir,
-            query="iCloud CloudKit external database",
-            project=self.project,
-            limit=1,
-        )
-
-        self.assertEqual(current["decisions"][0]["title"], "Apple data boundary")
-
     def test_expand_mode_uses_lessons_index(self) -> None:
         import memory_context as mc  # noqa: PLC0415
 

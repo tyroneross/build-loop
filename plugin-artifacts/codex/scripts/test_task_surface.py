@@ -60,9 +60,12 @@ class TaskSurfaceTests(unittest.TestCase):
             encoding="utf-8",
         )
         issues = self.workdir / ".build-loop" / "issues"
+        queue = self.workdir / ".build-loop" / "queue"
         followup = self.workdir / ".build-loop" / "followup"
         issues.mkdir()
+        queue.mkdir()
         followup.mkdir()
+        (queue / "outcome.md").write_text("# Complete known outcome\n", encoding="utf-8")
         (issues / "bug.md").write_text("# Fix stale watcher\n", encoding="utf-8")
         (followup / "later.md").write_text(
             "# Later\n\n- [ ] Add package privacy test\n",
@@ -77,6 +80,7 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertEqual(payload["counts_by_surface"]["state.in_flight_chunks"], 1)
         self.assertEqual(payload["counts_by_surface"]["state.queued_chunks"], 1)
         self.assertEqual(payload["counts_by_surface"]["issues"], 1)
+        self.assertEqual(payload["counts_by_surface"]["queue"], 1)
         self.assertEqual(payload["counts_by_surface"]["followup"], 1)
         self.assertEqual(payload["dry_run"]["mode"], "rank-only")
         self.assertEqual(payload["dry_run"]["next_item"]["id"], "T-1")
@@ -181,6 +185,11 @@ class TaskSurfaceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["counts_by_surface"]["backlog"], 1)
+        backlog_row = next(row for row in payload["items"] if row["surface"] == "backlog")
+        self.assertFalse(backlog_row["execution_eligible"])
+        self.assertEqual(backlog_row["pickup_policy"], "promote-at-planning-boundary")
+        self.assertEqual(payload["execution_queue_count"], 0)
+        self.assertIsNone(payload["dry_run"]["next_item"])
         titles = [row["title"] for row in payload["items"]]
         self.assertIn("Ship active backlog item", titles)
         self.assertNotIn("Completed backlog item", titles)
@@ -199,6 +208,40 @@ class TaskSurfaceTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["counts_by_surface"]["backlog"], 1)
         self.assertEqual(payload["items"][0]["title"], "Legacy backlog item")
+        self.assertFalse(payload["items"][0]["execution_eligible"])
+
+    def test_initiative_and_decision_backlog_policies_are_non_executable(self) -> None:
+        items = self.workdir / ".build-loop" / "backlog" / "items"
+        items.mkdir(parents=True)
+        (items / "initiative.md").write_text(
+            "---\nstatus: open\nbucket: initiative\nworkstream: dashboard-b\n---\n# Redesign UI\n",
+            encoding="utf-8",
+        )
+        (items / "decision.md").write_text(
+            "---\nstatus: open\ntype: decision\nbucket: decision\nworkstream: dashboard-b\n---\n# Pick density\n",
+            encoding="utf-8",
+        )
+        payload = json.loads(run_surface(
+            "--workdir", str(self.workdir), "--no-memory", "--json"
+        ).stdout)
+        policies = {row["bucket"]: row["pickup_policy"] for row in payload["items"]}
+        self.assertEqual(policies["initiative"], "user-approval-plus-isolated-worktree")
+        self.assertEqual(policies["decision"], "surface-only-for-matching-workstream")
+        self.assertEqual(payload["execution_queue_count"], 0)
+
+    def test_symlinked_external_backlog_is_not_read(self) -> None:
+        outside = self.root / "outside-backlog"
+        outside.mkdir()
+        (outside / "external.md").write_text("# External task\n", encoding="utf-8")
+        build_loop = self.workdir / ".build-loop"
+        build_loop.mkdir(exist_ok=True)
+        (build_loop / "backlog").symlink_to(outside, target_is_directory=True)
+
+        result = run_surface("--workdir", str(self.workdir), "--no-memory", "--json")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertNotIn("External task", [row["title"] for row in payload["items"]])
 
 
 if __name__ == "__main__":

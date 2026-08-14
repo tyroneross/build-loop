@@ -23,11 +23,12 @@ from _paths import memory_store_root  # type: ignore  # noqa: E402
 from project_resolver import resolve_project  # type: ignore  # noqa: E402
 
 ACTIVE_DIRS = [
+    ("queue", ".build-loop/queue", "queued", 20),
     ("ux_queue", ".build-loop/ux-queue", "active-iterate", 30),
     ("issues", ".build-loop/issues", "open-issue", 40),
     ("followup", ".build-loop/followup", "deferred-active", 50),
-    ("backlog", ".build-loop/backlog", "repo-backlog", 60),
 ]
+BACKLOG_DIR = ("backlog", ".build-loop/backlog", "deferred", 60)
 PROPOSAL_DIR = ("proposals", ".build-loop/proposals", "candidate", 90)
 
 SURFACE_RANK_BONUS = {
@@ -36,10 +37,11 @@ SURFACE_RANK_BONUS = {
     "state.queued_chunks": 25,
     "state.queued": 25,
     "status_current": 22,
+    "queue": 20,
     "ux_queue": 18,
     "issues": 16,
     "followup": 10,
-    "backlog": 5,
+    "backlog": -20,
     "memory_backlog": 2,
     "proposals": -10,
 }
@@ -50,10 +52,11 @@ SURFACE_ACTION = {
     "state.queued_chunks": "dispatch_next",
     "state.queued": "dispatch_next",
     "status_current": "address_status_item",
+    "queue": "dispatch_next",
     "ux_queue": "iterate_now",
     "issues": "investigate_issue",
     "followup": "resume_followup",
-    "backlog": "consider_backlog",
+    "backlog": "review_deferred_policy",
     "memory_backlog": "review_durable_backlog",
     "proposals": "review_proposal",
 }
@@ -214,6 +217,11 @@ def _risk_level(row: dict[str, Any]) -> str:
         return "decision-review"
     if surface == "memory_backlog":
         return "alignment-review"
+    if surface == "backlog":
+        return {
+            "initiative": "user-approval-required",
+            "decision": "contextual-user-decision",
+        }.get(str(row.get("bucket")), "planning-boundary")
     if str(surface).startswith("state."):
         return "active-run"
     return "safe-candidate"
@@ -235,6 +243,15 @@ def rank_task_items(
         item["dry_run_action"] = SURFACE_ACTION.get(str(item.get("surface")), "review")
         item["risk"] = _risk_level(item)
         item["validation_clarity"] = _validation_clarity(item)
+        item["execution_eligible"] = item.get("surface") not in {
+            "backlog", "memory_backlog", "proposals"
+        }
+        if item.get("surface") == "backlog":
+            item["pickup_policy"] = {
+                "planned": "promote-at-planning-boundary",
+                "initiative": "user-approval-plus-isolated-worktree",
+                "decision": "surface-only-for-matching-workstream",
+            }.get(str(item.get("bucket")), "promote-at-planning-boundary")
         if item["id"] in summaries:
             item["iteration_summary"] = summaries[item["id"]]
         ranked.append(item)
@@ -250,40 +267,56 @@ def markdown_surface_items(
     include_proposals: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    dirs = list(ACTIVE_DIRS)
+    dirs = list(ACTIVE_DIRS) + [BACKLOG_DIR]
     if include_proposals:
         dirs.append(PROPOSAL_DIR)
     for surface, rel, lifecycle, priority in dirs:
         root = workdir / rel
         if not root.exists():
             continue
+        try:
+            resolved_root = root.resolve()
+            resolved_root.relative_to(workdir.resolve())
+        except (OSError, ValueError):
+            continue
         for path in sorted(root.rglob("*.md")):
+            try:
+                path.resolve().relative_to(resolved_root)
+            except (OSError, ValueError):
+                continue
             if not _include_markdown_surface_item(surface, root, path):
                 continue
+            fm = _frontmatter(path) if surface == "backlog" else {}
+
+            def _append(row: dict[str, Any]) -> None:
+                if surface == "backlog":
+                    row["bucket"] = fm.get("bucket") or (
+                        "decision" if fm.get("type") == "decision" else "planned"
+                    )
+                    row["workstream"] = fm.get("workstream", "")
+                rows.append(row)
+
             unchecked = _unchecked_items(path)
             if unchecked:
                 for idx, title in enumerate(unchecked, start=1):
-                    rows.append(
-                        _item(
+                    _append(_item(
                             surface=surface,
                             lifecycle=lifecycle,
                             priority=priority,
                             title=title,
                             path=str(path),
                             item_id=f"{path.stem}:{idx}",
-                        )
-                    )
+                        ))
             else:
-                rows.append(
-                    _item(
-                        surface=surface,
-                        lifecycle=lifecycle,
-                        priority=priority,
-                        title=_markdown_title(path),
-                        path=str(path),
-                        item_id=path.stem,
-                    )
+                row = _item(
+                    surface=surface,
+                    lifecycle=lifecycle,
+                    priority=priority,
+                    title=_markdown_title(path),
+                    path=str(path),
+                    item_id=path.stem,
                 )
+                _append(row)
     return rows
 
 
@@ -385,7 +418,8 @@ def collect_task_surface(
     counts: dict[str, int] = {}
     for row in ranked_items:
         counts[row["surface"]] = counts.get(row["surface"], 0) + 1
-    next_item = ranked_items[0] if ranked_items else None
+    next_item = next((row for row in ranked_items if row["execution_eligible"]), None)
+    execution_count = sum(1 for row in ranked_items if row["execution_eligible"])
     return {
         "action": "task-surface",
         "workdir": str(wd),
@@ -398,6 +432,8 @@ def collect_task_surface(
             "stop_reasons": [],
         },
         "open_count": len(items),
+        "execution_queue_count": execution_count,
+        "deferred_count": len(items) - execution_count,
         "counts_by_surface": counts,
         "iteration_summary": summaries,
         "items": ranked_items[:max_items],

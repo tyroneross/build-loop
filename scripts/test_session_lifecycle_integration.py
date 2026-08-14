@@ -134,10 +134,10 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         issues_dir.mkdir()
         (issues_dir / "2026-05-30-safari-tap.md").write_text(ISSUE_BODY, encoding="utf-8")
 
-        # backlog/ dir with one item
-        backlog_dir = bl / "backlog"
-        backlog_dir.mkdir()
-        (backlog_dir / "2026-05-30-dark-mode.md").write_text(BACKLOG_BODY, encoding="utf-8")
+        # queue/ dir with one outcome-bound executable item
+        queue_dir = bl / "queue"
+        queue_dir.mkdir()
+        (queue_dir / "2026-05-30-dark-mode.md").write_text(BACKLOG_BODY, encoding="utf-8")
 
         # Plant a lesson in the memory store (top-level lessons lane).
         lessons_dir = self.memroot / "lessons"
@@ -154,7 +154,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_queue_counts_in_envelope(self) -> None:
-        """bootstrap packet contains correct issues and backlog counts."""
+        """bootstrap packet contains correct executable queue counts."""
         packet = cb.build_packet(
             workdir=self.workdir,
             query="safari touch mobile fix",
@@ -165,8 +165,9 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         queues = packet.get("queues", {})
         self.assertEqual(queues.get("issues", {}).get("count"), 1,
                          "issues.count should be 1 (one planted issue)")
-        self.assertEqual(queues.get("backlog", {}).get("count"), 1,
-                         "backlog.count should be 1 (one planted backlog item)")
+        self.assertEqual(queues.get("queue", {}).get("count"), 1,
+                         "queue.count should be 1 (one planted queue item)")
+        self.assertNotIn("backlog", queues)
 
     def test_queue_top_titles_in_envelope(self) -> None:
         """top[] lists contain the planted items' titles from frontmatter."""
@@ -185,7 +186,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
             f"Expected 'Login button' in issues top titles, got: {issues_top}",
         )
 
-        backlog_top = queues.get("backlog", {}).get("top", [])
+        backlog_top = queues.get("queue", {}).get("top", [])
         self.assertTrue(
             any("dark-mode" in item.get("title", "").lower() for item in backlog_top),
             f"Expected 'dark-mode' in backlog top titles, got: {backlog_top}",
@@ -218,7 +219,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         )
 
     def test_agent_brief_contains_queue_counts(self) -> None:
-        """agent_brief one-liner mentions the issue and backlog counts."""
+        """agent_brief one-liner mentions executable lane counts."""
         packet = cb.build_packet(
             workdir=self.workdir,
             query="mobile safari fix",
@@ -228,7 +229,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         )
         brief = packet.get("agent_brief", "")
         self.assertIn("#issues=1", brief, f"agent_brief missing #issues=1: {brief[:400]}")
-        self.assertIn("#backlog=1", brief, f"agent_brief missing #backlog=1: {brief[:400]}")
+        self.assertIn("#queue=1", brief, f"agent_brief missing #queue=1: {brief[:400]}")
 
     def test_session_prefs_block_present_with_defaults(self) -> None:
         """session_prefs block is present and defaults to 'ask'."""
@@ -276,16 +277,16 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         )
 
     def test_pending_queue_items_after_write_always(self) -> None:
-        """pending_queue_items returns correct counts for issues + backlog."""
+        """pending_queue_items returns correct executable-lane counts."""
         cb.write_session_prefs(self.workdir, "always", source="asked")
         # Gate must be True so the continuation would run.
         self.assertTrue(cb.should_continue_into_queues(self.workdir))
         pending = cb.pending_queue_items(self.workdir)
         self.assertEqual(pending.get("issues"), 1, f"Expected 1 issue, got: {pending}")
-        self.assertEqual(pending.get("backlog"), 1, f"Expected 1 backlog item, got: {pending}")
+        self.assertEqual(pending.get("queue"), 1, f"Expected 1 queue item, got: {pending}")
         # Combined count > 0 means the continuation loop should enter.
         self.assertGreater(
-            pending["issues"] + pending["backlog"], 0,
+            sum(pending.values()), 0,
             "pending sum must be > 0 so the continuation loop would enter",
         )
 
@@ -308,7 +309,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
             include_rally=False,
         )
         self.assertEqual(packet["queues"]["issues"]["count"], 1)
-        self.assertEqual(packet["queues"]["backlog"]["count"], 1)
+        self.assertEqual(packet["queues"]["queue"]["count"], 1)
         # Non-empty (not just a list): the planted lesson must be retrieved end-to-end.
         self.assertGreater(
             len(packet.get("lessons_progressive", [])), 0,
@@ -320,7 +321,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         # agent_brief must surface queue counts.
         brief = packet["agent_brief"]
         self.assertIn("#issues=1", brief)
-        self.assertIn("#backlog=1", brief)
+        self.assertIn("#queue=1", brief)
 
         # 2. Gate is True before preference is written (SHIPPED DEFAULT 2026-06-04
         #    — source="default" → auto-drain). Reversible via continue_from_queues:"never".
@@ -330,7 +331,7 @@ class SessionLifecycleIntegrationTest(unittest.TestCase):
         cb.write_session_prefs(self.workdir, "always", source="asked")
         self.assertTrue(cb.should_continue_into_queues(self.workdir))
         pending = cb.pending_queue_items(self.workdir)
-        self.assertGreater(pending["issues"] + pending["backlog"], 0)
+        self.assertGreater(sum(pending.values()), 0)
 
     def test_no_external_deps_required(self) -> None:
         """Entire pipeline runs without Postgres/MLX/Ollama — stdlib only.

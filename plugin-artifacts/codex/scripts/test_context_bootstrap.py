@@ -283,23 +283,22 @@ class QueueContextTests(EnvIsolationMixin, unittest.TestCase):
     def test_queue_count_and_top_titles(self) -> None:
         bl = self.workdir / ".build-loop"
         issues_dir = bl / "issues"
-        backlog_dir = bl / "backlog"
+        queue_dir = bl / "queue"
         self._make_md(issues_dir / "iss1.md", "Fix login bug")
         self._make_md(issues_dir / "iss2.md", "Fix nav crash")
-        self._make_md(backlog_dir / "bk1.md", "Add dark mode")
+        self._make_md(queue_dir / "bk1.md", "Add dark mode")
 
         result = cb.queue_context(self.workdir)
 
         self.assertEqual(result["issues"]["count"], 2)
-        self.assertEqual(result["backlog"]["count"], 1)
+        self.assertEqual(result["queue"]["count"], 1)
         self.assertEqual(result["ux-queue"]["count"], 0)
         self.assertEqual(result["followup"]["count"], 0)
-        self.assertEqual(result["proposals"]["count"], 0)
 
         issue_titles = [item["title"] for item in result["issues"]["top"]]
         self.assertIn("Fix login bug", issue_titles)
-        backlog_titles = [item["title"] for item in result["backlog"]["top"]]
-        self.assertIn("Add dark mode", backlog_titles)
+        queue_titles = [item["title"] for item in result["queue"]["top"]]
+        self.assertIn("Add dark mode", queue_titles)
 
     def test_missing_queue_dir_returns_zero(self) -> None:
         result = cb.queue_context(self.workdir)
@@ -309,11 +308,11 @@ class QueueContextTests(EnvIsolationMixin, unittest.TestCase):
 
     def test_frontmatter_title_uses_name_fallback(self) -> None:
         """Files using 'name:' key in frontmatter also work."""
-        md = self.workdir / ".build-loop" / "backlog" / "item.md"
+        md = self.workdir / ".build-loop" / "queue" / "item.md"
         md.parent.mkdir(parents=True, exist_ok=True)
-        md.write_text("---\nname: My backlog item\n---\nBody.\n", encoding="utf-8")
+        md.write_text("---\nname: My queue item\n---\nBody.\n", encoding="utf-8")
         result = cb.queue_context(self.workdir)
-        self.assertEqual(result["backlog"]["top"][0]["title"], "My backlog item")
+        self.assertEqual(result["queue"]["top"][0]["title"], "My queue item")
 
     def test_top_capped_at_three(self) -> None:
         issues_dir = self.workdir / ".build-loop" / "issues"
@@ -580,27 +579,31 @@ class ContinuationGateTests(EnvIsolationMixin, unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / name).write_text(f"---\ntitle: {name}\n---\n", encoding="utf-8")
 
-    def _make_backlog(self, name: str) -> None:
-        d = self.workdir / ".build-loop" / "backlog"
+    def _make_queue(self, name: str) -> None:
+        d = self.workdir / ".build-loop" / "queue"
         d.mkdir(parents=True, exist_ok=True)
         (d / name).write_text(f"---\ntitle: {name}\n---\n", encoding="utf-8")
 
-    def test_pending_counts_issues_and_backlog(self) -> None:
+    def test_pending_counts_executable_lanes_and_ignores_backlog(self) -> None:
         self._make_issue("iss1.md")
         self._make_issue("iss2.md")
-        self._make_backlog("bk1.md")
+        self._make_queue("queued.md")
+        backlog = self.workdir / ".build-loop" / "backlog"
+        backlog.mkdir(parents=True)
+        (backlog / "not-executable.md").write_text("future", encoding="utf-8")
         counts = cb.pending_queue_items(self.workdir)
         self.assertEqual(counts["issues"], 2)
-        self.assertEqual(counts["backlog"], 1)
+        self.assertEqual(counts["queue"], 1)
+        self.assertNotIn("backlog", counts)
 
     def test_pending_zero_when_dirs_absent(self) -> None:
         counts = cb.pending_queue_items(self.workdir)
         self.assertEqual(counts["issues"], 0)
-        self.assertEqual(counts["backlog"], 0)
+        self.assertEqual(counts["queue"], 0)
 
-    def test_pending_keys_are_exactly_issues_and_backlog(self) -> None:
+    def test_pending_keys_are_exactly_executable_lanes(self) -> None:
         counts = cb.pending_queue_items(self.workdir)
-        self.assertEqual(set(counts.keys()), {"issues", "backlog"})
+        self.assertEqual(set(counts.keys()), set(cb.QUEUE_NAMES))
 
     # --- integration: gate + counts together ---
 
@@ -608,16 +611,72 @@ class ContinuationGateTests(EnvIsolationMixin, unittest.TestCase):
         """Simulates the end-of-run continuation check: always + items present."""
         self._write_prefs("always")
         self._make_issue("critical.md")
-        self._make_backlog("nice-to-have.md")
+        self._make_queue("dependent-task.md")
         self.assertTrue(cb.should_continue_into_queues(self.workdir))
         counts = cb.pending_queue_items(self.workdir)
-        self.assertGreater(counts["issues"] + counts["backlog"], 0)
+        self.assertGreater(sum(counts.values()), 0)
 
     def test_gate_false_with_never_even_when_items_present(self) -> None:
         self._write_prefs("never")
         self._make_issue("critical.md")
         # Gate should still be False — items don't matter
         self.assertFalse(cb.should_continue_into_queues(self.workdir))
+
+
+class BacklogWorkContextTests(EnvIsolationMixin, unittest.TestCase):
+    def test_only_current_workstream_decision_surfaces(self) -> None:
+        rows = [
+            {
+                "id": "D-A", "title": "Choose A", "bucket": "decision",
+                "status": "open", "workstream": "worktree-a", "related_to": [],
+                "decision_options": ["one", "two"], "decision_impacts": ["user: clarity"],
+                "source": "canonical",
+            },
+            {
+                "id": "D-B", "title": "Choose B", "bucket": "decision",
+                "status": "open", "workstream": "worktree-b", "related_to": ["task-b2"],
+                "decision_options": ["one", "two"], "decision_impacts": ["app: speed"],
+                "source": "canonical",
+            },
+        ]
+        result = cb.backlog_work_context(self.workdir, "continue worktree-b task-b1", rows)
+        self.assertEqual([item["id"] for item in result["relevant_decisions"]], ["D-B"])
+        self.assertTrue(result["relevant_decisions"][0]["ready"])
+        self.assertIn("continue unrelated", result["relevant_decisions"][0]["behavior"])
+
+    def test_short_workstream_token_does_not_substring_match_other_work(self) -> None:
+        rows = [{
+            "id": "D-A", "title": "Decision for A", "bucket": "decision",
+            "status": "open", "workstream": "a", "related_to": [],
+            "decision_options": ["one", "two"], "decision_impacts": ["quality"],
+        }]
+
+        result = cb.backlog_work_context(self.workdir, "task for B", rows)
+
+        self.assertEqual(result["relevant_decisions"], [])
+
+    def test_incomplete_thought_is_relevant_but_marked_not_ready(self) -> None:
+        rows = [{
+            "id": "D-B", "title": "Maybe rethink navigation", "bucket": "decision",
+            "status": "open", "workstream": "worktree-b", "related_to": [],
+            "decision_options": [], "decision_impacts": [], "source": "mirror",
+            "needs_reconcile": True,
+        }]
+        result = cb.backlog_work_context(self.workdir, "worktree-b", rows)
+        decision = result["relevant_decisions"][0]
+        self.assertFalse(decision["ready"])
+        self.assertTrue(decision["needs_reconcile"])
+
+    def test_planned_and_initiative_stay_outside_active_queue(self) -> None:
+        rows = [
+            {"id": "P1", "title": "known work", "bucket": "planned", "status": "open"},
+            {"id": "I1", "title": "major redesign", "bucket": "initiative", "status": "open"},
+        ]
+        result = cb.backlog_work_context(self.workdir, "unrelated", rows)
+        self.assertEqual([item["id"] for item in result["planned_pickup"]], ["P1"])
+        self.assertEqual([item["id"] for item in result["gated_initiatives"]], ["I1"])
+        self.assertEqual(result["relevant_decisions"], [])
+        self.assertEqual(result["gated_initiatives"][0]["production_policy"], "prohibited")
 
 
 class DecisionQualityDoctrineTests(unittest.TestCase):

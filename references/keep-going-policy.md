@@ -77,21 +77,21 @@ After the report is committed, enter a fresh Phase 5 iterate cycle to drain the 
 
 C-FLOW/followup_auto_drain and C-FLOW/no_ask_at_chunk_boundary in `<memory-root>/constitution.md` (or the template if not yet adopted) are the binding citations. Asking the user "want me to continue with the rest?" at a chunk boundary, when the items are same-shape and same-intent, is a workflow violation — return the queue-drain answer, not the question.
 
-## End-of-run continuation into issues + backlog (preference-gated)
+## End-of-run continuation of the active queue (preference-gated)
 
 After the followup drain above completes (or is skipped when `.build-loop/followup/` is empty), run the preference gate:
 
 ```python
 # scripts/context_bootstrap.py — run from workdir
 should_continue = should_continue_into_queues(workdir)   # SHIPPED DEFAULT (2026-06-04): unset → True
-pending        = pending_queue_items(workdir)             # {"issues": N, "backlog": M}
+pending        = pending_queue_items(workdir)             # queue/issues/ux-queue/followup
 ```
 
-**Only proceed when BOTH are true:** `should_continue is True` AND `pending["issues"] + pending["backlog"] > 0`.
+**Only proceed when BOTH are true:** `should_continue is True` AND `sum(pending.values()) > 0`.
 
-If either condition is false, the run ends here. Do NOT ask the user again. **SHIPPED DEFAULT (2026-06-04)**: an unset preference (`source == "default"`) now returns `True`, so every build-loop run auto-drains its backlog/issues at end-of-thread. Existing explicit answers are still respected: `"always"` → True, `"never"` → False (the per-repo opt-out — set in `.build-loop/config.json`'s `sessionPrefs.continueFromQueues` or via `write_session_prefs(workdir, "never")`), `"ask"` (explicit) → False (legacy opt-in path; respected when the user explicitly answered). The gate enforcing this lives in `should_continue_into_queues` (`scripts/context_bootstrap.py`).
+If either condition is false, the run ends here. An unset preference continues executable queue work by default. The backlog remains deferred regardless of this preference.
 
-**When both conditions are met**, enter one additional Phase 5 iterate cycle targeting `.build-loop/issues/` then `.build-loop/backlog/` (issues first — active problems before deferred-wants). Use the IDENTICAL iterate machinery as the followup drain above:
+**When both conditions are met**, enter one additional Phase 5 iterate cycle targeting `.build-loop/queue/`, issues, UX queue, then followup. Planned backlog pickup occurs only at a new planning boundary through `backlog.py promote`; initiatives and decisions cannot enter this drain automatically.
 
 - alignment-checker per item against current `intent.md`
 - scope-auditor on proposed changes

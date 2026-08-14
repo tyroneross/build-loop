@@ -2,8 +2,8 @@
 
 # Backlog System — host-agnostic, multi-repo deferred-work tracker
 
-A backlog is the durable list of wanted-but-not-now work for a repo: deferred
-debt, blocked infra, known fixes, pending decisions. This system makes that list
+A backlog is the durable list of wanted-but-not-now work for a repo. It is
+separate from the active execution queue. This system makes that list
 **host-neutral** (any coding agent — Claude, Codex, or other — reads and writes
 it the same way), **filesystem-first** (grep + frontmatter, no DB/vector/graph),
 and **aggregatable** across all of one user's repos via their personal memory.
@@ -17,8 +17,9 @@ guide; Letta filesystem-memory benchmark; "don't over-engineer"):
    `INDEX.md` is a *generated, rebuildable* view — never hand-edited.
 2. **Metadata-rich items.** Each item carries provenance, evidence,
    supersession links, and a TTL (`review_by`) so it can be audited and aged.
-3. **Filesystem-first retrieval.** Reading = `cat BACKLOG.md` → `INDEX.md`, then
-   `grep` over `items/*.md` frontmatter. No index server, no embeddings.
+3. **Filesystem-first retrieval.** Recall unions canonical `items/*.md` and the
+   personal mirror by ID. `INDEX.md` is navigation only; recall never depends
+   on that derived file being fresh.
 4. **Lifecycle ops.** Formation (`new`) → consolidation (`sync` archives
    done/dropped, flags stale) → retrieval (`list`, grep) → forgetting
    (archive, never delete).
@@ -52,8 +53,8 @@ who downloaded build-loop.
 `<ID>` = `<PROJSLUG>-<AREA>-<token>` — e.g. `ATOM-SEARCH-mt3k9p7q`. The prefix is
 derived from the repo basename; the **token** is a coordination-free,
 collision-resistant suffix: 8 Crockford-base32 digits of millisecond time
-(so `ls items/` still roughly sorts by creation) followed by 5 digits of
-`os.urandom` entropy (so the ID is unique across agents, machines, branches, and
+(so `ls items/` still roughly sorts by creation) followed by 13 digits encoding
+64 bits of `os.urandom` entropy (so the ID is unique across agents, machines, branches, and
 clones with **no shared counter**). Lowercase throughout.
 
 **Why not the old sequential `-NNN`?** A per-area zero-padded counter is a
@@ -61,7 +62,7 @@ single-writer assumption. Two agents in independent worktrees/clones (Claude on
 branch A, Codex on branch B) each read their OWN highest-NNN and both minted the
 SAME `...-001/002/003` for DIFFERENT items — on `git merge` the identical
 filenames/IDs collided or silently lost an item. The token removes the shared
-counter entirely. The readability trade-off (IDs gain a ~13-char token suffix
+counter entirely. The readability trade-off (IDs gain a 21-char token suffix
 instead of `-001`) is paid back by `INDEX.md`, which is the human-ordered
 navigation view; the items themselves are addressed by token.
 
@@ -79,6 +80,11 @@ status: open            # open | in-progress | blocked | deferred | done | dropp
 priority: P2            # P0..P3
 type: debt              # feature | fix | debt | infra | decision | cleanup | research
 area: search            # free-ish tag; the grep + filter routing key
+bucket: planned         # planned | initiative | decision
+workstream: search-v2   # goal/branch context for pickup and decision relevance
+related_to: [TASK-12]   # tasks/goals/branches affected by this item
+decision_options: []    # decision bucket: user-readable choices
+decision_impacts: []    # person/user/app/performance/quality/etc.
 entities: [pg_trgm, keyword-leg]
 gated: db-migration     # none | prod-deploy | db-migration | infra | product-decision
 provenance: { source: followup, ref: <path/commit/PR#/chat-date> }
@@ -92,6 +98,24 @@ owner: unassigned
 ```
 
 Body sections: `## Context`, `## Acceptance`, `## Notes`.
+
+## Queue and backlog contract
+
+| class | meaning | agent action | user gate | branch / production |
+|---|---|---|---|---|
+| active queue | tasks required for a known outcome | execute and add discovered dependent work | normal autonomy gates | current owned branch/worktree |
+| `planned` | known future work outside the queue | select only at a new planning boundary; `promote` writes a queue receipt | none beyond plan acceptance | normal branch policy |
+| `initiative` | major redesign or overhaul | never auto-pick | explicit user approval receipt | isolated non-main worktree; production prohibited |
+| `decision` | question, trade-off, random thought, or incomplete idea | never execute; surface only for matching active work | user answers when available | only dependent tasks wait |
+
+The class controls behavior; priority controls urgency inside a class. `P1` does
+not make an item executable. Existing items without `bucket` read as `planned`;
+legacy `type: decision` items read as `decision`.
+
+A decision becomes ready to ask when it has at least two options and named
+impacts. Context bootstrap returns matching items in
+`packet.backlog_work.relevant_decisions` with `ready: true|false`. Unrelated
+reversible work continues while a decision waits.
 
 Dates are caller-stamped (`--today YYYY-MM-DD` or the `BACKLOG_TODAY` env var,
 falling back to the system clock) so the tool runs in harnesses where the clock
@@ -152,26 +176,41 @@ branches' new items survive a merge.
 ```bash
 # create
 python3 scripts/backlog.py new --repo <path> --area search --type debt \
-    --title "pg_trgm for keyword leg" --priority P1 --gated db-migration \
+    --title "pg_trgm for keyword leg" --priority P1 --bucket planned \
     --provenance-source followup --provenance-ref .build-loop/followup/x.md \
     --today 2026-06-16
-# edit the item body / frontmatter by hand in items/<ID>.md
-# then regenerate + mirror
+# update without drifting INDEX or mirror
+python3 scripts/backlog.py update <ID> --repo <path> --status in-progress
+# promote eligible work into .build-loop/queue/<ID>.md
+python3 scripts/backlog.py promote <ID> --repo <path> --outcome "keyword search works"
+# lossless three-store reconciliation; add --apply only after reviewing the plan
+python3 scripts/backlog.py reconcile --repo <path> --source-repo <peer-worktree>
+# regenerate + mirror
 python3 scripts/backlog.py sync --repo <path> --today 2026-06-16
 # read
 python3 scripts/backlog.py list --repo <path> --status open
 ```
 
-The CLI emits structured JSON (machine-readable) on `new`/`sync`; `list` prints
+The CLI emits structured JSON (machine-readable) on mutations; `list` prints
 a text table (or JSON with `--json`). The host LLM reasons over the structured
 data + the convention — it never calls a vendor API.
 
+`reconcile` unions canonical repo items, named peer worktrees, and the personal
+mirror by item ID. A different peer document with the same ID is a blocking
+`conflict`; no files are written. Different mirror content is non-blocking
+`mirror_drift` because the repo item is canonical. `--apply` first restores all
+unique items transactionally, then rebuilds the index and mirror from the
+complete union. This corrects stale mirror status without duplicating work.
+
 ## Relationship to existing build-loop surfaces
 
+- `.build-loop/queue/` — explicit outcome-bound queue receipts written by
+  `promote`. This and the existing issue/UX/followup lanes are executable.
 - `.build-loop/issues/` — current-run bugs (short-lived). A persistent issue is
   triaged INTO the backlog (`new`), then the issue file is referenced as
   `evidence`/`provenance.ref` so `sync` stops warning about it.
 - `.build-loop/followup/` — iterate-cap overflow. Same triage path.
+- `.build-loop/backlog/items/` — deferred only. Phase 5 never drains this path.
 - `templates/backlog-item.md` + `build-loop-memory/projects/<slug>/backlog.md`
   (the legacy single-table durable backlog) remain valid for build-loop's own
   self-work tracking; this per-item system is the general, multi-repo surface
@@ -180,8 +219,9 @@ data + the convention — it never calls a vendor API.
 ## Phase 1 Assess integration
 
 `scripts/context_bootstrap.py` surfaces a compact backlog line at Phase 1 Assess
-when `.build-loop/backlog/INDEX.md` exists: open P0/P1 count, past-`review_by`
-stale count, and gated count. Cheap (reads the generated INDEX summary only) and
+when `.build-loop/backlog/INDEX.md` exists: planned, initiative, decision, stale,
+and gated counts. Relevant items are recalled from canonical and mirror files by
+ID, so a stale INDEX cannot hide work. The summary remains cheap and
 non-fatal when the file is absent.
 
 It also surfaces a one-time **discoverability nudge** (`backlog_discoverability`)

@@ -46,8 +46,9 @@ elsewhere.
 ## Promotion Rules
 
 - Transient checklist items stay in the host task list and current run state.
-- Deferred work becomes `.build-loop/followup/` or `.build-loop/backlog/` using
-  the existing queue rules.
+- Outcome-bound executable work becomes `.build-loop/queue/` or a current-run
+  issue/followup. Deferred work becomes a classed `.build-loop/backlog/items/`
+  record and stays outside the queue until eligible promotion.
 - Durable project work goes to `build-loop-memory/projects/<slug>/backlog.md`
   or milestones. Do not persist every subtask into memory.
 - Completed/superseded tasks archive with rationale through the owning surface
@@ -61,9 +62,9 @@ Phase 1 may answer open-work questions by running:
 python3 scripts/task_surface.py --workdir "$PWD" --json
 ```
 
-If `open_count > 0`, surface the top active items by priority:
-in-flight/queued chunks, UX queue, issues, followups, repo backlog, memory
-backlog. Do not scan sibling project backlogs. Include proposals only when the
+If `open_count > 0`, surface executable work first, then separately label
+planned pickup, gated initiatives, and workstream-relevant decisions. Do not
+represent backlog records as queued tasks. Do not scan sibling project backlogs. Include proposals only when the
 current task is specifically self-review, improvement triage, or proposal
 cleanup.
 

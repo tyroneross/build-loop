@@ -72,6 +72,51 @@ class DeploymentPolicyTests(unittest.TestCase):
         self.assertEqual(data["action"], "confirm")
         self.assertTrue(data["requiresConfirmation"])
 
+    def test_initiative_branch_blocks_production_even_if_policy_would_allow(self) -> None:
+        subprocess.run(["git", "init", "-q", "-b", "feature/redesign", str(self.workdir)], check=True)
+        self.write_config({"production": "auto"})
+        queue = self.workdir / ".build-loop" / "queue"
+        queue.mkdir(parents=True)
+        (queue / "INIT-UI-001.md").write_text(
+            "---\nbucket: initiative\ntarget_branch: feature/redesign\n"
+            "production_policy: prohibited\n---\n",
+            encoding="utf-8",
+        )
+        data = output(run(self.workdir, "vercel deploy --prod"))
+        self.assertEqual(data["action"], "block")
+        self.assertFalse(data["requiresConfirmation"])
+        self.assertIn("initiative production prohibited", data["reason"])
+
+    def test_initiative_hold_does_not_block_preview(self) -> None:
+        subprocess.run(["git", "init", "-q", "-b", "feature/redesign", str(self.workdir)], check=True)
+        queue = self.workdir / ".build-loop" / "queue"
+        queue.mkdir(parents=True)
+        (queue / "INIT-UI-001.md").write_text(
+            "---\nbucket: initiative\ntarget_branch: feature/redesign\n"
+            "production_policy: prohibited\n---\n",
+            encoding="utf-8",
+        )
+        data = output(run(self.workdir, "vercel deploy"))
+        self.assertEqual(data["action"], "auto")
+
+    def test_symlinked_external_queue_cannot_create_production_hold(self) -> None:
+        subprocess.run(["git", "init", "-q", "-b", "feature/redesign", str(self.workdir)], check=True)
+        self.write_config({"production": "auto"})
+        outside = Path(self.tmp.name).parent / f"{Path(self.tmp.name).name}-outside-queue"
+        outside.mkdir()
+        self.addCleanup(lambda: __import__("shutil").rmtree(outside, ignore_errors=True))
+        (outside / "INIT-UI-001.md").write_text(
+            "---\nbucket: initiative\ntarget_branch: feature/redesign\n"
+            "production_policy: prohibited\n---\n",
+            encoding="utf-8",
+        )
+        (self.workdir / ".build-loop" / "queue").symlink_to(
+            outside, target_is_directory=True
+        )
+
+        data = output(run(self.workdir, "vercel deploy --prod"))
+        self.assertEqual(data["action"], "auto")
+
     def test_spaced_production_target_defaults_to_confirm(self) -> None:
         result = run(self.workdir, "vercel deploy --target production")
         self.assertEqual(result.returncode, 0, msg=result.stderr)

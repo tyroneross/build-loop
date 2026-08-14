@@ -6,7 +6,7 @@ Up to 5 iterations (classic mode) or 25 iterations (autonomous mode). Loaded on 
 
 ## End-of-run continuation gate
 
-After the followup drain, a second iterate cycle drains `.build-loop/issues/` then `.build-loop/backlog/` — but **only** when `session_prefs.continue_from_queues == "always"` (checked via `scripts/context_bootstrap.py:should_continue_into_queues`). Unset / "ask" / "never" → no continuation.
+After the followup drain, a second iterate cycle continues executable queue lanes only when `scripts/context_bootstrap.py:should_continue_into_queues` allows it. Backlog items remain deferred until class-aware promotion at a planning boundary.
 
 ## Re-validate hook for UI work (by `uiTarget.kind`)
 
@@ -115,7 +115,7 @@ When `state.json.autonomous.enabled == true`, Phase 5 generalizes into a queue-d
 
 **Body — drain the queue:**
 
-1. **Enumerate fresh items.** Glob `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/backlog/*.md` + `.build-loop/proposals/*.md`. Exclude items previously routed in this run (track in `state.autonomousLoop.processed[]`). Backlog items (longer-lived deferred work) are treated identically to issues during draining — same alignment-checker routing, same per-item cap.
+1. **Enumerate fresh executable items.** Glob `.build-loop/queue/*.md` + `.build-loop/ux-queue/*.md` + `.build-loop/issues/*.md` + `.build-loop/followup/*.md`. Exclude items previously routed in this run. Proposals, lessons, and backlog items are non-executable inbox/deferred records. A planned backlog item joins this set only after `backlog.py promote` writes its queue receipt.
 2. **For each item (sequential — alignment-check is per-item):**
    a. Dispatch `Agent(subagent_type="build-loop:alignment-checker", prompt=<brief>)` with `item_path`, `item_kind`, `workdir`, `current_task_id` (null when §15.2 working-state not yet shipped on this branch — graceful degradation per the agent's own contract), and the last 5 verdicts for consistency cross-checking.
    b. Parse the JSON verdict (the agent returns exactly one JSON object, no fence). Append to `state.runs[].alignment_verdicts[]` (one row per item, capped at 200 per run).

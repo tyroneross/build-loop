@@ -25,7 +25,7 @@ The "code is cheap, AI agents build fast" framing: the orchestrator does NOT def
 
 ## Premise re-validation gate (MANDATORY before scheduling any queue item)
 
-A queue item is written at one moment and executed at another. By the time it surfaces, the bug may be fixed, the file moved, or the precondition false — and executing it then manufactures fake progress and burns a run. Before scheduling any item drained from `.build-loop/issues/`, `.build-loop/backlog/`, or `.build-loop/followup/`:
+A queue item is written at one moment and executed at another. By the time it surfaces, the bug may be fixed, the file moved, or the precondition false. Before scheduling any item drained from `.build-loop/queue/`, `.build-loop/issues/`, `.build-loop/ux-queue/`, or `.build-loop/followup/`:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-.}/scripts/premise_revalidation.py" gate --item <path> --repo "$PWD" --json
