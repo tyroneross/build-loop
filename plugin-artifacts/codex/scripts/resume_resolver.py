@@ -302,7 +302,7 @@ def resolve(
     # user "resume with --resume <run-id>" and that exact command would then
     # abort on an incompatible schema. Advice the tool's own next step refuses
     # is worse than no advice.
-    if isinstance(execution, dict) and execution.get("phase") != "report" \
+    if isinstance(execution, dict) and execution and execution.get("phase") != "report" \
             and execution.get("schema_version") != EXPECTED_SCHEMA_VERSION:
         return {
             "decision": "abort",
@@ -314,7 +314,7 @@ def resolve(
 
     # No --resume: surface heartbeat staleness check (M4 primary signal).
     if not resume_arg:
-        if not isinstance(execution, dict) or execution.get("phase") == "report":
+        if not isinstance(execution, dict) or not execution or execution.get("phase") == "report":
             return {
                 "decision": "fresh", "reason": "no incomplete run", "run_id": None,
                 "remaining_chunks": [], "iterate_attempt": 0,
@@ -351,7 +351,7 @@ def resolve(
             }
         resume_arg = run_id
 
-    if not isinstance(execution, dict):
+    if not isinstance(execution, dict) or not execution:
         return {
             "decision": "abort", "reason": "no execution block to resume from",
             "run_id": None, "remaining_chunks": [], "iterate_attempt": 0,

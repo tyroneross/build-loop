@@ -48,6 +48,28 @@ def test_no_state_json_with_resume_aborts(tmp_path):
     assert env["decision"] == "abort"
 
 
+def test_empty_execution_without_resume_returns_fresh(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({"execution": {}}))
+
+    env = resolve(tmp_path, "")
+
+    assert env["decision"] == "fresh"
+    assert env["reason"] == "no incomplete run"
+
+
+def test_empty_execution_with_resume_reports_no_execution_block(tmp_path):
+    state_path = tmp_path / ".build-loop" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({"execution": {}}))
+
+    env = resolve(tmp_path, "run_doesnotexist")
+
+    assert env["decision"] == "abort"
+    assert env["reason"] == "no execution block to resume from"
+
+
 def test_no_resume_no_stale_heartbeat_returns_fresh(tmp_path):
     _setup_started_run(tmp_path)
     # Heartbeat is fresh-ish — call resolve with a "now" only 30s after start
