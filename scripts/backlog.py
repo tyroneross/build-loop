@@ -86,7 +86,11 @@ FIELD_ORDER = (
     "id", "schema_version", "title", "status", "priority", "type", "area",
     "bucket", "workstream", "related_to", "decision_options", "decision_impacts",
     "entities", "gated", "provenance", "evidence", "supersedes", "superseded_by",
-    "created", "updated", "review_by", "owner",
+    # `validated` is read by premise_revalidation.py:171 to decide whether an
+    # item's premise is fresh enough to schedule. It was never declared here,
+    # so the drain's staleness gate worked only because read_item preserves
+    # unknown keys — a load-bearing field surviving on forward-compat.
+    "created", "validated", "updated", "review_by", "owner",
 )
 
 # Default values for every schema field. The tolerant reader fills these in for
@@ -119,6 +123,10 @@ def item_defaults() -> dict[str, Any]:
         "supersedes": None,
         "superseded_by": None,
         "created": None,
+        # None = never re-checked; premise_revalidation falls back to `created`,
+        # so an item filed today is fresh by construction and the gate cannot
+        # deadlock a queue fed by the current run.
+        "validated": None,
         "updated": None,
         "review_by": None,
         "owner": "unassigned",
