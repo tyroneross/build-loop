@@ -29,11 +29,26 @@ class BuildItemTests(unittest.TestCase):
     def test_renders_required_frontmatter_fields(self) -> None:
         d = self._make_deferral("fix the broken Save button on the dashboard")
         body = build_item(d, repo="build-loop", branch="main", run_id="run-abc")
-        # All mandatory frontmatter present
-        for key in ("title:", "repo: build-loop", "branch: main", "created:",
-                    "source: run/run-abc", "classify: SAFE", "effort: M",
-                    "status: open", "product_impacting: true", "impact:"):
+        # Canonical schema only (scripts/backlog.py FIELD_ORDER).
+        for key in ("title:", "status: open", "priority:", "type:",
+                    "area: product", "bucket: planned", "workstream: main",
+                    "gated: none", "provenance:", "source: run/run-abc",
+                    "ref: build-loop", "created:", "validated:"):
             self.assertIn(key, body, f"missing frontmatter: {key}")
+
+    def test_emits_no_key_outside_the_canonical_schema(self) -> None:
+        """The defect this collapse fixes: a second writer with its own shape.
+
+        Two writers producing two frontmatter shapes into one directory is how
+        49 items ended up on one schema and 17 on another. Pin the boundary
+        rather than trusting the next editor to remember it.
+        """
+        d = self._make_deferral("checkout shows wrong amount when coupon applied")
+        body = build_item(d, repo="x", branch="main", run_id="r9")
+        head = body.split("---")[1]
+        for retired in ("repo:", "branch:", "classify:", "effort:",
+                        "product_impacting:", "impact:"):
+            self.assertNotIn(retired, head, f"retired key still emitted: {retired}")
 
     def test_renders_causal_tree_section(self) -> None:
         d = self._make_deferral("login form fails to render on mobile safari")
@@ -42,19 +57,34 @@ class BuildItemTests(unittest.TestCase):
         self.assertIn("Surface signal:", body)
         self.assertIn("Triage rationale:", body)
 
-    def test_impact_line_set_when_product_impacting(self) -> None:
+    def test_impact_survives_as_body_content_not_frontmatter(self) -> None:
+        """impact moved from a key nothing read to content a human reads."""
         d = self._make_deferral("checkout shows wrong amount when coupon applied")
         body = build_item(d, repo="x", branch="main", run_id="r2")
-        # impact field should not be empty after the colon
-        impact_line = next(ln for ln in body.splitlines() if ln.startswith("impact:"))
-        self.assertGreater(len(impact_line.strip()), len("impact: "))
+        head, tail = body.split("---")[1], body.split("---", 2)[2]
+        self.assertNotIn("impact:", head)
+        self.assertIn("Surface signal:", tail)
 
-    def test_passes_through_classify_and_effort_overrides(self) -> None:
-        d = self._make_deferral("broken Save button — production hotfix needed",
-                                classify="RISKY", effort="S")
-        body = build_item(d, repo="x", branch="main", run_id="r3")
-        self.assertIn("classify: RISKY", body)
-        self.assertIn("effort: S", body)
+    def test_classify_maps_to_gated_and_bucket(self) -> None:
+        """The approved mapping. RISKY stays ungated on purpose — risk means
+        'isolate to a worktree and continue', not 'stop and ask'."""
+        cases = {
+            "SAFE":       ("gated: none", "bucket: planned"),
+            "RISKY":      ("gated: none", "bucket: planned"),
+            "DECISION":   ("gated: product-decision", "bucket: decision"),
+            "PRODUCTION": ("gated: prod-deploy", "bucket: planned"),
+        }
+        for classify, (gated, bucket) in cases.items():
+            d = self._make_deferral("broken Save button", classify=classify)
+            body = build_item(d, repo="x", branch="main", run_id="r3")
+            self.assertIn(gated, body, f"{classify} -> {gated}")
+            self.assertIn(bucket, body, f"{classify} -> {bucket}")
+
+    def test_unknown_classify_falls_back_to_safe(self) -> None:
+        d = self._make_deferral("broken Save button", classify="NONSENSE")
+        body = build_item(d, repo="x", branch="main", run_id="r4")
+        self.assertIn("gated: none", body)
+        self.assertIn("bucket: planned", body)
 
     # ----- error path -----
 
@@ -66,16 +96,17 @@ class BuildItemTests(unittest.TestCase):
 
     # ----- defaults -----
 
-    def test_defaults_classify_to_safe_and_effort_to_m(self) -> None:
+    def test_defaults_classify_to_safe(self) -> None:
         d = self._make_deferral("dashboard nav is broken on tablet")
         body = build_item(d, repo="x", branch="main", run_id="r")
-        self.assertIn("classify: SAFE", body)
-        self.assertIn("effort: M", body)
+        self.assertIn("gated: none", body)
+        self.assertIn("bucket: planned", body)
 
-    def test_defaults_branch_to_main(self) -> None:
+    def test_defaults_workstream_to_main(self) -> None:
+        """branch became workstream — same concept, canonical name."""
         d = self._make_deferral("user signin error is unclear")
         body = build_item(d, repo="x", run_id="r")  # branch omitted
-        self.assertIn("branch: main", body)
+        self.assertIn("workstream: main", body)
 
     # ----- shape -----
 

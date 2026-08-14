@@ -46,6 +46,22 @@ def _causal_tree(triage_rationale: str, deferral_text: str, impact: str | None) 
     return "\n".join(lines)
 
 
+# classify (the descope-time risk read) -> (gated, bucket) in the canonical
+# backlog vocabulary. Approved 2026-08-14.
+#
+# RISKY maps to `gated: none` on purpose. Risk here means "isolate to a
+# worktree-branch and continue" — an execution property, not an approval gate
+# (references/keep-going-policy.md: RISKY is "not a human gate"). Mapping it
+# anywhere else would silently convert existing risky work into work that
+# stops and waits for a human.
+_CLASSIFY_MAP: dict[str, tuple[str, str]] = {
+    "SAFE":       ("none",             "planned"),
+    "RISKY":      ("none",             "planned"),
+    "DECISION":   ("product-decision", "decision"),
+    "PRODUCTION": ("prod-deploy",      "planned"),
+}
+
+
 def build_item(
     deferral: dict[str, Any],
     *,
@@ -96,18 +112,32 @@ def build_item(
     title_oneline = " ".join(title.splitlines()).strip()
     impact_oneline = (impact or "").replace("\n", " ").strip()
 
+    gated, bucket = _CLASSIFY_MAP.get(classify, _CLASSIFY_MAP["SAFE"])
+
+    # Canonical schema only — the key set here must stay a subset of
+    # scripts/backlog.py FIELD_ORDER, which schema_consistency_lint enforces.
+    # Three former keys are gone deliberately:
+    #   product_impacting  build_item raises unless triage says true, so the
+    #                      field was a constant. Encoded as `area: product`.
+    #   impact             kept as CONTENT (Acceptance + causal tree below)
+    #                      rather than a frontmatter key no code read.
+    #   effort             had no reader anywhere; `priority` carries scheduling
+    #                      weight. Dropped rather than declared-and-ignored.
     frontmatter = [
         "---",
         f"title: {title_oneline}",
-        f"repo: {repo}",
-        f"branch: {branch}",
-        f"created: {_today_iso()}",
-        f"source: run/{run_id}",
-        f"classify: {classify}",
-        f"effort: {effort}",
         "status: open",
-        "product_impacting: true",
-        f"impact: {impact_oneline}",
+        "priority: P2",
+        "type: fix",
+        "area: product",
+        f"bucket: {bucket}",
+        f"workstream: {branch}",
+        f"gated: {gated}",
+        "provenance:",
+        f"  source: run/{run_id}",
+        f"  ref: {repo}",
+        f"created: {_today_iso()}",
+        "validated:",
         "---",
     ]
 
