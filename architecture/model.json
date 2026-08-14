@@ -8,7 +8,7 @@
       "scripts/**/*.py",
       "hooks/hooks.json"
     ],
-    "content_sha256": "658269fe59acc9551857c119eb5690ef4be5b7a2f44ffe5c7682fb786885e67a"
+    "content_sha256": "875407dcfb11daec3e486f0f4c3e30a9438339936ead926a659a1108a7cb9628"
   },
   "pipe_in": [
     "user goal / prompt",
@@ -1708,7 +1708,6 @@
       "scripts/model_overrides.py": "Resolve build-loop model tier overrides.",
       "scripts/model_resolver.py": "Host-neutral model-tier resolver with availability fallback.",
       "scripts/model_taxonomy.py": "Two-axis model taxonomy loader — the SINGLE source of truth.",
-      "scripts/ops_state_probe.py": "Operational-state probe: what is actually ON, OFF, CORRUPT, or UNKNOWN.",
       "scripts/optimize_doe.py": "DOE matrix generation + effects analysis for build-loop:optimize.",
       "scripts/optimize_loop.py": "optimize_loop.py — Core loop mechanics for the build-loop optimize skill.",
       "scripts/optimize_suggest_factors.py": "Scan a repo for tunable parameters that could be DOE factors.",
@@ -1815,6 +1814,7 @@
       "scripts/scan_findings/__main__.py": "CLI + Stop-hook entry for the deterministic findings sweep.",
       "scripts/scan_findings/detect.py": "Tier-1 deterministic findings detector.",
       "scripts/scan_transcript_for_decisions.py": "End-of-session sweep for tier-3 (inferred / assumed) decisions.",
+      "scripts/schema_consistency_lint.py": "schema_consistency_lint.py — one schema per artifact, one name per module.",
       "scripts/script_relevance.py": "Script relevance / staleness detector (G5).",
       "scripts/security_checks_api.py": "",
       "scripts/security_common.py": "",
