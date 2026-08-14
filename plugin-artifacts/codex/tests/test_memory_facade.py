@@ -124,12 +124,105 @@ def test_runs_backend_handles_missing_file(tmp_path: Path) -> None:
 
 def test_decisions_backend_returns_matching(workdir: Path) -> None:
     out, reasons = mf.read_decisions(workdir, query="baseline", limit=10)
-    assert reasons == []
+    # `reasons` now carries the query-independent index-coverage
+    # observability signal (never an error/gate) — the isolated fixture's
+    # two decision files have no INDEX.jsonl, so both are reported missing.
+    assert any(r.startswith("decision_index_coverage:") for r in reasons)
     assert len(out) == 1
     assert out[0]["primary_tag"] == "architecture"
 
 
-def test_decisions_backend_handles_missing_dir(tmp_path: Path) -> None:
+def _pin_scoped_project(workdir: Path, slug: str) -> None:
+    """Give ``workdir`` a `.git` + a durable `memoryProjectSlug` pin so
+    `resolve_project(workdir)` returns a real named project instead of the
+    `_unscoped` fallback. Required by the global-decision-recall tests
+    below, which must exercise a genuinely SCOPED project context."""
+    (workdir / ".git").mkdir(exist_ok=True)
+    (workdir / ".build-loop" / "config.json").write_text(
+        json.dumps({"memoryProjectSlug": slug}), encoding="utf-8"
+    )
+
+
+def test_global_decision_recalled_from_scoped_project(workdir: Path) -> None:
+    """A decision routed `project: _unscoped` (the "would this apply to a
+    different project? yes -> global" routing rule) must be recallable from
+    a DIFFERENT, NAMED project's context — that is the entire point of
+    routing it global. Before the fix, `_index_row_to_decision`
+    (memory_facade/decisions.py) dropped every `_unscoped` index row the
+    moment the caller's own project resolved to a real name, making every
+    globally-routed decision invisible everywhere except `_unscoped` itself.
+    """
+    _pin_scoped_project(workdir, "scoped-project")
+
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    indexes_dir = memory_root / "indexes"
+    indexes_dir.mkdir(parents=True, exist_ok=True)
+    (indexes_dir / "INDEX.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "decision",
+                "id": "dec-global-001",
+                "canonical_id": "dec-global-001",
+                "title": "Global rollback policy: always keep a green main",
+                "project": "_unscoped",
+                "date": "2026-06-01T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    out, reasons = mf.read_decisions(workdir, query="rollback policy", limit=10)
+    ids = [d["canonical_id"] for d in out]
+    assert "dec-global-001" in ids, (
+        "expected the _unscoped global decision to be recalled from a scoped "
+        f"project context; got {ids} (reasons={reasons})"
+    )
+
+
+def test_decision_from_different_named_project_not_recalled(workdir: Path) -> None:
+    """A decision belonging to a DIFFERENT, NAMED project must stay
+    invisible from `scoped-project`'s recall — only `_unscoped`/global
+    decisions become visible everywhere; this guards against an
+    over-broad leak while fixing global recall."""
+    _pin_scoped_project(workdir, "scoped-project")
+
+    memory_root = Path(os.environ["AGENT_MEMORY_ROOT"])
+    indexes_dir = memory_root / "indexes"
+    indexes_dir.mkdir(parents=True, exist_ok=True)
+    (indexes_dir / "INDEX.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "decision",
+                "id": "dec-other-001",
+                "canonical_id": "dec-other-001",
+                "title": "other-project internal API contract v2",
+                "project": "other-project",
+                "date": "2026-06-01T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    out, reasons = mf.read_decisions(workdir, query="internal API contract", limit=10)
+    ids = [d["canonical_id"] for d in out]
+    assert "dec-other-001" not in ids, (
+        f"a different named project's decision leaked into scoped-project recall: {ids}"
+    )
+
+
+def test_decisions_backend_handles_missing_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Isolate from the live memory store so this actually exercises the
+    # "no decision directories at all" path (previously this test read the
+    # developer's real build-loop-memory store by accident, since
+    # `project_decisions_dir("_unscoped")` already resolved unconditionally
+    # pre-fix; that leak just didn't surface in `reasons` before).
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_STORE_ROOT", raising=False)
+    monkeypatch.delenv("BUILD_LOOP_MEMORY_ROOT", raising=False)
+    monkeypatch.setenv("AGENT_MEMORY_ROOT", str(tmp_path / "_empty_agent_memory_root"))
     out, reasons = mf.read_decisions(tmp_path, query="anything", limit=5)
     assert out == []
     assert reasons == []

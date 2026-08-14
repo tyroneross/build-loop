@@ -185,13 +185,39 @@ class CostLedgerHookTest(unittest.TestCase):
     def test_activation_path_hook_registered(self):
         # The regression-class assertion: the script MUST be wired into hooks.json.
         # Removing this registration should fail the test (mutation guard).
+        #
+        # The Stop entry now reaches the script through
+        # hooks/stop-transcript-sweep.sh (the wrapper that reads transcript_path
+        # from the stdin JSON payload — there is no CLAUDE_TRANSCRIPT_PATH env
+        # var, and the old inline guard on it never fired). So the activation
+        # path is two links long and BOTH must hold.
         data = json.loads(HOOKS_JSON.read_text())
         stop = data.get("hooks", {}).get("Stop", [])
         cmds = [hk.get("command", "") for grp in stop for hk in grp.get("hooks", [])]
+
+        sweep = REPO / "hooks" / "stop-transcript-sweep.sh"
+        registered = [c for c in cmds if "stop-transcript-sweep.sh" in c and "cost-ledger" in c]
         self.assertTrue(
-            any("cost_ledger_hook.py" in c for c in cmds),
-            "cost_ledger_hook.py is not registered on the Stop event in hooks.json",
+            registered,
+            "cost-ledger sweep is not registered on the Stop event in hooks.json",
         )
+        self.assertIn(
+            "cost_ledger_hook.py",
+            sweep.read_text(),
+            f"{sweep} no longer invokes cost_ledger_hook.py — the Stop activation path is broken",
+        )
+
+    def test_activation_path_does_not_gate_on_nonexistent_env_var(self):
+        """`CLAUDE_TRANSCRIPT_PATH` is not a Claude Code env var.
+
+        Gating on it silently disabled this sweep from 2026-07-07 to 2026-08-14.
+        The transcript path arrives only in the Stop hook's stdin JSON payload.
+        """
+        data = json.loads(HOOKS_JSON.read_text())
+        stop = data.get("hooks", {}).get("Stop", [])
+        cmds = [hk.get("command", "") for grp in stop for hk in grp.get("hooks", [])]
+        offenders = [c for c in cmds if "CLAUDE_TRANSCRIPT_PATH" in c]
+        self.assertEqual(offenders, [], f"Stop hook gates on a nonexistent env var: {offenders}")
 
 
 if __name__ == "__main__":

@@ -139,21 +139,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then nohup python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/scan_transcript_for_decisions.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/scan.log\" </dev/null >/dev/null 2>&1 & fi; printf '{}'",
-            "timeout": 5000
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; nohup env PYTHONPATH=\"$root/scripts\" python3 -m scan_corrections --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --source stop-hook </dev/null >/dev/null 2>&1 & fi; printf '{}'",
-            "timeout": 5000
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then root=\"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}\"; nohup env PYTHONPATH=\"$root/scripts\" python3 -m scan_findings --workdir \"$CLAUDE_PROJECT_DIR\" --transcript \"$CLAUDE_TRANSCRIPT_PATH\" --log-file \"${XDG_STATE_HOME:-$HOME/.local/state}/build-loop/findings-scan.log\" </dev/null >/dev/null 2>&1 & fi; printf '{}'",
-            "timeout": 5000
-          },
-          {
-            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/state_finalize.py\" --workdir \"$CLAUDE_PROJECT_DIR\" --mark-incomplete-as-crashed </dev/null >/dev/null 2>&1; printf '{}'",
             "timeout": 2000
           },
@@ -166,11 +151,6 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/closeout.sh\" stop 2>/dev/null; exit 0",
             "timeout": 6000
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TRANSCRIPT_PATH\" ]; then nohup python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/cost_ledger_hook.py\" </dev/null >/dev/null 2>&1 & fi; printf '{}'",
-            "timeout": 5000
           }
         ]
       },
@@ -180,6 +160,46 @@
           {
             "type": "command",
             "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" ]; then python3 \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/scripts/commit_state_check.py\" --workdir \"${CLAUDE_PROJECT_DIR}\" --hook; else printf '{}'; fi",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/stop-transcript-sweep.sh\" decisions 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/stop-transcript-sweep.sh\" corrections 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/stop-transcript-sweep.sh\" findings 2>/dev/null || printf '{}'",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-$CLAUDE_PROJECT_DIR}/hooks/stop-transcript-sweep.sh\" cost-ledger 2>/dev/null || printf '{}'",
             "timeout": 5000
           }
         ]

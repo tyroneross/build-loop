@@ -101,7 +101,7 @@ def _seed_transcript_with_explicit_decision() -> list[dict]:
 
 
 def _extract_scan_command_from_hooks_json() -> str:
-    """Pull the scan_transcript command string out of hooks/hooks.json.
+    """Pull the decisions-sweep command string out of hooks/hooks.json.
 
     We don't reconstruct the full hook environment; we just verify the
     same command line the hook runs works end-to-end.
@@ -110,9 +110,30 @@ def _extract_scan_command_from_hooks_json() -> str:
     for stop_hook in data["hooks"]["Stop"]:
         for h in stop_hook["hooks"]:
             cmd = h.get("command", "")
-            if "scan_transcript_for_decisions.py" in cmd:
+            if 'stop-transcript-sweep.sh" decisions' in cmd:
                 return cmd
-    raise AssertionError("scan_transcript_for_decisions hook not found in hooks.json")
+    raise AssertionError("decisions transcript-sweep hook not found in hooks.json")
+
+
+def _stop_payload(transcript: Path, cwd: Path) -> str:
+    """A Stop-hook stdin payload shaped like the live host's.
+
+    The host supplies `transcript_path` ONLY here — there is no
+    `CLAUDE_TRANSCRIPT_PATH` env var (verified live against Claude Code
+    2.1.232, 2026-08-14). These tests previously set that env var themselves,
+    which is exactly why they certified a hook that never fired in production.
+    Host-contract coverage now lives in `scripts/test_stop_transcript_sweep.py`;
+    these tests exercise the scanner behind the hook.
+    """
+    return json.dumps(
+        {
+            "session_id": "0fa8e187-e330-403a-97ed-6ad8a2866e98",
+            "transcript_path": str(transcript),
+            "cwd": str(cwd),
+            "hook_event_name": "Stop",
+            "stop_hook_active": False,
+        }
+    )
 
 
 @pytest.mark.live
@@ -139,10 +160,13 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         (self.workdir / ".episodic" / "decisions" / "_review").mkdir(parents=True)
         (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
 
-        # The hook command expects scripts/ at $CLAUDE_PROJECT_DIR/scripts.
-        # Symlink the repo's scripts directory in so the live hook command
-        # can resolve scan_transcript_for_decisions.py without a path edit.
+        # The hook command resolves $CLAUDE_PLUGIN_ROOT/hooks/stop-transcript-sweep.sh
+        # and $CLAUDE_PLUGIN_ROOT/scripts/scan_transcript_for_decisions.py.
+        # Symlink both repo dirs in so the live hook command resolves without a
+        # path edit ($CLAUDE_PLUGIN_ROOT is unset here, so it falls back to
+        # $CLAUDE_PROJECT_DIR = self.workdir).
         (self.workdir / "scripts").symlink_to(REPO / "scripts")
+        (self.workdir / "hooks").symlink_to(REPO / "hooks")
 
         self.transcript = self.workdir / "transcript.jsonl"
         with self.transcript.open("w") as f:
@@ -259,7 +283,7 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
 
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
-        env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+        payload = _stop_payload(self.transcript, self.workdir)
         # Phase C: pass the isolated AGENT_MEMORY_ROOT so the backgrounded
         # scan (and any write_decision.py it spawns) writes to the tmpdir,
         # not to the real ~/dev/git-folder/build-loop-memory store.
@@ -267,6 +291,7 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
+            input=payload,  # host delivers transcript_path HERE
             capture_output=True,
             text=True,
             env=env,
@@ -317,10 +342,11 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         cmd = _extract_scan_command_from_hooks_json()
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
-        env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+        payload = _stop_payload(self.transcript, self.workdir)
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
+            input=payload,  # host delivers transcript_path HERE
             capture_output=True,
             text=True,
             env=env,
@@ -337,11 +363,12 @@ class StopHookIntegrationTests(MemIsolationMixin, unittest.TestCase):
         cmd = _extract_scan_command_from_hooks_json()
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
-        env["CLAUDE_TRANSCRIPT_PATH"] = str(bogus)
+        payload = _stop_payload(bogus, self.workdir)
         env["AGENT_MEMORY_ROOT"] = self._memroot.name
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
+            input=payload,  # host delivers transcript_path HERE
             capture_output=True,
             text=True,
             env=env,
@@ -373,6 +400,7 @@ class StopHookHardeningTests(unittest.TestCase):
         (self.workdir / ".episodic" / "decisions" / "_review").mkdir(parents=True)
         (self.workdir / ".semantic" / "TAXONOMY.md").write_text(_seed_taxonomy())
         (self.workdir / "scripts").symlink_to(REPO / "scripts")
+        (self.workdir / "hooks").symlink_to(REPO / "hooks")
         # Force the scanner to early-exit so we don't depend on ollama.
         (self.workdir / ".episodic" / ".no-capture").touch()
 
@@ -389,13 +417,14 @@ class StopHookHardeningTests(unittest.TestCase):
         cmd = _extract_scan_command_from_hooks_json()
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
-        env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+        payload = _stop_payload(self.transcript, self.workdir)
         # Re-route HOME so the default --log-file path doesn't pollute the user's real state dir.
         env["HOME"] = str(self.workdir / "fakehome")
         env["XDG_STATE_HOME"] = str(self.workdir / "fakehome" / ".local" / "state")
 
         cp = subprocess.run(
             ["/bin/sh", "-c", cmd],
+            input=payload,  # host delivers transcript_path HERE
             capture_output=True,
             text=True,
             env=env,
@@ -425,7 +454,7 @@ class StopHookHardeningTests(unittest.TestCase):
             cmd = _extract_scan_command_from_hooks_json()
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = str(self.workdir)
-            env["CLAUDE_TRANSCRIPT_PATH"] = str(self.transcript)
+            payload = _stop_payload(self.transcript, self.workdir)
             env["HOME"] = str(self.workdir / "fakehome")
             env["XDG_STATE_HOME"] = str(self.workdir / "fakehome" / ".local" / "state")
             # Belt-and-braces: zero budget so any regression in lock handling
@@ -434,6 +463,7 @@ class StopHookHardeningTests(unittest.TestCase):
 
             cp = subprocess.run(
                 ["/bin/sh", "-c", cmd],
+                input=payload,  # host delivers transcript_path HERE
                 capture_output=True,
                 text=True,
                 env=env,
